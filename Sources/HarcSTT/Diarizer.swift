@@ -3,8 +3,8 @@ import FluidAudio
 import HarcCore
 
 /// Wraps FluidAudio's DiarizerManager. Separate from Transcriber because
-/// the diarizer model loads independently, so a daemon that doesn't need
-/// diarization doesn't pay the download cost.
+/// the diarizer model loads independently — the Daemon pre-loads this in a
+/// background task and degrades gracefully to empty speaker segments if load fails.
 ///
 /// API adaptations from best-guess spec:
 /// - `initialize(models:)` used instead of `loadModels(_:)` (consuming parameter pattern)
