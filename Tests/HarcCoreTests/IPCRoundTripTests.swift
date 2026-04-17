@@ -1,0 +1,70 @@
+import Testing
+import Foundation
+@testable import HarcCore
+
+@Suite("IPC round-trip")
+struct IPCRoundTripTests {
+    @Test("TranscribeRequest round-trip")
+    func transcribeRequestRoundTrip() throws {
+        let original = IPCRequest.transcribe(
+            TranscribeRequest(
+                audioPath: "/tmp/audio.wav",
+                language: "en",
+                wantTimestamps: true,
+                diarize: true
+            )
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(IPCRequest.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test("Status request round-trip")
+    func statusRequestRoundTrip() throws {
+        let data = try JSONEncoder().encode(IPCRequest.status)
+        let decoded = try JSONDecoder().decode(IPCRequest.self, from: data)
+        #expect(decoded == .status)
+    }
+
+    @Test("Shutdown request round-trip")
+    func shutdownRequestRoundTrip() throws {
+        let data = try JSONEncoder().encode(IPCRequest.shutdown)
+        let decoded = try JSONDecoder().decode(IPCRequest.self, from: data)
+        #expect(decoded == .shutdown)
+    }
+
+    @Test("Result response round-trip")
+    func resultResponseRoundTrip() throws {
+        let result = TranscribeResult(
+            text: "hello world",
+            words: [
+                Word(text: "hello", startMs: 0, endMs: 500),
+                Word(text: "world", startMs: 500, endMs: 1000),
+            ],
+            speakers: [SpeakerSegment(speaker: 1, startMs: 0, endMs: 1000)],
+            processingMs: 42
+        )
+        let original = IPCResponse.result(result)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(IPCResponse.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test("Status response round-trip")
+    func statusResponseRoundTrip() throws {
+        let original = IPCResponse.status(
+            DaemonStatus(version: "0.1.0", modelLoaded: false, uptimeSeconds: 3)
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(IPCResponse.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test("Error response round-trip")
+    func errorResponseRoundTrip() throws {
+        let original = IPCResponse.error(IPCError(code: "not_found", message: "No such file"))
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(IPCResponse.self, from: data)
+        #expect(decoded == original)
+    }
+}
