@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          xcode_path=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version
+          swift --version
+
+      - name: swift test
+        run: swift test
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build Harc.app
+        run: |
+          xcodebuild \
+            -project Harc.xcodeproj \
+            -scheme Harc \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Verify embedded harc-stt
+        run: |
+          APP=$(xcodebuild -project Harc.xcodeproj -scheme Harc -configuration Debug -showBuildSettings | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2}' | head -1)/Harc.app
+          "$APP/Contents/MacOS/harc-stt" --version
