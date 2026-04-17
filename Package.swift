@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "HarcCore", targets: ["HarcCore"]),
         .library(name: "HarcAudio", targets: ["HarcAudio"]),
+        .library(name: "HarcClient", targets: ["HarcClient"]),
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
     ],
     dependencies: [
@@ -21,6 +22,10 @@ let package = Package(
             name: "HarcAudio",
             dependencies: ["HarcCore"]
         ),
+        .target(
+            name: "HarcClient",
+            dependencies: ["HarcCore"]
+        ),
         .executableTarget(
             name: "HarcSTT",
             dependencies: [
@@ -31,18 +36,16 @@ let package = Package(
         .testTarget(name: "HarcCoreTests", dependencies: ["HarcCore"]),
         .testTarget(
             name: "HarcSTTTests",
-            dependencies: [
-                "HarcSTT",
-                "HarcCore",
-            ],
+            dependencies: ["HarcSTT", "HarcCore"],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "HarcAudioTests",
-            dependencies: [
-                "HarcAudio",
-                "HarcCore",
-            ]
+            dependencies: ["HarcAudio", "HarcCore"]
+        ),
+        .testTarget(
+            name: "HarcClientTests",
+            dependencies: ["HarcClient", "HarcCore"]
         ),
     ]
 )
