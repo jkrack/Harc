@@ -1,0 +1,49 @@
+name: Harc
+options:
+  bundleIdPrefix: com.harc
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  HarcCore:
+    path: .
+targets:
+  Harc:
+    type: application
+    platform: macOS
+    sources:
+      - path: HarcApp
+    dependencies:
+      - package: HarcCore
+        product: HarcCore
+    info:
+      path: HarcApp/Info.plist
+      properties:
+        CFBundleName: Harc
+        CFBundleDisplayName: Harc
+        LSUIElement: true
+        NSMicrophoneUsageDescription: "Harc uses the microphone to record meetings for transcription."
+        NSScreenCaptureUsageDescription: "Harc captures system audio so remote participants appear in transcriptions."
+    entitlements:
+      path: HarcApp/Harc.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.Harc
+        CODE_SIGN_ENTITLEMENTS: HarcApp/Harc.entitlements
+    postCompileScripts:
+      - name: Embed harc-stt daemon
+        script: |
+          "${SRCROOT}/scripts/build-daemon.sh"
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/harc-stt
