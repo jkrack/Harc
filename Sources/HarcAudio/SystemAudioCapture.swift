@@ -1,0 +1,146 @@
+import Foundation
+@preconcurrency import AVFoundation
+@preconcurrency import ScreenCaptureKit
+
+public protocol SystemAudioCaptureSource: Sendable {
+    /// Request screen-recording permission. Throws `AudioError.systemAudioPermissionDenied` on refusal.
+    /// First call triggers the TCC prompt.
+    func requestPermission() async throws
+
+    /// Start capture. Returns a stream of PCM buffers.
+    func start() async throws -> AsyncStream<AVAudioPCMBuffer>
+
+    func stop() async
+}
+
+/// Real implementation backed by SCStream.
+public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOutput {
+    private var stream: SCStream?
+    private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+    private var isRunning = false
+
+    public override init() {
+        super.init()
+    }
+
+    public func requestPermission() async throws {
+        // Invoking SCShareableContent triggers the TCC prompt and surfaces denial via error.
+        do {
+            _ = try await SCShareableContent.current
+        } catch {
+            throw AudioError.systemAudioPermissionDenied
+        }
+    }
+
+    public func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
+        if isRunning {
+            return AsyncStream { cont in cont.finish() }
+        }
+
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.current
+        } catch {
+            throw AudioError.systemAudioPermissionDenied
+        }
+        guard let display = content.displays.first else {
+            throw AudioError.systemAudioStreamFailed("no display")
+        }
+
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let config = SCStreamConfiguration()
+        config.capturesAudio = true
+        config.excludesCurrentProcessAudio = true
+        // We need a minimal video spec even for audio-only capture.
+        config.width = 2
+        config.height = 2
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+
+        let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+        do {
+            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInteractive))
+        } catch {
+            throw AudioError.systemAudioStreamFailed("addStreamOutput: \(error.localizedDescription)")
+        }
+
+        let (s, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+        self.continuation = cont
+        self.stream = stream
+
+        do {
+            try await stream.startCapture()
+        } catch {
+            cont.finish()
+            throw AudioError.systemAudioStreamFailed("startCapture: \(error.localizedDescription)")
+        }
+        isRunning = true
+        return s
+    }
+
+    public func stop() async {
+        guard isRunning, let stream else { return }
+        try? await stream.stopCapture()
+        self.stream = nil
+        continuation?.finish()
+        continuation = nil
+        isRunning = false
+    }
+
+    nonisolated public func stream(
+        _ stream: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of type: SCStreamOutputType
+    ) {
+        guard type == .audio else { return }
+        guard let buffer = Self.convertToPCM(sampleBuffer) else { return }
+        Task { await self.yieldBuffer(buffer) }
+    }
+
+    private func yieldBuffer(_ buffer: AVAudioPCMBuffer) {
+        continuation?.yield(buffer)
+    }
+
+    /// Convert a CMSampleBuffer from SCStream into a Float32 AVAudioPCMBuffer.
+    /// SCStream delivers Int16 or Float32 depending on the system; we route
+    /// whatever format the buffer describes and let AudioMixer normalise.
+    nonisolated private static func convertToPCM(_ sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let streamDesc = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
+        else { return nil }
+
+        var asbd = streamDesc
+        guard let format = AVAudioFormat(streamDescription: &asbd) else { return nil }
+        let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+        guard let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
+        pcm.frameLength = frames
+
+        guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
+        var totalLen = 0
+        var ptr: UnsafeMutablePointer<Int8>? = nil
+        let status = CMBlockBufferGetDataPointer(
+            dataBuffer,
+            atOffset: 0,
+            lengthAtOffsetOut: nil,
+            totalLengthOut: &totalLen,
+            dataPointerOut: &ptr
+        )
+        guard status == kCMBlockBufferNoErr, let src = ptr else { return nil }
+
+        if format.commonFormat == .pcmFormatFloat32, !format.isInterleaved,
+           let dst = pcm.floatChannelData {
+            // Non-interleaved Float32 — copy per channel.
+            let perChannelBytes = totalLen / Int(format.channelCount)
+            for ch in 0..<Int(format.channelCount) {
+                memcpy(dst[ch], src.advanced(by: ch * perChannelBytes), perChannelBytes)
+            }
+        } else {
+            // Interleaved or Int16 — memcpy as a single blob into the raw storage.
+            let mutableABL = UnsafeMutableAudioBufferListPointer(pcm.mutableAudioBufferList)
+            if let raw = mutableABL[0].mData {
+                memcpy(raw, src, totalLen)
+                mutableABL[0].mDataByteSize = UInt32(totalLen)
+            }
+        }
+        return pcm
+    }
+}
