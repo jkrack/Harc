@@ -1,4 +1,31 @@
 #!/usr/bin/env bash
-# Placeholder — real implementation lands in Task 7.
-# Exits 0 so xcodegen's postCompileScripts phase doesn't break the Plan 1 smoke build.
-echo "build-daemon.sh: placeholder (Task 7 supplies the real version)"
+set -euo pipefail
+
+: "${SRCROOT:?SRCROOT must be set (run from Xcode build phase)}"
+: "${BUILT_PRODUCTS_DIR:?BUILT_PRODUCTS_DIR must be set}"
+: "${CONTENTS_FOLDER_PATH:?CONTENTS_FOLDER_PATH must be set}"
+
+cd "$SRCROOT"
+
+SCRATCH="$SRCROOT/.build-daemon"
+echo "note: building harc-stt into $SCRATCH"
+
+swift build \
+  -c release \
+  --product harc-stt \
+  --scratch-path "$SCRATCH" \
+  --arch arm64
+
+DAEMON_SRC="$SCRATCH/arm64-apple-macosx/release/harc-stt"
+DAEMON_DST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/harc-stt"
+
+mkdir -p "$(dirname "$DAEMON_DST")"
+cp "$DAEMON_SRC" "$DAEMON_DST"
+
+IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:-}"
+if [[ -z "$IDENTITY" ]]; then IDENTITY="-"; fi
+
+echo "note: signing $DAEMON_DST with identity '$IDENTITY'"
+codesign --force --sign "$IDENTITY" --options runtime "$DAEMON_DST"
+
+echo "note: embedded harc-stt at $DAEMON_DST"
