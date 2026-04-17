@@ -5,10 +5,11 @@ import Darwin
 
 @Suite("SocketServer")
 struct SocketServerTests {
+    /// `sun_path` is 104 bytes on macOS. `FileManager.default.temporaryDirectory`
+    /// can already be ~47 chars (e.g. `/var/folders/.../T/`), leaving too little
+    /// room for a UUID-suffixed filename. Use a short `/tmp` path instead.
     private func tempSocketPath() -> String {
-        let dir = FileManager.default.temporaryDirectory
-        let path = dir.appendingPathComponent("harc-stt-test-\(UUID().uuidString).sock").path
-        return path
+        "/tmp/harc-test-\(UUID().uuidString.prefix(8)).sock"
     }
 
     @Test("start then connect from a client receives a client fd")
