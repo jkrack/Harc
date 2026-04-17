@@ -9,7 +9,10 @@ let package = Package(
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.13.5"),
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            .upToNextMinor(from: "0.13.5")
+        ),
     ],
     targets: [
         .target(name: "HarcCore"),
