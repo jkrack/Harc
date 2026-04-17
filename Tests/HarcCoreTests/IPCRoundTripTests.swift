@@ -67,4 +67,14 @@ struct IPCRoundTripTests {
         let decoded = try JSONDecoder().decode(IPCResponse.self, from: data)
         #expect(decoded == original)
     }
+
+    @Test("TranscribeRequest decodes with defaults when optional fields omitted")
+    func transcribeRequestOmittedFieldsUseDefaults() throws {
+        let data = Data(#"{"audioPath":"/x.wav"}"#.utf8)
+        let decoded = try JSONDecoder().decode(TranscribeRequest.self, from: data)
+        #expect(decoded.audioPath == "/x.wav")
+        #expect(decoded.language == "en")
+        #expect(decoded.wantTimestamps == true)
+        #expect(decoded.diarize == true)
+    }
 }

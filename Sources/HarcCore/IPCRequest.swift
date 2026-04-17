@@ -51,4 +51,16 @@ public struct TranscribeRequest: Codable, Equatable {
         self.wantTimestamps = wantTimestamps
         self.diarize = diarize
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case audioPath, language, wantTimestamps, diarize
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.audioPath = try c.decode(String.self, forKey: .audioPath)
+        self.language = try c.decodeIfPresent(String.self, forKey: .language) ?? "en"
+        self.wantTimestamps = try c.decodeIfPresent(Bool.self, forKey: .wantTimestamps) ?? true
+        self.diarize = try c.decodeIfPresent(Bool.self, forKey: .diarize) ?? true
+    }
 }
