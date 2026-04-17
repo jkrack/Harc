@@ -36,7 +36,7 @@ public enum IPCResponse: Codable, Equatable {
     }
 }
 
-public struct TranscribeResult: Codable, Equatable {
+public struct TranscribeResult: Codable, Equatable, Sendable {
     public var text: String
     public var words: [Word]
     public var speakers: [SpeakerSegment]
@@ -50,7 +50,7 @@ public struct TranscribeResult: Codable, Equatable {
     }
 }
 
-public struct Word: Codable, Equatable {
+public struct Word: Codable, Equatable, Sendable {
     public var text: String
     public var startMs: Int
     public var endMs: Int
@@ -61,7 +61,7 @@ public struct Word: Codable, Equatable {
     }
 }
 
-public struct SpeakerSegment: Codable, Equatable {
+public struct SpeakerSegment: Codable, Equatable, Sendable {
     public var speaker: Int
     public var startMs: Int
     public var endMs: Int
@@ -72,7 +72,7 @@ public struct SpeakerSegment: Codable, Equatable {
     }
 }
 
-public struct DaemonStatus: Codable, Equatable {
+public struct DaemonStatus: Codable, Equatable, Sendable {
     public var version: String
     public var modelLoaded: Bool
     public var uptimeSeconds: Int
@@ -83,7 +83,7 @@ public struct DaemonStatus: Codable, Equatable {
     }
 }
 
-public struct IPCError: Codable, Equatable, Error {
+public struct IPCError: Codable, Equatable, Error, Sendable {
     public var code: String
     public var message: String
     public init(code: String, message: String) {
