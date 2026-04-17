@@ -1,6 +1,6 @@
 import Foundation
 
-public enum IPCResponse: Codable, Equatable {
+public enum IPCResponse: Codable, Equatable, Sendable {
     case result(TranscribeResult)
     case status(DaemonStatus)
     case error(IPCError)

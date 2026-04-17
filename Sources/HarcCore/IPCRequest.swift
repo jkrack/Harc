@@ -1,6 +1,6 @@
 import Foundation
 
-public enum IPCRequest: Codable, Equatable {
+public enum IPCRequest: Codable, Equatable, Sendable {
     case transcribe(TranscribeRequest)
     case status
     case shutdown
@@ -34,7 +34,7 @@ public enum IPCRequest: Codable, Equatable {
     }
 }
 
-public struct TranscribeRequest: Codable, Equatable {
+public struct TranscribeRequest: Codable, Equatable, Sendable {
     public var audioPath: String
     public var language: String
     public var wantTimestamps: Bool
