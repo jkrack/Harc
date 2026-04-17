@@ -25,6 +25,8 @@ targets:
     dependencies:
       - package: HarcCore
         product: HarcCore
+      - package: HarcCore
+        product: HarcAudio
     info:
       path: HarcApp/Info.plist
       properties:

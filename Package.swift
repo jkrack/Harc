@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "HarcCore", targets: ["HarcCore"]),
+        .library(name: "HarcAudio", targets: ["HarcAudio"]),
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
     ],
     dependencies: [
@@ -16,6 +17,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "HarcCore"),
+        .target(
+            name: "HarcAudio",
+            dependencies: ["HarcCore"]
+        ),
         .executableTarget(
             name: "HarcSTT",
             dependencies: [
@@ -31,6 +36,13 @@ let package = Package(
                 "HarcCore",
             ],
             resources: [.copy("Fixtures")]
+        ),
+        .testTarget(
+            name: "HarcAudioTests",
+            dependencies: [
+                "HarcAudio",
+                "HarcCore",
+            ]
         ),
     ]
 )
