@@ -128,8 +128,11 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
 
         if format.commonFormat == .pcmFormatFloat32, !format.isInterleaved,
            let dst = pcm.floatChannelData {
-            // Non-interleaved Float32 — copy per channel.
-            let perChannelBytes = totalLen / Int(format.channelCount)
+            // Non-interleaved Float32 — copy per channel. Derive the per-channel
+            // stride from the declared frame geometry rather than splitting the
+            // observed buffer length, which would be wrong for formats where
+            // channel planes aren't equal-sized.
+            let perChannelBytes = Int(format.streamDescription.pointee.mBytesPerFrame) * Int(frames)
             for ch in 0..<Int(format.channelCount) {
                 memcpy(dst[ch], src.advanced(by: ch * perChannelBytes), perChannelBytes)
             }
