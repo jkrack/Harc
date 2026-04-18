@@ -34,5 +34,6 @@ public struct PopoverRootView: View {
         }
         .padding(HarcDesign.Space.lg)
         .frame(width: 400)
+        .background(.thickMaterial)
     }
 }

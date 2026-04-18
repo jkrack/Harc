@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Design tokens for the "Auditory Lens" design system.
 /// Palette + typography + spacing + corner radii.
@@ -13,10 +14,10 @@ public enum HarcDesign {
     /// Error/danger color — reserved for destructive actions only.
     public static let error = Color(red: 0xB3/255.0, green: 0x1B/255.0, blue: 0x25/255.0)
 
-    /// On-surface text — soft dark, NOT pure black (per "Don't use #000000" rule).
-    public static let onSurface = Color(red: 0x2D/255.0, green: 0x2F/255.0, blue: 0x33/255.0)
-    public static let onSurfaceVariant = Color(red: 0x5A/255.0, green: 0x5B/255.0, blue: 0x60/255.0)
-    public static let outlineVariant = Color(red: 0xAC/255.0, green: 0xAD/255.0, blue: 0xB1/255.0)
+    /// On-surface text — semantic NSColor labels so they adapt to light/dark appearance.
+    public static let onSurface = Color(nsColor: .labelColor)
+    public static let onSurfaceVariant = Color(nsColor: .secondaryLabelColor)
+    public static let outlineVariant = Color(nsColor: .separatorColor)
 
     /// Primary gradient for hero actions (135-degree angle).
     public static let primaryGradient = LinearGradient(

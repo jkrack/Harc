@@ -55,7 +55,8 @@ public struct RecordingControlsView: View {
                     .foregroundStyle(Color.harcOnSurfaceVariant)
             }
             .menuStyle(.borderlessButton)
-            .frame(width: 24)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
     }
 
