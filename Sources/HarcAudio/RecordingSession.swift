@@ -151,15 +151,63 @@ private func pumpStreams(
     mic micStream: AsyncStream<AVAudioPCMBuffer>,
     system sysStream: AsyncStream<AVAudioPCMBuffer>?
 ) async {
-    if let sysStream {
-        var sysIter = sysStream.makeAsyncIterator()
-        for await micBuffer in micStream {
-            let sysBuffer = await sysIter.next()
-            session.processPair(mic: micBuffer, system: sysBuffer)
-        }
-    } else {
+    guard let sysStream else {
         for await micBuffer in micStream {
             session.processPair(mic: micBuffer, system: nil)
         }
+        return
+    }
+
+    let latest = LatestSystemBuffer()
+
+    // Drain the sys stream into the latest-slot. Consumes every sys buffer
+    // so the writer can't stall; the mic pump picks whichever arrived most
+    // recently on each mic tick. Cancellation-safe.
+    let sysTask = Task.detached { [latest, carrier = StreamCarrier(stream: sysStream)] in
+        for await buf in carrier.stream {
+            await latest.put(buf)
+        }
+    }
+
+    // Mic drives the mix cadence. Each mic buffer reads the latest sys buffer
+    // (or nil if none has arrived since last read) and mixes accordingly.
+    for await micBuffer in micStream {
+        let sysBox = await latest.take()
+        session.processPair(mic: micBuffer, system: sysBox?.buffer)
+    }
+
+    sysTask.cancel()
+    _ = await sysTask.value
+}
+
+/// Sendable envelope for an `AVAudioPCMBuffer`. PCM buffers aren't annotated
+/// `Sendable` in the SDK, but they're effectively immutable once produced by a
+/// capture source, so it's safe to hand one off between tasks.
+private struct PCMBox: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+}
+
+/// Sendable envelope for an `AsyncStream<AVAudioPCMBuffer>`. The stream itself
+/// is safe to hand across tasks; the compiler only flags it because its
+/// element type isn't `Sendable`.
+private struct StreamCarrier: @unchecked Sendable {
+    let stream: AsyncStream<AVAudioPCMBuffer>
+}
+
+/// Single-slot mailbox for the most recent system-audio buffer.
+/// The sys-drain task overwrites the slot; the mic pump consumes it on each tick.
+/// `take()` returns nil if no new sys buffer has arrived since the last read —
+/// the pump treats that as "mic-only for this tick."
+private actor LatestSystemBuffer {
+    private var current: PCMBox?
+
+    func put(_ buffer: AVAudioPCMBuffer) {
+        current = PCMBox(buffer: buffer)
+    }
+
+    func take() -> PCMBox? {
+        let b = current
+        current = nil
+        return b
     }
 }
