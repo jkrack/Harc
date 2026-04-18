@@ -11,7 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var session: RecordingSession?
     private let launcher = DaemonLauncher()
     private let state = RecordingState()
-    private let recordingsIndex = RecordingsIndex(baseDirectory: RecordingDestination.defaultBaseDirectory())
+    private let prefs = HarcPreferences.shared
+    private var settingsWindow: SettingsWindowController?
+    private lazy var recordingsIndex = RecordingsIndex(baseDirectory: prefs.destinationURL)
     private var detailWindows: [URL: TranscriptionDetailWindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -33,10 +35,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             },
             onOpen: { [weak self] entry in
                 self?.openDetail(for: entry)
+            },
+            onOpenSettings: { [weak self] in
+                self?.openSettings()
             }
         )
         .environmentObject(state)
         .environmentObject(recordingsIndex)
+        .environmentObject(prefs)
 
         pop.contentViewController = NSHostingController(rootView: root)
         pop.contentSize = NSSize(width: 400, height: 400)
@@ -76,13 +82,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let client = HarcSTTClient()
             let transcriber = ChunkedTranscriber(
                 client: client,
-                diarize: true,
-                chunkDurationSeconds: 60.0
+                diarize: prefs.diarize,
+                chunkDurationSeconds: prefs.chunkDurationSeconds
             )
             let session = RecordingSession(
                 mic: MicCapture(),
                 systemAudio: SystemAudioCapture(),
-                destination: RecordingDestination(baseDirectory: RecordingDestination.defaultBaseDirectory()),
+                destination: RecordingDestination(baseDirectory: prefs.destinationURL),
                 transcriber: transcriber
             )
             self.session = session
@@ -179,5 +185,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         alert.messageText = "Recording error"
         alert.informativeText = error.localizedDescription
         alert.runModal()
+    }
+
+    @objc private func openSettings() {
+        if let existing = settingsWindow {
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let controller = SettingsWindowController(prefs: prefs)
+        settingsWindow = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

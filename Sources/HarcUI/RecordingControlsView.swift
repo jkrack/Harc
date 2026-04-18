@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// The top half of the popover: app header, live transcript preview, big Start/Stop button.
 public struct RecordingControlsView: View {
@@ -7,9 +8,11 @@ public struct RecordingControlsView: View {
     @State private var ticker: Timer?
 
     let onToggle: () -> Void
+    let onOpenSettings: () -> Void
 
-    public init(onToggle: @escaping () -> Void) {
+    public init(onToggle: @escaping () -> Void, onOpenSettings: @escaping () -> Void) {
         self.onToggle = onToggle
+        self.onOpenSettings = onOpenSettings
     }
 
     public var body: some View {
@@ -36,6 +39,16 @@ public struct RecordingControlsView: View {
                         .foregroundStyle(Color.harcOnSurfaceVariant)
                 }
             }
+            Menu {
+                Button("Settings…", action: onOpenSettings)
+                Divider()
+                Button("Quit Harc") { NSApplication.shared.terminate(nil) }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 24)
         }
     }
 
@@ -62,7 +75,9 @@ public struct RecordingControlsView: View {
                 .font(HarcDesign.Font.titleSm)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(
-                    state.isRecording ? AnyShapeStyle(Color.harcError) : AnyShapeStyle(HarcDesign.primaryGradient),
+                    state.isRecording
+                        ? AnyShapeStyle(Color.harcError)
+                        : AnyShapeStyle(HarcDesign.primaryGradient),
                     in: RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
                 )
                 .foregroundStyle(.white)
