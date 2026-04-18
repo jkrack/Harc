@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import HarcAudio
 import HarcClient
+import HarcStore
 import HarcUI
 import KeyboardShortcuts
 
@@ -14,10 +15,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let state = RecordingState()
     private let prefs = HarcPreferences.shared
     private var settingsWindow: SettingsWindowController?
-    private lazy var recordingsIndex = RecordingsIndex(baseDirectory: prefs.destinationURL)
-    private var detailWindows: [URL: TranscriptionDetailWindowController] = [:]
+    private var store: RecordingStore?
+    private var recordingsVM: RecordingsViewModel?
+    private var detailWindows: [String: TranscriptionDetailWindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { [weak self] in
+            await self?.bootstrapStore()
+        }
+
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateMenuBarIcon(recording: false, on: item)
 
@@ -30,27 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         pop.behavior = .transient
         pop.delegate = self
 
-        let root = PopoverRootView(
-            onToggle: { [weak self] in
-                Task { await self?.toggleRecording() }
-            },
-            onOpen: { [weak self] entry in
-                self?.openDetail(for: entry)
-            },
-            onOpenSettings: { [weak self] in
-                self?.openSettings()
-            }
-        )
-        .environmentObject(state)
-        .environmentObject(recordingsIndex)
-        .environmentObject(prefs)
-
-        pop.contentViewController = NSHostingController(rootView: root)
         pop.contentSize = NSSize(width: 400, height: 400)
 
         self.statusItem = item
         self.popover = pop
-        recordingsIndex.refresh()
 
         // Pre-launch the daemon in the background so ⌘R doesn't have to wait for
         // model load. Failure is logged and retried lazily on next recording start.
@@ -131,8 +120,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         do {
             let result = try await session.stop()
             state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
+            if let store = self.store {
+                let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
+                let transcriptText = result.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                let rec = Recording(
+                    wavPath: result.wavURL.path,
+                    txtPath: result.txtURL?.path,
+                    jsonPath: result.jsonURL?.path,
+                    startedAt: startedAt,
+                    endedAt: Date(),
+                    transcriptText: transcriptText
+                )
+                _ = try? await store.upsert(rec)
+            }
             notifyRecordingSaved(result: result)
-            recordingsIndex.refresh()
         } catch {
             presentError(error)
         }
@@ -175,36 +176,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func openDetail(for entry: RecordingEntry) {
-        if let existing = detailWindows[entry.wavURL] {
+    private func openDetail(for recording: Recording) {
+        if let existing = detailWindows[recording.wavPath] {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         let controller = TranscriptionDetailWindowController(
-            entry: entry,
+            recording: recording,
             onReveal: {
-                NSWorkspace.shared.activateFileViewerSelecting([entry.wavURL])
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: recording.wavPath)])
             },
             onDelete: { [weak self] in
-                self?.deleteRecording(entry: entry)
+                self?.deleteRecording(recording: recording)
             }
         )
-        detailWindows[entry.wavURL] = controller
+        detailWindows[recording.wavPath] = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func deleteRecording(entry: RecordingEntry) {
-        let fm = FileManager.default
-        for url in [entry.wavURL, entry.txtURL, entry.jsonURL].compactMap({ $0 }) {
-            try? fm.trashItem(at: url, resultingItemURL: nil)
+    private func deleteRecording(recording: Recording) {
+        guard let id = recording.id, let vm = recordingsVM else { return }
+        Task {
+            try? await vm.delete(id: id)
         }
-        detailWindows[entry.wavURL]?.close()
-        detailWindows.removeValue(forKey: entry.wavURL)
-        recordingsIndex.refresh()
+        // Also trash the files on disk.
+        let fm = FileManager.default
+        let paths = [recording.wavPath, recording.txtPath, recording.jsonPath].compactMap { $0 }
+        for path in paths {
+            try? fm.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        }
+        detailWindows[recording.wavPath]?.close()
+        detailWindows.removeValue(forKey: recording.wavPath)
     }
 
     private func presentError(_ error: Error) {
@@ -226,5 +232,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func bootstrapStore() async {
+        do {
+            let store = try await RecordingStore.onDisk()
+            self.store = store
+
+            // Ingest existing filesystem recordings.
+            let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
+            _ = try? await ingestor.ingestAll()
+
+            let vm = RecordingsViewModel(store: store)
+            vm.start()
+            self.recordingsVM = vm
+
+            // Mount into SwiftUI environment.
+            await refreshPopoverRoot()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc: store init failed: \(error.localizedDescription)\n".utf8
+            ))
+        }
+    }
+
+    private func refreshPopoverRoot() async {
+        guard let vm = recordingsVM, let pop = popover else { return }
+        let root = PopoverRootView(
+            onToggle: { [weak self] in
+                Task { await self?.toggleRecording() }
+            },
+            onOpen: { [weak self] rec in
+                self?.openDetail(for: rec)
+            },
+            onOpenSettings: { [weak self] in
+                self?.openSettings()
+            }
+        )
+        .environmentObject(state)
+        .environmentObject(vm)
+        .environmentObject(prefs)
+
+        pop.contentViewController = NSHostingController(rootView: root)
     }
 }

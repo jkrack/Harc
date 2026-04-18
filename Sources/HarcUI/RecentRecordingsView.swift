@@ -1,12 +1,12 @@
 import SwiftUI
+import HarcStore
 
 public struct RecentRecordingsView: View {
-    @EnvironmentObject private var index: RecordingsIndex
+    @EnvironmentObject private var vm: RecordingsViewModel
 
-    /// Called when the user clicks a row.
-    let onOpen: (RecordingEntry) -> Void
+    let onOpen: (Recording) -> Void
 
-    public init(onOpen: @escaping (RecordingEntry) -> Void) {
+    public init(onOpen: @escaping (Recording) -> Void) {
         self.onOpen = onOpen
     }
 
@@ -18,13 +18,13 @@ public struct RecentRecordingsView: View {
                 .textCase(.uppercase)
                 .tracking(1.2)
 
-            if index.entries.isEmpty {
+            if vm.recordings.isEmpty {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(index.entries.prefix(8)) { entry in
-                            row(for: entry)
+                        ForEach(vm.recordings.prefix(8)) { rec in
+                            row(for: rec)
                         }
                     }
                 }
@@ -40,21 +40,21 @@ public struct RecentRecordingsView: View {
             .padding(.vertical, HarcDesign.Space.sm)
     }
 
-    private func row(for entry: RecordingEntry) -> some View {
-        Button { onOpen(entry) } label: {
+    private func row(for rec: Recording) -> some View {
+        Button { onOpen(rec) } label: {
             HStack(alignment: .top, spacing: HarcDesign.Space.sm) {
-                Image(systemName: "waveform")
+                Image(systemName: rec.pinned ? "pin.fill" : "waveform")
                     .font(.system(size: 16))
-                    .foregroundStyle(Color.harcPrimary)
+                    .foregroundStyle(rec.pinned ? Color.harcTertiary : Color.harcPrimary)
                     .frame(width: 24, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.date)
+                    Text(rec.displayTitle)
                         .font(HarcDesign.Font.titleSm)
                         .foregroundStyle(Color.harcOnSurface)
                         .lineLimit(1)
-                    if let preview = entry.preview, !preview.isEmpty {
-                        Text(preview)
+                    if !rec.preview.isEmpty {
+                        Text(rec.preview)
                             .font(HarcDesign.Font.bodySm)
                             .foregroundStyle(Color.harcOnSurfaceVariant)
                             .lineLimit(2)

@@ -1,8 +1,9 @@
 import SwiftUI
 import AppKit
+import HarcStore
 
 public struct TranscriptionDetailView: View {
-    let entry: RecordingEntry
+    let recording: Recording
     let onReveal: () -> Void
     let onDelete: () -> Void
 
@@ -11,11 +12,11 @@ public struct TranscriptionDetailView: View {
     @State private var deleteConfirm = false
 
     public init(
-        entry: RecordingEntry,
+        recording: Recording,
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void
     ) {
-        self.entry = entry
+        self.recording = recording
         self.onReveal = onReveal
         self.onDelete = onDelete
     }
@@ -24,10 +25,10 @@ public struct TranscriptionDetailView: View {
         VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading) {
-                    Text(entry.date)
+                    Text(recording.displayTitle)
                         .font(HarcDesign.Font.titleLg)
                         .foregroundStyle(Color.harcOnSurface)
-                    Text(entry.wavURL.lastPathComponent)
+                    Text(URL(fileURLWithPath: recording.wavPath).lastPathComponent)
                         .font(HarcDesign.Font.labelMd)
                         .foregroundStyle(Color.harcOnSurfaceVariant)
                 }
@@ -84,18 +85,22 @@ public struct TranscriptionDetailView: View {
                 Button("Delete", role: .destructive, action: onDelete)
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("Also removes the .txt and .json siblings. This cannot be undone.")
+                Text("The recording's audio, transcript, and JSON files are moved to Trash and the entry is soft-deleted from the library.")
             }
         }
     }
 
     private func load() {
-        guard let txt = entry.txtURL else {
+        if let cached = recording.transcriptText, !cached.isEmpty {
+            transcript = cached
+            return
+        }
+        guard let txtPath = recording.txtPath else {
             loadError = "No transcript file — recording likely had no transcription."
             return
         }
         do {
-            transcript = try String(contentsOf: txt, encoding: .utf8)
+            transcript = try String(contentsOf: URL(fileURLWithPath: txtPath), encoding: .utf8)
         } catch {
             loadError = "Failed to load transcript: \(error.localizedDescription)"
         }

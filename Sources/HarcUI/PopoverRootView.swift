@@ -1,16 +1,17 @@
 import SwiftUI
+import HarcStore
 
 public struct PopoverRootView: View {
     @EnvironmentObject private var state: RecordingState
-    @EnvironmentObject private var index: RecordingsIndex
+    @EnvironmentObject private var vm: RecordingsViewModel
 
     let onToggle: () -> Void
-    let onOpen: (RecordingEntry) -> Void
+    let onOpen: (Recording) -> Void
     let onOpenSettings: () -> Void
 
     public init(
         onToggle: @escaping () -> Void,
-        onOpen: @escaping (RecordingEntry) -> Void,
+        onOpen: @escaping (Recording) -> Void,
         onOpenSettings: @escaping () -> Void
     ) {
         self.onToggle = onToggle
