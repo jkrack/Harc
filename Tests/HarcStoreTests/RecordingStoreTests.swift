@@ -120,4 +120,56 @@ struct RecordingStoreTests {
         let restored = try await store.fetchByWavPath(r.wavPath)
         #expect(restored?.deletedAt == nil)
     }
+
+    @Test("daysWithRecordings returns only days that have non-deleted rows in the month")
+    func daysWithRecordingsInMonth() async throws {
+        let store = try await RecordingStore.inMemory()
+        let cal = Calendar.current
+        let d1 = cal.date(from: DateComponents(year: 2026, month: 4, day: 5, hour: 10))!
+        let d2 = cal.date(from: DateComponents(year: 2026, month: 4, day: 5, hour: 15))!  // same day
+        let d3 = cal.date(from: DateComponents(year: 2026, month: 4, day: 12, hour: 9))!
+        let d4 = cal.date(from: DateComponents(year: 2026, month: 5, day: 1, hour: 9))!   // next month
+        for (idx, d) in [d1, d2, d3, d4].enumerated() {
+            _ = try await store.upsert(Recording(wavPath: "/tmp/day/\(idx).wav", startedAt: d))
+        }
+        // Soft-delete one on the 5th — remaining row that day still counts.
+        let apr12Rec = try #require(try await store.fetchByWavPath("/tmp/day/2.wav"))
+        try await store.softDelete(id: apr12Rec.id!)
+
+        let april = cal.date(from: DateComponents(year: 2026, month: 4, day: 15))!
+        let days = try await store.daysWithRecordings(inMonthContaining: april)
+        let dayStarts = Set([d1].map { cal.startOfDay(for: $0) })
+        #expect(days == dayStarts)
+    }
+
+    @Test("recordings(onDay:) returns rows for that local day, ordered pinned-first desc")
+    func recordingsOnDay() async throws {
+        let store = try await RecordingStore.inMemory()
+        let cal = Calendar.current
+        let morning = cal.date(from: DateComponents(year: 2026, month: 4, day: 17, hour: 9))!
+        let evening = cal.date(from: DateComponents(year: 2026, month: 4, day: 17, hour: 21))!
+        let otherDay = cal.date(from: DateComponents(year: 2026, month: 4, day: 18, hour: 9))!
+
+        let r1 = try await store.upsert(Recording(wavPath: "/tmp/d/a.wav", startedAt: morning))
+        let r2 = try await store.upsert(Recording(wavPath: "/tmp/d/b.wav", startedAt: evening))
+        _ = try await store.upsert(Recording(wavPath: "/tmp/d/c.wav", startedAt: otherDay))
+        try await store.setPinned(id: r1.id!, pinned: true)
+
+        let result = try await store.recordings(onDay: morning)
+        #expect(result.map { $0.wavPath } == ["/tmp/d/a.wav", "/tmp/d/b.wav"])
+        #expect(result[0].pinned == true)
+        _ = r2
+    }
+
+    @Test("daysWithRecordings excludes rows in other months")
+    func daysWithRecordingsRespectsMonthBounds() async throws {
+        let store = try await RecordingStore.inMemory()
+        let cal = Calendar.current
+        let inMonth = cal.date(from: DateComponents(year: 2026, month: 4, day: 10))!
+        let outOfMonth = cal.date(from: DateComponents(year: 2026, month: 3, day: 31))!
+        _ = try await store.upsert(Recording(wavPath: "/tmp/a.wav", startedAt: inMonth))
+        _ = try await store.upsert(Recording(wavPath: "/tmp/b.wav", startedAt: outOfMonth))
+        let days = try await store.daysWithRecordings(inMonthContaining: inMonth)
+        #expect(days.count == 1)
+    }
 }

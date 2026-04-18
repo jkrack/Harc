@@ -201,6 +201,50 @@ public actor RecordingStore {
         }
     }
 
+    /// Day-starts (local-TZ midnight) for every day in the given month that has
+    /// at least one non-deleted recording. Useful for rendering calendar dot
+    /// indicators.
+    public func daysWithRecordings(inMonthContaining reference: Date) async throws -> Set<Date> {
+        let (start, end) = Self.monthBounds(reference)
+        let cal = Calendar.current
+        let rows = try await dbQueue.read { db in
+            try Recording
+                .filter(Recording.Columns.deletedAt == nil)
+                .filter(Recording.Columns.startedAt >= start && Recording.Columns.startedAt < end)
+                .select(Recording.Columns.startedAt)
+                .asRequest(of: Date.self)
+                .fetchAll(db)
+        }
+        return Set(rows.map { cal.startOfDay(for: $0) })
+    }
+
+    /// All non-deleted recordings whose `startedAt` falls on the given local day.
+    /// Ordered by pinned-first, then most-recent start.
+    public func recordings(onDay day: Date) async throws -> [Recording] {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: day)
+        guard let end = cal.date(byAdding: .day, value: 1, to: start) else {
+            throw StoreError.writeFailed("date math failed")
+        }
+        return try await dbQueue.read { db in
+            try Recording
+                .filter(Recording.Columns.deletedAt == nil)
+                .filter(Recording.Columns.startedAt >= start && Recording.Columns.startedAt < end)
+                .order(Recording.Columns.pinned.desc, Recording.Columns.startedAt.desc)
+                .fetchAll(db)
+        }
+    }
+
+    /// Calendar-relative first-day-of-month and first-day-of-next-month bounds
+    /// for any date in the reference month.
+    private static func monthBounds(_ reference: Date) -> (Date, Date) {
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.year, .month], from: reference)
+        let start = cal.date(from: comps) ?? reference
+        let end = cal.date(byAdding: .month, value: 1, to: start) ?? reference
+        return (start, end)
+    }
+
     // MARK: - Observation
 
     /// AsyncStream that re-emits the full list of (non-deleted, pinned-first)
