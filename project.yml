@@ -29,6 +29,8 @@ targets:
         product: HarcAudio
       - package: HarcCore
         product: HarcClient
+      - package: HarcCore
+        product: HarcUI
     info:
       path: HarcApp/Info.plist
       properties:
