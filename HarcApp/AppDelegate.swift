@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let launcher = DaemonLauncher()
     private let state = RecordingState()
     private let recordingsIndex = RecordingsIndex(baseDirectory: RecordingDestination.defaultBaseDirectory())
+    private var detailWindows: [URL: TranscriptionDetailWindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -142,9 +143,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func openDetail(for entry: RecordingEntry) {
-        // Transcription detail window lands in Task 5.
-        // For now, just reveal the recording in Finder on click so the click does something visible.
-        NSWorkspace.shared.activateFileViewerSelecting([entry.wavURL])
+        if let existing = detailWindows[entry.wavURL] {
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let controller = TranscriptionDetailWindowController(
+            entry: entry,
+            onReveal: {
+                NSWorkspace.shared.activateFileViewerSelecting([entry.wavURL])
+            },
+            onDelete: { [weak self] in
+                self?.deleteRecording(entry: entry)
+            }
+        )
+        detailWindows[entry.wavURL] = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func deleteRecording(entry: RecordingEntry) {
+        let fm = FileManager.default
+        for url in [entry.wavURL, entry.txtURL, entry.jsonURL].compactMap({ $0 }) {
+            try? fm.trashItem(at: url, resultingItemURL: nil)
+        }
+        detailWindows[entry.wavURL]?.close()
+        detailWindows.removeValue(forKey: entry.wavURL)
+        recordingsIndex.refresh()
     }
 
     private func presentError(_ error: Error) {
