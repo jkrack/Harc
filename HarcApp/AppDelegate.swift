@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var libraryVM: LibraryViewModel?
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
+    private var menuBarTicker: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [weak self] in
@@ -157,10 +158,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func updateMenuBarIcon(recording: Bool, on item: NSStatusItem? = nil) {
         let target = item ?? statusItem
-        guard let target else { return }
+        guard let button = target?.button else { return }
         let symbol = recording ? "record.circle.fill" : "waveform"
         let label = recording ? "Harc — recording" : "Harc"
-        target.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        button.contentTintColor = recording ? .systemRed : nil
+        if recording {
+            updateMenuBarElapsed()
+            menuBarTicker?.invalidate()
+            menuBarTicker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.updateMenuBarElapsed() }
+            }
+        } else {
+            menuBarTicker?.invalidate()
+            menuBarTicker = nil
+            button.title = ""
+        }
+    }
+
+    private func updateMenuBarElapsed() {
+        guard let button = statusItem?.button, let start = state.recordingStartedAt else { return }
+        let seconds = Int(Date().timeIntervalSince(start))
+        button.title = String(format: " %d:%02d", seconds / 60, seconds % 60)
     }
 
 private func openDetail(for recording: Recording) {
