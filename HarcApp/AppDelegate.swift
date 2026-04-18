@@ -1,5 +1,6 @@
 import AppKit
 import HarcAudio
+import HarcClient
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -7,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var startMenuItem: NSMenuItem?
     private var stopMenuItem: NSMenuItem?
     private var session: RecordingSession?
+    private let launcher = DaemonLauncher()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -48,22 +50,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func startRecording() {
         guard session == nil else { return }
-        let session = RecordingSession(
-            mic: MicCapture(),
-            systemAudio: SystemAudioCapture(),
-            destination: RecordingDestination(baseDirectory: RecordingDestination.defaultBaseDirectory())
-        )
-        self.session = session
+
         startMenuItem?.isEnabled = false
         stopMenuItem?.isEnabled = true
         if let item = statusItem { updateMenuBarIcon(recording: true, on: item) }
 
         Task {
             do {
+                // Ensure daemon is running before the first chunk.
+                _ = try await self.launcher.ensureRunning()
+                let client = HarcSTTClient()
+                let transcriber = ChunkedTranscriber(
+                    client: client,
+                    diarize: true,
+                    chunkDurationSeconds: 60.0
+                )
+                let session = RecordingSession(
+                    mic: MicCapture(),
+                    systemAudio: SystemAudioCapture(),
+                    destination: RecordingDestination(baseDirectory: RecordingDestination.defaultBaseDirectory()),
+                    transcriber: transcriber
+                )
+                self.session = session
                 try await session.start(at: Date())
             } catch {
-                await MainActor.run { self.presentError(error) }
-                await MainActor.run { self.resetUI() }
+                self.presentError(error)
+                self.resetUI()
             }
         }
     }
@@ -73,11 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             do {
                 let result = try await session.stop()
-                await MainActor.run { self.notifyRecordingSaved(url: result.wavURL) }
+                self.notifyRecordingSaved(result: result)
             } catch {
-                await MainActor.run { self.presentError(error) }
+                self.presentError(error)
             }
-            await MainActor.run { self.resetUI() }
+            self.resetUI()
         }
     }
 
@@ -94,15 +106,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
     }
 
-    private func notifyRecordingSaved(url: URL) {
+    private func notifyRecordingSaved(result: RecordingResult) {
         let alert = NSAlert()
         alert.messageText = "Recording saved"
-        alert.informativeText = url.path
+        if result.txtURL != nil {
+            alert.informativeText = "Audio, transcript, and structured JSON written next to each other.\n\n\(result.wavURL.path)"
+        } else {
+            alert.informativeText = result.wavURL.path
+        }
         alert.addButton(withTitle: "Reveal in Finder")
         alert.addButton(withTitle: "OK")
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            NSWorkspace.shared.activateFileViewerSelecting([result.wavURL])
         }
     }
 

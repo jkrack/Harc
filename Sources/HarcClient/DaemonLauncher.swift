@@ -44,6 +44,8 @@ public actor DaemonLauncher {
 
         let p = Process()
         p.executableURL = bin
+        // Pass the socket path so the daemon binds to the correct location.
+        p.arguments = ["--socket", socketPath]
         p.standardError = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
         p.standardOutput = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
         do {
