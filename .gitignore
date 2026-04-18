@@ -12,3 +12,6 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# xcodegen-generated
+HarcApp/Info.plist

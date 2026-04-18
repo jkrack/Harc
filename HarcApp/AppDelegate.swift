@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import HarcAudio
 import HarcClient
@@ -20,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var detailWindows: [String: TranscriptionDetailWindowController] = [:]
     private var libraryWindow: LibraryWindowController?
     private var libraryVM: LibraryViewModel?
+    private var previewTask: Task<Void, Never>?
+    private var prefsObserver: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [weak self] in
@@ -102,7 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.session = session
 
             // Pipe transcript updates into the UI.
-            Task { [weak self, transcriber] in
+            self.previewTask?.cancel()
+            self.previewTask = Task { [weak self, transcriber] in
                 for await update in await transcriber.updates {
                     await MainActor.run {
                         self?.state.appendPreview(update.joinedTextSoFar)
@@ -113,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await session.start(at: state.recordingStartedAt ?? Date())
         } catch {
             presentError(error)
-            resetAfterFailure()
+            resetUI()
         }
     }
 
@@ -139,18 +143,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } catch {
             presentError(error)
         }
-        resetAfterFailure()
+        previewTask?.cancel()
+        previewTask = nil
+        resetUI()
     }
 
-    private func resetAfterFailure() {
+    private func resetUI() {
         session = nil
-        if state.isRecording {
-            state.markStopped(
-                wavURL: URL(fileURLWithPath: "/dev/null"),
-                txtURL: nil,
-                jsonURL: nil
-            )
-        }
         updateMenuBarIcon(recording: false)
     }
 
@@ -272,6 +271,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             vm.start()
             self.recordingsVM = vm
 
+            observeDestinationChanges()
+
             // Mount into SwiftUI environment.
             await refreshPopoverRoot()
         } catch {
@@ -279,6 +280,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 "harc: store init failed: \(error.localizedDescription)\n".utf8
             ))
         }
+    }
+
+    private func observeDestinationChanges() {
+        prefsObserver = prefs.$destinationPath
+            .removeDuplicates()
+            .dropFirst()  // skip initial value
+            .sink { [weak self] _ in
+                Task { await self?.reingestForNewDestination() }
+            }
+    }
+
+    private func reingestForNewDestination() async {
+        guard let store = store else { return }
+        let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
+        _ = try? await ingestor.ingestAll()
     }
 
     private func refreshPopoverRoot() async {

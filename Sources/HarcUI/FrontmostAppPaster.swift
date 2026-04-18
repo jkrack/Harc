@@ -27,6 +27,7 @@ public enum FrontmostAppPaster {
     /// Copy `text` to the clipboard and paste into the frontmost app.
     /// `dwellMs` is the delay before the paste fires — gives macOS a moment to
     /// restore focus to the previous app after our window resigns key.
+    @MainActor
     public static func copyAndPaste(_ text: String, dwellMs: UInt64 = 150) throws {
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -36,12 +37,14 @@ public enum FrontmostAppPaster {
         NSApp.hide(nil)
 
         // Small delay, then synthesize ⌘V.
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(dwellMs))) {
-            _ = try? synthesizeCmdV()
+        Task {
+            try? await Task.sleep(for: .milliseconds(Int(dwellMs)))
+            try? synthesizeCmdV()
         }
     }
 
     /// Synthesize Cmd-V into the frontmost (post-hide) application.
+    @MainActor
     public static func synthesizeCmdV() throws {
         // AXIsProcessTrustedWithOptions with the prompt flag asks the user
         // to grant Accessibility if it hasn't been granted yet.
