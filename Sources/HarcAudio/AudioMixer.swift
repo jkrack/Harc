@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 
 /// Resamples incoming mic and system-audio buffers to 16 kHz mono Float32,
 /// then sums aligned chunks. Not Sendable — hold on a single actor.
@@ -121,14 +121,18 @@ public final class AudioMixer {
         }
 
         var error: NSError?
-        var delivered = false
+        // Use a reference-type box so Swift 6 doesn't flag the closure's mutation
+        // as a captured-var concurrency hazard. The inputBlock runs synchronously
+        // inside convert(); there's no actual concurrency, but the API types the
+        // closure as @Sendable.
+        let delivered = DeliveredFlag()
         let status = converter!.convert(to: out, error: &error) { _, outStatus in
-            if delivered {
+            if delivered.value {
                 outStatus.pointee = .endOfStream
                 return nil
             }
             outStatus.pointee = .haveData
-            delivered = true
+            delivered.value = true
             return extended
         }
 
@@ -140,4 +144,10 @@ public final class AudioMixer {
         out.frameLength = min(out.frameLength, expectedOutput)
         return out
     }
+}
+
+/// Ref-type box so AudioMixer's synchronous-but-@Sendable inputBlock can toggle a flag
+/// without triggering Swift 6's captured-var concurrency diagnostic.
+private final class DeliveredFlag: @unchecked Sendable {
+    var value = false
 }
