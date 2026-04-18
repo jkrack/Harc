@@ -7,9 +7,13 @@ import HarcStore
 @MainActor
 public final class RecordingsViewModel: ObservableObject {
     @Published public private(set) var recordings: [Recording] = []
+    @Published public var filter: LibraryFilter = .all {
+        didSet { if oldValue != filter { recordings = apply(filter, to: fullList) } }
+    }
 
     public let store: RecordingStore
     private var observationTask: Task<Void, Never>?
+    private var fullList: [Recording] = []
 
     public init(store: RecordingStore) {
         self.store = store
@@ -20,7 +24,10 @@ public final class RecordingsViewModel: ObservableObject {
         observationTask = Task { [weak self, store] in
             guard let self else { return }
             for await list in store.observeAll(pinnedFirst: true) {
-                await MainActor.run { self.recordings = list }
+                await MainActor.run {
+                    self.fullList = list
+                    self.recordings = self.apply(self.filter, to: list)
+                }
             }
         }
     }
@@ -35,10 +42,15 @@ public final class RecordingsViewModel: ObservableObject {
     public func refresh() async {
         do {
             let latest = try await store.fetchAll()
-            self.recordings = latest
+            self.fullList = latest
+            self.recordings = apply(filter, to: latest)
         } catch {
             // Keep the previous list on error.
         }
+    }
+
+    private func apply(_ filter: LibraryFilter, to list: [Recording]) -> [Recording] {
+        list.filter { filter.matches($0) }
     }
 
     public func delete(id: Int64) async throws {

@@ -18,6 +18,8 @@ public struct RecentRecordingsView: View {
                 .textCase(.uppercase)
                 .tracking(1.2)
 
+            filterPills
+
             if vm.recordings.isEmpty {
                 emptyState
             } else {
@@ -33,8 +35,37 @@ public struct RecentRecordingsView: View {
         }
     }
 
+    private var filterPills: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: HarcDesign.Space.xxs) {
+                pill("All",       filter: .all)
+                pill("Today",     filter: .today)
+                pill("Yesterday", filter: .yesterday)
+                pill("Week",      filter: .thisWeek)
+                pill("Pinned",    filter: .pinned)
+            }
+        }
+    }
+
+    private func pill(_ label: String, filter: LibraryFilter) -> some View {
+        let active = vm.filter == filter
+        return Button { vm.filter = filter } label: {
+            Text(label)
+                .font(HarcDesign.Font.labelMd)
+                .foregroundStyle(active ? Color.white : Color.harcOnSurface)
+                .padding(.horizontal, HarcDesign.Space.xs)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(active ? Color.harcPrimary : Color.harcOutlineVariant.opacity(0.25))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var emptyState: some View {
-        Text("No recordings yet. Press Start Recording to begin.")
+        Text(vm.filter == .all
+             ? "No recordings yet. Press Start Recording to begin."
+             : "No recordings match this filter.")
             .font(HarcDesign.Font.bodySm)
             .foregroundStyle(Color.harcOnSurfaceVariant)
             .padding(.vertical, HarcDesign.Space.sm)
