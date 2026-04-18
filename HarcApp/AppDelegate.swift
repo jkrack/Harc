@@ -52,6 +52,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         self.popover = pop
         recordingsIndex.refresh()
 
+        // Pre-launch the daemon in the background so ⌘R doesn't have to wait for
+        // model load. Failure is logged and retried lazily on next recording start.
+        Task { [launcher] in
+            do {
+                _ = try await launcher.ensureRunning()
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harc: background daemon launch failed: \(error.localizedDescription)\n".utf8
+                ))
+            }
+        }
+
         KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [weak self] in
             Task { await self?.toggleRecording() }
         }
@@ -97,6 +109,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 transcriber: transcriber
             )
             self.session = session
+
+            // Pipe transcript updates into the UI.
+            Task { [weak self, transcriber] in
+                for await update in await transcriber.updates {
+                    await MainActor.run {
+                        self?.state.appendPreview(update.joinedTextSoFar)
+                    }
+                }
+            }
+
             try await session.start(at: state.recordingStartedAt ?? Date())
         } catch {
             presentError(error)
