@@ -101,7 +101,8 @@ struct RecordingSessionTests {
         try await session.start(at: Date())
         // Wait briefly for fake streams to drain.
         try await Task.sleep(nanoseconds: 300_000_000)
-        let url = try await session.stop()
+        let result = try await session.stop()
+        let url = result.wavURL
 
         #expect(FileManager.default.fileExists(atPath: url.path))
         #expect(url.path.hasPrefix(base.path))
@@ -125,7 +126,8 @@ struct RecordingSessionTests {
         let session = RecordingSession(mic: mic, systemAudio: sys, destination: destination)
         try await session.start(at: Date())
         try await Task.sleep(nanoseconds: 200_000_000)
-        let url = try await session.stop()
+        let result = try await session.stop()
+        let url = result.wavURL
 
         #expect(FileManager.default.fileExists(atPath: url.path))
         let file = try AVAudioFile(forReading: url)

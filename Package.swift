@@ -20,7 +20,7 @@ let package = Package(
         .target(name: "HarcCore"),
         .target(
             name: "HarcAudio",
-            dependencies: ["HarcCore"]
+            dependencies: ["HarcCore", "HarcClient"]
         ),
         .target(
             name: "HarcClient",
@@ -41,7 +41,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcAudioTests",
-            dependencies: ["HarcAudio", "HarcCore"]
+            dependencies: ["HarcAudio", "HarcCore", "HarcClient"]
         ),
         .testTarget(
             name: "HarcClientTests",

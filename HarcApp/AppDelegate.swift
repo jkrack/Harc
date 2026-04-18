@@ -72,8 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let session else { return }
         Task {
             do {
-                let url = try await session.stop()
-                await MainActor.run { self.notifyRecordingSaved(url: url) }
+                let result = try await session.stop()
+                await MainActor.run { self.notifyRecordingSaved(url: result.wavURL) }
             } catch {
                 await MainActor.run { self.presentError(error) }
             }

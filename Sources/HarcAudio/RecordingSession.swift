@@ -1,16 +1,21 @@
 import Foundation
 @preconcurrency import AVFoundation
+import HarcClient
+
+/// Result of a completed recording.
+public struct RecordingResult: Sendable {
+    public let wavURL: URL
+    public let txtURL: URL?
+    public let jsonURL: URL?
+}
 
 /// Orchestrates a single recording. One instance per recording.
 public actor RecordingSession {
     private let mic: any MicCaptureSource
     private let systemAudio: any SystemAudioCaptureSource
     private let destination: RecordingDestination
+    private let transcriber: ChunkedTranscriber?
 
-    // Processing state accessed from the pump task via nonisolated(unsafe).
-    // Safe because the pump task is serialised: it runs sequentially (one buffer
-    // at a time), and RecordingSession.stop() cancels + awaits the pump before
-    // touching mixer or writer.
     nonisolated(unsafe) private let mixer = AudioMixer()
     nonisolated(unsafe) private var writer: AudioFileWriter?
 
@@ -22,18 +27,17 @@ public actor RecordingSession {
     public init(
         mic: any MicCaptureSource,
         systemAudio: any SystemAudioCaptureSource,
-        destination: RecordingDestination
+        destination: RecordingDestination,
+        transcriber: ChunkedTranscriber? = nil
     ) {
         self.mic = mic
         self.systemAudio = systemAudio
         self.destination = destination
+        self.transcriber = transcriber
     }
 
     public func start(at date: Date) async throws {
-        // Permissions.
         try await mic.requestPermission()
-
-        // System audio is optional — log and degrade on denial.
         do {
             try await systemAudio.requestPermission()
             systemAudioAvailable = true
@@ -45,6 +49,10 @@ public actor RecordingSession {
         self.cacheURL = cache
         self.startedAt = date
         self.writer = try AudioFileWriter(url: cache)
+
+        if let transcriber {
+            await transcriber.start(audioURL: cache)
+        }
 
         let micStream = try await mic.start()
         let sysStream: AsyncStream<AVAudioPCMBuffer>?
@@ -59,7 +67,7 @@ public actor RecordingSession {
         }
     }
 
-    public func stop() async throws -> URL {
+    public func stop() async throws -> RecordingResult {
         await mic.stop()
         await systemAudio.stop()
         pumpTask?.cancel()
@@ -71,14 +79,35 @@ public actor RecordingSession {
         }
         try writer.close()
 
-        let dst = try destination.publicPath(for: startedAt)
-        try RecordingDestination.atomicMove(from: cache, to: dst)
+        let wavURL = try destination.publicPath(for: startedAt)
+        try RecordingDestination.atomicMove(from: cache, to: wavURL)
         self.writer = nil
-        return dst
+
+        var txtURL: URL? = nil
+        var jsonURL: URL? = nil
+        if let transcriber {
+            do {
+                let transcript = try await transcriber.finalize(
+                    startedAt: startedAt,
+                    endedAt: Date()
+                )
+                var finalTranscript = transcript
+                finalTranscript.audioPath = wavURL.path
+                try TranscriptWriter.writeSiblings(transcript: finalTranscript, nextTo: wavURL)
+                let stem = wavURL.deletingPathExtension().lastPathComponent
+                let parent = wavURL.deletingLastPathComponent()
+                txtURL = parent.appendingPathComponent("\(stem).txt")
+                jsonURL = parent.appendingPathComponent("\(stem).json")
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harc-audio: transcription finalize failed: \(error.localizedDescription)\n".utf8
+                ))
+            }
+        }
+
+        return RecordingResult(wavURL: wavURL, txtURL: txtURL, jsonURL: jsonURL)
     }
 
-    // Called from pumpStreams. Because mixer and writer are nonisolated(unsafe),
-    // this can be nonisolated — no actor hop required, no Sendable issues.
     nonisolated fileprivate func processPair(mic: AVAudioPCMBuffer, system: AVAudioPCMBuffer?) {
         do {
             let micMono = try mixer.processMic(mic)
@@ -91,8 +120,6 @@ public actor RecordingSession {
             }
             try writer?.write(mixed)
         } catch {
-            // Best-effort: log and continue. A transient conversion failure
-            // shouldn't tear down the whole recording.
             FileHandle.standardError.write(Data(
                 "harc-audio: processPair failed: \(error.localizedDescription)\n".utf8
             ))
@@ -100,9 +127,6 @@ public actor RecordingSession {
     }
 }
 
-/// Free nonisolated function: iterates the mic stream, zips with the system stream (if any),
-/// and calls the nonisolated processPair on the session. Running as a free function means
-/// AsyncStream iterators (non-Sendable) stay as local vars and never cross isolation boundaries.
 private func pumpStreams(
     session: RecordingSession,
     mic micStream: AsyncStream<AVAudioPCMBuffer>,
