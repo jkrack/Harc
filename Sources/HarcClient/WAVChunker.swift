@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import AVFoundation
+@preconcurrency import AVFAudio
 
 /// Yields fixed-duration slices of a growing WAV file.
 /// Each chunk is written to `/tmp/harc-chunk-<uuid>.wav`; caller is responsible for cleanup.

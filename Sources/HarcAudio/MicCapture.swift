@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import AVFoundation
+@preconcurrency import AVFAudio
 
 /// Minimal protocol so RecordingSession can be tested against fakes.
 public protocol MicCaptureSource: Sendable {

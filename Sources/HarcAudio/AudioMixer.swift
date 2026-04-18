@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import AVFoundation
+@preconcurrency import AVFAudio
 
 /// Resamples incoming mic and system-audio buffers to 16 kHz mono Float32,
 /// then sums aligned chunks. Not Sendable — hold on a single actor.

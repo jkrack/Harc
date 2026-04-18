@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import AVFoundation
+@preconcurrency import AVFAudio
 @preconcurrency import ScreenCaptureKit
 
 public protocol SystemAudioCaptureSource: Sendable {

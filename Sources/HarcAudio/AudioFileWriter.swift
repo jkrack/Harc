@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import AVFoundation
+@preconcurrency import AVFAudio
 import Darwin
 
 /// Writes 16 kHz mono Int16 PCM WAV incrementally. Caller must serialize
