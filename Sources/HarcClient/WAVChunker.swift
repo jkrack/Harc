@@ -3,8 +3,9 @@ import Foundation
 
 /// Yields fixed-duration slices of a growing WAV file.
 /// Each chunk is written to `/tmp/harc-chunk-<uuid>.wav`; caller is responsible for cleanup.
-/// Not Sendable — hold on a single actor (ChunkedTranscriber in Task 4).
-public final class WAVChunker {
+/// @unchecked Sendable: access is serialized by ChunkedTranscriber — pump is the sole caller
+/// during recording; finalize awaits the pump before touching the chunker.
+public final class WAVChunker: @unchecked Sendable {
     public struct Chunk: Sendable {
         public let audioURL: URL
         public let startMs: Int
