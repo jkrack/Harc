@@ -126,9 +126,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         do {
             let result = try await session.stop()
             state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
+            let transcriptText = result.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
             if let store = self.store {
                 let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
-                let transcriptText = result.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
                 let rec = Recording(
                     wavPath: result.wavURL.path,
                     txtPath: result.txtURL?.path,
@@ -139,7 +139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 )
                 _ = try? await store.upsert(rec)
             }
-            notifyRecordingSaved(result: result)
+            if let text = transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                try? FrontmostAppPaster.copyAndPaste(text)
+            }
         } catch {
             presentError(error)
         }
@@ -161,23 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         target.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
     }
 
-    private func notifyRecordingSaved(result: RecordingResult) {
-        let alert = NSAlert()
-        alert.messageText = "Recording saved"
-        if result.txtURL != nil {
-            alert.informativeText = "Audio, transcript, and structured JSON written next to each other.\n\n\(result.wavURL.path)"
-        } else {
-            alert.informativeText = result.wavURL.path
-        }
-        alert.addButton(withTitle: "Reveal in Finder")
-        alert.addButton(withTitle: "OK")
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            NSWorkspace.shared.activateFileViewerSelecting([result.wavURL])
-        }
-    }
-
-    private func openDetail(for recording: Recording) {
+private func openDetail(for recording: Recording) {
         if let existing = detailWindows[recording.wavPath] {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
