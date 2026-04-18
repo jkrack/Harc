@@ -30,6 +30,8 @@ targets:
       - package: HarcCore
         product: HarcClient
       - package: HarcCore
+        product: HarcStore
+      - package: HarcCore
         product: HarcUI
     info:
       path: HarcApp/Info.plist
