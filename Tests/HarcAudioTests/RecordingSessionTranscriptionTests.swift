@@ -61,9 +61,13 @@ struct RecordingSessionTranscriptionTests {
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
 
+        // 24000 frames = 1.5 s of audio in a single buffer: the pump will see one
+        // full 1-s chunk (first 16000 frames → "one") and leave the remaining 0.5 s
+        // (8000 frames) for the flush tail → "two".  A single buffer avoids the
+        // race where stop()/cancel() interrupts the pump before a second buffer is
+        // written.
         let mic = FakeMic(script: [
-            makeConstantBuffer(frames: 16000),
-            makeConstantBuffer(frames: 16000),
+            makeConstantBuffer(frames: 24000),
         ])
         let sys = FakeSystem()
         let destination = RecordingDestination(baseDirectory: base)
@@ -97,5 +101,8 @@ struct RecordingSessionTranscriptionTests {
 
         let txt = try String(contentsOf: result.txtURL!, encoding: .utf8)
         #expect(!txt.isEmpty)
+        // Stub returned "one" and "two" — the flush tail must make it into the transcript.
+        #expect(txt.contains("one"))
+        #expect(txt.contains("two"))
     }
 }

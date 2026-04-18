@@ -78,29 +78,41 @@ public actor RecordingSession {
             throw AudioError.audioEngineFailed("stop called before start")
         }
         try writer.close()
-
-        let wavURL = try destination.publicPath(for: startedAt)
-        try RecordingDestination.atomicMove(from: cache, to: wavURL)
         self.writer = nil
 
-        var txtURL: URL? = nil
-        var jsonURL: URL? = nil
+        // Finalize transcriber while cache file still exists.
+        var finalTranscript: SessionTranscript? = nil
         if let transcriber {
             do {
-                let transcript = try await transcriber.finalize(
+                finalTranscript = try await transcriber.finalize(
                     startedAt: startedAt,
                     endedAt: Date()
                 )
-                var finalTranscript = transcript
-                finalTranscript.audioPath = wavURL.path
-                try TranscriptWriter.writeSiblings(transcript: finalTranscript, nextTo: wavURL)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harc-audio: transcription finalize failed: \(error.localizedDescription)\n".utf8
+                ))
+            }
+        }
+
+        // Now move the WAV to its public location.
+        let wavURL = try destination.publicPath(for: startedAt)
+        try RecordingDestination.atomicMove(from: cache, to: wavURL)
+
+        // Write sibling files at the final location with the final path.
+        var txtURL: URL? = nil
+        var jsonURL: URL? = nil
+        if var transcript = finalTranscript {
+            transcript.audioPath = wavURL.path
+            do {
+                try TranscriptWriter.writeSiblings(transcript: transcript, nextTo: wavURL)
                 let stem = wavURL.deletingPathExtension().lastPathComponent
                 let parent = wavURL.deletingLastPathComponent()
                 txtURL = parent.appendingPathComponent("\(stem).txt")
                 jsonURL = parent.appendingPathComponent("\(stem).json")
             } catch {
                 FileHandle.standardError.write(Data(
-                    "harc-audio: transcription finalize failed: \(error.localizedDescription)\n".utf8
+                    "harc-audio: transcript sibling write failed: \(error.localizedDescription)\n".utf8
                 ))
             }
         }
