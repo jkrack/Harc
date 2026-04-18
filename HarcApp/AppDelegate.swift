@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var store: RecordingStore?
     private var recordingsVM: RecordingsViewModel?
     private var detailWindows: [String: TranscriptionDetailWindowController] = [:]
+    private var libraryWindow: LibraryWindowController?
+    private var libraryVM: LibraryViewModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [weak self] in
@@ -234,6 +236,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func openLibrary() {
+        if let existing = libraryWindow {
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        guard let store else { return }
+        let vm = LibraryViewModel(store: store)
+        libraryVM = vm
+        let controller = LibraryWindowController(vm: vm) { [weak self] rec in
+            self?.openDetail(for: rec)
+        }
+        libraryWindow = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func bootstrapStore() async {
         do {
             let store = try await RecordingStore.onDisk()
@@ -267,6 +288,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             },
             onOpenSettings: { [weak self] in
                 self?.openSettings()
+            },
+            onOpenLibrary: { [weak self] in
+                self?.openLibrary()
             }
         )
         .environmentObject(state)

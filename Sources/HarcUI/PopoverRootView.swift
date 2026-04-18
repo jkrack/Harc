@@ -8,20 +8,27 @@ public struct PopoverRootView: View {
     let onToggle: () -> Void
     let onOpen: (Recording) -> Void
     let onOpenSettings: () -> Void
+    let onOpenLibrary: () -> Void
 
     public init(
         onToggle: @escaping () -> Void,
         onOpen: @escaping (Recording) -> Void,
-        onOpenSettings: @escaping () -> Void
+        onOpenSettings: @escaping () -> Void,
+        onOpenLibrary: @escaping () -> Void
     ) {
         self.onToggle = onToggle
         self.onOpen = onOpen
         self.onOpenSettings = onOpenSettings
+        self.onOpenLibrary = onOpenLibrary
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
-            RecordingControlsView(onToggle: onToggle, onOpenSettings: onOpenSettings)
+            RecordingControlsView(
+                onToggle: onToggle,
+                onOpenSettings: onOpenSettings,
+                onOpenLibrary: onOpenLibrary
+            )
             Divider().background(Color.harcOutlineVariant.opacity(0.3))
             RecentRecordingsView(onOpen: onOpen)
         }

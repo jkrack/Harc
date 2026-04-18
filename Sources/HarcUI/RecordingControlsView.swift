@@ -9,10 +9,16 @@ public struct RecordingControlsView: View {
 
     let onToggle: () -> Void
     let onOpenSettings: () -> Void
+    let onOpenLibrary: () -> Void
 
-    public init(onToggle: @escaping () -> Void, onOpenSettings: @escaping () -> Void) {
+    public init(
+        onToggle: @escaping () -> Void,
+        onOpenSettings: @escaping () -> Void,
+        onOpenLibrary: @escaping () -> Void
+    ) {
         self.onToggle = onToggle
         self.onOpenSettings = onOpenSettings
+        self.onOpenLibrary = onOpenLibrary
     }
 
     public var body: some View {
@@ -40,6 +46,7 @@ public struct RecordingControlsView: View {
                 }
             }
             Menu {
+                Button("Open Library…", action: onOpenLibrary)
                 Button("Settings…", action: onOpenSettings)
                 Divider()
                 Button("Quit Harc") { NSApplication.shared.terminate(nil) }
