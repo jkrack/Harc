@@ -94,6 +94,14 @@ public struct TranscriptionDetailView: View {
             }
             .disabled(transcript.isEmpty)
 
+            Button {
+                try? FrontmostAppPaster.copyAndPaste(transcript)
+            } label: {
+                Label("Paste", systemImage: "text.viewfinder")
+            }
+            .disabled(transcript.isEmpty)
+            .help("Copy to clipboard and paste into the frontmost app")
+
             Button(action: onReveal) {
                 Label("Reveal", systemImage: "folder")
             }
