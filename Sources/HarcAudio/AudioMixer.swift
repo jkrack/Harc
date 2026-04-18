@@ -127,6 +127,11 @@ public final class AudioMixer {
         // inside convert(); there's no actual concurrency, but the API types the
         // closure as @Sendable.
         let delivered = DeliveredFlag()
+        // Reset so the converter doesn't stay latched in .endOfStream from the
+        // previous call's input-block returning nil. Without this, only the first
+        // convert() on a cached converter produces output; every subsequent call
+        // returns 0 frames.
+        converter!.reset()
         let status = converter!.convert(to: out, error: &error) { _, outStatus in
             if delivered.value {
                 outStatus.pointee = .endOfStream

@@ -75,6 +75,24 @@ struct AudioMixerTests {
         #expect(first >= 1.0 - 0.01, "expected exactly 1.0 after clamp, got \(first)")
     }
 
+    @Test("processMic on the same mixer twice produces non-empty output for both calls")
+    func processMicTwiceProducesNonEmptyBuffers() throws {
+        let mixer = AudioMixer()
+        let fmt = makeFormat(rate: 48000, channels: 2)
+
+        let buf1 = makeConstantBuffer(value: 0.25, frames: 48000, format: fmt)
+        let buf2 = makeConstantBuffer(value: 0.5, frames: 48000, format: fmt)
+
+        let result1 = try mixer.processMic(buf1)
+        let result2 = try mixer.processMic(buf2)
+
+        #expect(result1.frameLength > 0, "first convert returned 0 frames")
+        #expect(
+            result2.frameLength > 0,
+            "second convert returned 0 frames — AVAudioConverter end-of-stream bug"
+        )
+    }
+
     @Test("processSystem converts 48 kHz stereo to 16 kHz mono")
     func processesSystemBuffer() throws {
         let mixer = AudioMixer()
