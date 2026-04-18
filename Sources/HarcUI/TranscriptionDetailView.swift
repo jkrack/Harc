@@ -6,7 +6,10 @@ public struct TranscriptionDetailView: View {
     let recording: Recording
     let onReveal: () -> Void
     let onDelete: () -> Void
+    let onRename: (String?) -> Void
 
+    @State private var renameDraft: String
+    @State private var isEditingTitle = false
     @State private var transcript: String = ""
     @State private var loadError: String? = nil
     @State private var deleteConfirm = false
@@ -14,20 +17,39 @@ public struct TranscriptionDetailView: View {
     public init(
         recording: Recording,
         onReveal: @escaping () -> Void,
-        onDelete: @escaping () -> Void
+        onDelete: @escaping () -> Void,
+        onRename: @escaping (String?) -> Void
     ) {
         self.recording = recording
         self.onReveal = onReveal
         self.onDelete = onDelete
+        self.onRename = onRename
+        self._renameDraft = State(initialValue: recording.title ?? "")
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading) {
-                    Text(recording.displayTitle)
-                        .font(HarcDesign.Font.titleLg)
-                        .foregroundStyle(Color.harcOnSurface)
+                    if isEditingTitle {
+                        TextField("Title", text: $renameDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(HarcDesign.Font.titleLg)
+                            .onSubmit {
+                                let cleaned = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                onRename(cleaned.isEmpty ? nil : cleaned)
+                                isEditingTitle = false
+                            }
+                    } else {
+                        Button {
+                            isEditingTitle = true
+                        } label: {
+                            Text(recording.displayTitle)
+                                .font(HarcDesign.Font.titleLg)
+                                .foregroundStyle(Color.harcOnSurface)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     Text(URL(fileURLWithPath: recording.wavPath).lastPathComponent)
                         .font(HarcDesign.Font.labelMd)
                         .foregroundStyle(Color.harcOnSurfaceVariant)

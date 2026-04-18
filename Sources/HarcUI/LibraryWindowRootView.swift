@@ -4,6 +4,8 @@ import HarcStore
 
 public struct LibraryWindowRootView: View {
     @EnvironmentObject private var vm: LibraryViewModel
+    @State private var renameTarget: Recording?
+    @State private var renameText: String = ""
 
     let onOpen: (Recording) -> Void
 
@@ -20,6 +22,19 @@ public struct LibraryWindowRootView: View {
         .frame(minWidth: 680, minHeight: 480)
         .onAppear { vm.start() }
         .onDisappear { vm.stop() }
+        .alert("Rename recording", isPresented: .constant(renameTarget != nil), presenting: renameTarget) { rec in
+            TextField("Title", text: $renameText)
+            Button("Save") {
+                let newTitle = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                Task {
+                    try? await vm.rename(id: rec.id ?? -1, title: newTitle.isEmpty ? nil : newTitle)
+                    renameTarget = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { renameTarget = nil }
+        } message: { _ in
+            Text("Leave empty to clear the custom title.")
+        }
     }
 
     @ViewBuilder
@@ -38,6 +53,10 @@ public struct LibraryWindowRootView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { onOpen(rec) }
                     .contextMenu {
+                        Button("Rename…") {
+                            renameTarget = rec
+                            renameText = rec.title ?? ""
+                        }
                         Button("Open") { onOpen(rec) }
                         Button(rec.pinned ? "Unpin" : "Pin") {
                             Task { try? await vm.togglePin(id: rec.id ?? -1, currentlyPinned: rec.pinned) }

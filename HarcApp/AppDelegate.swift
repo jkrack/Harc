@@ -192,6 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             },
             onDelete: { [weak self] in
                 self?.deleteRecording(recording: recording)
+            },
+            onRename: { [weak self] newTitle in
+                guard let id = recording.id else { return }
+                Task { try? await self?.store?.rename(id: id, title: newTitle) }
             }
         )
         detailWindows[recording.wavPath] = controller
