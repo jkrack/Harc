@@ -14,12 +14,13 @@ public struct LibraryWindowRootView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
-            LibrarySearchField(text: $vm.searchText)
-            list
+        HSplitView {
+            sidebar
+                .frame(minWidth: 220, idealWidth: 240, maxWidth: 280)
+            main
+                .frame(minWidth: 480)
         }
-        .padding(HarcDesign.Space.lg)
-        .frame(minWidth: 680, minHeight: 480)
+        .frame(minWidth: 780, minHeight: 520)
         .onAppear { vm.start() }
         .onDisappear { vm.stop() }
         .alert("Rename recording", isPresented: .constant(renameTarget != nil), presenting: renameTarget) { rec in
@@ -37,12 +38,80 @@ public struct LibraryWindowRootView: View {
         }
     }
 
+    // MARK: Sidebar
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
+            quickFilters
+            Divider().background(Color.harcOutlineVariant.opacity(0.3))
+            MonthCalendarView(
+                month: vm.calendarMonth,
+                selectedDay: selectedDay,
+                daysWithRecordings: vm.daysWithRecordings,
+                onPrevMonth: { vm.advanceMonth(by: -1) },
+                onNextMonth: { vm.advanceMonth(by: 1) },
+                onSelectDay: { day in vm.filter = .day(day) }
+            )
+            Spacer()
+        }
+        .padding(HarcDesign.Space.md)
+    }
+
+    private var quickFilters: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            filterRow("All",       filter: .all,       systemImage: "tray.2")
+            filterRow("Today",     filter: .today,     systemImage: "sun.max")
+            filterRow("Yesterday", filter: .yesterday, systemImage: "clock.arrow.circlepath")
+            filterRow("This Week", filter: .thisWeek,  systemImage: "calendar")
+            filterRow("Pinned",    filter: .pinned,    systemImage: "pin.fill")
+        }
+    }
+
+    private func filterRow(_ label: String, filter: LibraryFilter, systemImage: String) -> some View {
+        Button {
+            vm.filter = filter
+        } label: {
+            HStack(spacing: HarcDesign.Space.xs) {
+                Image(systemName: systemImage)
+                    .frame(width: 16)
+                    .foregroundStyle(vm.filter == filter ? Color.harcPrimary : Color.harcOnSurfaceVariant)
+                Text(label)
+                    .font(HarcDesign.Font.bodyMd)
+                    .foregroundStyle(Color.harcOnSurface)
+                Spacer()
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, HarcDesign.Space.xs)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(vm.filter == filter ? Color.harcPrimary.opacity(0.14) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var selectedDay: Date? {
+        if case .day(let d) = vm.filter { return d }
+        return nil
+    }
+
+    // MARK: Main list
+
+    private var main: some View {
+        VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
+            LibrarySearchField(text: $vm.searchText)
+            list
+        }
+        .padding(HarcDesign.Space.lg)
+    }
+
     @ViewBuilder
     private var list: some View {
         if vm.recordings.isEmpty {
             VStack {
                 Spacer()
-                Text(vm.searchText.isEmpty ? "No recordings yet." : "No matches.")
+                Text(vm.searchText.isEmpty ? "No recordings." : "No matches.")
                     .font(HarcDesign.Font.bodyMd)
                     .foregroundStyle(Color.harcOnSurfaceVariant)
                 Spacer()
