@@ -3,6 +3,7 @@ import SwiftUI
 import HarcAudio
 import HarcClient
 import HarcUI
+import KeyboardShortcuts
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -50,6 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         self.statusItem = item
         self.popover = pop
         recordingsIndex.refresh()
+
+        KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [weak self] in
+            Task { await self?.toggleRecording() }
+        }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
