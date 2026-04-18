@@ -55,6 +55,27 @@ struct RecordingSessionTests {
         func stop() async { continuation?.finish() }
     }
 
+    /// System-audio fake that emits N buffers then HANGS — stream never finishes,
+    /// never emits more. Models real ScreenCaptureKit when mic/sys cadences differ.
+    actor FakeSystemHanging: SystemAudioCaptureSource {
+        nonisolated let script: [AVAudioPCMBuffer]
+        private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+        init(script: [AVAudioPCMBuffer]) { self.script = script }
+        func requestPermission() async throws {}
+        func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
+            let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+            self.continuation = cont
+            let box = SendableBuffers(script)
+            Task.detached {
+                for buf in box.buffers { cont.yield(buf) }
+                // DELIBERATELY do not call cont.finish() — simulates a live
+                // sys stream that is slower than mic and hasn't delivered more yet.
+            }
+            return stream
+        }
+        func stop() async { continuation?.finish() }
+    }
+
     private func makeConstantBuffer(
         _ value: Float,
         frames: AVAudioFrameCount,
@@ -132,5 +153,36 @@ struct RecordingSessionTests {
         #expect(FileManager.default.fileExists(atPath: url.path))
         let file = try AVAudioFile(forReading: url)
         #expect(file.length >= 15000, "expected ~1s recorded with mic-only, got \(file.length) frames")
+    }
+
+    @Test("mic pump survives a system stream that delivers fewer buffers than mic and doesn't finish")
+    func micPumpSurvivesSlowSystemStream() async throws {
+        let base = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        // 10 mic buffers, 1 sys buffer that stalls forever afterwards.
+        let micBuffers = (0..<10).map { _ in makeConstantBuffer(0.1, frames: 1600) }
+        let sysBuffers = [makeConstantBuffer(0.2, frames: 1600)]
+
+        let mic = FakeMic(script: micBuffers)
+        let sys = FakeSystemHanging(script: sysBuffers)
+        let session = RecordingSession(
+            mic: mic,
+            systemAudio: sys,
+            destination: RecordingDestination(baseDirectory: base),
+            transcriber: nil
+        )
+
+        try await session.start(at: Date())
+        // Give the pump enough time to drain the 10-buffer mic stream.
+        // If the pump deadlocks on sysIter.next(), this test will TIME OUT.
+        try await Task.sleep(for: .milliseconds(500))
+        let result = try await session.stop()
+
+        // Verify the WAV has > 1 buffer's worth of frames.
+        // 10 buffers × 1600 frames = 16000 frames = 1.0s at 16kHz.
+        // If the deadlock bug is present, the file will have ~1600 frames (0.1s).
+        let af = try AVAudioFile(forReading: result.wavURL)
+        #expect(af.length > 5000, "expected >5000 frames; got \(af.length) (pump deadlocked?)")
     }
 }
