@@ -8,6 +8,12 @@ public struct RecordingResult: Sendable {
     public let wavURL: URL
     public let txtURL: URL?
     public let jsonURL: URL?
+
+    public init(wavURL: URL, txtURL: URL?, jsonURL: URL?) {
+        self.wavURL = wavURL
+        self.txtURL = txtURL
+        self.jsonURL = jsonURL
+    }
 }
 
 /// Orchestrates a single recording. One instance per recording.

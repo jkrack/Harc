@@ -1,109 +1,119 @@
 import AppKit
+import SwiftUI
 import HarcAudio
 import HarcClient
+import HarcUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
-    private var startMenuItem: NSMenuItem?
-    private var stopMenuItem: NSMenuItem?
+    private var popover: NSPopover?
     private var session: RecordingSession?
     private let launcher = DaemonLauncher()
+    private let state = RecordingState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateMenuBarIcon(recording: false, on: item)
 
-        let menu = NSMenu()
+        if let button = item.button {
+            button.action = #selector(togglePopover(_:))
+            button.target = self
+        }
 
-        let start = NSMenuItem(
-            title: "Start Recording",
-            action: #selector(startRecording),
-            keyEquivalent: "r"
-        )
-        start.target = self
-        menu.addItem(start)
-        self.startMenuItem = start
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.delegate = self
 
-        let stop = NSMenuItem(
-            title: "Stop Recording",
-            action: #selector(stopRecording),
-            keyEquivalent: "s"
-        )
-        stop.target = self
-        stop.isEnabled = false
-        menu.addItem(stop)
-        self.stopMenuItem = stop
+        let root = PopoverRootView(onToggle: { [weak self] in
+            Task { await self?.toggleRecording() }
+        })
+        .environmentObject(state)
 
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Quit Harc",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
+        pop.contentViewController = NSHostingController(rootView: root)
+        pop.contentSize = NSSize(width: 360, height: 120)
 
-        item.menu = menu
         self.statusItem = item
+        self.popover = pop
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    @objc private func startRecording() {
+    @objc private func togglePopover(_ sender: Any?) {
+        guard let popover, let button = statusItem?.button else { return }
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    private func toggleRecording() async {
+        if state.isRecording {
+            await stopRecording()
+        } else {
+            await startRecording()
+        }
+    }
+
+    private func startRecording() async {
         guard session == nil else { return }
 
-        startMenuItem?.isEnabled = false
-        stopMenuItem?.isEnabled = true
-        if let item = statusItem { updateMenuBarIcon(recording: true, on: item) }
+        updateMenuBarIcon(recording: true)
+        state.markStarted(at: Date())
 
-        Task {
-            do {
-                // Ensure daemon is running before the first chunk.
-                _ = try await self.launcher.ensureRunning()
-                let client = HarcSTTClient()
-                let transcriber = ChunkedTranscriber(
-                    client: client,
-                    diarize: true,
-                    chunkDurationSeconds: 60.0
-                )
-                let session = RecordingSession(
-                    mic: MicCapture(),
-                    systemAudio: SystemAudioCapture(),
-                    destination: RecordingDestination(baseDirectory: RecordingDestination.defaultBaseDirectory()),
-                    transcriber: transcriber
-                )
-                self.session = session
-                try await session.start(at: Date())
-            } catch {
-                self.presentError(error)
-                self.resetUI()
-            }
+        do {
+            _ = try await launcher.ensureRunning()
+            let client = HarcSTTClient()
+            let transcriber = ChunkedTranscriber(
+                client: client,
+                diarize: true,
+                chunkDurationSeconds: 60.0
+            )
+            let session = RecordingSession(
+                mic: MicCapture(),
+                systemAudio: SystemAudioCapture(),
+                destination: RecordingDestination(baseDirectory: RecordingDestination.defaultBaseDirectory()),
+                transcriber: transcriber
+            )
+            self.session = session
+            try await session.start(at: state.recordingStartedAt ?? Date())
+        } catch {
+            presentError(error)
+            resetAfterFailure()
         }
     }
 
-    @objc private func stopRecording() {
+    private func stopRecording() async {
         guard let session else { return }
-        Task {
-            do {
-                let result = try await session.stop()
-                self.notifyRecordingSaved(result: result)
-            } catch {
-                self.presentError(error)
-            }
-            self.resetUI()
+        do {
+            let result = try await session.stop()
+            state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
+            notifyRecordingSaved(result: result)
+        } catch {
+            presentError(error)
         }
+        resetAfterFailure()
     }
 
-    private func resetUI() {
-        self.session = nil
-        startMenuItem?.isEnabled = true
-        stopMenuItem?.isEnabled = false
-        if let item = statusItem { updateMenuBarIcon(recording: false, on: item) }
+    private func resetAfterFailure() {
+        session = nil
+        if state.isRecording {
+            state.markStopped(
+                wavURL: URL(fileURLWithPath: "/dev/null"),
+                txtURL: nil,
+                jsonURL: nil
+            )
+        }
+        updateMenuBarIcon(recording: false)
     }
 
-    private func updateMenuBarIcon(recording: Bool, on item: NSStatusItem) {
+    private func updateMenuBarIcon(recording: Bool, on item: NSStatusItem? = nil) {
+        let target = item ?? statusItem
+        guard let target else { return }
         let symbol = recording ? "record.circle.fill" : "waveform"
         let label = recording ? "Harc — recording" : "Harc"
-        item.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        target.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
     }
 
     private func notifyRecordingSaved(result: RecordingResult) {
