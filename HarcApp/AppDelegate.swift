@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var session: RecordingSession?
     private let launcher = DaemonLauncher()
     private let state = RecordingState()
+    private let recordingsIndex = RecordingsIndex(baseDirectory: RecordingDestination.defaultBaseDirectory())
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -25,16 +26,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         pop.behavior = .transient
         pop.delegate = self
 
-        let root = PopoverRootView(onToggle: { [weak self] in
-            Task { await self?.toggleRecording() }
-        })
+        let root = PopoverRootView(
+            onToggle: { [weak self] in
+                Task { await self?.toggleRecording() }
+            },
+            onOpen: { [weak self] entry in
+                self?.openDetail(for: entry)
+            }
+        )
         .environmentObject(state)
+        .environmentObject(recordingsIndex)
 
         pop.contentViewController = NSHostingController(rootView: root)
-        pop.contentSize = NSSize(width: 360, height: 120)
+        pop.contentSize = NSSize(width: 400, height: 400)
 
         self.statusItem = item
         self.popover = pop
+        recordingsIndex.refresh()
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -90,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let result = try await session.stop()
             state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
             notifyRecordingSaved(result: result)
+            recordingsIndex.refresh()
         } catch {
             presentError(error)
         }
@@ -130,6 +139,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if response == .alertFirstButtonReturn {
             NSWorkspace.shared.activateFileViewerSelecting([result.wavURL])
         }
+    }
+
+    private func openDetail(for entry: RecordingEntry) {
+        // Transcription detail window lands in Task 5.
+        // For now, just reveal the recording in Finder on click so the click does something visible.
+        NSWorkspace.shared.activateFileViewerSelecting([entry.wavURL])
     }
 
     private func presentError(_ error: Error) {
