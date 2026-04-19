@@ -11,12 +11,14 @@ public struct RecentRecordingsView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
-            Text("Recent")
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
-                .textCase(.uppercase)
-                .tracking(1.2)
+        VStack(alignment: .leading, spacing: HarcDesign.Space.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("RECENT CAPTURES")
+                    .font(HarcDesign.Font.labelMd)
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .tracking(1.2)
+                Spacer()
+            }
 
             filterPills
 
@@ -24,13 +26,13 @@ public struct RecentRecordingsView: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: HarcDesign.Space.xxs) {
                         ForEach(vm.recordings.prefix(8)) { rec in
                             row(for: rec)
                         }
                     }
                 }
-                .frame(maxHeight: 240)
+                .frame(maxHeight: 280)
             }
         }
     }
@@ -74,31 +76,39 @@ public struct RecentRecordingsView: View {
     private func row(for rec: Recording) -> some View {
         Button { onOpen(rec) } label: {
             HStack(alignment: .top, spacing: HarcDesign.Space.sm) {
-                Image(systemName: rec.pinned ? "pin.fill" : "waveform")
-                    .font(.system(size: 16))
-                    .foregroundStyle(rec.pinned ? Color.harcTertiary : Color.harcPrimary)
-                    .frame(width: 24, alignment: .leading)
-
+                RecordingIconTile(
+                    systemImage: rec.pinned ? "pin.fill" : "waveform",
+                    accent: rec.pinned ? .harcTertiary : .harcPrimary,
+                    size: 40
+                )
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(rec.displayTitle)
-                        .font(HarcDesign.Font.titleSm)
-                        .foregroundStyle(Color.harcOnSurface)
-                        .lineLimit(1)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(rec.displayTitle)
+                            .font(HarcDesign.Font.titleSm)
+                            .foregroundStyle(Color.harcOnSurface)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(RelativeTimeFormatter.format(rec.startedAt))
+                            .font(HarcDesign.Font.labelMd)
+                            .foregroundStyle(Color.harcOnSurfaceVariant)
+                    }
                     if !rec.preview.isEmpty {
                         Text(rec.preview)
                             .font(HarcDesign.Font.bodySm)
                             .foregroundStyle(Color.harcOnSurfaceVariant)
                             .lineLimit(2)
-                    } else {
-                        Text("(no transcript)")
-                            .font(HarcDesign.Font.bodySm)
-                            .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.7))
+                    }
+                    if !rec.tags.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(rec.tags.prefix(3), id: \.self) { tag in
+                                TagChip(tag)
+                            }
+                        }
                     }
                 }
-                Spacer()
             }
-            .padding(.vertical, HarcDesign.Space.xs)
-            .padding(.horizontal, HarcDesign.Space.xs)
+            .padding(.vertical, HarcDesign.Space.xxs)
+            .padding(.horizontal, HarcDesign.Space.xxs)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
