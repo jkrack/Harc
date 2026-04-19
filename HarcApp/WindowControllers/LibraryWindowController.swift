@@ -8,9 +8,14 @@ final class LibraryWindowController: NSWindowController {
     convenience init(
         vm: LibraryViewModel,
         onOpen: @escaping (Recording) -> Void,
+        onOpenInEditor: @escaping (Recording) -> Void,
         onOpenSettings: @escaping () -> Void
     ) {
-        let root = LibraryWindowRootView(onOpen: onOpen, onOpenSettings: onOpenSettings)
+        let root = LibraryWindowRootView(
+            onOpen: onOpen,
+            onOpenInEditor: onOpenInEditor,
+            onOpenSettings: onOpenSettings
+        )
             .environmentObject(vm)
         let host = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: host)
