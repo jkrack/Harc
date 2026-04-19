@@ -19,6 +19,9 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
     private var stream: SCStream?
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
     private var isRunning = false
+    // Cached across requestPermission→start within a single session so the TCC
+    // path fires once, not twice. Consumed on start; cleared on stop.
+    private var cachedContent: SCShareableContent?
 
     public override init() {
         super.init()
@@ -27,7 +30,7 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
     public func requestPermission() async throws {
         // Invoking SCShareableContent triggers the TCC prompt and surfaces denial via error.
         do {
-            _ = try await SCShareableContent.current
+            cachedContent = try await SCShareableContent.current
         } catch {
             throw AudioError.systemAudioPermissionDenied
         }
@@ -39,10 +42,15 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
         }
 
         let content: SCShareableContent
-        do {
-            content = try await SCShareableContent.current
-        } catch {
-            throw AudioError.systemAudioPermissionDenied
+        if let cached = cachedContent {
+            content = cached
+            cachedContent = nil
+        } else {
+            do {
+                content = try await SCShareableContent.current
+            } catch {
+                throw AudioError.systemAudioPermissionDenied
+            }
         }
         guard let display = content.displays.first else {
             throw AudioError.systemAudioStreamFailed("no display")
@@ -79,6 +87,7 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
     }
 
     public func stop() async {
+        cachedContent = nil
         guard isRunning, let stream else { return }
         try? await stream.stopCapture()
         self.stream = nil
