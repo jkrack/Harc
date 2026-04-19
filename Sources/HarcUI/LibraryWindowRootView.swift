@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import HarcStore
+import HarcExport
 
 /// Identifiable wrapper so SwiftUI Table can use `wavPath` (non-optional String)
 /// as the row id. `Recording.id` is `Int64?`, which makes the Table's
@@ -15,6 +17,7 @@ public struct LibraryWindowRootView: View {
     @State private var renameTarget: Recording?
     @State private var renameText: String = ""
     @State private var selectedWavPath: String?
+    @State private var exportErrorMessage: String?
 
     private var selectedRecording: Recording? {
         guard let path = selectedWavPath else { return nil }
@@ -308,10 +311,85 @@ public struct LibraryWindowRootView: View {
                     }
                 }
 
+                exportControls(for: rec)
+
                 Spacer(minLength: 0)
             }
             .padding(HarcDesign.Space.lg)
         }
+    }
+
+    private func exportControls(for rec: Recording) -> some View {
+        VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
+            Text("EXPORT")
+                .font(HarcDesign.Font.labelMd)
+                .foregroundStyle(Color.harcOnSurfaceVariant)
+                .tracking(1.2)
+            HStack(spacing: HarcDesign.Space.sm) {
+                Menu {
+                    Button("Export Markdown…") { runExport(rec, format: .markdown) }
+                    Button("Export DOCX…")     { runExport(rec, format: .docx) }
+                    Divider()
+                    Button("Copy Markdown")    { copyMarkdown(rec) }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("Export")
+                    }
+                    .font(HarcDesign.Font.bodyMd)
+                    .foregroundStyle(Color.harcPrimary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
+                Button {
+                    copyMarkdown(rec)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.clipboard")
+                        Text("Copy Markdown")
+                    }
+                    .font(HarcDesign.Font.bodyMd)
+                    .foregroundStyle(Color.harcPrimary)
+                }
+                .buttonStyle(.plain)
+            }
+            if let msg = exportErrorMessage {
+                Text(msg)
+                    .font(HarcDesign.Font.labelMd)
+                    .foregroundStyle(Color.harcError)
+            }
+        }
+    }
+
+    private func runExport(_ rec: Recording, format: ExportFormat) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = ExportService
+            .defaultDestination(for: rec, format: format)
+            .lastPathComponent
+        panel.directoryURL = URL(fileURLWithPath: rec.wavPath).deletingLastPathComponent()
+        if let contentType = UTType(filenameExtension: format.filenameExtension) {
+            panel.allowedContentTypes = [contentType]
+        }
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try ExportService.write(recording: rec, format: format, to: url)
+                exportErrorMessage = nil
+            } catch {
+                exportErrorMessage = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func copyMarkdown(_ rec: Recording) {
+        let md = ExportService.markdownString(for: rec)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(md, forType: .string)
+        exportErrorMessage = nil
     }
 
     private func detailRow(label: String, value: String) -> some View {

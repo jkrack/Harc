@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "HarcClient", targets: ["HarcClient"]),
         .library(name: "HarcStore", targets: ["HarcStore"]),
         .library(name: "HarcUI", targets: ["HarcUI"]),
+        .library(name: "HarcExport", targets: ["HarcExport"]),
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
     ],
     dependencies: [
@@ -50,6 +51,7 @@ let package = Package(
                 "HarcAudio",
                 "HarcClient",
                 "HarcStore",
+                "HarcExport",
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ]
         ),
@@ -60,7 +62,16 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ]
         ),
+        .target(
+            name: "HarcExport",
+            dependencies: ["HarcCore", "HarcClient", "HarcStore"]
+        ),
         .testTarget(name: "HarcCoreTests", dependencies: ["HarcCore"]),
+        .testTarget(
+            name: "HarcExportTests",
+            dependencies: ["HarcExport", "HarcCore", "HarcClient", "HarcStore"],
+            resources: [.copy("Fixtures")]
+        ),
         .testTarget(
             name: "HarcSTTTests",
             dependencies: ["HarcSTT", "HarcCore"],

@@ -1,0 +1,16 @@
+{
+  "audioPath": "/tmp/fake.wav",
+  "chunks": [],
+  "endedAt": 1700000010,
+  "joinedText": "All me talking here",
+  "speakers": [
+    {"endMs": 10000, "speaker": 0, "startMs": 0}
+  ],
+  "startedAt": 1700000000,
+  "words": [
+    {"endMs": 500, "startMs": 0, "text": "All"},
+    {"endMs": 1000, "startMs": 500, "text": "me"},
+    {"endMs": 1500, "startMs": 1000, "text": "talking"},
+    {"endMs": 2000, "startMs": 1500, "text": "here"}
+  ]
+}
