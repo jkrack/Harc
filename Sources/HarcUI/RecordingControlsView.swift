@@ -8,17 +8,9 @@ public struct RecordingControlsView: View {
     @State private var ticker: Timer?
 
     let onToggle: () -> Void
-    let onOpenSettings: () -> Void
-    let onOpenLibrary: () -> Void
 
-    public init(
-        onToggle: @escaping () -> Void,
-        onOpenSettings: @escaping () -> Void,
-        onOpenLibrary: @escaping () -> Void
-    ) {
+    public init(onToggle: @escaping () -> Void) {
         self.onToggle = onToggle
-        self.onOpenSettings = onOpenSettings
-        self.onOpenLibrary = onOpenLibrary
     }
 
     public var body: some View {
@@ -30,10 +22,17 @@ public struct RecordingControlsView: View {
     }
 
     private var header: some View {
-        HStack {
-            Text("Harc")
-                .font(HarcDesign.Font.titleLg)
-                .foregroundStyle(Color.harcOnSurface)
+        HStack(spacing: HarcDesign.Space.sm) {
+            RecordingIconTile(systemImage: "waveform", accent: .harcPrimary, size: 40)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Harc")
+                    .font(HarcDesign.Font.titleLg)
+                    .foregroundStyle(Color.harcOnSurface)
+                Text("MENU BAR")
+                    .font(HarcDesign.Font.labelMd)
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .tracking(1.2)
+            }
             Spacer()
             if state.isRecording {
                 HStack(spacing: HarcDesign.Space.xxs) {
@@ -45,18 +44,6 @@ public struct RecordingControlsView: View {
                         .foregroundStyle(Color.harcOnSurfaceVariant)
                 }
             }
-            Menu {
-                Button("Open Library…", action: onOpenLibrary)
-                Button("Settings…", action: onOpenSettings)
-                Divider()
-                Button("Quit Harc") { NSApplication.shared.terminate(nil) }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
         }
     }
 
@@ -79,28 +66,33 @@ public struct RecordingControlsView: View {
 
     private var toggleButton: some View {
         Button(action: onToggle) {
-            Text(state.isRecording ? "Stop Recording" : "Start Recording")
-                .font(HarcDesign.Font.titleSm)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(
-                    state.isRecording
-                        ? AnyShapeStyle(Color.harcError)
-                        : AnyShapeStyle(HarcDesign.primaryGradient),
-                    in: RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
-                )
-                .foregroundStyle(.white)
+            HStack(spacing: HarcDesign.Space.xs) {
+                Image(systemName: state.isRecording ? "stop.fill" : "mic.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                Text(state.isRecording ? "Stop Recording" : "Start New Recording")
+                    .font(HarcDesign.Font.titleSm)
+                if !state.isRecording {
+                    Spacer()
+                    Image(systemName: "mic")
+                        .font(.system(size: 14))
+                        .opacity(0.8)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .padding(.horizontal, HarcDesign.Space.md)
+            .background(
+                state.isRecording
+                    ? AnyShapeStyle(Color.harcError)
+                    : AnyShapeStyle(HarcDesign.primaryGradient),
+                in: RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+            )
+            .foregroundStyle(.white)
         }
         .buttonStyle(.plain)
         .onChange(of: state.isRecording) { _, isRecording in
-            if isRecording {
-                startTicker()
-            } else {
-                stopTicker()
-            }
+            if isRecording { startTicker() } else { stopTicker() }
         }
-        .onAppear {
-            if state.isRecording { startTicker() }
-        }
+        .onAppear { if state.isRecording { startTicker() } }
     }
 
     private func startTicker() {

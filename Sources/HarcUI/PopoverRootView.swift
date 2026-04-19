@@ -24,11 +24,7 @@ public struct PopoverRootView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
-            RecordingControlsView(
-                onToggle: onToggle,
-                onOpenSettings: onOpenSettings,
-                onOpenLibrary: onOpenLibrary
-            )
+            RecordingControlsView(onToggle: onToggle)
             Divider().background(Color.harcOutlineVariant.opacity(0.3))
             RecentRecordingsView(onOpen: onOpen)
         }
