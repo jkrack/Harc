@@ -1,0 +1,19 @@
+{
+  "audioPath": "/tmp/fake.wav",
+  "chunks": [],
+  "endedAt": 1700000060,
+  "joinedText": "Hello there friend howdy partner",
+  "speakers": [
+    {"endMs": 2000, "speaker": 0, "startMs": 0},
+    {"endMs": 4000, "speaker": 1, "startMs": 2000},
+    {"endMs": 6000, "speaker": 2, "startMs": 4000}
+  ],
+  "startedAt": 1700000000,
+  "words": [
+    {"endMs": 500, "startMs": 0, "text": "Hello"},
+    {"endMs": 1800, "startMs": 500, "text": "there"},
+    {"endMs": 2500, "startMs": 2000, "text": "friend"},
+    {"endMs": 3800, "startMs": 2500, "text": "howdy"},
+    {"endMs": 5000, "startMs": 4000, "text": "partner"}
+  ]
+}

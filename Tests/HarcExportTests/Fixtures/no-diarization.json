@@ -1,0 +1,9 @@
+{
+  "audioPath": "/tmp/fake.wav",
+  "chunks": [],
+  "endedAt": 1700000010,
+  "joinedText": "No speakers here just text",
+  "speakers": [],
+  "startedAt": 1700000000,
+  "words": []
+}
