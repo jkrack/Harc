@@ -218,7 +218,7 @@ Plain text intentionally strips speaker labels — if you're pasting a snippet s
 - A secondary menu item (via `Menu` wrapper or chevron) exposes **"Copy Plain Text"** that puts the raw `transcript` string on the pasteboard.
 - The existing "Paste" button's content source changes from `transcript` to `ExportService.promptString(for: recording)`, matching the clipboard principle. The mechanics (`FrontmostAppPaster.copyAndPaste`) are unchanged. Preference toggles, toast feedback, and target safety remain #1's scope.
 
-Note: `TranscriptionDetailView` currently receives only `transcript: String` and not the full `Recording`. Building an `ExportInput` needs the `Recording` (for `displayTitle`, `startedAt`, `endedAt`, `tags`, `jsonPath`). Either thread the `Recording` into the view alongside `transcript`, or call an `ExportService.promptString(forTranscript: String, startedAt: Date, …)` overload. The cleaner choice is threading the `Recording`; decide in the plan.
+Note: `TranscriptionDetailView` already receives `recording: Recording` (it renders title, tags, etc.), so `ExportService.promptString(for: recording)` wires in directly — no new parameters or overloads needed.
 
 No other views change. No Settings surface. No new hotkeys. No new preferences.
 
