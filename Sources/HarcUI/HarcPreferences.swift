@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import HarcCore
 
 /// App-wide preferences backed by UserDefaults. SwiftUI views observe.
 @MainActor
@@ -8,6 +9,7 @@ public final class HarcPreferences: ObservableObject {
         static let destinationPath = "harc.destinationPath"
         static let diarize = "harc.diarize"
         static let chunkDurationSeconds = "harc.chunkDurationSeconds"
+        static let vocabulary = "harc.vocabulary"
     }
 
     @Published public var destinationPath: String {
@@ -22,6 +24,10 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(chunkDurationSeconds, forKey: Key.chunkDurationSeconds) }
     }
 
+    @Published public var vocabulary: Vocabulary {
+        didSet { persistVocabulary() }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -31,9 +37,60 @@ public final class HarcPreferences: ObservableObject {
         self.destinationPath = defaults.string(forKey: Key.destinationPath) ?? defaultPath
         self.diarize = defaults.object(forKey: Key.diarize) as? Bool ?? true
         self.chunkDurationSeconds = defaults.object(forKey: Key.chunkDurationSeconds) as? Double ?? 60.0
+        if let data = defaults.data(forKey: Key.vocabulary),
+           let decoded = try? JSONDecoder().decode(Vocabulary.self, from: data) {
+            self.vocabulary = decoded
+        } else {
+            self.vocabulary = .empty
+        }
     }
 
     public var destinationURL: URL {
         URL(fileURLWithPath: destinationPath, isDirectory: true)
+    }
+
+    public func addEntry(from: String, to: String) {
+        var v = vocabulary
+        v.entries.append(VocabularyEntry(from: from, to: to))
+        vocabulary = v
+    }
+
+    public func updateEntry(
+        id: VocabularyEntry.ID,
+        from: String? = nil,
+        to: String? = nil,
+        enabled: Bool? = nil
+    ) {
+        var v = vocabulary
+        guard let idx = v.entries.firstIndex(where: { $0.id == id }) else { return }
+        if let from { v.entries[idx].from = from }
+        if let to { v.entries[idx].to = to }
+        if let enabled { v.entries[idx].enabled = enabled }
+        vocabulary = v
+    }
+
+    public func toggleEntry(id: VocabularyEntry.ID) {
+        var v = vocabulary
+        guard let idx = v.entries.firstIndex(where: { $0.id == id }) else { return }
+        v.entries[idx].enabled.toggle()
+        vocabulary = v
+    }
+
+    public func deleteEntries(ids: Set<VocabularyEntry.ID>) {
+        var v = vocabulary
+        v.entries.removeAll { ids.contains($0.id) }
+        vocabulary = v
+    }
+
+    public func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
+        var v = vocabulary
+        v.entries.move(fromOffsets: source, toOffset: destination)
+        vocabulary = v
+    }
+
+    private func persistVocabulary() {
+        if let data = try? JSONEncoder().encode(vocabulary) {
+            UserDefaults.standard.set(data, forKey: Key.vocabulary)
+        }
     }
 }
