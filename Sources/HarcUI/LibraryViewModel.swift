@@ -36,6 +36,8 @@ public enum LibraryFilter: Equatable, Sendable {
 public final class LibraryViewModel: ObservableObject {
     @Published public var searchText: String = ""
     @Published public private(set) var recordings: [Recording] = []
+    /// Populated only when `searchText` is non-empty. BM25-ranked.
+    @Published public private(set) var hits: [TranscriptHit] = []
     @Published public var filter: LibraryFilter = .all {
         didSet { if oldValue != filter { applyCurrent() } }
     }
@@ -115,15 +117,20 @@ public final class LibraryViewModel: ObservableObject {
                     await MainActor.run {
                         self.fullList = all
                         self.recordings = self.apply(filter: filter, to: all)
+                        self.hits = []
                     }
                 } else {
                     let results = try await store.search(query: trimmed)
                     await MainActor.run {
-                        self.recordings = self.apply(filter: filter, to: results)
+                        self.hits = results
+                        // `recordings` stays populated with the unfiltered list so
+                        // the detail pane can still look up full Recording data
+                        // by wavPath. The main view branches on searchText.isEmpty
+                        // to pick which list to render.
                     }
                 }
             } catch {
-                // Keep previous list on error.
+                // Keep previous state on error.
             }
         }
     }
