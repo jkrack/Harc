@@ -154,6 +154,21 @@ public actor RecordingStore {
         }
     }
 
+    /// Atomically update the stored transcript text. The FTS5 `synchronize`
+    /// trigger picks this up automatically so search is consistent post-edit.
+    public func updateTranscriptText(id: Int64, text: String) async throws {
+        try await dbQueue.write { db in
+            let count = try Recording.filter(key: id).updateAll(
+                db,
+                [
+                    Recording.Columns.transcriptText.set(to: text),
+                    Recording.Columns.updatedAt.set(to: Date()),
+                ]
+            )
+            guard count > 0 else { throw StoreError.notFound }
+        }
+    }
+
     public func setPinned(id: Int64, pinned: Bool) async throws {
         try await dbQueue.write { db in
             let count = try Recording.filter(key: id).updateAll(
