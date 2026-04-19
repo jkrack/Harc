@@ -45,8 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         updateMenuBarIcon(recording: false, on: item)
 
         if let button = item.button {
-            button.action = #selector(togglePopover(_:))
+            button.action = #selector(handleStatusItemClick(_:))
             button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         let pop = NSPopover()
@@ -92,13 +93,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    @objc private func togglePopover(_ sender: Any?) {
+    @objc private func handleStatusItemClick(_ sender: Any?) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showStatusItemMenu()
+        } else {
+            togglePopover(sender)
+        }
+    }
+
+    private func togglePopover(_ sender: Any?) {
         guard let popover, let button = statusItem?.button else { return }
         if popover.isShown {
             popover.performClose(sender)
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
+    }
+
+    private func showStatusItemMenu() {
+        guard let statusItem else { return }
+        let menu = NSMenu()
+        let library = NSMenuItem(title: "Open Library…", action: #selector(openLibrary), keyEquivalent: "l")
+        library.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(library)
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(settings)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(
+            title: "Quit Harc",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        ))
+        // Temporarily attach the menu so right-click shows it; clear it after
+        // so subsequent left-clicks still invoke handleStatusItemClick.
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
     }
 
     private func toggleRecording() async {
