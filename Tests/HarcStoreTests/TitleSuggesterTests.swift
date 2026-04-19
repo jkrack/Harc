@@ -40,4 +40,29 @@ struct TitleSuggesterTests {
         // Must use the first-occurrence capitalisation.
         #expect(result?.contains("Sarah") == true)
     }
+
+    @Test("extractEntities returns ordered list of all entities")
+    func extractEntitiesReturnsAll() {
+        let text = "Sarah met with Acme Corp and also spoke with John about Q3."
+        let entities = TitleSuggester.extractEntities(from: text)
+        #expect(entities.count >= 2)
+        #expect(entities.contains { $0.lowercased().contains("sarah") })
+        #expect(entities.contains { $0.lowercased().contains("acme") })
+    }
+
+    @Test("extractEntities returns empty for no-entity transcript")
+    func extractEntitiesEmpty() {
+        #expect(TitleSuggester.extractEntities(from: nil) == [])
+        #expect(TitleSuggester.extractEntities(from: "") == [])
+        #expect(TitleSuggester.extractEntities(from: "uh yeah so about lunch") == [])
+    }
+
+    @Test("suggest still delegates to top-2 of extractEntities")
+    func suggestUsesTopTwo() {
+        let text = "Sarah and John met Sarah and Acme Corp. Acme Acme."
+        let suggestion = TitleSuggester.suggest(from: text)
+        let entities = TitleSuggester.extractEntities(from: text)
+        let expected = Array(entities.prefix(2)).joined(separator: ", ")
+        #expect(suggestion == expected)
+    }
 }
