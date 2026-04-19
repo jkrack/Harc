@@ -172,4 +172,18 @@ struct RecordingStoreTests {
         let days = try await store.daysWithRecordings(inMonthContaining: inMonth)
         #expect(days.count == 1)
     }
+
+    @Test("suggested_title survives round-trip and drives displayTitle fallback")
+    func suggestedTitleRoundTrip() async throws {
+        let store = try await RecordingStore.inMemory()
+        let rec = try await store.upsert(Recording(
+            wavPath: "/tmp/st/a.wav",
+            startedAt: Date(),
+            suggestedTitle: "Sarah, Q3 roadmap"
+        ))
+        let fetched = try #require(try await store.fetchByWavPath("/tmp/st/a.wav"))
+        #expect(fetched.suggestedTitle == "Sarah, Q3 roadmap")
+        #expect(fetched.displayTitle.contains("Sarah, Q3 roadmap"))
+        _ = rec
+    }
 }

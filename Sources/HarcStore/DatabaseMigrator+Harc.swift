@@ -34,6 +34,12 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v2_suggested_title") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "suggested_title", .text)
+            }
+        }
+
         return migrator
     }
 }

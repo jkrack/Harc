@@ -11,6 +11,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var endedAt: Date?
     public var title: String?
     public var transcriptText: String?
+    public var suggestedTitle: String?
     public var pinned: Bool
     public var deletedAt: Date?
     public var createdAt: Date
@@ -25,6 +26,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         endedAt: Date? = nil,
         title: String? = nil,
         transcriptText: String? = nil,
+        suggestedTitle: String? = nil,
         pinned: Bool = false,
         deletedAt: Date? = nil,
         createdAt: Date = Date(),
@@ -38,15 +40,23 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.endedAt = endedAt
         self.title = title
         self.transcriptText = transcriptText
+        self.suggestedTitle = suggestedTitle
         self.pinned = pinned
         self.deletedAt = deletedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
-    /// Display title: user's custom title if set, else derived from startedAt.
+    /// Display title: user's custom title if set; else the NLTagger-derived
+    /// suggestion if present; else derived from startedAt.
     public var displayTitle: String {
         if let t = title, !t.isEmpty { return t }
+        if let s = suggestedTitle, !s.isEmpty {
+            let fmt = DateFormatter()
+            fmt.dateStyle = .short
+            fmt.timeStyle = .short
+            return "\(fmt.string(from: startedAt)) — \(s)"
+        }
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
         fmt.timeStyle = .short
@@ -74,6 +84,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         case endedAt = "ended_at"
         case title
         case transcriptText = "transcript_text"
+        case suggestedTitle = "suggested_title"
         case pinned
         case deletedAt = "deleted_at"
         case createdAt = "created_at"
@@ -89,6 +100,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let endedAt = Column("ended_at")
         static let title = Column("title")
         static let transcriptText = Column("transcript_text")
+        static let suggestedTitle = Column("suggested_title")
         static let pinned = Column("pinned")
         static let deletedAt = Column("deleted_at")
         static let createdAt = Column("created_at")
