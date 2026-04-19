@@ -1,6 +1,8 @@
 import Foundation
 import Combine
+import SwiftUI
 import HarcCore
+import HarcMeetingDetect
 
 /// App-wide preferences backed by UserDefaults. SwiftUI views observe.
 @MainActor
@@ -10,6 +12,8 @@ public final class HarcPreferences: ObservableObject {
         static let diarize = "harc.diarize"
         static let chunkDurationSeconds = "harc.chunkDurationSeconds"
         static let vocabulary = "harc.vocabulary"
+        static let meetingDetectionEnabled = "harc.meetingDetectionEnabled"
+        static let meetingAppEnabled = "harc.meetingAppEnabled"
     }
 
     @Published public var destinationPath: String {
@@ -28,6 +32,18 @@ public final class HarcPreferences: ObservableObject {
         didSet { persistVocabulary() }
     }
 
+    @Published public var meetingDetectionEnabled: Bool {
+        didSet { UserDefaults.standard.set(meetingDetectionEnabled, forKey: Key.meetingDetectionEnabled) }
+    }
+
+    @Published public var meetingAppEnabled: [String: Bool] {
+        didSet {
+            if let data = try? JSONEncoder().encode(meetingAppEnabled) {
+                UserDefaults.standard.set(data, forKey: Key.meetingAppEnabled)
+            }
+        }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -43,6 +59,28 @@ public final class HarcPreferences: ObservableObject {
         } else {
             self.vocabulary = .empty
         }
+        self.meetingDetectionEnabled = defaults.object(forKey: Key.meetingDetectionEnabled) as? Bool ?? false
+        if let data = defaults.data(forKey: Key.meetingAppEnabled),
+           let decoded = try? JSONDecoder().decode([String: Bool].self, from: data) {
+            self.meetingAppEnabled = decoded
+        } else {
+            self.meetingAppEnabled = [
+                "us.zoom.xos": true,
+                "com.microsoft.teams2": true,
+                "com.tinyspeck.slackmacgap": false,
+            ]
+        }
+    }
+
+    public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {
+        Binding(
+            get: { self.meetingAppEnabled[app.id] ?? true },
+            set: { newValue in
+                var copy = self.meetingAppEnabled
+                copy[app.id] = newValue
+                self.meetingAppEnabled = copy
+            }
+        )
     }
 
     public var destinationURL: URL {

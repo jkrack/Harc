@@ -1,14 +1,16 @@
 import AppKit
 import Combine
 import SwiftUI
+import UserNotifications
 import HarcAudio
 import HarcClient
+import HarcMeetingDetect
 import HarcStore
 import HarcUI
 import KeyboardShortcuts
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, MeetingDetector.Delegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var session: RecordingSession?
@@ -25,6 +27,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
     private var menuBarTicker: Timer?
+
+    private let meetingState = MeetingDetectionState()
+    private let notificationPresenter = MeetingNotificationPresenter()
+    private var detector: MeetingDetector?
+    private var terminateToken: NSObjectProtocol?
+    private var pulseTimer: Timer?
+    private var pulseOn = false
+    private var cancellables: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [weak self] in
@@ -63,6 +73,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [weak self] in
             Task { await self?.toggleRecording() }
         }
+
+        notificationPresenter.registerCategory()
+        UNUserNotificationCenter.current().delegate = self
+        setupMeetingDetector()
+        registerTerminateWatchdog()
+        observeMeetingDetectionPref()
+        observeMeetingStateForPulse()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let token = terminateToken {
+            SystemWorkspace.shared.removeObserver(token)
+            terminateToken = nil
+        }
+        detector?.stop()
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -87,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func startRecording() async {
         guard session == nil else { return }
 
+        meetingState.clearAll()
         updateMenuBarIcon(recording: true)
         state.markStarted(at: Date())
 
@@ -186,7 +212,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             menuBarTicker?.invalidate()
             menuBarTicker = nil
             button.title = ""
+            applyPulse()
         }
+    }
+
+    // MARK: - Meeting detection
+
+    private func setupMeetingDetector() {
+        guard prefs.meetingDetectionEnabled else { return }
+        guard detector == nil else { return }
+        let d = MeetingDetector(
+            workspace: SystemWorkspace.shared,
+            isGloballyEnabled: { [weak self] in self?.prefs.meetingDetectionEnabled ?? false },
+            isAppEnabled: { [weak self] app in self?.prefs.meetingAppEnabled[app.id] ?? true },
+            isRecordingInProgress: { [weak self] in self?.state.isRecording ?? false }
+        )
+        d.delegate = self
+        d.start()
+        detector = d
+    }
+
+    private func tearDownMeetingDetector() {
+        detector?.stop()
+        detector = nil
+        meetingState.clearAll()
+        for app in MeetingCatalog.builtIn {
+            notificationPresenter.withdraw(bundleID: app.bundleID)
+            for alias in app.aliasBundleIDs { notificationPresenter.withdraw(bundleID: alias) }
+        }
+    }
+
+    private func registerTerminateWatchdog() {
+        terminateToken = SystemWorkspace.shared.addDidTerminateObserver { [weak self] bundleID in
+            Task { @MainActor in
+                self?.meetingState.clear(bundleID: bundleID)
+                self?.notificationPresenter.withdraw(bundleID: bundleID)
+            }
+        }
+    }
+
+    private func observeMeetingDetectionPref() {
+        prefs.$meetingDetectionEnabled
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                if enabled { self.setupMeetingDetector() } else { self.tearDownMeetingDetector() }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func observeMeetingStateForPulse() {
+        meetingState.$pendingBundleIDs
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyPulse() }
+            .store(in: &cancellables)
+    }
+
+    private func applyPulse() {
+        guard let button = statusItem?.button else { return }
+        guard meetingState.isPulsing, !state.isRecording else {
+            pulseTimer?.invalidate()
+            pulseTimer = nil
+            pulseOn = false
+            if !state.isRecording { button.contentTintColor = nil }
+            return
+        }
+        if pulseTimer == nil {
+            pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.tickPulse() }
+            }
+        }
+    }
+
+    private func tickPulse() {
+        guard let button = statusItem?.button else { return }
+        guard meetingState.isPulsing, !state.isRecording else {
+            applyPulse()
+            return
+        }
+        pulseOn.toggle()
+        button.contentTintColor = pulseOn ? NSColor(HarcDesign.tertiary) : nil
     }
 
     private func updateMenuBarElapsed() {
@@ -340,6 +446,52 @@ private func openDetail(for recording: Recording) {
         guard let store = store else { return }
         let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
         _ = try? await ingestor.ingestAll()
+    }
+
+    // MARK: - MeetingDetector.Delegate / UNUserNotificationCenterDelegate
+
+    nonisolated func meetingDetector(_ detector: MeetingDetector, didDetect app: MeetingApp) {
+        Task { @MainActor in
+            self.meetingState.add(bundleID: app.bundleID, displayName: app.displayName)
+            await self.notificationPresenter.present(app: app)
+            // 2-minute pulse/banner timeout — if the user never reacts, clean up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+                self?.meetingState.clear(bundleID: app.bundleID)
+                self?.notificationPresenter.withdraw(bundleID: app.bundleID)
+            }
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let info = response.notification.request.content.userInfo
+        let bundleID = info[MeetingNotification.bundleIDUserInfoKey] as? String
+        let actionID = response.actionIdentifier
+        Task { @MainActor in
+            if let bundleID {
+                self.meetingState.clear(bundleID: bundleID)
+                self.detector?.markHandled(bundleID: bundleID)
+            }
+            switch actionID {
+            case MeetingNotification.recordActionID, UNNotificationDefaultActionIdentifier:
+                if !self.state.isRecording { await self.startRecording() }
+            default:
+                break
+            }
+        }
+        completionHandler()
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        // Show the banner even when the app is frontmost.
+        completionHandler([.banner, .list])
     }
 
     private func refreshPopoverRoot() async {
