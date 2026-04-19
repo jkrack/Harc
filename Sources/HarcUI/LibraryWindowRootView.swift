@@ -30,8 +30,10 @@ public struct LibraryWindowRootView: View {
                 .frame(minWidth: 220, idealWidth: 240, maxWidth: 280)
             main
                 .frame(minWidth: 480)
+            detail
+                .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
         }
-        .frame(minWidth: 780, minHeight: 520)
+        .frame(minWidth: 1040, minHeight: 560)
         .onAppear { vm.start() }
         .onDisappear { vm.stop() }
         .alert("Rename recording", isPresented: .constant(renameTarget != nil), presenting: renameTarget) { rec in
@@ -171,6 +173,112 @@ public struct LibraryWindowRootView: View {
                 .foregroundStyle(Color.harcPrimary)
                 .tracking(1.2)
         }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let rec = selectedRecording {
+            detailContent(for: rec)
+        } else {
+            detailEmpty
+        }
+    }
+
+    private var detailEmpty: some View {
+        VStack(spacing: HarcDesign.Space.sm) {
+            Spacer()
+            Image(systemName: "waveform.slash")
+                .font(.system(size: 36))
+                .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.4))
+            Text("Select a recording")
+                .font(HarcDesign.Font.bodyMd)
+                .foregroundStyle(Color.harcOnSurfaceVariant)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(HarcDesign.Space.lg)
+    }
+
+    private func detailContent(for rec: Recording) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                        .fill(Color.harcPrimary.opacity(0.14))
+                        .frame(height: 140)
+                    Button {
+                        onOpen(rec)
+                    } label: {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(Color.harcPrimary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
+                    Text("FILE DETAILS")
+                        .font(HarcDesign.Font.labelMd)
+                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .tracking(1.2)
+                    detailRow(label: "Recording Date", value: formatFullDate(rec.startedAt))
+                    detailRow(label: "Duration",       value: formatDuration(rec))
+                    detailRow(label: "File",           value: URL(fileURLWithPath: rec.wavPath).lastPathComponent)
+                    if !rec.tags.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Tags")
+                                .font(HarcDesign.Font.labelMd)
+                                .foregroundStyle(Color.harcOnSurfaceVariant)
+                            HStack(spacing: 4) {
+                                ForEach(rec.tags, id: \.self) { TagChip($0) }
+                            }
+                        }
+                    }
+                }
+
+                if !rec.preview.isEmpty {
+                    VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
+                        Text("AI SUMMARY")
+                            .font(HarcDesign.Font.labelMd)
+                            .foregroundStyle(Color.harcOnSurfaceVariant)
+                            .tracking(1.2)
+                        Text(rec.preview)
+                            .font(HarcDesign.Font.bodySm)
+                            .foregroundStyle(Color.harcOnSurface)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            onOpen(rec)
+                        } label: {
+                            Text("Read Full Transcript →")
+                                .font(HarcDesign.Font.labelMd)
+                                .foregroundStyle(Color.harcPrimary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(HarcDesign.Space.lg)
+        }
+    }
+
+    private func detailRow(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(HarcDesign.Font.labelMd)
+                .foregroundStyle(Color.harcOnSurfaceVariant)
+            Text(value)
+                .font(HarcDesign.Font.bodySm)
+                .foregroundStyle(Color.harcOnSurface)
+        }
+    }
+
+    private func formatFullDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .full
+        f.timeStyle = .short
+        return f.string(from: date)
     }
 
     private var storageUsed: String {

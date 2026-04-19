@@ -16,7 +16,7 @@ final class LibraryWindowController: NSWindowController {
         let window = NSWindow(contentViewController: host)
         window.title = "Harc Library"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 1080, height: 680))
+        window.setContentSize(NSSize(width: 1200, height: 720))
         window.center()
         self.init(window: window)
     }
