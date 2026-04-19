@@ -122,6 +122,18 @@ public actor RecordingStore {
         }
     }
 
+    /// Post-process path: set the NLTagger-derived title hint. No `notFound`
+    /// throw — the post-process task fires detached and a late update on a
+    /// soft-deleted row is benign (store just no-ops).
+    public func updateSuggestedTitle(id: Int64, title: String?) async throws {
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE recordings SET suggested_title = ?, updated_at = ? WHERE id = ?",
+                arguments: [title, Date(), id]
+            )
+        }
+    }
+
     public func setPinned(id: Int64, pinned: Bool) async throws {
         try await dbQueue.write { db in
             let count = try Recording.filter(key: id).updateAll(

@@ -186,4 +186,16 @@ struct RecordingStoreTests {
         #expect(fetched.displayTitle.contains("Sarah, Q3 roadmap"))
         _ = rec
     }
+
+    @Test("updateSuggestedTitle writes the column and is a no-op on missing id")
+    func updateSuggestedTitleBasics() async throws {
+        let store = try await RecordingStore.inMemory()
+        let rec = try await store.upsert(Recording(wavPath: "/tmp/upd/a.wav", startedAt: Date()))
+        try await store.updateSuggestedTitle(id: rec.id!, title: "Sarah, Q3")
+        let refreshed = try #require(try await store.fetchByWavPath("/tmp/upd/a.wav"))
+        #expect(refreshed.suggestedTitle == "Sarah, Q3")
+
+        // No-op on phantom id — no throw.
+        try await store.updateSuggestedTitle(id: 999_999, title: "anything")
+    }
 }

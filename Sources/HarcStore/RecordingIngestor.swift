@@ -61,7 +61,13 @@ public struct RecordingIngestor: Sendable {
                         startedAt: startedAt,
                         transcriptText: transcriptText
                     )
-                    _ = try await store.upsert(recording)
+                    let persisted = try await store.upsert(recording)
+                    if let transcriptText, let id = persisted.id {
+                        Task.detached { [store] in
+                            guard let suggestion = TitleSuggester.suggest(from: transcriptText) else { return }
+                            try? await store.updateSuggestedTitle(id: id, title: suggestion)
+                        }
+                    }
                     inserted += 1
                 }
             }

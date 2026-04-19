@@ -140,6 +140,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 )
                 _ = try? await store.upsert(rec)
             }
+            if let transcriptText, let store = self.store {
+                Task.detached { [store] in
+                    guard let suggestion = TitleSuggester.suggest(from: transcriptText) else { return }
+                    guard let persisted = try? await store.fetchByWavPath(result.wavURL.path),
+                          let id = persisted.id else { return }
+                    try? await store.updateSuggestedTitle(id: id, title: suggestion)
+                }
+            }
             if let text = transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                 try? FrontmostAppPaster.copyAndPaste(text)
             }
