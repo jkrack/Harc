@@ -24,6 +24,7 @@ public enum ExportInputBuilder {
                     title: title,
                     startedAt: recording.startedAt,
                     durationSeconds: duration,
+                    tags: recording.tags,
                     segments: segments
                 )
             }
@@ -35,6 +36,7 @@ public enum ExportInputBuilder {
                 title: title,
                 startedAt: recording.startedAt,
                 durationSeconds: duration,
+                tags: recording.tags,
                 segments: [.init(speaker: nil, text: text)]
             )
         }
@@ -43,6 +45,7 @@ public enum ExportInputBuilder {
             title: title,
             startedAt: recording.startedAt,
             durationSeconds: duration,
+            tags: recording.tags,
             segments: []
         )
     }
