@@ -95,4 +95,44 @@ struct ChunkedTranscriberTests {
         let tailWord = transcript.words.first { $0.text == "tail" }
         #expect(tailWord?.startMs == 2000)
     }
+
+    @Test("applies vocabulary to chunk text and joinedText")
+    func vocabularyIsApplied() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 1.2)
+
+        let fake = FakeClient(results: [
+            TranscribeResult(
+                text: "Arakeet is up",
+                words: [Word(text: "Arakeet", startMs: 0, endMs: 500)],
+                speakers: [],
+                processingMs: 1
+            ),
+            TranscribeResult(
+                text: "arakeet again",
+                words: [Word(text: "arakeet", startMs: 0, endMs: 400)],
+                speakers: [],
+                processingMs: 1
+            ),
+        ])
+
+        let vocab = Vocabulary(entries: [VocabularyEntry(from: "Arakeet", to: "Parakeet")])
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            diarize: false,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.05,
+            vocabulary: vocab
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let final = try await transcriber.finalize(startedAt: Date(), endedAt: Date())
+        // Both chunks rewritten with case preservation; joinedText reflects per-chunk passes.
+        let chunkTexts = final.chunks.map(\.text)
+        #expect(chunkTexts.contains("Parakeet is up"))
+        #expect(chunkTexts.contains("parakeet again"))
+        #expect(!final.joinedText.contains("Arakeet"))
+    }
 }
