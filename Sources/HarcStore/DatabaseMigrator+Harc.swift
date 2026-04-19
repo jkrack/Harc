@@ -40,6 +40,12 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v3_tags") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "tags", .text)  // JSON-encoded [String]; nil means no tags
+            }
+        }
+
         return migrator
     }
 }

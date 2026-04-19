@@ -12,6 +12,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var title: String?
     public var transcriptText: String?
     public var suggestedTitle: String?
+    public var tags: [String] = []
     public var pinned: Bool
     public var deletedAt: Date?
     public var createdAt: Date
@@ -27,6 +28,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         title: String? = nil,
         transcriptText: String? = nil,
         suggestedTitle: String? = nil,
+        tags: [String] = [],
         pinned: Bool = false,
         deletedAt: Date? = nil,
         createdAt: Date = Date(),
@@ -41,6 +43,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.title = title
         self.transcriptText = transcriptText
         self.suggestedTitle = suggestedTitle
+        self.tags = tags
         self.pinned = pinned
         self.deletedAt = deletedAt
         self.createdAt = createdAt
@@ -69,6 +72,55 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return String(trimmed.prefix(120))
     }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(Int64.self, forKey: .id)
+        self.wavPath = try c.decode(String.self, forKey: .wavPath)
+        self.txtPath = try c.decodeIfPresent(String.self, forKey: .txtPath)
+        self.jsonPath = try c.decodeIfPresent(String.self, forKey: .jsonPath)
+        self.startedAt = try c.decode(Date.self, forKey: .startedAt)
+        self.endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+        self.title = try c.decodeIfPresent(String.self, forKey: .title)
+        self.transcriptText = try c.decodeIfPresent(String.self, forKey: .transcriptText)
+        self.suggestedTitle = try c.decodeIfPresent(String.self, forKey: .suggestedTitle)
+        if let json = try c.decodeIfPresent(String.self, forKey: .tags),
+           let data = json.data(using: .utf8),
+           let arr = try? JSONDecoder().decode([String].self, from: data) {
+            self.tags = arr
+        } else {
+            self.tags = []
+        }
+        self.pinned = try c.decode(Bool.self, forKey: .pinned)
+        self.deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(id, forKey: .id)
+        try c.encode(wavPath, forKey: .wavPath)
+        try c.encodeIfPresent(txtPath, forKey: .txtPath)
+        try c.encodeIfPresent(jsonPath, forKey: .jsonPath)
+        try c.encode(startedAt, forKey: .startedAt)
+        try c.encodeIfPresent(endedAt, forKey: .endedAt)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(transcriptText, forKey: .transcriptText)
+        try c.encodeIfPresent(suggestedTitle, forKey: .suggestedTitle)
+        if tags.isEmpty {
+            try c.encodeNil(forKey: .tags)
+        } else if let data = try? JSONEncoder().encode(tags),
+                  let s = String(data: data, encoding: .utf8) {
+            try c.encode(s, forKey: .tags)
+        } else {
+            try c.encodeNil(forKey: .tags)
+        }
+        try c.encode(pinned, forKey: .pinned)
+        try c.encodeIfPresent(deletedAt, forKey: .deletedAt)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(updatedAt, forKey: .updatedAt)
+    }
 }
 
 extension Recording: FetchableRecord, PersistableRecord {
@@ -85,6 +137,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         case title
         case transcriptText = "transcript_text"
         case suggestedTitle = "suggested_title"
+        case tags
         case pinned
         case deletedAt = "deleted_at"
         case createdAt = "created_at"
@@ -101,6 +154,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let title = Column("title")
         static let transcriptText = Column("transcript_text")
         static let suggestedTitle = Column("suggested_title")
+        static let tags = Column("tags")
         static let pinned = Column("pinned")
         static let deletedAt = Column("deleted_at")
         static let createdAt = Column("created_at")

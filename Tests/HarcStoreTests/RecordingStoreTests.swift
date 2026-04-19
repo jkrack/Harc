@@ -198,4 +198,24 @@ struct RecordingStoreTests {
         // No-op on phantom id — no throw.
         try await store.updateSuggestedTitle(id: 999_999, title: "anything")
     }
+
+    @Test("tags round-trip through the DB")
+    func tagsRoundTrip() async throws {
+        let store = try await RecordingStore.inMemory()
+        _ = try await store.upsert(Recording(
+            wavPath: "/tmp/tags/a.wav",
+            startedAt: Date(),
+            tags: ["Sarah", "Acme", "Q3"]
+        ))
+        let fetched = try #require(try await store.fetchByWavPath("/tmp/tags/a.wav"))
+        #expect(fetched.tags == ["Sarah", "Acme", "Q3"])
+    }
+
+    @Test("empty tags array reads back as empty, not nil")
+    func tagsEmptyDefault() async throws {
+        let store = try await RecordingStore.inMemory()
+        _ = try await store.upsert(Recording(wavPath: "/tmp/tags/b.wav", startedAt: Date()))
+        let fetched = try #require(try await store.fetchByWavPath("/tmp/tags/b.wav"))
+        #expect(fetched.tags == [])
+    }
 }
