@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var store: RecordingStore?
     private var recordingsVM: RecordingsViewModel?
     private var detailWindows: [String: TranscriptionDetailWindowController] = [:]
+    private var editorWindows: [String: TranscriptEditorWindowController] = [:]
     private var libraryWindow: LibraryWindowController?
     private var libraryVM: LibraryViewModel?
     private var previewTask: Task<Void, Never>?
@@ -220,6 +221,30 @@ private func openDetail(for recording: Recording) {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func openEditor(for recording: Recording) {
+        if let existing = editorWindows[recording.wavPath] {
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        guard let store else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let vm = await TranscriptEditorViewModel(recording: recording, store: store)
+            let controller = TranscriptEditorWindowController(
+                vm: vm,
+                onClose: { [weak self] in
+                    self?.editorWindows.removeValue(forKey: recording.wavPath)
+                }
+            )
+            self.editorWindows[recording.wavPath] = controller
+            controller.showWindow(nil)
+            controller.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
     private func deleteRecording(recording: Recording) {
         guard let id = recording.id, let vm = recordingsVM else { return }
         Task {
@@ -269,6 +294,7 @@ private func openDetail(for recording: Recording) {
         let controller = LibraryWindowController(
             vm: vm,
             onOpen: { [weak self] rec in self?.openDetail(for: rec) },
+            onOpenInEditor: { [weak self] rec in self?.openEditor(for: rec) },
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
         libraryWindow = controller

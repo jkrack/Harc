@@ -28,13 +28,16 @@ public struct LibraryWindowRootView: View {
     }
 
     let onOpen: (Recording) -> Void
+    let onOpenInEditor: (Recording) -> Void
     let onOpenSettings: () -> Void
 
     public init(
         onOpen: @escaping (Recording) -> Void,
+        onOpenInEditor: @escaping (Recording) -> Void,
         onOpenSettings: @escaping () -> Void
     ) {
         self.onOpen = onOpen
+        self.onOpenInEditor = onOpenInEditor
         self.onOpenSettings = onOpenSettings
     }
 
@@ -261,7 +264,7 @@ public struct LibraryWindowRootView: View {
                         .fill(Color.harcPrimary.opacity(0.14))
                         .frame(height: 140)
                     Button {
-                        onOpen(rec)
+                        onOpenInEditor(rec)
                     } label: {
                         Image(systemName: "play.circle.fill")
                             .font(.system(size: 48))
@@ -496,6 +499,7 @@ public struct LibraryWindowRootView: View {
                         renameTarget = rec
                         renameText = rec.title ?? ""
                     }
+                    Button("Open in Editor") { onOpenInEditor(rec) }
                     Button("Open") { onOpen(rec) }
                     Button(rec.pinned ? "Unpin" : "Pin") {
                         Task { try? await vm.togglePin(id: rec.id ?? -1, currentlyPinned: rec.pinned) }
@@ -512,7 +516,7 @@ public struct LibraryWindowRootView: View {
                 }
             }, primaryAction: { paths in
                 if let path = paths.first, let rec = vm.recordings.first(where: { $0.wavPath == path }) {
-                    onOpen(rec)
+                    onOpenInEditor(rec)
                 }
             })
         }

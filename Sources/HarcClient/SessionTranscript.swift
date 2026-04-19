@@ -31,11 +31,15 @@ public struct SessionTranscript: Codable, Equatable, Sendable {
     public var words: [Word]
     public var speakers: [SpeakerSegment]
     public var chunks: [ChunkResult]
+    /// Set when the user has manually edited `joinedText` in the editor.
+    /// Signals downstream tools that word timings are approximate.
+    public var manualEditAt: Date?
 
     public init(
         startedAt: Date, endedAt: Date, audioPath: String,
         joinedText: String, words: [Word], speakers: [SpeakerSegment],
-        chunks: [ChunkResult]
+        chunks: [ChunkResult],
+        manualEditAt: Date? = nil
     ) {
         self.startedAt = startedAt
         self.endedAt = endedAt
@@ -44,6 +48,7 @@ public struct SessionTranscript: Codable, Equatable, Sendable {
         self.words = words
         self.speakers = speakers
         self.chunks = chunks
+        self.manualEditAt = manualEditAt
     }
 }
 
