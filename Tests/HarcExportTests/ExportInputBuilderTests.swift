@@ -17,7 +17,8 @@ struct ExportInputBuilderTests {
             wavPath: "/tmp/fake.wav",
             jsonPath: url.path,
             startedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            endedAt: Date(timeIntervalSince1970: 1_700_000_060)
+            endedAt: Date(timeIntervalSince1970: 1_700_000_060),
+            tags: ["Acme"]
         )
         let input = ExportInputBuilder.build(from: rec)
         #expect(input.isDiarized)
@@ -26,6 +27,7 @@ struct ExportInputBuilderTests {
         #expect(input.segments[1].speaker == 1)
         #expect(input.segments[2].speaker == 2)
         #expect(input.segments[0].text.contains("Hello"))
+        #expect(input.tags == ["Acme"])
     }
 
     @Test("single-speaker JSON still emits attributed segments")
@@ -75,6 +77,7 @@ struct ExportInputBuilderTests {
         let rec = Recording(wavPath: "/tmp/fake.wav", startedAt: Date())
         let input = ExportInputBuilder.build(from: rec)
         #expect(input.segments.isEmpty)
+        #expect(input.tags.isEmpty)
     }
 
     @Test("tags flow from Recording.tags into ExportInput")
