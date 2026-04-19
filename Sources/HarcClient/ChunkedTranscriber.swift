@@ -15,6 +15,7 @@ public actor ChunkedTranscriber {
     private let diarize: Bool
     private let chunkDurationSeconds: Double
     private let pollIntervalSeconds: Double
+    private let vocabulary: Vocabulary
 
     nonisolated(unsafe) private let assembler = TranscriptAssembler()
     private var chunker: WAVChunker?
@@ -29,12 +30,14 @@ public actor ChunkedTranscriber {
         client: any TranscribingClient,
         diarize: Bool = true,
         chunkDurationSeconds: Double = 60.0,
-        pollIntervalSeconds: Double = 2.0
+        pollIntervalSeconds: Double = 2.0,
+        vocabulary: Vocabulary = .empty
     ) {
         self.client = client
         self.diarize = diarize
         self.chunkDurationSeconds = chunkDurationSeconds
         self.pollIntervalSeconds = pollIntervalSeconds
+        self.vocabulary = vocabulary
         let (stream, cont) = AsyncStream<TranscriptUpdate>.makeStream()
         self.updates = stream
         self.updatesContinuation = cont
@@ -68,11 +71,14 @@ public actor ChunkedTranscriber {
 
         updatesContinuation.finish()
 
-        return assembler.finalize(
+        var assembled = assembler.finalize(
             startedAt: startedAt,
             endedAt: endedAt,
             audioPath: audioURL?.path ?? ""
         )
+        // Second pass on the joined text — catches rules whose match spans a chunk boundary.
+        assembled.joinedText = VocabularyReplacer.apply(assembled.joinedText, using: vocabulary)
+        return assembled
     }
 
     private func pump() async {
@@ -96,10 +102,11 @@ public actor ChunkedTranscriber {
     private func processChunk(_ chunk: WAVChunker.Chunk) async throws {
         defer { try? FileManager.default.removeItem(at: chunk.audioURL) }
         let result = try await client.transcribe(audioPath: chunk.audioURL.path, diarize: diarize)
+        let cleanedText = VocabularyReplacer.apply(result.text, using: vocabulary)
         let cr = ChunkResult(
             startMs: chunk.startMs,
             endMs: chunk.endMs,
-            text: result.text,
+            text: cleanedText,
             words: result.words,
             speakers: result.speakers,
             processingMs: result.processingMs

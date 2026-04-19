@@ -95,7 +95,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let transcriber = ChunkedTranscriber(
                 client: client,
                 diarize: prefs.diarize,
-                chunkDurationSeconds: prefs.chunkDurationSeconds
+                chunkDurationSeconds: prefs.chunkDurationSeconds,
+                vocabulary: prefs.vocabulary
             )
             let session = RecordingSession(
                 mic: MicCapture(),
