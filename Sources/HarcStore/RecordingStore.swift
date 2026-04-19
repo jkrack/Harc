@@ -195,42 +195,45 @@ public actor RecordingStore {
 
     // MARK: - Search (FTS5)
 
-    /// Full-text search across title and transcript_text. Empty query returns fetchAll().
-    public func search(
-        query: String,
-        includeDeleted: Bool = false
-    ) async throws -> [Recording] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return try await fetchAll(includeDeleted: includeDeleted)
-        }
+    /// Full-text search over transcript bodies. Returns BM25-ranked hits with
+    /// pre-highlighted snippets (matched tokens wrapped in `<mark>…</mark>`).
+    /// Empty / whitespace query → `[]`. Excludes soft-deleted rows. Capped at 200.
+    public func search(query: String) async throws -> [TranscriptHit] {
+        let pattern = Self.ftsPattern(from: query)
+        guard !pattern.isEmpty else { return [] }
 
         return try await dbQueue.read { db in
-            // Wrap in an FTS5 pattern that does prefix matching per token.
-            let tokens = trimmed
-                .split(separator: " ")
-                .map { "\($0)*" }
-                .joined(separator: " ")
+            let sql = """
+                SELECT
+                    recordings.*,
+                    snippet(recordings_fts, 0, '<mark>', '</mark>', '…', 24) AS hit_snippet,
+                    bm25(recordings_fts)                                    AS hit_rank
+                FROM recordings
+                JOIN recordings_fts ON recordings_fts.rowid = recordings.id
+                WHERE recordings_fts MATCH ?
+                  AND recordings.deleted_at IS NULL
+                ORDER BY hit_rank ASC
+                LIMIT 200
+                """
 
-            let sql: String
-            if includeDeleted {
-                sql = """
-                    SELECT recordings.* FROM recordings
-                    JOIN recordings_fts ON recordings_fts.rowid = recordings.id
-                    WHERE recordings_fts MATCH ?
-                    ORDER BY recordings.pinned DESC, recordings.started_at DESC
-                """
-            } else {
-                sql = """
-                    SELECT recordings.* FROM recordings
-                    JOIN recordings_fts ON recordings_fts.rowid = recordings.id
-                    WHERE recordings_fts MATCH ? AND recordings.deleted_at IS NULL
-                    ORDER BY recordings.pinned DESC, recordings.started_at DESC
-                """
+            let rows = try Row.fetchAll(db, sql: sql, arguments: [pattern])
+            return try rows.map { row in
+                let rec = try Recording(row: row)
+                let snippet: String = row["hit_snippet"] ?? ""
+                let rank: Double = row["hit_rank"] ?? 0
+                return TranscriptHit(recording: rec, snippet: snippet, score: -rank)
             }
-
-            return try Recording.fetchAll(db, sql: sql, arguments: [tokens])
         }
+    }
+
+    /// Sanitise a user query into a safe FTS5 MATCH expression. Splits on any
+    /// non-alphanumeric boundary (keeping `-`), prefix-stars every token,
+    /// joins with spaces (FTS5's implicit AND). Guarantees no operator injection.
+    static func ftsPattern(from raw: String) -> String {
+        raw.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" })
+            .map { "\($0)*" }
+            .joined(separator: " ")
     }
 
     /// Day-starts (local-TZ midnight) for every day in the given month that has
