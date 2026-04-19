@@ -2,15 +2,23 @@ import SwiftUI
 import AppKit
 import HarcStore
 
+/// Identifiable wrapper so SwiftUI Table can use `wavPath` (non-optional String)
+/// as the row id. `Recording.id` is `Int64?`, which makes the Table's
+/// `.contextMenu(forSelectionType:)` + `primaryAction` machinery unreliable.
+private struct LibraryRow: Identifiable {
+    let recording: Recording
+    var id: String { recording.wavPath }
+}
+
 public struct LibraryWindowRootView: View {
     @EnvironmentObject private var vm: LibraryViewModel
     @State private var renameTarget: Recording?
     @State private var renameText: String = ""
-    @State private var selectedID: Int64?
+    @State private var selectedWavPath: String?
 
     private var selectedRecording: Recording? {
-        guard let id = selectedID else { return nil }
-        return vm.recordings.first { $0.id == id }
+        guard let path = selectedWavPath else { return nil }
+        return vm.recordings.first { $0.wavPath == path }
     }
 
     let onOpen: (Recording) -> Void
@@ -307,11 +315,9 @@ public struct LibraryWindowRootView: View {
                 Spacer()
             }
         } else {
-            Table(vm.recordings, selection: Binding<Int64??>(
-                get: { selectedID },
-                set: { selectedID = $0 ?? nil }
-            )) {
-                TableColumn("Name & Date") { rec in
+            Table(vm.recordings.map(LibraryRow.init), selection: $selectedWavPath) {
+                TableColumn("Name & Date") { row in
+                    let rec = row.recording
                     HStack(alignment: .center, spacing: HarcDesign.Space.xs) {
                         RecordingIconTile(
                             systemImage: rec.pinned ? "pin.fill" : "waveform",
@@ -329,24 +335,25 @@ public struct LibraryWindowRootView: View {
                         }
                     }
                 }
-                TableColumn("Duration") { rec in
-                    Text(formatDuration(rec))
+                TableColumn("Duration") { row in
+                    Text(formatDuration(row.recording))
                         .font(HarcDesign.Font.bodySm.monospacedDigit())
                         .foregroundStyle(Color.harcOnSurfaceVariant)
                 }
                 .width(min: 70, ideal: 80, max: 100)
-                TableColumn("Tags") { rec in
-                    if rec.tags.isEmpty {
+                TableColumn("Tags") { row in
+                    if row.recording.tags.isEmpty {
                         Text("—")
                             .font(HarcDesign.Font.labelMd)
                             .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.5))
                     } else {
                         HStack(spacing: 4) {
-                            ForEach(rec.tags.prefix(3), id: \.self) { TagChip($0) }
+                            ForEach(row.recording.tags.prefix(3), id: \.self) { TagChip($0) }
                         }
                     }
                 }
-                TableColumn("Actions") { rec in
+                TableColumn("Actions") { row in
+                    let rec = row.recording
                     HStack(spacing: HarcDesign.Space.xxs) {
                         Button { onOpen(rec) } label: {
                             Image(systemName: "arrow.up.forward.square")
@@ -362,8 +369,8 @@ public struct LibraryWindowRootView: View {
                 .width(min: 60, ideal: 72, max: 90)
             }
             .tableStyle(.inset)
-            .contextMenu(forSelectionType: Int64.self, menu: { ids in
-                if let id = ids.first, let rec = vm.recordings.first(where: { $0.id == id }) {
+            .contextMenu(forSelectionType: String.self, menu: { paths in
+                if let path = paths.first, let rec = vm.recordings.first(where: { $0.wavPath == path }) {
                     Button("Rename…") {
                         renameTarget = rec
                         renameText = rec.title ?? ""
@@ -382,8 +389,8 @@ public struct LibraryWindowRootView: View {
                         Text("Delete")
                     }
                 }
-            }, primaryAction: { ids in
-                if let id = ids.first, let rec = vm.recordings.first(where: { $0.id == id }) {
+            }, primaryAction: { paths in
+                if let path = paths.first, let rec = vm.recordings.first(where: { $0.wavPath == path }) {
                     onOpen(rec)
                 }
             })
