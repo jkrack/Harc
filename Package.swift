@@ -51,6 +51,7 @@ let package = Package(
                 "HarcAudio",
                 "HarcClient",
                 "HarcStore",
+                "HarcExport",
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ]
         ),
