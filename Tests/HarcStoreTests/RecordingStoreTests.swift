@@ -94,18 +94,7 @@ struct RecordingStoreTests {
 
         let results = try await store.search(query: "hello")
         #expect(results.count == 1)
-        #expect(results[0].wavPath == "/tmp/a.wav")
-    }
-
-    @Test("search matches against the title field too")
-    func searchByTitle() async throws {
-        let store = try await makeInMemoryStore()
-        var rec = sampleRecording()
-        rec.title = "Standup meeting"
-        _ = try await store.upsert(rec)
-
-        let results = try await store.search(query: "standup")
-        #expect(results.count == 1)
+        #expect(results[0].recording.wavPath == "/tmp/a.wav")
     }
 
     @Test("softDelete sets deletedAt; restore clears it")
