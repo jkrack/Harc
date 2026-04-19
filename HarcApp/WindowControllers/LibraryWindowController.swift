@@ -5,8 +5,12 @@ import HarcStore
 
 @MainActor
 final class LibraryWindowController: NSWindowController {
-    convenience init(vm: LibraryViewModel, onOpen: @escaping (Recording) -> Void) {
-        let root = LibraryWindowRootView(onOpen: onOpen)
+    convenience init(
+        vm: LibraryViewModel,
+        onOpen: @escaping (Recording) -> Void,
+        onOpenSettings: @escaping () -> Void
+    ) {
+        let root = LibraryWindowRootView(onOpen: onOpen, onOpenSettings: onOpenSettings)
             .environmentObject(vm)
         let host = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: host)

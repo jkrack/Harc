@@ -8,9 +8,14 @@ public struct LibraryWindowRootView: View {
     @State private var renameText: String = ""
 
     let onOpen: (Recording) -> Void
+    let onOpenSettings: () -> Void
 
-    public init(onOpen: @escaping (Recording) -> Void) {
+    public init(
+        onOpen: @escaping (Recording) -> Void,
+        onOpenSettings: @escaping () -> Void
+    ) {
         self.onOpen = onOpen
+        self.onOpenSettings = onOpenSettings
     }
 
     public var body: some View {
@@ -42,6 +47,8 @@ public struct LibraryWindowRootView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
+            brandHeader
+            Divider().background(Color.harcOutlineVariant.opacity(0.3))
             quickFilters
             Divider().background(Color.harcOutlineVariant.opacity(0.3))
             MonthCalendarView(
@@ -53,8 +60,43 @@ public struct LibraryWindowRootView: View {
                 onSelectDay: { day in vm.filter = .day(day) }
             )
             Spacer()
+            sidebarFooter
         }
         .padding(HarcDesign.Space.md)
+    }
+
+    private var brandHeader: some View {
+        HStack(spacing: HarcDesign.Space.sm) {
+            RecordingIconTile(systemImage: "waveform", accent: .harcPrimary, size: 36)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Harc")
+                    .font(HarcDesign.Font.titleLg)
+                    .foregroundStyle(Color.harcOnSurface)
+                Text("LOCAL LIBRARY")
+                    .font(HarcDesign.Font.labelMd)
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .tracking(1.2)
+            }
+            Spacer()
+        }
+    }
+
+    private var sidebarFooter: some View {
+        Button(action: onOpenSettings) {
+            HStack(spacing: HarcDesign.Space.xs) {
+                Image(systemName: "gearshape")
+                    .frame(width: 16)
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                Text("Settings")
+                    .font(HarcDesign.Font.bodyMd)
+                    .foregroundStyle(Color.harcOnSurface)
+                Spacer()
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, HarcDesign.Space.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var quickFilters: some View {

@@ -265,9 +265,11 @@ private func openDetail(for recording: Recording) {
         guard let store else { return }
         let vm = LibraryViewModel(store: store)
         libraryVM = vm
-        let controller = LibraryWindowController(vm: vm) { [weak self] rec in
-            self?.openDetail(for: rec)
-        }
+        let controller = LibraryWindowController(
+            vm: vm,
+            onOpen: { [weak self] rec in self?.openDetail(for: rec) },
+            onOpenSettings: { [weak self] in self?.openSettings() }
+        )
         libraryWindow = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
