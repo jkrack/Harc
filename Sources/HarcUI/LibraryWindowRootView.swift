@@ -18,6 +18,9 @@ public struct LibraryWindowRootView: View {
 
     private var selectedRecording: Recording? {
         guard let path = selectedWavPath else { return nil }
+        if let hit = vm.hits.first(where: { $0.recording.wavPath == path }) {
+            return hit.recording
+        }
         return vm.recordings.first { $0.wavPath == path }
     }
 
@@ -159,15 +162,55 @@ public struct LibraryWindowRootView: View {
     private var main: some View {
         VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
             LibrarySearchField(text: $vm.searchText)
-            list
+            if vm.searchText.isEmpty {
+                list
+            } else {
+                searchResultsList
+            }
             statusStrip
         }
         .padding(HarcDesign.Space.lg)
     }
 
+    @ViewBuilder
+    private var searchResultsList: some View {
+        if vm.hits.isEmpty {
+            VStack {
+                Spacer()
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.4))
+                Text("No matches for \u{201C}\(vm.searchText)\u{201D}")
+                    .font(HarcDesign.Font.bodyMd)
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .padding(.top, HarcDesign.Space.xs)
+                Spacer()
+            }
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(vm.hits) { hit in
+                        TranscriptHitRow(hit: hit) { onOpen(hit.recording) }
+                            .background(
+                                selectedWavPath == hit.recording.wavPath
+                                    ? Color.harcPrimary.opacity(0.08)
+                                    : Color.clear
+                            )
+                            .onTapGesture {
+                                selectedWavPath = hit.recording.wavPath
+                            }
+                        Divider().background(Color.harcOutlineVariant.opacity(0.2))
+                    }
+                }
+            }
+        }
+    }
+
     private var statusStrip: some View {
         HStack {
-            Text("\(vm.recordings.count) files")
+            Text(vm.searchText.isEmpty
+                 ? "\(vm.recordings.count) files"
+                 : "\(vm.hits.count) match\(vm.hits.count == 1 ? "" : "es")")
                 .font(HarcDesign.Font.labelMd)
                 .foregroundStyle(Color.harcOnSurfaceVariant)
             Text("·")

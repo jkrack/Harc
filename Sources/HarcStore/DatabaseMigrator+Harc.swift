@@ -46,6 +46,28 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v4_fts_transcript_only") { db in
+            // GRDB's synchronize triggers outlive the virtual table — drop them first.
+            try db.execute(sql: "DROP TRIGGER IF EXISTS __recordings_fts_ai")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS __recordings_fts_ad")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS __recordings_fts_au")
+
+            // Drop the v1 combined-column FTS table.
+            try db.execute(sql: "DROP TABLE IF EXISTS recordings_fts")
+
+            // Recreate on transcript_text only, Porter over unicode61, diacritic-folded.
+            try db.create(virtualTable: "recordings_fts", using: FTS5()) { t in
+                t.synchronize(withTable: "recordings")
+                t.column("transcript_text")
+                t.tokenizer = .porter(wrapping: .unicode61(diacritics: .removeLegacy))
+            }
+
+            // Backfill existing rows: `synchronize` only installs triggers for
+            // future writes; `rebuild` reads every row and repopulates the FTS
+            // index using those same trigger projections.
+            try db.execute(sql: "INSERT INTO recordings_fts(recordings_fts) VALUES('rebuild')")
+        }
+
         return migrator
     }
 }
