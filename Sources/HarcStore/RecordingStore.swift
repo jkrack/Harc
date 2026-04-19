@@ -134,6 +134,26 @@ public actor RecordingStore {
         }
     }
 
+    /// Post-process path: set the NLTagger-derived tags array. Like
+    /// `updateSuggestedTitle`, no `notFound` throw — late updates are benign.
+    public func updateTags(id: Int64, tags: [String]) async throws {
+        let json: String?
+        if tags.isEmpty {
+            json = nil
+        } else if let data = try? JSONEncoder().encode(tags),
+                  let s = String(data: data, encoding: .utf8) {
+            json = s
+        } else {
+            json = nil
+        }
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE recordings SET tags = ?, updated_at = ? WHERE id = ?",
+                arguments: [json, Date(), id]
+            )
+        }
+    }
+
     public func setPinned(id: Int64, pinned: Bool) async throws {
         try await dbQueue.write { db in
             let count = try Recording.filter(key: id).updateAll(

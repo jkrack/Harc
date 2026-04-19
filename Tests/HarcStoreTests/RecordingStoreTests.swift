@@ -218,4 +218,18 @@ struct RecordingStoreTests {
         let fetched = try #require(try await store.fetchByWavPath("/tmp/tags/b.wav"))
         #expect(fetched.tags == [])
     }
+
+    @Test("updateTags writes the JSON-encoded array")
+    func updateTagsBasics() async throws {
+        let store = try await RecordingStore.inMemory()
+        let rec = try await store.upsert(Recording(wavPath: "/tmp/ut/a.wav", startedAt: Date()))
+        try await store.updateTags(id: rec.id!, tags: ["Sarah", "Q3"])
+        let refreshed = try #require(try await store.fetchByWavPath("/tmp/ut/a.wav"))
+        #expect(refreshed.tags == ["Sarah", "Q3"])
+
+        // Clearing — empty array round-trips to empty array.
+        try await store.updateTags(id: rec.id!, tags: [])
+        let cleared = try #require(try await store.fetchByWavPath("/tmp/ut/a.wav"))
+        #expect(cleared.tags == [])
+    }
 }

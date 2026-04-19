@@ -142,10 +142,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             if let transcriptText, let store = self.store {
                 Task.detached { [store] in
-                    guard let suggestion = TitleSuggester.suggest(from: transcriptText) else { return }
+                    let entities = TitleSuggester.extractEntities(from: transcriptText)
+                    let suggestion = entities.isEmpty ? nil : Array(entities.prefix(2)).joined(separator: ", ")
+                    guard suggestion != nil || !entities.isEmpty else { return }
                     guard let persisted = try? await store.fetchByWavPath(result.wavURL.path),
                           let id = persisted.id else { return }
-                    try? await store.updateSuggestedTitle(id: id, title: suggestion)
+                    if let suggestion { try? await store.updateSuggestedTitle(id: id, title: suggestion) }
+                    if !entities.isEmpty { try? await store.updateTags(id: id, tags: entities) }
                 }
             }
             if let text = transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
