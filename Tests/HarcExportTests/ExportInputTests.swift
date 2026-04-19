@@ -24,4 +24,23 @@ struct ExportInputTests {
         )
         #expect(!input.isDiarized)
     }
+
+    @Test("tags defaults to empty when omitted")
+    func tagsDefaultsEmpty() {
+        let input = ExportInput(
+            title: "t", startedAt: Date(), durationSeconds: 0,
+            segments: []
+        )
+        #expect(input.tags.isEmpty)
+    }
+
+    @Test("tags round-trip via initializer")
+    func tagsRoundTrip() {
+        let input = ExportInput(
+            title: "t", startedAt: Date(), durationSeconds: 0,
+            tags: ["Harc", "standup"],
+            segments: []
+        )
+        #expect(input.tags == ["Harc", "standup"])
+    }
 }
