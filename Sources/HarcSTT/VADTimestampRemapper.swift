@@ -22,7 +22,7 @@ public enum VADTimestampRemapper {
     /// Find the region containing `compactMs` and return the corresponding
     /// original-timeline ms. If `compactMs` is past the last region, returns
     /// the last region's tail (origEnd in ms).
-    static func remapCompactMs(_ compactMs: Int, regions: [VoicedRegion], sampleRate: Int) -> Int {
+    private static func remapCompactMs(_ compactMs: Int, regions: [VoicedRegion], sampleRate: Int) -> Int {
         let compactSamples = compactMs * sampleRate / 1000
         var containing: VoicedRegion = regions.last!
         for r in regions {

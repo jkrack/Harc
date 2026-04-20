@@ -498,7 +498,7 @@ In `startRecording()`, pass `vadEnabled: prefs.vadEnabled` into the `ChunkedTran
 
 - Record 90s of solo dictation with long thinking pauses. Compare (a) transcript text and (b) daemon stderr "processingMs" between VAD-on and VAD-off. Expect ≥30% reduction in processingMs, identical transcript.
 - Record a 10-minute Zoom call with ScreenCaptureKit capture running (you talking ~30% of the time). Expect ~20% reduction, identical transcript.
-- Flip the Settings toggle mid-session. The next chunk (not the in-flight one) should honour the new value.
+- Flip the Settings toggle between recordings. The next recording honours the new value. (The current recording is unaffected — the setting is captured once at recording start, consistent with how `diarize` and `chunkDurationSeconds` behave.)
 - Revoke VAD model (temporarily rename the download cache dir) and record. Expect daemon stderr log, full-chunk fallback, transcript unchanged.
 
 ---

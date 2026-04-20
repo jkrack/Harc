@@ -9,6 +9,11 @@ public actor Transcriber {
     private var asrManager: AsrManager?
     private let audioConverter = AudioConverter()
     private let vadGate: VADGate
+    /// Sample rate the VAD / stitcher / remapper operate at. Matches what
+    /// AudioConverter.resampleAudioFile emits by default. Making this
+    /// explicit prevents silent misbehaviour if the pipeline's audio
+    /// format ever changes.
+    private static let sampleRate: Int = 16000
 
     public init(vadGate: VADGate = VADGate()) {
         self.vadGate = vadGate
@@ -46,6 +51,7 @@ public actor Transcriber {
             return try await runParakeet(on: samples, with: manager, regions: nil)
         }
 
+        let vadStart = DispatchTime.now()
         let segments: [VadSegment]
         do {
             segments = try await vadGate.segments(in: samples)
@@ -55,12 +61,17 @@ public actor Transcriber {
             ))
             return try await runParakeet(on: samples, with: manager, regions: nil)
         }
+        let vadMs = Int((DispatchTime.now().uptimeNanoseconds - vadStart.uptimeNanoseconds) / 1_000_000)
 
         guard VADGate.hasMinimumVoicedDuration(segments) else {
-            return TranscribeResult(text: "", words: [], speakers: [], processingMs: 0)
+            return TranscribeResult(text: "", words: [], speakers: [], processingMs: vadMs)
         }
 
-        let stitch = VoicedStitcher.stitch(samples: samples, segments: segments)
+        let stitch = VoicedStitcher.stitch(
+            samples: samples,
+            segments: segments,
+            sampleRate: Self.sampleRate
+        )
         return try await runParakeet(on: stitch.compactSamples, with: manager, regions: stitch.regions)
     }
 
@@ -86,7 +97,11 @@ public actor Transcriber {
             )
         }
         let words = regions.map {
-            VADTimestampRemapper.remap(words: compactWords, regions: $0)
+            VADTimestampRemapper.remap(
+                words: compactWords,
+                regions: $0,
+                sampleRate: Self.sampleRate
+            )
         } ?? compactWords
 
         return TranscribeResult(

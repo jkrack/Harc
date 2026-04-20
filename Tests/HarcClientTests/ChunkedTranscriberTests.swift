@@ -96,6 +96,31 @@ struct ChunkedTranscriberTests {
         #expect(tailWord?.startMs == 2000)
     }
 
+    @Test("vadEnabled:false forwards vad=false to client per chunk")
+    func vadEnabledForwardsToClient() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 1.2)
+
+        let fake = FakeClient(results: [
+            TranscribeResult(text: "one", words: [], speakers: [], processingMs: 1),
+            TranscribeResult(text: "two", words: [], speakers: [], processingMs: 1),
+        ])
+
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            diarize: false,
+            vadEnabled: false,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.05
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        _ = try await transcriber.finalize(startedAt: Date(), endedAt: Date())
+        #expect(await fake.calls.first?.vad == false)
+    }
+
     @Test("applies vocabulary to chunk text and joinedText")
     func vocabularyIsApplied() async throws {
         let url = tempWAVPath()
