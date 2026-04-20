@@ -17,6 +17,8 @@ enum PromptFrontMatter {
     }
 
     /// ISO 8601 with an explicit offset — e.g. `2026-04-19T14:32:00-07:00`.
+    /// Uses the `xxx` format code so UTC renders as `+00:00` (not `Z`) for
+    /// a single consistent offset form across all recordings.
     /// The `timeZone` parameter exists for deterministic tests; production
     /// callers pass `.current`.
     static func formatRecorded(_ date: Date, timeZone: TimeZone = .current) -> String {

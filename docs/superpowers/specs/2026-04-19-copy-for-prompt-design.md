@@ -67,7 +67,7 @@ Speaker 1: ...
 | Field | Source | Format | Omitted when |
 |-------|--------|--------|--------------|
 | `title` | `Recording.displayTitle` | YAML-escaped string | `displayTitle` is empty after trim |
-| `recorded` | `Recording.startedAt` | ISO 8601 with local offset (`yyyy-MM-dd'T'HH:mm:ssXXX`) | never |
+| `recorded` | `Recording.startedAt` | ISO 8601 with local offset (`yyyy-MM-dd'T'HH:mm:ssxxx`) | never |
 | `duration` | `endedAt - startedAt` | `<N>s` / `<N>m` / `<H>h <M>m` (see §3.2) | `endedAt == nil` |
 | `tags` | `Recording.tags` (joined by `, `) | comma-separated YAML-escaped string | list is empty |
 | `speakers` | count of distinct speakers in `ExportInput.segments` | integer | count < 2 (single-speaker or un-diarized) |

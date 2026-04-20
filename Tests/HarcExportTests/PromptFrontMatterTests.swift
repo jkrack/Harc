@@ -229,4 +229,16 @@ struct PromptFrontMatterTests {
         let out = PromptFrontMatter.render(input, timeZone: laTZ())
         #expect(out.contains("tags: \"foo: bar, baz\""))
     }
+
+    @Test("render — emits duration line even when durationSeconds is 0")
+    func renderEmitsDurationZero() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 0,
+            segments: []
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(out.contains("duration: 0s"))
+    }
 }
