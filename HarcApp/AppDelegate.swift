@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var menuBarTicker: Timer?
     private let menuBarFlash = MenuBarFlash()
     private var accessibilityPromptShown = false
+    private var pendingSkipPaste = false
 
     private let meetingState = MeetingDetectionState()
     private let notificationPresenter = MeetingNotificationPresenter()
@@ -129,9 +130,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     @objc private func handleStatusItemClick(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showStatusItemMenu()
-        } else {
-            togglePopover(sender)
+            return
         }
+        // ⌥-left-click while recording → stop without auto-paste.
+        if state.isRecording,
+           NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            pendingSkipPaste = true
+            Task { await stopRecording() }
+            return
+        }
+        togglePopover(sender)
     }
 
     private func togglePopover(_ sender: Any?) {
@@ -450,9 +458,11 @@ private func openDetail(for recording: Recording) {
 
     @MainActor
     private func runAutoPaste(for rec: Recording, shiftHeld: Bool) {
+        let shouldSkip = shiftHeld || pendingSkipPaste
+        pendingSkipPaste = false
         let decision = AutoPasteGuard.decide(
             enabled: prefs.autoPasteEnabled,
-            shiftHeld: shiftHeld,
+            shiftHeld: shouldSkip,
             frontmostBundleID: FrontmostAppPaster.frontmostBundleID()
         )
 
