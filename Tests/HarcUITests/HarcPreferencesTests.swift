@@ -48,4 +48,24 @@ struct HarcPreferencesTests {
         prefs.deleteEntries(ids: [id])
         #expect(!prefs.vocabulary.entries.contains(where: { $0.id == id }))
     }
+
+    @Test("autoPasteEnabled defaults to true when UserDefaults has no key")
+    func autoPasteEnabledDefaultTrue() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.autoPasteEnabled")
+        let prefs = HarcPreferences()
+        #expect(prefs.autoPasteEnabled == true)
+    }
+
+    @Test("autoPasteEnabled persists and round-trips through UserDefaults")
+    func autoPasteEnabledPersists() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.autoPasteEnabled")
+        let prefs = HarcPreferences()
+        prefs.autoPasteEnabled = false
+        let reloaded = HarcPreferences()
+        #expect(reloaded.autoPasteEnabled == false)
+        // Restore default for subsequent tests.
+        defaults.removeObject(forKey: "harc.autoPasteEnabled")
+    }
 }

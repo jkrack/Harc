@@ -14,6 +14,7 @@ public final class HarcPreferences: ObservableObject {
         static let vocabulary = "harc.vocabulary"
         static let meetingDetectionEnabled = "harc.meetingDetectionEnabled"
         static let meetingAppEnabled = "harc.meetingAppEnabled"
+        static let autoPasteEnabled = "harc.autoPasteEnabled"
     }
 
     @Published public var destinationPath: String {
@@ -44,6 +45,10 @@ public final class HarcPreferences: ObservableObject {
         }
     }
 
+    @Published public var autoPasteEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: Key.autoPasteEnabled) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -70,6 +75,7 @@ public final class HarcPreferences: ObservableObject {
                 "com.tinyspeck.slackmacgap": false,
             ]
         }
+        self.autoPasteEnabled = defaults.object(forKey: Key.autoPasteEnabled) as? Bool ?? true
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {
