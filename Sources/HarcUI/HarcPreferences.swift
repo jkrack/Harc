@@ -15,6 +15,7 @@ public final class HarcPreferences: ObservableObject {
         static let meetingDetectionEnabled = "harc.meetingDetectionEnabled"
         static let meetingAppEnabled = "harc.meetingAppEnabled"
         static let autoPasteEnabled = "harc.autoPasteEnabled"
+        static let vadEnabled = "harc.vadEnabled"
     }
 
     @Published public var destinationPath: String {
@@ -49,6 +50,10 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: Key.autoPasteEnabled) }
     }
 
+    @Published public var vadEnabled: Bool {
+        didSet { UserDefaults.standard.set(vadEnabled, forKey: Key.vadEnabled) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -76,6 +81,7 @@ public final class HarcPreferences: ObservableObject {
             ]
         }
         self.autoPasteEnabled = defaults.object(forKey: Key.autoPasteEnabled) as? Bool ?? true
+        self.vadEnabled = defaults.object(forKey: Key.vadEnabled) as? Bool ?? true
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {

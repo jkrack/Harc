@@ -68,4 +68,23 @@ struct HarcPreferencesTests {
         // Restore default for subsequent tests.
         defaults.removeObject(forKey: "harc.autoPasteEnabled")
     }
+
+    @Test("vadEnabled defaults to true when UserDefaults has no key")
+    func vadEnabledDefaultTrue() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.vadEnabled")
+        let prefs = HarcPreferences()
+        #expect(prefs.vadEnabled == true)
+    }
+
+    @Test("vadEnabled persists and round-trips through UserDefaults")
+    func vadEnabledPersists() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.vadEnabled")
+        let prefs = HarcPreferences()
+        prefs.vadEnabled = false
+        let reloaded = HarcPreferences()
+        #expect(reloaded.vadEnabled == false)
+        defaults.removeObject(forKey: "harc.vadEnabled")
+    }
 }
