@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import HarcStore
+import HarcExport
 
 public struct TranscriptionDetailView: View {
     let recording: Recording
@@ -85,22 +86,24 @@ public struct TranscriptionDetailView: View {
 
     private var toolbar: some View {
         HStack(spacing: HarcDesign.Space.xs) {
-            Button {
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.setString(transcript, forType: .string)
+            Menu {
+                Button("Copy for Prompt")  { copyPromptString() }
+                Button("Copy Plain Text")  { copyPlainText() }
             } label: {
-                Label("Copy", systemImage: "doc.on.clipboard")
+                Label("Copy for Prompt", systemImage: "doc.on.clipboard")
             }
+            .menuStyle(.borderlessButton)
             .disabled(transcript.isEmpty)
+            .help("Copy the prompt-formatted blob (default) or plain text")
 
             Button {
-                try? FrontmostAppPaster.copyAndPaste(transcript)
+                let s = ExportService.promptString(for: recording)
+                try? FrontmostAppPaster.copyAndPaste(s)
             } label: {
                 Label("Paste", systemImage: "text.viewfinder")
             }
             .disabled(transcript.isEmpty)
-            .help("Copy to clipboard and paste into the frontmost app")
+            .help("Copy the prompt blob to clipboard and paste into the frontmost app")
 
             Button(action: onReveal) {
                 Label("Reveal", systemImage: "folder")
@@ -118,6 +121,19 @@ public struct TranscriptionDetailView: View {
                 Text("The recording's audio, transcript, and JSON files are moved to Trash and the entry is soft-deleted from the library.")
             }
         }
+    }
+
+    private func copyPromptString() {
+        let s = ExportService.promptString(for: recording)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(s, forType: .string)
+    }
+
+    private func copyPlainText() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(transcript, forType: .string)
     }
 
     private func load() {
