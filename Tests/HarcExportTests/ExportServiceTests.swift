@@ -70,4 +70,36 @@ struct ExportServiceTests {
         #expect(prompt == header + "\n")
         #expect(!prompt.contains("\n\n"))
     }
+
+    @Test("defaultDestination for .prompt uses <stem>.prompt.md in the recording folder")
+    func defaultDestinationPrompt() {
+        let rec = Recording(
+            wavPath: "/tmp/harc/2026/2026-04-19/10-00-00.wav",
+            startedAt: Date()
+        )
+        let url = ExportService.defaultDestination(for: rec, format: .prompt)
+        #expect(url.path == "/tmp/harc/2026/2026-04-19/10-00-00.prompt.md")
+    }
+
+    @Test("write .prompt writes the promptString bytes atomically")
+    func writesPrompt() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-export-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let rec = Recording(
+            wavPath: tmp.appendingPathComponent("x.wav").path,
+            startedAt: Date(),
+            transcriptText: "hello prompt",
+            tags: ["demo"]
+        )
+        let target = tmp.appendingPathComponent("x.prompt.md")
+        try ExportService.write(recording: rec, format: .prompt, to: target)
+        let contents = try String(contentsOf: target, encoding: .utf8)
+        #expect(contents == ExportService.promptString(for: rec))
+        #expect(contents.hasPrefix("---\n"))
+        #expect(contents.contains("tags: demo"))
+        #expect(contents.contains("hello prompt"))
+    }
 }

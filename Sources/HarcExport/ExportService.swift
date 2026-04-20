@@ -4,11 +4,13 @@ import HarcStore
 public enum ExportFormat: Sendable {
     case markdown
     case docx
+    case prompt
 
     public var filenameExtension: String {
         switch self {
         case .markdown: return "md"
         case .docx:     return "docx"
+        case .prompt:   return "md"
         }
     }
 }
@@ -21,8 +23,13 @@ public enum ExportService {
     public static func defaultDestination(for recording: Recording, format: ExportFormat) -> URL {
         let wav = URL(fileURLWithPath: recording.wavPath)
         let stem = wav.deletingPathExtension().lastPathComponent
-        return wav.deletingLastPathComponent()
-            .appendingPathComponent("\(stem).\(format.filenameExtension)")
+        let folder = wav.deletingLastPathComponent()
+        switch format {
+        case .markdown, .docx:
+            return folder.appendingPathComponent("\(stem).\(format.filenameExtension)")
+        case .prompt:
+            return folder.appendingPathComponent("\(stem).prompt.md")
+        }
     }
 
     /// Render + write to `url`. Atomic write.
@@ -38,6 +45,8 @@ public enum ExportService {
             data = Data(MarkdownExporter.render(input).utf8)
         case .docx:
             data = try DocxExporter.render(input)
+        case .prompt:
+            data = Data(ExportService.promptString(for: recording).utf8)
         }
         do {
             try data.write(to: url, options: .atomic)
