@@ -208,6 +208,26 @@ struct RecordingStoreTests {
         #expect(fetched.tags == [])
     }
 
+    @Test("speakerNames round-trip through the DB (dict)")
+    func speakerNamesRoundTrip() async throws {
+        let store = try await RecordingStore.inMemory()
+        _ = try await store.upsert(Recording(
+            wavPath: "/tmp/spk/a.wav",
+            startedAt: Date(),
+            speakerNames: [0: "Jason", 1: "Amy"]
+        ))
+        let fetched = try #require(try await store.fetchByWavPath("/tmp/spk/a.wav"))
+        #expect(fetched.speakerNames == [0: "Jason", 1: "Amy"])
+    }
+
+    @Test("empty speakerNames reads back as empty, not nil")
+    func speakerNamesEmptyDefault() async throws {
+        let store = try await RecordingStore.inMemory()
+        _ = try await store.upsert(Recording(wavPath: "/tmp/spk/b.wav", startedAt: Date()))
+        let fetched = try #require(try await store.fetchByWavPath("/tmp/spk/b.wav"))
+        #expect(fetched.speakerNames == [:])
+    }
+
     @Test("updateTags writes the JSON-encoded array")
     func updateTagsBasics() async throws {
         let store = try await RecordingStore.inMemory()

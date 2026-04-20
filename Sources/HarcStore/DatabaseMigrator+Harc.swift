@@ -68,6 +68,12 @@ extension DatabaseMigrator {
             try db.execute(sql: "INSERT INTO recordings_fts(recordings_fts) VALUES('rebuild')")
         }
 
+        migrator.registerMigration("v5_speaker_names") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "speaker_names", .text)  // JSON-encoded [String: String]; nil means no overrides
+            }
+        }
+
         return migrator
     }
 }

@@ -13,6 +13,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var transcriptText: String?
     public var suggestedTitle: String?
     public var tags: [String] = []
+    public var speakerNames: [Int: String] = [:]
     public var pinned: Bool
     public var deletedAt: Date?
     public var createdAt: Date
@@ -29,6 +30,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         transcriptText: String? = nil,
         suggestedTitle: String? = nil,
         tags: [String] = [],
+        speakerNames: [Int: String] = [:],
         pinned: Bool = false,
         deletedAt: Date? = nil,
         createdAt: Date = Date(),
@@ -44,6 +46,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.transcriptText = transcriptText
         self.suggestedTitle = suggestedTitle
         self.tags = tags
+        self.speakerNames = speakerNames
         self.pinned = pinned
         self.deletedAt = deletedAt
         self.createdAt = createdAt
@@ -91,6 +94,19 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         } else {
             self.tags = []
         }
+        if let json = try c.decodeIfPresent(String.self, forKey: .speakerNames),
+           let data = json.data(using: .utf8),
+           let raw = try? JSONDecoder().decode([String: String].self, from: data) {
+            var parsed: [Int: String] = [:]
+            for (k, v) in raw {
+                if let i = Int(k), !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    parsed[i] = v
+                }
+            }
+            self.speakerNames = parsed
+        } else {
+            self.speakerNames = [:]
+        }
         self.pinned = try c.decode(Bool.self, forKey: .pinned)
         self.deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
@@ -116,6 +132,18 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         } else {
             try c.encodeNil(forKey: .tags)
         }
+        if speakerNames.isEmpty {
+            try c.encodeNil(forKey: .speakerNames)
+        } else {
+            var stringKeyed: [String: String] = [:]
+            for (k, v) in speakerNames { stringKeyed[String(k)] = v }
+            if let data = try? JSONEncoder().encode(stringKeyed),
+               let s = String(data: data, encoding: .utf8) {
+                try c.encode(s, forKey: .speakerNames)
+            } else {
+                try c.encodeNil(forKey: .speakerNames)
+            }
+        }
         try c.encode(pinned, forKey: .pinned)
         try c.encodeIfPresent(deletedAt, forKey: .deletedAt)
         try c.encode(createdAt, forKey: .createdAt)
@@ -138,6 +166,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         case transcriptText = "transcript_text"
         case suggestedTitle = "suggested_title"
         case tags
+        case speakerNames = "speaker_names"
         case pinned
         case deletedAt = "deleted_at"
         case createdAt = "created_at"
@@ -155,6 +184,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let transcriptText = Column("transcript_text")
         static let suggestedTitle = Column("suggested_title")
         static let tags = Column("tags")
+        static let speakerNames = Column("speaker_names")
         static let pinned = Column("pinned")
         static let deletedAt = Column("deleted_at")
         static let createdAt = Column("created_at")
