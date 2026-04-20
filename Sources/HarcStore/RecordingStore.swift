@@ -154,6 +154,36 @@ public actor RecordingStore {
         }
     }
 
+    /// Post-process path: set the per-recording speaker-name overrides.
+    /// Empty dict clears the column (stored as NULL). No `notFound` throw —
+    /// late updates are benign.
+    public func updateSpeakerNames(id: Int64, names: [Int: String]) async throws {
+        let json: String?
+        if names.isEmpty {
+            json = nil
+        } else {
+            var stringKeyed: [String: String] = [:]
+            for (k, v) in names {
+                let trimmed = v.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { stringKeyed[String(k)] = trimmed }
+            }
+            if stringKeyed.isEmpty {
+                json = nil
+            } else if let data = try? JSONEncoder().encode(stringKeyed),
+                      let s = String(data: data, encoding: .utf8) {
+                json = s
+            } else {
+                json = nil
+            }
+        }
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE recordings SET speaker_names = ?, updated_at = ? WHERE id = ?",
+                arguments: [json, Date(), id]
+            )
+        }
+    }
+
     /// Atomically update the stored transcript text. The FTS5 `synchronize`
     /// trigger picks this up automatically so search is consistent post-edit.
     public func updateTranscriptText(id: Int64, text: String) async throws {

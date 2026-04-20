@@ -241,4 +241,19 @@ struct RecordingStoreTests {
         let cleared = try #require(try await store.fetchByWavPath("/tmp/ut/a.wav"))
         #expect(cleared.tags == [])
     }
+
+    @Test("updateSpeakerNames writes the JSON-encoded dict and clears on empty")
+    func updateSpeakerNamesBasics() async throws {
+        let store = try await RecordingStore.inMemory()
+        let rec = try await store.upsert(Recording(wavPath: "/tmp/usn/a.wav", startedAt: Date()))
+
+        try await store.updateSpeakerNames(id: rec.id!, names: [0: "Jason", 2: "Amy"])
+        let written = try #require(try await store.fetchByWavPath("/tmp/usn/a.wav"))
+        #expect(written.speakerNames == [0: "Jason", 2: "Amy"])
+
+        // Empty dict clears the column.
+        try await store.updateSpeakerNames(id: rec.id!, names: [:])
+        let cleared = try #require(try await store.fetchByWavPath("/tmp/usn/a.wav"))
+        #expect(cleared.speakerNames == [:])
+    }
 }
