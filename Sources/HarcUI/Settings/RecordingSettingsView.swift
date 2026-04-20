@@ -46,6 +46,20 @@ public struct RecordingSettingsView: View {
             }
 
             Section {
+                Toggle("Auto-paste on stop", isOn: $prefs.autoPasteEnabled)
+                    .tint(HarcDesign.primary)
+            } header: {
+                Text("Auto-paste")
+            } footer: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("When recording stops, the prompt-formatted transcript is pasted into the frontmost app.")
+                    Text("Hold ⇧ while clicking Stop, or ⌥-click the menu-bar icon, to skip for one recording. Paste is always skipped for password managers, Finder, and meeting apps.")
+                }
+                .font(HarcDesign.Font.bodySm)
+                .foregroundStyle(Color.harcOnSurfaceVariant)
+            }
+
+            Section {
                 KeyboardShortcuts.Recorder("Toggle recording:", name: .toggleRecording)
             } header: {
                 Text("Global hotkey")
