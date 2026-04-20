@@ -129,4 +129,104 @@ struct PromptFrontMatterTests {
         ]
         #expect(PromptFrontMatter.speakerCount(in: segs) == 1)
     }
+
+    // MARK: render
+
+    private func laTZ() -> TimeZone { TimeZone(identifier: "America/Los_Angeles")! }
+
+    private func fixedDate() -> Date {
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 4; comps.day = 19
+        comps.hour = 14; comps.minute = 32; comps.second = 0
+        comps.timeZone = laTZ()
+        return Calendar(identifier: .gregorian).date(from: comps)!
+    }
+
+    @Test("render — full set of fields in fixed order")
+    func renderFull() {
+        let input = ExportInput(
+            title: "Standup with Jason",
+            startedAt: fixedDate(),
+            durationSeconds: 2820, // 47m
+            tags: ["standup", "Jason", "Harc"],
+            segments: [
+                .init(speaker: 0, text: "Hi"),
+                .init(speaker: 1, text: "Hey"),
+            ]
+        )
+        let expected = """
+        ---
+        title: Standup with Jason
+        recorded: 2026-04-19T14:32:00-07:00
+        duration: 47m
+        tags: standup, Jason, Harc
+        speakers: 2
+        ---
+        """
+        #expect(PromptFrontMatter.render(input, timeZone: laTZ()) == expected)
+    }
+
+    @Test("render — omits empty title")
+    func renderOmitsEmptyTitle() {
+        let input = ExportInput(
+            title: "",
+            startedAt: fixedDate(),
+            durationSeconds: 30,
+            segments: [.init(speaker: nil, text: "x")]
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(!out.contains("title:"))
+        #expect(out.contains("recorded: 2026-04-19T14:32:00-07:00"))
+        #expect(out.contains("duration: 30s"))
+    }
+
+    @Test("render — omits duration when nil")
+    func renderOmitsDuration() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: nil,
+            segments: []
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(!out.contains("duration:"))
+    }
+
+    @Test("render — omits tags when empty")
+    func renderOmitsTags() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 30,
+            tags: [],
+            segments: []
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(!out.contains("tags:"))
+    }
+
+    @Test("render — omits speakers when count < 2")
+    func renderOmitsSpeakersSingle() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 30,
+            segments: [.init(speaker: 0, text: "alone")]
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(!out.contains("speakers:"))
+    }
+
+    @Test("render — tags with a colon force the whole tags line to be quoted")
+    func renderQuotesTagsWithColon() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 30,
+            tags: ["foo: bar", "baz"],
+            segments: []
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(out.contains("tags: \"foo: bar, baz\""))
+    }
 }

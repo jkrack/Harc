@@ -60,6 +60,37 @@ enum PromptFrontMatter {
         return seen.count
     }
 
+    /// Render the full YAML front-matter block, including opening and closing
+    /// `---` delimiters. Does NOT add a trailing blank line — the composer in
+    /// `ExportService.promptString` owns spacing between header and body.
+    static func render(_ input: ExportInput, timeZone: TimeZone = .current) -> String {
+        var lines: [String] = ["---"]
+
+        let trimmedTitle = input.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedTitle.isEmpty {
+            lines.append("title: \(yamlScalar(trimmedTitle))")
+        }
+
+        lines.append("recorded: \(formatRecorded(input.startedAt, timeZone: timeZone))")
+
+        if let secs = input.durationSeconds {
+            lines.append("duration: \(formatDuration(secs))")
+        }
+
+        if !input.tags.isEmpty {
+            let joined = input.tags.joined(separator: ", ")
+            lines.append("tags: \(yamlScalar(joined))")
+        }
+
+        let speakers = speakerCount(in: input.segments)
+        if speakers >= 2 {
+            lines.append("speakers: \(speakers)")
+        }
+
+        lines.append("---")
+        return lines.joined(separator: "\n")
+    }
+
     private static let reservedLeadingChars: Set<Character> = [
         "!", "&", "*", "-", ":", "?", "{", "}", "[", "]", ",",
         "#", "|", ">", "'", "\"", "%", "@", "`",
