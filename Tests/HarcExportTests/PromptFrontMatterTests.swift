@@ -93,4 +93,40 @@ struct PromptFrontMatterTests {
         // \u{0001} (SOH) gets stripped → just "ab", passes through plain.
         #expect(PromptFrontMatter.yamlScalar("a\u{0001}b") == "ab")
     }
+
+    // MARK: speakerCount
+
+    @Test("speakerCount — empty segments → 0")
+    func speakerCountEmpty() {
+        #expect(PromptFrontMatter.speakerCount(in: []) == 0)
+    }
+
+    @Test("speakerCount — nil-speaker segments don't count")
+    func speakerCountNilOnly() {
+        let segs: [ExportInput.Segment] = [
+            .init(speaker: nil, text: "a"),
+            .init(speaker: nil, text: "b"),
+        ]
+        #expect(PromptFrontMatter.speakerCount(in: segs) == 0)
+    }
+
+    @Test("speakerCount — distinct speaker ids are counted once each")
+    func speakerCountDistinct() {
+        let segs: [ExportInput.Segment] = [
+            .init(speaker: 0, text: "a"),
+            .init(speaker: 1, text: "b"),
+            .init(speaker: 0, text: "c"),      // duplicate id
+            .init(speaker: 2, text: "d"),
+        ]
+        #expect(PromptFrontMatter.speakerCount(in: segs) == 3)
+    }
+
+    @Test("speakerCount — mixed nil and ids")
+    func speakerCountMixed() {
+        let segs: [ExportInput.Segment] = [
+            .init(speaker: nil, text: "a"),
+            .init(speaker: 0, text: "b"),
+        ]
+        #expect(PromptFrontMatter.speakerCount(in: segs) == 1)
+    }
 }

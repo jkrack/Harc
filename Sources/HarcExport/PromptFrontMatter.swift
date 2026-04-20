@@ -49,6 +49,17 @@ enum PromptFrontMatter {
         return filtered
     }
 
+    /// Count of distinct non-nil speaker ids in `segments`. Returns 0 for
+    /// un-diarized input. Used to decide whether the `speakers:` field is
+    /// emitted (only when >= 2).
+    static func speakerCount(in segments: [ExportInput.Segment]) -> Int {
+        var seen: Set<Int> = []
+        for s in segments {
+            if let id = s.speaker { seen.insert(id) }
+        }
+        return seen.count
+    }
+
     private static let reservedLeadingChars: Set<Character> = [
         "!", "&", "*", "-", ":", "?", "{", "}", "[", "]", ",",
         "#", "|", ">", "'", "\"", "%", "@", "`",
