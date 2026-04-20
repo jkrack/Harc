@@ -39,21 +39,24 @@ public struct TranscribeRequest: Codable, Equatable, Sendable {
     public var language: String
     public var wantTimestamps: Bool
     public var diarize: Bool
+    public var vad: Bool
 
     public init(
         audioPath: String,
         language: String = "en",
         wantTimestamps: Bool = true,
-        diarize: Bool = true
+        diarize: Bool = true,
+        vad: Bool = true
     ) {
         self.audioPath = audioPath
         self.language = language
         self.wantTimestamps = wantTimestamps
         self.diarize = diarize
+        self.vad = vad
     }
 
     private enum CodingKeys: String, CodingKey {
-        case audioPath, language, wantTimestamps, diarize
+        case audioPath, language, wantTimestamps, diarize, vad
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,5 +65,6 @@ public struct TranscribeRequest: Codable, Equatable, Sendable {
         self.language = try c.decodeIfPresent(String.self, forKey: .language) ?? "en"
         self.wantTimestamps = try c.decodeIfPresent(Bool.self, forKey: .wantTimestamps) ?? true
         self.diarize = try c.decodeIfPresent(Bool.self, forKey: .diarize) ?? true
+        self.vad = try c.decodeIfPresent(Bool.self, forKey: .vad) ?? true
     }
 }
