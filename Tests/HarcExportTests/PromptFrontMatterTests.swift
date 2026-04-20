@@ -51,6 +51,11 @@ struct PromptFrontMatterTests {
         #expect(PromptFrontMatter.yamlScalar("Harc, standup") == "Harc, standup")
     }
 
+    @Test("yamlScalar — mid-value ` #` (space-then-hash) forces quoting")
+    func yamlScalarSpaceHash() {
+        #expect(PromptFrontMatter.yamlScalar("Sprint 12 #backlog") == "\"Sprint 12 #backlog\"")
+    }
+
     @Test("yamlScalar — values with : get quoted")
     func yamlScalarColon() {
         // A colon followed by space requires quoting per YAML 1.2.

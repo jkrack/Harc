@@ -61,6 +61,7 @@ enum PromptFrontMatter {
         if let last = s.last, last.isWhitespace { return true }
         if s.contains("\n") || s.contains("\r") || s.contains("\t") { return true }
         if s.contains(": ") || s.hasSuffix(":") { return true }
+        if s.contains(" #") { return true }
         if s.contains("\"") || s.contains("\\") { return true }
         return false
     }
