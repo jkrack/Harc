@@ -405,6 +405,10 @@ private func openDetail(for recording: Recording) {
             onRename: { [weak self] newTitle in
                 guard let id = recording.id else { return }
                 Task { try? await self?.store?.rename(id: id, title: newTitle) }
+            },
+            onSpeakerNamesChanged: { [weak self] names in
+                guard let id = recording.id else { return }
+                Task { try? await self?.store?.updateSpeakerNames(id: id, names: names) }
             }
         )
         detailWindows[recording.wavPath] = controller

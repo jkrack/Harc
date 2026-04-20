@@ -8,6 +8,7 @@ public struct TranscriptionDetailView: View {
     let onReveal: () -> Void
     let onDelete: () -> Void
     let onRename: (String?) -> Void
+    let onSpeakerNamesChanged: ([Int: String]) -> Void
 
     @State private var renameDraft: String
     @State private var isEditingTitle = false
@@ -19,12 +20,14 @@ public struct TranscriptionDetailView: View {
         recording: Recording,
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void,
-        onRename: @escaping (String?) -> Void
+        onRename: @escaping (String?) -> Void,
+        onSpeakerNamesChanged: @escaping ([Int: String]) -> Void
     ) {
         self.recording = recording
         self.onReveal = onReveal
         self.onDelete = onDelete
         self.onRename = onRename
+        self.onSpeakerNamesChanged = onSpeakerNamesChanged
         self._renameDraft = State(initialValue: recording.title ?? "")
     }
 
@@ -58,6 +61,12 @@ public struct TranscriptionDetailView: View {
                 Spacer()
                 toolbar
             }
+
+            SpeakerNameEditor(
+                speakerIndices: speakerIndices,
+                initialNames: recording.speakerNames,
+                onCommit: onSpeakerNamesChanged
+            )
 
             if let loadError {
                 Text(loadError)
@@ -136,6 +145,18 @@ public struct TranscriptionDetailView: View {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
+    }
+
+    /// Distinct speaker indices present in the recording, discovered by
+    /// re-using `ExportInputBuilder.build` (which reads the sibling .json
+    /// once). Empty array when the recording is un-diarized.
+    private var speakerIndices: [Int] {
+        let input = ExportInputBuilder.build(from: recording)
+        var seen: Set<Int> = []
+        for s in input.segments {
+            if let id = s.speaker { seen.insert(id) }
+        }
+        return seen.sorted()
     }
 
     private func load() {
