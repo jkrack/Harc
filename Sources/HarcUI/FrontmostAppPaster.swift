@@ -75,4 +75,12 @@ public enum FrontmostAppPaster {
         pb.clearContents()
         pb.setString(text, forType: .string)
     }
+
+    /// Bundle ID of the current frontmost application. Call this BEFORE any
+    /// Harc window has hidden — otherwise the reading reflects whatever app
+    /// receives focus after `NSApp.hide(nil)`.
+    @MainActor
+    public static func frontmostBundleID() -> String? {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
 }
