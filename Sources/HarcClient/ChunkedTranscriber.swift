@@ -3,7 +3,7 @@ import HarcCore
 
 /// Protocol boundary for testing — any client that can transcribe a WAV path.
 public protocol TranscribingClient: Sendable {
-    func transcribe(audioPath: String, diarize: Bool) async throws -> TranscribeResult
+    func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult
 }
 
 extension HarcSTTClient: TranscribingClient {}
@@ -13,6 +13,7 @@ extension HarcSTTClient: TranscribingClient {}
 public actor ChunkedTranscriber {
     private let client: any TranscribingClient
     private let diarize: Bool
+    private let vadEnabled: Bool
     private let chunkDurationSeconds: Double
     private let pollIntervalSeconds: Double
     private let vocabulary: Vocabulary
@@ -29,12 +30,14 @@ public actor ChunkedTranscriber {
     public init(
         client: any TranscribingClient,
         diarize: Bool = true,
+        vadEnabled: Bool = true,
         chunkDurationSeconds: Double = 60.0,
         pollIntervalSeconds: Double = 2.0,
         vocabulary: Vocabulary = .empty
     ) {
         self.client = client
         self.diarize = diarize
+        self.vadEnabled = vadEnabled
         self.chunkDurationSeconds = chunkDurationSeconds
         self.pollIntervalSeconds = pollIntervalSeconds
         self.vocabulary = vocabulary
@@ -101,7 +104,7 @@ public actor ChunkedTranscriber {
 
     private func processChunk(_ chunk: WAVChunker.Chunk) async throws {
         defer { try? FileManager.default.removeItem(at: chunk.audioURL) }
-        let result = try await client.transcribe(audioPath: chunk.audioURL.path, diarize: diarize)
+        let result = try await client.transcribe(audioPath: chunk.audioURL.path, diarize: diarize, vad: vadEnabled)
         let cleanedText = VocabularyReplacer.apply(result.text, using: vocabulary)
         let cr = ChunkResult(
             startMs: chunk.startMs,

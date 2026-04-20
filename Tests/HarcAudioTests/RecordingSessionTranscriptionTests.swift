@@ -39,7 +39,7 @@ struct RecordingSessionTranscriptionTests {
     actor StubClient: TranscribingClient {
         var results: [TranscribeResult]
         init(results: [TranscribeResult]) { self.results = results }
-        func transcribe(audioPath: String, diarize: Bool) async throws -> TranscribeResult {
+        func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
             if results.isEmpty {
                 return TranscribeResult(text: "", words: [], speakers: [], processingMs: 0)
             }

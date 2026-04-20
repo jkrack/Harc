@@ -33,12 +33,13 @@ public struct HarcSTTClient: Sendable {
         }
     }
 
-    public func transcribe(audioPath: String, diarize: Bool = true) async throws -> TranscribeResult {
+    public func transcribe(audioPath: String, diarize: Bool = true, vad: Bool = true) async throws -> TranscribeResult {
         let request = IPCRequest.transcribe(TranscribeRequest(
             audioPath: audioPath,
             language: "en",
             wantTimestamps: true,
-            diarize: diarize
+            diarize: diarize,
+            vad: vad
         ))
         let response = try await roundTrip(request)
         switch response {

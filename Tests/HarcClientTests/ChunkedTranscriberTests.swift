@@ -8,11 +8,11 @@ import HarcCore
 struct ChunkedTranscriberTests {
     /// Fake client that returns canned results based on call count.
     actor FakeClient: TranscribingClient {
-        var calls: [(path: String, diarize: Bool)] = []
+        var calls: [(path: String, diarize: Bool, vad: Bool)] = []
         var results: [TranscribeResult]
         init(results: [TranscribeResult]) { self.results = results }
-        func transcribe(audioPath: String, diarize: Bool) async throws -> TranscribeResult {
-            calls.append((audioPath, diarize))
+        func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
+            calls.append((audioPath, diarize, vad))
             if results.isEmpty {
                 return TranscribeResult(text: "", words: [], speakers: [], processingMs: 0)
             }
