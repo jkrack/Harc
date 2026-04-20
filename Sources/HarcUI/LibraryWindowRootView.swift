@@ -330,10 +330,12 @@ public struct LibraryWindowRootView: View {
                 .tracking(1.2)
             HStack(spacing: HarcDesign.Space.sm) {
                 Menu {
-                    Button("Export Markdown…") { runExport(rec, format: .markdown) }
-                    Button("Export DOCX…")     { runExport(rec, format: .docx) }
+                    Button("Export Markdown…")    { runExport(rec, format: .markdown) }
+                    Button("Export DOCX…")        { runExport(rec, format: .docx) }
+                    Button("Export for Prompt…")  { runExport(rec, format: .prompt) }
                     Divider()
-                    Button("Copy Markdown")    { copyMarkdown(rec) }
+                    Button("Copy for Prompt")     { copyPromptString(rec) }
+                    Button("Copy Plain Text")     { copyPlainText(rec) }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "square.and.arrow.up")
@@ -346,11 +348,11 @@ public struct LibraryWindowRootView: View {
                 .fixedSize()
 
                 Button {
-                    copyMarkdown(rec)
+                    copyPromptString(rec)
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.on.clipboard")
-                        Text("Copy Markdown")
+                        Text("Copy for Prompt")
                     }
                     .font(HarcDesign.Font.bodyMd)
                     .foregroundStyle(Color.harcPrimary)
@@ -363,6 +365,23 @@ public struct LibraryWindowRootView: View {
                     .foregroundStyle(Color.harcError)
             }
         }
+    }
+
+    private func copyPromptString(_ rec: Recording) {
+        let s = ExportService.promptString(for: rec)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(s, forType: .string)
+        exportErrorMessage = nil
+    }
+
+    private func copyPlainText(_ rec: Recording) {
+        let input = ExportInputBuilder.build(from: rec)
+        let text = input.segments.map { $0.text }.joined(separator: "\n\n")
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        exportErrorMessage = nil
     }
 
     private func runExport(_ rec: Recording, format: ExportFormat) {
@@ -385,14 +404,6 @@ public struct LibraryWindowRootView: View {
                     ?? error.localizedDescription
             }
         }
-    }
-
-    private func copyMarkdown(_ rec: Recording) {
-        let md = ExportService.markdownString(for: rec)
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(md, forType: .string)
-        exportErrorMessage = nil
     }
 
     private func detailRow(label: String, value: String) -> some View {
