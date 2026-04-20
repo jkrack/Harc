@@ -241,4 +241,83 @@ struct PromptFrontMatterTests {
         let out = PromptFrontMatter.render(input, timeZone: laTZ())
         #expect(out.contains("duration: 0s"))
     }
+
+    @Test("render — emits participants line when all speakers overridden")
+    func renderEmitsParticipantsFullOverride() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 60,
+            speakerNames: [0: "Jason", 1: "Amy"],
+            segments: [
+                .init(speaker: 0, text: "a"),
+                .init(speaker: 1, text: "b"),
+            ]
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(out.contains("participants: Jason, Amy"))
+        #expect(out.contains("speakers: 2"))
+    }
+
+    @Test("render — participants mixes names and Speaker N for partial override")
+    func renderParticipantsPartial() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 60,
+            speakerNames: [0: "Jason"],
+            segments: [
+                .init(speaker: 0, text: "a"),
+                .init(speaker: 1, text: "b"),
+            ]
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(out.contains("participants: Jason, Speaker 2"))
+    }
+
+    @Test("render — omits participants when speakerNames is empty")
+    func renderOmitsParticipantsNoOverride() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 60,
+            segments: [
+                .init(speaker: 0, text: "a"),
+                .init(speaker: 1, text: "b"),
+            ]
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(!out.contains("participants:"))
+        #expect(out.contains("speakers: 2"))
+    }
+
+    @Test("render — omits participants for single-speaker recordings even with override")
+    func renderOmitsParticipantsSingleSpeaker() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 60,
+            speakerNames: [0: "Jason"],
+            segments: [.init(speaker: 0, text: "a")]
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(!out.contains("participants:"))
+        #expect(!out.contains("speakers:"))
+    }
+
+    @Test("render — participants with a colon in a name forces quoting")
+    func renderParticipantsQuotesColon() {
+        let input = ExportInput(
+            title: "t",
+            startedAt: fixedDate(),
+            durationSeconds: 60,
+            speakerNames: [0: "Foo: Bar", 1: "Amy"],
+            segments: [
+                .init(speaker: 0, text: "a"),
+                .init(speaker: 1, text: "b"),
+            ]
+        )
+        let out = PromptFrontMatter.render(input, timeZone: laTZ())
+        #expect(out.contains("participants: \"Foo: Bar, Amy\""))
+    }
 }

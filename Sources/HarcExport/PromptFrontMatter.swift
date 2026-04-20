@@ -62,6 +62,17 @@ enum PromptFrontMatter {
         return seen.count
     }
 
+    /// True iff `input.speakerNames` has at least one entry whose value
+    /// is non-empty after trimming. Used to gate the `participants:`
+    /// front-matter emission — otherwise the line would just be
+    /// `Speaker 1, Speaker 2` which duplicates the `speakers:` count.
+    static func hasAnyOverride(input: ExportInput) -> Bool {
+        for (_, v) in input.speakerNames {
+            if !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        }
+        return false
+    }
+
     /// Render the full YAML front-matter block, including opening and closing
     /// `---` delimiters. Does NOT add a trailing blank line — the composer in
     /// `ExportService.promptString` owns spacing between header and body.
@@ -85,6 +96,16 @@ enum PromptFrontMatter {
         }
 
         let speakers = speakerCount(in: input.segments)
+        if speakers >= 2, hasAnyOverride(input: input) {
+            let joined = (0..<speakers).map { i -> String in
+                if let raw = input.speakerNames[i] {
+                    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { return trimmed }
+                }
+                return "Speaker \(i + 1)"
+            }.joined(separator: ", ")
+            lines.append("participants: \(yamlScalar(joined))")
+        }
         if speakers >= 2 {
             lines.append("speakers: \(speakers)")
         }
