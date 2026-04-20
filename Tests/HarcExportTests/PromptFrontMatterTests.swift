@@ -42,4 +42,50 @@ struct PromptFrontMatterTests {
         let date = Date(timeIntervalSince1970: 1_700_000_000) // 2023-11-14T22:13:20Z
         #expect(PromptFrontMatter.formatRecorded(date, timeZone: tz) == "2023-11-14T22:13:20+00:00")
     }
+
+    // MARK: yamlScalar
+
+    @Test("yamlScalar — plain string passes through unquoted")
+    func yamlScalarPlain() {
+        #expect(PromptFrontMatter.yamlScalar("Standup with Jason") == "Standup with Jason")
+        #expect(PromptFrontMatter.yamlScalar("Harc, standup") == "Harc, standup")
+    }
+
+    @Test("yamlScalar — values with : get quoted")
+    func yamlScalarColon() {
+        // A colon followed by space requires quoting per YAML 1.2.
+        #expect(PromptFrontMatter.yamlScalar("foo: bar") == "\"foo: bar\"")
+    }
+
+    @Test("yamlScalar — leading-indicator characters get quoted")
+    func yamlScalarIndicator() {
+        #expect(PromptFrontMatter.yamlScalar("- dash lead") == "\"- dash lead\"")
+        #expect(PromptFrontMatter.yamlScalar("# hash lead") == "\"# hash lead\"")
+        #expect(PromptFrontMatter.yamlScalar("@at lead") == "\"@at lead\"")
+    }
+
+    @Test("yamlScalar — double-quoted escapes handle quotes and backslash")
+    func yamlScalarEscapes() {
+        #expect(PromptFrontMatter.yamlScalar(#"he said "hi""#) == #""he said \"hi\"""#)
+        #expect(PromptFrontMatter.yamlScalar(#"path\to"#) == #""path\\to""#)
+    }
+
+    @Test("yamlScalar — whitespace-only/leading-or-trailing-space gets quoted")
+    func yamlScalarWhitespace() {
+        #expect(PromptFrontMatter.yamlScalar(" leading") == "\" leading\"")
+        #expect(PromptFrontMatter.yamlScalar("trailing ") == "\"trailing \"")
+        #expect(PromptFrontMatter.yamlScalar("") == "\"\"")
+    }
+
+    @Test("yamlScalar — newlines and tabs get escaped")
+    func yamlScalarControlChars() {
+        #expect(PromptFrontMatter.yamlScalar("a\nb") == "\"a\\nb\"")
+        #expect(PromptFrontMatter.yamlScalar("a\tb") == "\"a\\tb\"")
+    }
+
+    @Test("yamlScalar — control chars below 0x20 are stripped before decision")
+    func yamlScalarControlStripped() {
+        // \u{0001} (SOH) gets stripped → just "ab", passes through plain.
+        #expect(PromptFrontMatter.yamlScalar("a\u{0001}b") == "ab")
+    }
 }
