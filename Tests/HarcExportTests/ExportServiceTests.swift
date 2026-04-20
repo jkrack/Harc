@@ -45,4 +45,29 @@ struct ExportServiceTests {
         let s = ExportService.markdownString(for: rec)
         #expect(s.contains("clipboard paste"))
     }
+
+    @Test("promptString = PromptFrontMatter.render + blank line + MarkdownExporter.render")
+    func promptStringComposesHeaderAndBody() {
+        let rec = Recording(
+            wavPath: "/tmp/x.wav",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            transcriptText: "hello body",
+            tags: ["Acme"]
+        )
+        let input = ExportInputBuilder.build(from: rec)
+        let expectedHeader = PromptFrontMatter.render(input)
+        let expectedBody = MarkdownExporter.render(input)
+        let prompt = ExportService.promptString(for: rec)
+        #expect(prompt == expectedHeader + "\n\n" + expectedBody)
+    }
+
+    @Test("promptString — empty body yields header + single trailing newline")
+    func promptStringEmptyBody() {
+        let rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        let prompt = ExportService.promptString(for: rec)
+        let input = ExportInputBuilder.build(from: rec)
+        let header = PromptFrontMatter.render(input)
+        #expect(prompt == header + "\n")
+        #expect(!prompt.contains("\n\n"))
+    }
 }

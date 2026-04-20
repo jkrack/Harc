@@ -61,4 +61,14 @@ public enum ExportService {
         let input = ExportInputBuilder.build(from: recording)
         return MarkdownExporter.render(input)
     }
+
+    /// Render the prompt-formatted blob — YAML front-matter + Markdown body —
+    /// for clipboard or `.prompt.md` export. Pure.
+    public static func promptString(for recording: Recording) -> String {
+        let input = ExportInputBuilder.build(from: recording)
+        let header = PromptFrontMatter.render(input)
+        let body = MarkdownExporter.render(input)
+        if body.isEmpty { return header + "\n" }
+        return header + "\n\n" + body
+    }
 }
