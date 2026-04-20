@@ -131,9 +131,11 @@ public struct TranscriptionDetailView: View {
     }
 
     private func copyPlainText() {
+        let input = ExportInputBuilder.build(from: recording)
+        let text = input.segments.map { $0.text }.joined(separator: "\n\n")
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(transcript, forType: .string)
+        pb.setString(text, forType: .string)
     }
 
     private func load() {

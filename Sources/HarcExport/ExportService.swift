@@ -65,7 +65,10 @@ public enum ExportService {
         }
     }
 
-    /// Render Markdown only, return the string. For the "Copy Markdown" UI.
+    /// Render Markdown only, return the string. Retained for a future
+    /// "Copy Markdown" UI action (deliberately not wired in v1 per the
+    /// Copy-for-Prompt spec §8 — all current Copy actions use
+    /// `promptString` or plain-text segment join).
     public static func markdownString(for recording: Recording) -> String {
         let input = ExportInputBuilder.build(from: recording)
         return MarkdownExporter.render(input)
