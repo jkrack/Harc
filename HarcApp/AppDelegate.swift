@@ -214,6 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     }
 
     private func stopRecording() async {
+        // Sample modifier state NOW, before any await — by the time session.stop()
+        // resolves (seconds later), the user may have released Shift.
+        let shiftHeldAtStopTrigger = NSEvent.modifierFlags.contains(.shift)
         guard let session else { return }
         do {
             let result = try await session.stop()
@@ -242,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                     if !entities.isEmpty { try? await store.updateTags(id: id, tags: entities) }
                 }
             }
-            runAutoPaste(for: rec)
+            runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger)
         } catch {
             presentError(error)
         }
@@ -446,16 +449,17 @@ private func openDetail(for recording: Recording) {
     }
 
     @MainActor
-    private func runAutoPaste(for rec: Recording) {
+    private func runAutoPaste(for rec: Recording, shiftHeld: Bool) {
         let decision = AutoPasteGuard.decide(
             enabled: prefs.autoPasteEnabled,
-            shiftHeld: NSEvent.modifierFlags.contains(.shift),
+            shiftHeld: shiftHeld,
             frontmostBundleID: FrontmostAppPaster.frontmostBundleID()
         )
 
         guard let statusItem else { return }
         let restore: @MainActor () -> Void = { [weak self] in
-            self?.updateMenuBarIcon(recording: false)
+            guard let self, !self.state.isRecording else { return }
+            self.updateMenuBarIcon(recording: false)
         }
 
         switch decision {

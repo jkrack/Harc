@@ -27,8 +27,21 @@ public enum FrontmostAppPaster {
     /// Copy `text` to the clipboard and paste into the frontmost app.
     /// `dwellMs` is the delay before the paste fires — gives macOS a moment to
     /// restore focus to the previous app after our window resigns key.
+    ///
+    /// Throws `PasteError.accessibilityDenied` synchronously if Harc has not
+    /// been granted Accessibility permission — the caller is responsible for
+    /// presenting UI to request it. No system prompt is triggered here.
     @MainActor
     public static func copyAndPaste(_ text: String, dwellMs: UInt64 = 150) throws {
+        // Verify AX up front so accessibilityDenied propagates to the caller.
+        // synthesizeCmdV re-checks defensively; passing `false` here means we
+        // don't race with our own AppKit modal.
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue()
+        let opts = [promptKey: false] as CFDictionary
+        guard AXIsProcessTrustedWithOptions(opts) else {
+            throw PasteError.accessibilityDenied
+        }
+
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
