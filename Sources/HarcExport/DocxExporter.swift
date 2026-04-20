@@ -55,9 +55,9 @@ public enum DocxExporter {
 
         for segment in input.segments {
             if segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
-            if let speaker = segment.speaker {
+            if let label = SpeakerLabel.displayLabel(for: segment.speaker, names: input.speakerNames) {
                 out.append(NSAttributedString(
-                    string: "Speaker \(speaker + 1): ",
+                    string: "\(label): ",
                     attributes: [
                         .font: labelFont,
                         .paragraphStyle: para
