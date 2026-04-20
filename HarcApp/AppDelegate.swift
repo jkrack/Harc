@@ -4,6 +4,7 @@ import SwiftUI
 import UserNotifications
 import HarcAudio
 import HarcClient
+import HarcExport
 import HarcMeetingDetect
 import HarcStore
 import HarcUI
@@ -27,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
     private var menuBarTicker: Timer?
+    private let menuBarFlash = MenuBarFlash()
+    private var accessibilityPromptShown = false
 
     private let meetingState = MeetingDetectionState()
     private let notificationPresenter = MeetingNotificationPresenter()
@@ -35,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var pulseTimer: Timer?
     private var pulseOn = false
     private var cancellables: Set<AnyCancellable> = []
+    private var managedWindowCount = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [weak self] in
@@ -92,6 +96,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { openLibrary() }
+        return true
+    }
+
+    private func trackManagedWindow(_ window: NSWindow?) {
+        guard let window else { return }
+        managedWindowCount += 1
+        refreshActivationPolicy()
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.managedWindowCount = max(0, self.managedWindowCount - 1)
+                self.refreshActivationPolicy()
+            }
+        }
+    }
+
+    private func refreshActivationPolicy() {
+        let desired: NSApplication.ActivationPolicy = managedWindowCount > 0 ? .regular : .accessory
+        if NSApp.activationPolicy() != desired {
+            NSApp.setActivationPolicy(desired)
+        }
+    }
 
     @objc private func handleStatusItemClick(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp {
@@ -186,16 +219,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
             let result = try await session.stop()
             state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
             let transcriptText = result.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
+            let rec = Recording(
+                wavPath: result.wavURL.path,
+                txtPath: result.txtURL?.path,
+                jsonPath: result.jsonURL?.path,
+                startedAt: startedAt,
+                endedAt: Date(),
+                transcriptText: transcriptText
+            )
             if let store = self.store {
-                let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
-                let rec = Recording(
-                    wavPath: result.wavURL.path,
-                    txtPath: result.txtURL?.path,
-                    jsonPath: result.jsonURL?.path,
-                    startedAt: startedAt,
-                    endedAt: Date(),
-                    transcriptText: transcriptText
-                )
                 _ = try? await store.upsert(rec)
             }
             if let transcriptText, let store = self.store {
@@ -209,9 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                     if !entities.isEmpty { try? await store.updateTags(id: id, tags: entities) }
                 }
             }
-            if let text = transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                try? FrontmostAppPaster.copyAndPaste(text)
-            }
+            runAutoPaste(for: rec)
         } catch {
             presentError(error)
         }
@@ -228,9 +259,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private func updateMenuBarIcon(recording: Bool, on item: NSStatusItem? = nil) {
         let target = item ?? statusItem
         guard let button = target?.button else { return }
-        let symbol = recording ? "record.circle.fill" : "waveform"
         let label = recording ? "Harc — recording" : "Harc"
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        let image: NSImage?
+        if recording {
+            image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: label)
+        } else if let asset = NSImage(named: "MenuBarIcon") {
+            asset.isTemplate = true
+            asset.accessibilityDescription = label
+            image = asset
+        } else {
+            image = NSImage(systemSymbolName: "waveform", accessibilityDescription: label)
+        }
+        button.image = image
         button.contentTintColor = recording ? .systemRed : nil
         if recording {
             updateMenuBarElapsed()
@@ -354,6 +394,7 @@ private func openDetail(for recording: Recording) {
         detailWindows[recording.wavPath] = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+        trackManagedWindow(controller.window)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -377,6 +418,7 @@ private func openDetail(for recording: Recording) {
             self.editorWindows[recording.wavPath] = controller
             controller.showWindow(nil)
             controller.window?.makeKeyAndOrderFront(nil)
+            self.trackManagedWindow(controller.window)
             NSApp.activate(ignoringOtherApps: true)
         }
     }
@@ -403,6 +445,65 @@ private func openDetail(for recording: Recording) {
         alert.runModal()
     }
 
+    @MainActor
+    private func runAutoPaste(for rec: Recording) {
+        let decision = AutoPasteGuard.decide(
+            enabled: prefs.autoPasteEnabled,
+            shiftHeld: NSEvent.modifierFlags.contains(.shift),
+            frontmostBundleID: FrontmostAppPaster.frontmostBundleID()
+        )
+
+        guard let statusItem else { return }
+        let restore: @MainActor () -> Void = { [weak self] in
+            self?.updateMenuBarIcon(recording: false)
+        }
+
+        switch decision {
+        case .skipDisabled, .skipModifierHeld:
+            return
+        case .skipUnsafeTarget(let id):
+            menuBarFlash.flashSkipped(
+                on: statusItem,
+                tooltip: "Auto-paste skipped — \(appDisplayName(for: id))",
+                restore: restore
+            )
+        case .paste:
+            let blob = ExportService.promptString(for: rec)
+            do {
+                try FrontmostAppPaster.copyAndPaste(blob)
+                menuBarFlash.flashSuccess(on: statusItem, restore: restore)
+            } catch FrontmostAppPaster.PasteError.accessibilityDenied {
+                menuBarFlash.flashFailure(on: statusItem, restore: restore)
+                if !accessibilityPromptShown {
+                    accessibilityPromptShown = true
+                    presentAccessibilityPrompt()
+                }
+            } catch {
+                menuBarFlash.flashFailure(on: statusItem, restore: restore)
+            }
+        }
+    }
+
+    @MainActor
+    private func presentAccessibilityPrompt() {
+        let alert = NSAlert()
+        alert.messageText = "Harc needs Accessibility permission"
+        alert.informativeText = "Auto-paste synthesises ⌘V into the frontmost app. macOS requires Accessibility permission for that. Your transcript is still on the clipboard — you can paste it manually with ⌘V."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func appDisplayName(for bundleID: String) -> String {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return bundleID }
+        return FileManager.default.displayName(atPath: url.path)
+    }
+
     @objc private func openSettings() {
         if let existing = settingsWindow {
             existing.showWindow(nil)
@@ -414,6 +515,7 @@ private func openDetail(for recording: Recording) {
         settingsWindow = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+        trackManagedWindow(controller.window)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -436,6 +538,7 @@ private func openDetail(for recording: Recording) {
         libraryWindow = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+        trackManagedWindow(controller.window)
         NSApp.activate(ignoringOtherApps: true)
     }
 
