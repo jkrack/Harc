@@ -193,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
             let transcriber = ChunkedTranscriber(
                 client: client,
                 diarize: prefs.diarize,
+                vadEnabled: prefs.vadEnabled,
                 chunkDurationSeconds: prefs.chunkDurationSeconds,
                 vocabulary: prefs.vocabulary
             )
