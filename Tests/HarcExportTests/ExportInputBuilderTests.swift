@@ -102,4 +102,27 @@ struct ExportInputBuilderTests {
         let input = ExportInputBuilder.build(from: rec)
         #expect(input.tags.isEmpty)
     }
+
+    @Test("speakerNames flow from Recording.speakerNames into ExportInput")
+    func speakerNamesFlow() {
+        let rec = Recording(
+            wavPath: "/tmp/fake.wav",
+            startedAt: Date(),
+            transcriptText: "hi",
+            speakerNames: [0: "Jason", 1: "Amy"]
+        )
+        let input = ExportInputBuilder.build(from: rec)
+        #expect(input.speakerNames == [0: "Jason", 1: "Amy"])
+    }
+
+    @Test("speakerNames defaults to empty when Recording has none")
+    func speakerNamesEmptyByDefault() {
+        let rec = Recording(
+            wavPath: "/tmp/fake.wav",
+            startedAt: Date(),
+            transcriptText: "hi"
+        )
+        let input = ExportInputBuilder.build(from: rec)
+        #expect(input.speakerNames.isEmpty)
+    }
 }
