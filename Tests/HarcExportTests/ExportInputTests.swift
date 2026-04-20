@@ -43,4 +43,23 @@ struct ExportInputTests {
         )
         #expect(input.tags == ["Harc", "standup"])
     }
+
+    @Test("speakerNames defaults to empty when omitted")
+    func speakerNamesDefaultsEmpty() {
+        let input = ExportInput(
+            title: "t", startedAt: Date(), durationSeconds: 0,
+            segments: []
+        )
+        #expect(input.speakerNames.isEmpty)
+    }
+
+    @Test("speakerNames round-trips via initializer")
+    func speakerNamesRoundTrip() {
+        let input = ExportInput(
+            title: "t", startedAt: Date(), durationSeconds: 0,
+            speakerNames: [0: "Jason", 1: "Amy"],
+            segments: []
+        )
+        #expect(input.speakerNames == [0: "Jason", 1: "Amy"])
+    }
 }

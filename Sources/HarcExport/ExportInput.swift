@@ -7,6 +7,7 @@ public struct ExportInput: Equatable, Sendable {
     public let startedAt: Date
     public let durationSeconds: Int?
     public let tags: [String]
+    public let speakerNames: [Int: String]
     public let segments: [Segment]
 
     public init(
@@ -14,12 +15,14 @@ public struct ExportInput: Equatable, Sendable {
         startedAt: Date,
         durationSeconds: Int?,
         tags: [String] = [],
+        speakerNames: [Int: String] = [:],
         segments: [Segment]
     ) {
         self.title = title
         self.startedAt = startedAt
         self.durationSeconds = durationSeconds
         self.tags = tags
+        self.speakerNames = speakerNames
         self.segments = segments
     }
 
