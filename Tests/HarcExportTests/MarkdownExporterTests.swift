@@ -69,4 +69,38 @@ struct MarkdownExporterTests {
         #expect(result.contains("helloworld"))
         #expect(!result.contains("\u{0000}"))
     }
+
+    @Test("override names replace Speaker N in the body")
+    func overrideNamesRender() {
+        let input = ExportInput(
+            title: "t", startedAt: Date(), durationSeconds: 0,
+            tags: [],
+            speakerNames: [0: "Jason", 1: "Amy"],
+            segments: [
+                .init(speaker: 0, text: "morning"),
+                .init(speaker: 1, text: "hey"),
+            ]
+        )
+        let out = MarkdownExporter.render(input)
+        #expect(out.contains("Jason: morning"))
+        #expect(out.contains("Amy: hey"))
+        #expect(!out.contains("Speaker 1:"))
+        #expect(!out.contains("Speaker 2:"))
+    }
+
+    @Test("partial override mixes names and Speaker N fallback")
+    func partialOverride() {
+        let input = ExportInput(
+            title: "t", startedAt: Date(), durationSeconds: 0,
+            tags: [],
+            speakerNames: [0: "Jason"],
+            segments: [
+                .init(speaker: 0, text: "morning"),
+                .init(speaker: 1, text: "hey"),
+            ]
+        )
+        let out = MarkdownExporter.render(input)
+        #expect(out.contains("Jason: morning"))
+        #expect(out.contains("Speaker 2: hey"))
+    }
 }

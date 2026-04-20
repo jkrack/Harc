@@ -15,8 +15,7 @@ public enum MarkdownExporter {
         for segment in input.segments {
             let cleaned = sanitize(segment.text)
             guard !cleaned.isEmpty else { continue }
-            if let speaker = segment.speaker {
-                let label = "Speaker \(speaker + 1)"
+            if let label = SpeakerLabel.displayLabel(for: segment.speaker, names: input.speakerNames) {
                 out += "\(label): \(cleaned)\n"
             } else {
                 out += "\(cleaned)\n\n"
