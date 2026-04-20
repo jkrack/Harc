@@ -46,6 +46,17 @@ public struct RecordingSettingsView: View {
             }
 
             Section {
+                Toggle("Voice-activity detection", isOn: $prefs.vadEnabled)
+                    .tint(HarcDesign.primary)
+            } header: {
+                Text("Processing")
+            } footer: {
+                Text("Skips silent regions before transcription. Faster and quieter on battery; disable if you suspect a word is being clipped.")
+                    .font(HarcDesign.Font.bodySm)
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+            }
+
+            Section {
                 Toggle("Auto-paste on stop", isOn: $prefs.autoPasteEnabled)
                     .tint(HarcDesign.primary)
             } header: {
