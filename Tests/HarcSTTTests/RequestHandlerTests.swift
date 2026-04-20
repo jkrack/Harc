@@ -10,12 +10,14 @@ struct RequestHandlerTests {
     actor FakeTranscriber: TranscribeService {
         var loadCalled = false
         var lastPath: String?
+        var lastVAD: Bool?
         var result: TranscribeResult = TranscribeResult(
             text: "fake", words: [], speakers: [], processingMs: 1
         )
 
-        func transcribe(audioPath: String) async throws -> TranscribeResult {
+        func transcribe(audioPath: String, vad: Bool) async throws -> TranscribeResult {
             lastPath = audioPath
+            lastVAD = vad
             return result
         }
 
@@ -84,5 +86,18 @@ struct RequestHandlerTests {
         } else {
             Issue.record("expected .result, got: \(resp)")
         }
+    }
+
+    @Test("transcribe request threads req.vad to TranscribeService")
+    func transcribePassesVAD() async throws {
+        let fake = FakeTranscriber()
+        let handler = RequestHandler(
+            transcriber: fake, diarizer: nil, version: "0.1.0", startedAt: Date()
+        )
+        _ = await handler.handle(.transcribe(TranscribeRequest(audioPath: "/tmp/x.wav", vad: false)))
+        #expect(await fake.lastVAD == false)
+
+        _ = await handler.handle(.transcribe(TranscribeRequest(audioPath: "/tmp/y.wav")))
+        #expect(await fake.lastVAD == true)
     }
 }

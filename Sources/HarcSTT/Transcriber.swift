@@ -2,17 +2,17 @@ import Foundation
 import FluidAudio
 import HarcCore
 
-/// Wraps FluidAudio's ASR pipeline (Parakeet TDT v3) for CoreML inference on ANE/Metal.
-///
-/// Models auto-download from HuggingFace on first `loadModels()` to
-/// `~/Library/Application Support/FluidAudio/Models/`. Keep one instance for the
-/// lifetime of the daemon — loading is expensive (seconds) and the underlying
-/// CoreML compiled model is not cheap to hold.
+/// Wraps FluidAudio's ASR pipeline (Parakeet TDT v3) for CoreML inference on
+/// ANE/Metal, with an optional VAD pre-filter that strips silent regions and
+/// remaps Parakeet's timestamps back to the original chunk timeline.
 public actor Transcriber {
     private var asrManager: AsrManager?
     private let audioConverter = AudioConverter()
+    private let vadGate: VADGate
 
-    public init() {}
+    public init(vadGate: VADGate = VADGate()) {
+        self.vadGate = vadGate
+    }
 
     public var isLoaded: Bool { asrManager != nil }
 
@@ -22,9 +22,17 @@ public actor Transcriber {
         let models = try await AsrModels.downloadAndLoad(version: .v3)
         try await manager.loadModels(models)
         self.asrManager = manager
+        // VAD is an optimisation — its failure must never block ASR load.
+        do {
+            try await vadGate.loadModel()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc-stt: VAD model load failed (\(error.localizedDescription)) — transcription will run without VAD\n".utf8
+            ))
+        }
     }
 
-    public func transcribe(audioPath: String) async throws -> TranscribeResult {
+    public func transcribe(audioPath: String, vad: Bool) async throws -> TranscribeResult {
         guard let manager = asrManager else { throw DaemonError.modelNotLoaded }
 
         let samples: [Float]
@@ -34,6 +42,33 @@ public actor Transcriber {
             throw DaemonError.audioLoadFailed(error.localizedDescription)
         }
 
+        if !vad {
+            return try await runParakeet(on: samples, with: manager, regions: nil)
+        }
+
+        let segments: [VadSegment]
+        do {
+            segments = try await vadGate.segments(in: samples)
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc-stt: VAD failed (\(error.localizedDescription)) — falling back to full chunk transcription for \(audioPath)\n".utf8
+            ))
+            return try await runParakeet(on: samples, with: manager, regions: nil)
+        }
+
+        guard VADGate.hasMinimumVoicedDuration(segments) else {
+            return TranscribeResult(text: "", words: [], speakers: [], processingMs: 0)
+        }
+
+        let stitch = VoicedStitcher.stitch(samples: samples, segments: segments)
+        return try await runParakeet(on: stitch.compactSamples, with: manager, regions: stitch.regions)
+    }
+
+    private func runParakeet(
+        on samples: [Float],
+        with manager: AsrManager,
+        regions: [VoicedRegion]?
+    ) async throws -> TranscribeResult {
         let start = DispatchTime.now()
         let result: ASRResult
         do {
@@ -43,18 +78,21 @@ public actor Transcriber {
         }
         let elapsedNs = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
 
-        let words: [Word] = (result.tokenTimings ?? []).map { t in
+        let compactWords: [Word] = (result.tokenTimings ?? []).map { t in
             Word(
                 text: t.token,
                 startMs: Int(t.startTime * 1000),
                 endMs: Int(t.endTime * 1000)
             )
         }
+        let words = regions.map {
+            VADTimestampRemapper.remap(words: compactWords, regions: $0)
+        } ?? compactWords
 
         return TranscribeResult(
             text: result.text,
             words: words,
-            speakers: [],                       // Diarizer fills this in Task 6
+            speakers: [],
             processingMs: Int(elapsedNs / 1_000_000)
         )
     }

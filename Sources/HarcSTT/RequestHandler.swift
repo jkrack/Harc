@@ -3,7 +3,7 @@ import HarcCore
 
 /// Minimal protocol so RequestHandler can be unit-tested against fakes.
 public protocol TranscribeService: Sendable {
-    func transcribe(audioPath: String) async throws -> TranscribeResult
+    func transcribe(audioPath: String, vad: Bool) async throws -> TranscribeResult
     var isLoaded: Bool { get async }
 }
 
@@ -60,7 +60,7 @@ public struct RequestHandler: Sendable {
     private func transcribe(_ req: TranscribeRequest) async -> IPCResponse {
         let textResult: TranscribeResult
         do {
-            textResult = try await transcriber.transcribe(audioPath: req.audioPath)
+            textResult = try await transcriber.transcribe(audioPath: req.audioPath, vad: req.vad)
         } catch let err as DaemonError {
             return .error(IPCError(code: err.ipcCode, message: err.errorDescription ?? "transcribe failed"))
         } catch {
