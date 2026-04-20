@@ -223,8 +223,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
     private func stopRecording() async {
         // Sample modifier state NOW, before any await — by the time session.stop()
-        // resolves (seconds later), the user may have released Shift.
+        // resolves (seconds later), the user may have released Shift. Also consume
+        // the ⌥-click escape-hatch flag unconditionally so it can't leak into a
+        // subsequent stop if session.stop() throws.
         let shiftHeldAtStopTrigger = NSEvent.modifierFlags.contains(.shift)
+        let skipFromOptionClick = pendingSkipPaste
+        pendingSkipPaste = false
         guard let session else { return }
         do {
             let result = try await session.stop()
@@ -253,7 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                     if !entities.isEmpty { try? await store.updateTags(id: id, tags: entities) }
                 }
             }
-            runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger)
+            runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
         } catch {
             presentError(error)
         }
@@ -458,11 +462,16 @@ private func openDetail(for recording: Recording) {
 
     @MainActor
     private func runAutoPaste(for rec: Recording, shiftHeld: Bool) {
-        let shouldSkip = shiftHeld || pendingSkipPaste
-        pendingSkipPaste = false
+        let blob = ExportService.promptString(for: rec)
+
+        // Per spec §3: clipboard always holds the prompt blob, regardless
+        // of decision. copyAndPaste (below, on the .paste branch) re-writes
+        // the same bytes — harmless duplication.
+        FrontmostAppPaster.copyOnly(blob)
+
         let decision = AutoPasteGuard.decide(
             enabled: prefs.autoPasteEnabled,
-            shiftHeld: shouldSkip,
+            shiftHeld: shiftHeld,
             frontmostBundleID: FrontmostAppPaster.frontmostBundleID()
         )
 
@@ -482,7 +491,6 @@ private func openDetail(for recording: Recording) {
                 restore: restore
             )
         case .paste:
-            let blob = ExportService.promptString(for: rec)
             do {
                 try FrontmostAppPaster.copyAndPaste(blob)
                 menuBarFlash.flashSuccess(on: statusItem, restore: restore)

@@ -12,6 +12,7 @@ struct PasteDenyListTests {
             "us.zoom.xos",
             "com.microsoft.teams2",
             "com.apple.finder",
+            "com.tinyspeck.slackmacgap",
         ]
         #expect(expected.isSubset(of: PasteDenyList.bundleIDs))
     }

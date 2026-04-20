@@ -18,6 +18,7 @@ public enum PasteDenyList {
         "org.keepassxc.keepassxc",
         "us.zoom.xos",
         "com.microsoft.teams2",
+        "com.tinyspeck.slackmacgap",
     ]
 
     public static func isDenied(_ bundleID: String?) -> Bool {
