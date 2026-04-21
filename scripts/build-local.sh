@@ -49,15 +49,31 @@ codesign --force --deep --sign - --options runtime \
 echo "==> Verifying signature"
 codesign --verify --deep --strict --verbose=2 "$APP_DST"
 
-echo "==> Zipping"
-ZIP_PATH="$DIST/Harc-local.zip"
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_DST" "$ZIP_PATH"
+echo "==> Building DMG"
+DMG_PATH="$DIST/Harc-local.dmg"
+# UDZO = zlib-compressed read-only. The .app is ad-hoc signed; the DMG itself
+# is unsigned (fine for local/personal distribution — the user will need to
+# strip the quarantine attribute on the destination Mac).
+/usr/bin/hdiutil create \
+  -volname "Harc" \
+  -srcfolder "$APP_DST" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH"
+
+echo "==> Zipping DMG"
+# Zipping the DMG makes it safer to move across Slack / email / iCloud Drive,
+# which can otherwise strip attributes or flag .dmg attachments. ditto keeps
+# the macOS metadata intact.
+ZIP_PATH="$DIST/Harc-local-dmg.zip"
+/usr/bin/ditto -c -k --sequesterRsrc "$DMG_PATH" "$ZIP_PATH"
 
 echo ""
 echo "Built: $APP_DST"
-echo "Zip:   $ZIP_PATH"
+echo "DMG:   $DMG_PATH"
+echo "Zip:   $ZIP_PATH  (contains the DMG)"
 echo ""
 echo "On the target Mac:"
-echo "  1. Unzip, drag Harc.app to /Applications"
+echo "  1. Unzip, double-click Harc-local.dmg, drag Harc.app to /Applications"
 echo "  2. xattr -dr com.apple.quarantine /Applications/Harc.app"
 echo "  3. Launch. Approve mic + screen recording prompts in System Settings."
