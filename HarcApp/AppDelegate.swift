@@ -297,7 +297,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         } else {
             menuBarTicker?.invalidate()
             menuBarTicker = nil
+            // Reserve the elapsed-label width with a transparent placeholder so
+            // the status item stays a constant width across idle → recording.
+            // Otherwise the macOS mic indicator + the " 00:00" label appearing
+            // at once yanks the popover anchor left the moment recording starts.
+            let font = NSFont.monospacedDigitSystemFont(
+                ofSize: NSFont.systemFontSize(for: .small),
+                weight: .regular
+            )
             button.title = ""
+            button.attributedTitle = NSAttributedString(
+                string: " 00:00",
+                attributes: [.font: font, .foregroundColor: NSColor.clear]
+            )
             applyPulse()
         }
     }
@@ -383,8 +395,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
     private func updateMenuBarElapsed() {
         guard let button = statusItem?.button, let start = state.recordingStartedAt else { return }
-        let seconds = Int(Date().timeIntervalSince(start))
-        button.title = String(format: " %d:%02d", seconds / 60, seconds % 60)
+        let total = Int(Date().timeIntervalSince(start))
+        // Pad minutes to 2 digits AND use a monospaced-digit font so the title's
+        // pixel width is constant from 00:00 through 99:59. Without both, the
+        // variableLength status item reflows every tick and drags the anchored
+        // popover with it. (Beyond 99:59 the title grows once more — acceptable.)
+        let m = min(99, total / 60)
+        let s = total % 60
+        let text = String(format: " %02d:%02d", m, s)
+        let font = NSFont.monospacedDigitSystemFont(
+            ofSize: NSFont.systemFontSize(for: .small),
+            weight: .regular
+        )
+        button.attributedTitle = NSAttributedString(
+            string: text,
+            attributes: [.font: font]
+        )
     }
 
 private func openDetail(for recording: Recording) {
