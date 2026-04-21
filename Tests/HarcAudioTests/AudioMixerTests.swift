@@ -40,7 +40,7 @@ struct AudioMixerTests {
         #expect(abs(first - 0.5) < 0.05, "expected ~0.5, got \(first)")
     }
 
-    @Test("mixer sums mic and system tracks sample-aligned when fed equal-length buffers")
+    @Test("mixer sums mic (with micGain) and system sample-aligned for equal-length buffers")
     func sumsMicAndSystem() throws {
         let mixer = AudioMixer()
         let micIn = makeFormat(rate: 16000, channels: 1)
@@ -57,7 +57,44 @@ struct AudioMixerTests {
         #expect(summed.format.channelCount == 1)
         #expect(summed.frameLength == 1600)
         let first = summed.floatChannelData![0][0]
-        #expect(abs(first - 0.5) < 0.01, "expected 0.2 + 0.3 = 0.5, got \(first)")
+        let expected = 0.2 * Double(AudioMixer.micGain) + 0.3
+        #expect(abs(Double(first) - expected) < 0.01, "expected \(expected), got \(first)")
+    }
+
+    @Test("mixer writes max(mic, sys) frames and zero-pads the shorter buffer")
+    func padsShorterBuffer() throws {
+        let mixer = AudioMixer()
+        let fmt = makeFormat(rate: 16000, channels: 1)
+
+        // mic buffer longer than sys buffer — mic tail must survive, not get dropped.
+        let mic = makeConstantBuffer(value: 0.2, frames: 1600, format: fmt)
+        let sys = makeConstantBuffer(value: 0.3, frames: 400, format: fmt)
+
+        let summed = try mixer.sum(mic: mic, system: sys)
+        #expect(summed.frameLength == 1600, "expected max(1600, 400) = 1600, got \(summed.frameLength)")
+
+        let data = summed.floatChannelData![0]
+        // Overlapping region: (0.2 * micGain) + 0.3
+        let overlap = 0.2 * Double(AudioMixer.micGain) + 0.3
+        #expect(abs(Double(data[0]) - overlap) < 0.01, "overlap expected \(overlap), got \(data[0])")
+        // Mic-only tail: 0.2 * micGain, clamped to 1.0 if necessary.
+        let tail = min(1.0, 0.2 * Double(AudioMixer.micGain))
+        #expect(abs(Double(data[1599]) - tail) < 0.01, "tail expected \(tail), got \(data[1599])")
+    }
+
+    @Test("mixer writes max(mic, sys) frames when system is longer, mic region gets padded to 0")
+    func padsShorterMic() throws {
+        let mixer = AudioMixer()
+        let fmt = makeFormat(rate: 16000, channels: 1)
+
+        let mic = makeConstantBuffer(value: 0.2, frames: 400, format: fmt)
+        let sys = makeConstantBuffer(value: 0.3, frames: 1600, format: fmt)
+
+        let summed = try mixer.sum(mic: mic, system: sys)
+        #expect(summed.frameLength == 1600)
+        let data = summed.floatChannelData![0]
+        // System-only tail: mic zero-padded, so just the system sample.
+        #expect(abs(Double(data[1599]) - 0.3) < 0.01, "sys-only tail expected 0.3, got \(data[1599])")
     }
 
     @Test("mixer clamps summed output to [-1, 1] to prevent clipping overflow")

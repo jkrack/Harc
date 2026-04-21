@@ -15,6 +15,15 @@ public final class AudioMixer {
         )!
     }()
 
+    /// Per-channel gain applied to the mic before summing with system audio.
+    /// Parakeet transcribes the mixed stream as a single source, so the louder
+    /// signal wins acoustic attention. MacBook built-in mics capture the user
+    /// noticeably quieter than the system-audio playback of a meeting/video,
+    /// and on an equal-gain sum the user's voice gets masked and dropped from
+    /// the transcript. 2× tilts the mix toward the mic without pushing typical
+    /// speech into the hard clip ceiling.
+    public static let micGain: Float = 2.0
+
     private var micConverter: AVAudioConverter?
     private var micInputFormat: AVAudioFormat?
     private var systemConverter: AVAudioConverter?
@@ -41,23 +50,33 @@ public final class AudioMixer {
     }
 
     /// Sample-wise sum of two mono 16 kHz buffers, clamped to [-1, 1].
-    /// If lengths differ, sums the shorter prefix.
+    /// Applies `micGain` to mic samples before summing, biasing the mix toward
+    /// the user's voice.
+    ///
+    /// When lengths differ, writes `max(mic, sys)` frames and zero-pads the
+    /// shorter input — dropping the longer buffer's tail (the original
+    /// `min(...)` behaviour) discarded mic frames every tick whenever system
+    /// audio delivered smaller buffers, which attenuated the mic in the WAV.
     public func sum(mic: AVAudioPCMBuffer, system: AVAudioPCMBuffer) throws -> AVAudioPCMBuffer {
         guard mic.format == AudioMixer.targetFormat,
               system.format == AudioMixer.targetFormat
         else {
             throw AudioError.conversionFailed("sum: both inputs must be in target format")
         }
-        let frames = min(mic.frameLength, system.frameLength)
-        guard let out = AVAudioPCMBuffer(pcmFormat: AudioMixer.targetFormat, frameCapacity: frames) else {
+        let micFrames = Int(mic.frameLength)
+        let sysFrames = Int(system.frameLength)
+        let total = AVAudioFrameCount(max(micFrames, sysFrames))
+        guard let out = AVAudioPCMBuffer(pcmFormat: AudioMixer.targetFormat, frameCapacity: total) else {
             throw AudioError.conversionFailed("sum: allocation failed")
         }
-        out.frameLength = frames
+        out.frameLength = total
         let m = mic.floatChannelData![0]
         let s = system.floatChannelData![0]
         let o = out.floatChannelData![0]
-        for i in 0..<Int(frames) {
-            var v = m[i] + s[i]
+        for i in 0..<Int(total) {
+            let mv = i < micFrames ? m[i] * AudioMixer.micGain : 0
+            let sv = i < sysFrames ? s[i] : 0
+            var v = mv + sv
             if v > 1.0 { v = 1.0 } else if v < -1.0 { v = -1.0 }
             o[i] = v
         }
