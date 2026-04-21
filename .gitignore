@@ -13,5 +13,8 @@ xcuserdata/
 # macOS
 .DS_Store
 
+# Local build artifacts
+build/
+
 # xcodegen-generated
 HarcApp/Info.plist

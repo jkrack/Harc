@@ -99,6 +99,20 @@ public final class TranscriptEditorViewModel: ObservableObject {
         }
     }
 
+    /// Persist a new custom title for this recording. Pass nil/empty to clear.
+    /// Mirrors `LibraryViewModel.rename` so the editor can rename in place.
+    public func renameTitle(_ raw: String?) async {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        guard let id = recording.id else { return }
+        do {
+            try await store.rename(id: id, title: value)
+        } catch {
+            saveError = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
     public func stopPlayback() {
         pollTask?.cancel()
         pollTask = nil

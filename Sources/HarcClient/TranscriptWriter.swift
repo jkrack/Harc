@@ -10,7 +10,8 @@ public enum TranscriptWriter {
         let txtURL = parent.appendingPathComponent("\(stem).txt")
         let jsonURL = parent.appendingPathComponent("\(stem).json")
 
-        let txtData = Data((transcript.joinedText + "\n").utf8)
+        let plain = TranscriptPlainTextRenderer.render(transcript)
+        let txtData = Data((plain + "\n").utf8)
         try txtData.write(to: txtURL, options: .atomic)
 
         let encoder = JSONEncoder()

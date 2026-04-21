@@ -4,19 +4,14 @@ import UniformTypeIdentifiers
 import HarcStore
 import HarcExport
 
-/// Identifiable wrapper so SwiftUI Table can use `wavPath` (non-optional String)
-/// as the row id. `Recording.id` is `Int64?`, which makes the Table's
-/// `.contextMenu(forSelectionType:)` + `primaryAction` machinery unreliable.
-private struct LibraryRow: Identifiable {
-    let recording: Recording
-    var id: String { recording.wavPath }
-}
-
 public struct LibraryWindowRootView: View {
     @EnvironmentObject private var vm: LibraryViewModel
     @State private var renameTarget: Recording?
     @State private var renameText: String = ""
     @State private var selectedWavPath: String?
+    @State private var hoveredRowId: String?
+    @State private var rowHeight: CGFloat = HarcDesign.Layout.rowHeightCompact
+    @State private var showStackedRail: Bool = true
     @State private var exportErrorMessage: String?
 
     private var selectedRecording: Recording? {
@@ -42,15 +37,26 @@ public struct LibraryWindowRootView: View {
     }
 
     public var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             sidebar
-                .frame(minWidth: 220, idealWidth: 240, maxWidth: 280)
+                .frame(width: HarcDesign.Layout.sidebarWidth)
+                .background(Color.harcSurface1)
+
+            verticalHairline
+
             main
-                .frame(minWidth: 480)
+                .frame(maxWidth: .infinity)
+                .background(Color.harcSurface2)
+
+            verticalHairline
+
             detail
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
+                .frame(width: HarcDesign.Layout.railWidth)
+                .background(Color.harcSurface1)
         }
-        .frame(minWidth: 1040, minHeight: 560)
+        .frame(minWidth: 1100, minHeight: 600)
+        .background(Color.harcSurface0)
+        .preferredColorScheme(.dark)
         .onAppear { vm.start() }
         .onDisappear { vm.stop() }
         .alert("Rename recording", isPresented: .constant(renameTarget != nil), presenting: renameTarget) { rec in
@@ -68,14 +74,27 @@ public struct LibraryWindowRootView: View {
         }
     }
 
+    private var verticalHairline: some View {
+        Rectangle()
+            .fill(Color.harcBorderSubtle)
+            .frame(width: 1)
+    }
+
     // MARK: Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
+        VStack(alignment: .leading, spacing: 0) {
             brandHeader
-            Divider().background(Color.harcOutlineVariant.opacity(0.3))
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+
             quickFilters
-            Divider().background(Color.harcOutlineVariant.opacity(0.3))
+                .padding(.horizontal, 8)
+                .padding(.bottom, 12)
+
+            Divider().background(Color.harcBorderSubtle)
+
             MonthCalendarView(
                 month: vm.calendarMonth,
                 selectedDay: selectedDay,
@@ -84,74 +103,90 @@ public struct LibraryWindowRootView: View {
                 onNextMonth: { vm.advanceMonth(by: 1) },
                 onSelectDay: { day in vm.filter = .day(day) }
             )
-            Spacer()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Spacer(minLength: 0)
+
+            Divider().background(Color.harcBorderSubtle)
             sidebarFooter
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
         }
-        .padding(HarcDesign.Space.md)
     }
 
     private var brandHeader: some View {
-        HStack(spacing: HarcDesign.Space.sm) {
-            RecordingIconTile(systemImage: "waveform", accent: .harcPrimary, size: 36)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Harc")
-                    .font(HarcDesign.Font.titleLg)
-                    .foregroundStyle(Color.harcOnSurface)
-                Text("LOCAL LIBRARY")
-                    .font(HarcDesign.Font.labelMd)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
-                    .tracking(1.2)
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                    .fill(HarcDesign.primaryGradient)
+                    .frame(width: 28, height: 28)
+                    .shadow(color: Color.harcAccent.opacity(0.4), radius: 6, x: 0, y: 4)
+                Image(systemName: "waveform")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
             }
-            Spacer()
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Harc")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color.harcInkPrimary)
+                Text("LOCAL LIBRARY")
+                    .font(HarcDesign.Font.monoXs)
+                    .foregroundStyle(Color.harcInkTertiary)
+                    .tracking(1.4)
+            }
+            Spacer(minLength: 0)
         }
     }
 
     private var sidebarFooter: some View {
         Button(action: onOpenSettings) {
-            HStack(spacing: HarcDesign.Space.xs) {
+            HStack(spacing: 8) {
                 Image(systemName: "gearshape")
-                    .frame(width: 16)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.harcInkTertiary)
                 Text("Settings")
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcOnSurface)
-                Spacer()
+                    .font(HarcDesign.Font.body)
+                    .foregroundStyle(Color.harcInkSecondary)
+                Spacer(minLength: 0)
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, HarcDesign.Space.xs)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     private var quickFilters: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             filterRow("All",       filter: .all,       systemImage: "tray.2")
             filterRow("Today",     filter: .today,     systemImage: "sun.max")
-            filterRow("Yesterday", filter: .yesterday, systemImage: "clock.arrow.circlepath")
+            filterRow("Yesterday", filter: .yesterday, systemImage: "moon")
             filterRow("This Week", filter: .thisWeek,  systemImage: "calendar")
             filterRow("Pinned",    filter: .pinned,    systemImage: "pin.fill")
         }
     }
 
     private func filterRow(_ label: String, filter: LibraryFilter, systemImage: String) -> some View {
-        Button {
-            vm.filter = filter
-        } label: {
-            HStack(spacing: HarcDesign.Space.xs) {
+        let active = vm.filter == filter
+        return Button { vm.filter = filter } label: {
+            HStack(spacing: 10) {
                 Image(systemName: systemImage)
-                    .frame(width: 16)
-                    .foregroundStyle(vm.filter == filter ? Color.harcPrimary : Color.harcOnSurfaceVariant)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 14)
+                    .foregroundStyle(active ? Color.harcAccent : Color.harcInkTertiary)
                 Text(label)
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcOnSurface)
-                Spacer()
+                    .font(HarcDesign.Font.body)
+                    .foregroundStyle(active ? Color.harcInkPrimary : Color.harcInkSecondary)
+                Spacer(minLength: 0)
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, HarcDesign.Space.xs)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(vm.filter == filter ? Color.harcPrimary.opacity(0.14) : Color.clear)
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(active ? Color.harcSurface3 : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .stroke(active ? Color.harcBorderStrong : Color.clear, lineWidth: 1)
+                    )
             )
             .contentShape(Rectangle())
         }
@@ -163,209 +198,610 @@ public struct LibraryWindowRootView: View {
         return nil
     }
 
-    // MARK: Main list
+    // MARK: Main
 
     private var main: some View {
-        VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
-            LibrarySearchField(text: $vm.searchText)
-            if vm.searchText.isEmpty {
-                list
-            } else {
-                searchResultsList
-            }
-            statusStrip
+        VStack(spacing: 0) {
+            searchBar
+            tableHeader
+            mainList
+            footerStrip
         }
-        .padding(HarcDesign.Space.lg)
+    }
+
+    private var searchBar: some View {
+        VStack(spacing: 0) {
+            LibrarySearchField(text: $vm.searchText)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            Divider().background(Color.harcBorderSubtle)
+        }
+    }
+
+    private var tableHeader: some View {
+        HStack(spacing: 16) {
+            headerCell("Name & Date", alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            headerCell("Duration", alignment: .leading)
+                .frame(width: 80, alignment: .leading)
+            headerCell("Tags", alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            headerCell("Actions", alignment: .trailing)
+                .frame(width: 80, alignment: .trailing)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.harcBorderSubtle)
+                .frame(height: 1)
+        }
+    }
+
+    private func headerCell(_ text: String, alignment: HorizontalAlignment) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .medium))
+            .tracking(0.6)
+            .foregroundStyle(Color.harcInkTertiary)
+    }
+
+    @ViewBuilder
+    private var mainList: some View {
+        if vm.searchText.isEmpty {
+            list
+        } else {
+            searchResultsList
+        }
     }
 
     @ViewBuilder
     private var searchResultsList: some View {
         if vm.hits.isEmpty {
-            VStack {
+            VStack(spacing: HarcDesign.Space.xs) {
                 Spacer()
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 28))
-                    .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.4))
+                    .foregroundStyle(Color.harcInkQuaternary)
                 Text("No matches for \u{201C}\(vm.searchText)\u{201D}")
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
-                    .padding(.top, HarcDesign.Space.xs)
+                    .font(HarcDesign.Font.body)
+                    .foregroundStyle(Color.harcInkSecondary)
                 Spacer()
             }
+            .frame(maxWidth: .infinity)
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(vm.hits) { hit in
                         TranscriptHitRow(hit: hit) { onOpen(hit.recording) }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
                             .background(
                                 selectedWavPath == hit.recording.wavPath
-                                    ? Color.harcPrimary.opacity(0.08)
+                                    ? Color.harcSelection
                                     : Color.clear
                             )
-                            .onTapGesture {
-                                selectedWavPath = hit.recording.wavPath
+                            .overlay(alignment: .leading) {
+                                if selectedWavPath == hit.recording.wavPath {
+                                    Rectangle()
+                                        .fill(Color.harcSelectionEdge)
+                                        .frame(width: 3)
+                                }
                             }
-                        Divider().background(Color.harcOutlineVariant.opacity(0.2))
+                            .contentShape(Rectangle())
+                            .onTapGesture { selectedWavPath = hit.recording.wavPath }
+                        Divider().background(Color.harcBorderSubtle.opacity(0.6))
                     }
                 }
             }
-        }
-    }
-
-    private var statusStrip: some View {
-        HStack {
-            Text(vm.searchText.isEmpty
-                 ? "\(vm.recordings.count) files"
-                 : "\(vm.hits.count) match\(vm.hits.count == 1 ? "" : "es")")
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
-            Text("·")
-                .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.5))
-            Text(storageUsed)
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
-            Spacer()
-            Text("LOCAL")
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcPrimary)
-                .tracking(1.2)
         }
     }
 
     @ViewBuilder
-    private var detail: some View {
-        if let rec = selectedRecording {
-            detailContent(for: rec)
+    private var list: some View {
+        if vm.recordings.isEmpty {
+            VStack(spacing: HarcDesign.Space.xs) {
+                Spacer()
+                Image(systemName: "waveform.slash")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.harcInkQuaternary)
+                Text("No recordings.")
+                    .font(HarcDesign.Font.body)
+                    .foregroundStyle(Color.harcInkSecondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
         } else {
-            detailEmpty
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(vm.recordings) { rec in
+                        recordingRow(rec)
+                    }
+                }
+                .padding(.bottom, 40)
+            }
         }
+    }
+
+    private func recordingRow(_ rec: Recording) -> some View {
+        let isSelected = selectedWavPath == rec.wavPath
+        let isHovered  = hoveredRowId == rec.wavPath
+        return HStack(spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: rec.pinned ? "pin.fill" : "waveform")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(isSelected ? .white : Color.harcAccent)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(rec.displayTitle)
+                        .font(HarcDesign.Font.body)
+                        .fontWeight(.medium)
+                        .foregroundStyle(isSelected ? .white : Color.harcInkPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(RelativeTimeFormatter.format(rec.startedAt))
+                        .font(HarcDesign.Font.monoXs)
+                        .foregroundStyle(isSelected
+                                         ? Color.white.opacity(0.75)
+                                         : Color.harcInkTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(formatDuration(rec))
+                .font(HarcDesign.Font.mono)
+                .monospacedDigit()
+                .foregroundStyle(isSelected
+                                 ? Color.white.opacity(0.85)
+                                 : Color.harcInkSecondary)
+                .frame(width: 80, alignment: .leading)
+
+            TagsRow(tags: rec.tags, maxInline: 2)
+                .opacity(isSelected ? 0.95 : 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 4) {
+                rowIconButton(systemImage: "rectangle.expand.vertical",
+                              help: "Open in editor",
+                              isSelected: isSelected) {
+                    onOpenInEditor(rec)
+                }
+                rowIconButton(systemImage: "folder",
+                              help: "Reveal in Finder",
+                              isSelected: isSelected) {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
+                }
+            }
+            .opacity(isSelected || isHovered ? 1 : 0.4)
+            .frame(width: 80, alignment: .trailing)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: rowHeight)
+        .background(
+            ZStack {
+                if isSelected {
+                    Color.harcSelection
+                } else if isHovered {
+                    Color.harcSurface3
+                }
+            }
+        )
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Rectangle()
+                    .fill(Color.harcSelectionEdge)
+                    .frame(width: 3)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.harcBorderSubtle.opacity(0.6))
+                .frame(height: 1)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            hoveredRowId = hovering ? rec.wavPath : (hoveredRowId == rec.wavPath ? nil : hoveredRowId)
+        }
+        .onTapGesture(count: 2) { onOpenInEditor(rec) }
+        .onTapGesture { selectedWavPath = rec.wavPath }
+        .contextMenu {
+            Button("Rename…") {
+                renameTarget = rec
+                renameText = rec.title ?? ""
+            }
+            Button("Open in Editor") { onOpenInEditor(rec) }
+            Button("Open") { onOpen(rec) }
+            Button(rec.pinned ? "Unpin" : "Pin") {
+                Task { try? await vm.togglePin(id: rec.id ?? -1, currentlyPinned: rec.pinned) }
+            }
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
+            }
+            Divider()
+            Button(role: .destructive) {
+                Task { try? await vm.delete(id: rec.id ?? -1) }
+            } label: {
+                Text("Delete")
+            }
+        }
+    }
+
+    private func rowIconButton(systemImage: String,
+                               help: String,
+                               isSelected: Bool,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 22, height: 22)
+                .foregroundStyle(isSelected ? Color.white : Color.harcInkTertiary)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    // MARK: Footer
+
+    private var footerStrip: some View {
+        HStack(spacing: 0) {
+            Text(footerLeft)
+                .font(HarcDesign.Font.monoXs)
+                .foregroundStyle(Color.harcInkTertiary)
+            Spacer()
+            footerStatus
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 32)
+        .background(Color.harcSurface1)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.harcBorderSubtle).frame(height: 1)
+        }
+    }
+
+    private var footerLeft: String {
+        let count = vm.searchText.isEmpty ? vm.recordings.count : vm.hits.count
+        return "\(count) files · \(storageUsed)"
+    }
+
+    private var footerStatus: some View {
+        HStack(spacing: 8) {
+            Text("M3 Max · Neural Engine")
+                .font(HarcDesign.Font.monoXs)
+                .foregroundStyle(Color.harcInkSecondary)
+            Text("·").foregroundStyle(Color.harcInkQuaternary)
+            Text("parakeet-tdt-0.6b-v3")
+                .font(HarcDesign.Font.monoXs)
+                .foregroundStyle(Color.harcInkSecondary)
+            Text("·").foregroundStyle(Color.harcInkQuaternary)
+            Text("LOCAL")
+                .font(HarcDesign.Font.monoXs)
+                .tracking(1.0)
+                .foregroundStyle(Color.harcAccent)
+                .fontWeight(.medium)
+        }
+    }
+
+    // MARK: Detail rail
+
+    @ViewBuilder
+    private var detail: some View {
+        VStack(spacing: 0) {
+            railHeader
+            if let rec = selectedRecording {
+                ScrollView {
+                    detailContent(for: rec)
+                        .padding(16)
+                }
+            } else {
+                detailEmpty
+            }
+        }
+    }
+
+    private var railHeader: some View {
+        HStack {
+            Spacer()
+            HStack(spacing: 2) {
+                railVariantButton("Detail",  active: !showStackedRail) { showStackedRail = false }
+                railVariantButton("Stacked", active:  showStackedRail) { showStackedRail = true }
+            }
+            .padding(2)
+            .background(
+                RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                    .fill(Color.harcSurface2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                            .stroke(Color.harcBorderSubtle, lineWidth: 1)
+                    )
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+    }
+
+    private func railVariantButton(_ label: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .foregroundStyle(active ? Color.harcInkPrimary : Color.harcInkSecondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(active ? Color.harcSurface4 : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private var detailEmpty: some View {
-        VStack(spacing: HarcDesign.Space.sm) {
+        VStack(spacing: HarcDesign.Space.xs) {
             Spacer()
             Image(systemName: "waveform.slash")
-                .font(.system(size: 36))
-                .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.4))
+                .font(.system(size: 32))
+                .foregroundStyle(Color.harcInkQuaternary)
             Text("Select a recording")
-                .font(HarcDesign.Font.bodyMd)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
+                .font(HarcDesign.Font.body)
+                .foregroundStyle(Color.harcInkTertiary)
             Spacer()
         }
-        .frame(maxWidth: .infinity)
-        .padding(HarcDesign.Space.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func detailContent(for rec: Recording) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
-                        .fill(Color.harcPrimary.opacity(0.14))
-                        .frame(height: 140)
-                    Button {
-                        onOpenInEditor(rec)
-                    } label: {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 48))
-                            .foregroundStyle(Color.harcPrimary)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
-                    Text("FILE DETAILS")
-                        .font(HarcDesign.Font.labelMd)
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
-                        .tracking(1.2)
-                    detailRow(label: "Recording Date", value: formatFullDate(rec.startedAt))
-                    detailRow(label: "Duration",       value: formatDuration(rec))
-                    detailRow(label: "File",           value: URL(fileURLWithPath: rec.wavPath).lastPathComponent)
-                    if !rec.tags.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Tags")
-                                .font(HarcDesign.Font.labelMd)
-                                .foregroundStyle(Color.harcOnSurfaceVariant)
-                            HStack(spacing: 4) {
-                                ForEach(rec.tags, id: \.self) { TagChip($0) }
-                            }
-                        }
-                    }
-                }
-
-                if !rec.preview.isEmpty {
-                    VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
-                        Text("AI SUMMARY")
-                            .font(HarcDesign.Font.labelMd)
-                            .foregroundStyle(Color.harcOnSurfaceVariant)
-                            .tracking(1.2)
-                        Text(rec.preview)
-                            .font(HarcDesign.Font.bodySm)
-                            .foregroundStyle(Color.harcOnSurface)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button {
-                            onOpen(rec)
-                        } label: {
-                            Text("Read Full Transcript →")
-                                .font(HarcDesign.Font.labelMd)
-                                .foregroundStyle(Color.harcPrimary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                exportControls(for: rec)
-
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 20) {
+            playerCard(for: rec)
+            fileDetailsSection(for: rec)
+            exportSection(for: rec)
+            if showStackedRail, !rec.preview.isEmpty {
+                transcriptPreviewSection(for: rec)
             }
-            .padding(HarcDesign.Space.lg)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // ---- Rail: player card ----
+
+    private func playerCard(for rec: Recording) -> some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                skipButton(systemImage: "gobackward", label: "5", action: {})
+                Button { onOpenInEditor(rec) } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color.harcAccent)
+                            .frame(width: 44, height: 44)
+                            .shadow(color: Color.harcAccent.opacity(0.45),
+                                    radius: 10, x: 0, y: 4)
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .offset(x: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Open in editor")
+                skipButton(systemImage: "goforward", label: "5", action: {})
+            }
+            .frame(maxWidth: .infinity)
+
+            WaveformBars(seed: rec.wavPath.hashValue, count: 48, playedFraction: 0)
+                .frame(height: 40)
+
+            HStack {
+                Text("0:00")
+                Spacer()
+                Text(formatDuration(rec))
+            }
+            .font(HarcDesign.Font.mono)
+            .monospacedDigit()
+            .foregroundStyle(Color.harcInkTertiary)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg, style: .continuous)
+                .fill(Color.harcSurface2)
+                .overlay(
+                    RoundedRectangle(cornerRadius: HarcDesign.Radius.lg, style: .continuous)
+                        .stroke(Color.harcBorderSubtle, lineWidth: 1)
+                )
+        )
+    }
+
+    private func skipButton(systemImage: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(Color.harcInkSecondary)
+                Text(label)
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.harcInkSecondary)
+                    .offset(y: 1)
+            }
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: HarcDesign.Radius.full, style: .continuous)
+                    .fill(Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // ---- Rail: file details ----
+
+    private func fileDetailsSection(for rec: Recording) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("File Details")
+            VStack(spacing: 0) {
+                detailKV("Recording Date", value: formatFullDate(rec.startedAt), mono: false)
+                kvDivider()
+                detailKV("Duration", value: formatDuration(rec), mono: true)
+                kvDivider()
+                detailKV(
+                    "File",
+                    value: URL(fileURLWithPath: rec.wavPath).lastPathComponent,
+                    mono: true
+                )
+                if !rec.tags.isEmpty {
+                    kvDivider()
+                    HStack(alignment: .top, spacing: 12) {
+                        Text("Tags")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Color.harcInkTertiary)
+                            .frame(width: 92, alignment: .leading)
+                        // Wrap tag pills inside the rail with no horizontal overflow.
+                        FlowingTags(tags: rec.tags)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
         }
     }
 
-    private func exportControls(for rec: Recording) -> some View {
-        VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
-            Text("EXPORT")
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
-                .tracking(1.2)
-            HStack(spacing: HarcDesign.Space.sm) {
+    private func detailKV(_ key: String, value: String, mono: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(key)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Color.harcInkTertiary)
+                .frame(width: 92, alignment: .leading)
+            Text(value)
+                .font(mono ? HarcDesign.Font.mono : .system(size: 12.5))
+                .foregroundStyle(Color.harcInkPrimary)
+                // CRITICAL: lets text wrap inside a narrow rail rather than push it.
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func kvDivider() -> some View {
+        Rectangle()
+            .fill(Color.harcBorderSubtle)
+            .frame(height: 1)
+            .opacity(0.6)
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(HarcDesign.Font.monoXs)
+            .tracking(1.4)
+            .foregroundStyle(Color.harcInkTertiary)
+    }
+
+    // ---- Rail: export ----
+
+    private func exportSection(for rec: Recording) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Export")
+            HStack(spacing: 8) {
                 Menu {
-                    Button("Export Markdown…")    { runExport(rec, format: .markdown) }
-                    Button("Export DOCX…")        { runExport(rec, format: .docx) }
-                    Button("Export for Prompt…")  { runExport(rec, format: .prompt) }
-                    Divider()
-                    Button("Copy for Prompt")     { copyPromptString(rec) }
-                    Button("Copy Plain Text")     { copyPlainText(rec) }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.up")
-                        Text("Export")
+                    Section("Transcript") {
+                        Button("Plain text · .txt") { runExport(rec, format: .prompt) }
+                        Button("Markdown · .md")    { runExport(rec, format: .markdown) }
                     }
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcPrimary)
+                    Section("Document") {
+                        Button("DOCX · .docx")      { runExport(rec, format: .docx) }
+                    }
+                    Divider()
+                    Button("Copy plain text") { copyPlainText(rec) }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Export")
+                            .font(HarcDesign.Font.meta)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.harcInkPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                            .fill(Color.harcSurface3)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                                    .stroke(Color.harcBorderStrong, lineWidth: 1)
+                            )
+                    )
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
 
-                Button {
-                    copyPromptString(rec)
-                } label: {
+                Button { copyPromptString(rec) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 11, weight: .medium))
                         Text("Copy for Prompt")
+                            .font(HarcDesign.Font.meta)
                     }
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcPrimary)
+                    .foregroundStyle(Color.harcAccent)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
             }
             if let msg = exportErrorMessage {
                 Text(msg)
-                    .font(HarcDesign.Font.labelMd)
+                    .font(HarcDesign.Font.label)
                     .foregroundStyle(Color.harcError)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
+
+    // ---- Rail: transcript preview (Stacked variant) ----
+
+    private func transcriptPreviewSection(for rec: Recording) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Transcript · Preview")
+            ZStack(alignment: .bottom) {
+                Text(rec.preview)
+                    .font(.system(size: 12.5))
+                    .lineSpacing(4)
+                    .foregroundStyle(Color.harcInkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .frame(maxHeight: 220, alignment: .top)
+                    .clipped()
+                LinearGradient(
+                    colors: [Color.harcSurface1.opacity(0), Color.harcSurface1],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 60)
+                .allowsHitTesting(false)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: HarcDesign.Radius.lg, style: .continuous)
+                    .fill(Color.harcSurface2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: HarcDesign.Radius.lg, style: .continuous)
+                            .stroke(Color.harcBorderSubtle, lineWidth: 1)
+                    )
+            )
+
+            Button { onOpen(rec) } label: {
+                Text("Open full transcript →")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.harcAccent)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: Export helpers
 
     private func copyPromptString(_ rec: Recording) {
         let s = ExportService.promptString(for: rec)
@@ -406,16 +842,7 @@ public struct LibraryWindowRootView: View {
         }
     }
 
-    private func detailRow(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
-            Text(value)
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcOnSurface)
-        }
-    }
+    // MARK: Formatting helpers
 
     private func formatFullDate(_ date: Date) -> String {
         let f = DateFormatter()
@@ -439,100 +866,6 @@ public struct LibraryWindowRootView: View {
         return fmt.string(fromByteCount: total)
     }
 
-    @ViewBuilder
-    private var list: some View {
-        if vm.recordings.isEmpty {
-            VStack {
-                Spacer()
-                Text(vm.searchText.isEmpty ? "No recordings." : "No matches.")
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
-                Spacer()
-            }
-        } else {
-            Table(vm.recordings.map(LibraryRow.init), selection: $selectedWavPath) {
-                TableColumn("Name & Date") { row in
-                    let rec = row.recording
-                    HStack(alignment: .center, spacing: HarcDesign.Space.xs) {
-                        RecordingIconTile(
-                            systemImage: rec.pinned ? "pin.fill" : "waveform",
-                            accent: rec.pinned ? .harcTertiary : .harcPrimary,
-                            size: 28
-                        )
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(rec.displayTitle)
-                                .font(HarcDesign.Font.titleSm)
-                                .foregroundStyle(Color.harcOnSurface)
-                                .lineLimit(1)
-                            Text(RelativeTimeFormatter.format(rec.startedAt))
-                                .font(HarcDesign.Font.labelMd)
-                                .foregroundStyle(Color.harcOnSurfaceVariant)
-                        }
-                    }
-                }
-                TableColumn("Duration") { row in
-                    Text(formatDuration(row.recording))
-                        .font(HarcDesign.Font.bodySm.monospacedDigit())
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
-                }
-                .width(min: 70, ideal: 80, max: 100)
-                TableColumn("Tags") { row in
-                    if row.recording.tags.isEmpty {
-                        Text("—")
-                            .font(HarcDesign.Font.labelMd)
-                            .foregroundStyle(Color.harcOnSurfaceVariant.opacity(0.5))
-                    } else {
-                        HStack(spacing: 4) {
-                            ForEach(row.recording.tags.prefix(3), id: \.self) { TagChip($0) }
-                        }
-                    }
-                }
-                TableColumn("Actions") { row in
-                    let rec = row.recording
-                    HStack(spacing: HarcDesign.Space.xxs) {
-                        Button { onOpen(rec) } label: {
-                            Image(systemName: "arrow.up.forward.square")
-                        }.buttonStyle(.plain).help("Open")
-                        Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
-                        } label: {
-                            Image(systemName: "folder")
-                        }.buttonStyle(.plain).help("Reveal in Finder")
-                    }
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
-                }
-                .width(min: 60, ideal: 72, max: 90)
-            }
-            .tableStyle(.inset)
-            .contextMenu(forSelectionType: String.self, menu: { paths in
-                if let path = paths.first, let rec = vm.recordings.first(where: { $0.wavPath == path }) {
-                    Button("Rename…") {
-                        renameTarget = rec
-                        renameText = rec.title ?? ""
-                    }
-                    Button("Open in Editor") { onOpenInEditor(rec) }
-                    Button("Open") { onOpen(rec) }
-                    Button(rec.pinned ? "Unpin" : "Pin") {
-                        Task { try? await vm.togglePin(id: rec.id ?? -1, currentlyPinned: rec.pinned) }
-                    }
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
-                    }
-                    Divider()
-                    Button(role: .destructive) {
-                        Task { try? await vm.delete(id: rec.id ?? -1) }
-                    } label: {
-                        Text("Delete")
-                    }
-                }
-            }, primaryAction: { paths in
-                if let path = paths.first, let rec = vm.recordings.first(where: { $0.wavPath == path }) {
-                    onOpenInEditor(rec)
-                }
-            })
-        }
-    }
-
     private func formatDuration(_ rec: Recording) -> String {
         guard let end = rec.endedAt else { return "—" }
         let seconds = Int(end.timeIntervalSince(rec.startedAt))
@@ -542,5 +875,94 @@ public struct LibraryWindowRootView: View {
             return String(format: "%d:%02d:%02d", h, mm, s)
         }
         return String(format: "%d:%02d", m, s)
+    }
+}
+
+// MARK: - Waveform bars (deterministic)
+
+private struct WaveformBars: View {
+    let seed: Int
+    let count: Int
+    let playedFraction: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            let total = max(1, count)
+            let spacing: CGFloat = 1.5
+            let barW = max(1, (geo.size.width - spacing * CGFloat(total - 1)) / CGFloat(total))
+            HStack(alignment: .center, spacing: spacing) {
+                ForEach(0..<total, id: \.self) { i in
+                    let h = barHeight(for: i, in: total, height: geo.size.height)
+                    let played = Double(i) / Double(total) < playedFraction
+                    Rectangle()
+                        .fill(played ? Color.harcAccent : Color.harcInkQuaternary)
+                        .frame(width: barW, height: h)
+                        .cornerRadius(0.5)
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+        }
+    }
+
+    private func barHeight(for i: Int, in n: Int, height: CGFloat) -> CGFloat {
+        // deterministic pseudo-random shape
+        let s = Double(seed &* 0x1F1F1F1F &+ i &* 9301 &+ 49297)
+        let r = abs(sin(s)) // 0...1
+        let envelope = 0.35 + 0.65 * abs(sin(Double(i) * 0.27 + Double(seed) * 0.11))
+        let frac = 0.18 + 0.82 * (0.6 * envelope + 0.4 * r)
+        return max(2, height * CGFloat(min(1.0, frac)))
+    }
+}
+
+// MARK: - Flowing tag wrap (used in the rail's Tags row)
+
+private struct FlowingTags: View {
+    let tags: [String]
+
+    var body: some View {
+        FlowLayout(spacing: 4, lineSpacing: 4) {
+            ForEach(tags, id: \.self) { TagChip($0) }
+        }
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+    var lineSpacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxW = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineH: CGFloat = 0
+        for s in subviews {
+            let sz = s.sizeThatFits(.unspecified)
+            if x + sz.width > maxW, x > 0 {
+                x = 0
+                y += lineH + lineSpacing
+                lineH = 0
+            }
+            x += sz.width + spacing
+            lineH = max(lineH, sz.height)
+        }
+        return CGSize(width: maxW.isFinite ? maxW : x, height: y + lineH)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let maxW = bounds.width
+        var x = bounds.minX
+        var y = bounds.minY
+        var lineH: CGFloat = 0
+        for s in subviews {
+            let sz = s.sizeThatFits(.unspecified)
+            if x + sz.width > bounds.minX + maxW, x > bounds.minX {
+                x = bounds.minX
+                y += lineH + lineSpacing
+                lineH = 0
+            }
+            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sz))
+            x += sz.width + spacing
+            lineH = max(lineH, sz.height)
+        }
     }
 }
