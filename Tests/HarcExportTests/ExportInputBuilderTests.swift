@@ -115,6 +115,20 @@ struct ExportInputBuilderTests {
         #expect(input.speakerNames == [0: "Jason", 1: "Amy"])
     }
 
+    @Test("sentencepiece-style word tokens concatenate without doubled spaces")
+    func sentencePieceTokens() throws {
+        let url = try fixtureURL("sentencepiece-tokens")
+        let rec = Recording(
+            wavPath: "/tmp/fake.wav",
+            jsonPath: url.path,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let input = ExportInputBuilder.build(from: rec)
+        #expect(input.segments.count == 1)
+        #expect(input.segments[0].speaker == 0)
+        #expect(input.segments[0].text == "Big for New York")
+    }
+
     @Test("speakerNames defaults to empty when Recording has none")
     func speakerNamesEmptyByDefault() {
         let rec = Recording(

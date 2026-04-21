@@ -1,0 +1,17 @@
+{
+  "audioPath": "/tmp/fake.wav",
+  "chunks": [],
+  "endedAt": 1700000004,
+  "joinedText": "Big for New York",
+  "speakers": [
+    {"endMs": 4000, "speaker": 0, "startMs": 0}
+  ],
+  "startedAt": 1700000000,
+  "words": [
+    {"endMs": 400,  "startMs": 0,    "text": " B"},
+    {"endMs": 700,  "startMs": 400,  "text": "ig"},
+    {"endMs": 1200, "startMs": 700,  "text": " for"},
+    {"endMs": 1800, "startMs": 1200, "text": " New"},
+    {"endMs": 2400, "startMs": 1800, "text": " York"}
+  ]
+}

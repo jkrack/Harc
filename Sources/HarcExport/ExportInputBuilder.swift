@@ -61,6 +61,14 @@ public enum ExportInputBuilder {
             return t.isEmpty ? [] : [.init(speaker: nil, text: t)]
         }
 
+        // Parakeet/FluidAudio emits SentencePiece-style tokens where a leading
+        // space marks a word boundary (" for", " New") and a bare token is a
+        // subword continuation ("ig" after " B" → "Big"). Naively joining with
+        // " " between every token produces `" B" + " " + "ig" = " B ig"` and
+        // doubled spaces on word boundaries. Mirror the detection/concat
+        // strategy from TranscriptPlainTextRenderer.
+        let sentencePieceStyle = transcript.words.contains { $0.text.first?.isWhitespace == true }
+
         var currentSpeaker: Int? = nil
         var bucketText = ""
         var output: [ExportInput.Segment] = []
@@ -83,8 +91,13 @@ public enum ExportInputBuilder {
                 flush()
                 currentSpeaker = assigned
             }
-            if !bucketText.isEmpty { bucketText += " " }
-            bucketText += word.text
+            if sentencePieceStyle {
+                bucketText += word.text
+            } else if bucketText.isEmpty {
+                bucketText = word.text
+            } else {
+                bucketText += " " + word.text
+            }
         }
         flush()
 
