@@ -16,6 +16,32 @@ public struct RecordingResult: Sendable {
     }
 }
 
+/// RMS + FFT level snapshot per audio tick. Drives both the live scope and
+/// menu bar bars, and is the same signal the silence-detection trigger reads
+/// — one source of truth for "is there audio right now".
+///
+/// - `micDb` / `systemDb`: raw per-tick RMS of the individual streams, in
+///   dBFS. `-.infinity` if that stream had no frames.
+/// - `smoothedDb`: RMS of the weighted (mic 0.7 + sys 0.3) signal with a
+///   20 ms attack / 200 ms release envelope, clamped to `[-60, 0]` dBFS.
+///   This is the value the auto-stop timer checks against the silence
+///   threshold.
+/// - `fftBins`: 5 normalized band magnitudes of the weighted signal in
+///   `[0, 1]` — bass, low-mid, mid, high-mid, sibilance.
+public struct AudioLevels: Sendable {
+    public let micDb: Float
+    public let systemDb: Float
+    public let smoothedDb: Float
+    public let fftBins: [Float]
+
+    public init(micDb: Float, systemDb: Float, smoothedDb: Float, fftBins: [Float]) {
+        self.micDb = micDb
+        self.systemDb = systemDb
+        self.smoothedDb = smoothedDb
+        self.fftBins = fftBins
+    }
+}
+
 /// Orchestrates a single recording. One instance per recording.
 public actor RecordingSession {
     private let mic: any MicCaptureSource
@@ -25,6 +51,13 @@ public actor RecordingSession {
 
     nonisolated(unsafe) private let mixer = AudioMixer()
     nonisolated(unsafe) private var writer: AudioFileWriter?
+    nonisolated(unsafe) private let levelComputer = LevelComputer()
+
+    /// Live RMS + FFT level stream — one tick per mic buffer. Consumers can
+    /// drop this on the floor if no one subscribes; the continuation is buffered
+    /// with `.bufferingNewest(2)` so a slow consumer only sees the latest values.
+    public nonisolated let levels: AsyncStream<AudioLevels>
+    nonisolated private let levelsContinuation: AsyncStream<AudioLevels>.Continuation
 
     private var cacheURL: URL?
     private var startedAt: Date?
@@ -41,6 +74,9 @@ public actor RecordingSession {
         self.systemAudio = systemAudio
         self.destination = destination
         self.transcriber = transcriber
+        var continuation: AsyncStream<AudioLevels>.Continuation!
+        self.levels = AsyncStream(bufferingPolicy: .bufferingNewest(2)) { continuation = $0 }
+        self.levelsContinuation = continuation
     }
 
     public func start(at date: Date) async throws {
@@ -80,6 +116,7 @@ public actor RecordingSession {
         pumpTask?.cancel()
         _ = await pumpTask?.value
         pumpTask = nil
+        levelsContinuation.finish()
 
         guard let writer, let cache = cacheURL, let startedAt else {
             throw AudioError.audioEngineFailed("stop called before start")
@@ -130,19 +167,49 @@ public actor RecordingSession {
     nonisolated fileprivate func processPair(mic: AVAudioPCMBuffer, system: AVAudioPCMBuffer?) {
         do {
             let micMono = try mixer.processMic(mic)
+            let micDb = rmsDb(micMono)
+            let sysMono: AVAudioPCMBuffer?
+            let sysDb: Float
             let mixed: AVAudioPCMBuffer
             if let system {
-                let sysMono = try mixer.processSystem(system)
-                mixed = try mixer.sum(mic: micMono, system: sysMono)
+                let mono = try mixer.processSystem(system)
+                sysMono = mono
+                sysDb = rmsDb(mono)
+                mixed = try mixer.sum(mic: micMono, system: mono)
             } else {
+                sysMono = nil
+                sysDb = -.infinity
                 mixed = micMono
             }
             try writer?.write(mixed)
+            let levels = levelComputer.compute(
+                micMono: micMono,
+                systemMono: sysMono,
+                micDb: micDb,
+                systemDb: sysDb
+            )
+            levelsContinuation.yield(levels)
         } catch {
             FileHandle.standardError.write(Data(
                 "harc-audio: processPair failed: \(error.localizedDescription)\n".utf8
             ))
         }
+    }
+
+    /// RMS of a mono Float32 buffer in dBFS. Floor at -120 dB so a totally
+    /// silent buffer yields a finite number (`-.infinity` if there are no frames).
+    nonisolated private func rmsDb(_ buffer: AVAudioPCMBuffer) -> Float {
+        let count = Int(buffer.frameLength)
+        guard count > 0, let data = buffer.floatChannelData?[0] else { return -.infinity }
+        var sum: Float = 0
+        for i in 0..<count {
+            let s = data[i]
+            sum += s * s
+        }
+        let mean = sum / Float(count)
+        guard mean > 0 else { return -120 }
+        let rms = sqrtf(mean)
+        return max(-120, 20 * log10f(rms))
     }
 }
 

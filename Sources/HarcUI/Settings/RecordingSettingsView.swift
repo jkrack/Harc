@@ -56,6 +56,8 @@ public struct RecordingSettingsView: View {
                     .foregroundStyle(Color.harcOnSurfaceVariant)
             }
 
+            autoStopSection
+
             Section {
                 Toggle("Auto-paste on stop", isOn: $prefs.autoPasteEnabled)
                     .tint(HarcDesign.primary)
@@ -106,6 +108,67 @@ public struct RecordingSettingsView: View {
         }
         .formStyle(.grouped)
         .task { await refreshNotificationStatus() }
+    }
+
+    // MARK: - Auto-stop
+
+    @ViewBuilder
+    private var autoStopSection: some View {
+        Section {
+            Toggle("Auto-stop when silent", isOn: $prefs.autoStopEnabled)
+                .tint(HarcDesign.primary)
+
+            if prefs.autoStopEnabled {
+                HStack {
+                    Text("Silence threshold")
+                    Spacer()
+                    Picker("", selection: $prefs.silenceThresholdMinutes) {
+                        Text("3 min").tag(3)
+                        Text("5 min").tag(5)
+                        Text("10 min").tag(10)
+                        Text("15 min").tag(15)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 260)
+                }
+            }
+
+            Toggle("Hard duration cap", isOn: $prefs.hardCapEnabled)
+                .tint(HarcDesign.primary)
+
+            if prefs.hardCapEnabled {
+                Stepper(value: $prefs.hardCapMinutes, in: 15...720, step: 15) {
+                    HStack {
+                        Text("Maximum length")
+                        Spacer()
+                        Text(formatCap(prefs.hardCapMinutes))
+                            .font(HarcDesign.Font.labelMd.monospacedDigit())
+                            .foregroundStyle(Color.harcOnSurfaceVariant)
+                    }
+                }
+            }
+
+            Toggle("Post-stop notification", isOn: $prefs.postStopNotificationEnabled)
+                .tint(HarcDesign.primary)
+        } header: {
+            Text("Auto-stop")
+        } footer: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Stops recording automatically when both the mic and system audio have been silent. Warns 60 s before stopping so you can keep recording.")
+                Text("The hard cap stops recording regardless of silence. The tray banner always shows after an auto-stop; the macOS notification is additive and respects Do Not Disturb.")
+            }
+            .font(HarcDesign.Font.bodySm)
+            .foregroundStyle(Color.harcOnSurfaceVariant)
+        }
+    }
+
+    private func formatCap(_ minutes: Int) -> String {
+        let h = minutes / 60
+        let m = minutes % 60
+        if h > 0 && m > 0 { return String(format: "%dh %02dm", h, m) }
+        if h > 0 { return "\(h)h" }
+        return "\(m)m"
     }
 
     private func monitoredAppRow(_ app: MeetingApp) -> some View {

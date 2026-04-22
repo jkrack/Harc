@@ -16,6 +16,11 @@ public final class HarcPreferences: ObservableObject {
         static let meetingAppEnabled = "harc.meetingAppEnabled"
         static let autoPasteEnabled = "harc.autoPasteEnabled"
         static let vadEnabled = "harc.vadEnabled"
+        static let autoStopEnabled = "harc.autoStopEnabled"
+        static let silenceThresholdMinutes = "harc.silenceThresholdMinutes"
+        static let hardCapEnabled = "harc.hardCapEnabled"
+        static let hardCapMinutes = "harc.hardCapMinutes"
+        static let postStopNotificationEnabled = "harc.postStopNotificationEnabled"
     }
 
     @Published public var destinationPath: String {
@@ -54,6 +59,31 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(vadEnabled, forKey: Key.vadEnabled) }
     }
 
+    /// Auto-stop when both mic + system-audio have been silent for
+    /// `silenceThresholdMinutes`. Warns 60 s before stopping.
+    @Published public var autoStopEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoStopEnabled, forKey: Key.autoStopEnabled) }
+    }
+
+    /// Allowed values: 3, 5, 10, 15.
+    @Published public var silenceThresholdMinutes: Int {
+        didSet { UserDefaults.standard.set(silenceThresholdMinutes, forKey: Key.silenceThresholdMinutes) }
+    }
+
+    /// Hard ceiling on recording length regardless of silence.
+    @Published public var hardCapEnabled: Bool {
+        didSet { UserDefaults.standard.set(hardCapEnabled, forKey: Key.hardCapEnabled) }
+    }
+
+    @Published public var hardCapMinutes: Int {
+        didSet { UserDefaults.standard.set(hardCapMinutes, forKey: Key.hardCapMinutes) }
+    }
+
+    /// Additive macOS notification after auto-stop — the tray banner is always shown.
+    @Published public var postStopNotificationEnabled: Bool {
+        didSet { UserDefaults.standard.set(postStopNotificationEnabled, forKey: Key.postStopNotificationEnabled) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -82,6 +112,12 @@ public final class HarcPreferences: ObservableObject {
         }
         self.autoPasteEnabled = defaults.object(forKey: Key.autoPasteEnabled) as? Bool ?? true
         self.vadEnabled = defaults.object(forKey: Key.vadEnabled) as? Bool ?? true
+        self.autoStopEnabled = defaults.object(forKey: Key.autoStopEnabled) as? Bool ?? true
+        let rawThreshold = defaults.object(forKey: Key.silenceThresholdMinutes) as? Int ?? 5
+        self.silenceThresholdMinutes = [3, 5, 10, 15].contains(rawThreshold) ? rawThreshold : 5
+        self.hardCapEnabled = defaults.object(forKey: Key.hardCapEnabled) as? Bool ?? true
+        self.hardCapMinutes = defaults.object(forKey: Key.hardCapMinutes) as? Int ?? 180
+        self.postStopNotificationEnabled = defaults.object(forKey: Key.postStopNotificationEnabled) as? Bool ?? true
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {
