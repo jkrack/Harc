@@ -18,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private let launcher = DaemonLauncher()
     private let state = RecordingState()
     private let prefs = HarcPreferences.shared
+    private let autoStop = AutoStopController()
+    private var autoStopPhaseObserver: AnyCancellable?
+    private var autoStopConfigObserver: AnyCancellable?
+    private var stoppedFlashTask: Task<Void, Never>?
     private var settingsWindow: SettingsWindowController?
     private var store: RecordingStore?
     private var recordingsVM: RecordingsViewModel?
@@ -47,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        updateMenuBarIcon(recording: false, on: item)
+        updateMenuBarIcon(on: item)
 
         if let button = item.button {
             button.action = #selector(handleStatusItemClick(_:))
@@ -82,10 +86,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
         notificationPresenter.registerCategory()
         UNUserNotificationCenter.current().delegate = self
+        AutoStopNotification.registerCategory()
         setupMeetingDetector()
         registerTerminateWatchdog()
         observeMeetingDetectionPref()
         observeMeetingStateForPulse()
+        applyAutoStopConfigFromPrefs()
+        observeAutoStopPrefs()
+        observeAutoStopPhase()
+        observeAutoStopFFTBins()
+        autoStop.onAutoStop = { [weak self] reason in
+            Task { @MainActor in
+                await self?.stopRecording(autoStopReason: reason)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -136,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         if state.isRecording,
            NSApp.currentEvent?.modifierFlags.contains(.option) == true {
             pendingSkipPaste = true
-            Task { await stopRecording() }
+            Task { await stopRecording(autoStopReason: nil) }
             return
         }
         togglePopover(sender)
@@ -174,18 +188,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
     private func toggleRecording() async {
         if state.isRecording {
-            await stopRecording()
+            await stopRecording(autoStopReason: nil)
         } else {
             await startRecording()
         }
+    }
+
+    private func applyAutoStopConfigFromPrefs() {
+        autoStop.config = .from(
+            silenceEnabled: prefs.autoStopEnabled,
+            silenceThresholdMinutes: prefs.silenceThresholdMinutes,
+            hardCapEnabled: prefs.hardCapEnabled,
+            hardCapMinutes: prefs.hardCapMinutes
+        )
+    }
+
+    private func observeAutoStopPrefs() {
+        // Republish on any change to the four auto-stop prefs.
+        let combined = Publishers.CombineLatest4(
+            prefs.$autoStopEnabled,
+            prefs.$silenceThresholdMinutes,
+            prefs.$hardCapEnabled,
+            prefs.$hardCapMinutes
+        )
+        autoStopConfigObserver = combined
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applyAutoStopConfigFromPrefs()
+            }
+    }
+
+    private func observeAutoStopPhase() {
+        autoStopPhaseObserver = autoStop.$phase
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateMenuBarIcon()
+            }
+    }
+
+    /// Per-tick FFT-driven icon refresh. Only fires while the bars state
+    /// applies (recording / warning); in any other state the icon is a static
+    /// symbol set by `updateMenuBarIcon()`.
+    private var autoStopFFTObserver: AnyCancellable?
+    private func observeAutoStopFFTBins() {
+        autoStopFFTObserver = autoStop.$fftBins
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] bins in
+                self?.redrawMenuBarBars(bins)
+            }
+    }
+
+    private func redrawMenuBarBars(_ bins: [Float]) {
+        guard let button = statusItem?.button else { return }
+        let state = currentMenuBarState()
+        guard state == .recording || state == .warning else { return }
+        let label = state == .warning ? "Harc — about to auto-stop" : "Harc — recording"
+        let image = MenuBarBarsIcon.image(for: bins)
+        // Belt-and-braces: if we somehow got a zero-sized image back, keep the
+        // current button image rather than replacing it with something invisible.
+        if image.size.width <= 0 || image.size.height <= 0 { return }
+        image.accessibilityDescription = label
+        button.image = image
     }
 
     private func startRecording() async {
         guard session == nil else { return }
 
         meetingState.clearAll()
-        updateMenuBarIcon(recording: true)
+        autoStop.resetPostStop()
+        stoppedFlashTask?.cancel()
+        stoppedFlashTask = nil
         state.markStarted(at: Date())
+        updateMenuBarIcon()
 
         do {
             _ = try await launcher.ensureRunning()
@@ -216,13 +291,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
             }
 
             try await session.start(at: state.recordingStartedAt ?? Date())
+            autoStop.begin(
+                session: session,
+                startedAt: state.recordingStartedAt ?? Date()
+            )
         } catch {
             presentError(error)
             resetUI()
         }
     }
 
-    private func stopRecording() async {
+    private func stopRecording(autoStopReason: AutoStopController.StopReason?) async {
         // Sample modifier state NOW, before any await — by the time session.stop()
         // resolves (seconds later), the user may have released Shift. Also consume
         // the ⌥-click escape-hatch flag unconditionally so it can't leak into a
@@ -259,8 +338,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 }
             }
             runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
+            autoStop.end(autoStopReason: autoStopReason)
+            if let autoStopReason, prefs.postStopNotificationEnabled {
+                AutoStopNotification.post(
+                    reason: autoStopReason,
+                    duration: rec.endedAt.map { $0.timeIntervalSince(rec.startedAt) },
+                    thresholdMinutes: prefs.silenceThresholdMinutes,
+                    previewText: transcriptText
+                )
+            }
+            if autoStopReason != nil {
+                flashStoppedIcon()
+            }
         } catch {
             presentError(error)
+            autoStop.end()
         }
         previewTask?.cancel()
         previewTask = nil
@@ -269,30 +361,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
     private func resetUI() {
         session = nil
-        updateMenuBarIcon(recording: false)
+        updateMenuBarIcon()
     }
 
-    private func updateMenuBarIcon(recording: Bool, on item: NSStatusItem? = nil) {
+    /// Menu bar icon state — per the Auto-Stop Safety UX design:
+    /// `idle` · waveform (dim),
+    /// `recording` · waveform + red dot,
+    /// `warning` · waveform + amber badge (about to auto-stop),
+    /// `stoppedFlash` · green checkmark shown for ~3 s after an auto-stop.
+    private enum MenuBarIconState { case idle, recording, warning, stoppedFlash }
+
+    private func currentMenuBarState() -> MenuBarIconState {
+        if stoppedFlashTask != nil { return .stoppedFlash }
+        if state.isRecording {
+            if case .warning = autoStop.phase { return .warning }
+            return .recording
+        }
+        return .idle
+    }
+
+    private func updateMenuBarIcon(on item: NSStatusItem? = nil) {
         let target = item ?? statusItem
         guard let button = target?.button else { return }
-        let label = recording ? "Harc — recording" : "Harc"
+        let iconState = currentMenuBarState()
+        let label: String
         let image: NSImage?
-        if recording {
-            image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: label)
-        } else if let asset = NSImage(named: "MenuBarIcon") {
-            asset.isTemplate = true
-            asset.accessibilityDescription = label
-            image = asset
-        } else {
-            image = NSImage(systemSymbolName: "waveform", accessibilityDescription: label)
+        let tint: NSColor?
+
+        switch iconState {
+        case .idle:
+            label = "Harc"
+            // Idle uses the asset/symbol that was shipping before the FFT
+            // work — the dynamic bars template only runs while recording so
+            // a rendering bug in it can't hide the status item.
+            if let asset = NSImage(named: "MenuBarIcon") {
+                asset.isTemplate = true
+                asset.accessibilityDescription = label
+                image = asset
+            } else {
+                image = NSImage(systemSymbolName: "waveform", accessibilityDescription: label)
+            }
+            tint = nil
+        case .recording:
+            label = "Harc — recording"
+            let bars = MenuBarBarsIcon.image(for: autoStop.fftBins)
+            bars.accessibilityDescription = label
+            image = bars
+            tint = nil
+        case .warning:
+            label = "Harc — about to auto-stop"
+            let bars = MenuBarBarsIcon.image(for: autoStop.fftBins)
+            bars.accessibilityDescription = label
+            image = bars
+            tint = .systemOrange
+        case .stoppedFlash:
+            label = "Harc — stopped"
+            image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: label)
+            tint = .systemGreen
         }
+
         button.image = image
-        button.contentTintColor = recording ? .systemRed : nil
-        if recording {
+        button.contentTintColor = tint
+
+        if iconState == .recording || iconState == .warning {
             updateMenuBarElapsed()
-            menuBarTicker?.invalidate()
-            menuBarTicker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.updateMenuBarElapsed() }
+            if menuBarTicker == nil {
+                menuBarTicker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                    Task { @MainActor in self?.updateMenuBarElapsed() }
+                }
             }
         } else {
             menuBarTicker?.invalidate()
@@ -311,6 +447,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 attributes: [.font: font, .foregroundColor: NSColor.clear]
             )
             applyPulse()
+        }
+    }
+
+    /// Flash a green check in the menu bar for ~3 s, then fall back to the
+    /// resolved icon state. Used after an auto-stop so the user has a visible
+    /// confirmation even if the popover isn't open.
+    private func flashStoppedIcon() {
+        stoppedFlashTask?.cancel()
+        stoppedFlashTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.updateMenuBarIcon()
+            try? await Task.sleep(for: .seconds(3))
+            self.stoppedFlashTask = nil
+            self.updateMenuBarIcon()
         }
     }
 
@@ -509,7 +659,7 @@ private func openDetail(for recording: Recording) {
         guard let statusItem else { return }
         let restore: @MainActor () -> Void = { [weak self] in
             guard let self, !self.state.isRecording else { return }
-            self.updateMenuBarIcon(recording: false)
+            self.updateMenuBarIcon()
         }
 
         switch decision {
@@ -656,11 +806,29 @@ private func openDetail(for recording: Recording) {
         let info = response.notification.request.content.userInfo
         let bundleID = info[MeetingNotification.bundleIDUserInfoKey] as? String
         let actionID = response.actionIdentifier
+        let category = response.notification.request.content.categoryIdentifier
         Task { @MainActor in
             if let bundleID {
                 self.meetingState.clear(bundleID: bundleID)
                 self.detector?.markHandled(bundleID: bundleID)
             }
+
+            if category == AutoStopNotification.categoryID {
+                switch actionID {
+                case AutoStopNotification.resumeActionID, UNNotificationDefaultActionIdentifier:
+                    self.autoStop.resetPostStop()
+                    if !self.state.isRecording { await self.startRecording() }
+                case AutoStopNotification.openActionID:
+                    self.autoStop.resetPostStop()
+                    if let rec = self.recordingsVM?.recordings.first {
+                        self.openDetail(for: rec)
+                    }
+                default:
+                    break
+                }
+                return
+            }
+
             switch actionID {
             case MeetingNotification.recordActionID, UNNotificationDefaultActionIdentifier:
                 if !self.state.isRecording { await self.startRecording() }
@@ -694,11 +862,19 @@ private func openDetail(for recording: Recording) {
             },
             onOpenLibrary: { [weak self] in
                 self?.openLibrary()
+            },
+            onResumeAutoStopped: { [weak self] in
+                guard let self else { return }
+                self.autoStop.resetPostStop()
+                if !self.state.isRecording {
+                    Task { await self.startRecording() }
+                }
             }
         )
         .environmentObject(state)
         .environmentObject(vm)
         .environmentObject(prefs)
+        .environmentObject(autoStop)
 
         pop.contentViewController = NSHostingController(rootView: root)
     }

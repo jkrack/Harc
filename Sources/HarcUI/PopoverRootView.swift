@@ -4,22 +4,27 @@ import HarcStore
 public struct PopoverRootView: View {
     @EnvironmentObject private var state: RecordingState
     @EnvironmentObject private var vm: RecordingsViewModel
+    @EnvironmentObject private var prefs: HarcPreferences
+    @EnvironmentObject private var autoStop: AutoStopController
 
     let onToggle: () -> Void
     let onOpen: (Recording) -> Void
     let onOpenSettings: () -> Void
     let onOpenLibrary: () -> Void
+    let onResumeAutoStopped: () -> Void
 
     public init(
         onToggle: @escaping () -> Void,
         onOpen: @escaping (Recording) -> Void,
         onOpenSettings: @escaping () -> Void,
-        onOpenLibrary: @escaping () -> Void
+        onOpenLibrary: @escaping () -> Void,
+        onResumeAutoStopped: @escaping () -> Void
     ) {
         self.onToggle = onToggle
         self.onOpen = onOpen
         self.onOpenSettings = onOpenSettings
         self.onOpenLibrary = onOpenLibrary
+        self.onResumeAutoStopped = onResumeAutoStopped
     }
 
     public var body: some View {
@@ -29,9 +34,43 @@ public struct PopoverRootView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 12)
 
+            if let bannerInfo = postStopBannerInfo {
+                PostStopTrayBanner(
+                    reason: bannerInfo.reason,
+                    stoppedAt: bannerInfo.stoppedAt,
+                    duration: bannerInfo.duration,
+                    byteSize: bannerInfo.byteSize,
+                    frozenScope: autoStop.scopeHistory,
+                    onResume: onResumeAutoStopped,
+                    onOpen: {
+                        if let rec = vm.recordings.first { onOpen(rec) }
+                    },
+                    onDismiss: { autoStop.resetPostStop() }
+                )
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+            }
+
             RecordingControlsView(onToggle: onToggle)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
+
+            if case .warning(let secondsLeft, let reason) = autoStop.phase {
+                CountdownWarningPanel(
+                    secondsLeft: secondsLeft,
+                    totalSeconds: autoStop.config.warningSeconds,
+                    reason: reason,
+                    thresholdMinutes: prefs.silenceThresholdMinutes,
+                    micDb: autoStop.lastMicDb,
+                    systemDb: autoStop.lastSystemDb,
+                    onKeepRecording: { autoStop.keepRecording() },
+                    onStopNow: { onToggle() },
+                    onOpenSettings: onOpenSettings
+                )
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             quickActions
                 .padding(.horizontal, 14)
@@ -50,6 +89,36 @@ public struct PopoverRootView: View {
         .frame(width: 400)
         .background(Color.harcSurface1)
         .preferredColorScheme(.dark)
+        .animation(.easeInOut(duration: 0.2), value: phaseKey)
+    }
+
+    // Stable key the animation modifier can react to without comparing the
+    // whole enum (`Phase` carries associated values we don't want to animate on).
+    private var phaseKey: String {
+        switch autoStop.phase {
+        case .idle: return "idle"
+        case .watching: return "watching"
+        case .warning: return "warning"
+        case .stoppedBanner: return "stoppedBanner"
+        }
+    }
+
+    private var postStopBannerInfo: (reason: AutoStopController.StopReason, stoppedAt: Date, duration: TimeInterval?, byteSize: Int64?)? {
+        guard case .stoppedBanner(let reason, let at) = autoStop.phase,
+              !state.isRecording else { return nil }
+        let latest = vm.recordings.first
+        let fm = FileManager.default
+        var size: Int64? = nil
+        if let path = latest?.wavPath,
+           let attrs = try? fm.attributesOfItem(atPath: path),
+           let s = attrs[.size] as? Int64 {
+            size = s
+        }
+        var duration: TimeInterval? = nil
+        if let latest, let ended = latest.endedAt {
+            duration = ended.timeIntervalSince(latest.startedAt)
+        }
+        return (reason, at, duration, size)
     }
 
     // MARK: Header
