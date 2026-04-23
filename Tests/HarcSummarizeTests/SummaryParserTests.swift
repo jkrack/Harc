@@ -56,4 +56,29 @@ final class SummaryParserTests: XCTestCase {
         XCTAssertTrue(result.actionItems.isEmpty,
             "_None identified._ sentinel must yield zero items.")
     }
+
+    func test_parse_noSummaryHeader_setsParseWarningAndKeepsRaw() {
+        let raw = "Sometimes the model just talks. No fences, no structure."
+        let result = SummaryParser.parse(raw)
+
+        XCTAssertTrue(result.parseWarning,
+            "Missing ## Summary header must raise the warning.")
+        XCTAssertEqual(result.summary, raw,
+            "Raw text is preserved so the user still sees something.")
+        XCTAssertTrue(result.actionItems.isEmpty)
+    }
+
+    func test_parse_summaryHeaderButNoActionItemsHeader_setsParseWarning() {
+        let raw = """
+        ## Summary
+        We talked about the roadmap. Then the model trailed off without
+        producing the action items section.
+        """
+        let result = SummaryParser.parse(raw)
+
+        XCTAssertTrue(result.parseWarning,
+            "## Summary without ## Action Items is malformed per the template.")
+        XCTAssertTrue(result.summary.hasPrefix("We talked about"))
+        XCTAssertTrue(result.actionItems.isEmpty)
+    }
 }
