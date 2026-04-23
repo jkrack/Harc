@@ -62,6 +62,12 @@ public enum SummaryPrompt {
             keptReversed.append(line)
             keptWords += w
         }
+        // Degenerate case: even the last utterance alone exceeds the
+        // budget. Keep it anyway — better to give the model SOMETHING
+        // than to ask it to summarize an empty transcript.
+        if keptReversed.isEmpty, let last = lines.last {
+            keptReversed.append(last)
+        }
         let tail = keptReversed.reversed().joined(separator: "\n")
         return "[Earlier in the meeting…]\n" + tail
     }

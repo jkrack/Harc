@@ -21,4 +21,25 @@ final class SummaryPromptTests: XCTestCase {
         XCTAssertFalse(prompt.contains("{TRANSCRIPT}"),
             "Placeholder must be replaced.")
     }
+
+    func test_build_lastUtteranceExceedsBudget_keepsItAnyway() {
+        // The last utterance alone is much longer than the budget.
+        // Without the degenerate-case guard, the body would be
+        // literally "[Earlier in the meeting…]" with nothing after,
+        // sending Gemma an empty transcript. Verify we keep the last
+        // utterance regardless.
+        let transcript = PromptTranscript(utterances: [
+            .init(speaker: "Jason", text: "early small line"),
+            .init(speaker: "Amy",
+                  text: "this final utterance has many many words far beyond the budget cap"),
+        ])
+        let prompt = SummaryPrompt.build(transcript: transcript, budgetWords: 5)
+
+        XCTAssertTrue(prompt.contains("[Earlier in the meeting…]"),
+            "Truncation prefix must still appear.")
+        XCTAssertTrue(prompt.contains("Amy: this final utterance has many many words"),
+            "The last utterance must be retained even when over budget.")
+        XCTAssertFalse(prompt.contains("early small line"),
+            "Earlier utterance was dropped; only the last one survives.")
+    }
 }
