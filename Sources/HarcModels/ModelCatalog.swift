@@ -34,6 +34,28 @@ public enum ModelCatalog {
         v1.first { $0.id == id }
     }
 
+    /// First-run / hard-fallback summarizer id. Mirrors the default written
+    /// by `HarcPreferences`; drift between the two would mean a removed
+    /// active summarizer rolls over to a model the user never sees as
+    /// "default" in Settings. Tested in `ModelCatalogFallbackTests`.
+    public static let defaultSummarizerID = "gemma-4-e2b-it-4bit"
+
+    /// Pick the new active summarizer when the current one is being removed.
+    /// Returns the highest-tier summarizer that's still installed (excluding
+    /// the one being removed); falls back to `defaultSummarizerID` when no
+    /// other summarizer is installed. The default may itself be uninstalled —
+    /// that's intentional: the UI then prompts the user to download it.
+    public static func fallbackSummarizerID(
+        installed: Set<String>,
+        excluding excluded: String,
+        catalog: [ModelDescriptor] = ModelCatalog.v1
+    ) -> String {
+        let candidates = catalog
+            .filter { $0.task == .summarizer && $0.id != excluded && installed.contains($0.id) }
+            .sorted { $0.tier > $1.tier }
+        return candidates.first?.id ?? defaultSummarizerID
+    }
+
     /// All descriptors for a given task, ordered: non-singleton tiers asc,
     /// then singletons.
     public static func descriptors(for task: ModelTask) -> [ModelDescriptor] {

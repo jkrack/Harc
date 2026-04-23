@@ -60,7 +60,25 @@ public struct ModelsSettingsView: View {
             presenting: pendingRemoveID
         ) { id in
             Button("Remove", role: .destructive) {
-                Task { await models.remove(id); pendingRemoveID = nil }
+                Task {
+                    // If removing the currently-active summarizer, roll the
+                    // pref over to the highest installed tier (or the default)
+                    // BEFORE the remove lands — otherwise the picker would
+                    // briefly show its segment selected-but-disabled.
+                    if prefs.activeSummarizerID == id {
+                        let installed = Set(
+                            ModelCatalog.descriptors(for: .summarizer)
+                                .filter { models.state(of: $0.id).isInstalled }
+                                .map(\.id)
+                        )
+                        prefs.activeSummarizerID = ModelCatalog.fallbackSummarizerID(
+                            installed: installed,
+                            excluding: id
+                        )
+                    }
+                    await models.remove(id)
+                    pendingRemoveID = nil
+                }
             }
             Button("Cancel", role: .cancel) { pendingRemoveID = nil }
         } message: { id in
