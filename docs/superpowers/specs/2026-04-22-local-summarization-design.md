@@ -1,9 +1,9 @@
 # Local Summarization (Gemma 4 via MLX) Design Doc
 
 **Feature:** After a recording finishes, generate a structured summary + action items from the transcript using a locally-installed Gemma 4 model via MLX. Stored on the recording, shown in the Library detail pane, included in the Copy-for-Prompt blob. Opt-in, never blocks the recording pipeline, always deferrable.
-**Date:** 2026-04-22
+**Date:** 2026-04-22 (revised 2026-04-23: phasing, current-codebase fixes)
 **Status:** draft — ready for implementation
-**Depends on:** `2026-04-22-model-manager-design.md` (Gemma 4 weights + install UX)
+**Depends on:** `2026-04-22-model-manager-design.md` (Gemma 4 weights + install UX). Phase 1 of the model manager is complete as of 2026-04-23: `ModelManager` (actor) + `ModelManagerStore` (`@MainActor` `@Published` bridge) are constructed in `AppDelegate` and injected via `.environmentObject`. There is no `ModelManager.shared` singleton; this spec threads the existing instances.
 
 ---
 
@@ -30,10 +30,12 @@ The current flow — "record → transcribe → paste into an LLM" — assumes t
 - A new `HarcSummarize` Swift target that owns:
   - `SummarizerService` actor — loads the selected Gemma 4 model via mlx-swift on first use, caches it, serves sequential summarization requests.
   - `SummaryPrompt` — builds the prompt from a transcript (template + rendering helpers).
-  - `SummaryOutput` — plain data struct with `summary: String` (markdown), `actionItems: [ActionItem]`, `model: String` (descriptor id), `generatedAt: Date`, `elapsedMs: Int`.
-- Three new columns on `recordings`: `summary_markdown TEXT NULL`, `action_items_markdown TEXT NULL`, `summary_model_id TEXT NULL`, `summary_generated_at INTEGER NULL` (Unix ms). One `DatabaseMigrator` migration `v6_summary`.
+  - `SummaryParser` — splits Gemma's output into structured summary + action items.
+  - `SummaryOutput` — plain data struct with `summary: String` (markdown), `actionItems: [ActionItem]`, `model: String` (descriptor id), `generatedAt: Date`, `elapsedMs: Int`, `sourceWordCount: Int` (transcript word count at generation time — drives the staleness nudge in §7.2).
+  - `SummarizationQueue` actor + `SummarizationQueueStore` (`@MainActor` `@Published` bridge mirroring `ModelManagerStore` so SwiftUI views render per-recording queue state without polling).
+- Five new columns on `recordings`: `summary_markdown TEXT NULL`, `action_items_markdown TEXT NULL`, `summary_model_id TEXT NULL`, `summary_generated_at INTEGER NULL` (Unix ms), `summary_source_word_count INTEGER NULL`. One `DatabaseMigrator` migration `v7_summary` (the current head is `v6_speaker_embeddings`).
 - `RecordingStore.updateSummary(id:, output:)` / `.clearSummary(id:)` wires.
-- `SummarizationQueue` (serial, `DispatchQueue` or `Task.detached` pipeline) that consumes a channel of recording IDs. Only one summary runs at a time — RAM usage of a loaded LLM is non-trivial.
+- `SummarizationQueue` actor that consumes a queue of recording IDs (see §4.2). Only one summary runs at a time — RAM usage of a loaded LLM is non-trivial.
 - Automatic trigger at end of `AppDelegate.stopRecording` — after the transcript is persisted and the recording row is upserted, enqueue the ID. Trigger is gated by:
   - `HarcPreferences.autoSummarizeEnabled` (default `true`)
   - `HarcPreferences.autoSummarizeOnBatteryEnabled` (default `false`)
@@ -90,7 +92,7 @@ Targets:
 
 `HarcUI` gains a dep on `HarcSummarize` (needed for the card) and a new env-object `SummarizerService`.
 
-**Pinned versions will need verification** against the latest mlx-swift-examples API at implementation time — MLXLLM's loader API has moved in 2026-Q1. Treat the version numbers as placeholders.
+**Pinned versions will need verification** against the latest mlx-swift-examples API at implementation time — MLXLLM's loader API has moved in 2026-Q1. Treat the version numbers as placeholders. Resolving these is the first task of Stage 2 in §11; the rest of Stage 2 can't compile until it's done.
 
 ---
 
@@ -98,18 +100,18 @@ Targets:
 
 ### 4.1 Trigger
 
-Concretely, at the tail of `AppDelegate.stopRecording(autoStopReason:)` after the existing `runAutoPaste(for:shiftHeld:)` call:
+Concretely, at the tail of `AppDelegate.stopRecording(autoStopReason:)` after the existing `runAutoPaste(for:shiftHeld:)` call. `summarizationQueue` is a new AppDelegate-owned instance, mirroring `modelManager` / `modelStore`:
 
 ```swift
 if prefs.autoSummarizeEnabled,
    shouldSummarizeGivenPower(),                           // honors autoSummarizeOnBatteryEnabled
-   ModelManager.shared.state(of: prefs.activeSummarizerID) == .installed,
+   modelStore.state(of: prefs.activeSummarizerID).isInstalled,
    let id = rec.id {
     await summarizationQueue.enqueue(recordingID: id)
 }
 ```
 
-`shouldSummarizeGivenPower()` reads `IOPSCopyPowerSourcesInfo` — if on battery AND `autoSummarizeOnBatteryEnabled == false`, skip. The summary gets enqueued next time the user opens the detail pane of an un-summarized recording, or they can click Generate manually.
+`modelStore` is the `@MainActor` `ModelManagerStore` already injected into the SwiftUI environment — we read it synchronously rather than awaiting the underlying actor. `shouldSummarizeGivenPower()` reads `IOPSCopyPowerSourcesInfo` — if on battery AND `autoSummarizeOnBatteryEnabled == false`, skip. The summary gets enqueued next time the user opens the detail pane of an un-summarized recording, or they can click Generate manually.
 
 ### 4.2 Queue semantics
 
@@ -272,6 +274,7 @@ Rendered inside `TranscriptionDetailView`, just below the title block and above 
 - `↻` regenerates with the currently-active summarizer.
 - `⋯` overflow: `Copy summary`, `Copy action items`, `Clear summary`.
 - Checkboxes on action items toggle `done` on the item and persist via `RecordingStore.updateSummary`. Transcript is untouched.
+- **Staleness nudge.** If the current transcript word count differs from the persisted `summary_source_word_count` by more than 5 %, render a one-line banner above the summary text: `Summary is based on an older transcript. Regenerate?` with a click-target on `Regenerate`. Comparison happens in the view, not the DB; no migration cost beyond the column itself.
 
 ### 7.3 Progress card
 
@@ -320,7 +323,7 @@ The front-matter gains two keys: `summary_model: "gemma-4-e2b-it-4bit"` and `sum
 ### 8.2 Store tests (HarcStoreTests)
 
 - `RecordingStore.updateSummary` round-trip: set, fetch, clear, fetch.
-- Migration `v6_summary` adds the four columns without dropping data.
+- Migration `v7_summary` adds the five columns to a seeded v6 DB without dropping data.
 
 ### 8.3 Queue tests (HarcSummarizeTests)
 
@@ -346,6 +349,68 @@ The front-matter gains two keys: `summary_model: "gemma-4-e2b-it-4bit"` and `sum
 
 ## 10. Open questions
 
-- **Unload model after N minutes of idle?** Keeps RAM footprint low. I'd add it post-v1 after seeing real usage patterns — premature otherwise.
-- **Expose a "quality / speed" dial distinct from model tier?** Could surface `maxOutputTokens` or `temperature`. No — this is a product-opinion feature; fewer knobs is better.
-- **Should the summary be pinned to the transcript version?** If the user refines with beam search (separate spec), the summary becomes stale. Flag it: store the `source_word_count` at generation time; if the transcript's current word count differs by >5 %, show a subtle "summary is based on an older transcript" nudge above the card.
+Resolved during 2026-04-23 spec revision — kept here for the trail:
+
+- **Unload model after N minutes of idle?** Deferred to v2. v1 keeps the model resident for the app lifetime once first loaded; explicit pressure-driven unload (§4.4) is enough.
+- **Expose a "quality / speed" dial distinct from model tier?** No. The tier picker is the only knob; `maxOutputTokens` / `temperature` are not user-facing.
+- **Pin the summary to the transcript version?** Yes — included in v1. Store `source_word_count` on the row (driven by the new column in §2). When the current transcript word count differs from `source_word_count` by >5 %, `SummaryCardView` shows a subtle "summary is based on an older transcript" nudge above the card with a one-click regenerate (see §7.2).
+
+---
+
+## 11. Implementation phasing
+
+The work splits into four stages. Each stage is a coherent commit that builds and ships green tests; later stages depend on earlier ones but can be reviewed independently.
+
+### Stage 1 — Pure scaffolding (no MLX, no DB)
+
+**Adds:**
+- New SwiftPM target `HarcSummarize` (depends on `HarcCore` only at this stage).
+- `SummaryOutput`, `ActionItem` value types (`Codable`, `Equatable`, `Sendable`).
+- `SummaryPrompt` — the §5.1 template + `render(transcript:)` from §5.2 (head-truncation included).
+- `SummaryParser.parse(_:)` covering all branches in §5.3 (well-formed, no items, malformed, actor + due parsing).
+
+**Tests** (`HarcSummarizeTests`): full §8.1 unit tests — prompt snapshot, parser branches.
+
+**No app integration in this stage.** Validates the prompt + parser shape before introducing the MLX dependency.
+
+### Stage 2 — MLX wiring + SummarizerService
+
+**Adds:**
+- `mlx-swift` and `mlx-swift-examples` packages (versions resolved on first task — see §3 caveat).
+- `HarcSummarize` gains `MLX` / `MLXLLM` / `MLXLMCommon` deps.
+- `SummarizerService` actor (§4.3): `summarize(transcript:modelID:cancellation:)`, `unload()`. Loads from `~/Library/Application Support/Harc/Models/<id>/` resolved via the AppDelegate-injected `ModelManager`.
+- Memory pressure unload hook (§4.4).
+- Manual integration test (XCTest, marked `XCTSkip` unless `HARC_INTEGRATION_TESTS=1` env var is set + Gemma 4 E2B is installed) that runs one summary against a known fixture transcript and asserts non-empty `summary` + parses cleanly.
+
+**No queue, no UI, no DB writes** — Service is callable but nothing in the app calls it yet.
+
+### Stage 3 — Persistence, queue, trigger
+
+**Adds:**
+- DB migration `v7_summary` adding the five columns from §2.
+- `RecordingStore.updateSummary(id:output:)` / `clearSummary(id:)`.
+- `SummarizationQueue` actor (§4.2) + `SummarizationQueueStore` (`@MainActor` `@Published` bridge).
+- `BackgroundWorkCoordinator` actor (defined in spec for semantic-search interop; introduced here, not used externally yet).
+- `HarcPreferences.autoSummarizeEnabled` (default `true`), `autoSummarizeOnBatteryEnabled` (default `false`), `includeSummaryInPrompt` (default `true`).
+- AppDelegate wires: constructs queue + service, injects `summarizationQueueStore` into the SwiftUI environment, fires the §4.1 trigger from `stopRecording`.
+- One-time on-launch enqueue of un-summarized recordings (so a fresh install with previously-recorded meetings catches up).
+
+**Tests** (`HarcStoreTests`, `HarcSummarizeTests`): migration, `updateSummary` round-trip, queue serialization (3 enqueued → 1 active at a time), cancellation, dedupe-on-insert.
+
+### Stage 4 — UI: SummaryCardView + Copy-for-Prompt
+
+**Adds:**
+- `SummaryCardView` in `HarcUI` rendering all four states from §7.1 (empty/CTA, progress, summary, install-required via `ModelRequirementView`).
+- Mounted in `TranscriptionDetailView` between the title block and `SpeakerNameEditor`.
+- Action-item checkboxes that persist via `updateSummary`.
+- Staleness nudge from §7.2.
+- `ExportService.promptString(for:)` extension for the §7.4 `## Summary` / `## Action Items` block.
+- New `PromptFrontMatter` keys: `summary_model`, `summarized_at`.
+
+**Tests** (`HarcUITests`, `HarcExportTests`): card state-machine snapshot tests, `promptString` snapshot with + without summary, front-matter contains the new keys when present.
+
+### Sequencing & blast radius
+
+- Stages 1–3 are reviewable / mergeable without user-visible behavior change. After Stage 3 the trigger fires and writes to the DB columns, but no view in the existing app reads them, so the user sees nothing different.
+- Stage 4 is the user-visible flip. Easy to revert independently if anything's wrong with the card UX.
+- A pre-Stage-2 spike — verify the catalog's Gemma 4 E2B descriptor downloads end-to-end on a real machine (not a unit test) and the model directory layout is what `MLXLLM` expects — is recommended before Stage 2 so we're not debugging "why won't this load" with two unknowns at once. Treat as a half-day exploration, not a stage.
