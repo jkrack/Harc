@@ -81,4 +81,58 @@ final class SummaryParserTests: XCTestCase {
         XCTAssertTrue(result.summary.hasPrefix("We talked about"))
         XCTAssertTrue(result.actionItems.isEmpty)
     }
+
+    func test_parse_actionItemWithoutActor_keepsFullTextAndNilActor() {
+        let raw = """
+        ## Summary
+        Standup.
+
+        ## Action Items
+        - [ ] follow up with the design review thread
+        """
+        let result = SummaryParser.parse(raw)
+
+        XCTAssertEqual(result.actionItems.count, 1)
+        let item = result.actionItems[0]
+        XCTAssertNil(item.actor,
+            "No leading 'Actor:' → actor should be nil.")
+        XCTAssertEqual(item.text, "follow up with the design review thread")
+        XCTAssertNil(item.due)
+    }
+
+    func test_parse_actionItemWithActorAndDue_extractsBoth() {
+        let raw = """
+        ## Summary
+        Planning.
+
+        ## Action Items
+        - [ ] Jason: rewrite tiering page (next Friday)
+        """
+        let result = SummaryParser.parse(raw)
+
+        XCTAssertEqual(result.actionItems.count, 1)
+        let item = result.actionItems[0]
+        XCTAssertEqual(item.actor, "Jason")
+        XCTAssertEqual(item.text, "rewrite tiering page")
+        XCTAssertEqual(item.due, "next Friday")
+    }
+
+    func test_parse_actionItemWithCommasInPrefix_doesNotMisidentifyActor() {
+        // "Tuesday, Friday: ..." — colon in a phrase that isn't an
+        // actor. The 3-word + no-comma heuristic should reject this.
+        let raw = """
+        ## Summary
+        Time-boxed.
+
+        ## Action Items
+        - [ ] Tuesday, Friday: check in on rollout
+        """
+        let result = SummaryParser.parse(raw)
+
+        XCTAssertEqual(result.actionItems.count, 1)
+        let item = result.actionItems[0]
+        XCTAssertNil(item.actor,
+            "Comma-bearing prefix is not an actor name.")
+        XCTAssertEqual(item.text, "Tuesday, Friday: check in on rollout")
+    }
 }
