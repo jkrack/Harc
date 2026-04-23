@@ -201,36 +201,47 @@ private struct ModelRow: View {
 
     @ViewBuilder
     private var statusChip: some View {
-        switch state {
-        case .installed:
-            chip("Installed · \(sizeText)", color: HarcDesign.success)
-        case .downloading:
-            chip("Downloading · \(sizeText)", color: HarcDesign.accent)
-        case .verifying:
-            chip("Verifying", color: HarcDesign.accent)
-        case .failed:
-            chip("Failed", color: HarcDesign.danger)
-        case .absent:
-            chip("Not installed · \(sizeText)", color: HarcDesign.inkTertiary)
+        if !descriptor.manifestVerified {
+            chip("Manifest pending", color: HarcDesign.warning)
+        } else {
+            switch state {
+            case .installed:
+                chip("Installed · \(sizeText)", color: HarcDesign.success)
+            case .downloading:
+                chip("Downloading · \(sizeText)", color: HarcDesign.accent)
+            case .verifying:
+                chip("Verifying", color: HarcDesign.accent)
+            case .failed:
+                chip("Failed", color: HarcDesign.danger)
+            case .absent:
+                chip("Not installed · \(sizeText)", color: HarcDesign.inkTertiary)
+            }
         }
     }
 
     @ViewBuilder
     private var actionButton: some View {
-        switch state {
-        case .installed:
-            Button("Remove", role: .destructive, action: onRemove)
-                .controlSize(.small)
-        case .downloading, .verifying:
-            Button("Cancel", action: onCancel)
-                .controlSize(.small)
-        case .failed:
-            Button("Retry", action: onDownload)
-                .controlSize(.small)
-        case .absent:
+        if !descriptor.manifestVerified {
             Button("Download") { onDownload() }
                 .controlSize(.small)
-                .disabled(ramGB < descriptor.minRAMGB)
+                .disabled(true)
+                .help("Manifest hasn't been verified yet. Downloads are blocked until the manifest-refresh script runs.")
+        } else {
+            switch state {
+            case .installed:
+                Button("Remove", role: .destructive, action: onRemove)
+                    .controlSize(.small)
+            case .downloading, .verifying:
+                Button("Cancel", action: onCancel)
+                    .controlSize(.small)
+            case .failed:
+                Button("Retry", action: onDownload)
+                    .controlSize(.small)
+            case .absent:
+                Button("Download") { onDownload() }
+                    .controlSize(.small)
+                    .disabled(ramGB < descriptor.minRAMGB)
+            }
         }
     }
 

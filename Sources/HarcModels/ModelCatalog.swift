@@ -58,22 +58,40 @@ public enum ModelCatalog {
     //     memory, ~4 B activated so compute is E4B-equivalent)
     //   - BGE-small-en-v1.5: singleton embedder for semantic search
 
+    // Verified 2026-04-23 against HuggingFace tree view. Byte counts come
+    // from the HF UI's human-readable sizes (MiB/GB rounded); SHA256 is
+    // still empty pending a proper refresh script — download verifies by
+    // byte count (±1 %) only.
     private static let gemma4_E2B_IT_4bit = ModelDescriptor(
         id: "gemma-4-e2b-it-4bit",
         displayName: "Gemma 4 · Standard",
-        summary: "Good summaries in 20–40 s per hour of audio. Runs on any M-series Mac with 16 GB RAM.",
+        summary: "MoE E2B instruction-tuned, 4-bit MLX. 3.6 GB on disk; ~20–40 s per hour of audio.",
         task: .summarizer,
         tier: .standard,
         repoID: "mlx-community/gemma-4-e2b-it-4bit",
         revision: "main",
-        files: mlxGemmaFiles(
-            base: "https://huggingface.co/mlx-community/gemma-4-e2b-it-4bit/resolve/main",
-            shardCount: 1,
-            approximateBytes: 1_500_000_000
-        ),
+        files: [
+            file("config.json", bytes: 6_000,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+            file("generation_config.json", bytes: 208,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+            file("chat_template.jinja", bytes: 16_300,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+            file("processor_config.json", bytes: 902,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+            file("tokenizer.json", bytes: 32_200_000,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+            file("tokenizer_config.json", bytes: 2_100,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+            file("model.safetensors.index.json", bytes: 230_000,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+            file("model.safetensors", bytes: 3_580_000_000,
+                 repo: "mlx-community/gemma-4-e2b-it-4bit"),
+        ],
         minRAMGB: 8,
         recommendedRAMGB: 16,
-        contextTokens: 32_000
+        contextTokens: 32_000,
+        manifestVerified: true
     )
 
     private static let gemma4_E4B_IT_4bit = ModelDescriptor(
@@ -112,10 +130,16 @@ public enum ModelCatalog {
         contextTokens: 32_000
     )
 
+    // NOTE — `mlx-community/bge-small-en-v1.5` does NOT exist on HuggingFace
+    // as of 2026-04-23; attempting to download it returns HTTP 401. We ship
+    // the descriptor so the Settings UI can render a "Semantic search is
+    // waiting for an embedder" row, but `manifestVerified: false` makes the
+    // Download button inactive. The real repo id + file list will land
+    // alongside the semantic-search feature implementation.
     private static let bgeSmallEnV15 = ModelDescriptor(
         id: "bge-small-en-v1.5",
-        displayName: "BGE · English",
-        summary: "Tiny text embedder used for semantic library search. 130 MB on disk.",
+        displayName: "English text embedder",
+        summary: "Powers Related-meaning search. Not yet available — pending an MLX-ported embedder.",
         task: .textEmbedder,
         tier: .singleton,
         repoID: "mlx-community/bge-small-en-v1.5",
@@ -126,7 +150,8 @@ public enum ModelCatalog {
         ),
         minRAMGB: 8,
         recommendedRAMGB: 8,
-        contextTokens: 512  // the tokenizer max; unused for the embedder task
+        contextTokens: 512,
+        manifestVerified: false
     )
 
     // ─── File-list helpers ────────────────────────────────────────────────
@@ -134,6 +159,17 @@ public enum ModelCatalog {
     // Real manifests come from the refresh script. These helpers build a
     // plausible file list so the UI and storage layer can be exercised now.
     // SHA256 is left empty — see the big comment at the top of this type.
+
+    /// Convenience for a single-file entry against `mlx-community/<repo>`
+    /// on `main`. Used by entries whose file list has been hand-verified.
+    private static func file(_ path: String, bytes: Int64, repo: String) -> ModelFile {
+        ModelFile(
+            path: path,
+            bytes: bytes,
+            sha256: "",
+            url: URL(string: "https://huggingface.co/\(repo)/resolve/main/\(path)")!
+        )
+    }
 
     private static func mlxGemmaFiles(base: String, shardCount: Int, approximateBytes: Int64) -> [ModelFile] {
         let configs: [(String, Int64)] = [
