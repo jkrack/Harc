@@ -6,6 +6,7 @@ import HarcAudio
 import HarcClient
 import HarcExport
 import HarcMeetingDetect
+import HarcModels
 import HarcStore
 import HarcUI
 import KeyboardShortcuts
@@ -22,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var autoStopPhaseObserver: AnyCancellable?
     private var autoStopConfigObserver: AnyCancellable?
     private var stoppedFlashTask: Task<Void, Never>?
+    private let modelManager = ModelManager()
+    private lazy var modelStore = ModelManagerStore(manager: modelManager)
     private var settingsWindow: SettingsWindowController?
     private var store: RecordingStore?
     private var recordingsVM: RecordingsViewModel?
@@ -100,6 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 await self?.stopRecording(autoStopReason: reason)
             }
         }
+
+        // Seed install state from disk. Safe to call before any UI is shown;
+        // the actor bootstrap is cheap (just reads a handful of dotfiles).
+        Task { await modelManager.bootstrap() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -714,7 +721,7 @@ private func openDetail(for recording: Recording) {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let controller = SettingsWindowController(prefs: prefs)
+        let controller = SettingsWindowController(prefs: prefs, modelStore: modelStore)
         settingsWindow = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -875,6 +882,7 @@ private func openDetail(for recording: Recording) {
         .environmentObject(vm)
         .environmentObject(prefs)
         .environmentObject(autoStop)
+        .environmentObject(modelStore)
 
         pop.contentViewController = NSHostingController(rootView: root)
     }

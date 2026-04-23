@@ -21,6 +21,8 @@ public final class HarcPreferences: ObservableObject {
         static let hardCapEnabled = "harc.hardCapEnabled"
         static let hardCapMinutes = "harc.hardCapMinutes"
         static let postStopNotificationEnabled = "harc.postStopNotificationEnabled"
+        static let activeSummarizerID = "harc.activeSummarizerID"
+        static let activeEmbedderID = "harc.activeEmbedderID"
     }
 
     @Published public var destinationPath: String {
@@ -84,6 +86,19 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(postStopNotificationEnabled, forKey: Key.postStopNotificationEnabled) }
     }
 
+    /// Which summarizer model the user has selected. Value is a model id
+    /// from `ModelCatalog.v1`; callers verify installation via `ModelManager`.
+    /// Default: the lightweight `gemma-4-e2b-it-4bit` (nothing is installed
+    /// until the user asks — the preference is just which tier they want).
+    @Published public var activeSummarizerID: String {
+        didSet { UserDefaults.standard.set(activeSummarizerID, forKey: Key.activeSummarizerID) }
+    }
+
+    /// Active text embedder. Singleton today (`bge-small-en-v1.5`).
+    @Published public var activeEmbedderID: String {
+        didSet { UserDefaults.standard.set(activeEmbedderID, forKey: Key.activeEmbedderID) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -118,6 +133,8 @@ public final class HarcPreferences: ObservableObject {
         self.hardCapEnabled = defaults.object(forKey: Key.hardCapEnabled) as? Bool ?? true
         self.hardCapMinutes = defaults.object(forKey: Key.hardCapMinutes) as? Int ?? 180
         self.postStopNotificationEnabled = defaults.object(forKey: Key.postStopNotificationEnabled) as? Bool ?? true
+        self.activeSummarizerID = defaults.string(forKey: Key.activeSummarizerID) ?? "gemma-4-e2b-it-4bit"
+        self.activeEmbedderID = defaults.string(forKey: Key.activeEmbedderID) ?? "bge-small-en-v1.5"
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {
