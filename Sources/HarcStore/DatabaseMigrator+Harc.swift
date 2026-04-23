@@ -74,6 +74,29 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v6_speaker_embeddings") { db in
+            // One vector per (recording, diarized speaker index). Stored as a
+            // packed Float32 BLOB — 192 dims × 4 bytes = 768 B at current
+            // embedder setting. See HarcVoiceprint.EmbeddingBlob for layout.
+            // Cascade-delete follows the recording's lifecycle; if a
+            // recording is re-transcribed we delete the old rows first.
+            try db.create(table: "speaker_embeddings") { t in
+                t.column("recording_id", .integer)
+                    .notNull()
+                    .references("recordings", onDelete: .cascade)
+                t.column("speaker_index", .integer).notNull()
+                t.column("embedding", .blob).notNull()
+                t.column("segment_count", .integer).notNull()
+                t.column("total_ms", .integer).notNull()
+                t.primaryKey(["recording_id", "speaker_index"])
+            }
+            try db.create(
+                index: "idx_speaker_embeddings_recording",
+                on: "speaker_embeddings",
+                columns: ["recording_id"]
+            )
+        }
+
         return migrator
     }
 }

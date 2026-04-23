@@ -10,14 +10,16 @@ final class TranscriptionDetailWindowController: NSWindowController {
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onRename: @escaping (String?) -> Void,
-        onSpeakerNamesChanged: @escaping ([Int: String]) -> Void
+        onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
+        suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
     ) {
         let root = TranscriptionDetailView(
             recording: recording,
             onReveal: onReveal,
             onDelete: onDelete,
             onRename: onRename,
-            onSpeakerNamesChanged: onSpeakerNamesChanged
+            onSpeakerNamesChanged: onSpeakerNamesChanged,
+            suggestionsProvider: suggestionsProvider
         )
         let host = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: host)
