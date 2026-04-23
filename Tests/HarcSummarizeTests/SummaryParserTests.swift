@@ -135,4 +135,28 @@ final class SummaryParserTests: XCTestCase {
             "Comma-bearing prefix is not an actor name.")
         XCTAssertEqual(item.text, "Tuesday, Friday: check in on rollout")
     }
+
+    func test_parse_strayProseBetweenItems_isIgnored() {
+        // Gemma sometimes editorialises between the action items.
+        // Lines that don't start with "- [ ]" / "- [x]" must be
+        // skipped — the items list still contains exactly the two
+        // checkbox lines.
+        let raw = """
+        ## Summary
+        Reviewed the rollout plan.
+
+        ## Action Items
+        - [ ] Jason: confirm the rollout window
+        Some commentary the model shouldn't have written.
+        - [x] Amy: send the comms email
+        """
+        let result = SummaryParser.parse(raw)
+
+        XCTAssertFalse(result.parseWarning)
+        XCTAssertEqual(result.actionItems.count, 2,
+            "Non-checkbox lines must not produce action items.")
+        XCTAssertEqual(result.actionItems[0].actor, "Jason")
+        XCTAssertEqual(result.actionItems[1].actor, "Amy")
+        XCTAssertTrue(result.actionItems[1].done)
+    }
 }
