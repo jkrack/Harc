@@ -16,5 +16,8 @@ xcuserdata/
 # Local build artifacts
 build/
 
+# Git worktrees (project-local isolated workspaces)
+.worktrees/
+
 # xcodegen-generated
 HarcApp/Info.plist
