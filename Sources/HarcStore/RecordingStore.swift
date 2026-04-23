@@ -109,6 +109,14 @@ public actor RecordingStore {
         }
     }
 
+    /// Fetch a recording by primary key. Returns `nil` if the row was
+    /// deleted or never existed.
+    public func fetch(id: Int64) async throws -> Recording? {
+        try await dbQueue.read { db in
+            try Recording.filter(key: id).fetchOne(db)
+        }
+    }
+
     public func rename(id: Int64, title: String?) async throws {
         try await dbQueue.write { db in
             let count = try Recording.filter(key: id).updateAll(
@@ -183,6 +191,125 @@ public actor RecordingStore {
             )
         }
     }
+
+    // MARK: - Speaker embeddings
+
+    /// One row from `speaker_embeddings`. Decoupled from HarcVoiceprint's
+    /// `SpeakerEmbedding` so `HarcStore` can ship without a dep on the
+    /// voiceprint library — callers translate at the boundary.
+    public struct SpeakerEmbeddingRow: Sendable, Equatable {
+        public let recordingID: Int64
+        public let speakerIndex: Int
+        public let embedding: Data        // packed Float32
+        public let segmentCount: Int
+        public let totalMs: Int
+
+        public init(
+            recordingID: Int64,
+            speakerIndex: Int,
+            embedding: Data,
+            segmentCount: Int,
+            totalMs: Int
+        ) {
+            self.recordingID = recordingID
+            self.speakerIndex = speakerIndex
+            self.embedding = embedding
+            self.segmentCount = segmentCount
+            self.totalMs = totalMs
+        }
+    }
+
+    /// Replace all speaker embeddings for a recording in one transaction —
+    /// guarantees we don't have stale rows if a transcript is re-run.
+    public func upsertSpeakerEmbeddings(
+        recordingID: Int64,
+        rows: [SpeakerEmbeddingRow]
+    ) async throws {
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: "DELETE FROM speaker_embeddings WHERE recording_id = ?",
+                arguments: [recordingID]
+            )
+            for row in rows {
+                precondition(row.recordingID == recordingID,
+                             "upsertSpeakerEmbeddings: mixed recording ids in batch")
+                try db.execute(
+                    sql: """
+                    INSERT INTO speaker_embeddings
+                    (recording_id, speaker_index, embedding, segment_count, total_ms)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        row.recordingID,
+                        row.speakerIndex,
+                        row.embedding,
+                        row.segmentCount,
+                        row.totalMs,
+                    ]
+                )
+            }
+        }
+    }
+
+    /// The embedding for a specific (recording, speaker), or `nil` if none
+    /// was stored (e.g. the speaker had too little audio to embed reliably).
+    public func speakerEmbedding(recordingID: Int64, speakerIndex: Int) async throws -> SpeakerEmbeddingRow? {
+        try await dbQueue.read { db in
+            if let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT recording_id, speaker_index, embedding, segment_count, total_ms
+                FROM speaker_embeddings
+                WHERE recording_id = ? AND speaker_index = ?
+                """,
+                arguments: [recordingID, speakerIndex]
+            ) {
+                return SpeakerEmbeddingRow(
+                    recordingID: row["recording_id"],
+                    speakerIndex: row["speaker_index"],
+                    embedding: row["embedding"],
+                    segmentCount: row["segment_count"],
+                    totalMs: row["total_ms"]
+                )
+            }
+            return nil
+        }
+    }
+
+    /// Every embedding in the store, optionally excluding one recording.
+    /// The service layer linearly scans these — acceptable at realistic
+    /// library scale (see design doc §4.4).
+    public func allSpeakerEmbeddings(excludingRecording: Int64? = nil) async throws -> [SpeakerEmbeddingRow] {
+        try await dbQueue.read { db in
+            let sql: String
+            let args: StatementArguments
+            if let excluded = excludingRecording {
+                sql = """
+                SELECT recording_id, speaker_index, embedding, segment_count, total_ms
+                FROM speaker_embeddings
+                WHERE recording_id != ?
+                """
+                args = [excluded]
+            } else {
+                sql = """
+                SELECT recording_id, speaker_index, embedding, segment_count, total_ms
+                FROM speaker_embeddings
+                """
+                args = []
+            }
+            return try Row.fetchAll(db, sql: sql, arguments: args).map { row in
+                SpeakerEmbeddingRow(
+                    recordingID: row["recording_id"],
+                    speakerIndex: row["speaker_index"],
+                    embedding: row["embedding"],
+                    segmentCount: row["segment_count"],
+                    totalMs: row["total_ms"]
+                )
+            }
+        }
+    }
+
+    // MARK: - Transcript text
 
     /// Atomically update the stored transcript text. The FTS5 `synchronize`
     /// trigger picks this up automatically so search is consistent post-edit.

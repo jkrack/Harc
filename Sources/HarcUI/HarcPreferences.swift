@@ -23,6 +23,8 @@ public final class HarcPreferences: ObservableObject {
         static let postStopNotificationEnabled = "harc.postStopNotificationEnabled"
         static let activeSummarizerID = "harc.activeSummarizerID"
         static let activeEmbedderID = "harc.activeEmbedderID"
+        static let speakerReIDEnabled = "harc.speakerReIDEnabled"
+        static let speakerReIDAutoApply = "harc.speakerReIDAutoApply"
     }
 
     @Published public var destinationPath: String {
@@ -99,6 +101,24 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(activeEmbedderID, forKey: Key.activeEmbedderID) }
     }
 
+    /// Cross-recording speaker re-ID — extract per-speaker voice fingerprints
+    /// after recording, cluster across the library, and suggest names in the
+    /// speaker editor.
+    ///
+    /// **Defaults to `false` until a real ECAPA-TDNN Core ML model is bundled.**
+    /// The stub embedder used today produces audio-feature vectors, not
+    /// voice fingerprints — its suggestions would be noise-tier. Flip to
+    /// `true` in this initializer once the real embedder lands.
+    @Published public var speakerReIDEnabled: Bool {
+        didSet { UserDefaults.standard.set(speakerReIDEnabled, forKey: Key.speakerReIDEnabled) }
+    }
+
+    /// When true, single-match high-confidence suggestions apply silently
+    /// without user confirmation. Off by default; suggestions are one click.
+    @Published public var speakerReIDAutoApply: Bool {
+        didSet { UserDefaults.standard.set(speakerReIDAutoApply, forKey: Key.speakerReIDAutoApply) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -135,6 +155,8 @@ public final class HarcPreferences: ObservableObject {
         self.postStopNotificationEnabled = defaults.object(forKey: Key.postStopNotificationEnabled) as? Bool ?? true
         self.activeSummarizerID = defaults.string(forKey: Key.activeSummarizerID) ?? "gemma-4-e2b-it-4bit"
         self.activeEmbedderID = defaults.string(forKey: Key.activeEmbedderID) ?? "bge-small-en-v1.5"
+        self.speakerReIDEnabled = defaults.object(forKey: Key.speakerReIDEnabled) as? Bool ?? false
+        self.speakerReIDAutoApply = defaults.object(forKey: Key.speakerReIDAutoApply) as? Bool ?? false
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {

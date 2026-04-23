@@ -9,6 +9,10 @@ public struct TranscriptionDetailView: View {
     let onDelete: () -> Void
     let onRename: (String?) -> Void
     let onSpeakerNamesChanged: ([Int: String]) -> Void
+    /// Provides speaker re-ID suggestions for a given speaker index.
+    /// Optional — the editor renders chips when non-nil and the feature is
+    /// enabled; when nil, the editor behaves exactly as pre-feature.
+    let suggestionsProvider: SpeakerNameEditor.SuggestionsProvider?
 
     @State private var renameDraft: String
     @State private var isEditingTitle = false
@@ -21,13 +25,15 @@ public struct TranscriptionDetailView: View {
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onRename: @escaping (String?) -> Void,
-        onSpeakerNamesChanged: @escaping ([Int: String]) -> Void
+        onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
+        suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
     ) {
         self.recording = recording
         self.onReveal = onReveal
         self.onDelete = onDelete
         self.onRename = onRename
         self.onSpeakerNamesChanged = onSpeakerNamesChanged
+        self.suggestionsProvider = suggestionsProvider
         self._renameDraft = State(initialValue: recording.title ?? "")
     }
 
@@ -65,7 +71,8 @@ public struct TranscriptionDetailView: View {
             SpeakerNameEditor(
                 speakerIndices: speakerIndices,
                 initialNames: recording.speakerNames,
-                onCommit: onSpeakerNamesChanged
+                onCommit: onSpeakerNamesChanged,
+                suggestionsProvider: suggestionsProvider
             )
 
             if let loadError {

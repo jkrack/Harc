@@ -6,21 +6,37 @@ import HarcExport
 /// the recording. Users type display names; commits fire on Enter or
 /// focus-loss via the `onCommit` callback. Visibility: the view renders
 /// nothing when `speakerIndices` is empty (un-diarized recording).
+///
+/// When a `suggestionsProvider` is supplied, the editor also renders one
+/// tappable chip per match below each speaker row — "Sounds like Jason ·
+/// N prior recordings". Tapping fills the field + commits. Suggestions
+/// come from `SpeakerReIDService` living above this view.
 public struct SpeakerNameEditor: View {
+    /// Closure that returns the top matches for a given speaker index. Called
+    /// per row on appear; results cached in view state. The closure is
+    /// async to bridge to `SpeakerReIDService`, which is actor-isolated.
+    public typealias SuggestionsProvider = @Sendable (_ speakerIndex: Int) async -> [SpeakerSuggestion]
+
     private let speakerIndices: [Int]           // ascending, distinct
     private let initialNames: [Int: String]
     private let onCommit: ([Int: String]) -> Void
+    private let suggestionsProvider: SuggestionsProvider?
 
     @State private var draftNames: [Int: String]
+    @State private var suggestions: [Int: [SpeakerSuggestion]] = [:]
+    /// Chips the user has ×-dismissed for this speaker in this session.
+    @State private var dismissedSuggestionIDs: [Int: Set<String>] = [:]
 
     public init(
         speakerIndices: [Int],
         initialNames: [Int: String],
-        onCommit: @escaping ([Int: String]) -> Void
+        onCommit: @escaping ([Int: String]) -> Void,
+        suggestionsProvider: SuggestionsProvider? = nil
     ) {
         self.speakerIndices = speakerIndices.sorted()
         self.initialNames = initialNames
         self.onCommit = onCommit
+        self.suggestionsProvider = suggestionsProvider
         self._draftNames = State(initialValue: initialNames)
     }
 
@@ -34,7 +50,12 @@ public struct SpeakerNameEditor: View {
                     .foregroundStyle(Color.harcOnSurfaceVariant)
                     .tracking(1.2)
                 ForEach(speakerIndices, id: \.self) { index in
-                    row(for: index)
+                    VStack(alignment: .leading, spacing: 4) {
+                        row(for: index)
+                        if let provider = suggestionsProvider {
+                            suggestionChips(for: index, provider: provider)
+                        }
+                    }
                 }
             }
         }
@@ -51,6 +72,46 @@ public struct SpeakerNameEditor: View {
                 .font(HarcDesign.Font.bodyMd)
                 .onSubmit { commit() }
         }
+    }
+
+    @ViewBuilder
+    private func suggestionChips(for index: Int, provider: SuggestionsProvider) -> some View {
+        let raw = suggestions[index] ?? []
+        let dismissed = dismissedSuggestionIDs[index] ?? []
+        let visible = raw.filter { !dismissed.contains($0.id) }
+        if !visible.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(visible) { s in
+                    SpeakerSuggestionChip(
+                        suggestion: s,
+                        onAccept: { acceptSuggestion(s, for: index) },
+                        onDismiss: { dismissSuggestion(s, for: index) }
+                    )
+                }
+            }
+            .padding(.leading, 98) // align with TextField left edge
+        }
+        // Fetch once on appear. `provider` is captured on the init — the
+        // view holds it as a stored property, so we can re-reference it
+        // here in an escaping closure safely.
+        Color.clear
+            .frame(height: 0)
+            .task(id: "\(index)-load") {
+                guard suggestions[index] == nil else { return }
+                guard let fn = suggestionsProvider else { return }
+                let fetched = await fn(index)
+                await MainActor.run { suggestions[index] = fetched }
+            }
+    }
+
+    private func acceptSuggestion(_ s: SpeakerSuggestion, for index: Int) {
+        guard let name = s.name, !name.isEmpty else { return }
+        draftNames[index] = name
+        commit()
+    }
+
+    private func dismissSuggestion(_ s: SpeakerSuggestion, for index: Int) {
+        dismissedSuggestionIDs[index, default: []].insert(s.id)
     }
 
     /// Two-way binding into the `draftNames` dict. Reads return "" when

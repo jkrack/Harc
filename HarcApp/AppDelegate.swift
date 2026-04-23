@@ -9,6 +9,7 @@ import HarcMeetingDetect
 import HarcModels
 import HarcStore
 import HarcUI
+import HarcVoiceprint
 import KeyboardShortcuts
 
 @MainActor
@@ -25,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var stoppedFlashTask: Task<Void, Never>?
     private let modelManager = ModelManager()
     private lazy var modelStore = ModelManagerStore(manager: modelManager)
+    /// Stub today; swap for a bundled ECAPA-TDNN embedder when available.
+    private let speakerEmbedder: SpeakerEmbedder = StubSpeakerEmbedder()
+    private var speakerReIDService: SpeakerReIDService?
     private var settingsWindow: SettingsWindowController?
     private var store: RecordingStore?
     private var recordingsVM: RecordingsViewModel?
@@ -344,6 +348,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                     if !entities.isEmpty { try? await store.updateTags(id: id, tags: entities) }
                 }
             }
+
+            // Extract per-speaker voice fingerprints if the feature is on.
+            // Detached — the store write doesn't block the UI path. Reads the
+            // final mixed WAV; diarizer segments are attached to the
+            // transcript's JSON sidecar and re-derived via ExportInputBuilder
+            // on demand, so we go through the store once the recording row
+            // is persisted.
+            if prefs.speakerReIDEnabled, let store = self.store {
+                let wavPath = result.wavURL.path
+                let jsonPath = result.jsonURL?.path
+                let embedder = self.speakerEmbedder
+                Task.detached { [store] in
+                    await Self.extractAndStoreEmbeddings(
+                        wavPath: wavPath,
+                        jsonPath: jsonPath,
+                        store: store,
+                        embedder: embedder
+                    )
+                }
+            }
             runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
             autoStop.end(autoStopReason: autoStopReason)
             if let autoStopReason, prefs.postStopNotificationEnabled {
@@ -455,6 +479,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
             )
             applyPulse()
         }
+    }
+
+    /// Builds a `SuggestionsProvider` closure scoped to this recording —
+    /// returns the top matches for a given speaker index, or an empty array
+    /// when the re-ID feature is off or no embedding was stored.
+    private func reIDSuggestionsProvider(
+        for recording: Recording
+    ) -> SpeakerNameEditor.SuggestionsProvider? {
+        guard prefs.speakerReIDEnabled,
+              let service = speakerReIDService,
+              let store = store,
+              let recordingID = recording.id else {
+            return nil
+        }
+        let embeddingDim = speakerEmbedder.embeddingDim
+        return { speakerIndex in
+            guard let row = try? await store.speakerEmbedding(
+                recordingID: recordingID,
+                speakerIndex: speakerIndex
+            ) else { return [] }
+            guard let query = EmbeddingBlob.decode(row.embedding, expectedDim: embeddingDim) else {
+                return []
+            }
+            return (try? await service.suggestions(
+                for: query,
+                excludingRecording: recordingID
+            )) ?? []
+        }
+    }
+
+    /// Extract per-speaker voice fingerprints from the finished WAV and
+    /// persist them into the store. Called off the main actor so it doesn't
+    /// block the post-stop UI path.
+    nonisolated private static func extractAndStoreEmbeddings(
+        wavPath: String,
+        jsonPath: String?,
+        store: RecordingStore,
+        embedder: SpeakerEmbedder
+    ) async {
+        // Need the recording id + the diarized segments. Both come from the
+        // freshly-persisted row + its JSON sidecar.
+        guard let rec = try? await store.fetchByWavPath(wavPath),
+              let id = rec.id,
+              let jsonPath = jsonPath,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else {
+            return
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        guard let transcript = try? decoder.decode(SessionTranscript.self, from: data),
+              !transcript.speakers.isEmpty else {
+            return
+        }
+        let segments = transcript.speakers.map {
+            SpeakerExtractor.Segment(
+                speaker: $0.speaker,
+                startMs: $0.startMs,
+                endMs: $0.endMs
+            )
+        }
+        let embeddings: [SpeakerEmbedding]
+        do {
+            embeddings = try await SpeakerExtractor.extract(
+                from: URL(fileURLWithPath: wavPath),
+                segments: segments,
+                embedder: embedder
+            )
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc: speaker-embedding extraction failed: \(error.localizedDescription)\n".utf8
+            ))
+            return
+        }
+        let rows: [RecordingStore.SpeakerEmbeddingRow] = embeddings.map { e in
+            RecordingStore.SpeakerEmbeddingRow(
+                recordingID: id,
+                speakerIndex: e.speakerIndex,
+                embedding: EmbeddingBlob.encode(e.vector),
+                segmentCount: e.segmentCount,
+                totalMs: e.totalMs
+            )
+        }
+        try? await store.upsertSpeakerEmbeddings(recordingID: id, rows: rows)
     }
 
     /// Flash a green check in the menu bar for ~3 s, then fall back to the
@@ -592,7 +699,8 @@ private func openDetail(for recording: Recording) {
             onSpeakerNamesChanged: { [weak self] names in
                 guard let id = recording.id else { return }
                 Task { try? await self?.store?.updateSpeakerNames(id: id, names: names) }
-            }
+            },
+            suggestionsProvider: reIDSuggestionsProvider(for: recording)
         )
         detailWindows[recording.wavPath] = controller
         controller.showWindow(nil)
@@ -764,6 +872,15 @@ private func openDetail(for recording: Recording) {
             let vm = RecordingsViewModel(store: store)
             vm.start()
             self.recordingsVM = vm
+
+            // Cross-recording speaker re-ID service. Cheap to construct; the
+            // expensive linear scan runs only when the editor asks.
+            let nameResolver = StoreSpeakerNameResolver(store: store)
+            self.speakerReIDService = SpeakerReIDService(
+                store: store,
+                nameResolver: nameResolver,
+                embeddingDim: speakerEmbedder.embeddingDim
+            )
 
             observeDestinationChanges()
 
