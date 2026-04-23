@@ -40,4 +40,20 @@ final class SummaryParserTests: XCTestCase {
         XCTAssertTrue(result.actionItems[2].done,
             "- [x] should produce a done item.")
     }
+
+    func test_parse_noActionItems_returnsEmptyList() {
+        let raw = """
+        ## Summary
+        Quick check-in. No work assigned.
+
+        ## Action Items
+        _None identified._
+        """
+        let result = SummaryParser.parse(raw)
+
+        XCTAssertFalse(result.parseWarning)
+        XCTAssertEqual(result.summary, "Quick check-in. No work assigned.")
+        XCTAssertTrue(result.actionItems.isEmpty,
+            "_None identified._ sentinel must yield zero items.")
+    }
 }
