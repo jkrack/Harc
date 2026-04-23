@@ -33,6 +33,8 @@ final class SummaryParserTests: XCTestCase {
         XCTAssertEqual(result.actionItems[1].actor, "Amy")
         XCTAssertEqual(result.actionItems[1].text, "schedule follow-up on pricing")
         XCTAssertNil(result.actionItems[1].due)
+        XCTAssertFalse(result.actionItems[1].done,
+            "Unchecked - [ ] item must have done = false.")
 
         XCTAssertEqual(result.actionItems[2].actor, "Sam")
         XCTAssertTrue(result.actionItems[2].done,

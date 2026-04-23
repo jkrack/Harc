@@ -67,16 +67,31 @@ public enum SummaryParser {
         return items
     }
 
+    /// Parses an action-item body into structured `ActionItem` fields.
+    ///
+    /// Heuristics:
+    /// - Trailing `(...)` becomes `due`. Empty parens `()` parse to `nil`.
+    /// - Leading `<word>:` (≤3 words, no commas) becomes `actor`.
+    ///
+    /// Known limitation: short non-name prefixes like `Note:`, `TODO:`,
+    /// or `Reminder:` will be captured as `actor` even though they
+    /// aren't speaker names. Gemma's prompt template explicitly
+    /// discourages such meta-prefixes, so this is acceptable for v1; if
+    /// real-model output shows the pattern in Stage 2, add a denylist
+    /// here.
     static func parseActionItemBody(_ text: String, done: Bool) -> ActionItem {
         var remaining = text
         var due: String? = nil
         var actor: String? = nil
 
-        // Trailing "(...)" → due.
+        // Trailing "(...)" → due. Empty parens "()" are normalised to
+        // `nil` rather than the empty string, so downstream `if let`
+        // checks behave consistently with "no parens at all".
         if remaining.hasSuffix(")"),
            let openParen = remaining.lastIndex(of: "(") {
             let dueRange = remaining.index(after: openParen)..<remaining.index(before: remaining.endIndex)
-            due = String(remaining[dueRange]).trimmingCharacters(in: .whitespaces)
+            let extracted = String(remaining[dueRange]).trimmingCharacters(in: .whitespaces)
+            due = extracted.isEmpty ? nil : extracted
             remaining = String(remaining[..<openParen]).trimmingCharacters(in: .whitespaces)
         }
 
