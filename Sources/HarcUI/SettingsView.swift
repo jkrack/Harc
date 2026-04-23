@@ -13,6 +13,8 @@ public struct SettingsView: View {
                 .tabItem { Label("Library", systemImage: "tray.full") }
             ProcessingSettingsView()
                 .tabItem { Label("Processing", systemImage: "wand.and.rays") }
+            ModelsSettingsView()
+                .tabItem { Label("Models", systemImage: "brain") }
         }
         .padding(HarcDesign.Space.lg)
         .frame(minWidth: 560, minHeight: 440)
