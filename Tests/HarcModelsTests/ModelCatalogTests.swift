@@ -54,4 +54,21 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(embedders.count, 1)
         XCTAssertEqual(embedders[0].tier, .singleton)
     }
+
+    func test_atLeastOneSummarizerHasVerifiedManifest() {
+        let summarizers = ModelCatalog.descriptors(for: .summarizer)
+        XCTAssertTrue(summarizers.contains(where: { $0.manifestVerified }),
+            "No summarizer has a verified manifest — at least one needs real URLs so downloads can run.")
+    }
+
+    func test_verifiedEntriesDeclareNonZeroSize() {
+        for d in ModelCatalog.v1 where d.manifestVerified {
+            XCTAssertGreaterThan(d.totalBytes, 0,
+                "Verified manifest for \(d.id) reports 0 total bytes")
+            for f in d.files {
+                XCTAssertGreaterThan(f.bytes, 0,
+                    "Verified manifest \(d.id)/\(f.path) has 0 bytes")
+            }
+        }
+    }
 }

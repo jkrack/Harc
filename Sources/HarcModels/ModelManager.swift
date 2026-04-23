@@ -18,6 +18,7 @@ public actor ModelManager {
         case notInstalled(String)
         case filesystem(String)
         case verification(String)
+        case manifestUnverified(String)
 
         public var errorDescription: String? {
             switch self {
@@ -31,6 +32,8 @@ public actor ModelManager {
             case .notInstalled(let id): return "Model \"\(id)\" isn't installed yet."
             case .filesystem(let s): return s
             case .verification(let s): return s
+            case .manifestUnverified(let id):
+                return "Manifest for \"\(id)\" hasn't been verified. Downloads are blocked until the manifest-refresh script runs."
             }
         }
     }
@@ -99,6 +102,9 @@ public actor ModelManager {
     public func startDownload(_ id: String) throws {
         guard let descriptor = descriptor(for: id) else {
             throw Failure.unknownModel(id)
+        }
+        guard descriptor.manifestVerified else {
+            throw Failure.manifestUnverified(id)
         }
         if case .installed = state(of: id) {
             return   // already done

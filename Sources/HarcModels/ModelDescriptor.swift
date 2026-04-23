@@ -74,6 +74,12 @@ public struct ModelDescriptor: Codable, Sendable, Equatable, Identifiable {
     public let recommendedRAMGB: Int
     /// Prompt-context budget in tokens (for summarizer). Ignored for embedder.
     public let contextTokens: Int
+    /// True when this descriptor's `files` list (URLs + byte counts) has been
+    /// cross-checked against the real HuggingFace repo. False means the
+    /// entry is a placeholder — downloads are blocked by `ModelManager` and
+    /// the Settings row shows a "Manifest pending" chip. Flip to `true` when
+    /// the manifest-refresh script runs (or the URLs are hand-verified).
+    public let manifestVerified: Bool
 
     public init(
         id: String,
@@ -87,7 +93,8 @@ public struct ModelDescriptor: Codable, Sendable, Equatable, Identifiable {
         minMacOS: String = "14.0",
         minRAMGB: Int,
         recommendedRAMGB: Int,
-        contextTokens: Int
+        contextTokens: Int,
+        manifestVerified: Bool = false
     ) {
         self.id = id
         self.displayName = displayName
@@ -102,5 +109,6 @@ public struct ModelDescriptor: Codable, Sendable, Equatable, Identifiable {
         self.minRAMGB = minRAMGB
         self.recommendedRAMGB = recommendedRAMGB
         self.contextTokens = contextTokens
+        self.manifestVerified = manifestVerified
     }
 }
