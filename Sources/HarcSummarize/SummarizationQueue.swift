@@ -52,6 +52,13 @@ public actor SummarizationQueue {
         startWorkerIfNeeded()
     }
 
+    /// Cancel a specific id. If it's still in `pending`, drop it silently
+    /// (the queue never emits for work it never started). If it's `current`,
+    /// cancel the in-flight task — cancellation is cooperative: the
+    /// `perform` closure must observe `Task.isCancelled` and throw
+    /// `CancellationError` for `.finished(id, .failure(CancellationError))`
+    /// to surface. A perform body that swallows cancellation silently will
+    /// produce a `.finished(.success(()))` payload despite the cancel call.
     public func cancel(_ id: Int64) {
         if let idx = pending.firstIndex(of: id) {
             pending.remove(at: idx)

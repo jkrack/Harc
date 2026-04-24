@@ -29,18 +29,22 @@ struct SummarizationQueueStoreTests {
         await queue.enqueue(1)
         await queue.enqueue(2)
 
-        // Eventually: one is current, one is pending.
+        // Eventually: one is current, one is pending. totalInFlight
+        // counts both simultaneously.
         await expectEventually {
             await MainActor.run {
-                (store.current == 1 && store.pending == [2])
-                || (store.current == 2 && store.pending == [])
+                ((store.current == 1 && store.pending == [2])
+                 || (store.current == 2 && store.pending == []))
+                && store.totalInFlight >= 1
             }
         }
 
-        // After drain both are clear.
+        // After drain both are clear and totalInFlight == 0.
         await expectEventually {
             await MainActor.run {
-                store.current == nil && store.pending.isEmpty
+                store.current == nil
+                && store.pending.isEmpty
+                && store.totalInFlight == 0
             }
         }
     }
