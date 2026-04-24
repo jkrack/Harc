@@ -3,6 +3,26 @@ import XCTest
 
 final class SummarizerServiceTests: XCTestCase {
 
+    /// Spy loader that records every produced container so tests can
+    /// assert on recorded state post-summarize.
+    func spyLoader(id: String,
+                   response: String? = nil) -> (loader: SummarizerService.Loader,
+                                                 containers: () async -> [StubContainer]) {
+        let box = Box<[StubContainer]>(initial: [])
+        let loader: SummarizerService.Loader = { _ in
+            let stub = StubContainer(id: id, response: response ?? """
+            ## Summary
+            Stubbed summary.
+
+            ## Action Items
+            _None identified._
+            """)
+            await box.append(stub)
+            return stub
+        }
+        return (loader, { await box.snapshot() })
+    }
+
     func test_newService_reportsNoLoadedModel() async {
         let service = SummarizerService(loader: { _ in
             throw SummarizerError.loadFailed("not called")
@@ -116,6 +136,67 @@ final class SummarizerServiceTests: XCTestCase {
             XCTFail("Wrong error: \(error)")
         }
     }
+
+    func test_summarize_happyPath_returnsParsedResult() async throws {
+        let canned = """
+        ## Summary
+        The team reviewed the rollout plan and agreed on timing.
+
+        ## Action Items
+        - [ ] Jason: confirm the rollout window (Friday)
+        - [x] Amy: send the comms email
+        """
+        let (loader, containers) = spyLoader(id: "m", response: canned)
+        let service = SummarizerService(loader: loader)
+
+        let transcript = PromptTranscript(utterances: [
+            .init(speaker: "Jason", text: "Let's lock rollout for Friday."),
+            .init(speaker: "Amy", text: "I'll send the comms email."),
+        ])
+
+        let result = try await service.summarize(
+            transcript: transcript,
+            modelID: "m",
+            modelDirectory: URL(fileURLWithPath: "/tmp"),
+            budgetWords: 1_000
+        )
+
+        XCTAssertFalse(result.parseWarning,
+            "Well-formed stubbed output should not raise the warning.")
+        XCTAssertEqual(result.actionItems.count, 2)
+        XCTAssertEqual(result.actionItems[0].actor, "Jason")
+        XCTAssertTrue(result.actionItems[1].done)
+
+        let produced = await containers()
+        XCTAssertEqual(produced.count, 1, "One container produced.")
+        let stub = produced[0]
+        XCTAssertEqual(stub.generateCalls, 1)
+        XCTAssertEqual(stub.lastMaxTokens, SummaryPrompt.maxOutputTokens,
+            "Service must pass the canonical maxOutputTokens to the container.")
+        XCTAssertTrue(stub.lastPromptBody?.contains("Jason: Let's lock rollout for Friday.") ?? false,
+            "Prompt body must contain the speaker-labeled transcript lines.")
+        XCTAssertTrue(stub.lastPromptBody?.contains("## Summary") ?? false,
+            "Prompt body must include the Stage 1 template.")
+    }
+
+    func test_summarize_passesSystemPromptFromService() async throws {
+        let (loader, containers) = spyLoader(id: "m")
+        let service = SummarizerService(loader: loader)
+
+        _ = try await service.summarize(
+            transcript: PromptTranscript(utterances: [
+                .init(speaker: nil, text: "hi")
+            ]),
+            modelID: "m",
+            modelDirectory: URL(fileURLWithPath: "/tmp"),
+            budgetWords: 100
+        )
+
+        let produced = await containers()
+        XCTAssertEqual(produced.count, 1)
+        XCTAssertNil(produced[0].lastSystemPrompt,
+            "v1 deliberately passes no system prompt — the template carries the instructions.")
+    }
 }
 
 // MARK: - Test stub
@@ -126,11 +207,33 @@ final class SummarizerServiceTests: XCTestCase {
 final class StubContainer: ContainerLike, @unchecked Sendable {
     let id: String
     private(set) var generateCalls = 0
+    private(set) var lastPromptBody: String?
+    private(set) var lastSystemPrompt: String?
+    private(set) var lastMaxTokens: Int?
+    /// Caller can override the canned response for a specific test.
+    var response: String
 
-    init(id: String) { self.id = id }
+    init(id: String,
+         response: String = """
+        ## Summary
+        Stubbed summary.
 
-    static func loader(id: String) -> @Sendable (URL) async throws -> any ContainerLike {
-        { _ in StubContainer(id: id) }
+        ## Action Items
+        _None identified._
+        """
+    ) {
+        self.id = id
+        self.response = response
+    }
+
+    static func loader(id: String,
+                       response: String? = nil) -> @Sendable (URL) async throws -> any ContainerLike {
+        { _ in
+            if let response {
+                return StubContainer(id: id, response: response)
+            }
+            return StubContainer(id: id)
+        }
     }
 
     func generate(
@@ -139,13 +242,10 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
         maxTokens: Int
     ) async throws -> String {
         generateCalls += 1
-        return """
-        ## Summary
-        Stubbed summary from \(id).
-
-        ## Action Items
-        _None identified._
-        """
+        lastPromptBody = promptBody
+        lastSystemPrompt = systemPrompt
+        lastMaxTokens = maxTokens
+        return response
     }
 }
 
@@ -155,4 +255,17 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
 actor Counter {
     private(set) var value: Int = 0
     func increment() { value += 1 }
+}
+
+/// Minimal async-safe box so the spy loader can record produced
+/// containers across multiple invocations.
+actor Box<T> {
+    private var storage: T
+    init(initial: T) { self.storage = initial }
+    func snapshot() -> T { storage }
+    func assign(_ value: T) { storage = value }
+}
+
+extension Box where T == [StubContainer] {
+    func append(_ item: StubContainer) { storage.append(item) }
 }
