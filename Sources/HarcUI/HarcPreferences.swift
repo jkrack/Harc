@@ -25,6 +25,9 @@ public final class HarcPreferences: ObservableObject {
         static let activeEmbedderID = "harc.activeEmbedderID"
         static let speakerReIDEnabled = "harc.speakerReIDEnabled"
         static let speakerReIDAutoApply = "harc.speakerReIDAutoApply"
+        static let autoSummarizeEnabled = "harc.autoSummarizeEnabled"
+        static let autoSummarizeOnBatteryEnabled = "harc.autoSummarizeOnBatteryEnabled"
+        static let includeSummaryInPrompt = "harc.includeSummaryInPrompt"
     }
 
     @Published public var destinationPath: String {
@@ -119,6 +122,24 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(speakerReIDAutoApply, forKey: Key.speakerReIDAutoApply) }
     }
 
+    /// Fire the summarization queue from `stopRecording` when the active
+    /// summarizer is installed + power conditions allow. Default on.
+    @Published public var autoSummarizeEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoSummarizeEnabled, forKey: Key.autoSummarizeEnabled) }
+    }
+
+    /// Allow auto-summarize when the laptop is on battery. Default off
+    /// — Gemma 4 is multi-GB resident and drains battery fast.
+    @Published public var autoSummarizeOnBatteryEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoSummarizeOnBatteryEnabled, forKey: Key.autoSummarizeOnBatteryEnabled) }
+    }
+
+    /// Prepend the summary + action items to the Copy-for-Prompt blob.
+    /// Consumed by Stage 4. Default on.
+    @Published public var includeSummaryInPrompt: Bool {
+        didSet { UserDefaults.standard.set(includeSummaryInPrompt, forKey: Key.includeSummaryInPrompt) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -157,6 +178,9 @@ public final class HarcPreferences: ObservableObject {
         self.activeEmbedderID = defaults.string(forKey: Key.activeEmbedderID) ?? "bge-small-en-v1.5"
         self.speakerReIDEnabled = defaults.object(forKey: Key.speakerReIDEnabled) as? Bool ?? false
         self.speakerReIDAutoApply = defaults.object(forKey: Key.speakerReIDAutoApply) as? Bool ?? false
+        self.autoSummarizeEnabled = defaults.object(forKey: Key.autoSummarizeEnabled) as? Bool ?? true
+        self.autoSummarizeOnBatteryEnabled = defaults.object(forKey: Key.autoSummarizeOnBatteryEnabled) as? Bool ?? false
+        self.includeSummaryInPrompt = defaults.object(forKey: Key.includeSummaryInPrompt) as? Bool ?? true
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {
