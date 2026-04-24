@@ -30,6 +30,18 @@ let package = Package(
             url: "https://github.com/groue/GRDB.swift.git",
             from: "6.29.0"
         ),
+        .package(
+            url: "https://github.com/ml-explore/mlx-swift-lm.git",
+            .upToNextMajor(from: "3.31.3")
+        ),
+        .package(
+            url: "https://github.com/huggingface/swift-huggingface.git",
+            from: "0.9.0"
+        ),
+        .package(
+            url: "https://github.com/huggingface/swift-transformers.git",
+            from: "1.3.0"
+        ),
     ],
     targets: [
         .target(name: "HarcCore"),
@@ -86,7 +98,14 @@ let package = Package(
         ),
         .target(
             name: "HarcSummarize",
-            dependencies: ["HarcCore"]
+            dependencies: [
+                "HarcCore",
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+                .product(name: "HuggingFace", package: "swift-huggingface"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+            ]
         ),
         .testTarget(name: "HarcCoreTests", dependencies: ["HarcCore"]),
         .testTarget(
