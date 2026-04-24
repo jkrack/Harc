@@ -241,6 +241,20 @@ public actor RecordingStore {
         }
     }
 
+    /// Rows with a transcript but no summary yet — the on-launch catch-up
+    /// list. Ordered startedAt DESC, capped at `limit` so a fresh install
+    /// with a long pre-existing history doesn't seed hundreds of jobs.
+    public func unsummarizedRecordings(limit: Int = 20) async throws -> [Recording] {
+        try await dbQueue.read { db in
+            try Recording
+                .filter(Recording.Columns.deletedAt == nil)
+                .filter(Recording.Columns.summaryMarkdown == nil)
+                .order(Recording.Columns.startedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
     // MARK: - Speaker embeddings
 
     /// One row from `speaker_embeddings`. Decoupled from HarcVoiceprint's
