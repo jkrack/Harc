@@ -36,6 +36,86 @@ final class SummarizerServiceTests: XCTestCase {
         XCTAssertNil(loaded,
             "unload() must clear the loaded model id.")
     }
+
+    func test_summarize_reusesContainerForSameModelID() async throws {
+        let created = Counter()
+        let service = SummarizerService(loader: { _ in
+            await created.increment()
+            return StubContainer(id: "same")
+        })
+        let modelDir = URL(fileURLWithPath: "/tmp")
+        let transcript = PromptTranscript(utterances: [
+            .init(speaker: nil, text: "hello")
+        ])
+
+        _ = try await service.summarize(
+            transcript: transcript,
+            modelID: "same",
+            modelDirectory: modelDir,
+            budgetWords: 100
+        )
+        _ = try await service.summarize(
+            transcript: transcript,
+            modelID: "same",
+            modelDirectory: modelDir,
+            budgetWords: 100
+        )
+
+        let count = await created.value
+        XCTAssertEqual(count, 1,
+            "Loader should be called exactly once for repeated same-id requests.")
+    }
+
+    func test_summarize_reloadsWhenModelIDChanges() async throws {
+        let created = Counter()
+        let service = SummarizerService(loader: { _ in
+            await created.increment()
+            return StubContainer(id: "any")
+        })
+        let modelDir = URL(fileURLWithPath: "/tmp")
+        let transcript = PromptTranscript(utterances: [
+            .init(speaker: nil, text: "hello")
+        ])
+
+        _ = try await service.summarize(
+            transcript: transcript,
+            modelID: "first",
+            modelDirectory: modelDir,
+            budgetWords: 100
+        )
+        _ = try await service.summarize(
+            transcript: transcript,
+            modelID: "second",
+            modelDirectory: modelDir,
+            budgetWords: 100
+        )
+
+        let count = await created.value
+        XCTAssertEqual(count, 2,
+            "Switching model id must trigger a reload.")
+    }
+
+    func test_summarize_throwsWhenDirectoryMissing() async {
+        let service = SummarizerService(loader: { _ in
+            XCTFail("Loader must not be invoked when the directory is missing.")
+            return StubContainer(id: "never")
+        })
+        let missing = URL(fileURLWithPath: "/tmp/harc-summarizer-test-definitely-missing-\(UUID().uuidString)")
+
+        do {
+            _ = try await service.summarize(
+                transcript: PromptTranscript(utterances: []),
+                modelID: "any",
+                modelDirectory: missing,
+                budgetWords: 100
+            )
+            XCTFail("Expected modelDirectoryMissing to throw.")
+        } catch SummarizerError.modelDirectoryMissing(let url) {
+            XCTAssertEqual(url, missing)
+        } catch {
+            XCTFail("Wrong error: \(error)")
+        }
+    }
 }
 
 // MARK: - Test stub
@@ -67,4 +147,12 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
         _None identified._
         """
     }
+}
+
+// MARK: - Helpers
+
+/// Simple async-safe counter for the load-count assertions.
+actor Counter {
+    private(set) var value: Int = 0
+    func increment() { value += 1 }
 }
