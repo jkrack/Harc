@@ -18,6 +18,10 @@ import HarcCore
 ///     continuation.
 ///   - Whole-word (no token has a leading space — `"Hello"`, `"there"`):
 ///     tokens are joined with a single space.
+///
+/// The word-to-speaker assignment + same-speaker run grouping is mirrored
+/// in `HarcSummarize.PromptTranscriptAdapter`; if you fix a bug in one,
+/// fix the same bug in the other.
 public enum TranscriptPlainTextRenderer {
     public static func render(_ transcript: SessionTranscript) -> String {
         let joinedFallback = transcript.joinedText.trimmingCharacters(in: .whitespacesAndNewlines)

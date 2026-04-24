@@ -76,6 +76,53 @@ struct PromptTranscriptAdapterTests {
         #expect(t.utterances[1].speaker == "Amy")
     }
 
+    @Test("word whose midpoint falls in a between-segment gap stays with the current speaker")
+    func gapHandling() {
+        // Three segments with a gap between seg[0] (0-500) and seg[1] (1000-1500).
+        // The middle word (550-650, midpoint 600) falls in the gap and should stay
+        // on speaker 0 rather than starting a bogus un-labeled run.
+        let words = [
+            Word(text: "alpha", startMs: 0,    endMs: 500),
+            Word(text: "beta",  startMs: 550,  endMs: 650),
+            Word(text: "gamma", startMs: 1000, endMs: 1500),
+        ]
+        let speakers = [
+            SpeakerSegment(speaker: 0, startMs: 0,    endMs: 500),
+            SpeakerSegment(speaker: 1, startMs: 1000, endMs: 1500),
+        ]
+        let t = PromptTranscriptAdapter.make(
+            joinedText: "alpha beta gamma",
+            words: words,
+            speakers: speakers,
+            speakerNameOverrides: [:]
+        )
+        #expect(t.utterances.count == 2)
+        #expect(t.utterances[0].speaker == "Speaker 1")
+        #expect(t.utterances[0].text == "alpha beta")
+        #expect(t.utterances[1].speaker == "Speaker 2")
+        #expect(t.utterances[1].text == "gamma")
+    }
+
+    @Test("partial speakerNameOverrides — missing keys fall back to default Speaker N")
+    func partialOverrides() {
+        let words = [
+            Word(text: "first",  startMs: 0,    endMs: 500),
+            Word(text: "second", startMs: 1000, endMs: 1500),
+        ]
+        let speakers = [
+            SpeakerSegment(speaker: 0, startMs: 0,    endMs: 500),
+            SpeakerSegment(speaker: 1, startMs: 1000, endMs: 1500),
+        ]
+        let t = PromptTranscriptAdapter.make(
+            joinedText: "first second",
+            words: words,
+            speakers: speakers,
+            speakerNameOverrides: [0: "Jason"]   // speaker 1 has no override
+        )
+        #expect(t.utterances[0].speaker == "Jason")
+        #expect(t.utterances[1].speaker == "Speaker 2")
+    }
+
     @Test("sentencepiece-style words (leading space) concatenate without extra spaces")
     func sentencePieceStyle() {
         // Tokens arrive with leading spaces; concatenation is verbatim.
