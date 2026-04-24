@@ -107,4 +107,67 @@ struct RecordingStoreSummaryTests {
             try await store.clearSummary(id: 999_999)
         }
     }
+
+    @Test("unsummarizedRecordings returns un-summarized, non-deleted rows ordered by startedAt DESC, bounded by limit")
+    func unsummarizedRecordingsFilterOrderLimit() async throws {
+        let store = try await RecordingStore.inMemory()
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // Oldest, summarized — excluded.
+        let summarized = Recording(
+            wavPath: "/tmp/a.wav",
+            startedAt: t0,
+            transcriptText: "a"
+        )
+        let aSaved = try await store.upsert(summarized)
+        try await store.updateSummary(
+            id: aSaved.id!,
+            markdown: "s", actionItemsMarkdown: "i",
+            modelID: "m", generatedAt: Date(), sourceWordCount: 0
+        )
+
+        // Middle, soft-deleted — excluded.
+        let deleted = Recording(
+            wavPath: "/tmp/b.wav",
+            startedAt: t0.addingTimeInterval(60),
+            transcriptText: "b"
+        )
+        let bSaved = try await store.upsert(deleted)
+        try await store.softDelete(id: bSaved.id!)
+
+        // Newest two — included, newest first.
+        let c = Recording(
+            wavPath: "/tmp/c.wav",
+            startedAt: t0.addingTimeInterval(120),
+            transcriptText: "c"
+        )
+        let d = Recording(
+            wavPath: "/tmp/d.wav",
+            startedAt: t0.addingTimeInterval(180),
+            transcriptText: "d"
+        )
+        _ = try await store.upsert(c)
+        _ = try await store.upsert(d)
+
+        let rows = try await store.unsummarizedRecordings(limit: 10)
+        #expect(rows.map { $0.wavPath } == ["/tmp/d.wav", "/tmp/c.wav"])
+    }
+
+    @Test("unsummarizedRecordings honors the limit parameter")
+    func unsummarizedRecordingsRespectsLimit() async throws {
+        let store = try await RecordingStore.inMemory()
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<5 {
+            let rec = Recording(
+                wavPath: "/tmp/\(i).wav",
+                startedAt: t0.addingTimeInterval(Double(i) * 60),
+                transcriptText: "row \(i)"
+            )
+            _ = try await store.upsert(rec)
+        }
+        let rows = try await store.unsummarizedRecordings(limit: 2)
+        #expect(rows.count == 2)
+        // Newest two.
+        #expect(rows.map { $0.wavPath } == ["/tmp/4.wav", "/tmp/3.wav"])
+    }
 }
