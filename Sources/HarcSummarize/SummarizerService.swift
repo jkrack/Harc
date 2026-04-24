@@ -53,6 +53,45 @@ public actor SummarizerService {
         loadedModelID = nil
     }
 
+    /// Testing seam: the memory-pressure handler, callable directly by
+    /// tests. In production it's invoked by the `DispatchSource` set up
+    /// in `startObservingMemoryPressure()`.
+    public func handleMemoryPressure() {
+        unload()
+    }
+
+    /// Begin observing OS-level memory pressure warnings and nil-out
+    /// the resident container on warning/critical events. Safe to call
+    /// multiple times; only the first call installs the source. Caller
+    /// owns the returned handle — retain it for the lifetime of the
+    /// service; dropping it cancels observation.
+    ///
+    /// Not called from `init` because actor isolation combined with
+    /// `DispatchSource` event handlers would require a Task hop on
+    /// every invocation. The caller (AppDelegate in Stage 3) calls
+    /// this explicitly after construction.
+    public nonisolated func startObservingMemoryPressure() -> MemoryPressureObservation {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: .global(qos: .utility)
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            Task { await self.handleMemoryPressure() }
+        }
+        source.resume()
+        return MemoryPressureObservation(source: source)
+    }
+
+    /// Handle returned from `startObservingMemoryPressure`. Drops the
+    /// underlying DispatchSource when deallocated, which stops event
+    /// delivery.
+    public final class MemoryPressureObservation: @unchecked Sendable {
+        private let source: DispatchSourceMemoryPressure
+        init(source: DispatchSourceMemoryPressure) { self.source = source }
+        deinit { source.cancel() }
+    }
+
     /// Placeholder for Task 3. Full implementation lands in Task 5.
     public func summarize(
         transcript: PromptTranscript,
