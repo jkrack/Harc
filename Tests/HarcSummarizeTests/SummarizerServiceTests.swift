@@ -197,6 +197,31 @@ final class SummarizerServiceTests: XCTestCase {
         XCTAssertNil(produced[0].lastSystemPrompt,
             "v1 deliberately passes no system prompt — the template carries the instructions.")
     }
+
+    func test_handleMemoryPressure_callsUnload() async {
+        let (loader, _) = spyLoader(id: "m")
+        let service = SummarizerService(loader: loader)
+
+        _ = try? await service.summarize(
+            transcript: PromptTranscript(utterances: [
+                .init(speaker: nil, text: "hello")
+            ]),
+            modelID: "m",
+            modelDirectory: URL(fileURLWithPath: "/tmp"),
+            budgetWords: 100
+        )
+        var loaded = await service.loadedModelID
+        XCTAssertEqual(loaded, "m")
+
+        // Simulate a memory-pressure signal (the real DispatchSource
+        // can't be triggered synthetically in unit tests; we call the
+        // actor's handler directly to exercise the unload path).
+        await service.handleMemoryPressure()
+
+        loaded = await service.loadedModelID
+        XCTAssertNil(loaded,
+            "Memory-pressure handler must unload the model.")
+    }
 }
 
 // MARK: - Test stub
