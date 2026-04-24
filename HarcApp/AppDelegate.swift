@@ -384,7 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                modelStore.state(of: prefs.activeSummarizerID).isInstalled,
                let id = savedID,
                let queue = self.summarizationQueue {
-                queue.enqueue(id)
+                await queue.enqueue(id)
             }
             autoStop.end(autoStopReason: autoStopReason)
             if let autoStopReason, prefs.postStopNotificationEnabled {
@@ -912,6 +912,22 @@ private func openDetail(for recording: Recording) {
             self.summarizationQueue = queue
             self.summarizationQueueStore = await SummarizationQueueStore(queue: queue)
 
+            // Log summarization failures to stderr so Stage 3 QA can
+            // diagnose problems ahead of the Stage 4 UI that will surface
+            // them. CancellationError is expected (user cancel) and skipped.
+            let events = await queue.events()
+            Task { [weak self] in
+                _ = self   // keep the log task alive with the delegate
+                for await event in events {
+                    if case .finished(let id, .failure(let error)) = event,
+                       !(error is CancellationError) {
+                        FileHandle.standardError.write(Data(
+                            "harc: summarization failed for recording \(id): \(error.localizedDescription)\n".utf8
+                        ))
+                    }
+                }
+            }
+
             // On-launch catch-up: enqueue the N newest un-summarized rows
             // so a fresh install (or a crash recovery) picks up where it
             // left off. Gated by the same prefs + install checks the
@@ -920,7 +936,7 @@ private func openDetail(for recording: Recording) {
                shouldSummarizeGivenPower(),
                modelStore.state(of: prefs.activeSummarizerID).isInstalled {
                 let rows = (try? await store.unsummarizedRecordings(limit: 20)) ?? []
-                for rec in rows { if let id = rec.id { queue.enqueue(id) } }
+                for rec in rows { if let id = rec.id { await queue.enqueue(id) } }
             }
 
             observeDestinationChanges()
