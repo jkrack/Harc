@@ -92,7 +92,16 @@ public actor SummarizerService {
         deinit { source.cancel() }
     }
 
-    /// Placeholder for Task 3. Full implementation lands in Task 5.
+    /// Render the prompt for `transcript` (clamped to `budgetWords`),
+    /// generate via the lazily-loaded container for `modelID` (loaded
+    /// from `modelDirectory` on first use), and return the parsed
+    /// two-section result.
+    ///
+    /// Throws `SummarizerError.modelDirectoryMissing` if the directory
+    /// doesn't exist on disk, `.loadFailed` if the underlying loader
+    /// throws, `.generationFailed` if generation throws a non-typed
+    /// error. `CancellationError` from `Task` cancellation propagates
+    /// unwrapped so callers can `catch is CancellationError` cleanly.
     public func summarize(
         transcript: PromptTranscript,
         modelID: String,
