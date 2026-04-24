@@ -424,3 +424,293 @@ The work splits into four stages. Each stage is a coherent commit that builds an
 - Stages 1–3 are reviewable / mergeable without user-visible behavior change. After Stage 3 the trigger fires and writes to the DB columns, but no view in the existing app reads them, so the user sees nothing different.
 - Stage 4 is the user-visible flip. Easy to revert independently if anything's wrong with the card UX.
 - A pre-Stage-2 spike — verify the catalog's Gemma 4 E2B descriptor downloads end-to-end on a real machine (not a unit test), confirm `generation_config.json` is in the file list (carries the `<turn|>` EOS), and confirm `LLMModelFactory.shared.loadContainer(from:using:)` accepts the resulting directory — is **required** before Stage 2 so we're not debugging "why won't this load" with two unknowns at once. Treat as a half-day exploration, not a stage. The 2026-04-23 manifest HEAD-check spike already confirmed all 8 catalog file URLs return 200 with sizes within ±0.25 % of expected — what remains is the real download + the MLX load test.
+
+---
+
+## 12. Stage 3 refresh (2026-04-24)
+
+Supersedes the Stage 3 bullets in §11 where it contradicts them. Written after Stages 1–2 merged to `main` (PRs #1, #2) and the codebase was audited against §11's original wording. Keeps the stage's user-visible surface area identical — all changes are internal shape / dep-direction.
+
+### 12.1 Tight reconciliations to earlier sections
+
+- **§4.3 signature.** Stage 2 shipped `SummarizerService.summarize(transcript:modelID:modelDirectory:budgetWords:)` — directory resolution lives outside the actor. The `SummarizationQueue`'s `perform` closure (§12.4) calls `ModelManager.requireInstalled(...)` and passes the directory in.
+- **§4.4 heavyweight-app unload.** `NSWorkspace.didActivateApplicationNotification`-driven unload is deferred past v1. Pressure-driven unload (the `DispatchSource` set up in Stage 2) covers the memory case adequately; one mechanism is enough until there's evidence otherwise.
+- **§2 `updateSummary` signature.** Spelled as `updateSummary(id:output:)` taking `SummaryOutput`. `SummaryOutput` lives in `HarcSummarize`; `HarcStore` currently depends only on `HarcCore` + `GRDB`. Flipping that dep direction is the wrong way. Replaced with a primitives-based signature (§12.3) matching the `updateSpeakerNames` / `updateTags` / `updateSuggestedTitle` precedent.
+- **§3 `HarcSummarize` deps.** `HarcStore` and `HarcModels` are NOT added as deps in Stage 3. The queue is closure-driven (§12.4), and the `SessionTranscript → PromptTranscript` adapter takes HarcCore primitives rather than `HarcClient.SessionTranscript` directly (§12.4). Keeps HarcSummarize at its current dep footprint: HarcCore + the MLX/tokenizer packages.
+
+### 12.2 DB migration `v7_summary`
+
+One `alter(table:)` adding exactly the five columns from §2:
+
+```swift
+migrator.registerMigration("v7_summary") { db in
+    try db.alter(table: "recordings") { t in
+        t.add(column: "summary_markdown", .text)
+        t.add(column: "action_items_markdown", .text)
+        t.add(column: "summary_model_id", .text)
+        t.add(column: "summary_generated_at", .integer)  // Unix ms
+        t.add(column: "summary_source_word_count", .integer)
+    }
+}
+```
+
+`Recording` struct gains five matching optional fields + `Columns` entries + `CodingKeys`. `summary_generated_at` stored as Int64 milliseconds since epoch for SQLite portability. No FTS changes — summary isn't searchable in v1.
+
+**Action-item persistence is markdown-authoritative.** `action_items_markdown` holds the `- [ ]`/`- [x]` block verbatim. The UI re-parses on read via the existing `SummaryParser`; on `done` toggle it re-serializes through `ActionItemsMarkdown.render` (§12.4) and writes the column back. Round-trip is lossless for `text`, `actor`, `due`, `done`. `SummaryOutput.parseWarning` does not round-trip — it's generation-time-only and is lost once the row is persisted (acceptable: if parsing was clean enough to render a summary at all, the warning was already cosmetic).
+
+### 12.3 `RecordingStore` additions
+
+```swift
+public func updateSummary(
+    id: Int64,
+    markdown: String,
+    actionItemsMarkdown: String,
+    modelID: String,
+    generatedAt: Date,
+    sourceWordCount: Int
+) async throws
+
+public func clearSummary(id: Int64) async throws
+
+/// Rows with a transcript but no summary yet. Ordered startedAt DESC.
+/// Bounded — on-launch catch-up shouldn't seed hundreds of jobs.
+public func unsummarizedRecordings(limit: Int = 20) async throws -> [Recording]
+```
+
+`unsummarizedRecordings` filter: `deleted_at IS NULL AND summary_markdown IS NULL`. The `limit` default of 20 keeps first-run backlog bounded on a library that predates the summarization feature; beyond that the user regenerates older rows manually from the Stage 4 card.
+
+`updateSummary` + `clearSummary` update `updated_at` on write so the existing FTS5 sync / `observeAll` stream re-emit. Both throw `StoreError.notFound` if the id is missing — consistent with `setPinned` / `rename`.
+
+### 12.4 `HarcSummarize` new files
+
+No new external package deps. Five new files, all in `Sources/HarcSummarize/`:
+
+- **`PromptTranscriptAdapter.swift`** — pure static function, HarcCore types in, `PromptTranscript` out:
+  ```swift
+  public enum PromptTranscriptAdapter {
+      public static func make(
+          joinedText: String,
+          words: [Word],
+          speakers: [SpeakerSegment],
+          speakerNameOverrides: [Int: String]
+      ) -> PromptTranscript
+  }
+  ```
+  Algorithm mirrors `HarcClient.TranscriptPlainTextRenderer`: assign each word to a speaker via midpoint containment → collapse into contiguous same-speaker runs → one `Utterance` per run with label `speakerNameOverrides[i] ?? "Speaker \(i+1)"`. If speakers are empty or words are empty, returns one `Utterance(speaker: nil, text: joinedText)`. The call site (§12.5) unwraps `SessionTranscript` into primitives.
+
+- **`ActionItemsMarkdown.swift`** — inverse of `SummaryParser`:
+  ```swift
+  public enum ActionItemsMarkdown {
+      public static func render(_ items: [ActionItem]) -> String
+  }
+  ```
+  Empty → `"_None identified._"`. Otherwise one line per item:
+  - `done == true`  → `- [x] …`
+  - `done == false` → `- [ ] …`
+
+  The body shape: `<actor>: <text> (<due>)` when actor + due present, with `:`, `(`, `)` dropped progressively as fields are absent. Round-trip with `SummaryParser.parse` is covered by tests.
+
+- **`BackgroundWorkCoordinator.swift`** — matches the semantic-search spec §10 signature exactly:
+  ```swift
+  public actor BackgroundWorkCoordinator {
+      public init()
+      public func performOne<T>(_ op: () async throws -> T) async rethrows -> T
+  }
+  ```
+  One-slot serial mutex. Internally a `waiters: [CheckedContinuation<Void, Never>]` + a `busy: Bool` flag, or equivalent `AsyncSemaphore` pattern. In Stage 3 the only producer is summarization, so this is a pass-through; defining it now prevents a queue refactor when semantic search lands.
+
+- **`SummarizationQueue.swift`** — actor with this surface:
+  ```swift
+  public actor SummarizationQueue {
+      public typealias Perform = @Sendable (Int64) async throws -> Void
+
+      public init(
+          coordinator: BackgroundWorkCoordinator,
+          perform: @escaping Perform
+      )
+
+      public func enqueue(_ id: Int64)
+      public func cancel(_ id: Int64)
+      public func cancelAll()
+
+      public private(set) var pending: [Int64]
+      public private(set) var current: Int64?
+
+      public nonisolated func events() -> AsyncStream<Event>
+  }
+
+  public enum Event: Sendable {
+      case enqueued(Int64)
+      case started(Int64)
+      case finished(Int64, Result<Void, Error>)
+      case queueDrained
+  }
+  ```
+  Behaviour:
+  - `enqueue(id)` appends to `pending` unless `id == current || pending.contains(id)` (dedupe). Emits `.enqueued`. Starts the worker task if none is running.
+  - Worker loop: pop head → set `current` → emit `.started` → `coordinator.performOne { try await perform(id) }` → emit `.finished(id, .success(()))` or `.finished(id, .failure(error))` → clear `current`. On empty pending: emit `.queueDrained`, exit loop.
+  - `cancel(id)`: if `id` is in `pending`, remove it. If `id == current`, call `task.cancel()` on the in-flight `Task`. Structured concurrency propagates through `perform`; `SummarizerService.summarize`'s `Generation` stream tears down and throws `CancellationError`. The `.finished` event carries `.failure(CancellationError())`, which the UI distinguishes from `SummarizerError` cases.
+  - `cancelAll`: clears pending, cancels the in-flight task.
+  - No disk persistence. App quit drops everything; the on-launch catch-up in §12.5 re-seeds from un-summarized rows.
+
+- **`SummarizationQueueStore.swift`** — `@MainActor ObservableObject` mirroring `ModelManagerStore`:
+  ```swift
+  @MainActor
+  public final class SummarizationQueueStore: ObservableObject {
+      @Published public private(set) var pending: [Int64] = []
+      @Published public private(set) var current: Int64? = nil
+
+      public init(queue: SummarizationQueue)
+
+      public func isQueued(_ id: Int64) -> Bool   // pending OR current
+      public func position(_ id: Int64) -> Int?   // 1-based for "#2 of 3"
+      public func totalInFlight: Int              // pending.count + (current != nil ? 1 : 0)
+  }
+  ```
+  Subscribes to `queue.events()` at init on a detached `Task`, forwards state to `@Published` on `MainActor`.
+
+### 12.5 `HarcPreferences` additions
+
+Three new `@Published var` on the existing singleton, with matching UserDefaults keys:
+
+```swift
+@Published public var autoSummarizeEnabled: Bool           // default true
+@Published public var autoSummarizeOnBatteryEnabled: Bool  // default false
+@Published public var includeSummaryInPrompt: Bool         // default true
+```
+
+`includeSummaryInPrompt` is Stage 4's knob; storing it now keeps the pref surface stable across both merges. No Settings UI in Stage 3.
+
+### 12.6 `AppDelegate` wiring
+
+Six edits:
+
+1. **Graph construction** after `bootstrapStore` sets `self.store`:
+   ```swift
+   let coordinator = BackgroundWorkCoordinator()
+   let service = SummarizerService(loader: SummarizerService.defaultLoader)
+   self.memoryObservation = service.startObservingMemoryPressure()  // retain
+   let queue = SummarizationQueue(coordinator: coordinator, perform: { [weak self] id in
+       try await self?.performSummarization(id: id)
+   })
+   self.summarizerService = service
+   self.summarizationQueue = queue
+   self.summarizationQueueStore = SummarizationQueueStore(queue: queue)
+   ```
+   `memoryObservation` is a new `AppDelegate` property holding `SummarizerService.MemoryPressureObservation` for the app's lifetime (hand-off note 2 from Stage 2).
+
+2. **`performSummarization(id:)`** — private `@MainActor` helper, the closure the queue calls. Pseudocode:
+   ```swift
+   guard let store = self.store, let service = self.summarizerService else { return }
+   guard let rec = try await store.fetch(id: id),
+         let jsonPath = rec.jsonPath else { return }
+   let data = try Data(contentsOf: URL(fileURLWithPath: jsonPath))
+   let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .secondsSince1970
+   let sessionTranscript = try decoder.decode(SessionTranscript.self, from: data)
+
+   let promptTranscript = PromptTranscriptAdapter.make(
+       joinedText: sessionTranscript.joinedText,
+       words: sessionTranscript.words,
+       speakers: sessionTranscript.speakers,
+       speakerNameOverrides: rec.speakerNames
+   )
+
+   let modelID = prefs.activeSummarizerID
+   guard let descriptor = await modelManager.descriptor(for: modelID) else { return }
+   let directory = try await modelManager.requireInstalled(modelID)
+   let budgetWords = SummaryPrompt.budgetWords(contextTokens: descriptor.contextTokens)
+
+   let result = try await service.summarize(
+       transcript: promptTranscript,
+       modelID: modelID,
+       modelDirectory: directory,
+       budgetWords: budgetWords
+   )
+
+   try await store.updateSummary(
+       id: id,
+       markdown: result.summary,
+       actionItemsMarkdown: ActionItemsMarkdown.render(result.actionItems),
+       modelID: modelID,
+       generatedAt: Date(),
+       sourceWordCount: wordCount(in: sessionTranscript.joinedText)
+   )
+   ```
+   `rec.jsonPath == nil` (rare — a recording ingested without a JSON sidecar) is a no-op early return: we don't fall back to `rec.transcriptText` alone because losing the speaker segments would silently degrade the summary. The queue emits `.finished(.success(()))` and advances; the user can re-trigger manually from the Stage 4 card once a sidecar is present.
+
+3. **Trigger in `stopRecording`** — capture the upsert return value, enqueue after the existing `runAutoPaste` call:
+   ```swift
+   let saved: Recording? = try? await self.store?.upsert(rec)  // replaces the _ = try? … line
+   // … existing title/tags/reID code unchanged …
+   runAutoPaste(for: rec, shiftHeld: …)
+   if prefs.autoSummarizeEnabled,
+      shouldSummarizeGivenPower(),
+      modelStore.state(of: prefs.activeSummarizerID).isInstalled,
+      let id = saved?.id,
+      let queue = self.summarizationQueue {
+       await queue.enqueue(id)
+   }
+   ```
+
+4. **`shouldSummarizeGivenPower()`** — private `@MainActor` helper:
+   ```swift
+   import IOKit.ps
+   private func shouldSummarizeGivenPower() -> Bool {
+       if prefs.autoSummarizeOnBatteryEnabled { return true }
+       guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
+           return true   // IOKit probe failed → don't silently skip the user's opt-in
+       }
+       let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String?
+       // Skip only when we can positively confirm battery-only power. Anything
+       // else (AC, unknown, desktop with no battery) → summarize.
+       return type != kIOPSBatteryPowerValue
+   }
+   ```
+   The user explicitly opted into auto-summarize by leaving `autoSummarizeEnabled = true`; we only skip when we can affirmatively confirm battery-only power. Desktops without a battery (Mac Pro, Studio, Mini) report an AC/unknown type and summarize normally.
+
+5. **On-launch catch-up** — at the tail of `bootstrapStore`, after Stage 3 graph is built:
+   ```swift
+   if prefs.autoSummarizeEnabled,
+      shouldSummarizeGivenPower(),
+      modelStore.state(of: prefs.activeSummarizerID).isInstalled {
+       let rows = (try? await store.unsummarizedRecordings(limit: 20)) ?? []
+       for rec in rows { if let id = rec.id { await queue.enqueue(id) } }
+   }
+   ```
+
+6. **Environment injection** — `refreshPopoverRoot` gains `.environmentObject(summarizationQueueStore)` alongside the existing `.environmentObject(modelStore)`. Stage 4 views consume it; Stage 3 just makes it available.
+
+### 12.7 Test plan
+
+- `HarcStoreTests`:
+  - `v7_summary` migrates a seeded v6 DB without dropping any rows or columns; new columns are nullable and default to nil.
+  - `updateSummary` round-trip: write → fetch by id → all five columns match; `updated_at` advances.
+  - `clearSummary` nulls all five columns; `updated_at` advances; `notFound` throws on unknown id.
+  - `unsummarizedRecordings`: excludes soft-deleted, excludes already-summarized, respects `limit`, orders by `started_at DESC`.
+- `HarcSummarizeTests`:
+  - `PromptTranscriptAdapter` — undiarized (one utterance with nil speaker), two-speaker diarized (correct runs + default `Speaker N` labels), speaker-name override applied (`speakerNames[0] = "Amy"` → utterance labeled `Amy`), empty transcript returns empty `utterances`.
+  - `ActionItemsMarkdown.render` — empty → `"_None identified._"`; done=true → `- [x] …`; actor + due + text round-trips cleanly through `SummaryParser.parse`.
+  - `SummarizationQueue` — three enqueues execute sequentially (overlap counter stays ≤ 1), dedupe on same-id enqueue, cancel queued id skips invocation, cancel current id surfaces `CancellationError` in the `.finished` event and advances the queue, `events()` stream ordering (`.enqueued → .started → .finished → .queueDrained`).
+  - `BackgroundWorkCoordinator` — two concurrent `performOne` calls serialize (overlap counter ≤ 1), rethrows propagate, cancellation of the outer task propagates.
+- Manual QA (Stage 4 surfaces it visibly, Stage 3 just verifies the DB write):
+  - Record a short meeting with Gemma 4 E2B installed → SQL-inspect `recordings` → summary columns populated within a minute or two.
+  - Unplug → record → verify auto-summarize is skipped when `autoSummarizeOnBatteryEnabled = false`.
+  - Toggle `autoSummarizeEnabled = false` in UserDefaults → record → verify no enqueue.
+
+### 12.8 Implementation phasing (subagent-driven tasks)
+
+Seven independently-reviewable tasks, roughly bottom-up:
+
+1. **Migration + Recording columns + store round-trip.** `v7_summary`, extend `Recording` struct (fields + Columns + CodingKeys), `updateSummary` / `clearSummary`. Tests: migration from v6, round-trip, `notFound`.
+2. **`unsummarizedRecordings` query** + filter/order/limit tests.
+3. **`PromptTranscriptAdapter`** + unit tests across four scenarios.
+4. **`ActionItemsMarkdown.render`** + round-trip tests through `SummaryParser`.
+5. **`BackgroundWorkCoordinator`** + serialization + cancellation tests.
+6. **`SummarizationQueue` + `SummarizationQueueStore`** + the four queue behaviours + event stream ordering.
+7. **`HarcPreferences` additions + `AppDelegate` wiring** (graph, trigger, on-launch catch-up, `shouldSummarizeGivenPower`, memory-pressure observation, environment injection). The only task without pure unit tests; manual QA covers it.
+
+Tasks 1–6 are each mechanical TDD (Haiku implementer + Sonnet spec-compliance review + `superpowers:code-reviewer` for tasks with real logic). Task 7 integrates them; lighter review since it's plumbing but still code-reviewer-gated because it touches the user-facing app.
+
+### 12.9 What ships visibly after Stage 3 merges
+
+**Nothing user-visible.** The trigger fires, the queue runs, the DB row gets five new populated columns. No view in the existing app reads them. The sole observable change: a freshly-recorded meeting, a minute or two after stop, quietly has `summary_markdown` populated in the DB. Stage 4 is the UI flip — shipping it independently keeps the revert surface small.

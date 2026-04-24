@@ -14,6 +14,11 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var suggestedTitle: String?
     public var tags: [String] = []
     public var speakerNames: [Int: String] = [:]
+    public var summaryMarkdown: String?
+    public var actionItemsMarkdown: String?
+    public var summaryModelID: String?
+    public var summaryGeneratedAt: Date?
+    public var summarySourceWordCount: Int?
     public var pinned: Bool
     public var deletedAt: Date?
     public var createdAt: Date
@@ -34,7 +39,12 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         pinned: Bool = false,
         deletedAt: Date? = nil,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        summaryMarkdown: String? = nil,
+        actionItemsMarkdown: String? = nil,
+        summaryModelID: String? = nil,
+        summaryGeneratedAt: Date? = nil,
+        summarySourceWordCount: Int? = nil
     ) {
         self.id = id
         self.wavPath = wavPath
@@ -47,6 +57,11 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.suggestedTitle = suggestedTitle
         self.tags = tags
         self.speakerNames = speakerNames
+        self.summaryMarkdown = summaryMarkdown
+        self.actionItemsMarkdown = actionItemsMarkdown
+        self.summaryModelID = summaryModelID
+        self.summaryGeneratedAt = summaryGeneratedAt
+        self.summarySourceWordCount = summarySourceWordCount
         self.pinned = pinned
         self.deletedAt = deletedAt
         self.createdAt = createdAt
@@ -111,6 +126,15 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
         self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        self.summaryMarkdown = try c.decodeIfPresent(String.self, forKey: .summaryMarkdown)
+        self.actionItemsMarkdown = try c.decodeIfPresent(String.self, forKey: .actionItemsMarkdown)
+        self.summaryModelID = try c.decodeIfPresent(String.self, forKey: .summaryModelID)
+        if let ms = try c.decodeIfPresent(Int64.self, forKey: .summaryGeneratedAt) {
+            self.summaryGeneratedAt = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        } else {
+            self.summaryGeneratedAt = nil
+        }
+        self.summarySourceWordCount = try c.decodeIfPresent(Int.self, forKey: .summarySourceWordCount)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -148,6 +172,16 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         try c.encodeIfPresent(deletedAt, forKey: .deletedAt)
         try c.encode(createdAt, forKey: .createdAt)
         try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encodeIfPresent(summaryMarkdown, forKey: .summaryMarkdown)
+        try c.encodeIfPresent(actionItemsMarkdown, forKey: .actionItemsMarkdown)
+        try c.encodeIfPresent(summaryModelID, forKey: .summaryModelID)
+        if let d = summaryGeneratedAt {
+            let ms = Int64(d.timeIntervalSince1970 * 1000)
+            try c.encode(ms, forKey: .summaryGeneratedAt)
+        } else {
+            try c.encodeNil(forKey: .summaryGeneratedAt)
+        }
+        try c.encodeIfPresent(summarySourceWordCount, forKey: .summarySourceWordCount)
     }
 }
 
@@ -171,6 +205,11 @@ extension Recording: FetchableRecord, PersistableRecord {
         case deletedAt = "deleted_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case summaryMarkdown = "summary_markdown"
+        case actionItemsMarkdown = "action_items_markdown"
+        case summaryModelID = "summary_model_id"
+        case summaryGeneratedAt = "summary_generated_at"
+        case summarySourceWordCount = "summary_source_word_count"
     }
 
     public enum Columns {
@@ -189,5 +228,10 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let deletedAt = Column("deleted_at")
         static let createdAt = Column("created_at")
         static let updatedAt = Column("updated_at")
+        static let summaryMarkdown = Column("summary_markdown")
+        static let actionItemsMarkdown = Column("action_items_markdown")
+        static let summaryModelID = Column("summary_model_id")
+        static let summaryGeneratedAt = Column("summary_generated_at")
+        static let summarySourceWordCount = Column("summary_source_word_count")
     }
 }
