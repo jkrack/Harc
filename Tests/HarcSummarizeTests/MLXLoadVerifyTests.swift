@@ -85,4 +85,48 @@ final class MLXLoadVerifyTests: XCTestCase {
         XCTAssertTrue(sawInfo, "Stream should yield a final .info payload.")
         print("MLX load-verify output (\(text.count) chars): \(text)")
     }
+
+    func test_summarizerService_endToEnd_producesParsedSummary() async throws {
+        let fm = FileManager.default
+        let appSupport = try fm.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        )
+        let modelDir = appSupport
+            .appendingPathComponent("Harc", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("gemma-4-e2b-it-4bit", isDirectory: true)
+
+        try XCTSkipUnless(
+            fm.fileExists(atPath: modelDir.path),
+            "Gemma 4 E2B not installed at \(modelDir.path). Download it via Harc Settings → Models first."
+        )
+
+        let service = SummarizerService(loader: SummarizerService.defaultLoader)
+        let transcript = PromptTranscript(utterances: [
+            .init(speaker: "Jason", text: "Let's lock rollout for Friday."),
+            .init(speaker: "Amy", text: "I'll send the comms email on Thursday."),
+        ])
+
+        let result = try await service.summarize(
+            transcript: transcript,
+            modelID: "gemma-4-e2b-it-4bit",
+            modelDirectory: modelDir,
+            budgetWords: SummaryPrompt.budgetWords(contextTokens: 32_000)
+        )
+
+        XCTAssertFalse(
+            result.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "Summary must be non-empty."
+        )
+        // We can't pin specific action items (the model's output varies
+        // across runs), but we can insist on SOMETHING structured —
+        // either a non-empty list or an explicit "_None identified._"
+        // that the parser turned into an empty array. Both are fine.
+        XCTAssertFalse(result.parseWarning,
+            "Well-installed model + correct prompt should not raise parseWarning; raw=\(result.summary)")
+        print("SummarizerService.summarize result — summary (\(result.summary.count) chars), \(result.actionItems.count) action items")
+    }
 }
