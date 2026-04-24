@@ -61,13 +61,28 @@ public actor SummarizerService {
         budgetWords: Int
     ) async throws -> SummaryParseResult {
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
-        // Minimal body for Task 2: just prove the container is reachable.
-        // Task 5 replaces this with the real prompt / parse pipeline.
-        let raw = try await cont.generate(
-            promptBody: "(stage-2 task-2 placeholder)",
-            systemPrompt: nil,
-            maxTokens: 16
+        let promptBody = SummaryPrompt.build(
+            transcript: transcript,
+            budgetWords: budgetWords
         )
+
+        let raw: String
+        do {
+            // The template already carries the instructions — no
+            // separate system prompt in v1. See the §5.1 template.
+            raw = try await cont.generate(
+                promptBody: promptBody,
+                systemPrompt: nil,
+                maxTokens: SummaryPrompt.maxOutputTokens
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as SummarizerError {
+            throw error
+        } catch {
+            throw SummarizerError.generationFailed(error.localizedDescription)
+        }
+
         return SummaryParser.parse(raw)
     }
 
