@@ -36,6 +36,8 @@ targets:
       - package: HarcCore
         product: HarcVoiceprint
       - package: HarcCore
+        product: HarcSummarize
+      - package: HarcCore
         product: HarcUI
     info:
       path: HarcApp/Info.plist

@@ -9,7 +9,9 @@ import HarcMeetingDetect
 import HarcModels
 import HarcStore
 import HarcUI
+import HarcSummarize
 import HarcVoiceprint
+import IOKit.ps
 import KeyboardShortcuts
 
 @MainActor
@@ -26,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var stoppedFlashTask: Task<Void, Never>?
     private let modelManager = ModelManager()
     private lazy var modelStore = ModelManagerStore(manager: modelManager)
+    private var summarizerService: SummarizerService?
+    private var summarizationQueue: SummarizationQueue?
+    private var summarizationQueueStore: SummarizationQueueStore?
+    private var memoryObservation: SummarizerService.MemoryPressureObservation?
     /// Stub today; swap for a bundled ECAPA-TDNN embedder when available.
     private let speakerEmbedder: SpeakerEmbedder = StubSpeakerEmbedder()
     private var speakerReIDService: SpeakerReIDService?
@@ -334,8 +340,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 endedAt: Date(),
                 transcriptText: transcriptText
             )
+            var savedID: Int64? = nil
             if let store = self.store {
-                _ = try? await store.upsert(rec)
+                savedID = (try? await store.upsert(rec))?.id
             }
             if let transcriptText, let store = self.store {
                 Task.detached { [store] in
@@ -369,6 +376,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 }
             }
             runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
+            // Stage 3 summarization trigger. Gated by the user's opt-ins
+            // and the active model's install state. Silent no-op if any
+            // gate says no.
+            if prefs.autoSummarizeEnabled,
+               shouldSummarizeGivenPower(),
+               modelStore.state(of: prefs.activeSummarizerID).isInstalled,
+               let id = savedID,
+               let queue = self.summarizationQueue {
+                await queue.enqueue(id)
+            }
             autoStop.end(autoStopReason: autoStopReason)
             if let autoStopReason, prefs.postStopNotificationEnabled {
                 AutoStopNotification.post(
@@ -882,6 +899,56 @@ private func openDetail(for recording: Recording) {
                 embeddingDim: speakerEmbedder.embeddingDim
             )
 
+            // Stage 3 summarization graph. Owned by AppDelegate for app
+            // lifetime; queue survives popover re-renders.
+            let coordinator = BackgroundWorkCoordinator()
+            let service = SummarizerService(loader: SummarizerService.defaultLoader)
+            self.memoryObservation = service.startObservingMemoryPressure()
+            let queue = SummarizationQueue(coordinator: coordinator, perform: { [weak self] id in
+                guard let self else { return }
+                try await self.performSummarization(id: id)
+            })
+            self.summarizerService = service
+            self.summarizationQueue = queue
+            self.summarizationQueueStore = await SummarizationQueueStore(queue: queue)
+
+            // Log summarization failures to stderr so Stage 3 QA can
+            // diagnose problems ahead of the Stage 4 UI that will surface
+            // them. CancellationError is expected (user cancel) and skipped.
+            // The task's lifetime is tied to the events stream — it ends
+            // when the queue actor is deallocated, not to `self`.
+            let events = await queue.events()
+            Task {
+                for await event in events {
+                    if case .finished(let id, .failure(let error)) = event,
+                       !(error is CancellationError) {
+                        FileHandle.standardError.write(Data(
+                            "harc: summarization failed for recording \(id): \(error.localizedDescription)\n".utf8
+                        ))
+                    }
+                }
+            }
+
+            // On-launch catch-up: enqueue the N newest un-summarized rows
+            // so a fresh install (or a crash recovery) picks up where it
+            // left off. Gated by the same prefs + install checks the
+            // stopRecording trigger uses.
+            //
+            // Explicitly await modelManager.bootstrap() first so the
+            // install-state gate below reads a seeded value. Without it,
+            // the fire-and-forget bootstrap Task kicked off in
+            // applicationDidFinishLaunching races with this check —
+            // first-launch after a clean install could see `.absent`
+            // for an already-installed model and silently skip. Second
+            // call is idempotent (re-reads disk markers).
+            await modelManager.bootstrap()
+            if prefs.autoSummarizeEnabled,
+               shouldSummarizeGivenPower(),
+               await modelManager.state(of: prefs.activeSummarizerID).isInstalled {
+                let rows = (try? await store.unsummarizedRecordings(limit: 20)) ?? []
+                for rec in rows { if let id = rec.id { await queue.enqueue(id) } }
+            }
+
             observeDestinationChanges()
 
             // Mount into SwiftUI environment.
@@ -906,6 +973,74 @@ private func openDetail(for recording: Recording) {
         guard let store = store else { return }
         let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
         _ = try? await ingestor.ingestAll()
+    }
+
+    // MARK: - Summarization
+
+    /// The `SummarizationQueue` perform closure. Pulls the recording and
+    /// its JSON sidecar, builds the prompt transcript, resolves the active
+    /// summarizer's directory + context window, runs the summary, and
+    /// persists the result. Errors propagate — the queue's `.finished`
+    /// event carries them up to whatever's listening.
+    private func performSummarization(id: Int64) async throws {
+        guard let store = self.store,
+              let service = self.summarizerService else { return }
+        guard let rec = try await store.fetch(id: id),
+              let jsonPath = rec.jsonPath else {
+            // No sidecar = nothing structured to summarize. Losing speaker
+            // segments would silently degrade the summary, so we skip
+            // rather than fall back to plain transcriptText. The queue
+            // advances as success.
+            return
+        }
+
+        let data = try Data(contentsOf: URL(fileURLWithPath: jsonPath))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let session = try decoder.decode(SessionTranscript.self, from: data)
+
+        let promptTranscript = PromptTranscriptAdapter.make(
+            joinedText: session.joinedText,
+            words: session.words,
+            speakers: session.speakers,
+            speakerNameOverrides: rec.speakerNames
+        )
+
+        let modelID = prefs.activeSummarizerID
+        guard let descriptor = await modelManager.descriptor(for: modelID) else { return }
+        let directory = try await modelManager.requireInstalled(modelID)
+        let budgetWords = SummaryPrompt.budgetWords(contextTokens: descriptor.contextTokens)
+
+        let result = try await service.summarize(
+            transcript: promptTranscript,
+            modelID: modelID,
+            modelDirectory: directory,
+            budgetWords: budgetWords
+        )
+
+        let wordCount = session.joinedText.split(whereSeparator: { $0.isWhitespace }).count
+
+        try await store.updateSummary(
+            id: id,
+            markdown: result.summary,
+            actionItemsMarkdown: ActionItemsMarkdown.render(result.actionItems),
+            modelID: modelID,
+            generatedAt: Date(),
+            sourceWordCount: wordCount
+        )
+    }
+
+    /// Private helper — returns true when auto-summarize should fire. The
+    /// only skip condition is "on battery AND the user didn't opt into
+    /// battery-time summarization". Desktop Macs with no battery report
+    /// AC-or-unknown and always summarize.
+    private func shouldSummarizeGivenPower() -> Bool {
+        if prefs.autoSummarizeOnBatteryEnabled { return true }
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
+            return true
+        }
+        let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String?
+        return type != kIOPSBatteryPowerValue
     }
 
     // MARK: - MeetingDetector.Delegate / UNUserNotificationCenterDelegate
@@ -973,7 +1108,9 @@ private func openDetail(for recording: Recording) {
     }
 
     private func refreshPopoverRoot() async {
-        guard let vm = recordingsVM, let pop = popover else { return }
+        guard let vm = recordingsVM,
+              let pop = popover,
+              let queueStore = summarizationQueueStore else { return }
         let root = PopoverRootView(
             onToggle: { [weak self] in
                 Task { await self?.toggleRecording() }
@@ -1000,6 +1137,7 @@ private func openDetail(for recording: Recording) {
         .environmentObject(prefs)
         .environmentObject(autoStop)
         .environmentObject(modelStore)
+        .environmentObject(queueStore)
 
         pop.contentViewController = NSHostingController(rootView: root)
     }
