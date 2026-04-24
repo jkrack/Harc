@@ -241,9 +241,11 @@ public actor RecordingStore {
         }
     }
 
-    /// Rows with a transcript but no summary yet — the on-launch catch-up
-    /// list. Ordered startedAt DESC, capped at `limit` so a fresh install
-    /// with a long pre-existing history doesn't seed hundreds of jobs.
+    /// Rows with no summary yet — the on-launch catch-up list. Ordered
+    /// startedAt DESC, capped at `limit` so a fresh install with a long
+    /// pre-existing history doesn't seed hundreds of jobs. Rows without a
+    /// usable transcript (missing JSON sidecar, etc.) are tolerated by the
+    /// queue worker, which fast-returns success and advances.
     public func unsummarizedRecordings(limit: Int = 20) async throws -> [Recording] {
         try await dbQueue.read { db in
             try Recording
