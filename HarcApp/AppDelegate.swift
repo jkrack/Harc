@@ -915,9 +915,10 @@ private func openDetail(for recording: Recording) {
             // Log summarization failures to stderr so Stage 3 QA can
             // diagnose problems ahead of the Stage 4 UI that will surface
             // them. CancellationError is expected (user cancel) and skipped.
+            // The task's lifetime is tied to the events stream — it ends
+            // when the queue actor is deallocated, not to `self`.
             let events = await queue.events()
-            Task { [weak self] in
-                _ = self   // keep the log task alive with the delegate
+            Task {
                 for await event in events {
                     if case .finished(let id, .failure(let error)) = event,
                        !(error is CancellationError) {
@@ -932,9 +933,18 @@ private func openDetail(for recording: Recording) {
             // so a fresh install (or a crash recovery) picks up where it
             // left off. Gated by the same prefs + install checks the
             // stopRecording trigger uses.
+            //
+            // Explicitly await modelManager.bootstrap() first so the
+            // install-state gate below reads a seeded value. Without it,
+            // the fire-and-forget bootstrap Task kicked off in
+            // applicationDidFinishLaunching races with this check —
+            // first-launch after a clean install could see `.absent`
+            // for an already-installed model and silently skip. Second
+            // call is idempotent (re-reads disk markers).
+            await modelManager.bootstrap()
             if prefs.autoSummarizeEnabled,
                shouldSummarizeGivenPower(),
-               modelStore.state(of: prefs.activeSummarizerID).isInstalled {
+               await modelManager.state(of: prefs.activeSummarizerID).isInstalled {
                 let rows = (try? await store.unsummarizedRecordings(limit: 20)) ?? []
                 for rec in rows { if let id = rec.id { await queue.enqueue(id) } }
             }
