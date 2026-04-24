@@ -1,7 +1,7 @@
 # Local Summarization (Gemma 4 via MLX) Design Doc
 
 **Feature:** After a recording finishes, generate a structured summary + action items from the transcript using a locally-installed Gemma 4 model via MLX. Stored on the recording, shown in the Library detail pane, included in the Copy-for-Prompt blob. Opt-in, never blocks the recording pipeline, always deferrable.
-**Date:** 2026-04-22 (revised 2026-04-23: phasing, current-codebase fixes)
+**Date:** 2026-04-22 (revised 2026-04-23: phasing, current-codebase fixes; revised again 2026-04-23: single-stack MLX via `mlx-swift-lm` 3.x)
 **Status:** draft — ready for implementation
 **Depends on:** `2026-04-22-model-manager-design.md` (Gemma 4 weights + install UX). Phase 1 of the model manager is complete as of 2026-04-23: `ModelManager` (actor) + `ModelManagerStore` (`@MainActor` `@Published` bridge) are constructed in `AppDelegate` and injected via `.environmentObject`. There is no `ModelManager.shared` singleton; this spec threads the existing instances.
 
@@ -63,11 +63,14 @@ The current flow — "record → transcribe → paste into an LLM" — assumes t
 
 ## 3. Dependencies & tooling
 
+**Single-stack MLX.** `MLXLLM` and `MLXLMCommon` moved out of `mlx-swift-examples` into `mlx-swift-lm` in the 3.x rewrite (early 2025). The tokenizer is now a protocol, adapted via the `MLXHuggingFace` macro that ships inside `mlx-swift-lm`. `MLXEmbedders` — needed later for semantic search — also lives in the same `mlx-swift-lm` package, so adopting it costs zero additional packages. No Core ML, no dual stack.
+
 Add to `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.21.0"),
-.package(url: "https://github.com/ml-explore/mlx-swift-examples.git", from: "1.19.0"),
+.package(url: "https://github.com/ml-explore/mlx-swift-lm.git", .upToNextMajor(from: "3.31.3")),
+.package(url: "https://github.com/huggingface/swift-huggingface.git", from: "0.9.0"),
+.package(url: "https://github.com/huggingface/swift-transformers.git", from: "1.3.0"),
 ```
 
 Targets:
@@ -79,9 +82,11 @@ Targets:
         "HarcCore",
         "HarcStore",
         "HarcModels",
-        .product(name: "MLX", package: "mlx-swift"),
-        .product(name: "MLXLLM", package: "mlx-swift-examples"),
-        .product(name: "MLXLMCommon", package: "mlx-swift-examples"),
+        .product(name: "MLXLLM", package: "mlx-swift-lm"),
+        .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+        .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+        .product(name: "HuggingFace", package: "swift-huggingface"),
+        .product(name: "Tokenizers", package: "swift-transformers"),
     ]
 ),
 .testTarget(
@@ -90,9 +95,9 @@ Targets:
 ),
 ```
 
-`HarcUI` gains a dep on `HarcSummarize` (needed for the card) and a new env-object `SummarizerService`.
+`HarcUI` gains a dep on `HarcSummarize` (needed for the card) and a new env-object `SummarizerService`. `MLX` from `mlx-swift` is a transitive dep — add it explicitly only if we end up using `MLXArray` directly in our own code (we shouldn't for this feature).
 
-**Pinned versions will need verification** against the latest mlx-swift-examples API at implementation time — MLXLLM's loader API has moved in 2026-Q1. Treat the version numbers as placeholders. Resolving these is the first task of Stage 2 in §11; the rest of Stage 2 can't compile until it's done.
+**Version pin rationale.** `mlx-swift-lm` `3.31.3` is the April 2026 release that registers Gemma 4 in `LLMTypeRegistry` (both `"gemma4"` and `"gemma4_text"` model types) and provides the `loadContainer(from: URL, using: TokenizerLoader)` local-directory API this spec relies on. `swift-huggingface` + `swift-transformers` are first-party HuggingFace packages, pulled in as the adapter for the `#huggingFaceTokenizerLoader()` macro; they're stable at 1.x / 0.9.x respectively.
 
 ---
 
@@ -126,27 +131,31 @@ if prefs.autoSummarizeEnabled,
 ```swift
 public actor SummarizerService {
     private var loadedModelID: String?
-    private var llm: LLMModelContainer?    // from MLXLLM
+    private var container: ModelContainer?   // from MLXLMCommon
 
     public func summarize(
-        transcript: String,
+        transcript: PromptTranscript,
         modelID: String,
-        cancellation: CancellationToken
-    ) async throws -> SummaryOutput
+        budgetWords: Int
+    ) async throws -> SummaryParseResult
 
-    /// Unload — called when switching active models or on memory pressure.
+    /// Release the resident model so MLX can reclaim GPU/ANE memory.
+    /// Implemented by setting `container = nil` — `mlx-swift-lm` 3.x has
+    /// no explicit `unload()` method; nil-ing the container is the
+    /// documented way to drop weights.
     public func unload()
 }
 ```
 
-- First call with a given `modelID` loads the model from `~/Library/Application Support/Harc/Models/<id>/` via `MLXLLM`. Subsequent calls with the same id reuse the container.
-- Generation via `MLXLLM`'s async token stream; aggregate into a string; then split into summary + action items with the parser in §5.3.
-- On cancellation, drain the stream early and throw `CancellationError`.
+- First call with a given `modelID` loads the model from `~/Library/Application Support/Harc/Models/<id>/` via `LLMModelFactory.shared.loadContainer(from:using:)`. Subsequent calls with the same id reuse the container.
+- `SummarizerService.summarize` builds the user-turn body via `SummaryPrompt.build` (Stage 1, already shipped), then wraps it in a `UserInput` with the system message, calls `container.prepare(input:)` + `container.generate(input:parameters:)`, aggregates `Generation.chunk(String)` payloads into one string, and passes the result to `SummaryParser.parse` (Stage 1, already shipped). Return type is `SummaryParseResult`; the caller in Stage 3 (the queue) wraps with metadata (`model`, `generatedAt`, `elapsedMs`, `sourceWordCount`) into a full `SummaryOutput`.
+- Cancellation is structured-concurrency native: the queue's `Task` holds the `for await` loop; calling `task.cancel()` terminates the `AsyncStream<Generation>` mid-generation and `summarize` throws `CancellationError`.
 
 ### 4.4 Memory pressure
 
-- On `NSWorkspace.didActivateApplicationNotification` for a heavyweight app (Chrome, Final Cut), or on explicit memory pressure from `DispatchSource.makeMemoryPressureSource(...)`, call `SummarizerService.unload()` to free the resident model. Next summary pays the load cost again.
+- On `NSWorkspace.didActivateApplicationNotification` for a heavyweight app (Chrome, Final Cut), or on explicit memory pressure from `DispatchSource.makeMemoryPressureSource(...)`, call `SummarizerService.unload()` to free the resident model. That call sets `container = nil`; MLX's reference-counting on GPU memory then reclaims the weights. Next summary pays the load cost again.
 - The LLM is idle between summaries but still resident. A future `unloadAfterIdleSeconds` setting could trim this; v1 keeps it loaded for the app lifetime once first used.
+- `mlx-swift-lm` also exposes `WiredMemoryPolicy` / `WiredMemoryTicket` for coordinating wired-memory budget across concurrent inferences. Stage 2 doesn't need this (we only have one tenant — summarization). When semantic search lands as a second tenant, add a shared ticket pool so the two don't thrash.
 
 ---
 
@@ -185,7 +194,8 @@ Transcript:
 ```
 
 - `{TRANSCRIPT}` is replaced with the plain-text body joined by speaker labels where diarized.
-- Exact model-specific chat-template wrapping (Gemma uses `<start_of_turn>user` / `<start_of_turn>model`) is handled by `MLXLLM`'s tokenizer — we pass the template body as the user turn, no manual chat-template assembly.
+- Exact model-specific chat-template wrapping (Gemma uses `<start_of_turn>user` / `<start_of_turn>model`) is handled by `swift-transformers`' `Tokenizer` reading the model's `chat_template.jinja` — we pass the template body as the user turn, no manual chat-template assembly.
+- **Gemma 4 EOS gotcha.** Gemma 4 uses `<turn|>` as an extra EOS token (different from Gemma 3's `<end_of_turn>`). `LLMModelFactory.shared.loadContainer(from:using:)` reads EOS tokens from the model directory's `config.json` + `generation_config.json`, so this is handled automatically as long as those files made it through the download. The pre-Stage-2 spike (§11) verifies they did.
 
 ### 5.2 Transcript rendering
 
@@ -376,10 +386,10 @@ The work splits into four stages. Each stage is a coherent commit that builds an
 ### Stage 2 — MLX wiring + SummarizerService
 
 **Adds:**
-- `mlx-swift` and `mlx-swift-examples` packages (versions resolved on first task — see §3 caveat).
-- `HarcSummarize` gains `MLX` / `MLXLLM` / `MLXLMCommon` deps.
-- `SummarizerService` actor (§4.3): `summarize(transcript:modelID:cancellation:)`, `unload()`. Loads from `~/Library/Application Support/Harc/Models/<id>/` resolved via the AppDelegate-injected `ModelManager`.
-- Memory pressure unload hook (§4.4).
+- `mlx-swift-lm` (3.31.3+), `swift-huggingface` (0.9+), `swift-transformers` (1.3+) packages (verified pins per §3).
+- `HarcSummarize` gains `MLXLLM` / `MLXLMCommon` / `MLXHuggingFace` / `HuggingFace` / `Tokenizers` deps.
+- `SummarizerService` actor (§4.3): `summarize(transcript:modelID:budgetWords:)`, `unload()`. Loads from `~/Library/Application Support/Harc/Models/<id>/` via `LLMModelFactory.shared.loadContainer(from:using:)`, resolved through the AppDelegate-injected `ModelManager`. Returns `SummaryParseResult`; metadata wrapping happens in Stage 3.
+- Memory pressure unload hook (§4.4) — sets `container = nil` rather than calling a non-existent `.unload()`.
 - Manual integration test (XCTest, marked `XCTSkip` unless `HARC_INTEGRATION_TESTS=1` env var is set + Gemma 4 E2B is installed) that runs one summary against a known fixture transcript and asserts non-empty `summary` + parses cleanly.
 
 **No queue, no UI, no DB writes** — Service is callable but nothing in the app calls it yet.
@@ -413,4 +423,4 @@ The work splits into four stages. Each stage is a coherent commit that builds an
 
 - Stages 1–3 are reviewable / mergeable without user-visible behavior change. After Stage 3 the trigger fires and writes to the DB columns, but no view in the existing app reads them, so the user sees nothing different.
 - Stage 4 is the user-visible flip. Easy to revert independently if anything's wrong with the card UX.
-- A pre-Stage-2 spike — verify the catalog's Gemma 4 E2B descriptor downloads end-to-end on a real machine (not a unit test) and the model directory layout is what `MLXLLM` expects — is recommended before Stage 2 so we're not debugging "why won't this load" with two unknowns at once. Treat as a half-day exploration, not a stage.
+- A pre-Stage-2 spike — verify the catalog's Gemma 4 E2B descriptor downloads end-to-end on a real machine (not a unit test), confirm `generation_config.json` is in the file list (carries the `<turn|>` EOS), and confirm `LLMModelFactory.shared.loadContainer(from:using:)` accepts the resulting directory — is **required** before Stage 2 so we're not debugging "why won't this load" with two unknowns at once. Treat as a half-day exploration, not a stage. The 2026-04-23 manifest HEAD-check spike already confirmed all 8 catalog file URLs return 200 with sizes within ±0.25 % of expected — what remains is the real download + the MLX load test.
