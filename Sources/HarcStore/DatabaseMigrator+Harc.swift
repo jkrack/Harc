@@ -97,6 +97,16 @@ extension DatabaseMigrator {
             )
         }
 
+        migrator.registerMigration("v7_summary") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "summary_markdown", .text)
+                t.add(column: "action_items_markdown", .text)
+                t.add(column: "summary_model_id", .text)
+                t.add(column: "summary_generated_at", .integer)  // Unix ms
+                t.add(column: "summary_source_word_count", .integer)
+            }
+        }
+
         return migrator
     }
 }

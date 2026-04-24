@@ -192,6 +192,55 @@ public actor RecordingStore {
         }
     }
 
+    // MARK: - Summary
+
+    /// Write a generated summary + action items (markdown-authoritative) +
+    /// metadata onto a recording. Throws `StoreError.notFound` if the id
+    /// doesn't exist — a queue-time bug worth surfacing, not silently
+    /// dropping.
+    public func updateSummary(
+        id: Int64,
+        markdown: String,
+        actionItemsMarkdown: String,
+        modelID: String,
+        generatedAt: Date,
+        sourceWordCount: Int
+    ) async throws {
+        let ms = Int64(generatedAt.timeIntervalSince1970 * 1000)
+        try await dbQueue.write { db in
+            let count = try Recording.filter(key: id).updateAll(
+                db,
+                [
+                    Recording.Columns.summaryMarkdown.set(to: markdown),
+                    Recording.Columns.actionItemsMarkdown.set(to: actionItemsMarkdown),
+                    Recording.Columns.summaryModelID.set(to: modelID),
+                    Recording.Columns.summaryGeneratedAt.set(to: ms),
+                    Recording.Columns.summarySourceWordCount.set(to: sourceWordCount),
+                    Recording.Columns.updatedAt.set(to: Date()),
+                ]
+            )
+            guard count > 0 else { throw StoreError.notFound }
+        }
+    }
+
+    /// Null all five summary columns for a recording.
+    public func clearSummary(id: Int64) async throws {
+        try await dbQueue.write { db in
+            let count = try Recording.filter(key: id).updateAll(
+                db,
+                [
+                    Recording.Columns.summaryMarkdown.set(to: nil),
+                    Recording.Columns.actionItemsMarkdown.set(to: nil),
+                    Recording.Columns.summaryModelID.set(to: nil),
+                    Recording.Columns.summaryGeneratedAt.set(to: nil),
+                    Recording.Columns.summarySourceWordCount.set(to: nil),
+                    Recording.Columns.updatedAt.set(to: Date()),
+                ]
+            )
+            guard count > 0 else { throw StoreError.notFound }
+        }
+    }
+
     // MARK: - Speaker embeddings
 
     /// One row from `speaker_embeddings`. Decoupled from HarcVoiceprint's
