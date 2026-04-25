@@ -112,7 +112,7 @@ public struct ModelsSettingsView: View {
                 .foregroundStyle(Color.harcInkSecondary)
             Picker("", selection: $prefs.activeSummarizerID) {
                 ForEach(summarizers) { d in
-                    Text(tierName(d)).tag(d.id)
+                    Text(d.tierDisplayName).tag(d.id)
                         .disabled(!models.state(of: d.id).isInstalled)
                 }
             }
@@ -120,15 +120,6 @@ public struct ModelsSettingsView: View {
             .labelsHidden()
         }
         .padding(.top, 4)
-    }
-
-    private func tierName(_ d: ModelDescriptor) -> String {
-        switch d.tier {
-        case .standard: return "Standard"
-        case .quality:  return "Quality"
-        case .max:      return "Max"
-        case .singleton: return d.displayName
-        }
     }
 
     // MARK: - Actions

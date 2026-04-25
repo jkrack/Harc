@@ -4,7 +4,7 @@ public struct SettingsView: View {
 
     /// Identifies each tab so the "Open Models" link in
     /// `SummarizationSettingsView` can switch programmatically.
-    public enum Tab: Hashable {
+    enum Tab: Hashable {
         case general, recording, library, processing, summarization, models
     }
 
