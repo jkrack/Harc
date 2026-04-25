@@ -33,7 +33,7 @@ public struct SummarizationSettingsView: View {
                     .font(HarcDesign.Font.bodySm)
                     .foregroundStyle(Color.harcInkSecondary)
 
-                    if !models.state(of: prefs.activeSummarizerID).isInstalled {
+                    if case .absent = models.state(of: prefs.activeSummarizerID) {
                         Text("The active summarizer is not installed. Auto-summarize and the Generate button will have no effect.")
                             .font(HarcDesign.Font.bodySm)
                             .foregroundStyle(Color.harcWarning)
@@ -81,7 +81,7 @@ public struct SummarizationSettingsView: View {
                 .foregroundStyle(Color.harcInkSecondary)
             Picker("", selection: $prefs.activeSummarizerID) {
                 ForEach(summarizers) { d in
-                    Text(tierName(d)).tag(d.id)
+                    Text(d.tierDisplayName).tag(d.id)
                         .disabled(!models.state(of: d.id).isInstalled)
                 }
             }
@@ -92,14 +92,5 @@ public struct SummarizationSettingsView: View {
 
     private var summarizers: [ModelDescriptor] {
         ModelCatalog.descriptors(for: .summarizer)
-    }
-
-    private func tierName(_ d: ModelDescriptor) -> String {
-        switch d.tier {
-        case .standard: return "Standard"
-        case .quality:  return "Quality"
-        case .max:      return "Max"
-        case .singleton: return d.displayName
-        }
     }
 }
