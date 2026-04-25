@@ -162,7 +162,7 @@ public struct PopoverRootView: View {
 
     private var siliconBadge: some View {
         VStack(alignment: .trailing, spacing: 1) {
-            Text("M3 Max")
+            Text(HardwareInfo.appleSiliconDisplayName)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.harcInkPrimary)
             Text("NEURAL ENGINE")
@@ -176,8 +176,8 @@ public struct PopoverRootView: View {
 
     private var quickActions: some View {
         HStack(spacing: 8) {
-            quickButton(label: "Import",       kbd: "⌘I", systemImage: "square.and.arrow.down") {
-                openMostRecent() // fallback until import flow exists
+            quickButton(label: "Library",      kbd: "⇧⌘L", systemImage: "rectangle.stack") {
+                onOpenLibrary()
             }
             quickButton(label: "Last Capture", kbd: "⌘L", systemImage: "clock.arrow.circlepath") {
                 openMostRecent()
@@ -253,12 +253,23 @@ public struct PopoverRootView: View {
     }
 
     private var storageFraction: CGFloat {
-        // placeholder — storage quota isn't tracked yet, show a small default
-        0.08
+        let used = storageBytes
+        guard used > 0 else { return 0 }
+        let values = try? prefs.destinationURL.resourceValues(forKeys: [.volumeTotalCapacityKey])
+        guard let total = values?.volumeTotalCapacity, total > 0 else { return 0 }
+        return CGFloat(min(1.0, Double(used) / Double(total)))
     }
 
     private var storageText: String {
         let count = vm.recordings.count
+        let total = storageBytes
+        let fmt = ByteCountFormatter()
+        fmt.allowedUnits = [.useMB, .useGB]
+        fmt.countStyle = .file
+        return "\(fmt.string(fromByteCount: total)) · \(count) files"
+    }
+
+    private var storageBytes: Int64 {
         let fm = FileManager.default
         var total: Int64 = 0
         for rec in vm.recordings {
@@ -267,10 +278,7 @@ public struct PopoverRootView: View {
                 total += size
             }
         }
-        let fmt = ByteCountFormatter()
-        fmt.allowedUnits = [.useMB, .useGB]
-        fmt.countStyle = .file
-        return "\(fmt.string(fromByteCount: total)) · \(count) files"
+        return total
     }
 }
 

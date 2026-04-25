@@ -362,9 +362,9 @@ public struct LibraryWindowRootView: View {
 
             HStack(spacing: 4) {
                 rowIconButton(systemImage: "rectangle.expand.vertical",
-                              help: "Open in editor",
+                              help: "Open recording",
                               isSelected: isSelected) {
-                    onOpenInEditor(rec)
+                    onOpen(rec)
                 }
                 rowIconButton(systemImage: "folder",
                               help: "Reveal in Finder",
@@ -402,15 +402,15 @@ public struct LibraryWindowRootView: View {
         .onHover { hovering in
             hoveredRowId = hovering ? rec.wavPath : (hoveredRowId == rec.wavPath ? nil : hoveredRowId)
         }
-        .onTapGesture(count: 2) { onOpenInEditor(rec) }
+        .onTapGesture(count: 2) { onOpen(rec) }
         .onTapGesture { selectedWavPath = rec.wavPath }
         .contextMenu {
             Button("Rename…") {
                 renameTarget = rec
                 renameText = rec.title ?? ""
             }
-            Button("Open in Editor") { onOpenInEditor(rec) }
-            Button("Open") { onOpen(rec) }
+            Button("Open Recording") { onOpen(rec) }
+            Button("Edit Transcript") { onOpenInEditor(rec) }
             Button(rec.pinned ? "Unpin" : "Pin") {
                 Task { try? await vm.togglePin(id: rec.id ?? -1, currentlyPinned: rec.pinned) }
             }
@@ -470,7 +470,7 @@ public struct LibraryWindowRootView: View {
 
     private var footerStatus: some View {
         HStack(spacing: 8) {
-            Text("M3 Max · Neural Engine")
+            Text("\(HardwareInfo.appleSiliconDisplayName) · Neural Engine")
                 .font(HarcDesign.Font.monoXs)
                 .foregroundStyle(Color.harcInkSecondary)
             Text("·").foregroundStyle(Color.harcInkQuaternary)
@@ -569,38 +569,45 @@ public struct LibraryWindowRootView: View {
     // ---- Rail: player card ----
 
     private func playerCard(for rec: Recording) -> some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                skipButton(systemImage: "gobackward", label: "5", action: {})
-                Button { onOpenInEditor(rec) } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.harcAccent)
-                            .frame(width: 44, height: 44)
-                            .shadow(color: Color.harcAccent.opacity(0.45),
-                                    radius: 10, x: 0, y: 4)
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .offset(x: 1)
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.harcAccent)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Recording")
+                        .font(HarcDesign.Font.subtitle)
+                        .foregroundStyle(Color.harcInkPrimary)
+                    Text(URL(fileURLWithPath: rec.wavPath).lastPathComponent)
+                        .font(HarcDesign.Font.monoXs)
+                        .foregroundStyle(Color.harcInkTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                .buttonStyle(.plain)
-                .help("Open in editor")
-                skipButton(systemImage: "goforward", label: "5", action: {})
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
 
-            WaveformBars(seed: rec.wavPath.hashValue, count: 48, playedFraction: 0)
-                .frame(height: 40)
+            HStack(spacing: 8) {
+                recordingActionButton("Open", systemImage: "rectangle.expand.vertical") {
+                    onOpen(rec)
+                }
+                recordingActionButton("Edit", systemImage: "pencil") {
+                    onOpenInEditor(rec)
+                }
+                recordingIconButton(systemImage: "folder", help: "Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
+                }
+            }
 
-            HStack {
-                Text("0:00")
-                Spacer()
+            HStack(spacing: 8) {
                 Text(formatDuration(rec))
+                Text("·").foregroundStyle(Color.harcInkQuaternary)
+                Text(formatFullDate(rec.startedAt))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            .font(HarcDesign.Font.mono)
-            .monospacedDigit()
+            .font(HarcDesign.Font.monoXs)
             .foregroundStyle(Color.harcInkTertiary)
         }
         .padding(14)
@@ -614,25 +621,46 @@ public struct LibraryWindowRootView: View {
         )
     }
 
-    private func skipButton(systemImage: String, label: String, action: @escaping () -> Void) -> some View {
+    private func recordingActionButton(_ label: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            ZStack {
+            HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.system(size: 11, weight: .medium))
                 Text(label)
-                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.harcInkSecondary)
-                    .offset(y: 1)
+                    .font(HarcDesign.Font.meta)
             }
-            .frame(width: 28, height: 28)
+            .foregroundStyle(Color.harcInkPrimary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: HarcDesign.Radius.full, style: .continuous)
-                    .fill(Color.clear)
+                RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                    .fill(Color.harcSurface3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                            .stroke(Color.harcBorderStrong, lineWidth: 1)
+                    )
             )
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func recordingIconButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.harcInkSecondary)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                        .fill(Color.harcSurface2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                                .stroke(Color.harcBorderSubtle, lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     // ---- Rail: file details ----
@@ -793,7 +821,7 @@ public struct LibraryWindowRootView: View {
             )
 
             Button { onOpen(rec) } label: {
-                Text("Open full transcript →")
+                Text("Open recording →")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.harcAccent)
             }
@@ -875,42 +903,6 @@ public struct LibraryWindowRootView: View {
             return String(format: "%d:%02d:%02d", h, mm, s)
         }
         return String(format: "%d:%02d", m, s)
-    }
-}
-
-// MARK: - Waveform bars (deterministic)
-
-private struct WaveformBars: View {
-    let seed: Int
-    let count: Int
-    let playedFraction: Double
-
-    var body: some View {
-        GeometryReader { geo in
-            let total = max(1, count)
-            let spacing: CGFloat = 1.5
-            let barW = max(1, (geo.size.width - spacing * CGFloat(total - 1)) / CGFloat(total))
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(0..<total, id: \.self) { i in
-                    let h = barHeight(for: i, in: total, height: geo.size.height)
-                    let played = Double(i) / Double(total) < playedFraction
-                    Rectangle()
-                        .fill(played ? Color.harcAccent : Color.harcInkQuaternary)
-                        .frame(width: barW, height: h)
-                        .cornerRadius(0.5)
-                }
-            }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
-        }
-    }
-
-    private func barHeight(for i: Int, in n: Int, height: CGFloat) -> CGFloat {
-        // deterministic pseudo-random shape
-        let s = Double(seed &* 0x1F1F1F1F &+ i &* 9301 &+ 49297)
-        let r = abs(sin(s)) // 0...1
-        let envelope = 0.35 + 0.65 * abs(sin(Double(i) * 0.27 + Double(seed) * 0.11))
-        let frac = 0.18 + 0.82 * (0.6 * envelope + 0.4 * r)
-        return max(2, height * CGFloat(min(1.0, frac)))
     }
 }
 

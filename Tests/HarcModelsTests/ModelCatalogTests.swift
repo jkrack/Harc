@@ -61,6 +61,12 @@ final class ModelCatalogTests: XCTestCase {
             "No summarizer has a verified manifest — at least one needs real URLs so downloads can run.")
     }
 
+    func test_allSummarizersHaveVerifiedManifests() {
+        for d in ModelCatalog.descriptors(for: .summarizer) {
+            XCTAssertTrue(d.manifestVerified, "\(d.id) should be downloadable from Settings.")
+        }
+    }
+
     func test_verifiedEntriesDeclareNonZeroSize() {
         for d in ModelCatalog.v1 where d.manifestVerified {
             XCTAssertGreaterThan(d.totalBytes, 0,

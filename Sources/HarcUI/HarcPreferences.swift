@@ -134,8 +134,8 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(autoSummarizeOnBatteryEnabled, forKey: Key.autoSummarizeOnBatteryEnabled) }
     }
 
-    /// Prepend the summary + action items to the Copy-for-Prompt blob.
-    /// Consumed by Stage 4. Default on.
+    /// Prepend the summary + action items to prompt, Markdown, and DOCX
+    /// exports when complete summary columns exist. Default on.
     @Published public var includeSummaryInPrompt: Bool {
         didSet { UserDefaults.standard.set(includeSummaryInPrompt, forKey: Key.includeSummaryInPrompt) }
     }

@@ -43,9 +43,10 @@ public enum ExportService {
         let data: Data
         switch format {
         case .markdown:
-            data = Data(MarkdownExporter.render(input).utf8)
+            data = Data(markdownString(for: recording, includeSummary: includeSummary).utf8)
         case .docx:
-            data = try DocxExporter.render(input)
+            let summary = includeSummary ? PromptSummaryBlock.make(from: recording) : nil
+            data = try DocxExporter.render(input, summary: summary)
         case .prompt:
             data = Data(ExportService.promptString(for: recording, includeSummary: includeSummary).utf8)
         }
@@ -70,9 +71,16 @@ public enum ExportService {
     /// "Copy Markdown" UI action (deliberately not wired in v1 per the
     /// Copy-for-Prompt spec §8 — all current Copy actions use
     /// `promptString` or plain-text segment join).
-    public static func markdownString(for recording: Recording) -> String {
+    public static func markdownString(
+        for recording: Recording,
+        includeSummary: Bool = true
+    ) -> String {
         let input = ExportInputBuilder.build(from: recording)
-        return MarkdownExporter.render(input)
+        let body = MarkdownExporter.render(input)
+        guard includeSummary, let summary = PromptSummaryBlock.make(from: recording) else {
+            return body
+        }
+        return compose(header: "", summaryBlock: renderSummaryBlock(summary), body: body)
     }
 
     /// Render the prompt-formatted blob. When `includeSummary` is true AND the
@@ -105,13 +113,15 @@ public enum ExportService {
     private static func compose(header: String, summaryBlock: String, body: String) -> String {
         switch (body.isEmpty, summaryBlock.isEmpty) {
         case (true, true):
-            return header + "\n"
+            return header.isEmpty ? "" : header + "\n"
         case (true, false):
-            return header + "\n\n" + summaryBlock
+            return [header, summaryBlock].filter { !$0.isEmpty }.joined(separator: "\n\n")
         case (false, true):
-            return header + "\n\n" + body
+            return [header, body].filter { !$0.isEmpty }.joined(separator: "\n\n")
         case (false, false):
-            return header + "\n\n" + summaryBlock + "\n\n## Transcript\n" + body
+            return [header, summaryBlock, "## Transcript\n" + body]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
         }
     }
 }

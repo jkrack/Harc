@@ -21,7 +21,7 @@
 **Out of scope (deliberate deltas from original spec):**
 
 - **Interactive action-item checkboxes.** Supersedes §7.2's "Checkboxes on action items toggle `done` and persist via `RecordingStore.updateSummary`" and §11 Stage 4's "Action-item checkboxes that persist via updateSummary". Per-item done state and a checklist UX are their own feature — tracking task completion, syncing to external todo systems, re-parsing on regenerate without losing user flips, etc. V1 renders action items as a read-only bullet list. The `done: Bool` field on `ActionItem` and the `ActionItemsMarkdown.render` helper stay — they're exercised by `performSummarization` when serializing for storage. The UI ignores `done` in v1.
-- **Markdown / Docx summary integration.** Only `promptString` gains the summary block. `MarkdownExporter` and `DocxExporter` stay transcript-only per spec §7.4's explicit scoping and the surgical architecture decision (Section 4).
+- **Markdown / Docx summary integration.** Amended 2026-04-25: Markdown and DOCX exports are primary user outputs, so they now include `Summary`, `Action Items`, and `Transcript` sections when the existing include-summary preference is enabled and complete summary columns exist. The original Stage 4 copy-for-prompt-only scoping is superseded by this follow-up.
 - **Settings-driven summary regeneration on tier change.** Changing `activeSummarizerID` does not retroactively re-summarize. Users regenerate per-recording via the card's `↻` button.
 - **`parseWarning` badging.** The field doesn't round-trip per Stage 3 hand-off note 2. V1 accepts the loss.
 - **Streaming tokens into the card.** The queue serializes per §4.2; the card flips from `.inFlight` to `.summary` once `performSummarization` writes. No partial rendering.

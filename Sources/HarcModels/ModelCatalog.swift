@@ -119,19 +119,29 @@ public enum ModelCatalog {
     private static let gemma4_E4B_IT_4bit = ModelDescriptor(
         id: "gemma-4-e4b-it-4bit",
         displayName: "Gemma 4 · Quality",
-        summary: "Clearly better summaries. 40–90 s per hour. 16 GB RAM recommended.",
+        summary: "Clearly better summaries. 5.25 GB on disk; 40–90 s per hour. 16 GB RAM recommended.",
         task: .summarizer,
         tier: .quality,
         repoID: "mlx-community/gemma-4-e4b-it-4bit",
-        revision: "main",
-        files: mlxGemmaFiles(
-            base: "https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit/resolve/main",
-            shardCount: 1,
-            approximateBytes: 2_500_000_000
+        revision: "cc3b666c01c20395e0dcebd53854504c7d9821f9",
+        files: verifiedRepoFiles(
+            repo: "mlx-community/gemma-4-e4b-it-4bit",
+            revision: "cc3b666c01c20395e0dcebd53854504c7d9821f9",
+            entries: [
+                ("chat_template.jinja", 16_317),
+                ("config.json", 6_229),
+                ("generation_config.json", 208),
+                ("model.safetensors", 5_217_361_182),
+                ("model.safetensors.index.json", 251_749),
+                ("processor_config.json", 902),
+                ("tokenizer.json", 32_169_626),
+                ("tokenizer_config.json", 2_095),
+            ]
         ),
         minRAMGB: 16,
         recommendedRAMGB: 16,
-        contextTokens: 32_000
+        contextTokens: 32_000,
+        manifestVerified: true
     )
 
     private static let gemma4_26B_A4B_IT_4bit = ModelDescriptor(
@@ -141,15 +151,27 @@ public enum ModelCatalog {
         task: .summarizer,
         tier: .max,
         repoID: "mlx-community/gemma-4-26b-a4b-it-4bit",
-        revision: "main",
-        files: mlxGemmaFiles(
-            base: "https://huggingface.co/mlx-community/gemma-4-26b-a4b-it-4bit/resolve/main",
-            shardCount: 4,
-            approximateBytes: 15_000_000_000
+        revision: "695690b33533b1f8b0395c1d6b4f00dc411353ef",
+        files: verifiedRepoFiles(
+            repo: "mlx-community/gemma-4-26b-a4b-it-4bit",
+            revision: "695690b33533b1f8b0395c1d6b4f00dc411353ef",
+            entries: [
+                ("chat_template.jinja", 16_448),
+                ("config.json", 33_381),
+                ("generation_config.json", 208),
+                ("model-00001-of-00003.safetensors", 5_275_612_587),
+                ("model-00002-of-00003.safetensors", 5_296_718_232),
+                ("model-00003-of-00003.safetensors", 5_036_507_755),
+                ("model.safetensors.index.json", 176_940),
+                ("processor_config.json", 627),
+                ("tokenizer.json", 32_169_626),
+                ("tokenizer_config.json", 2_095),
+            ]
         ),
         minRAMGB: 24,
         recommendedRAMGB: 32,
-        contextTokens: 32_000
+        contextTokens: 32_000,
+        manifestVerified: true
     )
 
     // NOTE — `mlx-community/bge-small-en-v1.5` does NOT exist on HuggingFace
@@ -191,6 +213,21 @@ public enum ModelCatalog {
             sha256: "",
             url: URL(string: "https://huggingface.co/\(repo)/resolve/main/\(path)")!
         )
+    }
+
+    private static func verifiedRepoFiles(
+        repo: String,
+        revision: String,
+        entries: [(path: String, bytes: Int64)]
+    ) -> [ModelFile] {
+        entries.map { entry in
+            ModelFile(
+                path: entry.path,
+                bytes: entry.bytes,
+                sha256: "",
+                url: URL(string: "https://huggingface.co/\(repo)/resolve/\(revision)/\(entry.path)")!
+            )
+        }
     }
 
     private static func mlxGemmaFiles(base: String, shardCount: Int, approximateBytes: Int64) -> [ModelFile] {

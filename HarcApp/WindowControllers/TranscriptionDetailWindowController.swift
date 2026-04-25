@@ -9,21 +9,25 @@ import HarcSummarize
 final class TranscriptionDetailWindowController: NSWindowController {
     convenience init(
         recording: Recording,
+        store: RecordingStore,
         prefs: HarcPreferences,
         queueStore: SummarizationQueueStore,
         modelStore: ModelManagerStore,
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onRename: @escaping (String?) -> Void,
+        onEditTranscript: @escaping () -> Void,
         onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
         onClearSummary: @escaping (Int64) -> Void,
         suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
     ) {
         let root = TranscriptionDetailView(
             recording: recording,
+            store: store,
             onReveal: onReveal,
             onDelete: onDelete,
             onRename: onRename,
+            onEditTranscript: onEditTranscript,
             onSpeakerNamesChanged: onSpeakerNamesChanged,
             onClearSummary: onClearSummary,
             suggestionsProvider: suggestionsProvider

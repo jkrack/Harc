@@ -46,20 +46,29 @@ public struct SummarizationSettingsView: View {
                 Toggle("Also when on battery", isOn: $prefs.autoSummarizeOnBatteryEnabled)
                     .disabled(!prefs.autoSummarizeEnabled)
                     .padding(.leading, HarcDesign.Space.md)
-                Toggle("Include summary in Copy for Prompt", isOn: $prefs.includeSummaryInPrompt)
+                Toggle("Include summary in exports and Copy for Prompt", isOn: $prefs.includeSummaryInPrompt)
             } header: {
                 Text("Behavior")
             } footer: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Gemma 4 is multi-GB resident and uses power. The battery toggle is off by default.")
-                    Text("\"Include summary in Copy for Prompt\" prepends ## Summary and ## Action Items above the transcript when copying.")
+                    Text("When enabled, Markdown, DOCX, and prompt exports prepend Summary and Action Items above the transcript.")
                 }
                 .font(HarcDesign.Font.bodySm)
                 .foregroundStyle(Color.harcInkSecondary)
             }
         }
         .formStyle(.grouped)
-        .task { await models.bootstrap() }
+        .task {
+            await models.bootstrap()
+            ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
+        }
+        .onChange(of: models.states) { _, _ in
+            ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
+        }
+        .onChange(of: prefs.activeSummarizerID) { _, _ in
+            ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
+        }
     }
 
     private var header: some View {
