@@ -71,4 +71,92 @@ struct SummarizationQueueStoreTests {
         // Clean up so the test doesn't hang on outstanding sleeps.
         await queue.cancelAll()
     }
+
+    @Test("store captures non-cancellation .finished(.failure) into lastFailures keyed by id")
+    @MainActor
+    func capturesNonCancellationFailures() async throws {
+        struct Boom: Error, LocalizedError {
+            var errorDescription: String? { "boom" }
+        }
+        let queue = SummarizationQueue(coordinator: BackgroundWorkCoordinator()) { _ in
+            throw Boom()
+        }
+        let store = await SummarizationQueueStore(queue: queue)
+
+        await queue.enqueue(42)
+        await expectEventually {
+            await MainActor.run { store.lastFailures[42] == "boom" }
+        }
+    }
+
+    @Test("store swallows CancellationError — lastFailures stays nil when cancellation lands")
+    @MainActor
+    func swallowsCancellationError() async throws {
+        let queue = SummarizationQueue(coordinator: BackgroundWorkCoordinator()) { _ in
+            // Cooperate with cancellation.
+            while !Task.isCancelled {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            throw CancellationError()
+        }
+        let store = await SummarizationQueueStore(queue: queue)
+
+        await queue.enqueue(77)
+        // Wait for it to become current, then cancel.
+        await expectEventually { await MainActor.run { store.current == 77 } }
+        await queue.cancel(77)
+        await expectEventually { await MainActor.run { store.current == nil } }
+
+        // Give the event-apply loop one more hop.
+        try await Task.sleep(nanoseconds: 50_000_000)
+        await MainActor.run {
+            #expect(store.lastFailures[77] == nil)
+        }
+    }
+
+    @Test("enqueue clears a prior failure entry for the same id")
+    @MainActor
+    func enqueueClearsPriorFailure() async throws {
+        struct Boom: Error, LocalizedError {
+            var errorDescription: String? { "boom" }
+        }
+        final class Counter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var count = 0
+            func increment() -> Int {
+                lock.withLock { count += 1; return count }
+            }
+        }
+        let counter = Counter()
+        let queue = SummarizationQueue(coordinator: BackgroundWorkCoordinator()) { _ in
+            if counter.increment() == 1 {
+                throw Boom()
+            }
+            // Second run succeeds.
+        }
+        let store = await SummarizationQueueStore(queue: queue)
+
+        await queue.enqueue(5)
+        await expectEventually { await MainActor.run { store.lastFailures[5] == "boom" } }
+
+        await queue.enqueue(5)
+        // On enqueue, the failure should be cleared immediately (before the next run).
+        await expectEventually { await MainActor.run { store.lastFailures[5] == nil } }
+    }
+
+    @Test("dismissFailure(id) removes the entry")
+    @MainActor
+    func dismissFailure() async throws {
+        struct Boom: Error, LocalizedError {
+            var errorDescription: String? { "boom" }
+        }
+        let queue = SummarizationQueue(coordinator: BackgroundWorkCoordinator()) { _ in throw Boom() }
+        let store = await SummarizationQueueStore(queue: queue)
+
+        await queue.enqueue(8)
+        await expectEventually { await MainActor.run { store.lastFailures[8] == "boom" } }
+
+        store.dismissFailure(8)
+        #expect(store.lastFailures[8] == nil)
+    }
 }

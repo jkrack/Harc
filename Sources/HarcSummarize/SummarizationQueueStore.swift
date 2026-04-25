@@ -10,6 +10,7 @@ public final class SummarizationQueueStore: ObservableObject {
 
     @Published public private(set) var pending: [Int64] = []
     @Published public private(set) var current: Int64? = nil
+    @Published public private(set) var lastFailures: [Int64: String] = [:]
 
     public let queue: SummarizationQueue
     private var observer: Task<Void, Never>? = nil
@@ -54,19 +55,38 @@ public final class SummarizationQueueStore: ObservableObject {
         pending.count + (current == nil ? 0 : 1)
     }
 
+    /// Remove a failure entry — the UI's Dismiss action on the `.failed`
+    /// card state calls this to clear the banner without re-enqueuing.
+    public func dismissFailure(_ id: Int64) {
+        lastFailures.removeValue(forKey: id)
+    }
+
     // MARK: - Internals
 
     private func apply(_ event: SummarizationQueueEvent) {
         switch event {
         case .enqueued(let id):
+            // Retrying (re-enqueuing an id with a prior failure) clears the
+            // banner so the card shows .queued / .inFlight instead of stale
+            // .failed. Also handles the plain "first enqueue" case where
+            // lastFailures[id] is already nil.
+            lastFailures.removeValue(forKey: id)
             if current != id, !pending.contains(id) {
                 pending.append(id)
             }
         case .started(let id):
             if let idx = pending.firstIndex(of: id) { pending.remove(at: idx) }
             current = id
-        case .finished(let id, _):
+        case .finished(let id, let result):
             if current == id { current = nil }
+            if case .failure(let error) = result {
+                // CancellationError is user-initiated — don't surface as a
+                // failure in the UI; the card returns to .empty / .summary
+                // based on summaryMarkdown presence.
+                if !(error is CancellationError) {
+                    lastFailures[id] = error.localizedDescription
+                }
+            }
         case .queueDrained:
             current = nil
             pending.removeAll()
