@@ -185,6 +185,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private func showStatusItemMenu() {
         guard let statusItem else { return }
         let menu = NSMenu()
+        if session != nil {
+            let stop = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingFromMenu), keyEquivalent: ".")
+            stop.keyEquivalentModifierMask = [.command]
+            menu.addItem(stop)
+            menu.addItem(NSMenuItem.separator())
+        }
         let library = NSMenuItem(title: "Open Library…", action: #selector(openLibrary), keyEquivalent: "l")
         library.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(library)
@@ -201,6 +207,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func stopRecordingFromMenu() {
+        Task { await stopRecording(autoStopReason: nil) }
     }
 
     private func toggleRecording() async {
@@ -276,8 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         autoStop.resetPostStop()
         stoppedFlashTask?.cancel()
         stoppedFlashTask = nil
-        state.markStarted(at: Date())
-        updateMenuBarIcon()
+        let startedAt = Date()
 
         do {
             _ = try await launcher.ensureRunning()
@@ -307,12 +316,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 }
             }
 
-            try await session.start(at: state.recordingStartedAt ?? Date())
+            try await session.start(at: startedAt)
+            state.markStarted(at: startedAt)
+            updateMenuBarIcon()
             autoStop.begin(
                 session: session,
-                startedAt: state.recordingStartedAt ?? Date()
+                startedAt: startedAt
             )
         } catch {
+            self.session = nil
             presentError(error)
             resetUI()
         }
@@ -409,6 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
     private func resetUI() {
         session = nil
+        state.markIdle()
         updateMenuBarIcon()
     }
 
@@ -709,8 +722,10 @@ private func openDetail(for recording: Recording) {
             }
             return
         }
+        guard let store else { return }
         let controller = TranscriptionDetailWindowController(
             recording: recording,
+            store: store,
             prefs: prefs,
             queueStore: queueStore,
             modelStore: modelStore,
@@ -723,6 +738,9 @@ private func openDetail(for recording: Recording) {
             onRename: { [weak self] newTitle in
                 guard let id = recording.id else { return }
                 Task { try? await self?.store?.rename(id: id, title: newTitle) }
+            },
+            onEditTranscript: { [weak self] in
+                self?.openEditor(for: recording)
             },
             onSpeakerNamesChanged: { [weak self] names in
                 guard let id = recording.id else { return }

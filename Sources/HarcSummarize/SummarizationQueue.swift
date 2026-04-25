@@ -110,7 +110,7 @@ public actor SummarizationQueue {
     }
 
     private func run() async {
-        while let id = await popNext() {
+        while let id = popNext() {
             current = id
             emit(.started(id))
             let result: Result<Void, Error>

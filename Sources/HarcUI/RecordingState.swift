@@ -26,6 +26,12 @@ public final class RecordingState: ObservableObject {
         lastResult = RecordingResult(wavURL: wavURL, txtURL: txtURL, jsonURL: jsonURL)
     }
 
+    public func markIdle() {
+        isRecording = false
+        recordingStartedAt = nil
+        livePreviewText = ""
+    }
+
     public func appendPreview(_ text: String) {
         livePreviewText = text
     }

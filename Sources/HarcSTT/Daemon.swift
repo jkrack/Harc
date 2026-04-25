@@ -75,7 +75,7 @@ public actor Daemon {
         )
 
         for await clientFd in server.clients {
-            await recordActivity()
+            recordActivity()
             Task.detached { [handler, self] in
                 let conn = ClientConnection(fd: clientFd)
                 let wasShutdown = await conn.serve { request in

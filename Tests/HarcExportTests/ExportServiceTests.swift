@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AppKit
 import HarcStore
 @testable import HarcExport
 
@@ -33,6 +34,104 @@ struct ExportServiceTests {
         try ExportService.write(recording: rec, format: .markdown, to: target)
         let contents = try String(contentsOf: target, encoding: .utf8)
         #expect(contents.contains("hello world"))
+    }
+
+    @Test("write .markdown includes summary, action items, and transcript when requested")
+    func writesMarkdownWithSummary() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-export-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let date = Date(timeIntervalSince1970: 1_714_000_000)
+        let rec = Recording(
+            wavPath: tmp.appendingPathComponent("x.wav").path,
+            startedAt: date,
+            transcriptText: "hello transcript",
+            summaryMarkdown: "The team agreed.",
+            actionItemsMarkdown: "- [ ] Jason: ship it",
+            summaryModelID: "gemma-4-e2b-it-4bit",
+            summaryGeneratedAt: date,
+            summarySourceWordCount: 2
+        )
+        let target = tmp.appendingPathComponent("x.md")
+        try ExportService.write(recording: rec, format: .markdown, to: target)
+        let contents = try String(contentsOf: target, encoding: .utf8)
+
+        guard let summaryIdx = contents.range(of: "## Summary"),
+              let actionIdx = contents.range(of: "## Action Items"),
+              let transcriptIdx = contents.range(of: "## Transcript"),
+              let bodyIdx = contents.range(of: "hello transcript") else {
+            Issue.record("expected summary/action/transcript sections"); return
+        }
+        #expect(summaryIdx.lowerBound < actionIdx.lowerBound)
+        #expect(actionIdx.lowerBound < transcriptIdx.lowerBound)
+        #expect(transcriptIdx.lowerBound < bodyIdx.lowerBound)
+        #expect(contents.contains("The team agreed."))
+        #expect(contents.contains("- [ ] Jason: ship it"))
+    }
+
+    @Test("write .markdown can exclude summary explicitly")
+    func writesMarkdownWithoutSummaryWhenExcluded() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-export-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let date = Date(timeIntervalSince1970: 1_714_000_000)
+        let rec = Recording(
+            wavPath: tmp.appendingPathComponent("x.wav").path,
+            startedAt: date,
+            transcriptText: "hello transcript",
+            summaryMarkdown: "The team agreed.",
+            actionItemsMarkdown: "- [ ] Jason: ship it",
+            summaryModelID: "gemma-4-e2b-it-4bit",
+            summaryGeneratedAt: date,
+            summarySourceWordCount: 2
+        )
+        let target = tmp.appendingPathComponent("x.md")
+        try ExportService.write(recording: rec, format: .markdown, to: target, includeSummary: false)
+        let contents = try String(contentsOf: target, encoding: .utf8)
+        #expect(!contents.contains("## Summary"))
+        #expect(!contents.contains("## Action Items"))
+        #expect(!contents.contains("## Transcript"))
+        #expect(contents.contains("hello transcript"))
+    }
+
+    @Test("write .docx includes summary, action items, and transcript when requested")
+    func writesDocxWithSummary() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-export-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let date = Date(timeIntervalSince1970: 1_714_000_000)
+        let rec = Recording(
+            wavPath: tmp.appendingPathComponent("x.wav").path,
+            startedAt: date,
+            transcriptText: "hello transcript",
+            summaryMarkdown: "The team agreed.",
+            actionItemsMarkdown: "- [ ] Jason: ship it",
+            summaryModelID: "gemma-4-e2b-it-4bit",
+            summaryGeneratedAt: date,
+            summarySourceWordCount: 2
+        )
+        let target = tmp.appendingPathComponent("x.docx")
+        try ExportService.write(recording: rec, format: .docx, to: target)
+        let data = try Data(contentsOf: target)
+        var docAttrs: NSDictionary? = nil
+        let decoded = try NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.officeOpenXML],
+            documentAttributes: &docAttrs
+        ).string
+
+        #expect(decoded.contains("Summary"))
+        #expect(decoded.contains("The team agreed."))
+        #expect(decoded.contains("Action Items"))
+        #expect(decoded.contains("- [ ] Jason: ship it"))
+        #expect(decoded.contains("Transcript"))
+        #expect(decoded.contains("hello transcript"))
     }
 
     @Test("markdownString returns the renderer output")

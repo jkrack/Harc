@@ -86,7 +86,16 @@ public struct ModelsSettingsView: View {
                 Text("\(ByteCountFormatter.string(fromByteCount: d.totalBytes, countStyle: .file)) will be freed.")
             }
         }
-        .task { await models.bootstrap() }
+        .task {
+            await models.bootstrap()
+            ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
+        }
+        .onChange(of: models.states) { _, _ in
+            ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
+        }
+        .onChange(of: prefs.activeSummarizerID) { _, _ in
+            ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
+        }
     }
 
     // MARK: - Header

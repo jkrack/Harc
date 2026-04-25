@@ -545,4 +545,25 @@ public actor RecordingStore {
         cont.onTermination = { _ in cancellable.cancel() }
         return stream
     }
+
+    /// AsyncStream for a single recording row. Emits nil if the row is
+    /// deleted or missing.
+    public nonisolated func observe(id: Int64) -> AsyncStream<Recording?> {
+        let (stream, cont) = AsyncStream<Recording?>.makeStream()
+        let obs = ValueObservation.tracking { db -> Recording? in
+            try Recording
+                .filter(key: id)
+                .filter(Recording.Columns.deletedAt == nil)
+                .fetchOne(db)
+        }
+
+        nonisolated(unsafe) let cancellable = obs.start(
+            in: dbQueue,
+            onError: { _ in cont.finish() },
+            onChange: { value in cont.yield(value) }
+        )
+
+        cont.onTermination = { _ in cancellable.cancel() }
+        return stream
+    }
 }
