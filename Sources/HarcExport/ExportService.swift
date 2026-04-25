@@ -36,7 +36,8 @@ public enum ExportService {
     public static func write(
         recording: Recording,
         format: ExportFormat,
-        to url: URL
+        to url: URL,
+        includeSummary: Bool = true
     ) throws {
         let input = ExportInputBuilder.build(from: recording)
         let data: Data
@@ -46,7 +47,7 @@ public enum ExportService {
         case .docx:
             data = try DocxExporter.render(input)
         case .prompt:
-            data = Data(ExportService.promptString(for: recording).utf8)
+            data = Data(ExportService.promptString(for: recording, includeSummary: includeSummary).utf8)
         }
         do {
             try data.write(to: url, options: .atomic)
@@ -74,13 +75,43 @@ public enum ExportService {
         return MarkdownExporter.render(input)
     }
 
-    /// Render the prompt-formatted blob — YAML front-matter + Markdown body —
-    /// for clipboard or `.prompt.md` export. Pure.
-    public static func promptString(for recording: Recording) -> String {
+    /// Render the prompt-formatted blob. When `includeSummary` is true AND the
+    /// recording has a complete summary (all four required columns populated),
+    /// prepends `## Summary` + `## Action Items` above a `## Transcript` heading
+    /// and the body. Falls back to today's byte-identical output when summary
+    /// is absent or excluded. Pure.
+    public static func promptString(for recording: Recording, includeSummary: Bool = true) -> String {
         let input = ExportInputBuilder.build(from: recording)
-        let header = PromptFrontMatter.render(input)
+        let summary = includeSummary ? PromptSummaryBlock.make(from: recording) : nil
+        let header = PromptFrontMatter.render(input, summary: summary)
         let body = MarkdownExporter.render(input)
-        if body.isEmpty { return header + "\n" }
-        return header + "\n\n" + body
+        let summaryBlock = summary.map(Self.renderSummaryBlock) ?? ""
+        return Self.compose(header: header, summaryBlock: summaryBlock, body: body)
+    }
+
+    private static func renderSummaryBlock(_ s: PromptSummaryBlock) -> String {
+        """
+        ## Summary
+        \(s.summaryMarkdown)
+
+        ## Action Items
+        \(s.actionItemsMarkdown)
+        """
+    }
+
+    /// Joins the three composed pieces. Inserts `## Transcript\n` between the
+    /// summary block and the body only when both are present — today's
+    /// summary-less prompt output stays byte-identical (no new headings).
+    private static func compose(header: String, summaryBlock: String, body: String) -> String {
+        switch (body.isEmpty, summaryBlock.isEmpty) {
+        case (true, true):
+            return header + "\n"
+        case (true, false):
+            return header + "\n\n" + summaryBlock
+        case (false, true):
+            return header + "\n\n" + body
+        case (false, false):
+            return header + "\n\n" + summaryBlock + "\n\n## Transcript\n" + body
+        }
     }
 }
