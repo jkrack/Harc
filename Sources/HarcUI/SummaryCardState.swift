@@ -41,9 +41,8 @@ public enum SummaryCardState: Equatable {
     /// above the `.summary` card. False when either field is missing.
     public static func isStale(recording: Recording) -> Bool {
         guard let source = recording.summarySourceWordCount, source > 0 else { return false }
-        let current = recording.transcriptText?
-            .split(whereSeparator: { $0.isWhitespace })
-            .count ?? 0
+        guard let text = recording.transcriptText, !text.isEmpty else { return false }
+        let current = text.split(whereSeparator: { $0.isWhitespace }).count
         let diff = abs(current - source)
         return Double(diff) / Double(source) > 0.05
     }

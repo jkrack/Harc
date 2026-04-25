@@ -115,4 +115,39 @@ struct SummaryCardStateTests {
         )
         #expect(state == .failed(message: "boom"))
     }
+
+    @Test("isStale false when summarySourceWordCount is nil")
+    func isStaleNilSource() async {
+        var rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date(), transcriptText: "hello world")
+        rec.summarySourceWordCount = nil
+        #expect(SummaryCardState.isStale(recording: rec) == false)
+    }
+
+    @Test("isStale false when transcriptText is nil")
+    func isStaleNilTranscript() async {
+        var rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        rec.summarySourceWordCount = 100
+        rec.transcriptText = nil
+        #expect(SummaryCardState.isStale(recording: rec) == false)
+    }
+
+    @Test("isStale false when word count delta is 5% or less")
+    func isStaleWithinTolerance() async {
+        var rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        rec.summarySourceWordCount = 100
+        rec.transcriptText = Array(repeating: "word", count: 100).joined(separator: " ")
+        #expect(SummaryCardState.isStale(recording: rec) == false)
+        rec.transcriptText = Array(repeating: "word", count: 105).joined(separator: " ")
+        #expect(SummaryCardState.isStale(recording: rec) == false)
+    }
+
+    @Test("isStale true when word count delta exceeds 5%")
+    func isStaleBeyondTolerance() async {
+        var rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        rec.summarySourceWordCount = 100
+        rec.transcriptText = Array(repeating: "word", count: 110).joined(separator: " ")   // 10 %
+        #expect(SummaryCardState.isStale(recording: rec) == true)
+        rec.transcriptText = Array(repeating: "word", count: 80).joined(separator: " ")    // 20 %
+        #expect(SummaryCardState.isStale(recording: rec) == true)
+    }
 }
