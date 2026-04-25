@@ -38,7 +38,8 @@ public enum SummaryCardState: Equatable {
 
     /// True when the current transcript word count differs from the persisted
     /// `summary_source_word_count` by more than 5 %. Shown as a nudge banner
-    /// above the `.summary` card. False when either field is missing.
+    /// above the `.summary` card. False when either field is missing or empty
+    /// (we don't badge based on catastrophic transcript loss; that's a different signal).
     public static func isStale(recording: Recording) -> Bool {
         guard let source = recording.summarySourceWordCount, source > 0 else { return false }
         guard let text = recording.transcriptText, !text.isEmpty else { return false }
