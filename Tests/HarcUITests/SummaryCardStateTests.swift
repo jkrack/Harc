@@ -1,12 +1,10 @@
 import Testing
 import Foundation
 import HarcStore
-import HarcModels
-@testable import HarcSummarize
 @testable import HarcUI
 
 @MainActor
-@Suite("SummaryCardState.resolve")
+@Suite("SummaryCardState")
 struct SummaryCardStateTests {
 
     @Test("empty when summary nil, not queued, installed, no failure")
