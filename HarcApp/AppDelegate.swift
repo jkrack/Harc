@@ -926,22 +926,8 @@ private func openDetail(for recording: Recording) {
             self.summarizationQueue = queue
             self.summarizationQueueStore = await SummarizationQueueStore(queue: queue)
 
-            // Log summarization failures to stderr so Stage 3 QA can
-            // diagnose problems ahead of the Stage 4 UI that will surface
-            // them. CancellationError is expected (user cancel) and skipped.
-            // The task's lifetime is tied to the events stream — it ends
-            // when the queue actor is deallocated, not to `self`.
-            let events = await queue.events()
-            Task {
-                for await event in events {
-                    if case .finished(let id, .failure(let error)) = event,
-                       !(error is CancellationError) {
-                        FileHandle.standardError.write(Data(
-                            "harc: summarization failed for recording \(id): \(error.localizedDescription)\n".utf8
-                        ))
-                    }
-                }
-            }
+            // Failure surfaces now live on `summarizationQueueStore.lastFailures`
+            // (Stage 4) — consumed by `SummaryCardView.failed` state.
 
             // On-launch catch-up: enqueue the N newest un-summarized rows
             // so a fresh install (or a crash recovery) picks up where it
