@@ -74,6 +74,7 @@ let package = Package(
                 "HarcExport",
                 "HarcMeetingDetect",
                 "HarcModels",
+                "HarcSummarize",
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ]
         ),
