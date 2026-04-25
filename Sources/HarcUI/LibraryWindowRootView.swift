@@ -804,7 +804,7 @@ public struct LibraryWindowRootView: View {
     // MARK: Export helpers
 
     private func copyPromptString(_ rec: Recording) {
-        let s = ExportService.promptString(for: rec)
+        let s = ExportService.promptString(for: rec, includeSummary: HarcPreferences.shared.includeSummaryInPrompt)
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(s, forType: .string)
@@ -833,7 +833,7 @@ public struct LibraryWindowRootView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             do {
-                try ExportService.write(recording: rec, format: format, to: url)
+                try ExportService.write(recording: rec, format: format, to: url, includeSummary: HarcPreferences.shared.includeSummaryInPrompt)
                 exportErrorMessage = nil
             } catch {
                 exportErrorMessage = (error as? LocalizedError)?.errorDescription
