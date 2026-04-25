@@ -994,10 +994,12 @@ private func openDetail(for recording: Recording) {
             return
         }
 
-        let data = try Data(contentsOf: URL(fileURLWithPath: jsonPath))
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        let session = try decoder.decode(SessionTranscript.self, from: data)
+        let session: SessionTranscript = try await Task.detached(priority: .utility) {
+            let data = try Data(contentsOf: URL(fileURLWithPath: jsonPath))
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .secondsSince1970
+            return try decoder.decode(SessionTranscript.self, from: data)
+        }.value
 
         let promptTranscript = PromptTranscriptAdapter.make(
             joinedText: session.joinedText,
