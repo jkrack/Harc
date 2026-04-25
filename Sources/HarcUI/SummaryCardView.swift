@@ -38,7 +38,7 @@ public struct SummaryCardView: View {
     private var state: SummaryCardState {
         SummaryCardState.resolve(
             recording: recording,
-            isInFlight: queueStore.current == recording.id,
+            isInFlight: recording.id.map { queueStore.current == $0 } ?? false,
             isQueued: recording.id.map { queueStore.isQueued($0) && queueStore.current != $0 } ?? false,
             position: recording.id.flatMap { queueStore.position($0) },
             totalInFlight: queueStore.totalInFlight,

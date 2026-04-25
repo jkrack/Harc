@@ -789,7 +789,7 @@ private func openDetail(for recording: Recording) {
 
     @MainActor
     private func runAutoPaste(for rec: Recording, shiftHeld: Bool) {
-        let blob = ExportService.promptString(for: rec)
+        let blob = ExportService.promptString(for: rec, includeSummary: prefs.includeSummaryInPrompt)
 
         // Per spec §3: clipboard always holds the prompt blob, regardless
         // of decision. copyAndPaste (below, on the .paste branch) re-writes
