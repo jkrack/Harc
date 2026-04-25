@@ -701,8 +701,19 @@ private func openDetail(for recording: Recording) {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        guard let queueStore = summarizationQueueStore else {
+            // Safety: bootstrap hasn't completed; retry after graph exists.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                self?.openDetail(for: recording)
+            }
+            return
+        }
         let controller = TranscriptionDetailWindowController(
             recording: recording,
+            prefs: prefs,
+            queueStore: queueStore,
+            modelStore: modelStore,
             onReveal: {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: recording.wavPath)])
             },
@@ -716,6 +727,9 @@ private func openDetail(for recording: Recording) {
             onSpeakerNamesChanged: { [weak self] names in
                 guard let id = recording.id else { return }
                 Task { try? await self?.store?.updateSpeakerNames(id: id, names: names) }
+            },
+            onClearSummary: { [weak self] id in
+                Task { try? await self?.store?.clearSummary(id: id) }
             },
             suggestionsProvider: reIDSuggestionsProvider(for: recording)
         )
