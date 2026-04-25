@@ -37,7 +37,7 @@ public enum SummaryParser {
 
     private static let noneIdentifiedMarker = "_none identified._"
 
-    static func parseActionItems(_ body: String) -> [ActionItem] {
+    public static func parseActionItems(_ body: String) -> [ActionItem] {
         // The "no items" sentinel is case-insensitive; whitespace around
         // it is tolerated.
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

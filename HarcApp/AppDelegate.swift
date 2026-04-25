@@ -701,8 +701,19 @@ private func openDetail(for recording: Recording) {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        guard let queueStore = summarizationQueueStore else {
+            // Safety: bootstrap hasn't completed; retry after graph exists.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                self?.openDetail(for: recording)
+            }
+            return
+        }
         let controller = TranscriptionDetailWindowController(
             recording: recording,
+            prefs: prefs,
+            queueStore: queueStore,
+            modelStore: modelStore,
             onReveal: {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: recording.wavPath)])
             },
@@ -716,6 +727,9 @@ private func openDetail(for recording: Recording) {
             onSpeakerNamesChanged: { [weak self] names in
                 guard let id = recording.id else { return }
                 Task { try? await self?.store?.updateSpeakerNames(id: id, names: names) }
+            },
+            onClearSummary: { [weak self] id in
+                Task { try? await self?.store?.clearSummary(id: id) }
             },
             suggestionsProvider: reIDSuggestionsProvider(for: recording)
         )
@@ -775,7 +789,7 @@ private func openDetail(for recording: Recording) {
 
     @MainActor
     private func runAutoPaste(for rec: Recording, shiftHeld: Bool) {
-        let blob = ExportService.promptString(for: rec)
+        let blob = ExportService.promptString(for: rec, includeSummary: prefs.includeSummaryInPrompt)
 
         // Per spec §3: clipboard always holds the prompt blob, regardless
         // of decision. copyAndPaste (below, on the .paste branch) re-writes
@@ -912,22 +926,8 @@ private func openDetail(for recording: Recording) {
             self.summarizationQueue = queue
             self.summarizationQueueStore = await SummarizationQueueStore(queue: queue)
 
-            // Log summarization failures to stderr so Stage 3 QA can
-            // diagnose problems ahead of the Stage 4 UI that will surface
-            // them. CancellationError is expected (user cancel) and skipped.
-            // The task's lifetime is tied to the events stream — it ends
-            // when the queue actor is deallocated, not to `self`.
-            let events = await queue.events()
-            Task {
-                for await event in events {
-                    if case .finished(let id, .failure(let error)) = event,
-                       !(error is CancellationError) {
-                        FileHandle.standardError.write(Data(
-                            "harc: summarization failed for recording \(id): \(error.localizedDescription)\n".utf8
-                        ))
-                    }
-                }
-            }
+            // Failure surfaces now live on `summarizationQueueStore.lastFailures`
+            // (Stage 4) — consumed by `SummaryCardView.failed` state.
 
             // On-launch catch-up: enqueue the N newest un-summarized rows
             // so a fresh install (or a crash recovery) picks up where it
@@ -994,10 +994,12 @@ private func openDetail(for recording: Recording) {
             return
         }
 
-        let data = try Data(contentsOf: URL(fileURLWithPath: jsonPath))
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        let session = try decoder.decode(SessionTranscript.self, from: data)
+        let session: SessionTranscript = try await Task.detached(priority: .utility) {
+            let data = try Data(contentsOf: URL(fileURLWithPath: jsonPath))
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .secondsSince1970
+            return try decoder.decode(SessionTranscript.self, from: data)
+        }.value
 
         let promptTranscript = PromptTranscriptAdapter.make(
             joinedText: session.joinedText,

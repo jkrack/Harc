@@ -320,4 +320,81 @@ struct PromptFrontMatterTests {
         let out = PromptFrontMatter.render(input, timeZone: laTZ())
         #expect(out.contains("participants: \"Foo: Bar, Amy\""))
     }
+
+    @Test("render without summary is byte-identical to the legacy single-arg render")
+    func renderNoSummaryByteIdentical() {
+        let input = ExportInput(
+            title: "Q3 planning",
+            startedAt: Date(timeIntervalSince1970: 1_714_000_000),
+            durationSeconds: 3600,
+            tags: ["team"],
+            speakerNames: [0: "Amy", 1: "Jason"],
+            segments: [
+                .init(speaker: 0, text: "We should…"),
+                .init(speaker: 1, text: "Agreed."),
+            ]
+        )
+        let tz = TimeZone(identifier: "UTC")!
+        let legacy = PromptFrontMatter.render(input, timeZone: tz)
+        let overloaded = PromptFrontMatter.render(input, summary: nil, timeZone: tz)
+        #expect(legacy == overloaded)
+    }
+
+    @Test("render with summary emits summary_model and summarized_at before closing ---")
+    func renderWithSummaryEmitsNewKeys() {
+        let input = ExportInput(
+            title: "Q3 planning",
+            startedAt: Date(timeIntervalSince1970: 1_714_000_000),
+            durationSeconds: 3600,
+            segments: [.init(speaker: nil, text: "hi")]
+        )
+        let summary = PromptSummaryBlock(
+            summaryMarkdown: "s",
+            actionItemsMarkdown: "a",
+            modelID: "gemma-4-e2b-it-4bit",
+            generatedAt: Date(timeIntervalSince1970: 1_714_003_800)
+        )
+        let tz = TimeZone(identifier: "UTC")!
+        let out = PromptFrontMatter.render(input, summary: summary, timeZone: tz)
+
+        #expect(out.contains("summary_model: gemma-4-e2b-it-4bit"))
+        #expect(out.contains("summarized_at: 2024-04-25T00:10:00+00:00"))
+
+        // Keys must appear INSIDE the front-matter block, before the closing ---.
+        let lines = out.components(separatedBy: "\n")
+        guard let openIdx = lines.firstIndex(of: "---"),
+              let closeIdx = lines.lastIndex(of: "---") else {
+            Issue.record("front-matter fences missing"); return
+        }
+        let modelLineIdx = lines.firstIndex(where: { $0.hasPrefix("summary_model:") })
+        let dateLineIdx = lines.firstIndex(where: { $0.hasPrefix("summarized_at:") })
+        if let modelIdx = modelLineIdx {
+            #expect(openIdx < modelIdx && modelIdx < closeIdx)
+        } else {
+            Issue.record("summary_model line not found")
+        }
+        if let dateIdx = dateLineIdx {
+            #expect(openIdx < dateIdx && dateIdx < closeIdx)
+        } else {
+            Issue.record("summarized_at line not found")
+        }
+    }
+
+    @Test("render with summary escapes modelID via yamlScalar when it contains reserved chars")
+    func renderSummaryModelYamlEscape() {
+        let input = ExportInput(
+            title: "x",
+            startedAt: Date(timeIntervalSince1970: 1_714_000_000),
+            durationSeconds: nil,
+            segments: [.init(speaker: nil, text: "hi")]
+        )
+        let summary = PromptSummaryBlock(
+            summaryMarkdown: "s",
+            actionItemsMarkdown: "a",
+            modelID: "has: colon",
+            generatedAt: Date(timeIntervalSince1970: 1_714_003_800)
+        )
+        let out = PromptFrontMatter.render(input, summary: summary, timeZone: TimeZone(identifier: "UTC")!)
+        #expect(out.contains("summary_model: \"has: colon\""))
+    }
 }

@@ -102,4 +102,74 @@ struct ExportServiceTests {
         #expect(contents.contains("tags: demo"))
         #expect(contents.contains("hello prompt"))
     }
+
+    @Test("promptString with includeSummary=true and summary present inserts summary + action items + ## Transcript before body")
+    func promptStringSummaryPresent() {
+        let date = Date(timeIntervalSince1970: 1_714_000_000)
+        let rec = Recording(
+            wavPath: "/tmp/x.wav",
+            startedAt: date,
+            transcriptText: "Hello world",
+            summaryMarkdown: "The team agreed.",
+            actionItemsMarkdown: "- [ ] Jason: ship it",
+            summaryModelID: "gemma-4-e2b-it-4bit",
+            summaryGeneratedAt: date,
+            summarySourceWordCount: 2
+        )
+        let out = ExportService.promptString(for: rec, includeSummary: true)
+
+        #expect(out.contains("summary_model: gemma-4-e2b-it-4bit"))
+        #expect(out.contains("summarized_at:"))
+
+        guard let summaryIdx = out.range(of: "## Summary"),
+              let actionIdx = out.range(of: "## Action Items"),
+              let transcriptIdx = out.range(of: "## Transcript"),
+              let bodyIdx = out.range(of: "Hello world") else {
+            Issue.record("expected headings + body"); return
+        }
+        #expect(summaryIdx.lowerBound < actionIdx.lowerBound)
+        #expect(actionIdx.lowerBound < transcriptIdx.lowerBound)
+        #expect(transcriptIdx.lowerBound < bodyIdx.lowerBound)
+
+        #expect(out.contains("The team agreed."))
+        #expect(out.contains("- [ ] Jason: ship it"))
+    }
+
+    @Test("promptString with includeSummary=false drops summary block even when columns are present")
+    func promptStringSummaryExcluded() {
+        let date = Date(timeIntervalSince1970: 1_714_000_000)
+        let rec = Recording(
+            wavPath: "/tmp/x.wav",
+            startedAt: date,
+            transcriptText: "Hello world",
+            summaryMarkdown: "The team agreed.",
+            actionItemsMarkdown: "- [ ] Jason: ship it",
+            summaryModelID: "gemma-4-e2b-it-4bit",
+            summaryGeneratedAt: date,
+            summarySourceWordCount: 2
+        )
+        let out = ExportService.promptString(for: rec, includeSummary: false)
+        #expect(!out.contains("## Summary"))
+        #expect(!out.contains("## Action Items"))
+        #expect(!out.contains("## Transcript"))
+        #expect(!out.contains("summary_model:"))
+        #expect(!out.contains("summarized_at:"))
+        #expect(out.contains("Hello world"))
+    }
+
+    @Test("promptString with summary absent is byte-identical regardless of includeSummary flag")
+    func promptStringSummaryAbsentIdempotent() {
+        let rec = Recording(
+            wavPath: "/tmp/x.wav",
+            startedAt: Date(timeIntervalSince1970: 1_714_000_000),
+            transcriptText: "Hello"
+        )
+        let withFlag = ExportService.promptString(for: rec, includeSummary: true)
+        let withoutFlag = ExportService.promptString(for: rec, includeSummary: false)
+        let legacy = ExportService.promptString(for: rec)
+        #expect(withFlag == withoutFlag)
+        #expect(withFlag == legacy)
+        #expect(!withFlag.contains("## Summary"))
+        #expect(!withFlag.contains("## Transcript"))
+    }
 }
