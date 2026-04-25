@@ -2,15 +2,21 @@ import AppKit
 import SwiftUI
 import HarcUI
 import HarcStore
+import HarcModels
+import HarcSummarize
 
 @MainActor
 final class TranscriptionDetailWindowController: NSWindowController {
     convenience init(
         recording: Recording,
+        prefs: HarcPreferences,
+        queueStore: SummarizationQueueStore,
+        modelStore: ModelManagerStore,
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onRename: @escaping (String?) -> Void,
         onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
+        onClearSummary: @escaping (Int64) -> Void,
         suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
     ) {
         let root = TranscriptionDetailView(
@@ -19,8 +25,13 @@ final class TranscriptionDetailWindowController: NSWindowController {
             onDelete: onDelete,
             onRename: onRename,
             onSpeakerNamesChanged: onSpeakerNamesChanged,
+            onClearSummary: onClearSummary,
             suggestionsProvider: suggestionsProvider
         )
+        .environmentObject(prefs)
+        .environmentObject(queueStore)
+        .environmentObject(modelStore)
+
         let host = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: host)
         window.title = "Harc — \(recording.displayTitle)"

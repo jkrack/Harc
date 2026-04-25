@@ -291,7 +291,7 @@ public struct TranscriptEditorView: View {
     }
 
     private func copyPromptString() {
-        let s = ExportService.promptString(for: vm.recording)
+        let s = ExportService.promptString(for: vm.recording, includeSummary: HarcPreferences.shared.includeSummaryInPrompt)
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(s, forType: .string)
@@ -310,7 +310,7 @@ public struct TranscriptEditorView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             do {
-                try ExportService.write(recording: vm.recording, format: format, to: url)
+                try ExportService.write(recording: vm.recording, format: format, to: url, includeSummary: HarcPreferences.shared.includeSummaryInPrompt)
                 exportError = nil
             } catch {
                 exportError = (error as? LocalizedError)?.errorDescription

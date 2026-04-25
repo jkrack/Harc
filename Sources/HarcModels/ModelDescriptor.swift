@@ -112,3 +112,17 @@ public struct ModelDescriptor: Codable, Sendable, Equatable, Identifiable {
         self.manifestVerified = manifestVerified
     }
 }
+
+public extension ModelDescriptor {
+    /// Display string for the descriptor's tier, falling back to the
+    /// descriptor's own `displayName` for `singleton` tiers (which don't
+    /// have a meaningful "Standard/Quality/Max" label).
+    var tierDisplayName: String {
+        switch tier {
+        case .standard: return "Standard"
+        case .quality:  return "Quality"
+        case .max:      return "Max"
+        case .singleton: return displayName
+        }
+    }
+}

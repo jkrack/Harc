@@ -19,5 +19,8 @@ build/
 # Git worktrees (project-local isolated workspaces)
 .worktrees/
 
+# Brainstorm mockups (visual-companion scratch)
+.superpowers/
+
 # xcodegen-generated
 HarcApp/Info.plist

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import HarcStore
 import HarcExport
+import HarcSummarize
 
 public struct TranscriptionDetailView: View {
     let recording: Recording
@@ -9,10 +10,13 @@ public struct TranscriptionDetailView: View {
     let onDelete: () -> Void
     let onRename: (String?) -> Void
     let onSpeakerNamesChanged: ([Int: String]) -> Void
+    let onClearSummary: (Int64) -> Void
     /// Provides speaker re-ID suggestions for a given speaker index.
     /// Optional — the editor renders chips when non-nil and the feature is
     /// enabled; when nil, the editor behaves exactly as pre-feature.
     let suggestionsProvider: SpeakerNameEditor.SuggestionsProvider?
+
+    @EnvironmentObject private var prefs: HarcPreferences
 
     @State private var renameDraft: String
     @State private var isEditingTitle = false
@@ -26,6 +30,7 @@ public struct TranscriptionDetailView: View {
         onDelete: @escaping () -> Void,
         onRename: @escaping (String?) -> Void,
         onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
+        onClearSummary: @escaping (Int64) -> Void,
         suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
     ) {
         self.recording = recording
@@ -33,6 +38,7 @@ public struct TranscriptionDetailView: View {
         self.onDelete = onDelete
         self.onRename = onRename
         self.onSpeakerNamesChanged = onSpeakerNamesChanged
+        self.onClearSummary = onClearSummary
         self.suggestionsProvider = suggestionsProvider
         self._renameDraft = State(initialValue: recording.title ?? "")
     }
@@ -67,6 +73,12 @@ public struct TranscriptionDetailView: View {
                 Spacer()
                 toolbar
             }
+
+            SummaryCardView(
+                recording: recording,
+                activeSummarizerID: prefs.activeSummarizerID,
+                onClearSummary: onClearSummary
+            )
 
             SpeakerNameEditor(
                 speakerIndices: speakerIndices,
@@ -113,7 +125,7 @@ public struct TranscriptionDetailView: View {
             .help("Copy the prompt-formatted blob (default) or plain text")
 
             Button {
-                let s = ExportService.promptString(for: recording)
+                let s = ExportService.promptString(for: recording, includeSummary: prefs.includeSummaryInPrompt)
                 try? FrontmostAppPaster.copyAndPaste(s)
             } label: {
                 Label("Paste", systemImage: "text.viewfinder")
@@ -140,7 +152,7 @@ public struct TranscriptionDetailView: View {
     }
 
     private func copyPromptString() {
-        let s = ExportService.promptString(for: recording)
+        let s = ExportService.promptString(for: recording, includeSummary: prefs.includeSummaryInPrompt)
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(s, forType: .string)

@@ -73,10 +73,15 @@ enum PromptFrontMatter {
         return false
     }
 
-    /// Render the full YAML front-matter block, including opening and closing
-    /// `---` delimiters. Does NOT add a trailing blank line — the composer in
-    /// `ExportService.promptString` owns spacing between header and body.
+    /// Legacy / default form — no summary block. Preserved for callers that
+    /// pre-date Stage 4.
     static func render(_ input: ExportInput, timeZone: TimeZone = .current) -> String {
+        return render(input, summary: nil, timeZone: timeZone)
+    }
+
+    /// Summary-aware form. When `summary != nil`, emits `summary_model:` and
+    /// `summarized_at:` after the `speakers:` key and before the closing `---`.
+    static func render(_ input: ExportInput, summary: PromptSummaryBlock?, timeZone: TimeZone = .current) -> String {
         var lines: [String] = ["---"]
 
         let trimmedTitle = input.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -108,6 +113,11 @@ enum PromptFrontMatter {
         }
         if speakers >= 2 {
             lines.append("speakers: \(speakers)")
+        }
+
+        if let summary {
+            lines.append("summary_model: \(yamlScalar(summary.modelID))")
+            lines.append("summarized_at: \(formatRecorded(summary.generatedAt, timeZone: timeZone))")
         }
 
         lines.append("---")
