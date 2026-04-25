@@ -173,14 +173,25 @@ public struct SummaryCardView: View {
                 if let items = parsedActionItems, !items.isEmpty {
                     actionItemsLabel
                     actionItemsList(items)
-                } else if recording.actionItemsMarkdown?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased() == "_none identified._" {
+                } else if let raw = recording.actionItemsMarkdown?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                          !raw.isEmpty {
                     actionItemsLabel
-                    Text("No action items identified.")
-                        .font(HarcDesign.Font.bodySm)
-                        .italic()
-                        .foregroundStyle(Color.harcInkTertiary)
+                    if raw.lowercased() == "_none identified._" {
+                        Text("No action items identified.")
+                            .font(HarcDesign.Font.bodySm)
+                            .italic()
+                            .foregroundStyle(Color.harcInkTertiary)
+                    } else {
+                        // Parser couldn't extract structured items but the
+                        // column has content — render the raw markdown so the
+                        // user sees what the model produced rather than a
+                        // silently-dropped section.
+                        Text(markdown: raw)
+                            .font(HarcDesign.Font.body)
+                            .foregroundStyle(Color.harcInkPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
@@ -351,9 +362,18 @@ public struct SummaryCardView: View {
     }
 }
 
-// Tiny helper so `Text(markdown:)` reads clearly at call site.
+// Tiny helper so `Text(markdown:)` reads clearly at call site. Uses
+// AttributedString rather than LocalizedStringKey because the input is
+// model-generated content — LocalizedStringKey would reinterpret `%@`-style
+// substrings as format specifiers and run the string through Bundle
+// localization lookup. AttributedString.init(markdown:) parses inline
+// markdown safely; the verbatim fallback covers any parse failure.
 private extension Text {
     init(markdown: String) {
-        self.init(LocalizedStringKey(markdown))
+        if let attr = try? AttributedString(markdown: markdown) {
+            self.init(attr)
+        } else {
+            self.init(verbatim: markdown)
+        }
     }
 }
