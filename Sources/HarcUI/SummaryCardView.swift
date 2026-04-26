@@ -12,6 +12,7 @@ public struct SummaryCardView: View {
     let recording: Recording
     let store: RecordingStore?
     let activeSummarizerID: String
+    let hasTranscript: Bool
     let onClearSummary: (Int64) -> Void
 
     @EnvironmentObject private var queueStore: SummarizationQueueStore
@@ -21,11 +22,13 @@ public struct SummaryCardView: View {
         recording: Recording,
         store: RecordingStore? = nil,
         activeSummarizerID: String,
+        hasTranscript: Bool = true,
         onClearSummary: @escaping (Int64) -> Void
     ) {
         self.recording = recording
         self.store = store
         self.activeSummarizerID = activeSummarizerID
+        self.hasTranscript = hasTranscript
         self.onClearSummary = onClearSummary
     }
 
@@ -46,6 +49,7 @@ public struct SummaryCardView: View {
             position: recording.id.flatMap { queueStore.position($0) },
             totalInFlight: queueStore.totalInFlight,
             isSummarizerInstalled: modelStore.state(of: activeSummarizerID).isInstalled,
+            hasTranscript: hasTranscript,
             lastFailure: recording.id.flatMap { queueStore.lastFailures[$0] }
         )
     }
@@ -56,6 +60,8 @@ public struct SummaryCardView: View {
             emptyCard
         case .installRequired:
             installRequiredCard
+        case .transcriptRequired:
+            transcriptRequiredCard
         case .queued(let position, let totalInFlight):
             queuedCard(position: position, totalInFlight: totalInFlight)
         case .inFlight:
@@ -100,6 +106,24 @@ public struct SummaryCardView: View {
                         .font(HarcDesign.Font.body)
                         .foregroundStyle(Color.harcError)
                 }
+            }
+        }
+    }
+
+    private var transcriptRequiredCard: some View {
+        tintedContainer {
+            HStack(spacing: HarcDesign.Space.sm) {
+                Image(systemName: "text.badge.xmark")
+                    .foregroundStyle(Color.harcWarning)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("No transcript available")
+                        .font(HarcDesign.Font.body)
+                        .foregroundStyle(Color.harcInkPrimary)
+                    Text("Summaries need transcript text. Re-transcribe this audio before generating a summary.")
+                        .font(HarcDesign.Font.bodySm)
+                        .foregroundStyle(Color.harcInkSecondary)
+                }
+                Spacer(minLength: 0)
             }
         }
     }

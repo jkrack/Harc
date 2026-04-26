@@ -33,7 +33,11 @@ public struct TranscriptionDetailView: View {
     @State private var isEditingTitle = false
     @State private var selectedTab: DetailTab = .overview
     @State private var transcript: String = ""
+    @State private var transcriptDraft: String = ""
+    @State private var isEditingTranscript = false
+    @State private var isSavingTranscript = false
     @State private var loadError: String? = nil
+    @State private var saveError: String? = nil
     @State private var deleteConfirm = false
 
     public init(
@@ -122,7 +126,7 @@ public struct TranscriptionDetailView: View {
                 Button("Copy for Prompt")  { copyPromptString() }
                 Button("Copy Plain Text")  { copyPlainText() }
             } label: {
-                Label("Copy for Prompt", systemImage: "doc.on.clipboard")
+                Label("Prompt", systemImage: "doc.on.clipboard")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
@@ -190,16 +194,20 @@ public struct TranscriptionDetailView: View {
                     recording: displayedRecording,
                     store: store,
                     activeSummarizerID: prefs.activeSummarizerID,
+                    hasTranscript: hasTranscriptSource,
                     onClearSummary: onClearSummary
                 )
 
-                workspaceSection("Speakers") {
-                    SpeakerNameEditor(
-                        speakerIndices: speakerIndices,
-                        initialNames: displayedRecording.speakerNames,
-                        onCommit: onSpeakerNamesChanged,
-                        suggestionsProvider: suggestionsProvider
-                    )
+                if !speakerIndices.isEmpty {
+                    workspaceSection("Speakers") {
+                        SpeakerNameEditor(
+                            speakerIndices: speakerIndices,
+                            initialNames: displayedRecording.speakerNames,
+                            onCommit: onSpeakerNamesChanged,
+                            suggestionsProvider: suggestionsProvider,
+                            showsHeader: false
+                        )
+                    }
                 }
 
                 workspaceSection("Transcript Preview") {
@@ -216,13 +224,39 @@ public struct TranscriptionDetailView: View {
                 Text("Transcript")
                     .font(HarcDesign.Font.subtitle)
                     .foregroundStyle(Color.harcInkPrimary)
-                Spacer()
-                Button(action: onEditTranscript) {
-                    Label("Edit", systemImage: "square.and.pencil")
+                if let saveError {
+                    Text(saveError)
+                        .font(HarcDesign.Font.meta)
+                        .foregroundStyle(Color.harcError)
+                        .lineLimit(1)
                 }
-                .controlSize(.small)
-                .disabled(transcript.isEmpty)
-                .help("Open the dedicated transcript editor")
+                Spacer()
+                if isEditingTranscript {
+                    Button("Cancel") {
+                        transcriptDraft = transcript
+                        isEditingTranscript = false
+                        saveError = nil
+                    }
+                    .controlSize(.small)
+
+                    Button {
+                        Task { await saveTranscriptDraft() }
+                    } label: {
+                        Label(isSavingTranscript ? "Saving…" : "Save", systemImage: "arrow.down.doc")
+                    }
+                    .controlSize(.small)
+                    .disabled(isSavingTranscript || transcriptDraft == transcript)
+                } else {
+                    Button {
+                        transcriptDraft = transcript
+                        isEditingTranscript = true
+                    } label: {
+                        Label("Edit", systemImage: "square.and.pencil")
+                    }
+                    .controlSize(.small)
+                    .disabled(!hasTranscript)
+                    .help("Edit this transcript in the recording workspace")
+                }
             }
 
             transcriptBody
@@ -263,6 +297,21 @@ public struct TranscriptionDetailView: View {
             statusText(loadError, color: Color.harcError)
         } else if transcript.isEmpty {
             statusText("No transcript text is available.", color: Color.harcInkSecondary)
+        } else if isEditingTranscript {
+            TextEditor(text: $transcriptDraft)
+                .font(HarcDesign.Font.body)
+                .lineSpacing(4)
+                .foregroundStyle(Color.harcInkPrimary)
+                .scrollContentBackground(.hidden)
+                .padding(HarcDesign.Space.sm)
+                .background(
+                    RoundedRectangle(cornerRadius: HarcDesign.Radius.lg, style: .continuous)
+                        .fill(Color.harcSurface2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg, style: .continuous)
+                                .stroke(Color.harcAccent.opacity(0.45), lineWidth: 1)
+                        )
+                )
         } else {
             ScrollView {
                 Text(transcript)
@@ -296,6 +345,8 @@ public struct TranscriptionDetailView: View {
             .buttonStyle(.plain)
             .font(HarcDesign.Font.body)
             .foregroundStyle(Color.harcAccent)
+            .disabled(!hasTranscriptSource)
+            .opacity(hasTranscriptSource ? 1 : 0.45)
         }
     }
 
@@ -392,6 +443,37 @@ public struct TranscriptionDetailView: View {
         pb.setString(text, forType: .string)
     }
 
+    private var hasTranscript: Bool {
+        loadError == nil && !transcript.isEmpty
+    }
+
+    private var hasTranscriptSource: Bool {
+        if let text = displayedRecording.transcriptText, !text.isEmpty { return true }
+        guard let path = displayedRecording.txtPath else { return false }
+        return FileManager.default.fileExists(atPath: path)
+    }
+
+    private func saveTranscriptDraft() async {
+        guard let store else {
+            saveError = "Cannot save transcript because the recording store is unavailable."
+            return
+        }
+        isSavingTranscript = true
+        defer { isSavingTranscript = false }
+        do {
+            let document = TranscriptDocument.load(recording: displayedRecording)
+            _ = try document.save(editedText: transcriptDraft)
+            if let id = displayedRecording.id {
+                try await store.updateTranscriptText(id: id, text: transcriptDraft)
+            }
+            transcript = transcriptDraft
+            saveError = nil
+            isEditingTranscript = false
+        } catch {
+            saveError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
     /// Distinct speaker indices present in the recording, discovered by
     /// re-using `ExportInputBuilder.build` (which reads the sibling .json
     /// once). Empty array when the recording is un-diarized.
@@ -405,16 +487,21 @@ public struct TranscriptionDetailView: View {
     }
 
     private func load() {
+        loadError = nil
         if let cached = displayedRecording.transcriptText, !cached.isEmpty {
             transcript = cached
+            transcriptDraft = cached
             return
         }
         guard let txtPath = displayedRecording.txtPath else {
+            transcript = ""
+            transcriptDraft = ""
             loadError = "No transcript file — recording likely had no transcription."
             return
         }
         do {
             transcript = try String(contentsOf: URL(fileURLWithPath: txtPath), encoding: .utf8)
+            transcriptDraft = transcript
         } catch {
             loadError = "Failed to load transcript: \(error.localizedDescription)"
         }

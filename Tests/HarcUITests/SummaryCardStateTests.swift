@@ -16,7 +16,7 @@ struct SummaryCardStateTests {
             isQueued: false,
             position: nil,
             totalInFlight: 0,
-            isSummarizerInstalled: true,
+            isSummarizerInstalled: true, hasTranscript: true,
             lastFailure: nil
         )
         #expect(state == .empty)
@@ -28,9 +28,20 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: false, lastFailure: nil
+            isSummarizerInstalled: false, hasTranscript: true, lastFailure: nil
         )
         #expect(state == .installRequired)
+    }
+
+    @Test("transcriptRequired when no transcript exists and summarizer is available")
+    func transcriptRequired() async {
+        let rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        let state = SummaryCardState.resolve(
+            recording: rec,
+            isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
+            isSummarizerInstalled: true, hasTranscript: false, lastFailure: nil
+        )
+        #expect(state == .transcriptRequired)
     }
 
     @Test("summary when summaryMarkdown is present")
@@ -40,7 +51,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: true, lastFailure: nil
+            isSummarizerInstalled: true, hasTranscript: true, lastFailure: nil
         )
         #expect(state == .summary)
     }
@@ -51,7 +62,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: true, lastFailure: "boom"
+            isSummarizerInstalled: true, hasTranscript: true, lastFailure: "boom"
         )
         #expect(state == .failed(message: "boom"))
     }
@@ -64,7 +75,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: true, lastFailure: nil
+            isSummarizerInstalled: true, hasTranscript: true, lastFailure: nil
         )
         #expect(state == .failed(message: "persisted failure"))
     }
@@ -77,7 +88,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: true, lastFailure: nil
+            isSummarizerInstalled: true, hasTranscript: true, lastFailure: nil
         )
         #expect(state == .skipped(message: "on battery"))
     }
@@ -88,7 +99,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: true, position: 2, totalInFlight: 3,
-            isSummarizerInstalled: true, lastFailure: nil
+            isSummarizerInstalled: true, hasTranscript: true, lastFailure: nil
         )
         #expect(state == .queued(position: 2, totalInFlight: 3))
     }
@@ -100,7 +111,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: true, isQueued: true, position: 1, totalInFlight: 1,
-            isSummarizerInstalled: false, lastFailure: "boom"
+            isSummarizerInstalled: false, hasTranscript: true, lastFailure: "boom"
         )
         #expect(state == .inFlight)
     }
@@ -112,7 +123,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: true, lastFailure: "boom"
+            isSummarizerInstalled: true, hasTranscript: true, lastFailure: "boom"
         )
         #expect(state == .summary)
     }
@@ -124,7 +135,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: false, lastFailure: nil
+            isSummarizerInstalled: false, hasTranscript: true, lastFailure: nil
         )
         #expect(state == .summary)
     }
@@ -135,7 +146,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: false, lastFailure: "boom"
+            isSummarizerInstalled: false, hasTranscript: true, lastFailure: "boom"
         )
         #expect(state == .failed(message: "boom"))
     }
@@ -148,7 +159,7 @@ struct SummaryCardStateTests {
         let state = SummaryCardState.resolve(
             recording: rec,
             isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
-            isSummarizerInstalled: false, lastFailure: nil
+            isSummarizerInstalled: false, hasTranscript: true, lastFailure: nil
         )
         #expect(state == .skipped(message: "active model missing"))
     }
