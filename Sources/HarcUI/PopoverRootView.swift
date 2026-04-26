@@ -11,6 +11,7 @@ public struct PopoverRootView: View {
     let onOpen: (Recording) -> Void
     let onOpenSettings: () -> Void
     let onOpenLibrary: () -> Void
+    let onOpenLibraryAndSearch: () -> Void
     let onResumeAutoStopped: () -> Void
 
     public init(
@@ -18,12 +19,14 @@ public struct PopoverRootView: View {
         onOpen: @escaping (Recording) -> Void,
         onOpenSettings: @escaping () -> Void,
         onOpenLibrary: @escaping () -> Void,
+        onOpenLibraryAndSearch: @escaping () -> Void,
         onResumeAutoStopped: @escaping () -> Void
     ) {
         self.onToggle = onToggle
         self.onOpen = onOpen
         self.onOpenSettings = onOpenSettings
         self.onOpenLibrary = onOpenLibrary
+        self.onOpenLibraryAndSearch = onOpenLibraryAndSearch
         self.onResumeAutoStopped = onResumeAutoStopped
     }
 
@@ -183,8 +186,9 @@ public struct PopoverRootView: View {
                 openMostRecent()
             }
             quickButton(label: "Search",       kbd: "⌘F", systemImage: "magnifyingglass") {
-                onOpenLibrary()
+                onOpenLibraryAndSearch()
             }
+            .keyboardShortcut("f", modifiers: .command)
         }
     }
 

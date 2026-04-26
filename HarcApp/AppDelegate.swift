@@ -1283,6 +1283,18 @@ private func openDetail(for recording: Recording) {
             onOpenLibrary: { [weak self] in
                 self?.openLibrary()
             },
+            onOpenLibraryAndSearch: { [weak self] in
+                self?.openLibrary()
+                // Defer one runloop tick so SwiftUI finishes mounting the
+                // search field on first open. Existing-window case is also
+                // safe — the field is already mounted and will receive
+                // the notification immediately.
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .harcLibraryFocusSearch, object: nil
+                    )
+                }
+            },
             onResumeAutoStopped: { [weak self] in
                 guard let self else { return }
                 self.autoStop.resetPostStop()
