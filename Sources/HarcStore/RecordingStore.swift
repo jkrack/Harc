@@ -216,6 +216,9 @@ public actor RecordingStore {
                     Recording.Columns.summaryModelID.set(to: modelID),
                     Recording.Columns.summaryGeneratedAt.set(to: ms),
                     Recording.Columns.summarySourceWordCount.set(to: sourceWordCount),
+                    Recording.Columns.summaryStatusKind.set(to: nil),
+                    Recording.Columns.summaryStatusMessage.set(to: nil),
+                    Recording.Columns.summaryStatusUpdatedAt.set(to: nil),
                     Recording.Columns.updatedAt.set(to: Date()),
                 ]
             )
@@ -234,6 +237,48 @@ public actor RecordingStore {
                     Recording.Columns.summaryModelID.set(to: nil),
                     Recording.Columns.summaryGeneratedAt.set(to: nil),
                     Recording.Columns.summarySourceWordCount.set(to: nil),
+                    Recording.Columns.summaryStatusKind.set(to: nil),
+                    Recording.Columns.summaryStatusMessage.set(to: nil),
+                    Recording.Columns.summaryStatusUpdatedAt.set(to: nil),
+                    Recording.Columns.updatedAt.set(to: Date()),
+                ]
+            )
+            guard count > 0 else { throw StoreError.notFound }
+        }
+    }
+
+    /// Store the last non-successful summarization state for a recording.
+    /// This is intentionally row-local so detail views can explain "No summary
+    /// yet" after relaunch without relying on the in-memory queue bridge.
+    public func updateSummaryStatus(
+        id: Int64,
+        kind: RecordingSummaryStatusKind,
+        message: String,
+        updatedAt: Date = Date()
+    ) async throws {
+        let ms = Int64(updatedAt.timeIntervalSince1970 * 1000)
+        try await dbQueue.write { db in
+            let count = try Recording.filter(key: id).updateAll(
+                db,
+                [
+                    Recording.Columns.summaryStatusKind.set(to: kind.rawValue),
+                    Recording.Columns.summaryStatusMessage.set(to: message),
+                    Recording.Columns.summaryStatusUpdatedAt.set(to: ms),
+                    Recording.Columns.updatedAt.set(to: Date()),
+                ]
+            )
+            guard count > 0 else { throw StoreError.notFound }
+        }
+    }
+
+    public func clearSummaryStatus(id: Int64) async throws {
+        try await dbQueue.write { db in
+            let count = try Recording.filter(key: id).updateAll(
+                db,
+                [
+                    Recording.Columns.summaryStatusKind.set(to: nil),
+                    Recording.Columns.summaryStatusMessage.set(to: nil),
+                    Recording.Columns.summaryStatusUpdatedAt.set(to: nil),
                     Recording.Columns.updatedAt.set(to: Date()),
                 ]
             )

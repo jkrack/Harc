@@ -19,6 +19,9 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var summaryModelID: String?
     public var summaryGeneratedAt: Date?
     public var summarySourceWordCount: Int?
+    public var summaryStatusKind: RecordingSummaryStatusKind?
+    public var summaryStatusMessage: String?
+    public var summaryStatusUpdatedAt: Date?
     public var pinned: Bool
     public var deletedAt: Date?
     public var createdAt: Date
@@ -44,7 +47,10 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         actionItemsMarkdown: String? = nil,
         summaryModelID: String? = nil,
         summaryGeneratedAt: Date? = nil,
-        summarySourceWordCount: Int? = nil
+        summarySourceWordCount: Int? = nil,
+        summaryStatusKind: RecordingSummaryStatusKind? = nil,
+        summaryStatusMessage: String? = nil,
+        summaryStatusUpdatedAt: Date? = nil
     ) {
         self.id = id
         self.wavPath = wavPath
@@ -62,6 +68,9 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.summaryModelID = summaryModelID
         self.summaryGeneratedAt = summaryGeneratedAt
         self.summarySourceWordCount = summarySourceWordCount
+        self.summaryStatusKind = summaryStatusKind
+        self.summaryStatusMessage = summaryStatusMessage
+        self.summaryStatusUpdatedAt = summaryStatusUpdatedAt
         self.pinned = pinned
         self.deletedAt = deletedAt
         self.createdAt = createdAt
@@ -135,6 +144,17 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
             self.summaryGeneratedAt = nil
         }
         self.summarySourceWordCount = try c.decodeIfPresent(Int.self, forKey: .summarySourceWordCount)
+        if let rawStatus = try c.decodeIfPresent(String.self, forKey: .summaryStatusKind) {
+            self.summaryStatusKind = RecordingSummaryStatusKind(rawValue: rawStatus)
+        } else {
+            self.summaryStatusKind = nil
+        }
+        self.summaryStatusMessage = try c.decodeIfPresent(String.self, forKey: .summaryStatusMessage)
+        if let ms = try c.decodeIfPresent(Int64.self, forKey: .summaryStatusUpdatedAt) {
+            self.summaryStatusUpdatedAt = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        } else {
+            self.summaryStatusUpdatedAt = nil
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -182,6 +202,14 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
             try c.encodeNil(forKey: .summaryGeneratedAt)
         }
         try c.encodeIfPresent(summarySourceWordCount, forKey: .summarySourceWordCount)
+        try c.encodeIfPresent(summaryStatusKind?.rawValue, forKey: .summaryStatusKind)
+        try c.encodeIfPresent(summaryStatusMessage, forKey: .summaryStatusMessage)
+        if let d = summaryStatusUpdatedAt {
+            let ms = Int64(d.timeIntervalSince1970 * 1000)
+            try c.encode(ms, forKey: .summaryStatusUpdatedAt)
+        } else {
+            try c.encodeNil(forKey: .summaryStatusUpdatedAt)
+        }
     }
 }
 
@@ -210,6 +238,9 @@ extension Recording: FetchableRecord, PersistableRecord {
         case summaryModelID = "summary_model_id"
         case summaryGeneratedAt = "summary_generated_at"
         case summarySourceWordCount = "summary_source_word_count"
+        case summaryStatusKind = "summary_status_kind"
+        case summaryStatusMessage = "summary_status_message"
+        case summaryStatusUpdatedAt = "summary_status_updated_at"
     }
 
     public enum Columns {
@@ -233,5 +264,8 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let summaryModelID = Column("summary_model_id")
         static let summaryGeneratedAt = Column("summary_generated_at")
         static let summarySourceWordCount = Column("summary_source_word_count")
+        static let summaryStatusKind = Column("summary_status_kind")
+        static let summaryStatusMessage = Column("summary_status_message")
+        static let summaryStatusUpdatedAt = Column("summary_status_updated_at")
     }
 }
