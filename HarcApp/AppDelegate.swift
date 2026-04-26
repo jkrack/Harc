@@ -353,9 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 transcriptText: transcriptText
             )
             var savedID: Int64? = nil
-            if let store = self.store {
-                savedID = (try? await store.upsert(rec))?.id
-            }
+            savedID = await persistStoppedRecording(rec)
             if let transcriptText, let store = self.store {
                 Task.detached { [store] in
                     let entities = TitleSuggester.extractEntities(from: transcriptText)
@@ -388,9 +386,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 }
             }
             runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
-            // Stage 3 summarization trigger. Gated by the user's opt-ins
-            // and the active model's install state. Silent no-op if any
-            // gate says no.
+            // Stage 3 summarization trigger. Gated by the user's opt-ins,
+            // the active model's install state, and a persisted recording id.
+            // Issue #5 tracks making each skipped gate user-visible.
             if prefs.autoSummarizeEnabled,
                shouldSummarizeGivenPower(),
                modelStore.state(of: prefs.activeSummarizerID).isInstalled,
@@ -803,6 +801,68 @@ private func openDetail(for recording: Recording) {
         alert.messageText = "Recording error"
         alert.informativeText = error.localizedDescription
         alert.runModal()
+    }
+
+    private func persistStoppedRecording(_ recording: Recording) async -> Int64? {
+        guard let store = self.store else {
+            presentRecordingPersistenceFailure(
+                recording: recording,
+                errorDescription: "The recording database is not available."
+            )
+            return nil
+        }
+
+        do {
+            return try await store.upsert(recording).id
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc: failed to persist recording \(recording.wavPath): \(error.localizedDescription)\n".utf8
+            ))
+
+            if let recoveredID = await recoverFinalizedRecording(recording, store: store) {
+                FileHandle.standardError.write(Data(
+                    "harc: recovered recording row after persistence failure: \(recording.wavPath)\n".utf8
+                ))
+                return recoveredID
+            }
+
+            presentRecordingPersistenceFailure(
+                recording: recording,
+                errorDescription: error.localizedDescription
+            )
+            return nil
+        }
+    }
+
+    private func recoverFinalizedRecording(_ recording: Recording, store: RecordingStore) async -> Int64? {
+        if let existing = try? await store.fetchByWavPath(recording.wavPath),
+           let id = existing.id {
+            return id
+        }
+
+        let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
+        _ = try? await ingestor.ingestAll()
+        return (try? await store.fetchByWavPath(recording.wavPath))?.id
+    }
+
+    private func presentRecordingPersistenceFailure(recording: Recording, errorDescription: String) {
+        let alert = NSAlert()
+        alert.messageText = "Recording saved, but not added to Library"
+        alert.informativeText = """
+        Harc saved the audio file, but could not create the Library entry.
+
+        \(errorDescription)
+
+        File:
+        \(recording.wavPath)
+
+        Restarting Harc will retry importing completed recordings from your destination folder.
+        """
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Reveal File")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: recording.wavPath)])
+        }
     }
 
     @MainActor
