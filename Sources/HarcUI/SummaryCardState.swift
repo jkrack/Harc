@@ -9,6 +9,8 @@ public enum SummaryCardState: Equatable {
     case empty
     /// No summary, summarizer not installed — renders `ModelRequirementView`.
     case installRequired
+    /// No transcript is available, so summarization cannot run yet.
+    case transcriptRequired
     /// Queued behind at least one other job (`position` is 1-based).
     case queued(position: Int, totalInFlight: Int)
     /// Currently generating.
@@ -27,12 +29,14 @@ public enum SummaryCardState: Equatable {
         position: Int?,
         totalInFlight: Int,
         isSummarizerInstalled: Bool,
+        hasTranscript: Bool,
         lastFailure: String?
     ) -> SummaryCardState {
-        // Precedence (top wins): inFlight > queued > summary > failed > skipped > installRequired > empty.
+        // Precedence (top wins): inFlight > queued > summary > transcriptRequired > failed > skipped > installRequired > empty.
         if isInFlight { return .inFlight }
         if isQueued, let pos = position { return .queued(position: pos, totalInFlight: totalInFlight) }
         if recording.summaryMarkdown != nil { return .summary }
+        if !hasTranscript { return .transcriptRequired }
         if let msg = lastFailure { return .failed(message: msg) }
         if let status = recording.summaryStatusKind,
            let message = recording.summaryStatusMessage {

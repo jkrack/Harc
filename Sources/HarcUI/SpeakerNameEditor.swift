@@ -21,6 +21,7 @@ public struct SpeakerNameEditor: View {
     private let initialNames: [Int: String]
     private let onCommit: ([Int: String]) -> Void
     private let suggestionsProvider: SuggestionsProvider?
+    private let showsHeader: Bool
 
     @State private var draftNames: [Int: String]
     @State private var suggestions: [Int: [SpeakerSuggestion]] = [:]
@@ -31,12 +32,14 @@ public struct SpeakerNameEditor: View {
         speakerIndices: [Int],
         initialNames: [Int: String],
         onCommit: @escaping ([Int: String]) -> Void,
-        suggestionsProvider: SuggestionsProvider? = nil
+        suggestionsProvider: SuggestionsProvider? = nil,
+        showsHeader: Bool = true
     ) {
         self.speakerIndices = speakerIndices.sorted()
         self.initialNames = initialNames
         self.onCommit = onCommit
         self.suggestionsProvider = suggestionsProvider
+        self.showsHeader = showsHeader
         self._draftNames = State(initialValue: initialNames)
     }
 
@@ -45,10 +48,12 @@ public struct SpeakerNameEditor: View {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
-                Text("SPEAKERS")
-                    .font(HarcDesign.Font.labelMd)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
-                    .tracking(1.2)
+                if showsHeader {
+                    Text("SPEAKERS")
+                        .font(HarcDesign.Font.labelMd)
+                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .tracking(1.2)
+                }
                 ForEach(speakerIndices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 4) {
                         row(for: index)
@@ -70,6 +75,7 @@ public struct SpeakerNameEditor: View {
             TextField("Name (e.g. Jason)", text: binding(for: index))
                 .textFieldStyle(.roundedBorder)
                 .font(HarcDesign.Font.bodyMd)
+                .focusable(false)
                 .onSubmit { commit() }
         }
     }
