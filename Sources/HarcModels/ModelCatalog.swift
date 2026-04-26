@@ -152,7 +152,7 @@ public enum ModelCatalog {
     private static let gemma4_26B_A4B_IT_4bit = ModelDescriptor(
         id: "gemma-4-26b-a4b-it-4bit",
         displayName: "Gemma 4 · Max",
-        summary: "Highest quality. Runs E4B-speed via MoE. Requires a Mac Studio or 32 GB+ M-series.",
+        summary: "Highest quality. Runs E4B-speed via MoE. 32 GB+ Apple Silicon recommended.",
         task: .summarizer,
         tier: .max,
         repoID: "mlx-community/gemma-4-26b-a4b-it-4bit",
