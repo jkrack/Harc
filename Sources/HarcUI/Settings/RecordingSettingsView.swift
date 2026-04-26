@@ -7,6 +7,7 @@ import HarcMeetingDetect
 public struct RecordingSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @State private var notificationsDenied: Bool = false
+    @State private var destinationMissing: Bool = false
 
     public init() {}
 
@@ -21,6 +22,9 @@ public struct RecordingSettingsView: View {
                         .truncationMode(.middle)
                     Spacer()
                     Button("Choose…", action: pickFolder)
+                }
+                if destinationMissing {
+                    destinationMissingWarning
                 }
             } header: {
                 Text("Destination folder")
@@ -107,7 +111,13 @@ public struct RecordingSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .task { await refreshNotificationStatus() }
+        .task {
+            await refreshNotificationStatus()
+            refreshDestinationStatus()
+        }
+        .onChange(of: prefs.destinationPath) { _, _ in
+            refreshDestinationStatus()
+        }
     }
 
     // MARK: - Auto-stop
@@ -245,12 +255,47 @@ public struct RecordingSettingsView: View {
         notificationsDenied = settings.authorizationStatus == .denied
     }
 
+    private func refreshDestinationStatus() {
+        destinationMissing = !prefs.destinationFolderExists()
+    }
+
+    private var destinationMissingWarning: some View {
+        HStack(alignment: .top, spacing: HarcDesign.Space.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.harcError)
+            VStack(alignment: .leading, spacing: HarcDesign.Space.xxs) {
+                Text("Destination folder not found")
+                    .font(HarcDesign.Font.labelMd)
+                    .foregroundStyle(Color.harcOnSurface)
+                Text("Harc can't write recordings here until you choose a different folder or restore the missing one. New recordings will fail to save until this is resolved.")
+                    .font(HarcDesign.Font.bodySm)
+                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: HarcDesign.Space.sm) {
+                    Button("Choose…", action: pickFolder)
+                        .controlSize(.small)
+                    Button("Use Default") {
+                        prefs.destinationPath = HarcPreferences.defaultDestinationPath
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(.vertical, HarcDesign.Space.xxs)
+    }
+
     private func pickFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.directoryURL = prefs.destinationURL
+        // Fall back to the home directory if the persisted destination
+        // doesn't resolve (deleted, unmounted volume, missing iCloud
+        // materialization). Otherwise the open panel anchors at a stale
+        // path that may itself be unavailable.
+        panel.directoryURL = prefs.destinationFolderExists()
+            ? prefs.destinationURL
+            : FileManager.default.homeDirectoryForCurrentUser
         if panel.runModal() == .OK, let chosen = panel.url {
             prefs.destinationPath = chosen.path
         }

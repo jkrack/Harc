@@ -281,6 +281,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private func startRecording() async {
         guard session == nil else { return }
 
+        // Guard: destination must resolve to an existing directory before
+        // spinning up the session. Saves the user from a silent failure
+        // when the destination has been deleted, renamed, or sits on an
+        // unmounted external drive.
+        guard prefs.destinationFolderExists() else {
+            presentDestinationMissingAlert()
+            return
+        }
+
         meetingState.clearAll()
         autoStop.resetPostStop()
         stoppedFlashTask?.cancel()
@@ -907,6 +916,19 @@ private func openDetail(for recording: Recording) {
             } catch {
                 menuBarFlash.flashFailure(on: statusItem, restore: restore)
             }
+        }
+    }
+
+    @MainActor
+    private func presentDestinationMissingAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Can't start recording"
+        alert.informativeText = "The destination folder isn't available:\n\n\(prefs.destinationPath)\n\nChoose a new location in Settings, or restore the missing folder, then try again."
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Cancel")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            openSettings()
         }
     }
 
