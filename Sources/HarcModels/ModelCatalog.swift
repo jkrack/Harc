@@ -66,6 +66,11 @@ public enum ModelCatalog {
         }
     }
 
+    /// Descriptors that can be offered as user-installable models today.
+    public static func downloadableDescriptors(for task: ModelTask) -> [ModelDescriptor] {
+        descriptors(for: task).filter { $0.manifestVerified }
+    }
+
     // ─── Descriptors ──────────────────────────────────────────────────────
     //
     // File byte sizes below are approximations pulled from the HuggingFace
@@ -175,11 +180,10 @@ public enum ModelCatalog {
     )
 
     // NOTE — `mlx-community/bge-small-en-v1.5` does NOT exist on HuggingFace
-    // as of 2026-04-23; attempting to download it returns HTTP 401. We ship
-    // the descriptor so the Settings UI can render a "Semantic search is
-    // waiting for an embedder" row, but `manifestVerified: false` makes the
-    // Download button inactive. The real repo id + file list will land
-    // alongside the semantic-search feature implementation.
+    // as of 2026-04-23; attempting to download it returns HTTP 401. Keep the
+    // descriptor in the catalog so semantic-search preferences/storage have a
+    // stable planned singleton ID, but Settings hides unverified embedders
+    // until the feature ships with a real repo id and file list.
     private static let bgeSmallEnV15 = ModelDescriptor(
         id: "bge-small-en-v1.5",
         displayName: "English text embedder",
