@@ -16,8 +16,8 @@ struct RecordingStoreSummaryTests {
         return saved.id!
     }
 
-    @Test("v7_summary migration adds the five columns without dropping existing data")
-    func v7AddsColumnsAndPreservesData() throws {
+    @Test("summary migrations add summary and status columns without dropping existing data")
+    func summaryMigrationsAddColumnsAndPreserveData() throws {
         let dbq = try DatabaseQueue()
 
         // Stand up migrations up through v6 only, seed a row, then run v7.
@@ -39,6 +39,9 @@ struct RecordingStoreSummaryTests {
             #expect(cols.contains("summary_model_id"))
             #expect(cols.contains("summary_generated_at"))
             #expect(cols.contains("summary_source_word_count"))
+            #expect(cols.contains("summary_status_kind"))
+            #expect(cols.contains("summary_status_message"))
+            #expect(cols.contains("summary_status_updated_at"))
 
             // Seed row still there and queryable.
             let transcript = try String.fetchOne(
@@ -83,6 +86,74 @@ struct RecordingStoreSummaryTests {
         #expect(cleared?.summaryModelID == nil)
         #expect(cleared?.summaryGeneratedAt == nil)
         #expect(cleared?.summarySourceWordCount == nil)
+        #expect(cleared?.summaryStatusKind == nil)
+        #expect(cleared?.summaryStatusMessage == nil)
+        #expect(cleared?.summaryStatusUpdatedAt == nil)
+    }
+
+    @Test("updateSummaryStatus persists skipped and failed reasons")
+    func updateSummaryStatusRoundTrip() async throws {
+        let store = try await RecordingStore.inMemory()
+        let id = try await seed(store, wav: "/tmp/status.wav")
+        let skippedAt = Date(timeIntervalSince1970: 1_800_000_123)
+
+        try await store.updateSummaryStatus(
+            id: id,
+            kind: .skipped,
+            message: "On battery",
+            updatedAt: skippedAt
+        )
+
+        let skipped = try await store.fetch(id: id)
+        #expect(skipped?.summaryStatusKind == .skipped)
+        #expect(skipped?.summaryStatusMessage == "On battery")
+        #expect(
+            Int(skipped!.summaryStatusUpdatedAt!.timeIntervalSince1970 * 1000)
+            == Int(skippedAt.timeIntervalSince1970 * 1000)
+        )
+
+        try await store.updateSummaryStatus(
+            id: id,
+            kind: .failed,
+            message: "Model failed",
+            updatedAt: skippedAt.addingTimeInterval(60)
+        )
+
+        let failed = try await store.fetch(id: id)
+        #expect(failed?.summaryStatusKind == .failed)
+        #expect(failed?.summaryStatusMessage == "Model failed")
+
+        try await store.clearSummaryStatus(id: id)
+        let cleared = try await store.fetch(id: id)
+        #expect(cleared?.summaryStatusKind == nil)
+        #expect(cleared?.summaryStatusMessage == nil)
+        #expect(cleared?.summaryStatusUpdatedAt == nil)
+    }
+
+    @Test("updateSummary clears prior skipped or failed status")
+    func updateSummaryClearsPriorStatus() async throws {
+        let store = try await RecordingStore.inMemory()
+        let id = try await seed(store, wav: "/tmp/status-clear.wav")
+
+        try await store.updateSummaryStatus(
+            id: id,
+            kind: .failed,
+            message: "previous failure"
+        )
+        try await store.updateSummary(
+            id: id,
+            markdown: "summary",
+            actionItemsMarkdown: "_None identified._",
+            modelID: "gemma-4-e2b-it-4bit",
+            generatedAt: Date(),
+            sourceWordCount: 10
+        )
+
+        let saved = try await store.fetch(id: id)
+        #expect(saved?.summaryMarkdown == "summary")
+        #expect(saved?.summaryStatusKind == nil)
+        #expect(saved?.summaryStatusMessage == nil)
+        #expect(saved?.summaryStatusUpdatedAt == nil)
     }
 
     @Test("updateSummary throws notFound on an unknown id")

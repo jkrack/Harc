@@ -15,6 +15,8 @@ public enum SummaryCardState: Equatable {
     case inFlight
     /// Last run for this id failed; shows `message` + Retry + Dismiss.
     case failed(message: String)
+    /// Auto-summarization did not run because a local gate blocked it.
+    case skipped(message: String)
     /// Summary persisted — the rich card.
     case summary
 
@@ -27,11 +29,20 @@ public enum SummaryCardState: Equatable {
         isSummarizerInstalled: Bool,
         lastFailure: String?
     ) -> SummaryCardState {
-        // Precedence (top wins): inFlight > queued > summary > failed > installRequired > empty.
+        // Precedence (top wins): inFlight > queued > summary > failed > skipped > installRequired > empty.
         if isInFlight { return .inFlight }
         if isQueued, let pos = position { return .queued(position: pos, totalInFlight: totalInFlight) }
         if recording.summaryMarkdown != nil { return .summary }
         if let msg = lastFailure { return .failed(message: msg) }
+        if let status = recording.summaryStatusKind,
+           let message = recording.summaryStatusMessage {
+            switch status {
+            case .failed:
+                return .failed(message: message)
+            case .skipped:
+                return .skipped(message: message)
+            }
+        }
         if !isSummarizerInstalled { return .installRequired }
         return .empty
     }

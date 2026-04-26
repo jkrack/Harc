@@ -56,6 +56,32 @@ struct SummaryCardStateTests {
         #expect(state == .failed(message: "boom"))
     }
 
+    @Test("persisted failed status renders as failed when queue has no in-memory failure")
+    func persistedFailedStatus() async {
+        var rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        rec.summaryStatusKind = .failed
+        rec.summaryStatusMessage = "persisted failure"
+        let state = SummaryCardState.resolve(
+            recording: rec,
+            isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
+            isSummarizerInstalled: true, lastFailure: nil
+        )
+        #expect(state == .failed(message: "persisted failure"))
+    }
+
+    @Test("persisted skipped status renders as skipped")
+    func persistedSkippedStatus() async {
+        var rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        rec.summaryStatusKind = .skipped
+        rec.summaryStatusMessage = "on battery"
+        let state = SummaryCardState.resolve(
+            recording: rec,
+            isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
+            isSummarizerInstalled: true, lastFailure: nil
+        )
+        #expect(state == .skipped(message: "on battery"))
+    }
+
     @Test("queued with position + totalInFlight when isQueued is true")
     func queued() async {
         let rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
@@ -112,6 +138,19 @@ struct SummaryCardStateTests {
             isSummarizerInstalled: false, lastFailure: "boom"
         )
         #expect(state == .failed(message: "boom"))
+    }
+
+    @Test("skipped beats installRequired")
+    func skippedBeatsInstallRequired() async {
+        var rec = Recording(wavPath: "/tmp/x.wav", startedAt: Date())
+        rec.summaryStatusKind = .skipped
+        rec.summaryStatusMessage = "active model missing"
+        let state = SummaryCardState.resolve(
+            recording: rec,
+            isInFlight: false, isQueued: false, position: nil, totalInFlight: 0,
+            isSummarizerInstalled: false, lastFailure: nil
+        )
+        #expect(state == .skipped(message: "active model missing"))
     }
 
     @Test("isStale false when summarySourceWordCount is nil")
