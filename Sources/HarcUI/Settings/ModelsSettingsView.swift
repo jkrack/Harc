@@ -35,19 +35,21 @@ public struct ModelsSettingsView: View {
                     .foregroundStyle(Color.harcInkSecondary)
             }
 
-            Section {
-                ForEach(embedders) { d in
-                    ModelRow(descriptor: d, ramGB: ramGB,
-                             onDownload: { download(d) },
-                             onCancel:  { cancel(d) },
-                             onRemove:  { pendingRemoveID = d.id })
+            if !embedders.isEmpty {
+                Section {
+                    ForEach(embedders) { d in
+                        ModelRow(descriptor: d, ramGB: ramGB,
+                                 onDownload: { download(d) },
+                                 onCancel:  { cancel(d) },
+                                 onRemove:  { pendingRemoveID = d.id })
+                    }
+                } header: {
+                    Text("Semantic search")
+                } footer: {
+                    Text("Required to enable the Related tab in the library search.")
+                        .font(HarcDesign.Font.bodySm)
+                        .foregroundStyle(Color.harcInkSecondary)
                 }
-            } header: {
-                Text("Semantic search")
-            } footer: {
-                Text("Required to enable the Related tab in the library search. 130 MB.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcInkSecondary)
             }
         }
         .formStyle(.grouped)
@@ -156,7 +158,7 @@ public struct ModelsSettingsView: View {
     }
 
     private var embedders: [ModelDescriptor] {
-        ModelCatalog.descriptors(for: .textEmbedder)
+        ModelCatalog.downloadableDescriptors(for: .textEmbedder)
     }
 
     private static func physicalRAMGB() -> Int {
