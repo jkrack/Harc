@@ -386,16 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 }
             }
             runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
-            // Stage 3 summarization trigger. Gated by the user's opt-ins,
-            // the active model's install state, and a persisted recording id.
-            // Issue #5 tracks making each skipped gate user-visible.
-            if prefs.autoSummarizeEnabled,
-               shouldSummarizeGivenPower(),
-               modelStore.state(of: prefs.activeSummarizerID).isInstalled,
-               let id = savedID,
-               let queue = self.summarizationQueue {
-                await queue.enqueue(id)
-            }
+            await enqueueAutoSummaryAfterStop(recordingID: savedID)
             autoStop.end(autoStopReason: autoStopReason)
             if let autoStopReason, prefs.postStopNotificationEnabled {
                 AutoStopNotification.post(
@@ -1077,20 +1068,80 @@ private func openDetail(for recording: Recording) {
 
     // MARK: - Summarization
 
+    private func enqueueAutoSummaryAfterStop(recordingID: Int64?) async {
+        guard let id = recordingID else { return }
+        guard let store else { return }
+
+        func skip(_ message: String) async {
+            try? await store.updateSummaryStatus(id: id, kind: .skipped, message: message)
+        }
+
+        guard prefs.autoSummarizeEnabled else {
+            await skip("Auto-summarize is turned off in Settings.")
+            return
+        }
+        guard shouldSummarizeGivenPower() else {
+            await skip("Auto-summarize is paused while this Mac is on battery power.")
+            return
+        }
+        guard modelStore.state(of: prefs.activeSummarizerID).isInstalled else {
+            await skip("The active summarizer is not installed.")
+            return
+        }
+        guard let queue = self.summarizationQueue else {
+            await skip("The summarization queue is not available yet.")
+            return
+        }
+
+        try? await store.clearSummaryStatus(id: id)
+        await queue.enqueue(id)
+    }
+
     /// The `SummarizationQueue` perform closure. Pulls the recording and
     /// its JSON sidecar, builds the prompt transcript, resolves the active
     /// summarizer's directory + context window, runs the summary, and
     /// persists the result. Errors propagate — the queue's `.finished`
     /// event carries them up to whatever's listening.
     private func performSummarization(id: Int64) async throws {
-        guard let store = self.store,
-              let service = self.summarizerService else { return }
+        guard let store = self.store else { return }
+        guard let service = self.summarizerService else {
+            try? await store.updateSummaryStatus(
+                id: id,
+                kind: .failed,
+                message: "The summarization service is not available."
+            )
+            return
+        }
+        do {
+            try await performSummarizationBody(id: id, store: store, service: service)
+        } catch {
+            if !(error is CancellationError) {
+                try? await store.updateSummaryStatus(
+                    id: id,
+                    kind: .failed,
+                    message: error.localizedDescription
+                )
+            }
+            throw error
+        }
+    }
+
+    private func performSummarizationBody(
+        id: Int64,
+        store: RecordingStore,
+        service: SummarizerService
+    ) async throws {
         guard let rec = try await store.fetch(id: id),
               let jsonPath = rec.jsonPath else {
             // No sidecar = nothing structured to summarize. Losing speaker
             // segments would silently degrade the summary, so we skip
             // rather than fall back to plain transcriptText. The queue
             // advances as success.
+            try? await store.updateSummaryStatus(
+                id: id,
+                kind: .skipped,
+                message: "No transcript sidecar was found for this recording."
+            )
             return
         }
 
@@ -1109,7 +1160,14 @@ private func openDetail(for recording: Recording) {
         )
 
         let modelID = prefs.activeSummarizerID
-        guard let descriptor = await modelManager.descriptor(for: modelID) else { return }
+        guard let descriptor = await modelManager.descriptor(for: modelID) else {
+            try? await store.updateSummaryStatus(
+                id: id,
+                kind: .skipped,
+                message: "The active summarizer model is unknown."
+            )
+            return
+        }
         let directory = try await modelManager.requireInstalled(modelID)
         let budgetWords = SummaryPrompt.budgetWords(contextTokens: descriptor.contextTokens)
 
