@@ -107,6 +107,14 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v8_summary_status") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "summary_status_kind", .text)
+                t.add(column: "summary_status_message", .text)
+                t.add(column: "summary_status_updated_at", .integer)  // Unix ms
+            }
+        }
+
         return migrator
     }
 }

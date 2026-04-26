@@ -10,6 +10,7 @@ import HarcSummarize
 /// helper's primitive inputs and lay out each case.
 public struct SummaryCardView: View {
     let recording: Recording
+    let store: RecordingStore?
     let activeSummarizerID: String
     let onClearSummary: (Int64) -> Void
 
@@ -18,10 +19,12 @@ public struct SummaryCardView: View {
 
     public init(
         recording: Recording,
+        store: RecordingStore? = nil,
         activeSummarizerID: String,
         onClearSummary: @escaping (Int64) -> Void
     ) {
         self.recording = recording
+        self.store = store
         self.activeSummarizerID = activeSummarizerID
         self.onClearSummary = onClearSummary
     }
@@ -59,6 +62,8 @@ public struct SummaryCardView: View {
             inFlightCard
         case .failed(let message):
             failedCard(message: message)
+        case .skipped(let message):
+            skippedCard(message: message)
         case .summary:
             summaryCard
         }
@@ -152,6 +157,33 @@ public struct SummaryCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: HarcDesign.Space.xs) {
                     Button("Retry") { enqueueSelf() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    Button("Dismiss") { dismissFailureOnSelf() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func skippedCard(message: String) -> some View {
+        tintedContainer {
+            VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
+                HStack(spacing: HarcDesign.Space.xs) {
+                    Image(systemName: "pause.circle.fill")
+                        .foregroundStyle(Color.harcWarning)
+                    Text("Summarization skipped")
+                        .font(HarcDesign.Font.body)
+                        .foregroundStyle(Color.harcInkPrimary)
+                    Spacer()
+                }
+                Text(message)
+                    .font(HarcDesign.Font.bodySm)
+                    .foregroundStyle(Color.harcInkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: HarcDesign.Space.xs) {
+                    Button("Generate") { enqueueSelf() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                     Button("Dismiss") { dismissFailureOnSelf() }
@@ -353,6 +385,12 @@ public struct SummaryCardView: View {
     private func dismissFailureOnSelf() {
         guard let id = recording.id else { return }
         queueStore.dismissFailure(id)
+        Task { try? await recordingStoreClearSummaryStatus(id: id) }
+    }
+
+    private func recordingStoreClearSummaryStatus(id: Int64) async throws {
+        guard let store else { return }
+        try await store.clearSummaryStatus(id: id)
     }
 
     private func copyToPasteboard(_ s: String) {

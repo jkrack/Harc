@@ -188,6 +188,7 @@ public struct TranscriptionDetailView: View {
             VStack(alignment: .leading, spacing: HarcDesign.Space.md) {
                 SummaryCardView(
                     recording: displayedRecording,
+                    store: store,
                     activeSummarizerID: prefs.activeSummarizerID,
                     onClearSummary: onClearSummary
                 )
