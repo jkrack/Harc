@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         pop.behavior = .transient
         pop.delegate = self
 
-        pop.contentSize = NSSize(width: 400, height: 400)
+        pop.contentSize = NSSize(width: 400, height: 560)
 
         self.statusItem = item
         self.popover = pop
@@ -728,9 +728,7 @@ private func openDetail(for recording: Recording) {
                 guard let id = recording.id else { return }
                 Task { try? await self?.store?.rename(id: id, title: newTitle) }
             },
-            onEditTranscript: { [weak self] in
-                self?.openEditor(for: recording)
-            },
+            onEditTranscript: {},
             onSpeakerNamesChanged: { [weak self] names in
                 guard let id = recording.id else { return }
                 Task { try? await self?.store?.updateSpeakerNames(id: id, names: names) }
@@ -959,7 +957,7 @@ private func openDetail(for recording: Recording) {
         let controller = LibraryWindowController(
             vm: vm,
             onOpen: { [weak self] rec in self?.openDetail(for: rec) },
-            onOpenInEditor: { [weak self] rec in self?.openEditor(for: rec) },
+            onOpenInEditor: { [weak self] rec in self?.openDetail(for: rec) },
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
         libraryWindow = controller

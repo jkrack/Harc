@@ -416,7 +416,6 @@ public struct LibraryWindowRootView: View {
                 renameText = rec.title ?? ""
             }
             Button("Open Recording") { onOpen(rec) }
-            Button("Edit Transcript") { onOpenInEditor(rec) }
             Button(rec.pinned ? "Unpin" : "Pin") {
                 Task { try? await vm.togglePin(id: rec.id ?? -1, currentlyPinned: rec.pinned) }
             }
@@ -588,9 +587,10 @@ public struct LibraryWindowRootView: View {
                     .foregroundStyle(Color.harcAccent)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Recording")
+                    Text(rec.displayTitle)
                         .font(HarcDesign.Font.subtitle)
                         .foregroundStyle(Color.harcInkPrimary)
+                        .lineLimit(2)
                     Text(URL(fileURLWithPath: rec.wavPath).lastPathComponent)
                         .font(HarcDesign.Font.monoXs)
                         .foregroundStyle(Color.harcInkTertiary)
@@ -604,8 +604,10 @@ public struct LibraryWindowRootView: View {
                 recordingActionButton("Open", systemImage: "rectangle.expand.vertical") {
                     onOpen(rec)
                 }
-                recordingActionButton("Edit", systemImage: "pencil") {
-                    onOpenInEditor(rec)
+                if hasTranscript(rec) {
+                    recordingActionButton("Transcript", systemImage: "text.alignleft") {
+                        onOpen(rec)
+                    }
                 }
                 recordingIconButton(systemImage: "folder", help: "Reveal in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
@@ -777,6 +779,7 @@ public struct LibraryWindowRootView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .disabled(!hasTranscript(rec))
 
                 Button { copyPromptString(rec) } label: {
                     HStack(spacing: 4) {
@@ -790,6 +793,8 @@ public struct LibraryWindowRootView: View {
                     .padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
+                .disabled(!hasTranscript(rec))
+                .opacity(hasTranscript(rec) ? 1 : 0.45)
             }
             if let msg = exportErrorMessage {
                 Text(msg)
@@ -849,6 +854,12 @@ public struct LibraryWindowRootView: View {
         pb.clearContents()
         pb.setString(s, forType: .string)
         exportErrorMessage = nil
+    }
+
+    private func hasTranscript(_ rec: Recording) -> Bool {
+        if let text = rec.transcriptText, !text.isEmpty { return true }
+        guard let path = rec.txtPath else { return false }
+        return FileManager.default.fileExists(atPath: path)
     }
 
     private func copyPlainText(_ rec: Recording) {
