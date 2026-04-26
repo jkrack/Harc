@@ -144,9 +144,8 @@ public final class HarcPreferences: ObservableObject {
 
     public init() {
         let defaults = UserDefaults.standard
-        let defaultPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/Harc").path
-        self.destinationPath = defaults.string(forKey: Key.destinationPath) ?? defaultPath
+        self.destinationPath = defaults.string(forKey: Key.destinationPath)
+            ?? Self.defaultDestinationPath
         self.diarize = defaults.object(forKey: Key.diarize) as? Bool ?? true
         self.chunkDurationSeconds = defaults.object(forKey: Key.chunkDurationSeconds) as? Double ?? 60.0
         if let data = defaults.data(forKey: Key.vocabulary),
@@ -196,6 +195,27 @@ public final class HarcPreferences: ObservableObject {
 
     public var destinationURL: URL {
         URL(fileURLWithPath: destinationPath, isDirectory: true)
+    }
+
+    /// True iff the persisted destination path resolves to an existing
+    /// directory. Cheap synchronous stat — safe to call from the main
+    /// thread on launch, on Settings open, and at recording start.
+    /// Returns false for missing paths, paths to plain files, and paths
+    /// on unmounted external volumes.
+    public func destinationFolderExists() -> Bool {
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(
+            atPath: destinationPath,
+            isDirectory: &isDir
+        )
+        return exists && isDir.boolValue
+    }
+
+    /// The default destination — `~/Documents/Harc`. Available as a
+    /// fallback when the persisted destination becomes unreachable.
+    public static var defaultDestinationPath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/Harc").path
     }
 
     public func addEntry(from: String, to: String) {
