@@ -55,6 +55,12 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(embedders[0].tier, .singleton)
     }
 
+    func test_downloadableDescriptors_hideUnverifiedEmbedder() {
+        let embedders = ModelCatalog.downloadableDescriptors(for: .textEmbedder)
+        XCTAssertTrue(embedders.isEmpty,
+            "Semantic-search embedders should stay hidden until their manifest is verified.")
+    }
+
     func test_atLeastOneSummarizerHasVerifiedManifest() {
         let summarizers = ModelCatalog.descriptors(for: .summarizer)
         XCTAssertTrue(summarizers.contains(where: { $0.manifestVerified }),
