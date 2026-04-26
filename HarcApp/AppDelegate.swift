@@ -46,7 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var prefsObserver: AnyCancellable?
     private var menuBarTicker: Timer?
     private let menuBarFlash = MenuBarFlash()
-    private var accessibilityPromptShown = false
     private var pendingSkipPaste = false
 
     private let meetingState = MeetingDetectionState()
@@ -899,10 +898,12 @@ private func openDetail(for recording: Recording) {
                 menuBarFlash.flashSuccess(on: statusItem, restore: restore)
             } catch FrontmostAppPaster.PasteError.accessibilityDenied {
                 menuBarFlash.flashFailure(on: statusItem, restore: restore)
-                if !accessibilityPromptShown {
-                    accessibilityPromptShown = true
-                    presentAccessibilityPrompt()
-                }
+                // Re-prompt every paste failure: the prompt itself notes that
+                // the transcript is already on the clipboard, so re-showing it
+                // is informative rather than annoying. A user who chose
+                // "Later" once may want to act the next time auto-paste
+                // silently failed.
+                presentAccessibilityPrompt()
             } catch {
                 menuBarFlash.flashFailure(on: statusItem, restore: restore)
             }
