@@ -107,14 +107,7 @@ public final class AutoStopController: ObservableObject {
     // MARK: - Lifecycle
 
     public func begin(session: RecordingSession, startedAt: Date) {
-        self.startedAt = startedAt
-        self.lastNonSilentAt = startedAt   // assume audio until proven silent
-        phase = .watching
-        scopeHistory = []
-        scopeWindowMax = 0
-        scopeWindowStartedAt = startedAt
-        smoothedDb = Self.dbFloor
-        fftBins = Array(repeating: 0, count: 5)
+        resetForBegin(startedAt: startedAt)
 
         levelsTask?.cancel()
         let stream = session.levels
@@ -130,6 +123,17 @@ public final class AutoStopController: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         tickTimer = timer
+    }
+
+    private func resetForBegin(startedAt: Date) {
+        self.startedAt = startedAt
+        self.lastNonSilentAt = startedAt   // assume audio until proven silent
+        phase = .watching
+        scopeHistory = []
+        scopeWindowMax = 0
+        scopeWindowStartedAt = startedAt
+        smoothedDb = Self.dbFloor
+        fftBins = Array(repeating: 0, count: 5)
     }
 
     /// Stop monitoring. Called when the recording ends (for any reason).
@@ -158,17 +162,21 @@ public final class AutoStopController: ObservableObject {
 
     /// User pressed "Keep Recording" — dismiss warning, reset silence window.
     public func keepRecording() {
+        keepRecording(at: Date())
+    }
+
+    private func keepRecording(at date: Date) {
         guard case .warning = phase else { return }
-        lastNonSilentAt = Date()
+        lastNonSilentAt = date
         phase = .watching
     }
 
     /// User pressed "Stop Now" — request an immediate stop (counts as user action,
     /// not auto-stop, so no post-stop banner).
     public func stopNow() {
-        guard case .warning = phase else { return }
+        guard case .warning(_, let reason) = phase else { return }
         phase = .watching
-        onAutoStop?(.silence)   // owner decides; reason is informational
+        onAutoStop?(reason)   // owner decides; reason is informational
     }
 
     // MARK: - Ticking
@@ -176,7 +184,7 @@ public final class AutoStopController: ObservableObject {
     /// Clamp/normalization floor used for the scope Y-axis and envelope.
     public static let dbFloor: Float = -60
 
-    private func consume(_ level: AudioLevels) {
+    private func consume(_ level: AudioLevels, now: Date = Date()) {
         lastMicDb = level.micDb
         lastSystemDb = level.systemDb
         smoothedDb = level.smoothedDb
@@ -186,13 +194,12 @@ public final class AutoStopController: ObservableObject {
         // bars — so a flatline on the scope corresponds exactly to the timer
         // running.
         if level.smoothedDb > config.silenceDbCeiling {
-            lastNonSilentAt = Date()
+            lastNonSilentAt = now
         }
 
         // Accumulate scope bars. Each bar is the max normalized value seen in
         // the preceding `scopeBarInterval` window — a mini peak hold so fast
         // transients still register at the display cadence.
-        let now = Date()
         if scopeWindowStartedAt == nil { scopeWindowStartedAt = now }
         let normalized = max(0, min(1, (level.smoothedDb - Self.dbFloor) / abs(Self.dbFloor)))
         scopeWindowMax = max(scopeWindowMax, normalized)
@@ -207,9 +214,8 @@ public final class AutoStopController: ObservableObject {
         }
     }
 
-    private func tick() {
+    private func tick(now: Date = Date()) {
         guard let startedAt else { return }
-        let now = Date()
         let elapsed = now.timeIntervalSince(startedAt)
 
         // Hard cap takes precedence — a silent warning can be "kept" but
@@ -255,6 +261,36 @@ public final class AutoStopController: ObservableObject {
         default:
             phase = .warning(secondsLeft: remaining, reason: reason)
         }
+    }
+}
+
+extension AutoStopController {
+    func testingBegin(startedAt: Date) {
+        resetForBegin(startedAt: startedAt)
+    }
+
+    func testingConsume(
+        smoothedDb: Float,
+        micDb: Float? = nil,
+        systemDb: Float? = nil,
+        fftBins: [Float] = Array(repeating: 0, count: 5),
+        now: Date
+    ) {
+        let db = smoothedDb
+        consume(AudioLevels(
+            micDb: micDb ?? db,
+            systemDb: systemDb ?? db,
+            smoothedDb: db,
+            fftBins: fftBins
+        ), now: now)
+    }
+
+    func testingTick(now: Date) {
+        tick(now: now)
+    }
+
+    func testingKeepRecording(at date: Date) {
+        keepRecording(at: date)
     }
 }
 

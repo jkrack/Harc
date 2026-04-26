@@ -72,4 +72,31 @@ struct RecordingIngestorTests {
         let all = try await store.fetchAll()
         #expect(all[0].transcriptText?.contains("Q3 roadmap") == true)
     }
+
+    @Test("ingestAll recovers a completed file set when the database row is missing")
+    func ingestRecoversCompletedFileSet() async throws {
+        let base = try tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let wav = try fakeRecording(
+            base: base,
+            year: "2026",
+            day: "2026-04-17",
+            time: "14-05-30",
+            txt: "completed transcript"
+        )
+        let json = wav.deletingPathExtension().appendingPathExtension("json")
+        try Data(#"{"joinedText":"completed transcript","words":[],"speakers":[]}"#.utf8).write(to: json)
+
+        let store = try await RecordingStore.inMemory()
+        let ingestor = RecordingIngestor(baseDirectory: base, store: store)
+        let inserted = try await ingestor.ingestAll()
+
+        let recovered = try #require(try await store.fetchByWavPath(wav.path))
+        #expect(inserted == 1)
+        #expect(recovered.wavPath == wav.path)
+        #expect(recovered.txtPath == wav.deletingPathExtension().appendingPathExtension("txt").path)
+        #expect(recovered.jsonPath == json.path)
+        #expect(recovered.transcriptText == "completed transcript")
+    }
 }
