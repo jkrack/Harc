@@ -13,6 +13,7 @@ public struct LibraryWindowRootView: View {
     @State private var rowHeight: CGFloat = HarcDesign.Layout.rowHeightCompact
     @State private var showStackedRail: Bool = true
     @State private var exportErrorMessage: String?
+    @State private var deleteErrorMessage: String?
 
     private var selectedRecording: Recording? {
         guard let path = selectedWavPath else { return nil }
@@ -71,6 +72,11 @@ public struct LibraryWindowRootView: View {
             Button("Cancel", role: .cancel) { renameTarget = nil }
         } message: { _ in
             Text("Leave empty to clear the custom title.")
+        }
+        .alert("Could not delete recording", isPresented: .constant(deleteErrorMessage != nil)) {
+            Button("OK") { deleteErrorMessage = nil }
+        } message: {
+            Text(deleteErrorMessage ?? "")
         }
     }
 
@@ -419,7 +425,13 @@ public struct LibraryWindowRootView: View {
             }
             Divider()
             Button(role: .destructive) {
-                Task { try? await vm.delete(id: rec.id ?? -1) }
+                Task {
+                    do {
+                        try await vm.delete(recording: rec)
+                    } catch {
+                        deleteErrorMessage = error.localizedDescription
+                    }
+                }
             } label: {
                 Text("Delete")
             }

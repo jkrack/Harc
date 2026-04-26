@@ -57,6 +57,10 @@ public final class RecordingsViewModel: ObservableObject {
         try await store.softDelete(id: id)
     }
 
+    public func delete(recording: Recording) async throws {
+        try await RecordingDeletionService(store: store).delete(recording: recording)
+    }
+
     public func rename(id: Int64, title: String?) async throws {
         try await store.rename(id: id, title: title)
     }

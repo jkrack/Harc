@@ -156,4 +156,8 @@ public final class LibraryViewModel: ObservableObject {
     public func delete(id: Int64) async throws {
         try await store.softDelete(id: id)
     }
+
+    public func delete(recording: Recording) async throws {
+        try await RecordingDeletionService(store: store).delete(recording: recording)
+    }
 }
