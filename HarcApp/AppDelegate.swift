@@ -782,18 +782,16 @@ private func openDetail(for recording: Recording) {
     }
 
     private func deleteRecording(recording: Recording) {
-        guard let id = recording.id, let vm = recordingsVM else { return }
-        Task {
-            try? await vm.delete(id: id)
+        guard let vm = recordingsVM else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await vm.delete(recording: recording)
+                self?.detailWindows[recording.wavPath]?.close()
+                self?.detailWindows.removeValue(forKey: recording.wavPath)
+            } catch {
+                self?.presentDeleteFailure(recording: recording, error: error)
+            }
         }
-        // Also trash the files on disk.
-        let fm = FileManager.default
-        let paths = [recording.wavPath, recording.txtPath, recording.jsonPath].compactMap { $0 }
-        for path in paths {
-            try? fm.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
-        }
-        detailWindows[recording.wavPath]?.close()
-        detailWindows.removeValue(forKey: recording.wavPath)
     }
 
     private func presentError(_ error: Error) {
@@ -801,6 +799,17 @@ private func openDetail(for recording: Recording) {
         alert.messageText = "Recording error"
         alert.informativeText = error.localizedDescription
         alert.runModal()
+    }
+
+    private func presentDeleteFailure(recording: Recording, error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could not delete recording"
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Reveal File")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: recording.wavPath)])
+        }
     }
 
     private func persistStoppedRecording(_ recording: Recording) async -> Int64? {
