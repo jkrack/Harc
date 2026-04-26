@@ -914,6 +914,19 @@ private func openDetail(for recording: Recording) {
             let store = try await RecordingStore.onDisk()
             self.store = store
 
+            // Recover recordings that were interrupted before RecordingSession
+            // could finalize and move them out of the cache directory.
+            let recovery = RecordingCacheRecovery(
+                cacheDirectory: RecordingDestination.cacheDirectory(),
+                destinationDirectory: prefs.destinationURL,
+                store: store
+            )
+            if let recovered = try? await recovery.recoverAll(), recovered.recovered > 0 {
+                FileHandle.standardError.write(Data(
+                    "harc: recovered \(recovered.recovered) interrupted recording(s)\n".utf8
+                ))
+            }
+
             // Ingest existing filesystem recordings.
             let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
             _ = try? await ingestor.ingestAll()
