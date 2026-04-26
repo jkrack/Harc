@@ -16,9 +16,14 @@ public struct RecordingDestination: Sendable {
     /// The in-progress cache path for a recording, e.g. `~/Library/Caches/Harc/recordings/<uuid>.wav`.
     /// Fresh UUID every call — callers keep the URL for the duration of one recording.
     public static func cachePath() -> URL {
+        cacheDirectory().appendingPathComponent(UUID().uuidString + ".wav")
+    }
+
+    /// Directory that holds in-progress recordings before they are finalized
+    /// into the user's public destination folder.
+    public static func cacheDirectory() -> URL {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let dir = caches.appendingPathComponent("Harc/recordings", isDirectory: true)
-        return dir.appendingPathComponent(UUID().uuidString + ".wav")
+        return caches.appendingPathComponent("Harc/recordings", isDirectory: true)
     }
 
     /// The final public path for a recording started at `date`.
