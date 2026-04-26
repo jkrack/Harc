@@ -29,6 +29,8 @@ xcodebuild \
   DEVELOPMENT_TEAM= \
   CODE_SIGNING_REQUIRED=YES \
   CODE_SIGNING_ALLOWED=YES \
+  ARCHS=arm64 \
+  ONLY_ACTIVE_ARCH=NO \
   build
 
 APP_SRC="$DERIVED/Build/Products/$CONFIG/$APP_NAME"
@@ -36,6 +38,18 @@ APP_DST="$DIST/$APP_NAME"
 
 if [[ ! -d "$APP_SRC" ]]; then
   echo "error: build succeeded but $APP_SRC is missing" >&2
+  exit 1
+fi
+
+APP_ARCHS="$(/usr/bin/lipo -archs "$APP_SRC/Contents/MacOS/Harc")"
+if [[ "$APP_ARCHS" != "arm64" ]]; then
+  echo "error: expected arm64-only Harc binary, got: $APP_ARCHS" >&2
+  exit 1
+fi
+
+DAEMON_ARCHS="$(/usr/bin/lipo -archs "$APP_SRC/Contents/MacOS/harc-stt")"
+if [[ "$DAEMON_ARCHS" != "arm64" ]]; then
+  echo "error: expected arm64-only harc-stt binary, got: $DAEMON_ARCHS" >&2
   exit 1
 fi
 
