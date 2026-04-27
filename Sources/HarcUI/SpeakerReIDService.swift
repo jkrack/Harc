@@ -37,10 +37,9 @@ public actor SpeakerReIDService {
     public let nameResolver: SpeakerNameResolver
     public let embeddingDim: Int
 
-    /// Cosine similarity cutoff below which matches are discarded. 0.62 is
-    /// a defensible default for ECAPA; the stub embedder may tune this
-    /// differently (but the stub's suggestions shouldn't be acted on
-    /// anyway — see `HarcVoiceprint/StubSpeakerEmbedder.swift`).
+    /// Cosine similarity cutoff below which matches are discarded. 0.65 is
+    /// tuned for WeSpeaker; older ECAPA embeddings used 0.62 but are now
+    /// filtered out by embedderKind before cosine comparison.
     public let threshold: Float
     /// Ignore embeddings whose source audio was shorter than this. Short
     /// segments produce noisy fingerprints.
@@ -49,8 +48,8 @@ public actor SpeakerReIDService {
     public init(
         store: RecordingStore,
         nameResolver: SpeakerNameResolver,
-        embeddingDim: Int = 192,
-        threshold: Float = 0.62,
+        embeddingDim: Int = 256,
+        threshold: Float = 0.65,
         minTotalMs: Int = 5_000
     ) {
         self.store = store
@@ -70,7 +69,10 @@ public actor SpeakerReIDService {
     ) async throws -> [SpeakerSuggestion] {
         guard query.count == embeddingDim else { return [] }
 
-        let rows = try await store.allSpeakerEmbeddings(excludingRecording: excludingRecording)
+        let rows = try await store.allSpeakerEmbeddings(
+            excludingRecording: excludingRecording,
+            embedderKind: EmbedderKind.wespeakerV2
+        )
         guard !rows.isEmpty else { return [] }
 
         var matches: [SpeakerMatch] = []

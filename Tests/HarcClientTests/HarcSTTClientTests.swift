@@ -105,4 +105,39 @@ struct HarcSTTClientTests {
         data.append(0x0A)
         _ = data.withUnsafeBytes { write(fd, $0.baseAddress, data.count) }
     }
+
+    @Test("diarize sends DiarizeRequest and returns DiarizeResult")
+    func diarizeRoundTrip() async throws {
+        let (serverFd, clientFd) = try makePair()
+        defer { close(serverFd) }
+
+        let expectedResult = DiarizeResult(
+            segments: [SpeakerSegment(speaker: 0, startMs: 0, endMs: 1500)],
+            speakers: [SpeakerEmbeddingRow(
+                speakerIndex: 0,
+                vector: [Float](repeating: 0.0625, count: 256),
+                totalMs: 1500,
+                segmentCount: 1
+            )],
+            processingMs: 42
+        )
+
+        let fakeTask = Task.detached { [serverFd] in
+            let req: IPCRequest = try await HarcSTTClientTests.readOnly(fd: serverFd)
+            if case .diarize(let dreq) = req {
+                #expect(dreq.audioPath == "/tmp/dx.wav")
+            } else {
+                Issue.record("expected .diarize, got \(req)")
+            }
+            try HarcSTTClientTests.writeOnly(IPCResponse.diarization(expectedResult), to: serverFd)
+        }
+
+        let client = HarcSTTClient(connectedFd: clientFd)
+        let result = try await client.diarize(audioPath: "/tmp/dx.wav")
+        #expect(result.segments.count == 1)
+        #expect(result.speakers.count == 1)
+        #expect(result.speakers[0].vector.count == 256)
+        #expect(result.processingMs == 42)
+        try await fakeTask.value
+    }
 }

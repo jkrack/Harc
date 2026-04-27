@@ -13,12 +13,14 @@ final class TranscriptionDetailWindowController: NSWindowController {
         prefs: HarcPreferences,
         queueStore: SummarizationQueueStore,
         modelStore: ModelManagerStore,
+        postProcessingState: RecordingPostProcessingState,
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onRename: @escaping (String?) -> Void,
         onEditTranscript: @escaping () -> Void,
         onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
         onClearSummary: @escaping (Int64) -> Void,
+        onIdentifySpeakers: @escaping (Int64) -> Void = { _ in },
         suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
     ) {
         let root = TranscriptionDetailView(
@@ -30,11 +32,17 @@ final class TranscriptionDetailWindowController: NSWindowController {
             onEditTranscript: onEditTranscript,
             onSpeakerNamesChanged: onSpeakerNamesChanged,
             onClearSummary: onClearSummary,
-            suggestionsProvider: suggestionsProvider
+            suggestionsProvider: suggestionsProvider,
+            onIdentifySpeakers: {
+                if let id = recording.id {
+                    onIdentifySpeakers(id)
+                }
+            }
         )
         .environmentObject(prefs)
         .environmentObject(queueStore)
         .environmentObject(modelStore)
+        .environmentObject(postProcessingState)
 
         let host = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: host)

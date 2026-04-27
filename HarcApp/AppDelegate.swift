@@ -32,8 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var summarizationQueue: SummarizationQueue?
     private var summarizationQueueStore: SummarizationQueueStore?
     private var memoryObservation: SummarizerService.MemoryPressureObservation?
-    /// Stub today; swap for a bundled ECAPA-TDNN embedder when available.
-    private let speakerEmbedder: SpeakerEmbedder = StubSpeakerEmbedder()
+    private let postProcessingState = RecordingPostProcessingState()
+    /// Retained so runIdentifySpeakers can call diarize() outside of a recording session.
+    private var sttClient: HarcSTTClient?
     private var speakerReIDService: SpeakerReIDService?
     private var settingsWindow: SettingsWindowController?
     private var store: RecordingStore?
@@ -103,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         registerTerminateWatchdog()
         observeMeetingDetectionPref()
         observeMeetingStateForPulse()
+        observePostProcessingState()
         applyAutoStopConfigFromPrefs()
         observeAutoStopPrefs()
         observeAutoStopPhase()
@@ -299,9 +301,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         do {
             _ = try await launcher.ensureRunning()
             let client = HarcSTTClient()
+            self.sttClient = client
             let transcriber = ChunkedTranscriber(
                 client: client,
-                diarize: prefs.diarize,
+                diarizer: prefs.diarize ? client : nil,
                 vadEnabled: prefs.vadEnabled,
                 chunkDurationSeconds: prefs.chunkDurationSeconds,
                 vocabulary: prefs.vocabulary
@@ -374,23 +377,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 }
             }
 
-            // Extract per-speaker voice fingerprints if the feature is on.
-            // Detached — the store write doesn't block the UI path. Reads the
-            // final mixed WAV; diarizer segments are attached to the
-            // transcript's JSON sidecar and re-derived via ExportInputBuilder
-            // on demand, so we go through the store once the recording row
-            // is persisted.
-            if prefs.speakerReIDEnabled, let store = self.store {
-                let wavPath = result.wavURL.path
-                let jsonPath = result.jsonURL?.path
-                let embedder = self.speakerEmbedder
-                Task.detached { [store] in
-                    await Self.extractAndStoreEmbeddings(
-                        wavPath: wavPath,
-                        jsonPath: jsonPath,
-                        store: store,
-                        embedder: embedder
-                    )
+            // Persist speaker embeddings produced by the post-stop diarize pass
+            // (already completed inside RecordingSession.stop / ChunkedTranscriber.finalize).
+            // We defer begin() until after persistStoppedRecording so we have the
+            // recording row ID. The status indicator appears a beat after stop — fine
+            // for the post-stop UX window.
+            if let id = savedID, let store = self.store {
+                postProcessingState.begin(recordingID: id)
+                let embeddings = result.speakerEmbeddings
+                let diarizeErr = result.diarizationError
+                Task.detached { [store, postProcessingState = self.postProcessingState] in
+                    if !embeddings.isEmpty {
+                        let dbRows: [RecordingStore.SpeakerEmbeddingRow] = embeddings.map {
+                            RecordingStore.SpeakerEmbeddingRow(
+                                recordingID: id,
+                                speakerIndex: $0.speakerIndex,
+                                embedding: EmbeddingBlob.encode($0.vector),
+                                segmentCount: $0.segmentCount,
+                                totalMs: $0.totalMs,
+                                embedderKind: EmbedderKind.wespeakerV2
+                            )
+                        }
+                        do {
+                            try await store.upsertSpeakerEmbeddings(recordingID: id, rows: dbRows)
+                            await postProcessingState.succeed(recordingID: id, speakerCount: embeddings.count)
+                        } catch {
+                            await postProcessingState.fail(recordingID: id, message: error.localizedDescription)
+                        }
+                    } else if let err = diarizeErr {
+                        await postProcessingState.fail(recordingID: id, message: err)
+                    } else {
+                        // Diarize returned no speakers (e.g. diarize was disabled or
+                        // the recording had no speech). Collapse immediately.
+                        await postProcessingState.succeed(recordingID: id, speakerCount: 0)
+                    }
                 }
             }
             runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
@@ -520,8 +540,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
               let recordingID = recording.id else {
             return nil
         }
-        let embeddingDim = speakerEmbedder.embeddingDim
         return { speakerIndex in
+            // Read embeddingDim inside the async closure so the actor hop is valid.
+            let embeddingDim = await service.embeddingDim
             guard let row = try? await store.speakerEmbedding(
                 recordingID: recordingID,
                 speakerIndex: speakerIndex
@@ -534,61 +555,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                 excludingRecording: recordingID
             )) ?? []
         }
-    }
-
-    /// Extract per-speaker voice fingerprints from the finished WAV and
-    /// persist them into the store. Called off the main actor so it doesn't
-    /// block the post-stop UI path.
-    nonisolated private static func extractAndStoreEmbeddings(
-        wavPath: String,
-        jsonPath: String?,
-        store: RecordingStore,
-        embedder: SpeakerEmbedder
-    ) async {
-        // Need the recording id + the diarized segments. Both come from the
-        // freshly-persisted row + its JSON sidecar.
-        guard let rec = try? await store.fetchByWavPath(wavPath),
-              let id = rec.id,
-              let jsonPath = jsonPath,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else {
-            return
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        guard let transcript = try? decoder.decode(SessionTranscript.self, from: data),
-              !transcript.speakers.isEmpty else {
-            return
-        }
-        let segments = transcript.speakers.map {
-            SpeakerExtractor.Segment(
-                speaker: $0.speaker,
-                startMs: $0.startMs,
-                endMs: $0.endMs
-            )
-        }
-        let embeddings: [SpeakerEmbedding]
-        do {
-            embeddings = try await SpeakerExtractor.extract(
-                from: URL(fileURLWithPath: wavPath),
-                segments: segments,
-                embedder: embedder
-            )
-        } catch {
-            FileHandle.standardError.write(Data(
-                "harc: speaker-embedding extraction failed: \(error.localizedDescription)\n".utf8
-            ))
-            return
-        }
-        let rows: [RecordingStore.SpeakerEmbeddingRow] = embeddings.map { e in
-            RecordingStore.SpeakerEmbeddingRow(
-                recordingID: id,
-                speakerIndex: e.speakerIndex,
-                embedding: EmbeddingBlob.encode(e.vector),
-                segmentCount: e.segmentCount,
-                totalMs: e.totalMs
-            )
-        }
-        try? await store.upsertSpeakerEmbeddings(recordingID: id, rows: rows)
     }
 
     /// Flash a green check in the menu bar for ~3 s, then fall back to the
@@ -655,6 +621,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         meetingState.$pendingBundleIDs
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.applyPulse() }
+            .store(in: &cancellables)
+    }
+
+    /// Overlays a spinner glyph while diarization is in-flight, and a brief
+    /// tooltip when it fails. Only fires when not recording — the recording
+    /// indicator takes visual priority while a session is active.
+    private func observePostProcessingState() {
+        postProcessingState.$current
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] entry in
+                guard let self, !self.state.isRecording else { return }
+                switch entry?.phase {
+                case .identifying:
+                    self.statusItem?.button?.image = NSImage(
+                        systemSymbolName: "ellipsis.circle",
+                        accessibilityDescription: "Identifying speakers…"
+                    )
+                    self.statusItem?.button?.toolTip = "Identifying speakers…"
+                case .failed:
+                    self.updateMenuBarIcon()
+                    self.statusItem?.button?.toolTip = "Couldn't identify speakers — open recording to retry"
+                case .done, .idle, nil:
+                    self.updateMenuBarIcon()
+                    self.statusItem?.button?.toolTip = nil
+                }
+            }
             .store(in: &cancellables)
     }
 
@@ -726,6 +718,7 @@ private func openDetail(for recording: Recording) {
             prefs: prefs,
             queueStore: queueStore,
             modelStore: modelStore,
+            postProcessingState: postProcessingState,
             onReveal: {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: recording.wavPath)])
             },
@@ -743,6 +736,9 @@ private func openDetail(for recording: Recording) {
             },
             onClearSummary: { [weak self] id in
                 Task { try? await self?.store?.clearSummary(id: id) }
+            },
+            onIdentifySpeakers: { [weak self] recordingID in
+                self?.runIdentifySpeakers(recordingID: recordingID)
             },
             suggestionsProvider: reIDSuggestionsProvider(for: recording)
         )
@@ -775,6 +771,45 @@ private func openDetail(for recording: Recording) {
             controller.window?.makeKeyAndOrderFront(nil)
             self.trackManagedWindow(controller.window)
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// Called by the "Identify speakers" / "Retry" buttons in TranscriptionDetailView
+    /// and the popover post-stop tray. Runs a fresh full-WAV diarize pass against
+    /// the recording's on-disk WAV, persists embeddings, and updates postProcessingState.
+    func runIdentifySpeakers(recordingID: Int64) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let store = self.store else {
+                postProcessingState.fail(recordingID: recordingID, message: "Recording database is not available")
+                return
+            }
+            guard let recording = try? await store.fetch(id: recordingID) else {
+                postProcessingState.fail(recordingID: recordingID, message: "Recording not found")
+                return
+            }
+            // Ensure the daemon is running before making an IPC call.
+            _ = try? await launcher.ensureRunning()
+            let client = self.sttClient ?? HarcSTTClient()
+            self.sttClient = client
+            postProcessingState.begin(recordingID: recordingID)
+            do {
+                let result = try await client.diarize(audioPath: recording.wavPath)
+                let dbRows: [RecordingStore.SpeakerEmbeddingRow] = result.speakers.map {
+                    RecordingStore.SpeakerEmbeddingRow(
+                        recordingID: recordingID,
+                        speakerIndex: $0.speakerIndex,
+                        embedding: EmbeddingBlob.encode($0.vector),
+                        segmentCount: $0.segmentCount,
+                        totalMs: $0.totalMs,
+                        embedderKind: EmbedderKind.wespeakerV2
+                    )
+                }
+                try await store.upsertSpeakerEmbeddings(recordingID: recordingID, rows: dbRows)
+                postProcessingState.succeed(recordingID: recordingID, speakerCount: result.speakers.count)
+            } catch {
+                postProcessingState.fail(recordingID: recordingID, message: error.localizedDescription)
+            }
         }
     }
 
@@ -1018,11 +1053,11 @@ private func openDetail(for recording: Recording) {
 
             // Cross-recording speaker re-ID service. Cheap to construct; the
             // expensive linear scan runs only when the editor asks.
+            // embeddingDim defaults to 256 (WeSpeaker v2 centroid dimension).
             let nameResolver = StoreSpeakerNameResolver(store: store)
             self.speakerReIDService = SpeakerReIDService(
                 store: store,
-                nameResolver: nameResolver,
-                embeddingDim: speakerEmbedder.embeddingDim
+                nameResolver: nameResolver
             )
 
             // Stage 3 summarization graph. Owned by AppDelegate for app
@@ -1323,6 +1358,9 @@ private func openDetail(for recording: Recording) {
                 if !self.state.isRecording {
                     Task { await self.startRecording() }
                 }
+            },
+            onRetryDiarize: { [weak self] recordingID in
+                self?.runIdentifySpeakers(recordingID: recordingID)
             }
         )
         .environmentObject(state)
@@ -1331,6 +1369,7 @@ private func openDetail(for recording: Recording) {
         .environmentObject(autoStop)
         .environmentObject(modelStore)
         .environmentObject(queueStore)
+        .environmentObject(postProcessingState)
 
         pop.contentViewController = NSHostingController(rootView: root)
     }
