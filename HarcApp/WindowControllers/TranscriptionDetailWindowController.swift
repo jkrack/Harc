@@ -13,6 +13,7 @@ final class TranscriptionDetailWindowController: NSWindowController {
         prefs: HarcPreferences,
         queueStore: SummarizationQueueStore,
         modelStore: ModelManagerStore,
+        postProcessingState: RecordingPostProcessingState,
         onReveal: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onRename: @escaping (String?) -> Void,
@@ -30,11 +31,16 @@ final class TranscriptionDetailWindowController: NSWindowController {
             onEditTranscript: onEditTranscript,
             onSpeakerNamesChanged: onSpeakerNamesChanged,
             onClearSummary: onClearSummary,
-            suggestionsProvider: suggestionsProvider
+            suggestionsProvider: suggestionsProvider,
+            onIdentifySpeakers: {
+                // TODO Task 14: trigger diarize for recording
+                print("[TranscriptionDetailWindowController] onIdentifySpeakers requested for recording id=\(recording.id?.description ?? "nil")")
+            }
         )
         .environmentObject(prefs)
         .environmentObject(queueStore)
         .environmentObject(modelStore)
+        .environmentObject(postProcessingState)
 
         let host = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: host)
