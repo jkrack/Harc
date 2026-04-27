@@ -517,7 +517,7 @@ public struct TranscriptionDetailView: View {
     private enum SpeakerSection {
         case identifying
         case ready                        // editor renders normally
-        case empty(retryAvailable: Bool)  // recording has no embeddings; user can run "Identify speakers"
+        case empty                        // recording has no embeddings; user can run "Identify speakers"
         case failed(message: String)
     }
 
@@ -531,8 +531,9 @@ public struct TranscriptionDetailView: View {
         }
         // No active in-flight job. Decide based on whether the recording has
         // any speaker_embeddings rows. If yes, show the editor; if no, show
-        // the "Identify speakers" affordance.
-        return hasSpeakerEmbeddings ? .ready : .empty(retryAvailable: true)
+        // the "Identify speakers" affordance. Unsaved recordings (nil id) will
+        // end up here because loadHasEmbeddings returns early when id is nil.
+        return hasSpeakerEmbeddings ? .ready : .empty
     }
 
     private func loadHasEmbeddings() async {
