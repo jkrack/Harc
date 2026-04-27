@@ -4,21 +4,23 @@ import Foundation
 import HarcCore
 @testable import HarcClient
 
+/// Fake client that returns canned results based on call count.
+/// Defined at file scope so both test suites can use it.
+actor FakeClient: TranscribingClient {
+    var calls: [(path: String, diarize: Bool, vad: Bool)] = []
+    var results: [TranscribeResult]
+    init(results: [TranscribeResult]) { self.results = results }
+    func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
+        calls.append((audioPath, diarize, vad))
+        if results.isEmpty {
+            return TranscribeResult(text: "", words: [], speakers: [], processingMs: 0)
+        }
+        return results.removeFirst()
+    }
+}
+
 @Suite("ChunkedTranscriber")
 struct ChunkedTranscriberTests {
-    /// Fake client that returns canned results based on call count.
-    actor FakeClient: TranscribingClient {
-        var calls: [(path: String, diarize: Bool, vad: Bool)] = []
-        var results: [TranscribeResult]
-        init(results: [TranscribeResult]) { self.results = results }
-        func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
-            calls.append((audioPath, diarize, vad))
-            if results.isEmpty {
-                return TranscribeResult(text: "", words: [], speakers: [], processingMs: 0)
-            }
-            return results.removeFirst()
-        }
-    }
 
     private func tempWAVPath() -> URL {
         URL(fileURLWithPath: "/tmp/harc-ct-\(UUID().uuidString.prefix(8)).wav")
@@ -74,7 +76,6 @@ struct ChunkedTranscriberTests {
 
         let transcriber = ChunkedTranscriber(
             client: fake,
-            diarize: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05
         )
@@ -84,7 +85,8 @@ struct ChunkedTranscriberTests {
 
         let start = Date().addingTimeInterval(-3)
         let end = Date()
-        let transcript = try await transcriber.finalize(startedAt: start, endedAt: end)
+        let result = try await transcriber.finalize(startedAt: start, endedAt: end)
+        let transcript = result.transcript
 
         #expect(transcript.chunks.count == 3, "expected 2 full + 1 tail chunk, got \(transcript.chunks.count)")
         #expect(transcript.joinedText == "hello world tail")
@@ -109,7 +111,6 @@ struct ChunkedTranscriberTests {
 
         let transcriber = ChunkedTranscriber(
             client: fake,
-            diarize: false,
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05
@@ -145,7 +146,6 @@ struct ChunkedTranscriberTests {
         let vocab = Vocabulary(entries: [VocabularyEntry(from: "Arakeet", to: "Parakeet")])
         let transcriber = ChunkedTranscriber(
             client: fake,
-            diarize: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
             vocabulary: vocab
@@ -153,11 +153,171 @@ struct ChunkedTranscriberTests {
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
 
-        let final = try await transcriber.finalize(startedAt: Date(), endedAt: Date())
+        let finalized = try await transcriber.finalize(startedAt: Date(), endedAt: Date())
+        let final = finalized.transcript
         // Both chunks rewritten with case preservation; joinedText reflects per-chunk passes.
         let chunkTexts = final.chunks.map(\.text)
         #expect(chunkTexts.contains("Parakeet is up"))
         #expect(chunkTexts.contains("parakeet again"))
         #expect(!final.joinedText.contains("Arakeet"))
+    }
+}
+
+actor FakeDiarizingClient: DiarizingClient {
+    var calls: [String] = []
+    var result: DiarizeResult = DiarizeResult(segments: [], speakers: [], processingMs: 0)
+    var shouldThrow: Error?
+
+    init(result: DiarizeResult = DiarizeResult(segments: [], speakers: [], processingMs: 0)) {
+        self.result = result
+    }
+
+    func diarize(audioPath: String) async throws -> DiarizeResult {
+        calls.append(audioPath)
+        if let err = shouldThrow { throw err }
+        return result
+    }
+
+    func setShouldThrow(_ err: Error?) { self.shouldThrow = err }
+}
+
+@Suite("ChunkedTranscriber — diarize")
+struct ChunkedTranscriberDiarizeTests {
+    private func tempWAVPath() -> URL {
+        URL(fileURLWithPath: "/tmp/harc-ct-\(UUID().uuidString.prefix(8)).wav")
+    }
+
+    private func writeSineWAV(to url: URL, seconds: Double) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+        let frames = AVAudioFrameCount(seconds * 16000)
+        let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames)!
+        buf.frameLength = frames
+        let ch = buf.floatChannelData![0]
+        for i in 0..<Int(frames) {
+            ch[i] = sinf(Float(2.0 * .pi * 440.0 * Double(i) / 16000.0))
+        }
+        try file.write(from: buf)
+    }
+
+    @Test("finalize calls diarize once on the full WAV and uses its segments")
+    func finalizeRunsFullWAVDiarize() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 2.0)
+
+        let fake = FakeClient(results: [
+            TranscribeResult(text: "hi", words: [Word(text: "hi", startMs: 0, endMs: 200)],
+                             speakers: [], processingMs: 1),
+            TranscribeResult(text: "bye", words: [Word(text: "bye", startMs: 0, endMs: 200)],
+                             speakers: [], processingMs: 1),
+        ])
+        let fakeDi = FakeDiarizingClient(result: DiarizeResult(
+            segments: [
+                SpeakerSegment(speaker: 0, startMs: 0, endMs: 1000),
+                SpeakerSegment(speaker: 1, startMs: 1000, endMs: 2000),
+            ],
+            speakers: [
+                SpeakerEmbeddingRow(
+                    speakerIndex: 0,
+                    vector: [Float](repeating: 0.0625, count: 256),
+                    totalMs: 1000,
+                    segmentCount: 1
+                ),
+                SpeakerEmbeddingRow(
+                    speakerIndex: 1,
+                    vector: [Float](repeating: 0.0625, count: 256),
+                    totalMs: 1000,
+                    segmentCount: 1
+                ),
+            ],
+            processingMs: 50
+        ))
+
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            diarizer: fakeDi,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.05
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let result = try await transcriber.finalize(
+            startedAt: Date().addingTimeInterval(-3),
+            endedAt: Date()
+        )
+
+        #expect(await fakeDi.calls == [url.path])
+        #expect(result.transcript.speakers.count == 2)
+        #expect(result.speakerEmbeddings.count == 2)
+        #expect(result.diarizationError == nil)
+    }
+
+    @Test("finalize tolerates diarize errors — transcript still returned")
+    func finalizeToleratesDiarizeError() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 1.5)
+
+        let fake = FakeClient(results: [
+            TranscribeResult(text: "hi", words: [Word(text: "hi", startMs: 0, endMs: 200)],
+                             speakers: [], processingMs: 1),
+        ])
+        let fakeDi = FakeDiarizingClient()
+        await fakeDi.setShouldThrow(NSError(
+            domain: "test", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "diarize blew up"]
+        ))
+
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            diarizer: fakeDi,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.05
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let result = try await transcriber.finalize(
+            startedAt: Date().addingTimeInterval(-3),
+            endedAt: Date()
+        )
+
+        #expect(result.transcript.joinedText.contains("hi"))
+        #expect(result.transcript.speakers.isEmpty)
+        #expect(result.speakerEmbeddings.isEmpty)
+        #expect(result.diarizationError == "diarize blew up")
+    }
+
+    @Test("per-chunk transcribe always sends diarize=false")
+    func perChunkSendsDiarizeFalse() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 1.5)
+
+        let fake = FakeClient(results: [
+            TranscribeResult(text: "hi", words: [], speakers: [], processingMs: 1),
+        ])
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.05
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 400_000_000)
+        _ = try await transcriber.finalize(
+            startedAt: Date().addingTimeInterval(-3), endedAt: Date()
+        )
+
+        #expect(await fake.calls.allSatisfy { $0.diarize == false })
     }
 }
