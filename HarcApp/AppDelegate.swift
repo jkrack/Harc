@@ -1053,7 +1053,7 @@ private func openDetail(for recording: Recording) {
 
             // Cross-recording speaker re-ID service. Cheap to construct; the
             // expensive linear scan runs only when the editor asks.
-            // embeddingDim defaults to 192 (WeSpeaker v2 centroid dimension).
+            // embeddingDim defaults to 256 (WeSpeaker v2 centroid dimension).
             let nameResolver = StoreSpeakerNameResolver(store: store)
             self.speakerReIDService = SpeakerReIDService(
                 store: store,

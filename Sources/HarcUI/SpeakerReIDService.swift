@@ -48,7 +48,7 @@ public actor SpeakerReIDService {
     public init(
         store: RecordingStore,
         nameResolver: SpeakerNameResolver,
-        embeddingDim: Int = 192,
+        embeddingDim: Int = 256,
         threshold: Float = 0.65,
         minTotalMs: Int = 5_000
     ) {
