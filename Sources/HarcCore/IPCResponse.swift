@@ -2,17 +2,20 @@ import Foundation
 
 public enum IPCResponse: Codable, Equatable, Sendable {
     case result(TranscribeResult)
+    case diarization(DiarizeResult)
     case status(DaemonStatus)
     case error(IPCError)
 
     private enum CodingKeys: String, CodingKey { case type, payload }
-    private enum Kind: String, Codable { case result, status, error }
+    private enum Kind: String, Codable { case result, diarization, status, error }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(Kind.self, forKey: .type) {
         case .result:
             self = .result(try c.decode(TranscribeResult.self, forKey: .payload))
+        case .diarization:
+            self = .diarization(try c.decode(DiarizeResult.self, forKey: .payload))
         case .status:
             self = .status(try c.decode(DaemonStatus.self, forKey: .payload))
         case .error:
@@ -26,6 +29,9 @@ public enum IPCResponse: Codable, Equatable, Sendable {
         case .result(let r):
             try c.encode(Kind.result, forKey: .type)
             try c.encode(r, forKey: .payload)
+        case .diarization(let d):
+            try c.encode(Kind.diarization, forKey: .type)
+            try c.encode(d, forKey: .payload)
         case .status(let s):
             try c.encode(Kind.status, forKey: .type)
             try c.encode(s, forKey: .payload)
@@ -47,6 +53,41 @@ public struct TranscribeResult: Codable, Equatable, Sendable {
         self.words = words
         self.speakers = speakers
         self.processingMs = processingMs
+    }
+}
+
+public struct DiarizeResult: Codable, Equatable, Sendable {
+    public var segments: [SpeakerSegment]
+    public var speakers: [SpeakerEmbeddingRow]
+    public var processingMs: Int
+
+    public init(
+        segments: [SpeakerSegment],
+        speakers: [SpeakerEmbeddingRow],
+        processingMs: Int
+    ) {
+        self.segments = segments
+        self.speakers = speakers
+        self.processingMs = processingMs
+    }
+}
+
+public struct SpeakerEmbeddingRow: Codable, Equatable, Sendable {
+    public var speakerIndex: Int
+    public var vector: [Float]
+    public var totalMs: Int
+    public var segmentCount: Int
+
+    public init(
+        speakerIndex: Int,
+        vector: [Float],
+        totalMs: Int,
+        segmentCount: Int
+    ) {
+        self.speakerIndex = speakerIndex
+        self.vector = vector
+        self.totalMs = totalMs
+        self.segmentCount = segmentCount
     }
 }
 
