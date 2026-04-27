@@ -2,17 +2,32 @@ import Foundation
 @preconcurrency import AVFoundation
 @preconcurrency import AVFAudio
 import HarcClient
+import HarcCore
 
 /// Result of a completed recording.
 public struct RecordingResult: Sendable {
     public let wavURL: URL
     public let txtURL: URL?
     public let jsonURL: URL?
+    /// Per-speaker WeSpeaker centroid rows from the post-stop diarize pass.
+    /// Empty when diarization was disabled, failed, or returned nothing.
+    public let speakerEmbeddings: [SpeakerEmbeddingRow]
+    /// Set when the diarize pass failed; the transcript text is still complete.
+    /// UI layers surface a retry affordance from this.
+    public let diarizationError: String?
 
-    public init(wavURL: URL, txtURL: URL?, jsonURL: URL?) {
+    public init(
+        wavURL: URL,
+        txtURL: URL?,
+        jsonURL: URL?,
+        speakerEmbeddings: [SpeakerEmbeddingRow] = [],
+        diarizationError: String? = nil
+    ) {
         self.wavURL = wavURL
         self.txtURL = txtURL
         self.jsonURL = jsonURL
+        self.speakerEmbeddings = speakerEmbeddings
+        self.diarizationError = diarizationError
     }
 }
 
@@ -126,6 +141,8 @@ public actor RecordingSession {
 
         // Finalize transcriber while cache file still exists.
         var finalTranscript: SessionTranscript? = nil
+        var speakerEmbeddings: [SpeakerEmbeddingRow] = []
+        var diarizationError: String? = nil
         if let transcriber {
             do {
                 let finalized = try await transcriber.finalize(
@@ -133,6 +150,8 @@ public actor RecordingSession {
                     endedAt: Date()
                 )
                 finalTranscript = finalized.transcript
+                speakerEmbeddings = finalized.speakerEmbeddings
+                diarizationError = finalized.diarizationError
             } catch {
                 FileHandle.standardError.write(Data(
                     "harc-audio: transcription finalize failed: \(error.localizedDescription)\n".utf8
@@ -162,7 +181,13 @@ public actor RecordingSession {
             }
         }
 
-        return RecordingResult(wavURL: wavURL, txtURL: txtURL, jsonURL: jsonURL)
+        return RecordingResult(
+            wavURL: wavURL,
+            txtURL: txtURL,
+            jsonURL: jsonURL,
+            speakerEmbeddings: speakerEmbeddings,
+            diarizationError: diarizationError
+        )
     }
 
     nonisolated fileprivate func processPair(mic: AVAudioPCMBuffer, system: AVAudioPCMBuffer?) {
