@@ -67,7 +67,7 @@ struct SpeakerReIDServiceTests {
         }
 
         // Create a normalized test vector (same across all embeddings for simplicity).
-        var v = [Float](repeating: 0, count: 192)
+        var v = [Float](repeating: 0, count: 256)
         v[0] = 1.0  // normalized
         let blob = EmbeddingBlob.encode(v)
 
@@ -134,7 +134,7 @@ struct SpeakerReIDServiceTests {
             return
         }
 
-        var v = [Float](repeating: 0, count: 192)
+        var v = [Float](repeating: 0, count: 256)
         v[0] = 1.0
         let blob = EmbeddingBlob.encode(v)
 
@@ -186,11 +186,11 @@ struct SpeakerReIDServiceTests {
         }
 
         // Query vector (normalized).
-        var query = [Float](repeating: 0, count: 192)
+        var query = [Float](repeating: 0, count: 256)
         query[0] = 1.0
 
         // Target vector (slightly perturbed, similarity ~0.9).
-        var target = [Float](repeating: 0, count: 192)
+        var target = [Float](repeating: 0, count: 256)
         target[0] = 0.9
         target[1] = Float(sqrt(0.19))  // normalize
 
@@ -233,7 +233,7 @@ struct SpeakerReIDServiceTests {
             return
         }
 
-        var v = [Float](repeating: 0, count: 192)
+        var v = [Float](repeating: 0, count: 256)
         v[0] = 1.0
         let blob = EmbeddingBlob.encode(v)
 
@@ -279,7 +279,7 @@ struct SpeakerReIDServiceTests {
         try await store.updateSpeakerNames(id: recAId, names: [0: "Alice"])
         try await store.updateSpeakerNames(id: recBId, names: [0: "Alice"])
 
-        var v = [Float](repeating: 0, count: 192)
+        var v = [Float](repeating: 0, count: 256)
         v[0] = 1.0
         let blob = EmbeddingBlob.encode(v)
 
