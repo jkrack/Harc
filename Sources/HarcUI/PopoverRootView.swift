@@ -1,11 +1,15 @@
 import SwiftUI
+import AppKit
 import HarcStore
+import HarcExport
 
 public struct PopoverRootView: View {
     @EnvironmentObject private var state: RecordingState
     @EnvironmentObject private var vm: RecordingsViewModel
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var autoStop: AutoStopController
+    // TODO Task 14: env-inject postProcessing from AppDelegate
+    @EnvironmentObject private var postProcessing: RecordingPostProcessingState
 
     let onToggle: () -> Void
     let onOpen: (Recording) -> Void
@@ -49,6 +53,19 @@ public struct PopoverRootView: View {
                         if let rec = vm.recordings.first { onOpen(rec) }
                     },
                     onDismiss: { autoStop.resetPostStop() }
+                )
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+            }
+
+            if let entry = postProcessing.current,
+               !state.isRecording,
+               let rec = vm.recordings.first(where: { $0.id == entry.recordingID }) {
+                RecordingStoppedTray(
+                    recording: rec,
+                    entry: entry,
+                    onOpen: { onOpen(rec) },
+                    onRetryDiarize: {} // TODO Task 14: wire actual diarize trigger from AppDelegate
                 )
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
@@ -283,6 +300,172 @@ public struct PopoverRootView: View {
             }
         }
         return total
+    }
+}
+
+// MARK: - Recording stopped tray
+
+/// Shown in the popover immediately after a recording finishes, driven by
+/// `RecordingPostProcessingState`. Displays a diarization status row above
+/// Copy-for-prompt / Copy-plain-text / Open buttons. Collapses automatically
+/// ~1.5 s after the `.done` phase is reached.
+private struct RecordingStoppedTray: View {
+    let recording: Recording
+    let entry: RecordingPostProcessingState.Entry
+    let onOpen: () -> Void
+    /// Called when the user taps Retry in the `.failed` phase.
+    /// TODO Task 14: AppDelegate passes the real diarize trigger here.
+    let onRetryDiarize: () -> Void
+
+    @EnvironmentObject private var prefs: HarcPreferences
+    @EnvironmentObject private var postProcessing: RecordingPostProcessingState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            diarizationStatusRow
+            actionRow
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
+                .fill(HarcDesign.success.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
+                .strokeBorder(HarcDesign.success.opacity(0.3), lineWidth: 1)
+        )
+        .onChange(of: postProcessing.current) { _, newValue in
+            guard let newEntry = newValue,
+                  newEntry.recordingID == entry.recordingID,
+                  case .done = newEntry.phase else { return }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                postProcessing.clear(recordingID: newEntry.recordingID)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var diarizationStatusRow: some View {
+        switch entry.phase {
+        case .idle:
+            EmptyView()
+        case .identifying:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Identifying speakers…")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+            .padding(.bottom, 6)
+        case .done(let n):
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("\(n) speaker\(n == 1 ? "" : "s") identified")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+            .padding(.bottom, 6)
+        case .failed(let msg):
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Couldn't identify speakers")
+                    .font(.caption)
+                Button("Retry") {
+                    onRetryDiarize()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+            .help(msg)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                let s = ExportService.promptString(
+                    for: recording,
+                    includeSummary: prefs.includeSummaryInPrompt
+                )
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(s, forType: .string)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Copy for Prompt")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .foregroundStyle(isIdentifyingSpeakers ? Color.harcInkTertiary : .white)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isIdentifyingSpeakers ? Color.harcSurface3 : Color.harcAccent)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isIdentifyingSpeakers)
+
+            Button {
+                let input = ExportInputBuilder.build(from: recording)
+                let text = input.segments.map { $0.text }.joined(separator: "\n\n")
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(text, forType: .string)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.plaintext")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Copy plain text")
+                        .font(.system(size: 11.5))
+                }
+                .foregroundStyle(Color.harcInkPrimary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.harcSurface3)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.harcBorderStrong, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onOpen) {
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Open")
+                        .font(.system(size: 11.5))
+                }
+                .foregroundStyle(Color.harcInkPrimary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.harcSurface3)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.harcBorderStrong, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var isIdentifyingSpeakers: Bool {
+        if case .identifying = entry.phase { return true }
+        return false
     }
 }
 
