@@ -11,11 +11,10 @@ extension Transcriber: TranscribeService {}
 
 public protocol DiarizeService: Sendable {
     func diarize(audioPath: String) async throws -> [SpeakerSegment]
+    func diarizeWithEmbeddings(audioPath: String) async throws -> Diarizer.DiarizationOutput
     var isLoaded: Bool { get async }
 }
 
-/// Routes IPCRequests to the appropriate service, producing an IPCResponse.
-/// Stateless except for a handful of daemon-lifetime values (version, startedAt).
 public struct RequestHandler: Sendable {
     private let transcriber: any TranscribeService
     private let diarizer: (any DiarizeService)?
@@ -37,60 +36,66 @@ public struct RequestHandler: Sendable {
     public func handle(_ request: IPCRequest) async -> IPCResponse {
         switch request {
         case .status:
-            let loaded = await transcriber.isLoaded
             return .status(DaemonStatus(
                 version: version,
-                modelLoaded: loaded,
+                modelLoaded: await transcriber.isLoaded,
                 uptimeSeconds: Int(Date().timeIntervalSince(startedAt))
             ))
 
         case .shutdown:
-            let loaded = await transcriber.isLoaded
             return .status(DaemonStatus(
                 version: version,
-                modelLoaded: loaded,
+                modelLoaded: await transcriber.isLoaded,
                 uptimeSeconds: Int(Date().timeIntervalSince(startedAt))
             ))
 
         case .transcribe(let req):
-            return await transcribe(req)
+            do {
+                var result = try await transcriber.transcribe(audioPath: req.audioPath, vad: req.vad)
+                if req.diarize, let diarizer {
+                    do {
+                        let segs = try await diarizer.diarize(audioPath: req.audioPath)
+                        result.speakers = segs
+                    } catch {
+                        // Diarization is best-effort during chunked transcribe;
+                        // log but return text + words intact.
+                        FileHandle.standardError.write(Data(
+                            "harc-stt: diarize failed (transcribe path): \(error.localizedDescription)\n".utf8
+                        ))
+                    }
+                }
+                return .result(result)
+            } catch let err as DaemonError {
+                return .error(IPCError(code: err.ipcCode, message: err.errorDescription ?? "transcribe failed"))
+            } catch {
+                return .error(IPCError(
+                    code: "transcribe_failed",
+                    message: error.localizedDescription
+                ))
+            }
 
-        case .diarize:
-            return .error(IPCError(code: "not_implemented", message: "standalone diarize not yet implemented"))
+        case .diarize(let req):
+            guard let diarizer else {
+                return .error(IPCError(
+                    code: "diarizer_unavailable",
+                    message: "Diarizer model not loaded"
+                ))
+            }
+            let started = Date()
+            do {
+                let output = try await diarizer.diarizeWithEmbeddings(audioPath: req.audioPath)
+                let processingMs = Int(Date().timeIntervalSince(started) * 1000)
+                return .diarization(DiarizeResult(
+                    segments: output.segments,
+                    speakers: output.speakers,
+                    processingMs: processingMs
+                ))
+            } catch {
+                return .error(IPCError(
+                    code: "diarize_failed",
+                    message: error.localizedDescription
+                ))
+            }
         }
-    }
-
-    private func transcribe(_ req: TranscribeRequest) async -> IPCResponse {
-        let textResult: TranscribeResult
-        do {
-            textResult = try await transcriber.transcribe(audioPath: req.audioPath, vad: req.vad)
-        } catch let err as DaemonError {
-            return .error(IPCError(code: err.ipcCode, message: err.errorDescription ?? "transcribe failed"))
-        } catch {
-            return .error(IPCError(code: "transcribe_failed", message: error.localizedDescription))
-        }
-
-        guard req.diarize, let diarizer else {
-            return .result(textResult)
-        }
-
-        let speakers: [SpeakerSegment]
-        do {
-            speakers = try await diarizer.diarize(audioPath: req.audioPath)
-        } catch let err as DaemonError {
-            // Transcription succeeded; degrade to empty speakers and return success.
-            // Clients that care can inspect speakers.isEmpty.
-            _ = err
-            speakers = []
-        } catch {
-            speakers = []
-        }
-
-        return .result(TranscribeResult(
-            text: textResult.text,
-            words: textResult.words,
-            speakers: speakers,
-            processingMs: textResult.processingMs
-        ))
     }
 }
