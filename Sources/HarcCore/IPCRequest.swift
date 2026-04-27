@@ -2,17 +2,20 @@ import Foundation
 
 public enum IPCRequest: Codable, Equatable, Sendable {
     case transcribe(TranscribeRequest)
+    case diarize(DiarizeRequest)
     case status
     case shutdown
 
     private enum CodingKeys: String, CodingKey { case type, payload }
-    private enum Kind: String, Codable { case transcribe, status, shutdown }
+    private enum Kind: String, Codable { case transcribe, diarize, status, shutdown }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(Kind.self, forKey: .type) {
         case .transcribe:
             self = .transcribe(try c.decode(TranscribeRequest.self, forKey: .payload))
+        case .diarize:
+            self = .diarize(try c.decode(DiarizeRequest.self, forKey: .payload))
         case .status:
             self = .status
         case .shutdown:
@@ -25,6 +28,9 @@ public enum IPCRequest: Codable, Equatable, Sendable {
         switch self {
         case .transcribe(let r):
             try c.encode(Kind.transcribe, forKey: .type)
+            try c.encode(r, forKey: .payload)
+        case .diarize(let r):
+            try c.encode(Kind.diarize, forKey: .type)
             try c.encode(r, forKey: .payload)
         case .status:
             try c.encode(Kind.status, forKey: .type)
@@ -66,5 +72,13 @@ public struct TranscribeRequest: Codable, Equatable, Sendable {
         self.wantTimestamps = try c.decodeIfPresent(Bool.self, forKey: .wantTimestamps) ?? true
         self.diarize = try c.decodeIfPresent(Bool.self, forKey: .diarize) ?? true
         self.vad = try c.decodeIfPresent(Bool.self, forKey: .vad) ?? true
+    }
+}
+
+public struct DiarizeRequest: Codable, Equatable, Sendable {
+    public var audioPath: String
+
+    public init(audioPath: String) {
+        self.audioPath = audioPath
     }
 }

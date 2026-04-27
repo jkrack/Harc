@@ -54,6 +54,9 @@ public struct RequestHandler: Sendable {
 
         case .transcribe(let req):
             return await transcribe(req)
+
+        case .diarize:
+            return .error(IPCError(code: "not_implemented", message: "standalone diarize not yet implemented"))
         }
     }
 
