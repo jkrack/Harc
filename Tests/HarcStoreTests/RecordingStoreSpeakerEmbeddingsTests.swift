@@ -72,6 +72,76 @@ final class RecordingStoreSpeakerEmbeddingsTests: XCTestCase {
         XCTAssertNil(missing)
     }
 
+    func test_upsertWritesEmbedderKind() async throws {
+        let store = try await RecordingStore.inMemory()
+        let rec = try await store.upsert(Recording(
+            wavPath: "/tmp/k.wav",
+            startedAt: Date(),
+            transcriptText: "x"
+        ))
+        let row = RecordingStore.SpeakerEmbeddingRow(
+            recordingID: rec.id!,
+            speakerIndex: 0,
+            embedding: Data(repeating: 0x11, count: 1024),
+            segmentCount: 2,
+            totalMs: 4000,
+            embedderKind: "wespeaker_v2"
+        )
+        try await store.upsertSpeakerEmbeddings(recordingID: rec.id!, rows: [row])
+
+        let fetched = try await store.speakerEmbedding(recordingID: rec.id!, speakerIndex: 0)
+        XCTAssertEqual(fetched?.embedderKind, "wespeaker_v2")
+    }
+
+    func test_allSpeakerEmbeddings_filtersByEmbedderKind() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recA = try await store.upsert(Recording(wavPath: "/tmp/a.wav", startedAt: Date()))
+        let recB = try await store.upsert(Recording(wavPath: "/tmp/b.wav", startedAt: Date()))
+        let recC = try await store.upsert(Recording(wavPath: "/tmp/c.wav", startedAt: Date()))
+
+        try await store.upsertSpeakerEmbeddings(
+            recordingID: recA.id!,
+            rows: [RecordingStore.SpeakerEmbeddingRow(
+                recordingID: recA.id!, speakerIndex: 0,
+                embedding: Data(repeating: 1, count: 1024),
+                segmentCount: 1, totalMs: 5000,
+                embedderKind: "wespeaker_v2"
+            )]
+        )
+        try await store.upsertSpeakerEmbeddings(
+            recordingID: recB.id!,
+            rows: [RecordingStore.SpeakerEmbeddingRow(
+                recordingID: recB.id!, speakerIndex: 0,
+                embedding: Data(repeating: 2, count: 1024),
+                segmentCount: 1, totalMs: 5000,
+                embedderKind: "ecapa_v1"
+            )]
+        )
+        try await store.upsertSpeakerEmbeddings(
+            recordingID: recC.id!,
+            rows: [RecordingStore.SpeakerEmbeddingRow(
+                recordingID: recC.id!, speakerIndex: 0,
+                embedding: Data(repeating: 3, count: 1024),
+                segmentCount: 1, totalMs: 5000,
+                embedderKind: "wespeaker_v2"
+            )]
+        )
+
+        let weSpeaker = try await store.allSpeakerEmbeddings(
+            excludingRecording: nil,
+            embedderKind: "wespeaker_v2"
+        )
+        XCTAssertEqual(weSpeaker.count, 2)
+        XCTAssertTrue(weSpeaker.allSatisfy { $0.embedderKind == "wespeaker_v2" })
+
+        let ecapa = try await store.allSpeakerEmbeddings(
+            excludingRecording: nil,
+            embedderKind: "ecapa_v1"
+        )
+        XCTAssertEqual(ecapa.count, 1)
+        XCTAssertEqual(ecapa[0].recordingID, recB.id!)
+    }
+
     // MARK: - helpers
 
     private func seedRecording(in store: RecordingStore, wav: String) async throws -> Int64 {
