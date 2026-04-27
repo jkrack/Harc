@@ -115,6 +115,21 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v9_speaker_embeddings_wespeaker") { db in
+            // The v6 stub-embedder rows are 192-dim mel statistics — wrong
+            // shape and wrong semantics for the WeSpeaker v2 vectors that
+            // replace them. New recordings repopulate; pre-existing recordings
+            // stay un-fingerprinted (no automatic backfill — see design doc).
+            try db.execute(sql: "DELETE FROM speaker_embeddings")
+
+            try db.alter(table: "speaker_embeddings") { t in
+                // Versioned embedder identity. NULL means "unknown / pre-v9";
+                // SpeakerReIDService filters to the current kind only, so old
+                // rows are effectively invisible. New writes always set this.
+                t.add(column: "embedder_kind", .text)
+            }
+        }
+
         return migrator
     }
 }

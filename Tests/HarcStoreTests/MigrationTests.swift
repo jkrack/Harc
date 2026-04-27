@@ -111,4 +111,119 @@ struct MigrationTests {
             #expect(hit == 1)
         }
     }
+
+    @Test("v9 wipes stub embeddings and adds embedder_kind column")
+    func v9WipesEmbeddingsAndAddsKindColumn() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        // Seed a v6-shape row directly via SQL — test that embedder_kind column
+        // now exists and can be set.
+        try dbq.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO recordings (wav_path, started_at, pinned, created_at, updated_at)
+                VALUES (?, ?, 0, ?, ?)
+                """,
+                arguments: ["/tmp/v9-fixture.wav", Date(), Date(), Date()]
+            )
+            let recID = db.lastInsertedRowID
+            try db.execute(
+                sql: """
+                INSERT INTO speaker_embeddings
+                (recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [recID, 0, Data(repeating: 0xAA, count: 1024), 3, 4500, "wespeaker_v2"]
+            )
+        }
+
+        try dbq.read { db in
+            let cols = try Row.fetchAll(db, sql: "PRAGMA table_info(speaker_embeddings)")
+            let names = cols.compactMap { $0["name"] as String? }
+            #expect(names.contains("embedder_kind"), "v9 should add embedder_kind column; got \(names)")
+
+            let rows = try Row.fetchAll(db, sql: "SELECT speaker_index, embedder_kind FROM speaker_embeddings")
+            #expect(rows.count == 1)
+            #expect(rows[0]["embedder_kind"] as String? == "wespeaker_v2")
+        }
+    }
+
+    @Test("v9 deletes pre-existing v6 rows when running on a v8 fixture")
+    func v9DeletesPreExistingStubRows() throws {
+        let dbq = try DatabaseQueue()
+
+        // Stand up a v1..v8 migrator manually, seed a row, then run the full
+        // (v1..v9) migrator over the same DB and assert v9's DELETE wiped it.
+        var partial = DatabaseMigrator()
+        let full = DatabaseMigrator.harcMigrator()
+        // Replay the registered migrations in the same order, stopping at v8.
+        // Easier: run the full migrator now (which already includes v9), then
+        // we can't seed a pre-v9 row to test the DELETE. So we go the other
+        // direction: build a stripped-down v8 migrator inline.
+        partial.registerMigration("v1_recordings_and_fts") { db in
+            try db.create(table: "recordings") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("wav_path", .text).notNull().unique()
+                t.column("txt_path", .text)
+                t.column("json_path", .text)
+                t.column("started_at", .datetime).notNull()
+                t.column("ended_at", .datetime)
+                t.column("title", .text)
+                t.column("transcript_text", .text)
+                t.column("pinned", .boolean).notNull().defaults(to: false)
+                t.column("deleted_at", .datetime)
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+        }
+        partial.registerMigration("v6_speaker_embeddings") { db in
+            try db.create(table: "speaker_embeddings") { t in
+                t.column("recording_id", .integer).notNull()
+                    .references("recordings", onDelete: .cascade)
+                t.column("speaker_index", .integer).notNull()
+                t.column("embedding", .blob).notNull()
+                t.column("segment_count", .integer).notNull()
+                t.column("total_ms", .integer).notNull()
+                t.primaryKey(["recording_id", "speaker_index"])
+            }
+        }
+        try partial.migrate(dbq)
+
+        // Seed a recording + a stub-shaped 192-dim row.
+        try dbq.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO recordings (wav_path, started_at, pinned, created_at, updated_at)
+                VALUES (?, ?, 0, ?, ?)
+                """,
+                arguments: ["/tmp/old.wav", Date(), Date(), Date()]
+            )
+            let recID = db.lastInsertedRowID
+            try db.execute(
+                sql: """
+                INSERT INTO speaker_embeddings
+                (recording_id, speaker_index, embedding, segment_count, total_ms)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                arguments: [recID, 0, Data(repeating: 0xCC, count: 768), 5, 8000]
+            )
+
+            let preCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM speaker_embeddings") ?? -1
+            #expect(preCount == 1, "expected 1 stub row before v9 runs, got \(preCount)")
+        }
+
+        // Now run the full migrator — its v9 step should DELETE the row and
+        // add the embedder_kind column.
+        try full.migrate(dbq)
+
+        try dbq.read { db in
+            let postCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM speaker_embeddings") ?? -1
+            #expect(postCount == 0, "v9 should wipe pre-existing stub rows; got \(postCount)")
+
+            let cols = try Row.fetchAll(db, sql: "PRAGMA table_info(speaker_embeddings)")
+            let names = cols.compactMap { $0["name"] as String? }
+            #expect(names.contains("embedder_kind"))
+        }
+    }
 }

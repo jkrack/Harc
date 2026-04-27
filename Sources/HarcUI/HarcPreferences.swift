@@ -108,10 +108,8 @@ public final class HarcPreferences: ObservableObject {
     /// after recording, cluster across the library, and suggest names in the
     /// speaker editor.
     ///
-    /// **Defaults to `false` until a real ECAPA-TDNN Core ML model is bundled.**
-    /// The stub embedder used today produces audio-feature vectors, not
-    /// voice fingerprints — its suggestions would be noise-tier. Flip to
-    /// `true` in this initializer once the real embedder lands.
+    /// **Defaults to `true` with WeSpeaker v2 on board.** User-set false
+    /// values are preserved unchanged.
     @Published public var speakerReIDEnabled: Bool {
         didSet { UserDefaults.standard.set(speakerReIDEnabled, forKey: Key.speakerReIDEnabled) }
     }
@@ -175,7 +173,7 @@ public final class HarcPreferences: ObservableObject {
         self.postStopNotificationEnabled = defaults.object(forKey: Key.postStopNotificationEnabled) as? Bool ?? true
         self.activeSummarizerID = defaults.string(forKey: Key.activeSummarizerID) ?? "gemma-4-e2b-it-4bit"
         self.activeEmbedderID = defaults.string(forKey: Key.activeEmbedderID) ?? "bge-small-en-v1.5"
-        self.speakerReIDEnabled = defaults.object(forKey: Key.speakerReIDEnabled) as? Bool ?? false
+        self.speakerReIDEnabled = defaults.object(forKey: Key.speakerReIDEnabled) as? Bool ?? true
         self.speakerReIDAutoApply = defaults.object(forKey: Key.speakerReIDAutoApply) as? Bool ?? false
         self.autoSummarizeEnabled = defaults.object(forKey: Key.autoSummarizeEnabled) as? Bool ?? true
         self.autoSummarizeOnBatteryEnabled = defaults.object(forKey: Key.autoSummarizeOnBatteryEnabled) as? Bool ?? false

@@ -1,43 +1,8 @@
 import Foundation
 
-/// A voice-fingerprint extractor. Given a mono 16 kHz Float32 audio buffer,
-/// returns an L2-normalized fixed-length embedding suitable for cosine
-/// similarity against embeddings from other recordings.
-///
-/// Production implementation target: a bundled ECAPA-TDNN Core ML model
-/// (~20 MB), producing 192-dim vectors. Until that model is bundled, the
-/// only implementation is `StubSpeakerEmbedder` — see that type for caveats.
-public protocol SpeakerEmbedder: Sendable {
-    /// The dimensionality of the returned vectors. Fixed per embedder
-    /// instance; consumers can rely on this for buffer sizing.
-    var embeddingDim: Int { get }
-
-    /// Extract one embedding from `samples`. Caller is expected to have
-    /// gathered enough audio — generally at least ~1 s; shorter inputs are
-    /// allowed but produce less stable embeddings.
-    func embed(samples: [Float]) throws -> [Float]
-}
-
-public enum SpeakerEmbedderError: Error, LocalizedError {
-    case tooShort(minSamples: Int, got: Int)
-    case modelUnavailable
-    case inferenceFailed(String)
-
-    public var errorDescription: String? {
-        switch self {
-        case .tooShort(let min, let got):
-            return "Audio too short for speaker embedding: needed \(min) samples, got \(got)."
-        case .modelUnavailable:
-            return "Speaker-embedding model is not bundled in this build."
-        case .inferenceFailed(let s):
-            return "Speaker-embedding inference failed: \(s)."
-        }
-    }
-}
-
 /// One extracted embedding + the metadata needed to decide whether it's
-/// worth keeping (short `total_ms` means the embedding is noisy and the
-/// re-ID service will skip it).
+/// worth keeping. Independent of the producer — both daemon-side
+/// computation and store-side decoding can build / consume this.
 public struct SpeakerEmbedding: Sendable, Equatable {
     public let speakerIndex: Int
     public let vector: [Float]

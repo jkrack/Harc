@@ -100,4 +100,91 @@ struct RequestHandlerTests {
         _ = await handler.handle(.transcribe(TranscribeRequest(audioPath: "/tmp/y.wav")))
         #expect(await fake.lastVAD == true)
     }
+
+    // Fake diarizer for tests below.
+    actor FakeDiarizer: DiarizeService {
+        var diarizeCalls: [String] = []
+        var diarizeWithEmbeddingsCalls: [String] = []
+
+        var segmentsResult: [SpeakerSegment] = []
+        var diarizationResult: Diarizer.DiarizationOutput = Diarizer.DiarizationOutput(
+            segments: [],
+            speakers: []
+        )
+
+        func setSegmentsResult(_ v: [SpeakerSegment]) { segmentsResult = v }
+        func setDiarizationResult(_ v: Diarizer.DiarizationOutput) { diarizationResult = v }
+
+        func diarize(audioPath: String) async throws -> [SpeakerSegment] {
+            diarizeCalls.append(audioPath)
+            return segmentsResult
+        }
+
+        func diarizeWithEmbeddings(audioPath: String) async throws -> Diarizer.DiarizationOutput {
+            diarizeWithEmbeddingsCalls.append(audioPath)
+            return diarizationResult
+        }
+
+        var isLoaded: Bool { true }
+    }
+
+    @Test("transcribe with diarize=false skips the diarizer entirely")
+    func transcribeSkipsDiarizerWhenFlagFalse() async throws {
+        let fake = FakeTranscriber()
+        let fakeDi = FakeDiarizer()
+        await fakeDi.setSegmentsResult([SpeakerSegment(speaker: 0, startMs: 0, endMs: 1000)])
+        let handler = RequestHandler(
+            transcriber: fake, diarizer: fakeDi, version: "0.1.0", startedAt: Date()
+        )
+        let req = IPCRequest.transcribe(TranscribeRequest(audioPath: "/tmp/x.wav", diarize: false))
+        let resp = await handler.handle(req)
+        if case .result(let r) = resp {
+            #expect(r.speakers.isEmpty, "expected diarizer skipped, but got speakers: \(r.speakers)")
+        } else {
+            Issue.record("expected .result, got: \(resp)")
+        }
+        #expect(await fakeDi.diarizeCalls.isEmpty)
+        #expect(await fakeDi.diarizeWithEmbeddingsCalls.isEmpty)
+    }
+
+    @Test("diarize request returns .diarization with embeddings")
+    func diarizeRequestReturnsEmbeddings() async throws {
+        let fake = FakeTranscriber()
+        let fakeDi = FakeDiarizer()
+        await fakeDi.setDiarizationResult(Diarizer.DiarizationOutput(
+            segments: [SpeakerSegment(speaker: 0, startMs: 0, endMs: 2000)],
+            speakers: [SpeakerEmbeddingRow(
+                speakerIndex: 0,
+                vector: [Float](repeating: 0.0625, count: 256),
+                totalMs: 2000,
+                segmentCount: 1
+            )]
+        ))
+        let handler = RequestHandler(
+            transcriber: fake, diarizer: fakeDi, version: "0.1.0", startedAt: Date()
+        )
+        let resp = await handler.handle(.diarize(DiarizeRequest(audioPath: "/tmp/d.wav")))
+        if case .diarization(let d) = resp {
+            #expect(d.segments.count == 1)
+            #expect(d.speakers.count == 1)
+            #expect(d.speakers[0].vector.count == 256)
+        } else {
+            Issue.record("expected .diarization, got: \(resp)")
+        }
+        #expect(await fakeDi.diarizeWithEmbeddingsCalls == ["/tmp/d.wav"])
+    }
+
+    @Test("diarize request without a diarizer returns .error")
+    func diarizeWithoutDiarizerErrors() async throws {
+        let fake = FakeTranscriber()
+        let handler = RequestHandler(
+            transcriber: fake, diarizer: nil, version: "0.1.0", startedAt: Date()
+        )
+        let resp = await handler.handle(.diarize(DiarizeRequest(audioPath: "/tmp/d.wav")))
+        if case .error(let e) = resp {
+            #expect(e.code == "diarizer_unavailable")
+        } else {
+            Issue.record("expected .error, got: \(resp)")
+        }
+    }
 }

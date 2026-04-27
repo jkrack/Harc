@@ -1,8 +1,11 @@
 # Speaker Re-ID Across Recordings Design Doc
 
+> **Superseded by [2026-04-26-speaker-identity-design.md](2026-04-26-speaker-identity-design.md).**
+> The 2026-04-26 design subsumes this one and broadens scope to cover within-recording diarization correctness alongside across-recording identity. It also retires the bundled-ECAPA model plan in favor of FluidAudio's already-bundled WeSpeaker v2 embedder. The shipped commit `d9e78e2` (schema, EmbeddingBlob, SpeakerExtractor, StubSpeakerEmbedder, suggestion chips) implements parts of this older design; what remained un-shipped is now redesigned from scratch in the 2026-04-26 doc. This document is preserved as historical context — do not implement against it.
+
 **Feature:** Extract a short voice fingerprint per diarized speaker segment, cluster fingerprints across the user's library, and surface "this speaker sounds like <Name> — used in N other recordings" suggestions in the existing `SpeakerNameEditor`. Naming one speaker automatically propagates across their recent recordings, fixing the "Speaker 1 is a different person in every meeting" problem.
 **Date:** 2026-04-22
-**Status:** draft — ready for implementation
+**Status:** superseded by 2026-04-26-speaker-identity-design.md
 **Depends on:** `2026-04-20-speaker-renaming-design.md` (the per-recording rename feature; this extends it, not replaces it)
 
 ---

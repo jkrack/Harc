@@ -77,4 +77,41 @@ struct IPCRoundTripTests {
         #expect(decoded.wantTimestamps == true)
         #expect(decoded.diarize == true)
     }
+
+    @Test("DiarizeRequest round-trip")
+    func diarizeRequestRoundTrip() throws {
+        let original = IPCRequest.diarize(DiarizeRequest(audioPath: "/tmp/audio.wav"))
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(IPCRequest.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test("DiarizeResult round-trip")
+    func diarizeResultRoundTrip() throws {
+        let result = DiarizeResult(
+            segments: [
+                SpeakerSegment(speaker: 0, startMs: 0, endMs: 1000),
+                SpeakerSegment(speaker: 1, startMs: 1000, endMs: 2500),
+            ],
+            speakers: [
+                SpeakerEmbeddingRow(
+                    speakerIndex: 0,
+                    vector: Array(repeating: Float(0.1), count: 256),
+                    totalMs: 1000,
+                    segmentCount: 1
+                ),
+                SpeakerEmbeddingRow(
+                    speakerIndex: 1,
+                    vector: Array(repeating: Float(-0.05), count: 256),
+                    totalMs: 1500,
+                    segmentCount: 1
+                ),
+            ],
+            processingMs: 87
+        )
+        let original = IPCResponse.diarization(result)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(IPCResponse.self, from: data)
+        #expect(decoded == original)
+    }
 }
