@@ -128,10 +128,11 @@ public actor RecordingSession {
         var finalTranscript: SessionTranscript? = nil
         if let transcriber {
             do {
-                finalTranscript = try await transcriber.finalize(
+                let finalized = try await transcriber.finalize(
                     startedAt: startedAt,
                     endedAt: Date()
                 )
+                finalTranscript = finalized.transcript
             } catch {
                 FileHandle.standardError.write(Data(
                     "harc-audio: transcription finalize failed: \(error.localizedDescription)\n".utf8

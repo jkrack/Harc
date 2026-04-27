@@ -78,7 +78,6 @@ struct RecordingSessionTranscriptionTests {
         ])
         let transcriber = ChunkedTranscriber(
             client: stub,
-            diarize: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05
         )
