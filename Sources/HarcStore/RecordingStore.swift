@@ -313,19 +313,22 @@ public actor RecordingStore {
         public let embedding: Data        // packed Float32
         public let segmentCount: Int
         public let totalMs: Int
+        public let embedderKind: String?
 
         public init(
             recordingID: Int64,
             speakerIndex: Int,
             embedding: Data,
             segmentCount: Int,
-            totalMs: Int
+            totalMs: Int,
+            embedderKind: String? = nil
         ) {
             self.recordingID = recordingID
             self.speakerIndex = speakerIndex
             self.embedding = embedding
             self.segmentCount = segmentCount
             self.totalMs = totalMs
+            self.embedderKind = embedderKind
         }
     }
 
@@ -346,8 +349,8 @@ public actor RecordingStore {
                 try db.execute(
                     sql: """
                     INSERT INTO speaker_embeddings
-                    (recording_id, speaker_index, embedding, segment_count, total_ms)
-                    VALUES (?, ?, ?, ?, ?)
+                    (recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     arguments: [
                         row.recordingID,
@@ -355,6 +358,7 @@ public actor RecordingStore {
                         row.embedding,
                         row.segmentCount,
                         row.totalMs,
+                        row.embedderKind,
                     ]
                 )
             }
@@ -368,7 +372,7 @@ public actor RecordingStore {
             if let row = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT recording_id, speaker_index, embedding, segment_count, total_ms
+                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
                 FROM speaker_embeddings
                 WHERE recording_id = ? AND speaker_index = ?
                 """,
@@ -379,7 +383,8 @@ public actor RecordingStore {
                     speakerIndex: row["speaker_index"],
                     embedding: row["embedding"],
                     segmentCount: row["segment_count"],
-                    totalMs: row["total_ms"]
+                    totalMs: row["total_ms"],
+                    embedderKind: row["embedder_kind"]
                 )
             }
             return nil
@@ -389,31 +394,35 @@ public actor RecordingStore {
     /// Every embedding in the store, optionally excluding one recording.
     /// The service layer linearly scans these — acceptable at realistic
     /// library scale (see design doc §4.4).
-    public func allSpeakerEmbeddings(excludingRecording: Int64? = nil) async throws -> [SpeakerEmbeddingRow] {
+    public func allSpeakerEmbeddings(
+        excludingRecording: Int64? = nil,
+        embedderKind: String? = nil
+    ) async throws -> [SpeakerEmbeddingRow] {
         try await dbQueue.read { db in
-            let sql: String
-            let args: StatementArguments
+            var clauses: [String] = []
+            var args: [DatabaseValueConvertible] = []
             if let excluded = excludingRecording {
-                sql = """
-                SELECT recording_id, speaker_index, embedding, segment_count, total_ms
-                FROM speaker_embeddings
-                WHERE recording_id != ?
-                """
-                args = [excluded]
-            } else {
-                sql = """
-                SELECT recording_id, speaker_index, embedding, segment_count, total_ms
-                FROM speaker_embeddings
-                """
-                args = []
+                clauses.append("recording_id != ?")
+                args.append(excluded)
             }
-            return try Row.fetchAll(db, sql: sql, arguments: args).map { row in
+            if let kind = embedderKind {
+                clauses.append("embedder_kind = ?")
+                args.append(kind)
+            }
+            let where_ = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
+            let sql = """
+                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
+                FROM speaker_embeddings
+                \(where_)
+                """
+            return try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args)).map { row in
                 SpeakerEmbeddingRow(
                     recordingID: row["recording_id"],
                     speakerIndex: row["speaker_index"],
                     embedding: row["embedding"],
                     segmentCount: row["segment_count"],
-                    totalMs: row["total_ms"]
+                    totalMs: row["total_ms"],
+                    embedderKind: row["embedder_kind"]
                 )
             }
         }
