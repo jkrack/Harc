@@ -49,6 +49,16 @@ public struct HarcSTTClient: Sendable {
         }
     }
 
+    public func diarize(audioPath: String) async throws -> DiarizeResult {
+        let request = IPCRequest.diarize(DiarizeRequest(audioPath: audioPath))
+        let response = try await roundTrip(request)
+        switch response {
+        case .diarization(let d): return d
+        case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
+        default: throw ClientError.ipcDecodeFailed("unexpected response: \(response)")
+        }
+    }
+
     public func shutdown() async throws {
         _ = try await roundTrip(.shutdown)
     }
