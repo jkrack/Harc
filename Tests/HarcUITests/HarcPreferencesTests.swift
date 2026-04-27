@@ -87,4 +87,44 @@ struct HarcPreferencesTests {
         #expect(reloaded.vadEnabled == false)
         defaults.removeObject(forKey: "harc.vadEnabled")
     }
+
+    @Test("speakerReIDEnabled defaults to true when UserDefaults has no key")
+    func speakerReIDEnabledDefaultTrue() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.speakerReIDEnabled")
+        let prefs = HarcPreferences()
+        #expect(prefs.speakerReIDEnabled == true)
+    }
+
+    @Test("speakerReIDEnabled persists false when explicitly set")
+    func speakerReIDEnabledPreservesUserFalse() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.speakerReIDEnabled")
+        let prefs = HarcPreferences()
+        prefs.speakerReIDEnabled = false
+        let reloaded = HarcPreferences()
+        #expect(reloaded.speakerReIDEnabled == false)
+        // Restore default for subsequent tests.
+        defaults.removeObject(forKey: "harc.speakerReIDEnabled")
+    }
+
+    @Test("speakerReIDAutoApply defaults to false when UserDefaults has no key")
+    func speakerReIDAutoApplyDefaultFalse() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.speakerReIDAutoApply")
+        let prefs = HarcPreferences()
+        #expect(prefs.speakerReIDAutoApply == false)
+    }
+
+    @Test("speakerReIDAutoApply persists when explicitly set to true")
+    func speakerReIDAutoApplyPreservesUserTrue() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.speakerReIDAutoApply")
+        let prefs = HarcPreferences()
+        prefs.speakerReIDAutoApply = true
+        let reloaded = HarcPreferences()
+        #expect(reloaded.speakerReIDAutoApply == true)
+        // Restore default for subsequent tests.
+        defaults.removeObject(forKey: "harc.speakerReIDAutoApply")
+    }
 }
