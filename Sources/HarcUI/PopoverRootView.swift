@@ -318,7 +318,6 @@ private struct RecordingStoppedTray: View {
     let entry: RecordingPostProcessingState.Entry
     let onOpen: () -> Void
     /// Called when the user taps Retry in the `.failed` phase.
-    /// TODO Task 14: AppDelegate passes the real diarize trigger here.
     let onRetryDiarize: () -> Void
 
     @EnvironmentObject private var prefs: HarcPreferences
