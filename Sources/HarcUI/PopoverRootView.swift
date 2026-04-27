@@ -8,7 +8,6 @@ public struct PopoverRootView: View {
     @EnvironmentObject private var vm: RecordingsViewModel
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var autoStop: AutoStopController
-    // TODO Task 14: env-inject postProcessing from AppDelegate
     @EnvironmentObject private var postProcessing: RecordingPostProcessingState
 
     let onToggle: () -> Void
@@ -17,6 +16,7 @@ public struct PopoverRootView: View {
     let onOpenLibrary: () -> Void
     let onOpenLibraryAndSearch: () -> Void
     let onResumeAutoStopped: () -> Void
+    let onRetryDiarize: (Int64) -> Void
 
     public init(
         onToggle: @escaping () -> Void,
@@ -24,7 +24,8 @@ public struct PopoverRootView: View {
         onOpenSettings: @escaping () -> Void,
         onOpenLibrary: @escaping () -> Void,
         onOpenLibraryAndSearch: @escaping () -> Void,
-        onResumeAutoStopped: @escaping () -> Void
+        onResumeAutoStopped: @escaping () -> Void,
+        onRetryDiarize: @escaping (Int64) -> Void = { _ in }
     ) {
         self.onToggle = onToggle
         self.onOpen = onOpen
@@ -32,6 +33,7 @@ public struct PopoverRootView: View {
         self.onOpenLibrary = onOpenLibrary
         self.onOpenLibraryAndSearch = onOpenLibraryAndSearch
         self.onResumeAutoStopped = onResumeAutoStopped
+        self.onRetryDiarize = onRetryDiarize
     }
 
     public var body: some View {
@@ -65,7 +67,9 @@ public struct PopoverRootView: View {
                     recording: rec,
                     entry: entry,
                     onOpen: { onOpen(rec) },
-                    onRetryDiarize: {} // TODO Task 14: wire actual diarize trigger from AppDelegate
+                    onRetryDiarize: {
+                        if let id = rec.id { onRetryDiarize(id) }
+                    }
                 )
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)

@@ -20,6 +20,7 @@ final class TranscriptionDetailWindowController: NSWindowController {
         onEditTranscript: @escaping () -> Void,
         onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
         onClearSummary: @escaping (Int64) -> Void,
+        onIdentifySpeakers: @escaping (Int64) -> Void = { _ in },
         suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
     ) {
         let root = TranscriptionDetailView(
@@ -33,8 +34,9 @@ final class TranscriptionDetailWindowController: NSWindowController {
             onClearSummary: onClearSummary,
             suggestionsProvider: suggestionsProvider,
             onIdentifySpeakers: {
-                // TODO Task 14: trigger diarize for recording
-                print("[TranscriptionDetailWindowController] onIdentifySpeakers requested for recording id=\(recording.id?.description ?? "nil")")
+                if let id = recording.id {
+                    onIdentifySpeakers(id)
+                }
             }
         )
         .environmentObject(prefs)
