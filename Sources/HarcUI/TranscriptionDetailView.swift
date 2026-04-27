@@ -3,6 +3,7 @@ import AppKit
 import HarcStore
 import HarcExport
 import HarcSummarize
+import HarcVoiceprint
 
 public struct TranscriptionDetailView: View {
     private enum DetailTab: String, CaseIterable, Identifiable {
@@ -25,8 +26,10 @@ public struct TranscriptionDetailView: View {
     /// Optional — the editor renders chips when non-nil and the feature is
     /// enabled; when nil, the editor behaves exactly as pre-feature.
     let suggestionsProvider: SpeakerNameEditor.SuggestionsProvider?
+    let onIdentifySpeakers: () -> Void
 
     @EnvironmentObject private var prefs: HarcPreferences
+    @EnvironmentObject private var postProcessing: RecordingPostProcessingState
 
     @State private var displayedRecording: Recording
     @State private var renameDraft: String
@@ -39,6 +42,7 @@ public struct TranscriptionDetailView: View {
     @State private var loadError: String? = nil
     @State private var saveError: String? = nil
     @State private var deleteConfirm = false
+    @State private var hasSpeakerEmbeddings: Bool = false
 
     public init(
         recording: Recording,
@@ -49,7 +53,8 @@ public struct TranscriptionDetailView: View {
         onEditTranscript: @escaping () -> Void = {},
         onSpeakerNamesChanged: @escaping ([Int: String]) -> Void,
         onClearSummary: @escaping (Int64) -> Void,
-        suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil
+        suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil,
+        onIdentifySpeakers: @escaping () -> Void = {}
     ) {
         self.recording = recording
         self.store = store
@@ -60,6 +65,7 @@ public struct TranscriptionDetailView: View {
         self.onSpeakerNamesChanged = onSpeakerNamesChanged
         self.onClearSummary = onClearSummary
         self.suggestionsProvider = suggestionsProvider
+        self.onIdentifySpeakers = onIdentifySpeakers
         self._displayedRecording = State(initialValue: recording)
         self._renameDraft = State(initialValue: recording.title ?? "")
     }
@@ -76,6 +82,7 @@ public struct TranscriptionDetailView: View {
         .background(Color.harcSurface1)
         .onAppear(perform: load)
         .task { await observeRecording() }
+        .task(id: postProcessing.current) { await loadHasEmbeddings() }
     }
 
     private var header: some View {
@@ -198,15 +205,46 @@ public struct TranscriptionDetailView: View {
                     onClearSummary: onClearSummary
                 )
 
-                if !speakerIndices.isEmpty {
-                    workspaceSection("Speakers") {
-                        SpeakerNameEditor(
-                            speakerIndices: speakerIndices,
-                            initialNames: displayedRecording.speakerNames,
-                            onCommit: onSpeakerNamesChanged,
-                            suggestionsProvider: suggestionsProvider,
-                            showsHeader: false
-                        )
+                workspaceSection("Speakers") {
+                    switch speakerSection {
+                    case .identifying:
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Identifying speakers…")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 8)
+
+                    case .failed(let msg):
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Text("Couldn't identify speakers")
+                            Button("Retry") { onIdentifySpeakers() }
+                                .buttonStyle(.borderless)
+                        }
+                        .help(msg)
+                        .padding(.vertical, 8)
+
+                    case .empty:
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.wave.2").foregroundStyle(.secondary)
+                            Text("No speaker labels yet")
+                                .foregroundStyle(.secondary)
+                            Button("Identify speakers") { onIdentifySpeakers() }
+                                .buttonStyle(.borderless)
+                        }
+                        .padding(.vertical, 8)
+
+                    case .ready:
+                        if !speakerIndices.isEmpty {
+                            SpeakerNameEditor(
+                                speakerIndices: speakerIndices,
+                                initialNames: displayedRecording.speakerNames,
+                                onCommit: onSpeakerNamesChanged,
+                                suggestionsProvider: suggestionsProvider,
+                                showsHeader: false
+                            )
+                        }
                     }
                 }
 
@@ -472,6 +510,38 @@ public struct TranscriptionDetailView: View {
         } catch {
             saveError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    // MARK: - Speaker section
+
+    private enum SpeakerSection {
+        case identifying
+        case ready                        // editor renders normally
+        case empty(retryAvailable: Bool)  // recording has no embeddings; user can run "Identify speakers"
+        case failed(message: String)
+    }
+
+    private var speakerSection: SpeakerSection {
+        if let entry = postProcessing.current, entry.recordingID == recording.id {
+            switch entry.phase {
+            case .identifying: return .identifying
+            case .failed(let msg): return .failed(message: msg)
+            case .done, .idle: break
+            }
+        }
+        // No active in-flight job. Decide based on whether the recording has
+        // any speaker_embeddings rows. If yes, show the editor; if no, show
+        // the "Identify speakers" affordance.
+        return hasSpeakerEmbeddings ? .ready : .empty(retryAvailable: true)
+    }
+
+    private func loadHasEmbeddings() async {
+        guard let id = recording.id, let store else { return }
+        let count = (try? await store.allSpeakerEmbeddings(
+            excludingRecording: nil,
+            embedderKind: EmbedderKind.wespeakerV2
+        ).filter { $0.recordingID == id }.count) ?? 0
+        hasSpeakerEmbeddings = count > 0
     }
 
     /// Distinct speaker indices present in the recording, discovered by
