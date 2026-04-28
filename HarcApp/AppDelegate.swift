@@ -490,9 +490,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
 private func openDetail(for recording: Recording) {
-        // TODO(Phase 4.3): navigate HarcWindowRootView to the selected recording.
-        // Detail is now shown inline in HarcWindowRootView; opening the window is
-        // sufficient until HarcWindowRootView gains a selection API.
+        // Detail is shown inline in HarcWindowRootView; opening the library window
+        // is sufficient until HarcWindowRootView gains a selection API.
         _ = recording
         openLibrary()
     }
