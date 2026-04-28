@@ -12,7 +12,7 @@ public struct RecordingSettingsView: View {
     public init() {}
 
     public var body: some View {
-        Form {
+        Group {
             Section {
                 HStack {
                     Text(prefs.destinationPath)
@@ -110,7 +110,6 @@ public struct RecordingSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
         .task {
             await refreshNotificationStatus()
             refreshDestinationStatus()

@@ -10,9 +10,11 @@ public struct ProcessingSettingsView: View {
     public init() {}
 
     public var body: some View {
-        Form {
+        Group {
             Section {
                 Toggle("Transcribe speakers (diarization)", isOn: $prefs.diarize)
+            } header: {
+                Text("Transcription")
             } footer: {
                 Text("When on, transcripts include per-speaker segments.")
                     .font(.subheadline)
@@ -48,7 +50,6 @@ public struct ProcessingSettingsView: View {
                     .foregroundStyle(Color.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 
     @ViewBuilder

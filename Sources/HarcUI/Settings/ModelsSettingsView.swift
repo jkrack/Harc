@@ -16,8 +16,14 @@ public struct ModelsSettingsView: View {
     public init() {}
 
     public var body: some View {
-        Form {
-            header
+        Group {
+            Section {
+                Text("Harc runs all AI work on your Mac. Download only the tiers you need.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
+            } header: {
+                Text("Models")
+            }
 
             Section {
                 ForEach(summarizers) { d in
@@ -52,7 +58,6 @@ public struct ModelsSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
         .alert(
             "Remove this model?",
             isPresented: Binding(
@@ -98,20 +103,6 @@ public struct ModelsSettingsView: View {
         .onChange(of: prefs.activeSummarizerID) { _, _ in
             ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
         }
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Models")
-                .font(.title3.weight(.semibold))
-            Text("Harc runs all AI work on your Mac. Download only the tiers you need.")
-                .font(.subheadline)
-                .foregroundStyle(Color.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 6)
     }
 
     // MARK: - Active summarizer radio

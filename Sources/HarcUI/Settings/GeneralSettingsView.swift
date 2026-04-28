@@ -6,17 +6,16 @@ public struct GeneralSettingsView: View {
     public init() {}
 
     public var body: some View {
-        Form {
-            Section {
-                Text("General settings will appear here.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-            } footer: {
-                Text("Future: launch at login, appearance, menu bar options.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-            }
+        Section {
+            Text("General settings will appear here.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+        } header: {
+            Text("General")
+        } footer: {
+            Text("Future: launch at login, appearance, menu bar options.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
         }
-        .formStyle(.grouped)
     }
 }

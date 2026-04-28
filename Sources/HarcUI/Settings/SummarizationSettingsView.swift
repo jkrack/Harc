@@ -16,8 +16,14 @@ public struct SummarizationSettingsView: View {
     }
 
     public var body: some View {
-        Form {
-            header
+        Group {
+            Section {
+                Text("Harc summarizes finished recordings locally using Gemma 4.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
+            } header: {
+                Text("Summarization")
+            }
 
             Section {
                 activeTierPicker
@@ -58,7 +64,6 @@ public struct SummarizationSettingsView: View {
                 .foregroundStyle(Color.secondary)
             }
         }
-        .formStyle(.grouped)
         .task {
             await models.bootstrap()
             ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
@@ -69,18 +74,6 @@ public struct SummarizationSettingsView: View {
         .onChange(of: prefs.activeSummarizerID) { _, _ in
             ActiveSummarizerReconciler.reconcile(preferences: prefs, models: models)
         }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Summarization")
-                .font(.title3.weight(.semibold))
-            Text("Harc summarizes finished recordings locally using Gemma 4.")
-                .font(.subheadline)
-                .foregroundStyle(Color.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 6)
     }
 
     private var activeTierPicker: some View {
