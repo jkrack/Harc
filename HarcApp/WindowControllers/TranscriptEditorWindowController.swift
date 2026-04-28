@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import HarcStore
 import HarcUI
 
 @MainActor
@@ -7,10 +8,10 @@ final class TranscriptEditorWindowController: NSWindowController, NSWindowDelega
     private let vm: TranscriptEditorViewModel
     private let onClose: () -> Void
 
-    init(vm: TranscriptEditorViewModel, onClose: @escaping () -> Void) {
+    init(vm: TranscriptEditorViewModel, store: RecordingStore, onClose: @escaping () -> Void) {
         self.vm = vm
         self.onClose = onClose
-        let host = NSHostingController(rootView: TranscriptEditorView(vm: vm))
+        let host = NSHostingController(rootView: TranscriptEditorView(vm: vm, store: store))
         let window = NSWindow(contentViewController: host)
         window.title = "Harc Editor — \(vm.recording.displayTitle)"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]

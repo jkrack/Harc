@@ -519,6 +519,7 @@ private func openDetail(for recording: Recording) {
             let vm = await TranscriptEditorViewModel(recording: recording, store: store)
             let controller = TranscriptEditorWindowController(
                 vm: vm,
+                store: store,
                 onClose: { [weak self] in
                     self?.editorWindows.removeValue(forKey: recording.wavPath)
                 }

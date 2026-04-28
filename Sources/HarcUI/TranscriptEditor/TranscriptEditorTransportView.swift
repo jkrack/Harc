@@ -14,14 +14,14 @@ struct TranscriptEditorTransportView: View {
 
     private var transport: some View {
         HStack(spacing: 14) {
-            skipButton(systemImage: "gobackward", label: "5", help: "Back 5s") {
+            skipButton(systemImage: "gobackward.5", help: "Back 5s") {
                 vm.skip(by: -5)
             }
             .keyboardShortcut(.leftArrow, modifiers: [])
 
             playButton
 
-            skipButton(systemImage: "goforward", label: "5", help: "Forward 5s") {
+            skipButton(systemImage: "goforward.5", help: "Forward 5s") {
                 vm.skip(by: 5)
             }
             .keyboardShortcut(.rightArrow, modifiers: [])
@@ -54,42 +54,22 @@ struct TranscriptEditorTransportView: View {
 
     private var playButton: some View {
         Button { vm.togglePlay() } label: {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor)
-                    .frame(width: 34, height: 34)
-                    .shadow(color: Color.accentColor.opacity(0.5), radius: 8, x: 0, y: 3)
-                Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .offset(x: vm.isPlaying ? 0 : 1)
-            }
+            Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.bordered)
         .keyboardShortcut(.space, modifiers: [])
         .help(vm.isPlaying ? "Pause" : "Play")
     }
 
     private func skipButton(
         systemImage: String,
-        label: String,
         help: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            ZStack {
-                Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(Color.secondary)
-                Text(label)
-                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.secondary)
-                    .offset(y: 1)
-            }
-            .frame(width: 28, height: 28)
-            .contentShape(Rectangle())
+            Image(systemName: systemImage)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.bordered)
         .help(help)
     }
 
