@@ -40,8 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var recordingsVM: RecordingsViewModel?
     private var detailWindows: [String: TranscriptionDetailWindowController] = [:]
     private var editorWindows: [String: TranscriptEditorWindowController] = [:]
-    private var libraryWindow: LibraryWindowController?
-    private var libraryVM: LibraryViewModel?
+    private var harcWindow: HarcWindowController?
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
     private var menuBarTicker: Timer?
@@ -992,22 +991,32 @@ private func openDetail(for recording: Recording) {
     }
 
     @objc private func openLibrary() {
-        if let existing = libraryWindow {
+        if let existing = harcWindow {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        guard let store else { return }
-        let vm = LibraryViewModel(store: store)
-        libraryVM = vm
-        let controller = LibraryWindowController(
-            vm: vm,
-            onOpen: { [weak self] rec in self?.openDetail(for: rec) },
-            onOpenInEditor: { [weak self] rec in self?.openDetail(for: rec) },
-            onOpenSettings: { [weak self] in self?.openSettings() }
+        guard let store, let reIDService = speakerReIDService,
+              let queueStore = summarizationQueueStore else { return }
+        let libraryVM = LibraryViewModel(store: store)
+        let controller = HarcWindowController(
+            libraryVM: libraryVM,
+            recordingState: state,
+            store: store,
+            reIDService: reIDService,
+            prefs: prefs,
+            postProcessingState: postProcessingState,
+            queueStore: queueStore,
+            modelStore: modelStore,
+            onEdit: { [weak self] rec in self?.openEditor(for: rec) },
+            onExport: { rec in
+                // TODO Task 3.5: wire export sheet once ExportService gains a panel entry-point.
+                _ = rec
+            },
+            onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) }
         )
-        libraryWindow = controller
+        harcWindow = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         trackManagedWindow(controller.window)
