@@ -38,7 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var speakerReIDService: SpeakerReIDService?
     private var store: RecordingStore?
     private var recordingsVM: RecordingsViewModel?
-    private var detailWindows: [String: TranscriptionDetailWindowController] = [:]
     private var editorWindows: [String: TranscriptEditorWindowController] = [:]
     private var harcWindow: HarcWindowController?
     private var previewTask: Task<Void, Never>?
@@ -695,56 +694,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     }
 
 private func openDetail(for recording: Recording) {
-        if let existing = detailWindows[recording.wavPath] {
-            existing.showWindow(nil)
-            existing.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        guard let queueStore = summarizationQueueStore else {
-            // Safety: bootstrap hasn't completed; retry after graph exists.
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                self?.openDetail(for: recording)
-            }
-            return
-        }
-        guard let store else { return }
-        let controller = TranscriptionDetailWindowController(
-            recording: recording,
-            store: store,
-            prefs: prefs,
-            queueStore: queueStore,
-            modelStore: modelStore,
-            postProcessingState: postProcessingState,
-            onReveal: {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: recording.wavPath)])
-            },
-            onDelete: { [weak self] in
-                self?.deleteRecording(recording: recording)
-            },
-            onRename: { [weak self] newTitle in
-                guard let id = recording.id else { return }
-                Task { try? await self?.store?.rename(id: id, title: newTitle) }
-            },
-            onEditTranscript: {},
-            onSpeakerNamesChanged: { [weak self] names in
-                guard let id = recording.id else { return }
-                Task { try? await self?.store?.updateSpeakerNames(id: id, names: names) }
-            },
-            onClearSummary: { [weak self] id in
-                Task { try? await self?.store?.clearSummary(id: id) }
-            },
-            onIdentifySpeakers: { [weak self] recordingID in
-                self?.runIdentifySpeakers(recordingID: recordingID)
-            },
-            suggestionsProvider: reIDSuggestionsProvider(for: recording)
-        )
-        detailWindows[recording.wavPath] = controller
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
-        trackManagedWindow(controller.window)
-        NSApp.activate(ignoringOtherApps: true)
+        // TODO(Phase 4.3): navigate HarcWindowRootView to the selected recording.
+        // Detail is now shown inline in HarcWindowRootView; opening the window is
+        // sufficient until HarcWindowRootView gains a selection API.
+        _ = recording
+        openLibrary()
     }
 
     private func openEditor(for recording: Recording) {
@@ -772,7 +726,7 @@ private func openDetail(for recording: Recording) {
         }
     }
 
-    /// Called by the "Identify speakers" / "Retry" buttons in TranscriptionDetailView
+    /// Called by the "Identify speakers" / "Retry" buttons in the inspector panel
     /// and the popover post-stop tray. Runs a fresh full-WAV diarize pass against
     /// the recording's on-disk WAV, persists embeddings, and updates postProcessingState.
     func runIdentifySpeakers(recordingID: Int64) {
@@ -816,8 +770,6 @@ private func openDetail(for recording: Recording) {
         Task { @MainActor [weak self] in
             do {
                 try await vm.delete(recording: recording)
-                self?.detailWindows[recording.wavPath]?.close()
-                self?.detailWindows.removeValue(forKey: recording.wavPath)
             } catch {
                 self?.presentDeleteFailure(recording: recording, error: error)
             }

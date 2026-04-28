@@ -4,7 +4,7 @@ import HarcStore
 import HarcModels
 import HarcSummarize
 
-/// Renders one of six states above the transcript in `TranscriptionDetailView`.
+/// Renders one of six states above the transcript in the recording detail panel.
 /// All state resolution lives in the pure `SummaryCardState.resolve(...)` helper;
 /// this view's only job is to translate its observed environment into that
 /// helper's primitive inputs and lay out each case.

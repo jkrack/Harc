@@ -2,9 +2,7 @@ import SwiftUI
 import HarcStore
 
 /// An inspector `Section` that surfaces file metadata for a `Recording` — the
-/// WAV/TXT/JSON paths, recording start time, and derived duration. Mirrors the
-/// "Recording Files" block in `TranscriptionDetailView`'s files tab (which is
-/// still live — duplication clears in Task 3.5).
+/// WAV/TXT/JSON paths, recording start time, and derived duration.
 public struct FileInspectorSection: View {
     private let recording: Recording
 

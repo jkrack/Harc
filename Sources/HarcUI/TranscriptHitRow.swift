@@ -14,11 +14,16 @@ public struct TranscriptHitRow: View {
 
     public var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            RecordingIconTile(
-                systemImage: hit.recording.pinned ? "pin.fill" : "waveform",
-                accent: hit.recording.pinned ? .purple : .accentColor,
-                size: 32
-            )
+            let accent: Color = hit.recording.pinned ? .purple : .accentColor
+            let icon: String = hit.recording.pinned ? "pin.fill" : "waveform"
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(accent.opacity(0.14))
+                .frame(width: 32, height: 32)
+                .overlay(
+                    Image(systemName: icon)
+                        .font(.system(size: 14.72, weight: .semibold))
+                        .foregroundStyle(accent)
+                )
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(hit.recording.displayTitle)

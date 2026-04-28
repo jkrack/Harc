@@ -3,16 +3,22 @@ import HarcStore
 import HarcExport
 import AppKit
 
+// MARK: - Notifications
+
+public extension NSNotification.Name {
+    /// Posted by AppDelegate when the user invokes "open library + focus search".
+    /// `HarcWindowRootView` observes this to activate its search field.
+    static let harcLibraryFocusSearch = NSNotification.Name("HarcLibraryFocusSearch")
+}
+
 // MARK: - HarcWindowRootView
 
-/// Main window root view (Task 3.2). Hosts a `NavigationSplitView` with a
-/// recording-list sidebar (grouped by date / pinned), a transcript detail pane,
-/// and an inspector panel showing speaker and file metadata.
+/// Main window root view. Hosts a `NavigationSplitView` with a recording-list
+/// sidebar (grouped by date / pinned), a transcript detail pane, and an
+/// inspector panel showing speaker and file metadata.
 ///
-/// Toolbar actions (Edit, Export, Delete, recording pill) are wired in Task 3.3.
-/// This view is hosted by `HarcWindowController` (renamed in Task 3.4).
-/// The legacy `LibraryWindowRootView` and `TranscriptionDetailView` are removed
-/// in Task 3.5.
+/// Toolbar actions (Edit, Export, Delete, recording pill) are wired in.
+/// This view is hosted by `HarcWindowController`.
 public struct HarcWindowRootView: View {
     @ObservedObject var libraryVM: LibraryViewModel
     @ObservedObject var recordingState: RecordingState
@@ -26,8 +32,7 @@ public struct HarcWindowRootView: View {
     // MARK: View state
 
     /// Primary selection — keyed on `wavPath` (String), matching how the
-    /// existing VMs index recordings. This matches the selection approach used
-    /// by `LibraryWindowRootView`.
+    /// existing VMs index recordings.
     @State private var selection: String?
     @State private var inspectorOpen: Bool = false
 
@@ -251,7 +256,7 @@ public struct HarcWindowRootView: View {
             VStack(alignment: .leading, spacing: 16) {
                 // Summary card — requires SummarizationQueueStore and
                 // ModelManagerStore injected as environment objects by the
-                // window controller (same as TranscriptionDetailView).
+                // window controller.
                 SummaryCardView(
                     recording: recording,
                     store: store,
@@ -303,8 +308,7 @@ public struct HarcWindowRootView: View {
     private func inspectorContent(recording: Recording) -> some View {
         Form {
             SpeakerInspectorSection(
-                // Derive speaker indices from the JSON sidecar the same way
-                // TranscriptionDetailView does via ExportInputBuilder.
+                // Derive speaker indices from the JSON sidecar via ExportInputBuilder.
                 // TODO(Task 3.3/3.4): wire suggestions via reIDService.
                 speakerIndices: speakerIndices(for: recording),
                 initialNames: recording.speakerNames,
