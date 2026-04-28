@@ -369,6 +369,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 }
             }
             runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
+            // Show the post-stop tray in the MenuBarExtra panel so the user can
+            // copy or paste the transcript. Only fires when there is actual
+            // transcript text — avoids an empty/useless tray on silent recordings.
+            if let txt = transcriptText, !txt.isEmpty {
+                let trayBlob = ExportService.promptString(
+                    for: rec,
+                    includeSummary: prefs.includeSummaryInPrompt
+                )
+                bridge.trayState.show(title: rec.displayTitle, transcript: trayBlob)
+            }
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
             autoStop.end(autoStopReason: autoStopReason)
             if let autoStopReason, prefs.postStopNotificationEnabled {
