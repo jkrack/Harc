@@ -6,17 +6,16 @@ public struct LibrarySettingsView: View {
     public init() {}
 
     public var body: some View {
-        Form {
-            Section {
-                Text("Library settings will appear here.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-            } footer: {
-                Text("Future: retention, search preferences, archive behavior.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-            }
+        Section {
+            Text("Library settings will appear here.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+        } header: {
+            Text("Library")
+        } footer: {
+            Text("Future: retention, search preferences, archive behavior.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
         }
-        .formStyle(.grouped)
     }
 }
