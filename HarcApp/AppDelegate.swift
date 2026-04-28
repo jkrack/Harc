@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
     private var pendingSkipPaste = false
+    private var frontmostPoller: Timer?
 
     private let meetingState = MeetingDetectionState()
     private let notificationPresenter = MeetingNotificationPresenter()
@@ -125,6 +126,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // Seed install state from disk. Safe to call before any UI is shown;
         // the actor bootstrap is cheap (just reads a handful of dotfiles).
         Task { await modelManager.bootstrap() }
+
+        // Forward AutoStopController's rolling FFT/scope history to the bridge
+        // so the MenuBarExtra panel's LiveScopeView re-renders on each tick.
+        autoStop.$scopeHistory
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.scopeHistory, on: bridge)
+            .store(in: &cancellables)
+
+        startFrontmostPolling()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -133,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             terminateToken = nil
         }
         detector?.stop()
+        frontmostPoller?.invalidate()
+        frontmostPoller = nil
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -209,6 +221,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .sink { _ in
                 // Phase changes are reflected by the SwiftUI MenuBarExtra label.
             }
+    }
+
+    /// Polls `NSWorkspace.frontmostApplication` once per second and forwards
+    /// the display name to the bridge for the "Paste → [App]" button label.
+    private func startFrontmostPolling() {
+        frontmostPoller?.invalidate()
+        frontmostPoller = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let name = NSWorkspace.shared.frontmostApplication?.localizedName
+            if self.bridge.frontmostAppName != name {
+                self.bridge.frontmostAppName = name
+            }
+        }
     }
 
     private func startRecording() async {
