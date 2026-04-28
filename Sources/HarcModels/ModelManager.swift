@@ -73,9 +73,21 @@ public actor ModelManager {
     /// Read on-disk install markers and seed `states`. Safe to call more than
     /// once; later calls re-check disk so an externally-modified Models/
     /// directory is picked up.
+    ///
+    /// Goes through `transition` so subscribers (SwiftUI stores observing
+    /// `stateChanges`) actually see the result. A direct `states[id] = ...`
+    /// assignment used to silently leave subscribers stuck on `.absent`.
     public func bootstrap() {
         for d in catalog {
-            states[d.id] = storage.persistedState(for: d.id)
+            let previous = states[d.id] ?? .absent
+            let next = storage.persistedState(for: d.id)
+            if previous != next {
+                transition(d.id, to: next)
+            } else if states[d.id] == nil {
+                // First-ever read for this id: seed the dict and notify any
+                // subscriber that attached at .absent default.
+                transition(d.id, to: next)
+            }
         }
     }
 
