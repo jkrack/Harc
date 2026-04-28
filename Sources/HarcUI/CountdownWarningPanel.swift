@@ -49,10 +49,10 @@ public struct CountdownWarningPanel: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(headline)
                         .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(Color.harcInkPrimary)
+                        .foregroundStyle(Color.primary)
                     Text(subheadline)
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(Color.harcInkSecondary)
+                        .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     levelReadout
@@ -80,8 +80,8 @@ public struct CountdownWarningPanel: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                     .background(
-                        RoundedRectangle(cornerRadius: HarcDesign.Radius.md)
-                            .fill(Color.harcAccent)
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.accentColor)
                     )
                     .contentShape(Rectangle())
                 }
@@ -91,12 +91,12 @@ public struct CountdownWarningPanel: View {
                 Button(action: onStopNow) {
                     Text("Stop Now")
                         .font(.system(size: 12.5))
-                        .foregroundStyle(Color.harcInkSecondary)
+                        .foregroundStyle(Color.secondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(
-                            RoundedRectangle(cornerRadius: HarcDesign.Radius.md)
-                                .strokeBorder(Color.harcBorderStrong, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
                         )
                         .contentShape(Rectangle())
                 }
@@ -106,20 +106,20 @@ public struct CountdownWarningPanel: View {
 
             Text("Or do nothing — recording will save and stop.")
                 .font(.system(size: 11))
-                .foregroundStyle(Color.harcInkTertiary)
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            Divider().background(Color.harcBorderSubtle)
+            Divider().background(Color(nsColor: .separatorColor))
 
             HStack {
                 Text(reason == .hardCap ? "hard cap reached" : "silence threshold · \(thresholdMinutes) min")
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(Color.harcInkTertiary)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 Spacer(minLength: 8)
                 Button("Change in Settings →", action: onOpenSettings)
                     .buttonStyle(.plain)
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(Color.harcInkTertiary)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
         }
         .padding(.horizontal, 16)
@@ -129,8 +129,8 @@ public struct CountdownWarningPanel: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color.harcWarning.opacity(0.12),
-                            Color.harcWarning.opacity(0.05)
+                            Color.yellow.opacity(0.12),
+                            Color.yellow.opacity(0.05)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -139,7 +139,7 @@ public struct CountdownWarningPanel: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.harcWarning.opacity(0.45), lineWidth: 1)
+                .strokeBorder(Color.yellow.opacity(0.45), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(voiceOverLabel))
@@ -186,7 +186,7 @@ public struct CountdownWarningPanel: View {
                     .font(.system(size: 10.5, design: .monospaced))
             }
         }
-        .foregroundStyle(Color.harcInkTertiary)
+        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
     }
 
     private func dbText(_ db: Float) -> String {
@@ -214,11 +214,11 @@ private struct CountdownRing: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.harcWarning.opacity(0.18), lineWidth: 3)
+                .stroke(Color.yellow.opacity(0.18), lineWidth: 3)
             Circle()
                 .trim(from: 0, to: progress)
                 .stroke(
-                    Color.harcWarning,
+                    Color.yellow,
                     style: StrokeStyle(lineWidth: 3, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
@@ -226,14 +226,8 @@ private struct CountdownRing: View {
             Text("\(secondsLeft)")
                 .font(.system(size: 17, weight: .semibold, design: .monospaced))
                 .monospacedDigit()
-                .foregroundStyle(Color.harcWarning)
+                .foregroundStyle(Color.yellow)
         }
     }
 }
 
-// MARK: - Color shim
-
-extension Color {
-    static var harcWarning: Color { HarcDesign.warning }
-    static var harcSuccessColor: Color { HarcDesign.success }
-}

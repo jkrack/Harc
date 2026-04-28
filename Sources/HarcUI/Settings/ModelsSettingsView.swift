@@ -31,8 +31,8 @@ public struct ModelsSettingsView: View {
                 Text("Summarization")
             } footer: {
                 Text("Pick one tier. Higher tiers produce better summaries at higher RAM and time cost. Your Mac has \(ramGB) GB.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
 
             if !embedders.isEmpty {
@@ -47,8 +47,8 @@ public struct ModelsSettingsView: View {
                     Text("Semantic search")
                 } footer: {
                     Text("Required to enable the Related tab in the library search.")
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcInkSecondary)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
                 }
             }
         }
@@ -105,10 +105,10 @@ public struct ModelsSettingsView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Models")
-                .font(HarcDesign.Font.title)
+                .font(.title3.weight(.semibold))
             Text("Harc runs all AI work on your Mac. Download only the tiers you need.")
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.bottom, 6)
@@ -119,8 +119,8 @@ public struct ModelsSettingsView: View {
     private var activeSummarizerPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Active model")
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.caption)
+                .foregroundStyle(Color.secondary)
             Picker("", selection: $prefs.activeSummarizerID) {
                 ForEach(summarizers) { d in
                     Text(d.tierDisplayName).tag(d.id)
@@ -179,29 +179,29 @@ private struct ModelRow: View {
     @EnvironmentObject private var models: ModelManagerStore
 
     var body: some View {
-        HStack(alignment: .top, spacing: HarcDesign.Space.sm) {
+        HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(descriptor.displayName)
-                        .font(HarcDesign.Font.bodyMd)
+                        .font(.body)
                         .fontWeight(.medium)
                     statusChip
                 }
                 Text(descriptor.summary)
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
                 if ramGB < descriptor.recommendedRAMGB {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text("Your Mac has \(ramGB) GB — \(descriptor.recommendedRAMGB) GB recommended.")
                     }
                     .font(.system(size: 11))
-                    .foregroundStyle(Color.harcWarning)
+                    .foregroundStyle(Color.yellow)
                 }
                 if case .failed(let reason) = state {
                     Text(reason)
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcError)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.red)
                 }
                 if case .downloading(let progress) = state {
                     ProgressView(value: progress)
@@ -222,19 +222,19 @@ private struct ModelRow: View {
     @ViewBuilder
     private var statusChip: some View {
         if !descriptor.manifestVerified {
-            chip("Manifest pending", color: HarcDesign.warning)
+            chip("Manifest pending", color: Color.yellow)
         } else {
             switch state {
             case .installed:
-                chip("Installed · \(sizeText)", color: HarcDesign.success)
+                chip("Installed · \(sizeText)", color: Color.green)
             case .downloading:
-                chip("Downloading · \(sizeText)", color: HarcDesign.accent)
+                chip("Downloading · \(sizeText)", color: Color.accentColor)
             case .verifying:
-                chip("Verifying", color: HarcDesign.accent)
+                chip("Verifying", color: Color.accentColor)
             case .failed:
-                chip("Failed", color: HarcDesign.danger)
+                chip("Failed", color: Color.red)
             case .absent:
-                chip("Not installed · \(sizeText)", color: HarcDesign.inkTertiary)
+                chip("Not installed · \(sizeText)", color: Color(nsColor: .tertiaryLabelColor))
             }
         }
     }
@@ -271,7 +271,7 @@ private struct ModelRow: View {
 
     private func chip(_ label: String, color: Color) -> some View {
         Text(label)
-            .font(HarcDesign.Font.monoXs)
+            .font(.system(.caption2, design: .monospaced).weight(.medium))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

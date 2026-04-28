@@ -26,7 +26,7 @@ public struct TranscriptEditorView: View {
                 errorBanner(err)
             }
 
-            Divider().background(Color.harcBorderSubtle)
+            Divider().background(Color(nsColor: .separatorColor))
 
             body_
                 .frame(maxHeight: .infinity)
@@ -35,11 +35,11 @@ public struct TranscriptEditorView: View {
                 staleHintBanner
             }
 
-            Divider().background(Color.harcBorderSubtle)
+            Divider().background(Color(nsColor: .separatorColor))
 
             TranscriptEditorTransportView(vm: vm)
         }
-        .background(Color.harcSurface2)
+        .background(Color(nsColor: .controlBackgroundColor))
         .preferredColorScheme(.dark)
     }
 
@@ -61,13 +61,13 @@ public struct TranscriptEditorView: View {
         TextField("", text: $titleDraft)
             .textFieldStyle(.plain)
             .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(Color.harcInkPrimary)
+            .foregroundStyle(Color.primary)
             .focused($titleFocused)
             .onSubmit { commitTitle() }
             .overlay(alignment: .bottom) {
                 if titleFocused {
                     Rectangle()
-                        .fill(Color.harcAccent)
+                        .fill(Color.accentColor)
                         .frame(height: 1)
                         .padding(.top, 24)
                 }
@@ -80,29 +80,29 @@ public struct TranscriptEditorView: View {
                 .fill(stateColor)
                 .frame(width: 5, height: 5)
             Text(stateLabel)
-                .font(HarcDesign.Font.monoXs)
+                .font(.system(.caption2, design: .monospaced).weight(.medium))
                 .tracking(0.8)
-                .foregroundStyle(Color.harcInkTertiary)
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             metaSep
             Text(modelText)
-                .font(HarcDesign.Font.monoXs)
-                .foregroundStyle(Color.harcInkTertiary)
+                .font(.system(.caption2, design: .monospaced).weight(.medium))
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             metaSep
             Text(durationText)
-                .font(HarcDesign.Font.monoXs)
+                .font(.system(.caption2, design: .monospaced).weight(.medium))
                 .monospacedDigit()
-                .foregroundStyle(Color.harcInkTertiary)
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             metaSep
             Text(URL(fileURLWithPath: vm.recording.wavPath).lastPathComponent)
-                .font(HarcDesign.Font.monoXs)
-                .foregroundStyle(Color.harcInkTertiary)
+                .font(.system(.caption2, design: .monospaced).weight(.medium))
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
     }
 
     private var metaSep: some View {
-        Text("·").foregroundStyle(Color.harcInkQuaternary).font(HarcDesign.Font.monoXs)
+        Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor)).font(.system(.caption2, design: .monospaced).weight(.medium))
     }
 
     private var actions: some View {
@@ -112,9 +112,9 @@ public struct TranscriptEditorView: View {
                     Image(systemName: "doc.on.clipboard")
                         .font(.system(size: 11, weight: .medium))
                     Text("Copy for Prompt")
-                        .font(HarcDesign.Font.meta)
+                        .font(.subheadline)
                 }
-                .foregroundStyle(Color.harcAccent)
+                .foregroundStyle(Color.accentColor)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 6)
             }
@@ -148,19 +148,19 @@ public struct TranscriptEditorView: View {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 11, weight: .medium))
                 Text("Export")
-                    .font(HarcDesign.Font.meta)
+                    .font(.subheadline)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
             }
-            .foregroundStyle(Color.harcInkPrimary)
+            .foregroundStyle(Color.primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
-                    .fill(Color.harcSurface3)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
                     .overlay(
-                        RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
-                            .stroke(Color.harcBorderStrong, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                     )
             )
         }
@@ -175,17 +175,17 @@ public struct TranscriptEditorView: View {
                 Image(systemName: "arrow.down.doc")
                     .font(.system(size: 11, weight: .medium))
                 Text("Save")
-                    .font(HarcDesign.Font.meta.weight(.medium))
+                    .font(.subheadline.weight(.medium))
             }
-            .foregroundStyle(vm.isDirty ? .white : Color.harcInkSecondary)
+            .foregroundStyle(vm.isDirty ? .white : Color.secondary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
-                    .fill(vm.isDirty ? Color.harcAccent : Color.harcSurface3)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(vm.isDirty ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
                     .overlay(
-                        RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
-                            .stroke(vm.isDirty ? Color.clear : Color.harcBorderStrong, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(vm.isDirty ? Color.clear : Color(nsColor: .separatorColor), lineWidth: 1)
                     )
             )
         }
@@ -221,43 +221,43 @@ public struct TranscriptEditorView: View {
         HStack(spacing: 8) {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 11))
-                .foregroundStyle(Color.harcInkTertiary)
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             Text("Timestamps approximate after edits.")
-                .font(HarcDesign.Font.label)
-                .foregroundStyle(Color.harcInkTertiary)
+                .font(.caption)
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             Spacer()
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 6)
-        .background(Color.harcSurface1)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func errorBanner(_ message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 11))
-                .foregroundStyle(Color.harcError)
+                .foregroundStyle(Color.red)
             Text(message)
-                .font(HarcDesign.Font.label)
-                .foregroundStyle(Color.harcError)
+                .font(.caption)
+                .foregroundStyle(Color.red)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             Button("Dismiss") { exportError = nil }
                 .buttonStyle(.plain)
-                .font(HarcDesign.Font.label)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.caption)
+                .foregroundStyle(Color.secondary)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 8)
-        .background(Color.harcError.opacity(0.08))
+        .background(Color.red.opacity(0.08))
     }
 
     // MARK: - State derivations
 
     private var stateColor: Color {
-        if vm.audioMissing { return Color.harcInkQuaternary }
-        if vm.editedText.isEmpty { return Color.harcInkQuaternary }
-        return HarcDesign.success
+        if vm.audioMissing { return Color(nsColor: .quaternaryLabelColor) }
+        if vm.editedText.isEmpty { return Color(nsColor: .quaternaryLabelColor) }
+        return Color.green
     }
 
     private var stateLabel: String {
@@ -331,11 +331,11 @@ private struct EmptyTranscriptCard: View {
                     .frame(width: 240, height: 56)
                     .opacity(0.6)
                 Text("No transcript yet")
-                    .font(HarcDesign.Font.subtitle)
-                    .foregroundStyle(Color.harcInkPrimary)
+                    .font(.headline)
+                    .foregroundStyle(Color.primary)
                 Text("This recording is audio only. Transcribe on-device with parakeet-tdt-0.6b-v3 — typically a few seconds on Apple Silicon.")
-                    .font(HarcDesign.Font.body)
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.body)
+                    .foregroundStyle(Color.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 420)
                     .fixedSize(horizontal: false, vertical: true)
@@ -354,13 +354,13 @@ private struct EmptyAudioOnlyCard: View {
             Spacer()
             Image(systemName: "speaker.slash")
                 .font(.system(size: 28))
-                .foregroundStyle(Color.harcInkQuaternary)
+                .foregroundStyle(Color(nsColor: .quaternaryLabelColor))
             Text("Audio file not found")
-                .font(HarcDesign.Font.subtitle)
-                .foregroundStyle(Color.harcInkPrimary)
+                .font(.headline)
+                .foregroundStyle(Color.primary)
             Text("The original .wav for this recording is missing — playback is disabled. Editing still works if a transcript was previously saved.")
-                .font(HarcDesign.Font.body)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.body)
+                .foregroundStyle(Color.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
                 .fixedSize(horizontal: false, vertical: true)
@@ -377,7 +377,7 @@ private struct IdleWaveform: View {
             HStack(alignment: .center, spacing: 3) {
                 ForEach(0..<40, id: \.self) { i in
                     Capsule()
-                        .fill(Color.harcInkQuaternary)
+                        .fill(Color(nsColor: .quaternaryLabelColor))
                         .frame(width: 2, height: barHeight(at: i, totalHeight: geo.size.height))
                 }
             }

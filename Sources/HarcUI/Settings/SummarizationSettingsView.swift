@@ -30,13 +30,13 @@ public struct SummarizationSettingsView: View {
                         Button("Models tab") { onOpenModels() }
                             .buttonStyle(.link)
                     }
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
 
                     if case .absent = models.state(of: prefs.activeSummarizerID) {
                         Text("The active summarizer is not installed. Auto-summarize and the Generate button will have no effect.")
-                            .font(HarcDesign.Font.bodySm)
-                            .foregroundStyle(Color.harcWarning)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.yellow)
                     }
                 }
             }
@@ -45,7 +45,7 @@ public struct SummarizationSettingsView: View {
                 Toggle("Automatically summarize after recording", isOn: $prefs.autoSummarizeEnabled)
                 Toggle("Also when on battery", isOn: $prefs.autoSummarizeOnBatteryEnabled)
                     .disabled(!prefs.autoSummarizeEnabled)
-                    .padding(.leading, HarcDesign.Space.md)
+                    .padding(.leading, 16)
                 Toggle("Include summary in exports and Copy for Prompt", isOn: $prefs.includeSummaryInPrompt)
             } header: {
                 Text("Behavior")
@@ -54,8 +54,8 @@ public struct SummarizationSettingsView: View {
                     Text("Gemma 4 is multi-GB resident and uses power. The battery toggle is off by default.")
                     Text("When enabled, Markdown, DOCX, and prompt exports prepend Summary and Action Items above the transcript.")
                 }
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
             }
         }
         .formStyle(.grouped)
@@ -74,10 +74,10 @@ public struct SummarizationSettingsView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Summarization")
-                .font(HarcDesign.Font.title)
+                .font(.title3.weight(.semibold))
             Text("Harc summarizes finished recordings locally using Gemma 4.")
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.bottom, 6)
@@ -86,8 +86,8 @@ public struct SummarizationSettingsView: View {
     private var activeTierPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Active model")
-                .font(HarcDesign.Font.labelMd)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.caption)
+                .foregroundStyle(Color.secondary)
             Picker("", selection: $prefs.activeSummarizerID) {
                 ForEach(summarizers) { d in
                     Text(d.tierDisplayName).tag(d.id)

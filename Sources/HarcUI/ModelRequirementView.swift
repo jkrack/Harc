@@ -29,15 +29,15 @@ public struct ModelRequirementView: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "brain")
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(Color.harcAccent)
+                    .foregroundStyle(Color.accentColor)
                     .frame(width: 22, alignment: .center)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(HarcDesign.Font.subtitle)
-                        .foregroundStyle(Color.harcInkPrimary)
+                        .font(.headline)
+                        .foregroundStyle(Color.primary)
                     Text(reason)
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcInkSecondary)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -58,18 +58,18 @@ public struct ModelRequirementView: View {
 
             if case .failed(let reason) = models.state(of: descriptor.id) {
                 Text(reason)
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcError)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.red)
             }
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
-                .fill(Color.harcAccent.opacity(0.06))
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor.opacity(0.06))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
-                .strokeBorder(Color.harcAccent.opacity(0.3), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
         )
     }
 
@@ -95,8 +95,8 @@ public struct ModelRequirementView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: HarcDesign.Radius.md)
-                        .fill(Color.harcAccent)
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor)
                 )
             }
             .buttonStyle(.plain)
@@ -105,12 +105,12 @@ public struct ModelRequirementView: View {
                 Button("Later") { onLater() }
                     .buttonStyle(.plain)
                     .font(.system(size: 12.5))
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .foregroundStyle(Color.secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: HarcDesign.Radius.md)
-                            .strokeBorder(Color.harcBorderStrong, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
                     )
             }
         }
@@ -122,15 +122,15 @@ public struct ModelRequirementView: View {
                 .progressViewStyle(.linear)
             HStack {
                 Text(String(format: "%.0f %%", progress * 100))
-                    .font(HarcDesign.Font.monoXs)
-                    .foregroundStyle(Color.harcInkTertiary)
+                    .font(.system(.caption2, design: .monospaced).weight(.medium))
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 Spacer()
                 Button("Cancel") {
                     Task { await models.cancel(descriptor.id) }
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 11.5))
-                .foregroundStyle(Color.harcInkSecondary)
+                .foregroundStyle(Color.secondary)
             }
         }
     }
@@ -139,18 +139,18 @@ public struct ModelRequirementView: View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text("Verifying…")
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
         }
     }
 
     private var installedRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(HarcDesign.success)
+                .foregroundStyle(Color.green)
             Text("Installed. Reopen to use.")
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
         }
     }
 

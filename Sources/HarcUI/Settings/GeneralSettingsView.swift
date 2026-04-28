@@ -9,12 +9,12 @@ public struct GeneralSettingsView: View {
         Form {
             Section {
                 Text("General settings will appear here.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             } footer: {
                 Text("Future: launch at login, appearance, menu bar options.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
         }
         .formStyle(.grouped)

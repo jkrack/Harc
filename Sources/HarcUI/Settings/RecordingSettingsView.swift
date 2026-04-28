@@ -16,8 +16,8 @@ public struct RecordingSettingsView: View {
             Section {
                 HStack {
                     Text(prefs.destinationPath)
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
@@ -30,8 +30,8 @@ public struct RecordingSettingsView: View {
                 Text("Destination folder")
             } footer: {
                 Text("Recordings are written here as YYYY/YYYY-MM-DD/HH-mm-ss.{wav,txt,json}.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
 
             Section {
@@ -39,32 +39,32 @@ public struct RecordingSettingsView: View {
                     Text("Chunk duration")
                     Spacer()
                     Text("\(Int(prefs.chunkDurationSeconds)) s")
-                        .font(HarcDesign.Font.labelMd.monospacedDigit())
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.secondary)
                 }
                 Slider(value: $prefs.chunkDurationSeconds, in: 15...120, step: 15)
             } footer: {
                 Text("How often the transcriber processes a slice during recording.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
 
             Section {
                 Toggle("Voice-activity detection", isOn: $prefs.vadEnabled)
-                    .tint(HarcDesign.primary)
+                    .tint(Color.accentColor)
             } header: {
                 Text("Processing")
             } footer: {
                 Text("Skips silent regions before transcription. Faster and quieter on battery; disable if you suspect a word is being clipped.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
 
             autoStopSection
 
             Section {
                 Toggle("Auto-paste on stop", isOn: $prefs.autoPasteEnabled)
-                    .tint(HarcDesign.primary)
+                    .tint(Color.accentColor)
             } header: {
                 Text("Auto-paste")
             } footer: {
@@ -72,8 +72,8 @@ public struct RecordingSettingsView: View {
                     Text("When recording stops, the prompt-formatted transcript is pasted into the frontmost app.")
                     Text("Hold ⇧ while clicking Stop, or ⌥-click the menu-bar icon, to skip for one recording. Paste is always skipped for password managers, Finder, and meeting apps.")
                 }
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
             }
 
             Section {
@@ -84,13 +84,13 @@ public struct RecordingSettingsView: View {
 
             Section {
                 Toggle("Enable meeting detection", isOn: $prefs.meetingDetectionEnabled)
-                    .tint(HarcDesign.primary)
+                    .tint(Color.accentColor)
             } header: {
                 Text("Meeting detection")
             } footer: {
                 Text("Harc notices when you launch a video meeting app and offers to start recording.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
 
             if prefs.meetingDetectionEnabled {
@@ -126,7 +126,7 @@ public struct RecordingSettingsView: View {
     private var autoStopSection: some View {
         Section {
             Toggle("Auto-stop when silent", isOn: $prefs.autoStopEnabled)
-                .tint(HarcDesign.primary)
+                .tint(Color.accentColor)
 
             if prefs.autoStopEnabled {
                 HStack {
@@ -145,7 +145,7 @@ public struct RecordingSettingsView: View {
             }
 
             Toggle("Hard duration cap", isOn: $prefs.hardCapEnabled)
-                .tint(HarcDesign.primary)
+                .tint(Color.accentColor)
 
             if prefs.hardCapEnabled {
                 Stepper(value: $prefs.hardCapMinutes, in: 15...720, step: 15) {
@@ -153,14 +153,14 @@ public struct RecordingSettingsView: View {
                         Text("Maximum length")
                         Spacer()
                         Text(formatCap(prefs.hardCapMinutes))
-                            .font(HarcDesign.Font.labelMd.monospacedDigit())
-                            .foregroundStyle(Color.harcOnSurfaceVariant)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Color.secondary)
                     }
                 }
             }
 
             Toggle("Post-stop notification", isOn: $prefs.postStopNotificationEnabled)
-                .tint(HarcDesign.primary)
+                .tint(Color.accentColor)
         } header: {
             Text("Auto-stop")
         } footer: {
@@ -168,8 +168,8 @@ public struct RecordingSettingsView: View {
                 Text("Stops recording automatically when both the mic and system audio have been silent. Warns 60 s before stopping so you can keep recording.")
                 Text("The hard cap stops recording regardless of silence. The tray banner always shows after an auto-stop; the macOS notification is additive and respects Do Not Disturb.")
             }
-            .font(HarcDesign.Font.bodySm)
-            .foregroundStyle(Color.harcOnSurfaceVariant)
+            .font(.subheadline)
+            .foregroundStyle(Color.secondary)
         }
     }
 
@@ -182,62 +182,62 @@ public struct RecordingSettingsView: View {
     }
 
     private func monitoredAppRow(_ app: MeetingApp) -> some View {
-        HStack(spacing: HarcDesign.Space.sm) {
+        HStack(spacing: 12) {
             Image(systemName: app.symbolName)
                 .font(.body)
-                .foregroundStyle(Color.harcTertiary)
+                .foregroundStyle(Color.purple)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.displayName)
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcOnSurface)
+                    .font(.body)
+                    .foregroundStyle(Color.primary)
                 if let note = app.settingsNote {
                     Text(note)
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             Spacer()
             Toggle("", isOn: prefs.meetingAppBinding(for: app))
                 .labelsHidden()
-                .tint(HarcDesign.primary)
+                .tint(Color.accentColor)
         }
-        .padding(.vertical, HarcDesign.Space.xxs)
+        .padding(.vertical, 4)
     }
 
     private var googleMeetComingSoonRow: some View {
-        HStack(spacing: HarcDesign.Space.sm) {
+        HStack(spacing: 12) {
             Image(systemName: "globe")
                 .font(.body)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
+                .foregroundStyle(Color.secondary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Google Meet")
-                    .font(HarcDesign.Font.bodyMd)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.body)
+                    .foregroundStyle(Color.secondary)
                 Text("Runs in your browser — reliable detection is coming.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
             Spacer()
             Toggle("", isOn: .constant(false))
                 .labelsHidden()
                 .disabled(true)
         }
-        .padding(.vertical, HarcDesign.Space.xxs)
+        .padding(.vertical, 4)
     }
 
     private var notificationsDeniedWarning: some View {
-        HStack(alignment: .top, spacing: HarcDesign.Space.sm) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.harcError)
-            VStack(alignment: .leading, spacing: HarcDesign.Space.xxs) {
+                .foregroundStyle(Color.red)
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Notifications disabled")
-                    .font(HarcDesign.Font.labelMd)
-                    .foregroundStyle(Color.harcOnSurface)
+                    .font(.caption)
+                    .foregroundStyle(Color.primary)
                 Text("Harc will still pulse the menu bar icon, but can't show a banner until you re-enable notifications.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Open System Settings") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
@@ -247,7 +247,7 @@ public struct RecordingSettingsView: View {
                 .controlSize(.small)
             }
         }
-        .padding(.vertical, HarcDesign.Space.xxs)
+        .padding(.vertical, 4)
     }
 
     private func refreshNotificationStatus() async {
@@ -260,18 +260,18 @@ public struct RecordingSettingsView: View {
     }
 
     private var destinationMissingWarning: some View {
-        HStack(alignment: .top, spacing: HarcDesign.Space.sm) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.harcError)
-            VStack(alignment: .leading, spacing: HarcDesign.Space.xxs) {
+                .foregroundStyle(Color.red)
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Destination folder not found")
-                    .font(HarcDesign.Font.labelMd)
-                    .foregroundStyle(Color.harcOnSurface)
+                    .font(.caption)
+                    .foregroundStyle(Color.primary)
                 Text("Harc can't write recordings here until you choose a different folder or restore the missing one. New recordings will fail to save until this is resolved.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: HarcDesign.Space.sm) {
+                HStack(spacing: 12) {
                     Button("Choose…", action: pickFolder)
                         .controlSize(.small)
                     Button("Use Default") {
@@ -281,7 +281,7 @@ public struct RecordingSettingsView: View {
                 }
             }
         }
-        .padding(.vertical, HarcDesign.Space.xxs)
+        .padding(.vertical, 4)
     }
 
     private func pickFolder() {

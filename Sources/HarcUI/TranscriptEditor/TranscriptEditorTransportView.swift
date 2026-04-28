@@ -39,26 +39,26 @@ struct TranscriptEditorTransportView: View {
 
             HStack(spacing: 0) {
                 Text(formatTime(vm.currentTimeSec))
-                Text(" / ").foregroundStyle(Color.harcInkQuaternary)
+                Text(" / ").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
                 Text(formatTime(vm.durationSec))
             }
-            .font(HarcDesign.Font.mono)
+            .font(.system(.callout, design: .monospaced))
             .monospacedDigit()
-            .foregroundStyle(Color.harcInkSecondary)
+            .foregroundStyle(Color.secondary)
             .frame(minWidth: 110, alignment: .trailing)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(Color.harcSurface1)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private var playButton: some View {
         Button { vm.togglePlay() } label: {
             ZStack {
                 Circle()
-                    .fill(Color.harcAccent)
+                    .fill(Color.accentColor)
                     .frame(width: 34, height: 34)
-                    .shadow(color: Color.harcAccent.opacity(0.5), radius: 8, x: 0, y: 3)
+                    .shadow(color: Color.accentColor.opacity(0.5), radius: 8, x: 0, y: 3)
                 Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
@@ -80,10 +80,10 @@ struct TranscriptEditorTransportView: View {
             ZStack {
                 Image(systemName: systemImage)
                     .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .foregroundStyle(Color.secondary)
                 Text(label)
                     .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .foregroundStyle(Color.secondary)
                     .offset(y: 1)
             }
             .frame(width: 28, height: 28)
@@ -102,25 +102,25 @@ struct TranscriptEditorTransportView: View {
         HStack(spacing: 8) {
             Image(systemName: "speaker.slash")
                 .font(.system(size: 11))
-                .foregroundStyle(Color.harcInkTertiary)
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             Text("Audio file not found — editing still works; playback is disabled.")
-                .font(HarcDesign.Font.body)
-                .foregroundStyle(Color.harcInkSecondary)
+                .font(.body)
+                .foregroundStyle(Color.secondary)
             Spacer()
             if let wav = vm.document.wavURL {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([wav])
                 } label: {
                     Text("Reveal in Finder")
-                        .font(HarcDesign.Font.meta)
-                        .foregroundStyle(Color.harcAccent)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(Color.harcSurface1)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -150,7 +150,7 @@ private struct ScrubWaveform: View {
             HStack(alignment: .center, spacing: spacing) {
                 ForEach(0..<total, id: \.self) { i in
                     Rectangle()
-                        .fill(played(i, total: total) ? Color.harcAccent : Color.harcInkQuaternary)
+                        .fill(played(i, total: total) ? Color.accentColor : Color(nsColor: .quaternaryLabelColor))
                         .frame(width: barW, height: barHeight(i: i, height: geo.size.height))
                         .cornerRadius(0.5)
                 }

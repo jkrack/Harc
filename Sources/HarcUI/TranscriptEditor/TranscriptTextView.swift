@@ -84,7 +84,7 @@ public struct TranscriptTextView: NSViewRepresentable {
 
         storage.addAttribute(
             .backgroundColor,
-            value: NSColor(Color.harcPrimary.opacity(0.18)),
+            value: NSColor(Color.accentColor.opacity(0.18)),
             range: range
         )
         coordinator.appliedHighlightRange = range

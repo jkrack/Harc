@@ -24,13 +24,13 @@ public struct SpeakerSuggestionChip: View {
                 HStack(spacing: 6) {
                     Image(systemName: "person.wave.2")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.harcAccent)
+                        .foregroundStyle(Color.accentColor)
                     Text(titleLine)
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcInkPrimary)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.primary)
                     Text(percentText)
                         .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Color.harcInkTertiary)
+                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 }
                 .padding(.leading, 8)
                 .padding(.trailing, 4)
@@ -44,7 +44,7 @@ public struct SpeakerSuggestionChip: View {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(Color.harcInkTertiary)
+                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                         .padding(4)
                         .contentShape(Rectangle())
                 }
@@ -55,11 +55,11 @@ public struct SpeakerSuggestionChip: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color.harcAccent.opacity(0.08))
+                .fill(Color.accentColor.opacity(0.08))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(Color.harcAccent.opacity(0.22), lineWidth: 1)
+                .strokeBorder(Color.accentColor.opacity(0.22), lineWidth: 1)
         )
     }
 
