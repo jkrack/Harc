@@ -124,21 +124,10 @@ public struct CountdownWarningPanel: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.yellow.opacity(0.12),
-                            Color.yellow.opacity(0.05)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-        )
+        // TODO: switch to .glassEffect() once the macOS 26 API is verified
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(Color.yellow.opacity(0.45), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
