@@ -2,7 +2,7 @@ name: Harc
 options:
   bundleIdPrefix: com.harc
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 settings:

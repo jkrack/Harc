@@ -12,7 +12,7 @@ Status: greenfield. No code yet. This file will grow as the codebase does.
 
 Non-negotiable product decisions. Flag to the user before violating.
 
-- **Apple Silicon only** (arm64). Target macOS 14+. Free use of Neural Engine, Metal, Accelerate, Core ML.
+- **Apple Silicon only** (arm64). Target macOS 26+ (Tahoe). Free use of Neural Engine, Metal, Accelerate, Core ML, Liquid Glass / `.glassEffect()`.
 - **Fully local inference.** No cloud STT, no external telemetry. All audio stays on-device.
 - **Menu bar resident.** Primary UI is an `NSStatusItem` with a popover/panel. Not a dock/window-first app.
 - **English-first.** Multilingual is a non-goal — it unlocks the best model choice (Parakeet).
