@@ -1,6 +1,10 @@
 import SwiftUI
 import AppKit
 
+// DEPRECATED: this entire file is scheduled for deletion in Phase 7 cleanup.
+// Do not add new references. Use HarcBrand for the brand sliver and
+// Color.primary / .secondary / .accentColor / system materials elsewhere.
+
 /// Harc design tokens — dark-first, Apple Silicon utility-app aesthetic.
 ///
 /// Five surface stops (elevation = tone shift, not shadow), four ink levels,
