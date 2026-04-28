@@ -15,8 +15,8 @@ public struct ProcessingSettingsView: View {
                 Toggle("Transcribe speakers (diarization)", isOn: $prefs.diarize)
             } footer: {
                 Text("When on, transcripts include per-speaker segments.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
 
             Section {
@@ -30,22 +30,22 @@ public struct ProcessingSettingsView: View {
                             selection = []
                         } label: {
                             Text("Delete \(selection.count) selected")
-                                .font(HarcDesign.Font.labelMd)
+                                .font(.caption)
                         }
                     }
                 }
             } header: {
-                VStack(alignment: .leading, spacing: HarcDesign.Space.xxs) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Vocabulary")
                     Text("Replace mis-heard words and acronyms in every new transcript — names, product terms, jargon.")
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
                         .textCase(nil)
                 }
             } footer: {
                 Text("Drag rows to reorder — rules apply top to bottom. Applies to new recordings only.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
         }
         .formStyle(.grouped)
@@ -55,8 +55,8 @@ public struct ProcessingSettingsView: View {
     private var vocabularyList: some View {
         if prefs.vocabulary.entries.isEmpty {
             Text("No vocabulary entries yet. Add one below.")
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcOnSurfaceVariant)
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             List(selection: $selection) {
@@ -77,11 +77,11 @@ public struct ProcessingSettingsView: View {
     }
 
     private var addEntryRow: some View {
-        HStack(spacing: HarcDesign.Space.xs) {
+        HStack(spacing: 8) {
             TextField("Heard", text: $newFrom)
                 .textFieldStyle(.roundedBorder)
             Image(systemName: "arrow.right")
-                .foregroundStyle(Color.harcOnSurfaceVariant)
+                .foregroundStyle(Color.secondary)
             TextField("Replace with", text: $newTo)
                 .textFieldStyle(.roundedBorder)
             Button("Add") {
@@ -105,7 +105,7 @@ private struct VocabularyRow: View {
     @ObservedObject var prefs: HarcPreferences
 
     var body: some View {
-        HStack(spacing: HarcDesign.Space.xs) {
+        HStack(spacing: 8) {
             Toggle(
                 "",
                 isOn: Binding(
@@ -117,20 +117,20 @@ private struct VocabularyRow: View {
             .toggleStyle(.checkbox)
 
             Text(entry.from)
-                .font(HarcDesign.Font.bodyMd)
-                .foregroundStyle(entry.enabled ? Color.harcOnSurface : Color.harcOnSurfaceVariant)
+                .font(.body)
+                .foregroundStyle(entry.enabled ? Color.primary : Color.secondary)
                 .strikethrough(!entry.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Image(systemName: "arrow.right")
-                .foregroundStyle(Color.harcOnSurfaceVariant)
+                .foregroundStyle(Color.secondary)
 
             Text(entry.to)
-                .font(HarcDesign.Font.bodyMd)
-                .foregroundStyle(entry.enabled ? Color.harcOnSurface : Color.harcOnSurfaceVariant)
+                .font(.body)
+                .foregroundStyle(entry.enabled ? Color.primary : Color.secondary)
                 .strikethrough(!entry.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, HarcDesign.Space.xxs)
+        .padding(.vertical, 4)
     }
 }

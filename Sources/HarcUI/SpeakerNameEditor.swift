@@ -47,11 +47,11 @@ public struct SpeakerNameEditor: View {
         if speakerIndices.isEmpty {
             EmptyView()
         } else {
-            VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
+            VStack(alignment: .leading, spacing: 8) {
                 if showsHeader {
                     Text("SPEAKERS")
-                        .font(HarcDesign.Font.labelMd)
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .font(.caption)
+                        .foregroundStyle(Color.secondary)
                         .tracking(1.2)
                 }
                 ForEach(speakerIndices, id: \.self) { index in
@@ -67,14 +67,14 @@ public struct SpeakerNameEditor: View {
     }
 
     private func row(for index: Int) -> some View {
-        HStack(spacing: HarcDesign.Space.sm) {
+        HStack(spacing: 12) {
             Text("Speaker \(index + 1)")
-                .font(HarcDesign.Font.bodyMd)
-                .foregroundStyle(Color.harcOnSurface)
+                .font(.body)
+                .foregroundStyle(Color.primary)
                 .frame(width: 90, alignment: .leading)
             TextField("Name (e.g. Jason)", text: binding(for: index))
                 .textFieldStyle(.roundedBorder)
-                .font(HarcDesign.Font.bodyMd)
+                .font(.body)
                 .focusable(false)
                 .onSubmit { commit() }
         }

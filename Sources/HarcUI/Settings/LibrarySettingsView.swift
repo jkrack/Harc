@@ -9,12 +9,12 @@ public struct LibrarySettingsView: View {
         Form {
             Section {
                 Text("Library settings will appear here.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             } footer: {
                 Text("Future: retention, search preferences, archive behavior.")
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             }
         }
         .formStyle(.grouped)

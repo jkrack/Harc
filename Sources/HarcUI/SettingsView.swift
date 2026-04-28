@@ -27,7 +27,7 @@ public struct SettingsView: View {
                 .tabItem { Label("Models", systemImage: "brain") }
                 .tag(Tab.models)
         }
-        .padding(HarcDesign.Space.lg)
+        .padding(24)
         .frame(minWidth: 560, minHeight: 440)
     }
 }

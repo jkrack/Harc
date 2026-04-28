@@ -673,7 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
             return
         }
         pulseOn.toggle()
-        button.contentTintColor = pulseOn ? NSColor(HarcDesign.tertiary) : nil
+        button.contentTintColor = pulseOn ? NSColor(Color.purple) : nil
     }
 
     private func updateMenuBarElapsed() {

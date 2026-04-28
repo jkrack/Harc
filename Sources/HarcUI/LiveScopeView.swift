@@ -51,14 +51,14 @@ public struct LiveScopeView: View {
         let rest: Color
         switch tint {
         case .live:
-            accent = Color.harcAccent.opacity(0.75)
-            rest = Color.harcInkTertiary
+            accent = Color.accentColor.opacity(0.75)
+            rest = Color(nsColor: .tertiaryLabelColor)
         case .warning:
-            accent = HarcDesign.warning.opacity(0.9)
-            rest = Color.harcInkTertiary
+            accent = Color.yellow.opacity(0.9)
+            rest = Color(nsColor: .tertiaryLabelColor)
         case .dimmed:
-            accent = Color.harcAccent.opacity(0.32)
-            rest = Color.harcInkQuaternary
+            accent = Color.accentColor.opacity(0.32)
+            rest = Color(nsColor: .quaternaryLabelColor)
         }
         return index.isMultiple(of: 2) ? rest : accent
     }

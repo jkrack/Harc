@@ -13,38 +13,38 @@ public struct TranscriptHitRow: View {
     }
 
     public var body: some View {
-        HStack(alignment: .top, spacing: HarcDesign.Space.sm) {
+        HStack(alignment: .top, spacing: 12) {
             RecordingIconTile(
                 systemImage: hit.recording.pinned ? "pin.fill" : "waveform",
-                accent: hit.recording.pinned ? .harcTertiary : .harcPrimary,
+                accent: hit.recording.pinned ? .purple : .accentColor,
                 size: 32
             )
-            VStack(alignment: .leading, spacing: HarcDesign.Space.xxs) {
-                HStack(spacing: HarcDesign.Space.xs) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
                     Text(hit.recording.displayTitle)
-                        .font(HarcDesign.Font.titleSm)
-                        .foregroundStyle(Color.harcOnSurface)
+                        .font(.headline)
+                        .foregroundStyle(Color.primary)
                         .lineLimit(1)
                     Spacer()
                     Text(RelativeTimeFormatter.format(hit.recording.startedAt))
-                        .font(HarcDesign.Font.labelMd)
-                        .foregroundStyle(Color.harcOnSurfaceVariant)
+                        .font(.caption)
+                        .foregroundStyle(Color.secondary)
                 }
                 Text(TranscriptHitRow.highlight(hit.snippet))
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcOnSurfaceVariant)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.vertical, HarcDesign.Space.xs)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onOpen)
     }
 
     /// Convert a snippet containing literal "<mark>…</mark>" spans into an
-    /// AttributedString where matched tokens get HarcDesign.primary tint on
-    /// a translucent primary-container background. Pure string walk — no HTML.
+    /// AttributedString where matched tokens get accentColor tint on
+    /// a translucent accent background. Pure string walk — no HTML.
     public static func highlight(_ snippet: String) -> AttributedString {
         var out = AttributedString()
         var rest = Substring(snippet)
@@ -53,27 +53,27 @@ public struct TranscriptHitRow: View {
 
         while let openRange = rest.range(of: open) {
             var plain = AttributedString(String(rest[..<openRange.lowerBound]))
-            plain.foregroundColor = .harcOnSurfaceVariant
+            plain.foregroundColor = Color.secondary
             out += plain
 
             let afterOpen = rest[openRange.upperBound...]
             guard let closeRange = afterOpen.range(of: close) else {
                 var tail = AttributedString(String(afterOpen))
-                tail.foregroundColor = .harcOnSurfaceVariant
+                tail.foregroundColor = Color.secondary
                 out += tail
                 return out
             }
 
             var marked = AttributedString(String(afterOpen[..<closeRange.lowerBound]))
-            marked.foregroundColor = .harcPrimary
-            marked.backgroundColor = Color.harcPrimary.opacity(0.14)
+            marked.foregroundColor = Color.accentColor
+            marked.backgroundColor = Color.accentColor.opacity(0.14)
             out += marked
 
             rest = afterOpen[closeRange.upperBound...]
         }
 
         var tail = AttributedString(String(rest))
-        tail.foregroundColor = .harcOnSurfaceVariant
+        tail.foregroundColor = Color.secondary
         out += tail
         return out
     }

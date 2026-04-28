@@ -33,7 +33,7 @@ public struct SummaryCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
+        VStack(alignment: .leading, spacing: 8) {
             if case .summary = state, SummaryCardState.isStale(recording: recording) {
                 stalenessBanner
             }
@@ -79,12 +79,12 @@ public struct SummaryCardView: View {
 
     private var emptyCard: some View {
         tintedContainer {
-            HStack(spacing: HarcDesign.Space.sm) {
+            HStack(spacing: 12) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.harcAccent)
+                    .foregroundStyle(Color.accentColor)
                 Text("No summary yet.")
-                    .font(HarcDesign.Font.body)
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.body)
+                    .foregroundStyle(Color.secondary)
                 Spacer()
                 Button("Generate") { enqueueSelf() }
                     .buttonStyle(.borderedProminent)
@@ -103,8 +103,8 @@ public struct SummaryCardView: View {
             } else {
                 tintedContainer {
                     Text("Active summarizer model is unknown.")
-                        .font(HarcDesign.Font.body)
-                        .foregroundStyle(Color.harcError)
+                        .font(.body)
+                        .foregroundStyle(Color.red)
                 }
             }
         }
@@ -112,16 +112,16 @@ public struct SummaryCardView: View {
 
     private var transcriptRequiredCard: some View {
         tintedContainer {
-            HStack(spacing: HarcDesign.Space.sm) {
+            HStack(spacing: 12) {
                 Image(systemName: "text.badge.xmark")
-                    .foregroundStyle(Color.harcWarning)
+                    .foregroundStyle(Color.yellow)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("No transcript available")
-                        .font(HarcDesign.Font.body)
-                        .foregroundStyle(Color.harcInkPrimary)
+                        .font(.body)
+                        .foregroundStyle(Color.primary)
                     Text("Summaries need transcript text. Re-transcribe this audio before generating a summary.")
-                        .font(HarcDesign.Font.bodySm)
-                        .foregroundStyle(Color.harcInkSecondary)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
                 }
                 Spacer(minLength: 0)
             }
@@ -130,16 +130,16 @@ public struct SummaryCardView: View {
 
     private func queuedCard(position: Int, totalInFlight: Int) -> some View {
         tintedContainer {
-            HStack(spacing: HarcDesign.Space.sm) {
+            HStack(spacing: 12) {
                 Image(systemName: "clock")
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .foregroundStyle(Color.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Summarization queued")
-                        .font(HarcDesign.Font.body)
-                        .foregroundStyle(Color.harcInkPrimary)
+                        .font(.body)
+                        .foregroundStyle(Color.primary)
                     Text("Queued · #\(position) of \(totalInFlight)")
-                        .font(HarcDesign.Font.meta)
-                        .foregroundStyle(Color.harcInkTertiary)
+                        .font(.subheadline)
+                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 }
                 Spacer()
                 Button("Cancel") { cancelSelf() }
@@ -151,11 +151,11 @@ public struct SummaryCardView: View {
 
     private var inFlightCard: some View {
         tintedContainer {
-            HStack(spacing: HarcDesign.Space.sm) {
+            HStack(spacing: 12) {
                 ProgressView().controlSize(.small)
                 Text("Summarizing with \(currentTierDisplay)…")
-                    .font(HarcDesign.Font.body)
-                    .foregroundStyle(Color.harcInkPrimary)
+                    .font(.body)
+                    .foregroundStyle(Color.primary)
                 Spacer()
                 Button("Cancel") { cancelSelf() }
                     .buttonStyle(.bordered)
@@ -166,20 +166,20 @@ public struct SummaryCardView: View {
 
     private func failedCard(message: String) -> some View {
         tintedContainer {
-            VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
-                HStack(spacing: HarcDesign.Space.xs) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.harcWarning)
+                        .foregroundStyle(Color.yellow)
                     Text("Summarization failed")
-                        .font(HarcDesign.Font.body)
-                        .foregroundStyle(Color.harcInkPrimary)
+                        .font(.body)
+                        .foregroundStyle(Color.primary)
                     Spacer()
                 }
                 Text(message)
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: HarcDesign.Space.xs) {
+                HStack(spacing: 8) {
                     Button("Retry") { enqueueSelf() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -193,20 +193,20 @@ public struct SummaryCardView: View {
 
     private func skippedCard(message: String) -> some View {
         tintedContainer {
-            VStack(alignment: .leading, spacing: HarcDesign.Space.xs) {
-                HStack(spacing: HarcDesign.Space.xs) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
                     Image(systemName: "pause.circle.fill")
-                        .foregroundStyle(Color.harcWarning)
+                        .foregroundStyle(Color.yellow)
                     Text("Summarization skipped")
-                        .font(HarcDesign.Font.body)
-                        .foregroundStyle(Color.harcInkPrimary)
+                        .font(.body)
+                        .foregroundStyle(Color.primary)
                     Spacer()
                 }
                 Text(message)
-                    .font(HarcDesign.Font.bodySm)
-                    .foregroundStyle(Color.harcInkSecondary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: HarcDesign.Space.xs) {
+                HStack(spacing: 8) {
                     Button("Generate") { enqueueSelf() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -220,11 +220,11 @@ public struct SummaryCardView: View {
 
     private var summaryCard: some View {
         tintedContainer {
-            VStack(alignment: .leading, spacing: HarcDesign.Space.sm) {
+            VStack(alignment: .leading, spacing: 12) {
                 summaryHeader
                 Text(markdown: recording.summaryMarkdown ?? "")
-                    .font(HarcDesign.Font.body)
-                    .foregroundStyle(Color.harcInkPrimary)
+                    .font(.body)
+                    .foregroundStyle(Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let items = parsedActionItems, !items.isEmpty {
                     actionItemsLabel
@@ -235,17 +235,17 @@ public struct SummaryCardView: View {
                     actionItemsLabel
                     if raw.lowercased() == "_none identified._" {
                         Text("No action items identified.")
-                            .font(HarcDesign.Font.bodySm)
+                            .font(.subheadline)
                             .italic()
-                            .foregroundStyle(Color.harcInkTertiary)
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                     } else {
                         // Parser couldn't extract structured items but the
                         // column has content — render the raw markdown so the
                         // user sees what the model produced rather than a
                         // silently-dropped section.
                         Text(markdown: raw)
-                            .font(HarcDesign.Font.body)
-                            .foregroundStyle(Color.harcInkPrimary)
+                            .font(.body)
+                            .foregroundStyle(Color.primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -254,19 +254,19 @@ public struct SummaryCardView: View {
     }
 
     private var summaryHeader: some View {
-        HStack(spacing: HarcDesign.Space.xs) {
+        HStack(spacing: 8) {
             Image(systemName: "sparkles")
-                .foregroundStyle(Color.harcAccent)
+                .foregroundStyle(Color.accentColor)
             Text("Summary")
-                .font(HarcDesign.Font.subtitle)
-                .foregroundStyle(Color.harcInkPrimary)
+                .font(.headline)
+                .foregroundStyle(Color.primary)
             Text("· generated with \(persistedTierDisplay)")
-                .font(HarcDesign.Font.meta)
-                .foregroundStyle(Color.harcInkTertiary)
+                .font(.subheadline)
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             if let when = recording.summaryGeneratedAt {
                 Text("· \(when, format: .relative(presentation: .named))")
-                    .font(HarcDesign.Font.meta)
-                    .foregroundStyle(Color.harcInkTertiary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
             Spacer()
             Button(action: enqueueSelf) {
@@ -296,8 +296,8 @@ public struct SummaryCardView: View {
 
     private var actionItemsLabel: some View {
         Text("ACTION ITEMS")
-            .font(HarcDesign.Font.label)
-            .foregroundStyle(Color.harcInkSecondary)
+            .font(.caption)
+            .foregroundStyle(Color.secondary)
     }
 
     private func actionItemsList(_ items: [ActionItem]) -> some View {
@@ -309,44 +309,44 @@ public struct SummaryCardView: View {
     }
 
     private func actionItemRow(_ item: ActionItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: HarcDesign.Space.xs) {
-            Text("•").foregroundStyle(Color.harcInkTertiary)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("•").foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             HStack(spacing: 0) {
                 if let actor = item.actor {
-                    Text("\(actor): ").bold().foregroundStyle(Color.harcInkPrimary)
+                    Text("\(actor): ").bold().foregroundStyle(Color.primary)
                 }
-                Text(item.text).foregroundStyle(Color.harcInkPrimary)
+                Text(item.text).foregroundStyle(Color.primary)
                 if let due = item.due {
-                    Text(" (\(due))").italic().foregroundStyle(Color.harcInkTertiary)
+                    Text(" (\(due))").italic().foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 }
             }
             Spacer(minLength: 0)
         }
-        .font(HarcDesign.Font.body)
+        .font(.body)
     }
 
     private var stalenessBanner: some View {
-        HStack(spacing: HarcDesign.Space.xs) {
+        HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.harcWarning)
+                .foregroundStyle(Color.yellow)
             Text("Summary is based on an older transcript.")
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcWarning)
+                .font(.subheadline)
+                .foregroundStyle(Color.yellow)
             Spacer(minLength: 0)
             Button("Regenerate") { enqueueSelf() }
                 .buttonStyle(.plain)
-                .font(HarcDesign.Font.bodySm)
-                .foregroundStyle(Color.harcWarning)
+                .font(.subheadline)
+                .foregroundStyle(Color.yellow)
         }
-        .padding(.horizontal, HarcDesign.Space.sm)
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
-                .fill(Color.harcWarning.opacity(0.10))
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.yellow.opacity(0.10))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
-                .strokeBorder(Color.harcWarning.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.yellow.opacity(0.35), lineWidth: 1)
         )
     }
 
@@ -355,15 +355,15 @@ public struct SummaryCardView: View {
     @ViewBuilder
     private func tintedContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
-            .padding(.horizontal, HarcDesign.Space.md)
-            .padding(.vertical, HarcDesign.Space.sm)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
-                    .fill(Color.harcAccent.opacity(0.06))
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.accentColor.opacity(0.06))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: HarcDesign.Radius.lg)
-                    .strokeBorder(Color.harcAccent.opacity(0.3), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
             )
     }
 

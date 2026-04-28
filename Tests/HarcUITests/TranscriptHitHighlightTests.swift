@@ -10,14 +10,14 @@ struct TranscriptHitHighlightTests {
         #expect(String(out.characters) == "just some words here")
     }
 
-    @Test("mark spans produce a run tinted with HarcDesign.primary")
+    @Test("mark spans produce a run tinted with Color.accentColor")
     func singleMark() {
         let out = TranscriptHitRow.highlight("before <mark>hit</mark> after")
         #expect(String(out.characters) == "before hit after")
         var sawPrimary = false
         for run in out.runs {
             if String(out.characters[run.range]) == "hit",
-               run.foregroundColor == Color.harcPrimary {
+               run.foregroundColor == Color.accentColor {
                 sawPrimary = true
             }
         }
@@ -28,7 +28,7 @@ struct TranscriptHitHighlightTests {
     func multipleMarks() {
         let out = TranscriptHitRow.highlight("<mark>a</mark> b <mark>c</mark>")
         var primaryCount = 0
-        for run in out.runs where run.foregroundColor == Color.harcPrimary {
+        for run in out.runs where run.foregroundColor == Color.accentColor {
             primaryCount += 1
         }
         #expect(primaryCount == 2)
