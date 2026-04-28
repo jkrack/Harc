@@ -20,8 +20,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var popover: NSPopover?
     private var session: RecordingSession?
     private let launcher = DaemonLauncher()
-    private let state = RecordingState()
+    let state = RecordingState()
     let prefs = HarcPreferences.shared
+
+    // MARK: - SwiftUI MenuBarExtra bridge
+    let bridge: HarcAppBridge
+    private let trayState = PostStopTrayState()
+
+    override init() {
+        bridge = HarcAppBridge(
+            recordingState: state,
+            trayState: trayState
+        )
+        super.init()
+        bridge.onStartStop = { [weak self] in
+            Task { await self?.toggleRecording() }
+        }
+        bridge.onOpenWindow = { [weak self] in
+            self?.openLibrary()
+        }
+        bridge.onCopyLastTranscript = { [weak self] in
+            self?.copyLastTranscriptToPasteboard()
+        }
+        bridge.onPasteIntoFrontmost = { [weak self] in
+            self?.pasteLastTranscriptIntoFrontmost()
+        }
+    }
+
+    private func copyLastTranscriptToPasteboard() {
+        guard let text = trayState.lastTranscript, !text.isEmpty else { return }
+        FrontmostAppPaster.copyOnly(text)
+    }
+
+    private func pasteLastTranscriptIntoFrontmost() {
+        guard let text = trayState.lastTranscript, !text.isEmpty else { return }
+        // Paste into frontmost; ignores paste errors (accessibility not granted, etc.)
+        try? FrontmostAppPaster.copyAndPaste(text)
+    }
     private let autoStop = AutoStopController()
     private var autoStopPhaseObserver: AnyCancellable?
     private var autoStopConfigObserver: AnyCancellable?
