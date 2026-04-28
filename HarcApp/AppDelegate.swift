@@ -15,9 +15,7 @@ import IOKit.ps
 import KeyboardShortcuts
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, MeetingDetector.Delegate, UNUserNotificationCenterDelegate {
-    private var statusItem: NSStatusItem?
-    private var popover: NSPopover?
+final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delegate, UNUserNotificationCenterDelegate {
     private var session: RecordingSession?
     private let launcher = DaemonLauncher()
     let state = RecordingState()
@@ -77,16 +75,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var harcWindow: HarcWindowController?
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
-    private var menuBarTicker: Timer?
-    private let menuBarFlash = MenuBarFlash()
     private var pendingSkipPaste = false
 
     private let meetingState = MeetingDetectionState()
     private let notificationPresenter = MeetingNotificationPresenter()
     private var detector: MeetingDetector?
     private var terminateToken: NSObjectProtocol?
-    private var pulseTimer: Timer?
-    private var pulseOn = false
     private var cancellables: Set<AnyCancellable> = []
     private var managedWindowCount = 0
 
@@ -94,24 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         Task { [weak self] in
             await self?.bootstrapStore()
         }
-
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        updateMenuBarIcon(on: item)
-
-        if let button = item.button {
-            button.action = #selector(handleStatusItemClick(_:))
-            button.target = self
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
-
-        let pop = NSPopover()
-        pop.behavior = .transient
-        pop.delegate = self
-
-        pop.contentSize = NSSize(width: 400, height: 560)
-
-        self.statusItem = item
-        self.popover = pop
 
         // Pre-launch the daemon in the background so ⌘R doesn't have to wait for
         // model load. Failure is logged and retried lazily on next recording start.
@@ -140,7 +116,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         applyAutoStopConfigFromPrefs()
         observeAutoStopPrefs()
         observeAutoStopPhase()
-        observeAutoStopFFTBins()
         autoStop.onAutoStop = { [weak self] reason in
             Task { @MainActor in
                 await self?.stopRecording(autoStopReason: reason)
@@ -191,57 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         }
     }
 
-    @objc private func handleStatusItemClick(_ sender: Any?) {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            showStatusItemMenu()
-            return
-        }
-        // ⌥-left-click while recording → stop without auto-paste.
-        if state.isRecording,
-           NSApp.currentEvent?.modifierFlags.contains(.option) == true {
-            pendingSkipPaste = true
-            Task { await stopRecording(autoStopReason: nil) }
-            return
-        }
-        togglePopover(sender)
-    }
-
-    private func togglePopover(_ sender: Any?) {
-        guard let popover, let button = statusItem?.button else { return }
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        }
-    }
-
-    private func showStatusItemMenu() {
-        guard let statusItem else { return }
-        let menu = NSMenu()
-        if session != nil {
-            let stop = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingFromMenu), keyEquivalent: ".")
-            stop.keyEquivalentModifierMask = [.command]
-            menu.addItem(stop)
-            menu.addItem(NSMenuItem.separator())
-        }
-        let library = NSMenuItem(title: "Open Library…", action: #selector(openLibrary), keyEquivalent: "l")
-        library.keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(library)
-        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
-        menu.addItem(settings)
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(
-            title: "Quit Harc",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        ))
-        // Temporarily attach the menu so right-click shows it; clear it after
-        // so subsequent left-clicks still invoke handleStatusItemClick.
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
-        statusItem.menu = nil
-    }
-
     @objc private func stopRecordingFromMenu() {
         Task { await stopRecording(autoStopReason: nil) }
     }
@@ -282,34 +206,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
         autoStopPhaseObserver = autoStop.$phase
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateMenuBarIcon()
+            .sink { _ in
+                // Phase changes are reflected by the SwiftUI MenuBarExtra label.
             }
-    }
-
-    /// Per-tick FFT-driven icon refresh. Only fires while the bars state
-    /// applies (recording / warning); in any other state the icon is a static
-    /// symbol set by `updateMenuBarIcon()`.
-    private var autoStopFFTObserver: AnyCancellable?
-    private func observeAutoStopFFTBins() {
-        autoStopFFTObserver = autoStop.$fftBins
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] bins in
-                self?.redrawMenuBarBars(bins)
-            }
-    }
-
-    private func redrawMenuBarBars(_ bins: [Float]) {
-        guard let button = statusItem?.button else { return }
-        let state = currentMenuBarState()
-        guard state == .recording || state == .warning else { return }
-        let label = state == .warning ? "Harc — about to auto-stop" : "Harc — recording"
-        let image = MenuBarBarsIcon.image(for: bins)
-        // Belt-and-braces: if we somehow got a zero-sized image back, keep the
-        // current button image rather than replacing it with something invisible.
-        if image.size.width <= 0 || image.size.height <= 0 { return }
-        image.accessibilityDescription = label
-        button.image = image
     }
 
     private func startRecording() async {
@@ -361,7 +260,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
 
             try await session.start(at: startedAt)
             state.markStarted(at: startedAt)
-            updateMenuBarIcon()
             autoStop.begin(
                 session: session,
                 startedAt: startedAt
@@ -456,9 +354,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
                     previewText: transcriptText
                 )
             }
-            if autoStopReason != nil {
-                flashStoppedIcon()
-            }
         } catch {
             presentError(error)
             autoStop.end()
@@ -471,136 +366,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private func resetUI() {
         session = nil
         state.markIdle()
-        updateMenuBarIcon()
-    }
-
-    /// Menu bar icon state — per the Auto-Stop Safety UX design:
-    /// `idle` · waveform (dim),
-    /// `recording` · waveform + red dot,
-    /// `warning` · waveform + amber badge (about to auto-stop),
-    /// `stoppedFlash` · green checkmark shown for ~3 s after an auto-stop.
-    private enum MenuBarIconState { case idle, recording, warning, stoppedFlash }
-
-    private func currentMenuBarState() -> MenuBarIconState {
-        if stoppedFlashTask != nil { return .stoppedFlash }
-        if state.isRecording {
-            if case .warning = autoStop.phase { return .warning }
-            return .recording
-        }
-        return .idle
-    }
-
-    private func updateMenuBarIcon(on item: NSStatusItem? = nil) {
-        let target = item ?? statusItem
-        guard let button = target?.button else { return }
-        let iconState = currentMenuBarState()
-        let label: String
-        let image: NSImage?
-        let tint: NSColor?
-
-        switch iconState {
-        case .idle:
-            label = "Harc"
-            // Idle uses the asset/symbol that was shipping before the FFT
-            // work — the dynamic bars template only runs while recording so
-            // a rendering bug in it can't hide the status item.
-            if let asset = NSImage(named: "MenuBarIcon") {
-                asset.isTemplate = true
-                asset.accessibilityDescription = label
-                image = asset
-            } else {
-                image = NSImage(systemSymbolName: "waveform", accessibilityDescription: label)
-            }
-            tint = nil
-        case .recording:
-            label = "Harc — recording"
-            let bars = MenuBarBarsIcon.image(for: autoStop.fftBins)
-            bars.accessibilityDescription = label
-            image = bars
-            tint = nil
-        case .warning:
-            label = "Harc — about to auto-stop"
-            let bars = MenuBarBarsIcon.image(for: autoStop.fftBins)
-            bars.accessibilityDescription = label
-            image = bars
-            tint = .systemOrange
-        case .stoppedFlash:
-            label = "Harc — stopped"
-            image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: label)
-            tint = .systemGreen
-        }
-
-        button.image = image
-        button.contentTintColor = tint
-
-        if iconState == .recording || iconState == .warning {
-            updateMenuBarElapsed()
-            if menuBarTicker == nil {
-                menuBarTicker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                    Task { @MainActor in self?.updateMenuBarElapsed() }
-                }
-            }
-        } else {
-            menuBarTicker?.invalidate()
-            menuBarTicker = nil
-            // Reserve the elapsed-label width with a transparent placeholder so
-            // the status item stays a constant width across idle → recording.
-            // Otherwise the macOS mic indicator + the " 00:00" label appearing
-            // at once yanks the popover anchor left the moment recording starts.
-            let font = NSFont.monospacedDigitSystemFont(
-                ofSize: NSFont.systemFontSize(for: .small),
-                weight: .regular
-            )
-            button.title = ""
-            button.attributedTitle = NSAttributedString(
-                string: " 00:00",
-                attributes: [.font: font, .foregroundColor: NSColor.clear]
-            )
-            applyPulse()
-        }
-    }
-
-    /// Builds a `SuggestionsProvider` closure scoped to this recording —
-    /// returns the top matches for a given speaker index, or an empty array
-    /// when the re-ID feature is off or no embedding was stored.
-    private func reIDSuggestionsProvider(
-        for recording: Recording
-    ) -> SpeakerNameEditor.SuggestionsProvider? {
-        guard prefs.speakerReIDEnabled,
-              let service = speakerReIDService,
-              let store = store,
-              let recordingID = recording.id else {
-            return nil
-        }
-        return { speakerIndex in
-            // Read embeddingDim inside the async closure so the actor hop is valid.
-            let embeddingDim = await service.embeddingDim
-            guard let row = try? await store.speakerEmbedding(
-                recordingID: recordingID,
-                speakerIndex: speakerIndex
-            ) else { return [] }
-            guard let query = EmbeddingBlob.decode(row.embedding, expectedDim: embeddingDim) else {
-                return []
-            }
-            return (try? await service.suggestions(
-                for: query,
-                excludingRecording: recordingID
-            )) ?? []
-        }
-    }
-
-    /// Flash a green check in the menu bar for ~3 s, then fall back to the
-    /// resolved icon state. Used after an auto-stop so the user has a visible
-    /// confirmation even if the popover isn't open.
-    private func flashStoppedIcon() {
-        stoppedFlashTask?.cancel()
-        stoppedFlashTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.updateMenuBarIcon()
-            try? await Task.sleep(for: .seconds(3))
-            self.stoppedFlashTask = nil
-            self.updateMenuBarIcon()
-        }
     }
 
     // MARK: - Meeting detection
@@ -652,80 +417,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private func observeMeetingStateForPulse() {
         meetingState.$pendingBundleIDs
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.applyPulse() }
+            .sink { _ in
+                // Pulse state is reflected by the SwiftUI MenuBarExtra label.
+            }
             .store(in: &cancellables)
     }
 
-    /// Overlays a spinner glyph while diarization is in-flight, and a brief
-    /// tooltip when it fails. Only fires when not recording — the recording
-    /// indicator takes visual priority while a session is active.
+    /// Observes post-processing state for side-effects (future: could drive
+    /// a badge or notification). The SwiftUI MenuBarExtra label drives the
+    /// visual indicator now.
     private func observePostProcessingState() {
         postProcessingState.$current
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] entry in
-                guard let self, !self.state.isRecording else { return }
-                switch entry?.phase {
-                case .identifying:
-                    self.statusItem?.button?.image = NSImage(
-                        systemSymbolName: "ellipsis.circle",
-                        accessibilityDescription: "Identifying speakers…"
-                    )
-                    self.statusItem?.button?.toolTip = "Identifying speakers…"
-                case .failed:
-                    self.updateMenuBarIcon()
-                    self.statusItem?.button?.toolTip = "Couldn't identify speakers — open recording to retry"
-                case .done, .idle, nil:
-                    self.updateMenuBarIcon()
-                    self.statusItem?.button?.toolTip = nil
-                }
+            .sink { _ in
+                // Post-processing state is reflected by the SwiftUI MenuBarExtra label.
             }
             .store(in: &cancellables)
     }
 
-    private func applyPulse() {
-        guard let button = statusItem?.button else { return }
-        guard meetingState.isPulsing, !state.isRecording else {
-            pulseTimer?.invalidate()
-            pulseTimer = nil
-            pulseOn = false
-            if !state.isRecording { button.contentTintColor = nil }
-            return
+    /// Builds a `SuggestionsProvider` closure scoped to this recording —
+    /// returns the top matches for a given speaker index, or an empty array
+    /// when the re-ID feature is off or no embedding was stored.
+    private func reIDSuggestionsProvider(
+        for recording: Recording
+    ) -> SpeakerNameEditor.SuggestionsProvider? {
+        guard prefs.speakerReIDEnabled,
+              let service = speakerReIDService,
+              let store = store,
+              let recordingID = recording.id else {
+            return nil
         }
-        if pulseTimer == nil {
-            pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.tickPulse() }
+        return { speakerIndex in
+            // Read embeddingDim inside the async closure so the actor hop is valid.
+            let embeddingDim = await service.embeddingDim
+            guard let row = try? await store.speakerEmbedding(
+                recordingID: recordingID,
+                speakerIndex: speakerIndex
+            ) else { return [] }
+            guard let query = EmbeddingBlob.decode(row.embedding, expectedDim: embeddingDim) else {
+                return []
             }
+            return (try? await service.suggestions(
+                for: query,
+                excludingRecording: recordingID
+            )) ?? []
         }
-    }
-
-    private func tickPulse() {
-        guard let button = statusItem?.button else { return }
-        guard meetingState.isPulsing, !state.isRecording else {
-            applyPulse()
-            return
-        }
-        pulseOn.toggle()
-        button.contentTintColor = pulseOn ? NSColor(Color.purple) : nil
-    }
-
-    private func updateMenuBarElapsed() {
-        guard let button = statusItem?.button, let start = state.recordingStartedAt else { return }
-        let total = Int(Date().timeIntervalSince(start))
-        // Pad minutes to 2 digits AND use a monospaced-digit font so the title's
-        // pixel width is constant from 00:00 through 99:59. Without both, the
-        // variableLength status item reflows every tick and drags the anchored
-        // popover with it. (Beyond 99:59 the title grows once more — acceptable.)
-        let m = min(99, total / 60)
-        let s = total % 60
-        let text = String(format: " %02d:%02d", m, s)
-        let font = NSFont.monospacedDigitSystemFont(
-            ofSize: NSFont.systemFontSize(for: .small),
-            weight: .regular
-        )
-        button.attributedTitle = NSAttributedString(
-            string: text,
-            attributes: [.font: font]
-        )
     }
 
 private func openDetail(for recording: Recording) {
@@ -762,7 +498,7 @@ private func openDetail(for recording: Recording) {
     }
 
     /// Called by the "Identify speakers" / "Retry" buttons in the inspector panel
-    /// and the popover post-stop tray. Runs a fresh full-WAV diarize pass against
+    /// and the panel post-stop tray. Runs a fresh full-WAV diarize pass against
     /// the recording's on-disk WAV, persists embeddings, and updates postProcessingState.
     func runIdentifySpeakers(recordingID: Int64) {
         Task { @MainActor [weak self] in
@@ -906,27 +642,13 @@ private func openDetail(for recording: Recording) {
             frontmostBundleID: FrontmostAppPaster.frontmostBundleID()
         )
 
-        guard let statusItem else { return }
-        let restore: @MainActor () -> Void = { [weak self] in
-            guard let self, !self.state.isRecording else { return }
-            self.updateMenuBarIcon()
-        }
-
         switch decision {
-        case .skipDisabled, .skipModifierHeld:
+        case .skipDisabled, .skipModifierHeld, .skipUnsafeTarget:
             return
-        case .skipUnsafeTarget(let id):
-            menuBarFlash.flashSkipped(
-                on: statusItem,
-                tooltip: "Auto-paste skipped — \(appDisplayName(for: id))",
-                restore: restore
-            )
         case .paste:
             do {
                 try FrontmostAppPaster.copyAndPaste(blob)
-                menuBarFlash.flashSuccess(on: statusItem, restore: restore)
             } catch FrontmostAppPaster.PasteError.accessibilityDenied {
-                menuBarFlash.flashFailure(on: statusItem, restore: restore)
                 // Re-prompt every paste failure: the prompt itself notes that
                 // the transcript is already on the clipboard, so re-showing it
                 // is informative rather than annoying. A user who chose
@@ -934,7 +656,8 @@ private func openDetail(for recording: Recording) {
                 // silently failed.
                 presentAccessibilityPrompt()
             } catch {
-                menuBarFlash.flashFailure(on: statusItem, restore: restore)
+                // Paste error is silently swallowed; transcript is already on clipboard.
+                break
             }
         }
     }
@@ -1046,7 +769,7 @@ private func openDetail(for recording: Recording) {
             )
 
             // Stage 3 summarization graph. Owned by AppDelegate for app
-            // lifetime; queue survives popover re-renders.
+            // lifetime; queue survives panel re-renders.
             let coordinator = BackgroundWorkCoordinator()
             let service = SummarizerService(loader: SummarizerService.defaultLoader)
             self.memoryObservation = service.startObservingMemoryPressure()
@@ -1082,9 +805,6 @@ private func openDetail(for recording: Recording) {
             }
 
             observeDestinationChanges()
-
-            // Mount into SwiftUI environment.
-            await refreshPopoverRoot()
         } catch {
             FileHandle.standardError.write(Data(
                 "harc: store init failed: \(error.localizedDescription)\n".utf8
@@ -1306,56 +1026,5 @@ private func openDetail(for recording: Recording) {
     ) {
         // Show the banner even when the app is frontmost.
         completionHandler([.banner, .list])
-    }
-
-    private func refreshPopoverRoot() async {
-        guard let vm = recordingsVM,
-              let pop = popover,
-              let queueStore = summarizationQueueStore else { return }
-        let root = PopoverRootView(
-            onToggle: { [weak self] in
-                Task { await self?.toggleRecording() }
-            },
-            onOpen: { [weak self] rec in
-                self?.openDetail(for: rec)
-            },
-            onOpenSettings: { [weak self] in
-                self?.openSettings()
-            },
-            onOpenLibrary: { [weak self] in
-                self?.openLibrary()
-            },
-            onOpenLibraryAndSearch: { [weak self] in
-                self?.openLibrary()
-                // Defer one runloop tick so SwiftUI finishes mounting the
-                // search field on first open. Existing-window case is also
-                // safe — the field is already mounted and will receive
-                // the notification immediately.
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(
-                        name: .harcLibraryFocusSearch, object: nil
-                    )
-                }
-            },
-            onResumeAutoStopped: { [weak self] in
-                guard let self else { return }
-                self.autoStop.resetPostStop()
-                if !self.state.isRecording {
-                    Task { await self.startRecording() }
-                }
-            },
-            onRetryDiarize: { [weak self] recordingID in
-                self?.runIdentifySpeakers(recordingID: recordingID)
-            }
-        )
-        .environmentObject(state)
-        .environmentObject(vm)
-        .environmentObject(prefs)
-        .environmentObject(autoStop)
-        .environmentObject(modelStore)
-        .environmentObject(queueStore)
-        .environmentObject(postProcessingState)
-
-        pop.contentViewController = NSHostingController(rootView: root)
     }
 }
