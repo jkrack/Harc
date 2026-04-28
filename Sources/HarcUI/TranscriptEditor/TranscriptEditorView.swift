@@ -6,127 +6,99 @@ import HarcExport
 
 public struct TranscriptEditorView: View {
     @ObservedObject var vm: TranscriptEditorViewModel
+    let store: RecordingStore
     @State private var titleDraft: String
     @FocusState private var titleFocused: Bool
     @State private var exportError: String?
+    @State private var inspectorOpen: Bool = false
 
-    public init(vm: TranscriptEditorViewModel) {
+    public init(vm: TranscriptEditorViewModel, store: RecordingStore) {
         self.vm = vm
+        self.store = store
         self._titleDraft = State(initialValue: vm.recording.displayTitle)
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 14)
-
             if let err = vm.saveError ?? exportError {
                 errorBanner(err)
             }
 
-            Divider().background(Color(nsColor: .separatorColor))
-
             body_
-                .frame(maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if vm.wordIndexStale {
                 staleHintBanner
             }
 
-            Divider().background(Color(nsColor: .separatorColor))
+            Divider()
 
             TranscriptEditorTransportView(vm: vm)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .preferredColorScheme(.dark)
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
                 titleField
-                metaRow
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            actions
+            ToolbarItemGroup {
+                Button { copyPromptString() } label: {
+                    Label("Copy for Prompt", systemImage: "doc.on.clipboard")
+                }
+                .disabled(vm.editedText.isEmpty)
+                .help("Copy transcript as LLM prompt")
+
+                exportMenu
+
+                Button { Task { await vm.save() } } label: {
+                    Label("Save", systemImage: "arrow.down.doc")
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!vm.isDirty)
+                .help("Save edits to disk")
+
+                Button { inspectorOpen.toggle() } label: {
+                    Label("Inspector", systemImage: "sidebar.right")
+                }
+                .help("Toggle inspector")
+            }
+        }
+        .inspector(isPresented: $inspectorOpen) {
+            inspectorContent
         }
     }
+
+    // MARK: - Inspector
+
+    private var inspectorContent: some View {
+        Form {
+            SpeakerInspectorSection(
+                speakerIndices: speakerIndices,
+                initialNames: vm.recording.speakerNames,
+                onCommit: { newNames in
+                    guard let id = vm.recording.id else { return }
+                    Task { try? await store.updateSpeakerNames(id: id, names: newNames) }
+                },
+                suggestionsProvider: nil
+            )
+
+            FileInspectorSection(recording: vm.recording)
+        }
+        .formStyle(.grouped)
+        .background(.thinMaterial)
+        .navigationTitle("Inspector")
+    }
+
+    // MARK: - Toolbar fields
 
     private var titleField: some View {
-        TextField("", text: $titleDraft)
-            .textFieldStyle(.plain)
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(Color.primary)
+        TextField("Title", text: $titleDraft)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 200, maxWidth: 360)
             .focused($titleFocused)
             .onSubmit { commitTitle() }
-            .overlay(alignment: .bottom) {
-                if titleFocused {
-                    Rectangle()
-                        .fill(Color.accentColor)
-                        .frame(height: 1)
-                        .padding(.top, 24)
-                }
-            }
     }
 
-    private var metaRow: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(stateColor)
-                .frame(width: 5, height: 5)
-            Text(stateLabel)
-                .font(.system(.caption2, design: .monospaced).weight(.medium))
-                .tracking(0.8)
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            metaSep
-            Text(modelText)
-                .font(.system(.caption2, design: .monospaced).weight(.medium))
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            metaSep
-            Text(durationText)
-                .font(.system(.caption2, design: .monospaced).weight(.medium))
-                .monospacedDigit()
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            metaSep
-            Text(URL(fileURLWithPath: vm.recording.wavPath).lastPathComponent)
-                .font(.system(.caption2, design: .monospaced).weight(.medium))
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
-
-    private var metaSep: some View {
-        Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor)).font(.system(.caption2, design: .monospaced).weight(.medium))
-    }
-
-    private var actions: some View {
-        HStack(spacing: 6) {
-            Button { copyPromptString() } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.system(size: 11, weight: .medium))
-                    Text("Copy for Prompt")
-                        .font(.subheadline)
-                }
-                .foregroundStyle(Color.accentColor)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 6)
-            }
-            .buttonStyle(.plain)
-            .disabled(vm.editedText.isEmpty)
-
-            exportMenu
-
-            saveButton
-        }
-        .padding(.top, 2)
-    }
+    // MARK: - Export menu
 
     private var exportMenu: some View {
         Menu {
@@ -144,54 +116,9 @@ public struct TranscriptEditorView: View {
                 )
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Export")
-                    .font(.subheadline)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-                    )
-            )
+            Label("Export", systemImage: "square.and.arrow.up")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
-
-    private var saveButton: some View {
-        Button { Task { await vm.save() } } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.down.doc")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Save")
-                    .font(.subheadline.weight(.medium))
-            }
-            .foregroundStyle(vm.isDirty ? .white : Color.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(vm.isDirty ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(vm.isDirty ? Color.clear : Color(nsColor: .separatorColor), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut("s", modifiers: [.command])
-        .disabled(!vm.isDirty)
+        .help("Export transcript")
     }
 
     // MARK: - Body
@@ -252,37 +179,12 @@ public struct TranscriptEditorView: View {
         .background(Color.red.opacity(0.08))
     }
 
-    // MARK: - State derivations
+    // MARK: - Helpers
 
-    private var stateColor: Color {
-        if vm.audioMissing { return Color(nsColor: .quaternaryLabelColor) }
-        if vm.editedText.isEmpty { return Color(nsColor: .quaternaryLabelColor) }
-        return Color.green
+    /// Distinct speaker indices derived from the document's parsed JSON segments.
+    private var speakerIndices: [Int] {
+        Array(Set(vm.document.speakers.map(\.speaker))).sorted()
     }
-
-    private var stateLabel: String {
-        if vm.audioMissing { return "AUDIO MISSING" }
-        if vm.editedText.isEmpty { return "AUDIO ONLY" }
-        return "TRANSCRIBED"
-    }
-
-    private var modelText: String {
-        // The model name isn't tracked per-recording yet; show the daemon default.
-        "parakeet-tdt-0.6b-v3"
-    }
-
-    private var durationText: String {
-        guard let end = vm.recording.endedAt else { return "—" }
-        let total = Int(end.timeIntervalSince(vm.recording.startedAt))
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
-    }
-
-    // MARK: - Actions
 
     private func commitTitle() {
         titleFocused = false
