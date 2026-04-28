@@ -1,6 +1,7 @@
 import SwiftUI
 import HarcStore
 import HarcExport
+import AppKit
 
 // MARK: - HarcWindowRootView
 
@@ -14,9 +15,13 @@ import HarcExport
 /// in Task 3.5.
 public struct HarcWindowRootView: View {
     @ObservedObject var libraryVM: LibraryViewModel
+    @ObservedObject var recordingState: RecordingState
 
     let store: RecordingStore
     let reIDService: SpeakerReIDService
+    let onEdit: (Recording) -> Void
+    let onExport: (Recording) -> Void
+    let onDelete: (Recording) -> Void
 
     // MARK: View state
 
@@ -40,12 +45,20 @@ public struct HarcWindowRootView: View {
 
     public init(
         libraryVM: LibraryViewModel,
+        recordingState: RecordingState,
         store: RecordingStore,
-        reIDService: SpeakerReIDService
+        reIDService: SpeakerReIDService,
+        onEdit: @escaping (Recording) -> Void,
+        onExport: @escaping (Recording) -> Void,
+        onDelete: @escaping (Recording) -> Void
     ) {
         self.libraryVM = libraryVM
+        self.recordingState = recordingState
         self.store = store
         self.reIDService = reIDService
+        self.onEdit = onEdit
+        self.onExport = onExport
+        self.onDelete = onDelete
     }
 
     // MARK: Body
@@ -67,10 +80,59 @@ public struct HarcWindowRootView: View {
         .onDisappear { libraryVM.stop() }
         // Reload transcript text whenever the selected recording changes.
         .onChange(of: selection) { _, _ in loadTranscript() }
-        // Inspector toggle placeholder — Task 3.3 moves this into the proper
-        // toolbar alongside Edit/Export/Delete/recording-pill.
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            // Leading: glass-tinted recording pill — visible only while recording.
+            ToolbarItem(placement: .navigation) {
+                if recordingState.isRecording {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(HarcBrand.live)
+                            .frame(width: 8, height: 8)
+                        Text("Recording")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    // TODO: revisit once .glassEffect tint API is stable on macOS 26.
+                    .background(HarcBrand.live.opacity(0.7), in: Capsule())
+                    .foregroundStyle(.white)
+                }
+            }
+
+            // Trailing group: Copy / Edit / Export / Delete + Inspector toggle.
+            ToolbarItemGroup {
+                Button {
+                    if let rec = currentRecording { copyTranscript(rec) }
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .disabled(currentRecording == nil)
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+
+                Button {
+                    if let rec = currentRecording { onEdit(rec) }
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .disabled(currentRecording == nil)
+
+                Button {
+                    if let rec = currentRecording { onExport(rec) }
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .disabled(currentRecording == nil)
+
+                Button(role: .destructive) {
+                    if let rec = currentRecording { onDelete(rec) }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .disabled(currentRecording == nil)
+
+                Spacer()
+
                 Button {
                     inspectorOpen.toggle()
                 } label: {
@@ -271,6 +333,16 @@ public struct HarcWindowRootView: View {
             return hit.recording
         }
         return libraryVM.recordings.first { $0.wavPath == path }
+    }
+
+    /// Alias used by the toolbar buttons; identical to `selectedRecording`.
+    private var currentRecording: Recording? { selectedRecording }
+
+    /// Copies the currently loaded transcript text to the system pasteboard.
+    private func copyTranscript(_ recording: Recording) {
+        let text = transcriptText.isEmpty ? (recording.transcriptText ?? "") : transcriptText
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// True when there is any transcript source available for this recording.
