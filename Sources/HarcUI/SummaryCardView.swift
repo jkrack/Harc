@@ -97,8 +97,8 @@ public struct SummaryCardView: View {
         Group {
             if let descriptor = ModelCatalog.descriptor(for: activeSummarizerID) {
                 ModelRequirementView(
-                    descriptor: descriptor,
-                    reason: "Generate summaries and action items from your meeting transcripts."
+                    title: "Needs \(descriptor.displayName)",
+                    description: "Generate summaries and action items from your meeting transcripts."
                 )
             } else {
                 tintedContainer {
