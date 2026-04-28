@@ -21,13 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     private var session: RecordingSession?
     private let launcher = DaemonLauncher()
     private let state = RecordingState()
-    private let prefs = HarcPreferences.shared
+    let prefs = HarcPreferences.shared
     private let autoStop = AutoStopController()
     private var autoStopPhaseObserver: AnyCancellable?
     private var autoStopConfigObserver: AnyCancellable?
     private var stoppedFlashTask: Task<Void, Never>?
     private let modelManager = ModelManager()
-    private lazy var modelStore = ModelManagerStore(manager: modelManager)
+    lazy var modelStore = ModelManagerStore(manager: modelManager)
     private var summarizerService: SummarizerService?
     private var summarizationQueue: SummarizationQueue?
     private var summarizationQueueStore: SummarizationQueueStore?
@@ -36,7 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Mee
     /// Retained so runIdentifySpeakers can call diarize() outside of a recording session.
     private var sttClient: HarcSTTClient?
     private var speakerReIDService: SpeakerReIDService?
-    private var settingsWindow: SettingsWindowController?
     private var store: RecordingStore?
     private var recordingsVM: RecordingsViewModel?
     private var detailWindows: [String: TranscriptionDetailWindowController] = [:]
@@ -988,17 +987,7 @@ private func openDetail(for recording: Recording) {
     }
 
     @objc private func openSettings() {
-        if let existing = settingsWindow {
-            existing.showWindow(nil)
-            existing.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        let controller = SettingsWindowController(prefs: prefs, modelStore: modelStore)
-        settingsWindow = controller
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
-        trackManagedWindow(controller.window)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
