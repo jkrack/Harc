@@ -1,10 +1,8 @@
 import SwiftUI
 import HarcStore
 
-/// An inspector `Section` that wraps `SpeakerNameEditor` for use in the new
-/// HarcWindowRootView's `.inspector` panel. Mirrors the inline speaker block
-/// in `TranscriptionDetailView` (which is still live — duplication clears in
-/// Task 3.5).
+/// An inspector `Section` that wraps `SpeakerNameEditor` for use in
+/// HarcWindowRootView's `.inspector` panel.
 ///
 /// The caller is responsible for supplying `speakerIndices` (derived from the
 /// JSON sidecar via `ExportInputBuilder`) and the `suggestionsProvider` closure
