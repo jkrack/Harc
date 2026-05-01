@@ -93,6 +93,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var cancellables: Set<AnyCancellable> = []
     private var managedWindowCount = 0
 
+    /// Minimum transcript word count to actually call the summarizer.
+    /// Below this, the prompt is too thin to constrain the model and
+    /// it hallucinates plausible-but-fake meetings. Tuned conservatively;
+    /// a real meeting will easily clear this in seconds.
+    private static let minWordsToSummarize = 10
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [weak self] in
             await self?.bootstrapStore()
@@ -967,6 +973,22 @@ private func openDetail(for recording: Recording) {
             decoder.dateDecodingStrategy = .secondsSince1970
             return try decoder.decode(SessionTranscript.self, from: data)
         }.value
+
+        // Guard against summarizing empty / trivially-short transcripts.
+        // LLMs given an empty prompt happily fabricate a meeting from
+        // nothing — Sarah/David/Q3 review style hallucinations. Skip when
+        // there's not enough transcribed content for a meaningful summary.
+        let transcriptWordCount = session.joinedText.split(whereSeparator: { $0.isWhitespace }).count
+        guard transcriptWordCount >= Self.minWordsToSummarize else {
+            try? await store.updateSummaryStatus(
+                id: id,
+                kind: .skipped,
+                message: transcriptWordCount == 0
+                    ? "Recording contained no transcribable speech."
+                    : "Recording is too short to summarize (\(transcriptWordCount) words)."
+            )
+            return
+        }
 
         let promptTranscript = PromptTranscriptAdapter.make(
             joinedText: session.joinedText,
