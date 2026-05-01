@@ -161,6 +161,7 @@ public struct HarcWindowRootView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Library")
+        .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
     }
 
     // Grouped recordings list: pinned first, then by date-bucket.
