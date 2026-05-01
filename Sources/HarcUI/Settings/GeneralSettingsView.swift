@@ -7,13 +7,16 @@ public struct GeneralSettingsView: View {
 
     public var body: some View {
         Section {
-            Text("General settings will appear here.")
-                .font(.subheadline)
-                .foregroundStyle(Color.secondary)
+            Picker("Appearance", selection: $prefs.appearance) {
+                ForEach(HarcPreferences.Appearance.allCases) { option in
+                    Text(option.displayName).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
         } header: {
             Text("General")
         } footer: {
-            Text("Future: launch at login, appearance, menu bar options.")
+            Text("System follows your macOS appearance setting.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
         }

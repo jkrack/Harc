@@ -7,13 +7,14 @@ struct HarcApp: App {
 
     var body: some Scene {
         Settings {
-            HarcSettingsForm()
+            SettingsRoot()
                 .environmentObject(appDelegate.prefs)
                 .environmentObject(appDelegate.modelStore)
         }
 
         MenuBarExtra {
             MenuBarExtraContent(bridge: appDelegate.bridge)
+                .environmentObject(appDelegate.prefs)
         } label: {
             MenuBarExtraLabel(bridge: appDelegate.bridge)
         }
@@ -21,7 +22,15 @@ struct HarcApp: App {
     }
 }
 
-// MARK: - MenuBarExtra wrapper views
+// MARK: - Wrapper views that observe prefs for live appearance changes
+
+private struct SettingsRoot: View {
+    @EnvironmentObject private var prefs: HarcPreferences
+    var body: some View {
+        HarcSettingsForm()
+            .preferredColorScheme(prefs.appearance.colorScheme)
+    }
+}
 
 private struct MenuBarExtraLabel: View {
     @ObservedObject var bridge: HarcAppBridge
@@ -36,6 +45,7 @@ private struct MenuBarExtraLabel: View {
 
 private struct MenuBarExtraContent: View {
     @ObservedObject var bridge: HarcAppBridge
+    @EnvironmentObject private var prefs: HarcPreferences
     var body: some View {
         MenuBarPanelView(
             recordingState: bridge.recordingState,
@@ -47,5 +57,6 @@ private struct MenuBarExtraContent: View {
             onPasteIntoFrontmost: bridge.onPasteIntoFrontmost,
             frontmostAppName: bridge.frontmostAppName
         )
+        .preferredColorScheme(prefs.appearance.colorScheme)
     }
 }
