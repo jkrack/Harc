@@ -28,6 +28,31 @@ public final class HarcPreferences: ObservableObject {
         static let autoSummarizeEnabled = "harc.autoSummarizeEnabled"
         static let autoSummarizeOnBatteryEnabled = "harc.autoSummarizeOnBatteryEnabled"
         static let includeSummaryInPrompt = "harc.includeSummaryInPrompt"
+        static let appearance = "harc.appearance"
+    }
+
+    /// Override macOS appearance. `.system` (default) follows System Settings.
+    public enum Appearance: String, CaseIterable, Identifiable {
+        case system, light, dark
+        public var id: String { rawValue }
+        public var displayName: String {
+            switch self {
+            case .system: return "System"
+            case .light:  return "Light"
+            case .dark:   return "Dark"
+            }
+        }
+        public var colorScheme: ColorScheme? {
+            switch self {
+            case .system: return nil
+            case .light:  return .light
+            case .dark:   return .dark
+            }
+        }
+    }
+
+    @Published public var appearance: Appearance {
+        didSet { UserDefaults.standard.set(appearance.rawValue, forKey: Key.appearance) }
     }
 
     @Published public var destinationPath: String {
@@ -178,6 +203,8 @@ public final class HarcPreferences: ObservableObject {
         self.autoSummarizeEnabled = defaults.object(forKey: Key.autoSummarizeEnabled) as? Bool ?? true
         self.autoSummarizeOnBatteryEnabled = defaults.object(forKey: Key.autoSummarizeOnBatteryEnabled) as? Bool ?? false
         self.includeSummaryInPrompt = defaults.object(forKey: Key.includeSummaryInPrompt) as? Bool ?? true
+        let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
+        self.appearance = Appearance(rawValue: rawAppearance) ?? .system
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {

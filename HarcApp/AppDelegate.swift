@@ -45,6 +45,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
+    private func applyAppearance(_ pref: HarcPreferences.Appearance) {
+        switch pref {
+        case .system: NSApp.appearance = nil
+        case .light:  NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:   NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+
     private func copyLastTranscriptToPasteboard() {
         guard let text = trayState.lastTranscript, !text.isEmpty else { return }
         FrontmostAppPaster.copyOnly(text)
@@ -126,6 +134,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // Seed install state from disk. Safe to call before any UI is shown;
         // the actor bootstrap is cheap (just reads a handful of dotfiles).
         Task { await modelManager.bootstrap() }
+
+        // Apply persisted appearance pref to NSApp so AppKit-hosted windows
+        // (HarcWindowController, etc.) follow Light/Dark/System the way SwiftUI
+        // scenes already do via .preferredColorScheme.
+        applyAppearance(prefs.appearance)
+        prefs.$appearance
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] new in
+                self?.applyAppearance(new)
+            }
+            .store(in: &cancellables)
 
         // Forward AutoStopController's rolling FFT/scope history to the bridge
         // so the MenuBarExtra panel's LiveScopeView re-renders on each tick.

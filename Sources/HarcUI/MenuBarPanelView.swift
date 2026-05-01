@@ -44,8 +44,13 @@ public struct MenuBarPanelView: View {
                 Button(recordingState.isRecording ? "Stop" : "Record") { onStartStop() }
                     .buttonStyle(.borderedProminent)
                     .tint(recordingState.isRecording ? HarcBrand.live : .accentColor)
-                Button("Open") { onOpenWindow() }
-                    .buttonStyle(.bordered)
+                Button {
+                    onOpenWindow()
+                } label: {
+                    Label("Open Library", systemImage: "books.vertical")
+                }
+                .buttonStyle(.bordered)
+                .keyboardShortcut("l", modifiers: .command)
             }
 
             if trayState.isVisible {
