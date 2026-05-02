@@ -79,26 +79,34 @@ public final class AutoStopController: ObservableObject {
     @Published public private(set) var smoothedDb: Float = -60
     /// 5-band FFT magnitudes in `[0, 1]` — drives the menu bar icon.
     @Published public private(set) var fftBins: [Float] = Array(repeating: 0, count: 5)
-    /// Rolling 6-second history of normalized scope bars in `[0, 1]`, one
-    /// entry per `scopeBarInterval`. Frozen in place on `.stoppedBanner`.
-    @Published public private(set) var scopeHistory: [Float] = []
+    /// Rolling ~4-second history of normalized amplitude bars in `[0, 1]`, one
+    /// entry per `amplitudeInterval` (1/24 s). Frozen in place on `.stoppedBanner`.
+    @Published public private(set) var amplitudeHistory: [Float] = Array(repeating: 0, count: 96)
+
+    @available(*, deprecated, renamed: "amplitudeHistory")
+    public var scopeHistory: [Float] { amplitudeHistory }
 
     public var config: Config
 
     /// Called when the 60 s countdown runs out. Owner performs the actual stop.
     public var onAutoStop: ((StopReason) -> Void)?
 
-    /// Scope bar cadence — 40 bars × 150 ms ≈ 6 s of history.
-    public static let scopeBarInterval: TimeInterval = 0.150
-    public static let scopeBarCapacity: Int = 40
+    /// Amplitude bar cadence — 96 bars × (1/24) s ≈ 4 s of history.
+    public static let amplitudeInterval: TimeInterval = 1.0 / 24.0
+    public static let amplitudeCapacity: Int = 96
+
+    @available(*, deprecated, renamed: "amplitudeInterval")
+    public static var scopeBarInterval: TimeInterval { amplitudeInterval }
+    @available(*, deprecated, renamed: "amplitudeCapacity")
+    public static var scopeBarCapacity: Int { amplitudeCapacity }
 
     private var startedAt: Date?
     private var lastNonSilentAt: Date?
     private var levelsTask: Task<Void, Never>?
     private var tickTimer: Timer?
 
-    private var scopeWindowMax: Float = 0
-    private var scopeWindowStartedAt: Date?
+    private var amplitudeWindowMax: Float = 0
+    private var amplitudeWindowStartedAt: Date?
 
     public init(config: Config = .defaults) {
         self.config = config
@@ -129,9 +137,9 @@ public final class AutoStopController: ObservableObject {
         self.startedAt = startedAt
         self.lastNonSilentAt = startedAt   // assume audio until proven silent
         phase = .watching
-        scopeHistory = []
-        scopeWindowMax = 0
-        scopeWindowStartedAt = startedAt
+        amplitudeHistory = Array(repeating: 0, count: Self.amplitudeCapacity)
+        amplitudeWindowMax = 0
+        amplitudeWindowStartedAt = startedAt
         smoothedDb = Self.dbFloor
         fftBins = Array(repeating: 0, count: 5)
     }
@@ -197,20 +205,20 @@ public final class AutoStopController: ObservableObject {
             lastNonSilentAt = now
         }
 
-        // Accumulate scope bars. Each bar is the max normalized value seen in
-        // the preceding `scopeBarInterval` window — a mini peak hold so fast
+        // Accumulate amplitude bars. Each bar is the max normalized value seen in
+        // the preceding `amplitudeInterval` window — a mini peak hold so fast
         // transients still register at the display cadence.
-        if scopeWindowStartedAt == nil { scopeWindowStartedAt = now }
+        if amplitudeWindowStartedAt == nil { amplitudeWindowStartedAt = now }
         let normalized = max(0, min(1, (level.smoothedDb - Self.dbFloor) / abs(Self.dbFloor)))
-        scopeWindowMax = max(scopeWindowMax, normalized)
-        if let windowStart = scopeWindowStartedAt,
-           now.timeIntervalSince(windowStart) >= Self.scopeBarInterval {
-            scopeHistory.append(scopeWindowMax)
-            if scopeHistory.count > Self.scopeBarCapacity {
-                scopeHistory.removeFirst(scopeHistory.count - Self.scopeBarCapacity)
+        amplitudeWindowMax = max(amplitudeWindowMax, normalized)
+        if let windowStart = amplitudeWindowStartedAt,
+           now.timeIntervalSince(windowStart) >= Self.amplitudeInterval {
+            amplitudeHistory.append(amplitudeWindowMax)
+            if amplitudeHistory.count > Self.amplitudeCapacity {
+                amplitudeHistory.removeFirst(amplitudeHistory.count - Self.amplitudeCapacity)
             }
-            scopeWindowMax = 0
-            scopeWindowStartedAt = now
+            amplitudeWindowMax = 0
+            amplitudeWindowStartedAt = now
         }
     }
 

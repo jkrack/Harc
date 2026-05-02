@@ -118,4 +118,27 @@ struct AutoStopControllerTests {
         #expect(stopped == .hardCap)
         #expect(c.phase == .watching)
     }
+
+    @Test("amplitudeHistory has fixed capacity of 96 once filled")
+    func amplitudeHistoryFixedCapacity() async throws {
+        let c = AutoStopController()
+        var clock = Date()
+        for _ in 0..<200 {
+            c.testingConsume(
+                smoothedDb: -20,
+                micDb: -20,
+                systemDb: -.infinity,
+                now: clock
+            )
+            clock = clock.addingTimeInterval(0.05)  // step past the amplitudeInterval to push a bar
+        }
+        #expect(c.amplitudeHistory.count == 96)
+    }
+
+    @Test("amplitudeHistory is pre-filled to capacity at start")
+    func amplitudeHistoryPrefilled() async throws {
+        let c = AutoStopController()
+        #expect(c.amplitudeHistory.count == 96)
+        #expect(c.amplitudeHistory.allSatisfy { $0 == 0 })
+    }
 }
