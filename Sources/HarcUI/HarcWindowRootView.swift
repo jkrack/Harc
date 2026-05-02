@@ -146,6 +146,66 @@ public struct HarcWindowRootView: View {
                 .help("Toggle inspector panel")
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            libraryFooter
+        }
+    }
+
+    // MARK: - Library footer (status bar)
+
+    private var libraryFooter: some View {
+        HStack(spacing: 0) {
+            Text(footerCountAndStorage)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(Color.secondary)
+            Spacer(minLength: 16)
+            footerStackHardware
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 28)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private var footerStackHardware: some View {
+        HStack(spacing: 8) {
+            Text("\(HardwareInfo.appleSiliconDisplayName) · Neural Engine")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(Color.secondary)
+            Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
+            Text("parakeet-tdt-0.6b-v3")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(Color.secondary)
+            Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
+            Text("LOCAL")
+                .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                .tracking(1.0)
+                .foregroundStyle(Color.green)
+        }
+    }
+
+    private var footerCountAndStorage: String {
+        let isSearching = !libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let count = isSearching ? libraryVM.hits.count : libraryVM.recordings.count
+        let label = count == 1 ? "recording" : "recordings"
+        return "\(count) \(label) · \(footerStorageString)"
+    }
+
+    private var footerStorageString: String {
+        let fm = FileManager.default
+        var total: Int64 = 0
+        for rec in libraryVM.recordings {
+            if let attrs = try? fm.attributesOfItem(atPath: rec.wavPath),
+               let size = attrs[.size] as? Int64 {
+                total += size
+            }
+        }
+        let fmt = ByteCountFormatter()
+        fmt.allowedUnits = [.useMB, .useGB]
+        fmt.countStyle = .file
+        return fmt.string(fromByteCount: total)
     }
 
     // MARK: - Sidebar
