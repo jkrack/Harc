@@ -2,6 +2,7 @@ import SwiftUI
 import HarcStore
 import HarcExport
 import HarcClient
+import HarcCore
 import AppKit
 
 // MARK: - Notifications
@@ -538,23 +539,108 @@ public struct HarcWindowRootView: View {
         session: SessionTranscript,
         speakerNames: [Int: String]
     ) -> [TranscriptDisplaySegment] {
-        var out: [TranscriptDisplaySegment] = []
-        for seg in session.speakers {
-            let words = session.words.filter { w in
-                let mid = (w.startMs + w.endMs) / 2
-                return mid >= seg.startMs && mid < seg.endMs
-            }
-            guard !words.isEmpty else { continue }
-            let text = words.map(\.text).joined(separator: " ")
-            let name = speakerNames[seg.speaker] ?? "Speaker \(seg.speaker + 1)"
-            out.append(TranscriptDisplaySegment(
-                speaker: seg.speaker,
-                speakerName: name,
-                startSec: seg.startMs / 1000,
-                text: text
-            ))
+        guard !session.speakers.isEmpty, !session.words.isEmpty else { return [] }
+
+        // First pass: assign each word to a speaker (mirrors
+        // TranscriptPlainTextRenderer's algorithm so we get the same
+        // SentencePiece-aware concat: "That's" tokenized as ["That", "'s"]
+        // joins back to "That's" inside a single turn).
+        struct AssignedWord {
+            let text: String
+            let startMs: Int
+            let endMs: Int
+            let speaker: Int
         }
-        return out
+
+        let sentencePieceStyle = session.words.contains { $0.text.first?.isWhitespace == true }
+        var assigned: [AssignedWord] = []
+        var lastSpeaker: Int? = nil
+        for w in session.words {
+            let mid = (w.startMs + w.endMs) / 2
+            let s: Int
+            if let containing = session.speakers.first(where: { mid >= $0.startMs && mid < $0.endMs }) {
+                s = containing.speaker
+            } else if let last = lastSpeaker {
+                s = last
+            } else {
+                s = session.speakers.min { a, b in
+                    distanceFromSegment(mid, segment: a) < distanceFromSegment(mid, segment: b)
+                }?.speaker ?? 0
+            }
+            assigned.append(AssignedWord(text: w.text, startMs: w.startMs, endMs: w.endMs, speaker: s))
+            lastSpeaker = s
+        }
+
+        // Smoothing pass: collapse sub-300ms speaker excursions that are
+        // surrounded by the same other speaker. Catches diarizer artifacts
+        // where a single token (often punctuation like "'") flips speaker
+        // mid-word.
+        let minRunMs = 300
+        var i = 0
+        while i < assigned.count {
+            // Find run [i, j) of same speaker.
+            var j = i + 1
+            while j < assigned.count && assigned[j].speaker == assigned[i].speaker { j += 1 }
+            let runDuration = assigned[j - 1].endMs - assigned[i].startMs
+            let prevSpeaker = i > 0 ? assigned[i - 1].speaker : nil
+            let nextSpeaker = j < assigned.count ? assigned[j].speaker : nil
+            let surroundedBySame = prevSpeaker != nil && prevSpeaker == nextSpeaker && prevSpeaker != assigned[i].speaker
+            if runDuration < minRunMs && surroundedBySame, let host = prevSpeaker {
+                for k in i..<j {
+                    assigned[k] = AssignedWord(
+                        text: assigned[k].text,
+                        startMs: assigned[k].startMs,
+                        endMs: assigned[k].endMs,
+                        speaker: host
+                    )
+                }
+            }
+            i = j
+        }
+
+        // Second pass: group consecutive same-speaker words into turns,
+        // concatenating with the right strategy for the tokenizer style.
+        var segments: [TranscriptDisplaySegment] = []
+        var currentSpeaker: Int? = nil
+        var currentStartMs: Int = 0
+        var bucket = ""
+
+        func flush() {
+            let trimmed = bucket.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, let speaker = currentSpeaker {
+                let name = speakerNames[speaker] ?? "Speaker \(speaker + 1)"
+                segments.append(TranscriptDisplaySegment(
+                    speaker: speaker,
+                    speakerName: name,
+                    startSec: currentStartMs / 1000,
+                    text: trimmed
+                ))
+            }
+            bucket = ""
+        }
+
+        for w in assigned {
+            if w.speaker != currentSpeaker {
+                flush()
+                currentSpeaker = w.speaker
+                currentStartMs = w.startMs
+            }
+            if sentencePieceStyle {
+                bucket += w.text
+            } else if bucket.isEmpty {
+                bucket = w.text
+            } else {
+                bucket += " " + w.text
+            }
+        }
+        flush()
+        return segments
+    }
+
+    private static func distanceFromSegment(_ point: Int, segment: SpeakerSegment) -> Int {
+        if point < segment.startMs { return segment.startMs - point }
+        if point >= segment.endMs  { return point - segment.endMs + 1 }
+        return 0
     }
 
     /// Observe DB changes to the selected recording so the detail pane updates
