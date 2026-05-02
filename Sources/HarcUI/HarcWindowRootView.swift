@@ -69,6 +69,19 @@ public struct HarcWindowRootView: View {
     // MARK: Body
 
     public var body: some View {
+        VStack(spacing: 0) {
+            split
+            Divider()
+            libraryFooter
+        }
+        .frame(minWidth: 900, minHeight: 600)
+        .onAppear { libraryVM.start() }
+        .onDisappear { libraryVM.stop() }
+        .onChange(of: selection) { _, _ in loadTranscript() }
+    }
+
+    @ViewBuilder
+    private var split: some View {
         NavigationSplitView {
             sidebar
         } detail: {
@@ -80,11 +93,6 @@ public struct HarcWindowRootView: View {
             placement: .sidebar,
             prompt: "Search transcripts"
         )
-        .frame(minWidth: 900, minHeight: 600)
-        .onAppear { libraryVM.start() }
-        .onDisappear { libraryVM.stop() }
-        // Reload transcript text whenever the selected recording changes.
-        .onChange(of: selection) { _, _ in loadTranscript() }
         .toolbar {
             // Leading: glass-tinted recording pill — visible only while recording.
             ToolbarItem(placement: .navigation) {
@@ -146,9 +154,6 @@ public struct HarcWindowRootView: View {
                 .help("Toggle inspector panel")
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            libraryFooter
-        }
     }
 
     // MARK: - Library footer (status bar)
@@ -163,10 +168,8 @@ public struct HarcWindowRootView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 28)
+        .frame(maxWidth: .infinity)
         .background(.bar)
-        .overlay(alignment: .top) {
-            Divider()
-        }
     }
 
     private var footerStackHardware: some View {
