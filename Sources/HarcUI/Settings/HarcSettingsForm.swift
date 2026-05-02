@@ -12,6 +12,7 @@ public struct HarcSettingsForm: View {
             ModelsSettingsView()
             SummarizationSettingsView(onOpenModels: {})
             LibrarySettingsView()
+            AboutSettingsView()
         }
         .formStyle(.grouped)
         .frame(minWidth: 540, minHeight: 480)
