@@ -173,7 +173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         frontmostPoller = nil
     }
 
-    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+    /// Disabled. Harc is menu-bar-resident — the Library, TranscriptEditor,
+    /// and Settings windows all open on demand. Restoration would auto-pop a
+    /// stale window (commonly Settings, since it's the most-recently-opened
+    /// scene macOS knows about) every time the app launches.
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { openLibrary() }
