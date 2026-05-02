@@ -14,7 +14,7 @@ public final class HarcAppBridge: ObservableObject {
     public let trayState: PostStopTrayState
 
     @Published public var frontmostAppName: String? = nil
-    @Published public var scopeHistory: [Float] = []
+    @Published public var amplitudeHistory: [Float] = []
 
     public var onStartStop: () -> Void = {}
     public var onOpenWindow: () -> Void = {}
