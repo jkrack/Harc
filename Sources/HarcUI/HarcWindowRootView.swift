@@ -40,6 +40,7 @@ public struct HarcWindowRootView: View {
     // synchronous disk I/O in the view body.
     @State private var transcriptText: String = ""
     @State private var transcriptLoadError: String? = nil
+    @State private var detailEnvelope: [Float] = []
 
     // MARK: Environment
 
@@ -77,7 +78,10 @@ public struct HarcWindowRootView: View {
         .frame(minWidth: 900, minHeight: 600)
         .onAppear { libraryVM.start() }
         .onDisappear { libraryVM.stop() }
-        .onChange(of: selection) { _, _ in loadTranscript() }
+        .onChange(of: selection) { _, _ in
+            loadTranscript()
+            Task { await loadEnvelope() }
+        }
     }
 
     @ViewBuilder
@@ -318,6 +322,10 @@ public struct HarcWindowRootView: View {
     private func detailContent(recording: Recording) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                StaticWaveformView(envelope: detailEnvelope)
+                    .frame(height: 40)
+                    .padding(.horizontal)
+
                 // Summary card — requires SummarizationQueueStore and
                 // ModelManagerStore injected as environment objects by the
                 // window controller.
@@ -429,6 +437,21 @@ public struct HarcWindowRootView: View {
             if let id = segment.speaker { seen.insert(id) }
         }
         return seen.sorted()
+    }
+
+    private func loadEnvelope() async {
+        guard let rec = currentRecording else {
+            detailEnvelope = []
+            return
+        }
+        do {
+            detailEnvelope = try await AmplitudeEnvelopeLoader.load(
+                url: URL(fileURLWithPath: rec.wavPath),
+                samples: 1024
+            )
+        } catch {
+            detailEnvelope = []
+        }
     }
 
     /// Loads `transcriptText` from cache or disk. Called on selection change.
