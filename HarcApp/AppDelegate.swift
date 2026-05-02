@@ -153,8 +153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             .store(in: &cancellables)
 
-        // Forward AutoStopController's rolling FFT/scope history to the bridge
-        // so the MenuBarExtra panel's LiveScopeView re-renders on each tick.
+        // Forward AutoStopController's rolling amplitude history to the bridge
+        // so the MenuBarExtra panel re-renders on each tick.
         autoStop.$amplitudeHistory
             .receive(on: DispatchQueue.main)
             .assign(to: \.amplitudeHistory, on: bridge)
