@@ -5,7 +5,7 @@ import SwiftUI
 public struct MenuBarPanelView: View {
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var trayState: PostStopTrayState
-    let scopeHistory: [Float]
+    let amplitudeHistory: [Float]
     let onStartStop: () -> Void
     let onOpenWindow: () -> Void
     let onCopy: () -> Void
@@ -18,7 +18,7 @@ public struct MenuBarPanelView: View {
     public init(
         recordingState: RecordingState,
         trayState: PostStopTrayState,
-        scopeHistory: [Float] = [],
+        amplitudeHistory: [Float] = [],
         onStartStop: @escaping () -> Void,
         onOpenWindow: @escaping () -> Void,
         onCopy: @escaping () -> Void,
@@ -27,7 +27,7 @@ public struct MenuBarPanelView: View {
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
-        self.scopeHistory = scopeHistory
+        self.amplitudeHistory = amplitudeHistory
         self.onStartStop = onStartStop
         self.onOpenWindow = onOpenWindow
         self.onCopy = onCopy
@@ -38,8 +38,7 @@ public struct MenuBarPanelView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             stateLine
-            LiveScopeView(history: scopeHistory, tint: recordingState.isRecording ? .live : .dimmed)
-                .frame(height: 28)
+            LiveWaveformView(history: amplitudeHistory, size: .panel, isActive: recordingState.isRecording).frame(height: 28)
             HStack(spacing: 8) {
                 Button(recordingState.isRecording ? "Stop" : "Record") { onStartStop() }
                     .buttonStyle(.borderedProminent)
