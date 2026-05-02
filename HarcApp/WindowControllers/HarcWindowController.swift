@@ -10,6 +10,7 @@ final class HarcWindowController: NSWindowController {
     convenience init(
         libraryVM: LibraryViewModel,
         recordingState: RecordingState,
+        bridge: HarcAppBridge,
         store: RecordingStore,
         reIDService: SpeakerReIDService,
         prefs: HarcPreferences,
@@ -23,6 +24,7 @@ final class HarcWindowController: NSWindowController {
         let root = HarcWindowRootView(
             libraryVM: libraryVM,
             recordingState: recordingState,
+            bridge: bridge,
             store: store,
             reIDService: reIDService,
             onEdit: onEdit,

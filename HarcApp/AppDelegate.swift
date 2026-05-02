@@ -774,6 +774,7 @@ private func openDetail(for recording: Recording) {
         let controller = HarcWindowController(
             libraryVM: libraryVM,
             recordingState: state,
+            bridge: bridge,
             store: store,
             reIDService: reIDService,
             prefs: prefs,

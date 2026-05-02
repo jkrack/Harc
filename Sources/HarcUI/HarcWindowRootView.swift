@@ -22,6 +22,7 @@ public extension NSNotification.Name {
 public struct HarcWindowRootView: View {
     @ObservedObject var libraryVM: LibraryViewModel
     @ObservedObject var recordingState: RecordingState
+    @ObservedObject var bridge: HarcAppBridge
 
     let store: RecordingStore
     let reIDService: SpeakerReIDService
@@ -52,6 +53,7 @@ public struct HarcWindowRootView: View {
     public init(
         libraryVM: LibraryViewModel,
         recordingState: RecordingState,
+        bridge: HarcAppBridge,
         store: RecordingStore,
         reIDService: SpeakerReIDService,
         onEdit: @escaping (Recording) -> Void,
@@ -60,6 +62,7 @@ public struct HarcWindowRootView: View {
     ) {
         self.libraryVM = libraryVM
         self.recordingState = recordingState
+        self.bridge = bridge
         self.store = store
         self.reIDService = reIDService
         self.onEdit = onEdit
@@ -98,22 +101,28 @@ public struct HarcWindowRootView: View {
             prompt: "Search transcripts"
         )
         .toolbar {
-            // Leading: glass-tinted recording pill — visible only while recording.
+            // Leading: compound recording pill — visible only while recording.
             ToolbarItem(placement: .navigation) {
                 if recordingState.isRecording {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         Circle()
                             .fill(HarcBrand.live)
                             .frame(width: 8, height: 8)
+                        LiveWaveformView(
+                            history: bridge.amplitudeHistory,
+                            size: .pill,
+                            isActive: true,
+                            tint: WavePalette.center
+                        )
+                        .frame(width: 60, height: 16)
                         Text("Recording")
                             .font(.subheadline)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    // TODO: revisit once .glassEffect tint API is stable on macOS 26.
-                    .background(HarcBrand.live.opacity(0.7), in: Capsule())
-                    .foregroundStyle(.white)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(HarcBrand.live.opacity(0.4), lineWidth: 1))
                 }
             }
 
