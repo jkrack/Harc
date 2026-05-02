@@ -115,7 +115,22 @@ public actor RecordingSession {
         let micStream = try await mic.start()
         let sysStream: AsyncStream<AVAudioPCMBuffer>?
         if systemAudioAvailable {
-            sysStream = try await systemAudio.start()
+            do {
+                sysStream = try await systemAudio.start()
+            } catch {
+                // System audio failed AFTER mic.start succeeded (permission revoked
+                // between requestPermission and start, no display, addStreamOutput
+                // error, etc.). Without this catch the throw escapes RecordingSession
+                // .start, AppDelegate's catch nils out the session reference, and the
+                // mic keeps running with no controller — the user sees the macOS mic
+                // indicator but the app shows "Idle" and ⌥V can't stop it. Degrade
+                // to mic-only instead.
+                FileHandle.standardError.write(Data(
+                    "harc-audio: system audio start failed, recording mic-only: \(error.localizedDescription)\n".utf8
+                ))
+                sysStream = nil
+                systemAudioAvailable = false
+            }
         } else {
             sysStream = nil
         }
