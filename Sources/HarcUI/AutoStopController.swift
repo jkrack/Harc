@@ -83,9 +83,6 @@ public final class AutoStopController: ObservableObject {
     /// entry per `amplitudeInterval` (1/24 s). Frozen in place on `.stoppedBanner`.
     @Published public private(set) var amplitudeHistory: [Float] = Array(repeating: 0, count: 96)
 
-    @available(*, deprecated, renamed: "amplitudeHistory")
-    public var scopeHistory: [Float] { amplitudeHistory }
-
     public var config: Config
 
     /// Called when the 60 s countdown runs out. Owner performs the actual stop.
@@ -94,11 +91,6 @@ public final class AutoStopController: ObservableObject {
     /// Amplitude bar cadence — 96 bars × (1/24) s ≈ 4 s of history.
     public static let amplitudeInterval: TimeInterval = 1.0 / 24.0
     public static let amplitudeCapacity: Int = 96
-
-    @available(*, deprecated, renamed: "amplitudeInterval")
-    public static var scopeBarInterval: TimeInterval { amplitudeInterval }
-    @available(*, deprecated, renamed: "amplitudeCapacity")
-    public static var scopeBarCapacity: Int { amplitudeCapacity }
 
     private var startedAt: Date?
     private var lastNonSilentAt: Date?
