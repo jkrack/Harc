@@ -1,6 +1,7 @@
 import SwiftUI
 import HarcStore
 import HarcExport
+import HarcClient
 import AppKit
 
 // MARK: - Notifications
@@ -40,6 +41,9 @@ public struct HarcWindowRootView: View {
     // Transcript text is loaded lazily on selection change to avoid
     // synchronous disk I/O in the view body.
     @State private var transcriptText: String = ""
+    /// When the .json sidecar is available, we render structured turns
+    /// (timestamp + speaker + text) instead of the flat .txt blob.
+    @State private var transcriptSegments: [TranscriptDisplaySegment] = []
     @State private var transcriptLoadError: String? = nil
     @State private var detailEnvelope: [Float] = []
 
@@ -370,6 +374,29 @@ public struct HarcWindowRootView: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        } else if !transcriptSegments.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(transcriptSegments) { seg in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(formatTimestamp(seconds: seg.startSec))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.10), in: Capsule())
+                            Text(seg.speakerName)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                        }
+                        Text(seg.text)
+                            .font(.body)
+                            .lineSpacing(4)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
         } else if transcriptText.isEmpty {
             Text("No transcript available.")
                 .font(.body)
@@ -382,6 +409,14 @@ public struct HarcWindowRootView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func formatTimestamp(seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds / 60) % 60
+        let s = seconds % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%d:%02d", m, s)
     }
 
     // MARK: - Inspector
@@ -464,24 +499,62 @@ public struct HarcWindowRootView: View {
     }
 
     /// Loads `transcriptText` from cache or disk. Called on selection change.
+    /// Also loads the structured .json sidecar when available so the detail
+    /// pane can render per-turn timestamps instead of the flat .txt blob.
     private func loadTranscript() {
         transcriptLoadError = nil
         transcriptText = ""
+        transcriptSegments = []
         guard let recording = selectedRecording else { return }
 
+        // Plain text for fallback / pasteboard copy.
         if let cached = recording.transcriptText, !cached.isEmpty {
             transcriptText = cached
-            return
-        }
-        guard let txtPath = recording.txtPath else {
+        } else if let txtPath = recording.txtPath {
+            do {
+                transcriptText = try String(contentsOf: URL(fileURLWithPath: txtPath), encoding: .utf8)
+            } catch {
+                transcriptLoadError = "Could not load transcript: \(error.localizedDescription)"
+            }
+        } else {
             transcriptLoadError = "No transcript file — recording may not have been transcribed."
-            return
         }
-        do {
-            transcriptText = try String(contentsOf: URL(fileURLWithPath: txtPath), encoding: .utf8)
-        } catch {
-            transcriptLoadError = "Could not load transcript: \(error.localizedDescription)"
+
+        // Structured turns (preferred render path).
+        if let jsonPath = recording.jsonPath,
+           let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .secondsSince1970
+            if let session = try? decoder.decode(SessionTranscript.self, from: data) {
+                transcriptSegments = Self.buildDisplaySegments(
+                    session: session,
+                    speakerNames: recording.speakerNames
+                )
+            }
         }
+    }
+
+    private static func buildDisplaySegments(
+        session: SessionTranscript,
+        speakerNames: [Int: String]
+    ) -> [TranscriptDisplaySegment] {
+        var out: [TranscriptDisplaySegment] = []
+        for seg in session.speakers {
+            let words = session.words.filter { w in
+                let mid = (w.startMs + w.endMs) / 2
+                return mid >= seg.startMs && mid < seg.endMs
+            }
+            guard !words.isEmpty else { continue }
+            let text = words.map(\.text).joined(separator: " ")
+            let name = speakerNames[seg.speaker] ?? "Speaker \(seg.speaker + 1)"
+            out.append(TranscriptDisplaySegment(
+                speaker: seg.speaker,
+                speakerName: name,
+                startSec: seg.startMs / 1000,
+                text: text
+            ))
+        }
+        return out
     }
 
     /// Observe DB changes to the selected recording so the detail pane updates
@@ -497,6 +570,16 @@ public struct HarcWindowRootView: View {
             // updates automatically; selectedRecording re-derives from it.
         }
     }
+}
+
+// MARK: - Transcript display
+
+struct TranscriptDisplaySegment: Identifiable {
+    let id = UUID()
+    let speaker: Int
+    let speakerName: String
+    let startSec: Int
+    let text: String
 }
 
 // MARK: - Date grouping
