@@ -14,6 +14,9 @@ import HarcVoiceprint
 import IOKit.ps
 import KeyboardShortcuts
 
+/// Thrown by stopRecording's timeout race when session.stop() exceeds the cap.
+private struct StopTimeoutError: Error {}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delegate, UNUserNotificationCenterDelegate {
     private var session: RecordingSession?
@@ -340,9 +343,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         let skipFromOptionClick = pendingSkipPaste
         pendingSkipPaste = false
         guard let session else { return }
+        // Hard cap on how long session.stop() can block. session.stop() runs
+        // the post-stop transcribe finalize + full-WAV diarize through the
+        // daemon. Either can hang (no timeout on HarcSTTClient.roundTrip yet).
+        // Without this cap, the UI stays "Recording" forever and ⌥V can't
+        // toggle off. The mic + system-audio captures are stopped synchronously
+        // at the top of session.stop(), so the macOS mic indicator turns off
+        // immediately even when finalize hangs.
+        let stopResult: RecordingResult?
         do {
-            let result = try await session.stop()
-            state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
+            stopResult = try await withThrowingTaskGroup(of: RecordingResult.self) { group in
+                group.addTask { try await session.stop() }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(30))
+                    throw StopTimeoutError()
+                }
+                let first = try await group.next()!
+                group.cancelAll()
+                return first
+            }
+        } catch is StopTimeoutError {
+            // session.stop() didn't return in time. Free the UI; the leaked
+            // session keeps trying to finalize in the background. The cache
+            // WAV at ~/Library/Caches/Harc/recordings/<uuid>.wav remains as
+            // a recovery artifact even if it never makes it to the public
+            // destination.
+            FileHandle.standardError.write(Data(
+                "harc: session.stop() exceeded 30s; freeing UI, finalize continues in background\n".utf8
+            ))
+            self.session = nil
+            state.markIdle()
+            resetUI()
+            return
+        } catch {
+            self.session = nil
+            presentError(error)
+            resetUI()
+            return
+        }
+        guard let result = stopResult else {
+            self.session = nil
+            state.markIdle()
+            resetUI()
+            return
+        }
+        state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
             let transcriptText = result.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
             let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
             let rec = Recording(
@@ -424,10 +469,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     previewText: transcriptText
                 )
             }
-        } catch {
-            presentError(error)
-            autoStop.end()
-        }
         previewTask?.cancel()
         previewTask = nil
         resetUI()
