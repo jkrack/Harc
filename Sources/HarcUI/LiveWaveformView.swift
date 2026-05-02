@@ -35,18 +35,18 @@ public struct LiveWaveformView: View {
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isActive)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !isActive)) { timeline in
             Canvas { ctx, sz in
-                let smoothed = lowPass(toward: history, from: displayed, factor: 0.07)
-                let target = downsample(smoothed, to: targetCount)
+                let target = downsample(displayed.isEmpty ? history : displayed, to: targetCount)
                 draw(in: ctx, size: sz, samples: target, time: timeline.date.timeIntervalSinceReferenceDate)
             }
             .onChange(of: timeline.date) { _, _ in
-                displayed = lowPass(toward: history, from: displayed, factor: 0.07)
+                displayed = lowPass(toward: history, from: displayed, factor: 0.18)
             }
         }
-        .onChange(of: history.count) { _, _ in
-            if displayed.isEmpty { displayed = history }
+        .onChange(of: history) { _, new in
+            // Initial fill so the first render isn't a flatline waiting on the timeline.
+            if displayed.isEmpty { displayed = new }
         }
         .onChange(of: isActive) { _, active in
             if !active {
@@ -78,6 +78,13 @@ public struct LiveWaveformView: View {
         guard count > 1 else { return }
         let midY = sz.height / 2
         let stepX = sz.width / CGFloat(count - 1)
+
+        // Always-visible baseline so the viz never disappears when amplitudes
+        // are zero (idle, or recording-just-started before levels arrive).
+        // Renders as a thin horizontal band centered on midY.
+        let baseline = CGRect(x: 0, y: midY - 1, width: sz.width, height: 2)
+        ctx.fill(Path(roundedRect: baseline, cornerRadius: 1),
+                 with: .color(tint.opacity(isActive ? 0.45 : 0.30)))
 
         let phase1 = sin(t * 2 * .pi * 0.3) * phaseAmplitude
         let phase2 = sin(t * 2 * .pi * 0.5) * -phaseAmplitude

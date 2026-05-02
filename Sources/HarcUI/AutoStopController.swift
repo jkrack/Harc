@@ -79,8 +79,9 @@ public final class AutoStopController: ObservableObject {
     @Published public private(set) var smoothedDb: Float = -60
     /// 5-band FFT magnitudes in `[0, 1]` — drives the menu bar icon.
     @Published public private(set) var fftBins: [Float] = Array(repeating: 0, count: 5)
-    /// Rolling ~4-second history of normalized amplitude bars in `[0, 1]`, one
-    /// entry per `amplitudeInterval` (1/24 s). Frozen in place on `.stoppedBanner`.
+    /// Rolling ~9-second history of normalized amplitude bars in `[0, 1]`, one
+    /// entry per `amplitudeInterval` (~10 Hz). Frozen in place on `.stoppedBanner`.
+    /// In-view low-pass interpolation in LiveWaveformView smooths the visual.
     @Published public private(set) var amplitudeHistory: [Float] = Array(repeating: 0, count: 96)
 
     public var config: Config
@@ -88,8 +89,11 @@ public final class AutoStopController: ObservableObject {
     /// Called when the 60 s countdown runs out. Owner performs the actual stop.
     public var onAutoStop: ((StopReason) -> Void)?
 
-    /// Amplitude bar cadence — 96 bars × (1/24) s ≈ 4 s of history.
-    public static let amplitudeInterval: TimeInterval = 1.0 / 24.0
+    /// Amplitude bar cadence. Tuned so @Published emits at ~10 Hz — fast
+    /// enough that LiveWaveformView's low-pass smoothing reads as fluid,
+    /// slow enough that 24 Hz emits don't saturate SwiftUI's diff/render
+    /// chain across the icon, panel, and toolbar pill consumers.
+    public static let amplitudeInterval: TimeInterval = 0.10
     public static let amplitudeCapacity: Int = 96
 
     private var startedAt: Date?
