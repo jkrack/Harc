@@ -35,11 +35,12 @@ private struct SettingsRoot: View {
 private struct MenuBarExtraLabel: View {
     @ObservedObject var bridge: HarcAppBridge
     var body: some View {
-        // MenuBarBarsIcon is an AppKit-only enum (NSImage rendering); use an
-        // SF Symbol placeholder here. TODO: swap in a SwiftUI bars view when
-        // the SwiftUI port of the bars icon is available.
-        Image(systemName: "waveform")
-            .foregroundStyle(bridge.recordingState.isRecording ? HarcBrand.live : .primary)
+        LiveWaveformView(
+            history: bridge.amplitudeHistory,
+            size: .icon,
+            isActive: bridge.recordingState.isRecording
+        )
+        .frame(width: 22, height: 14)
     }
 }
 
@@ -50,7 +51,7 @@ private struct MenuBarExtraContent: View {
         MenuBarPanelView(
             recordingState: bridge.recordingState,
             trayState: bridge.trayState,
-            scopeHistory: bridge.scopeHistory,
+            amplitudeHistory: bridge.amplitudeHistory,
             onStartStop: bridge.onStartStop,
             onOpenWindow: bridge.onOpenWindow,
             onCopy: bridge.onCopyLastTranscript,
