@@ -320,6 +320,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 startedAt: startedAt
             )
         } catch {
+            // session.start may have brought up mic / system-audio captures
+            // BEFORE the throw. Best-effort stop so a partial start doesn't
+            // leave the mic running with no controller (state would show Idle
+            // but the macOS mic indicator would stay on).
+            try? await self.session?.stop()
             self.session = nil
             presentError(error)
             resetUI()
