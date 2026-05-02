@@ -1016,7 +1016,15 @@ private func openDetail(for recording: Recording) {
             budgetWords: budgetWords
         )
 
-        let wordCount = session.joinedText.split(whereSeparator: { $0.isWhitespace }).count
+        // sourceWordCount must match the field isStale() will read against
+        // (recording.transcriptText, mirrored from the .txt sidecar) — NOT
+        // session.joinedText (the .json sidecar's prose). The two differ
+        // because the .txt includes speaker labels / line breaks. Comparing
+        // mismatched counts triggered the "older transcript" banner on
+        // brand-new summaries. Fall back to joinedText only if the cached
+        // field is missing.
+        let staleSource = rec.transcriptText ?? session.joinedText
+        let wordCount = staleSource.split(whereSeparator: { $0.isWhitespace }).count
 
         try await store.updateSummary(
             id: id,
