@@ -164,6 +164,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .assign(to: \.amplitudeHistory, on: bridge)
             .store(in: &cancellables)
 
+        // Mirror RecordingState.isRecording to bridge.iconState so the
+        // always-visible menu-bar label updates on start/stop without
+        // observing the high-frequency amplitudeHistory feed.
+        state.$isRecording
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.isRecording, on: bridge.iconState)
+            .store(in: &cancellables)
+
         startFrontmostPolling()
 
         // SwiftUI's Settings { } scene + LSUIElement=true sometimes auto-opens

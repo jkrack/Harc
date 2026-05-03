@@ -16,7 +16,7 @@ struct HarcApp: App {
             MenuBarExtraContent(bridge: appDelegate.bridge)
                 .environmentObject(appDelegate.prefs)
         } label: {
-            MenuBarExtraLabel(bridge: appDelegate.bridge)
+            MenuBarExtraLabel(iconState: appDelegate.bridge.iconState)
         }
         .menuBarExtraStyle(.window)
     }
@@ -33,16 +33,16 @@ private struct SettingsRoot: View {
 }
 
 private struct MenuBarExtraLabel: View {
-    @ObservedObject var bridge: HarcAppBridge
+    @ObservedObject var iconState: MenuBarIconState
     var body: some View {
-        // Animated bars when recording, static SF Symbol when idle.
-        // Driven by parent re-renders (10 Hz from amplitudeHistory @Published)
-        // — NO TimelineView, since the always-visible menu-bar icon would
-        // saturate SwiftUI if we did per-frame redraws.
+        // Static SF Symbol with tint changes only. Observes a narrow
+        // MenuBarIconState — re-renders only on isRecording / pasteFlash
+        // (effectively never during a recording). The bridge's 10 Hz
+        // amplitudeHistory feed never reaches this label.
         MenuBarBarsView(
-            history: bridge.amplitudeHistory,
-            isRecording: bridge.recordingState.isRecording,
-            pasteFlash: bridge.pasteFlash
+            history: [],
+            isRecording: iconState.isRecording,
+            pasteFlash: iconState.pasteFlash
         )
     }
 }
