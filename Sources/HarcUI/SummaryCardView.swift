@@ -98,7 +98,12 @@ public struct SummaryCardView: View {
             if let descriptor = ModelCatalog.descriptor(for: activeSummarizerID) {
                 ModelRequirementView(
                     title: "Needs \(descriptor.displayName)",
-                    description: "Generate summaries and action items from your meeting transcripts."
+                    description: "Generate summaries and action items from your meeting transcripts.",
+                    actionTitle: "Open Models Settings",
+                    action: {
+                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 )
             } else {
                 tintedContainer {

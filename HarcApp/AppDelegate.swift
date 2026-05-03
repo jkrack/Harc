@@ -165,6 +165,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .store(in: &cancellables)
 
         startFrontmostPolling()
+
+        // SwiftUI's Settings { } scene + LSUIElement=true sometimes auto-opens
+        // the Settings window at launch (especially when the system has a
+        // saved frame for it from a previous session). Force any window that
+        // SwiftUI auto-opened at launch to close so Harc lands purely in the
+        // menu bar — windows should only appear via explicit user action.
+        DispatchQueue.main.async { [weak self] in
+            self?.closeAutoOpenedLaunchWindows()
+        }
+    }
+
+    /// Run once on launch (after the main runloop turn) to close any windows
+    /// SwiftUI may have auto-opened — the saved-frame Settings window is the
+    /// usual offender. Distinguishes "auto-opened" from "user-opened" by
+    /// `managedWindowCount`: anything we open ourselves goes through
+    /// `trackManagedWindow`. At first launch tick, `managedWindowCount` is 0
+    /// so any visible window is, by definition, not ours.
+    private func closeAutoOpenedLaunchWindows() {
+        guard managedWindowCount == 0 else { return }
+        for window in NSApplication.shared.windows where window.isVisible {
+            window.close()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -764,11 +786,14 @@ private func openDetail(for recording: Recording) {
 
         switch decision {
         case .skipDisabled, .skipModifierHeld, .skipUnsafeTarget:
+            bridge.flashPaste(.skipped)
             return
         case .paste:
             do {
                 try FrontmostAppPaster.copyAndPaste(blob)
+                bridge.flashPaste(.success)
             } catch FrontmostAppPaster.PasteError.accessibilityDenied {
+                bridge.flashPaste(.failure)
                 // Re-prompt every paste failure: the prompt itself notes that
                 // the transcript is already on the clipboard, so re-showing it
                 // is informative rather than annoying. A user who chose
@@ -776,6 +801,7 @@ private func openDetail(for recording: Recording) {
                 // silently failed.
                 presentAccessibilityPrompt()
             } catch {
+                bridge.flashPaste(.failure)
                 // Paste error is silently swallowed; transcript is already on clipboard.
                 break
             }

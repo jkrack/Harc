@@ -55,15 +55,27 @@ fi
 
 cp -R "$APP_SRC" "$APP_DST"
 
-echo "==> Re-signing bundle ad-hoc (deep)"
-# NOTE: NOT passing --options runtime. Hardened runtime + ad-hoc signing makes
-# TCC unable to verify a stable signing identity, so it re-prompts the user
-# for Microphone / Screen Recording on every launch instead of persisting the
-# grant. Hardened runtime is only required for notarization; we're not doing
-# that for local builds. If this script ever produces a build for distribution,
-# add `--options runtime` back AND switch the signing identity from `-` (ad-hoc)
-# to a Developer ID identity that TCC can persistently verify.
-codesign --force --deep --sign - \
+echo "==> Re-signing bundle (deep)"
+# Identity selection:
+#   1. If a self-signed "Harc Local Dev" identity exists in the user's
+#      keychain (created by scripts/setup-local-signing.sh), use it. A stable
+#      named identity helps TCC persist Microphone / Screen Recording grants
+#      across rebuilds — better than re-granting after every cdhash change.
+#   2. Otherwise fall back to ad-hoc (`-`).
+#
+# NOT passing --options runtime: hardened runtime + ad-hoc/self-signed makes
+# TCC unable to verify a stable signing identity reliably. Hardened runtime
+# is only required for notarization; not in scope for local builds.
+LOCAL_IDENTITY="Harc Local Dev"
+if /usr/bin/security find-identity -v -p codesigning 2>/dev/null | grep -q "${LOCAL_IDENTITY}"; then
+  SIGN_ID="${LOCAL_IDENTITY}"
+  echo "    using stable identity: ${LOCAL_IDENTITY}"
+else
+  SIGN_ID="-"
+  echo "    using ad-hoc identity (run scripts/setup-local-signing.sh once for stable TCC grants)"
+fi
+
+codesign --force --deep --sign "${SIGN_ID}" \
   --entitlements HarcApp/Harc.entitlements \
   "$APP_DST"
 

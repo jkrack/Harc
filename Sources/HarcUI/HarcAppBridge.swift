@@ -15,6 +15,9 @@ public final class HarcAppBridge: ObservableObject {
 
     @Published public var frontmostAppName: String? = nil
     @Published public var amplitudeHistory: [Float] = []
+    /// Brief tint signal for the menu-bar bars icon after auto-paste runs.
+    /// Cleared automatically ~1.2s after `flashPaste(_:)`.
+    @Published public private(set) var pasteFlash: PasteFlash? = nil
 
     public var onStartStop: () -> Void = {}
     public var onOpenWindow: () -> Void = {}
@@ -25,4 +28,31 @@ public final class HarcAppBridge: ObservableObject {
         self.recordingState = recordingState
         self.trayState = trayState
     }
+
+    /// Flash the menu-bar icon for a brief moment to signal the auto-paste
+    /// outcome. Replaces the legacy MenuBarFlash that was deleted with the
+    /// popover. Auto-clears after `flashDuration`.
+    public func flashPaste(_ outcome: PasteFlash) {
+        pasteFlash = outcome
+        let captureToken = UUID()
+        currentFlashToken = captureToken
+        Task { [weak self, captureToken] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard let self else { return }
+            // Only clear if no newer flash superseded us.
+            if self.currentFlashToken == captureToken {
+                await MainActor.run { self.pasteFlash = nil }
+            }
+        }
+    }
+
+    private var currentFlashToken: UUID = UUID()
+}
+
+/// Outcome of a post-stop auto-paste run, used as a one-shot tint hint
+/// on the menu-bar bars icon.
+public enum PasteFlash: Sendable, Equatable {
+    case success
+    case skipped
+    case failure
 }

@@ -41,7 +41,8 @@ private struct MenuBarExtraLabel: View {
         // saturate SwiftUI if we did per-frame redraws.
         MenuBarBarsView(
             history: bridge.amplitudeHistory,
-            isRecording: bridge.recordingState.isRecording
+            isRecording: bridge.recordingState.isRecording,
+            pasteFlash: bridge.pasteFlash
         )
     }
 }
