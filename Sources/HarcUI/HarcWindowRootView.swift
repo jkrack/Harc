@@ -153,7 +153,7 @@ public struct HarcWindowRootView: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(.regularMaterial, in: Capsule())
+                    .glassEffect(.regular.tint(HarcBrand.live), in: Capsule())
                     .overlay(Capsule().stroke(HarcBrand.live.opacity(0.4), lineWidth: 1))
                 }
             }

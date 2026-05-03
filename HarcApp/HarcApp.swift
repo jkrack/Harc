@@ -35,13 +35,14 @@ private struct SettingsRoot: View {
 private struct MenuBarExtraLabel: View {
     @ObservedObject var bridge: HarcAppBridge
     var body: some View {
-        // Static SF Symbol — NOT LiveWaveformView. The menu-bar icon is always
-        // visible, so a Canvas + TimelineView running at 24 Hz here would pin
-        // the main thread for the entire recording (saturating SwiftUI's
-        // re-render path and pinwheeling everything else, including hotkey
-        // dispatch). The panel viz still runs when the panel is open.
-        Image(systemName: "waveform")
-            .foregroundStyle(bridge.recordingState.isRecording ? HarcBrand.live : .primary)
+        // Animated bars when recording, static SF Symbol when idle.
+        // Driven by parent re-renders (10 Hz from amplitudeHistory @Published)
+        // — NO TimelineView, since the always-visible menu-bar icon would
+        // saturate SwiftUI if we did per-frame redraws.
+        MenuBarBarsView(
+            history: bridge.amplitudeHistory,
+            isRecording: bridge.recordingState.isRecording
+        )
     }
 }
 
