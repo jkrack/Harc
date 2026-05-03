@@ -15,15 +15,21 @@ import SwiftUI
 public struct MenuBarBarsView: View {
     let history: [Float]
     let isRecording: Bool
+    let pasteFlash: PasteFlash?
 
-    public init(history: [Float], isRecording: Bool) {
+    public init(history: [Float], isRecording: Bool, pasteFlash: PasteFlash? = nil) {
         self.history = history
         self.isRecording = isRecording
+        self.pasteFlash = pasteFlash
     }
 
     public var body: some View {
         if isRecording {
             bars
+        } else if let pasteFlash {
+            // Flash variant: full bars at fixed amplitude in the outcome
+            // color, briefly. Replaces the legacy MenuBarFlash sentry.
+            staticFlashBars(color: flashColor(pasteFlash))
         } else {
             Image(systemName: "waveform")
                 .foregroundStyle(.primary)
@@ -53,6 +59,33 @@ public struct MenuBarBarsView: View {
             }
         }
         .frame(width: 16, height: 14)
+    }
+
+    private func staticFlashBars(color: Color) -> some View {
+        Canvas { ctx, size in
+            let barCount = 5
+            let barWidth: CGFloat = 2
+            let spacing: CGFloat = 1.4
+            let totalW = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing
+            let startX = (size.width - totalW) / 2
+            let h = size.height
+            let bh = h - 2
+            for i in 0..<barCount {
+                let x = startX + CGFloat(i) * (barWidth + spacing)
+                let y = (h - bh) / 2
+                let rect = CGRect(x: x, y: y, width: barWidth, height: bh)
+                ctx.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2), with: .color(color))
+            }
+        }
+        .frame(width: 16, height: 14)
+    }
+
+    private func flashColor(_ outcome: PasteFlash) -> Color {
+        switch outcome {
+        case .success: return .green
+        case .skipped: return .yellow
+        case .failure: return HarcBrand.live
+        }
     }
 
     /// The 5 most-recent amplitude samples (left = older, right = newer).
