@@ -56,7 +56,14 @@ fi
 cp -R "$APP_SRC" "$APP_DST"
 
 echo "==> Re-signing bundle ad-hoc (deep)"
-codesign --force --deep --sign - --options runtime \
+# NOTE: NOT passing --options runtime. Hardened runtime + ad-hoc signing makes
+# TCC unable to verify a stable signing identity, so it re-prompts the user
+# for Microphone / Screen Recording on every launch instead of persisting the
+# grant. Hardened runtime is only required for notarization; we're not doing
+# that for local builds. If this script ever produces a build for distribution,
+# add `--options runtime` back AND switch the signing identity from `-` (ad-hoc)
+# to a Developer ID identity that TCC can persistently verify.
+codesign --force --deep --sign - \
   --entitlements HarcApp/Harc.entitlements \
   "$APP_DST"
 
