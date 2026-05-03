@@ -79,6 +79,13 @@ public actor RecordingSession {
     private var pumpTask: Task<Void, Never>?
     private var systemAudioAvailable = false
 
+    /// Set to true when `start` had to fall back to mic-only because system
+    /// audio capture failed (permission revoked, no display, etc.). The
+    /// caller can read this AFTER `start` returns to surface a heads-up
+    /// notification — without it, the user only sees their own voice in the
+    /// transcript and other meeting participants are silently missing.
+    public private(set) var systemAudioFellBack: Bool = false
+
     public init(
         mic: any MicCaptureSource,
         systemAudio: any SystemAudioCaptureSource,
@@ -130,6 +137,7 @@ public actor RecordingSession {
                 ))
                 sysStream = nil
                 systemAudioAvailable = false
+                systemAudioFellBack = true
             }
         } else {
             sysStream = nil

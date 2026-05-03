@@ -10,7 +10,7 @@ public struct HarcSettingsForm: View {
             RecordingSettingsView()
             ProcessingSettingsView()
             ModelsSettingsView()
-            SummarizationSettingsView(onOpenModels: {})
+            SummarizationSettingsView()
             LibrarySettingsView()
             AboutSettingsView()
         }
