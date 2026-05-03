@@ -438,9 +438,11 @@ public struct HarcWindowRootView: View {
     private func detailContent(recording: Recording) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                StaticWaveformView(envelope: detailEnvelope)
-                    .frame(height: 40)
-                    .padding(.horizontal)
+                WaveformPlayerView(
+                    envelope: detailEnvelope,
+                    audioURL: URL(fileURLWithPath: recording.wavPath)
+                )
+                .padding(.horizontal)
 
                 // Summary card — requires SummarizationQueueStore and
                 // ModelManagerStore injected as environment objects by the
