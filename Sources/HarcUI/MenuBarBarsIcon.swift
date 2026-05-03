@@ -1,99 +1,40 @@
 import AppKit
 import SwiftUI
 
-/// SwiftUI rendition of the legacy 5-bar spectrum tile, sized for the
-/// macOS menu-bar icon. Driven by `amplitudeHistory` (the 96-sample time
-/// series from `AutoStopController` forwarded through `HarcAppBridge`).
-///
-/// **Performance note:** rendering uses a plain `Canvas` and re-renders
-/// only when the parent re-renders (i.e., when `amplitudeHistory`
-/// `@Published`s a new value at ~10 Hz). NO `TimelineView` — an earlier
-/// implementation tried it at 24 Hz and saturated the main-thread render
-/// chain to the point where the Stop button stopped registering. Idle
-/// (`isRecording == false`) collapses to a static SF Symbol so the icon
-/// has zero per-frame cost when no recording is happening.
+/// SwiftUI menu-bar icon. Static SF Symbol, tinted red while recording or
+/// in flash colors briefly after auto-paste. NO Canvas, NO per-frame
+/// redraw — the always-visible menu-bar icon must NOT do live drawing
+/// work (an earlier version with Canvas at 10 Hz pinned the main thread
+/// and broke ⌥V / Stop / Quit). The richer fluid waveform still lives in
+/// the panel and the recording pill, both bounded surfaces.
 public struct MenuBarBarsView: View {
     let history: [Float]
     let isRecording: Bool
     let pasteFlash: PasteFlash?
 
     public init(history: [Float], isRecording: Bool, pasteFlash: PasteFlash? = nil) {
-        self.history = history
+        // history is accepted for API compatibility but intentionally unused —
+        // see type doc comment.
+        _ = history
+        self.history = []
         self.isRecording = isRecording
         self.pasteFlash = pasteFlash
     }
 
     public var body: some View {
-        if isRecording {
-            bars
-        } else if let pasteFlash {
-            // Flash variant: full bars at fixed amplitude in the outcome
-            // color, briefly. Replaces the legacy MenuBarFlash sentry.
-            staticFlashBars(color: flashColor(pasteFlash))
-        } else {
-            Image(systemName: "waveform")
-                .foregroundStyle(.primary)
-        }
+        Image(systemName: "waveform")
+            .foregroundStyle(tint)
     }
 
-    private var bars: some View {
-        Canvas { ctx, size in
-            let samples = lastFive
-            let barWidth: CGFloat = 2
-            let spacing: CGFloat = 1.4
-            let totalW = CGFloat(samples.count) * barWidth + CGFloat(samples.count - 1) * spacing
-            let startX = (size.width - totalW) / 2
-            let h = size.height
-            let minH: CGFloat = 2
-            let maxH = h - 2
-            for i in 0..<samples.count {
-                let clamped = max(0, min(1, CGFloat(samples[i])))
-                let bh = max(minH, clamped * maxH)
-                let x = startX + CGFloat(i) * (barWidth + spacing)
-                let y = (h - bh) / 2
-                let rect = CGRect(x: x, y: y, width: barWidth, height: bh)
-                ctx.fill(
-                    Path(roundedRect: rect, cornerRadius: barWidth / 2),
-                    with: .color(HarcBrand.live)
-                )
+    private var tint: Color {
+        if let pasteFlash {
+            switch pasteFlash {
+            case .success: return .green
+            case .skipped: return .yellow
+            case .failure: return HarcBrand.live
             }
         }
-        .frame(width: 16, height: 14)
-    }
-
-    private func staticFlashBars(color: Color) -> some View {
-        Canvas { ctx, size in
-            let barCount = 5
-            let barWidth: CGFloat = 2
-            let spacing: CGFloat = 1.4
-            let totalW = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing
-            let startX = (size.width - totalW) / 2
-            let h = size.height
-            let bh = h - 2
-            for i in 0..<barCount {
-                let x = startX + CGFloat(i) * (barWidth + spacing)
-                let y = (h - bh) / 2
-                let rect = CGRect(x: x, y: y, width: barWidth, height: bh)
-                ctx.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2), with: .color(color))
-            }
-        }
-        .frame(width: 16, height: 14)
-    }
-
-    private func flashColor(_ outcome: PasteFlash) -> Color {
-        switch outcome {
-        case .success: return .green
-        case .skipped: return .yellow
-        case .failure: return HarcBrand.live
-        }
-    }
-
-    /// The 5 most-recent amplitude samples (left = older, right = newer).
-    /// Pads with leading zeros if history is shorter than 5.
-    private var lastFive: [Float] {
-        let n = 5
-        if history.count >= n { return Array(history.suffix(n)) }
-        return Array(repeating: 0, count: n - history.count) + history
+        return isRecording ? HarcBrand.live : .primary
     }
 }
 
