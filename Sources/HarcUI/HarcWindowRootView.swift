@@ -42,6 +42,9 @@ public struct HarcWindowRootView: View {
     // Transcript text is loaded lazily on selection change to avoid
     // synchronous disk I/O in the view body.
     @State private var transcriptText: String = ""
+    /// Set when the user picks Delete from a sidebar context menu — drives
+    /// the destructive confirmation alert.
+    @State private var pendingDeleteRecording: Recording? = nil
     /// When the .json sidecar is available, we render structured turns
     /// (timestamp + speaker + text) instead of the flat .txt blob.
     @State private var transcriptSegments: [TranscriptDisplaySegment] = []
@@ -89,6 +92,30 @@ public struct HarcWindowRootView: View {
         .onChange(of: selection) { _, _ in
             loadTranscript()
             Task { await loadEnvelope() }
+        }
+        .alert(
+            "Delete recording?",
+            isPresented: Binding(
+                get: { pendingDeleteRecording != nil },
+                set: { if !$0 { pendingDeleteRecording = nil } }
+            ),
+            presenting: pendingDeleteRecording
+        ) { rec in
+            Button("Delete", role: .destructive) {
+                let target = rec
+                pendingDeleteRecording = nil
+                Task {
+                    do {
+                        try await libraryVM.delete(recording: target)
+                        if selection == target.wavPath { selection = nil }
+                    } catch {
+                        // Surface in console; LibraryViewModel logs to its own channel.
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingDeleteRecording = nil }
+        } message: { rec in
+            Text("\u{201C}\(rec.displayTitle)\u{201D} will be removed from the library and the audio + transcript files will be deleted from disk.")
         }
     }
 
@@ -233,16 +260,70 @@ public struct HarcWindowRootView: View {
 
     @ViewBuilder
     private var sidebar: some View {
-        Group {
-            if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                groupedList
-            } else {
-                searchResultsList
+        VStack(spacing: 0) {
+            calendarHeader
+            Divider()
+            Group {
+                if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    groupedList
+                } else {
+                    searchResultsList
+                }
             }
+            .listStyle(.sidebar)
         }
-        .listStyle(.sidebar)
         .navigationTitle("Library")
         .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
+    }
+
+    // MARK: - Calendar header
+
+    private var calendarHeader: some View {
+        VStack(spacing: 6) {
+            MonthCalendarView(
+                month: libraryVM.calendarMonth,
+                selectedDay: selectedFilterDay,
+                daysWithRecordings: libraryVM.daysWithRecordings,
+                onPrevMonth: { libraryVM.advanceMonth(by: -1) },
+                onNextMonth: { libraryVM.advanceMonth(by: 1) },
+                onSelectDay: { day in
+                    // Toggle: clicking the already-selected day clears the filter.
+                    if let current = selectedFilterDay,
+                       Calendar.current.isDate(current, inSameDayAs: day) {
+                        libraryVM.filter = .all
+                    } else {
+                        libraryVM.filter = .day(day)
+                    }
+                }
+            )
+            if let activeDay = selectedFilterDay {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .foregroundStyle(.secondary)
+                    Text("Filtered: \(formatFilterDay(activeDay))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Show all") { libraryVM.filter = .all }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private var selectedFilterDay: Date? {
+        if case .day(let d) = libraryVM.filter { return d }
+        return nil
+    }
+
+    private func formatFilterDay(_ day: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.dateStyle = .medium
+        return fmt.string(from: day)
     }
 
     // Grouped recordings list: pinned first, then by date-bucket.
@@ -289,6 +370,7 @@ public struct HarcWindowRootView: View {
                         selection = hit.recording.wavPath
                     }
                     .tag(hit.recording.wavPath)
+                    .contextMenu { contextMenu(for: hit.recording) }
                 }
             }
         }
@@ -313,6 +395,26 @@ public struct HarcWindowRootView: View {
                 .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
         }
         .tag(rec.wavPath)
+        .contextMenu { contextMenu(for: rec) }
+    }
+
+    @ViewBuilder
+    private func contextMenu(for rec: Recording) -> some View {
+        Button(rec.pinned ? "Unpin" : "Pin") {
+            guard let id = rec.id else { return }
+            Task { try? await libraryVM.togglePin(id: id, currentlyPinned: rec.pinned) }
+        }
+        Button("Open in Editor…") { onEdit(rec) }
+        Button("Export…") { onExport(rec) }
+        Divider()
+        Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
+        }
+        Button("Copy Transcript") { copyTranscript(rec) }
+        Divider()
+        Button("Delete", role: .destructive) {
+            pendingDeleteRecording = rec
+        }
     }
 
     // MARK: - Detail
