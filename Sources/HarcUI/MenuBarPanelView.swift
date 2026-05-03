@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Slim MenuBarExtra panel: recording state + level bars + Start/Stop + Open + post-stop tray.
 /// Replaces the 520-line PopoverRootView.
@@ -57,6 +58,9 @@ public struct MenuBarPanelView: View {
                 tray
                     .transition(.opacity)
             }
+
+            Divider()
+            footer
         }
         .padding(14)
         .frame(width: 280)
@@ -89,6 +93,36 @@ public struct MenuBarPanelView: View {
                     .monospacedDigit()
             }
         }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 0) {
+            Button {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Settings…")
+                    Spacer()
+                    Text("⌘,").foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(",", modifiers: .command)
+            Spacer(minLength: 12)
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Quit Harc")
+                    Spacer()
+                    Text("⌘Q").foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("q", modifiers: .command)
+        }
+        .font(.subheadline)
     }
 
     private var tray: some View {
