@@ -139,9 +139,7 @@ public struct MenuBarPanelView: View {
             }
         }
         .padding(10)
-        // .glassEffect(in: RoundedRectangle(cornerRadius: 10))
-        // TODO: re-enable once macOS 26 .glassEffect() API is verified at compile time
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Elapsed timer

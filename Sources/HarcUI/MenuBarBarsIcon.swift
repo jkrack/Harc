@@ -1,4 +1,68 @@
 import AppKit
+import SwiftUI
+
+/// SwiftUI rendition of the legacy 5-bar spectrum tile, sized for the
+/// macOS menu-bar icon. Driven by `amplitudeHistory` (the 96-sample time
+/// series from `AutoStopController` forwarded through `HarcAppBridge`).
+///
+/// **Performance note:** rendering uses a plain `Canvas` and re-renders
+/// only when the parent re-renders (i.e., when `amplitudeHistory`
+/// `@Published`s a new value at ~10 Hz). NO `TimelineView` — an earlier
+/// implementation tried it at 24 Hz and saturated the main-thread render
+/// chain to the point where the Stop button stopped registering. Idle
+/// (`isRecording == false`) collapses to a static SF Symbol so the icon
+/// has zero per-frame cost when no recording is happening.
+public struct MenuBarBarsView: View {
+    let history: [Float]
+    let isRecording: Bool
+
+    public init(history: [Float], isRecording: Bool) {
+        self.history = history
+        self.isRecording = isRecording
+    }
+
+    public var body: some View {
+        if isRecording {
+            bars
+        } else {
+            Image(systemName: "waveform")
+                .foregroundStyle(.primary)
+        }
+    }
+
+    private var bars: some View {
+        Canvas { ctx, size in
+            let samples = lastFive
+            let barWidth: CGFloat = 2
+            let spacing: CGFloat = 1.4
+            let totalW = CGFloat(samples.count) * barWidth + CGFloat(samples.count - 1) * spacing
+            let startX = (size.width - totalW) / 2
+            let h = size.height
+            let minH: CGFloat = 2
+            let maxH = h - 2
+            for i in 0..<samples.count {
+                let clamped = max(0, min(1, CGFloat(samples[i])))
+                let bh = max(minH, clamped * maxH)
+                let x = startX + CGFloat(i) * (barWidth + spacing)
+                let y = (h - bh) / 2
+                let rect = CGRect(x: x, y: y, width: barWidth, height: bh)
+                ctx.fill(
+                    Path(roundedRect: rect, cornerRadius: barWidth / 2),
+                    with: .color(HarcBrand.live)
+                )
+            }
+        }
+        .frame(width: 16, height: 14)
+    }
+
+    /// The 5 most-recent amplitude samples (left = older, right = newer).
+    /// Pads with leading zeros if history is shorter than 5.
+    private var lastFive: [Float] {
+        let n = 5
+        if history.count >= n { return Array(history.suffix(n)) }
+        return Array(repeating: 0, count: n - history.count) + history
+    }
+}
 
 /// Renders a 5-bar spectrum tile as an `NSImage` suitable for an
 /// `NSStatusItem`. Drawn as a template image so macOS's menu bar tints it
