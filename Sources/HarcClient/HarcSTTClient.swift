@@ -24,8 +24,20 @@ public struct HarcSTTClient: Sendable {
         self.preconnectedFd = connectedFd
     }
 
+    /// Per-IPC-call timeouts. The underlying read() is blocking so cancellation
+    /// can't unblock it cleanly — on timeout, the throwing task's continuation
+    /// returns to the caller while the orphan read keeps blocking until the
+    /// daemon eventually responds or the connection closes (kernel cleans up
+    /// the fd at process exit). What this protects against: a hung daemon
+    /// silently blocking the recording-stop path, the auto-paste flow, or any
+    /// UI surface that awaits these calls.
+    public static let statusTimeout: Int = 5
+    public static let transcribeTimeout: Int = 60
+    public static let diarizeTimeout: Int = 300   // 5 min for full-WAV diarize on long meetings
+    public static let shutdownTimeout: Int = 5
+
     public func status() async throws -> DaemonStatus {
-        let response = try await roundTrip(.status)
+        let response = try await roundTripWithTimeout(.status, seconds: Self.statusTimeout)
         switch response {
         case .status(let s): return s
         case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
@@ -41,7 +53,7 @@ public struct HarcSTTClient: Sendable {
             diarize: diarize,
             vad: vad
         ))
-        let response = try await roundTrip(request)
+        let response = try await roundTripWithTimeout(request, seconds: Self.transcribeTimeout)
         switch response {
         case .result(let r): return r
         case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
@@ -51,7 +63,7 @@ public struct HarcSTTClient: Sendable {
 
     public func diarize(audioPath: String) async throws -> DiarizeResult {
         let request = IPCRequest.diarize(DiarizeRequest(audioPath: audioPath))
-        let response = try await roundTrip(request)
+        let response = try await roundTripWithTimeout(request, seconds: Self.diarizeTimeout)
         switch response {
         case .diarization(let d): return d
         case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
@@ -60,7 +72,23 @@ public struct HarcSTTClient: Sendable {
     }
 
     public func shutdown() async throws {
-        _ = try await roundTrip(.shutdown)
+        _ = try await roundTripWithTimeout(.shutdown, seconds: Self.shutdownTimeout)
+    }
+
+    /// Race `roundTrip` against a `Task.sleep` timeout. The orphan roundTrip
+    /// keeps running on the leaked branch; we throw `ClientError.timeout`
+    /// to the caller after `seconds`.
+    private func roundTripWithTimeout(_ request: IPCRequest, seconds: Int) async throws -> IPCResponse {
+        try await withThrowingTaskGroup(of: IPCResponse.self) { group in
+            group.addTask { try await self.roundTrip(request) }
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                throw ClientError.timeout(seconds: seconds)
+            }
+            let first = try await group.next()!
+            group.cancelAll()
+            return first
+        }
     }
 
     /// Opens a socket (if not using a preconnected fd), sends `request`, reads one response, closes.

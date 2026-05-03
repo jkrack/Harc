@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var prefsObserver: AnyCancellable?
     private var pendingSkipPaste = false
     private var frontmostPoller: Timer?
+    private var hasShownMicOnlyNotice = false
 
     private let meetingState = MeetingDetectionState()
     private let notificationPresenter = MeetingNotificationPresenter()
@@ -322,6 +323,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 session: session,
                 startedAt: startedAt
             )
+            // If system audio fell back to mic-only, surface a one-time
+            // notice so the user knows other meeting participants will be
+            // missing from the transcript. Gated to once per app session
+            // (no nagging on every recording).
+            if await session.systemAudioFellBack, !hasShownMicOnlyNotice {
+                hasShownMicOnlyNotice = true
+                presentMicOnlyFallbackNotification()
+            }
         } catch {
             // session.start may have brought up mic / system-audio captures
             // BEFORE the throw. Best-effort stop so a partial start doesn't
@@ -787,6 +796,63 @@ private func openDetail(for recording: Recording) {
     }
 
     @MainActor
+    private func presentExportPanel(for recording: Recording) {
+        let alert = NSAlert()
+        alert.messageText = "Export \u{201C}\(recording.displayTitle)\u{201D}"
+        alert.informativeText = "Pick a format. The transcript and speaker labels are written; audio is not included."
+        alert.addButton(withTitle: "Markdown…")        // .alertFirstButtonReturn
+        alert.addButton(withTitle: "DOCX…")            // .alertSecondButtonReturn
+        alert.addButton(withTitle: "LLM Prompt…")      // .alertThirdButtonReturn
+        alert.addButton(withTitle: "Cancel")           // last
+        let chosen = alert.runModal()
+        let format: ExportFormat
+        switch chosen {
+        case .alertFirstButtonReturn:  format = .markdown
+        case .alertSecondButtonReturn: format = .docx
+        case .alertThirdButtonReturn:  format = .prompt
+        default: return
+        }
+
+        let savePanel = NSSavePanel()
+        let defaultURL = ExportService.defaultDestination(for: recording, format: format)
+        savePanel.directoryURL = defaultURL.deletingLastPathComponent()
+        savePanel.nameFieldStringValue = defaultURL.lastPathComponent
+        savePanel.canCreateDirectories = true
+        savePanel.allowedContentTypes = []   // free-form filename
+        let panelResult = savePanel.runModal()
+        guard panelResult == .OK, let destURL = savePanel.url else { return }
+
+        do {
+            try ExportService.write(
+                recording: recording,
+                format: format,
+                to: destURL,
+                includeSummary: prefs.includeSummaryInPrompt
+            )
+        } catch {
+            let err = NSAlert()
+            err.messageText = "Export failed"
+            err.informativeText = error.localizedDescription
+            err.addButton(withTitle: "OK")
+            err.runModal()
+        }
+    }
+
+    @MainActor
+    private func presentMicOnlyFallbackNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Recording mic only"
+        content.body = "Screen Recording isn't enabled, so other meeting participants won't be in the transcript. Open System Settings to grant it."
+        content.sound = nil
+        let request = UNNotificationRequest(
+            identifier: "com.harc.mic-only-fallback",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    @MainActor
     private func presentAccessibilityPrompt() {
         let alert = NSAlert()
         alert.messageText = "Harc needs Accessibility permission"
@@ -832,10 +898,7 @@ private func openDetail(for recording: Recording) {
             queueStore: queueStore,
             modelStore: modelStore,
             onEdit: { [weak self] rec in self?.openEditor(for: rec) },
-            onExport: { rec in
-                // TODO Task 3.5: wire export sheet once ExportService gains a panel entry-point.
-                _ = rec
-            },
+            onExport: { [weak self] rec in self?.presentExportPanel(for: rec) },
             onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) }
         )
         harcWindow = controller

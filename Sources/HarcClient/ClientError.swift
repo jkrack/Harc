@@ -7,6 +7,7 @@ public enum ClientError: Error, LocalizedError, Equatable {
     case ipcDecodeFailed(String)
     case transcribeFailed(code: String, message: String)
     case chunkerFailed(String)
+    case timeout(seconds: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ public enum ClientError: Error, LocalizedError, Equatable {
             return "Transcription failed [\(code)]: \(message)"
         case .chunkerFailed(let reason):
             return "Audio chunker failed: \(reason)"
+        case .timeout(let seconds):
+            return "Daemon did not respond within \(seconds)s."
         }
     }
 }

@@ -1,19 +1,14 @@
 import SwiftUI
 import HarcModels
 
-/// Settings → Summarization tab. Auto-summarize + prompt-copy knobs, plus
-/// a mirrored tier picker bound to the same `activeSummarizerID` key used
-/// on the Models tab. `onOpenModels` is invoked by the "Open Models" link
-/// so users install or remove tiers in the canonical place.
+/// Settings → Summarization section. Auto-summarize + prompt-copy knobs,
+/// plus a mirrored tier picker bound to the same `activeSummarizerID` key
+/// used by the Models section below in the same Form.
 public struct SummarizationSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var models: ModelManagerStore
 
-    public let onOpenModels: () -> Void
-
-    public init(onOpenModels: @escaping () -> Void) {
-        self.onOpenModels = onOpenModels
-    }
+    public init() {}
 
     public var body: some View {
         Group {
@@ -31,13 +26,9 @@ public struct SummarizationSettingsView: View {
                 Text("Model")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("Install or remove tiers from the")
-                        Button("Models tab") { onOpenModels() }
-                            .buttonStyle(.link)
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
+                    Text("Install or remove tiers in the Models section below.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
 
                     if case .absent = models.state(of: prefs.activeSummarizerID) {
                         Text("The active summarizer is not installed. Auto-summarize and the Generate button will have no effect.")
