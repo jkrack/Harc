@@ -8,6 +8,10 @@ public struct PersonDetailView: View {
 
     @StateObject private var viewModel: PersonDetailViewModel
 
+    @State private var selectedSlots: Set<String> = []
+    @State private var showingMergeSheet = false
+    @State private var showingSplitSheet = false
+
     public init(
         personID: Int64,
         store: RecordingStore,
@@ -27,6 +31,7 @@ public struct PersonDetailView: View {
                 if let stats = viewModel.stats { statsLine(stats) }
                 suggestionsSection
                 utterancesSection
+                voicePrintsSection
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -140,6 +145,62 @@ public struct PersonDetailView: View {
         }
     }
 
+    // MARK: - Voice prints
+
+    @ViewBuilder
+    private var voicePrintsSection: some View {
+        if !viewModel.embeddings.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Voice prints (\(viewModel.embeddings.count))").font(.headline)
+                    Spacer()
+                    Button("Merge\u{2026}") { showingMergeSheet = true }
+                        .buttonStyle(.bordered).controlSize(.small)
+                    Button("Split\u{2026}") { showingSplitSheet = true }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(selectedSlots.isEmpty)
+                }
+                ForEach(viewModel.embeddings, id: \.slotKey) { e in
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: Binding(
+                            get: { selectedSlots.contains(e.slotKey) },
+                            set: { isOn in
+                                if isOn { selectedSlots.insert(e.slotKey) }
+                                else { selectedSlots.remove(e.slotKey) }
+                            }
+                        ))
+                        .labelsHidden()
+                        Text("Recording #\(e.recordingID) Speaker \(e.speakerIndex + 1)")
+                        Spacer()
+                        Text("\(e.segmentCount) segs \u{00B7} \(e.totalMs / 1000)s \u{00B7} \(e.embedderKind ?? "\u{2014}")")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                    Divider()
+                }
+            }
+            .sheet(isPresented: $showingMergeSheet) {
+                MergePersonPicker(allPeople: viewModel.allPeopleForMerge) { targetID in
+                    Task { await viewModel.merge(into: targetID) }
+                    showingMergeSheet = false
+                }
+            }
+            .sheet(isPresented: $showingSplitSheet) {
+                SplitNameSheet { newName in
+                    let slots = selectedSlots.compactMap { key -> (Int64, Int)? in
+                        let parts = key.split(separator: "-")
+                        guard parts.count == 2, let r = Int64(parts[0]), let s = Int(parts[1]) else { return nil }
+                        return (r, s)
+                    }
+                    Task { await viewModel.split(slots: slots, newName: newName) }
+                    selectedSlots.removeAll()
+                    showingSplitSheet = false
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func formatMs(_ ms: Int) -> String {
@@ -153,5 +214,73 @@ public struct PersonDetailView: View {
     private func formatTimestamp(_ ms: Int) -> String {
         let s = ms / 1000
         return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+// MARK: - SpeakerEmbeddingRow slot key
+
+private extension RecordingStore.SpeakerEmbeddingRow {
+    var slotKey: String { "\(recordingID)-\(speakerIndex)" }
+}
+
+// MARK: - MergePersonPicker
+
+struct MergePersonPicker: View {
+    let allPeople: [Person]
+    let onSelect: (Int64) -> Void
+    @State private var selected: Int64?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Merge into\u{2026}").font(.headline)
+            if allPeople.isEmpty {
+                Text("No other people exist yet.").foregroundStyle(.secondary)
+            } else {
+                Picker("", selection: $selected) {
+                    Text("Select\u{2026}").tag(Int64?.none)
+                    ForEach(allPeople) { p in
+                        Text(p.displayName).tag(Int64?.some(p.id))
+                    }
+                }
+                .labelsHidden()
+            }
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Merge") {
+                    if let id = selected { onSelect(id) }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(selected == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+}
+
+// MARK: - SplitNameSheet
+
+struct SplitNameSheet: View {
+    let onSubmit: (String) -> Void
+    @State private var name = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New person name").font(.headline)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Split") { onSubmit(name.trimmingCharacters(in: .whitespaces)) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
     }
 }
