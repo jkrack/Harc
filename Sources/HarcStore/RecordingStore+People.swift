@@ -58,4 +58,49 @@ public extension RecordingStore {
             try database.execute(sql: "DELETE FROM people WHERE id = ?", arguments: [id])
         }
     }
+
+    // MARK: - Group C: linkSpeaker + unlinkSpeaker + fetchPersonSpeakerLinks
+
+    func linkSpeaker(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws {
+        try await db.write { database in
+            try database.execute(
+                sql: """
+                    INSERT OR REPLACE INTO person_speakers
+                        (person_id, recording_id, speaker_index, confirmed_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                arguments: [personID, recordingID, speakerIndex, Date().timeIntervalSince1970]
+            )
+        }
+    }
+
+    func unlinkSpeaker(recordingID: Int64, speakerIndex: Int) async throws {
+        try await db.write { database in
+            try database.execute(
+                sql: """
+                    DELETE FROM person_speakers
+                    WHERE recording_id = ? AND speaker_index = ?
+                    """,
+                arguments: [recordingID, speakerIndex]
+            )
+        }
+    }
+
+    func fetchPersonSpeakerLinks(recordingID: Int64) async throws -> [PersonSpeakerLink] {
+        try await db.read { database in
+            let rows = try Row.fetchAll(database, sql: """
+                SELECT person_id, recording_id, speaker_index, confirmed_at
+                FROM person_speakers
+                WHERE recording_id = ?
+                """, arguments: [recordingID])
+            return rows.map { row in
+                PersonSpeakerLink(
+                    personID: row["person_id"],
+                    recordingID: row["recording_id"],
+                    speakerIndex: row["speaker_index"],
+                    confirmedAt: Date(timeIntervalSince1970: row["confirmed_at"])
+                )
+            }
+        }
+    }
 }
