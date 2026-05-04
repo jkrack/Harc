@@ -103,4 +103,39 @@ public extension RecordingStore {
             }
         }
     }
+
+    // MARK: - Group D: resolvedSpeakerName
+
+    /// Resolution order:
+    /// 1. Linked Person's display_name if a person_speakers row exists
+    /// 2. The recordings.speaker_names JSON entry, if present (string keys)
+    /// 3. "Speaker N+1" as the final fallback
+    func resolvedSpeakerName(recordingID: Int64, speakerIndex: Int) async throws -> String {
+        try await db.read { database in
+            // 1. Person link
+            if let row = try Row.fetchOne(database, sql: """
+                SELECT p.display_name
+                FROM person_speakers ps
+                JOIN people p ON p.id = ps.person_id
+                WHERE ps.recording_id = ? AND ps.speaker_index = ?
+                LIMIT 1
+                """, arguments: [recordingID, speakerIndex]) {
+                let name: String = row["display_name"]
+                return name
+            }
+            // 2. JSON fallback — stored as TEXT, string-keyed [String: String]
+            if let jsonText: String = try Row.fetchOne(
+                database,
+                sql: "SELECT speaker_names FROM recordings WHERE id = ?",
+                arguments: [recordingID]
+            )?["speaker_names"],
+               let data = jsonText.data(using: .utf8),
+               let dict = try? JSONDecoder().decode([String: String].self, from: data),
+               let name = dict[String(speakerIndex)] {
+                return name
+            }
+            // 3. Default
+            return "Speaker \(speakerIndex + 1)"
+        }
+    }
 }

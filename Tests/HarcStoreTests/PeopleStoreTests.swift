@@ -73,6 +73,33 @@ final class PeopleStoreTests: XCTestCase {
         XCTAssertEqual(links.count, 0)
     }
 
+    // MARK: - Group D: resolvedSpeakerName
+
+    func test_resolvedSpeakerName_personLinkWins() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recID = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        try await store.updateSpeakerNames(id: recID, names: [0: "Old fallback"])
+        let personID = try await store.createPerson(displayName: "Sarah")
+        try await store.linkSpeaker(personID: personID, recordingID: recID, speakerIndex: 0)
+        let name = try await store.resolvedSpeakerName(recordingID: recID, speakerIndex: 0)
+        XCTAssertEqual(name, "Sarah")
+    }
+
+    func test_resolvedSpeakerName_speakerNamesJSONFallback() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recID = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        try await store.updateSpeakerNames(id: recID, names: [0: "Free-text Bob"])
+        let name = try await store.resolvedSpeakerName(recordingID: recID, speakerIndex: 0)
+        XCTAssertEqual(name, "Free-text Bob")
+    }
+
+    func test_resolvedSpeakerName_defaultFallback() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recID = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let name = try await store.resolvedSpeakerName(recordingID: recID, speakerIndex: 2)
+        XCTAssertEqual(name, "Speaker 3")
+    }
+
     // MARK: - Helpers
 
     private func seedRecording(in store: RecordingStore, wav: String) async throws -> Int64 {
