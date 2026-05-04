@@ -54,6 +54,11 @@ public actor RecordingStore {
     /// Internal accessor for same-module extensions that live in separate files.
     var db: DatabaseQueue { dbQueue }
 
+    /// Public read-only handle for GRDB ValueObservation publishers.
+    /// Nonisolated so callers on other actors can set up observation publishers
+    /// without an actor hop. `DatabaseQueue` is inherently thread-safe.
+    public nonisolated var dbReader: any DatabaseReader { dbQueue }
+
     // MARK: - CRUD
 
     /// Insert or update a recording by `wavPath`. Returns the saved row (with id set).

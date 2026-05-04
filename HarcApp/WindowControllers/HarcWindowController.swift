@@ -21,10 +21,12 @@ final class HarcWindowController: NSWindowController {
         onExport: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void
     ) {
+        let peopleVM = PeopleViewModel(store: store)
         let root = HarcWindowRootView(
             libraryVM: libraryVM,
             recordingState: recordingState,
             bridge: bridge,
+            peopleVM: peopleVM,
             store: store,
             reIDService: reIDService,
             onEdit: onEdit,
