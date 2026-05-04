@@ -130,6 +130,52 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v10_people") { db in
+            try db.execute(sql: """
+                CREATE TABLE people (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    display_name TEXT NOT NULL,
+                    match_threshold REAL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX people_display_name_idx ON people(display_name COLLATE NOCASE)")
+
+            try db.execute(sql: """
+                CREATE TABLE person_speakers (
+                    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+                    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    speaker_index INTEGER NOT NULL,
+                    confirmed_at REAL NOT NULL,
+                    PRIMARY KEY (recording_id, speaker_index)
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX person_speakers_person_idx ON person_speakers(person_id)")
+
+            try db.execute(sql: """
+                CREATE TABLE pending_suggestions (
+                    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+                    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    speaker_index INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (person_id, recording_id, speaker_index)
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX pending_suggestions_recording_idx ON pending_suggestions(recording_id, speaker_index)")
+
+            try db.execute(sql: """
+                CREATE TABLE dismissed_suggestions (
+                    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+                    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    speaker_index INTEGER NOT NULL,
+                    dismissed_at REAL NOT NULL,
+                    PRIMARY KEY (person_id, recording_id, speaker_index)
+                )
+                """)
+        }
+
         return migrator
     }
 }
