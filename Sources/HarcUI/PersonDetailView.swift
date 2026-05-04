@@ -4,12 +4,19 @@ import HarcStore
 public struct PersonDetailView: View {
     let personID: Int64
     let onSelectRecording: (Int64, Int) -> Void
+    var onPersonDeleted: (() -> Void)?
 
     @StateObject private var viewModel: PersonDetailViewModel
 
-    public init(personID: Int64, store: RecordingStore, onSelectRecording: @escaping (Int64, Int) -> Void) {
+    public init(
+        personID: Int64,
+        store: RecordingStore,
+        onSelectRecording: @escaping (Int64, Int) -> Void,
+        onPersonDeleted: (() -> Void)? = nil
+    ) {
         self.personID = personID
         self.onSelectRecording = onSelectRecording
+        self.onPersonDeleted = onPersonDeleted
         _viewModel = StateObject(wrappedValue: PersonDetailViewModel(store: store))
     }
 
@@ -18,6 +25,7 @@ public struct PersonDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 if let stats = viewModel.stats { statsLine(stats) }
+                suggestionsSection
                 utterancesSection
             }
             .padding(20)
@@ -35,7 +43,6 @@ public struct PersonDetailView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
             Spacer()
-            // Rename / Delete land in Phase 7.
         }
     }
 
@@ -52,6 +59,49 @@ public struct PersonDetailView: View {
         }
         .font(.subheadline)
     }
+
+    // MARK: - Suggestions
+
+    @ViewBuilder
+    private var suggestionsSection: some View {
+        if !viewModel.pendingSuggestions.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Suggested matches (\(viewModel.pendingSuggestions.count))").font(.headline)
+                    Spacer()
+                    Button("Confirm all") {
+                        Task { await viewModel.confirmAll() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                ForEach(viewModel.pendingSuggestions) { s in
+                    HStack(spacing: 8) {
+                        Text("Recording #\(s.recordingID) Speaker \(s.speakerIndex + 1)")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(String(format: "%.2f", s.score))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Button("Confirm") {
+                            Task { await viewModel.confirm(s) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        Button("Skip") {
+                            Task { await viewModel.dismiss(s) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 2)
+                    Divider()
+                }
+            }
+        }
+    }
+
+    // MARK: - Utterances
 
     @ViewBuilder
     private var utterancesSection: some View {
@@ -89,6 +139,8 @@ public struct PersonDetailView: View {
                 .foregroundStyle(.secondary)
         }
     }
+
+    // MARK: - Helpers
 
     private func formatMs(_ ms: Int) -> String {
         let total = ms / 1000
