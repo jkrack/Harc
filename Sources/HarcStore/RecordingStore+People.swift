@@ -41,4 +41,21 @@ public extension RecordingStore {
             )
         }
     }
+
+    // MARK: - Group B: renamePerson + deletePerson
+
+    func renamePerson(id: Int64, to newName: String) async throws {
+        try await db.write { database in
+            try database.execute(
+                sql: "UPDATE people SET display_name = ?, updated_at = ? WHERE id = ?",
+                arguments: [newName, Date().timeIntervalSince1970, id]
+            )
+        }
+    }
+
+    func deletePerson(id: Int64) async throws {
+        try await db.write { database in
+            try database.execute(sql: "DELETE FROM people WHERE id = ?", arguments: [id])
+        }
+    }
 }
