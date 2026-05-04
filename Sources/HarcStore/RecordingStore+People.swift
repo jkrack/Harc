@@ -324,6 +324,74 @@ public extension RecordingStore {
         }
     }
 
+    // MARK: - Phase 4: embedding fetchers for SpeakerSuggestionEngine
+
+    /// All embeddings for a single recording filtered by embedder kind.
+    func fetchSpeakerEmbeddings(recordingID: Int64, embedderKind: String) async throws -> [SpeakerEmbeddingRow] {
+        try await db.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
+                FROM speaker_embeddings
+                WHERE recording_id = ? AND embedder_kind = ?
+                """, arguments: [recordingID, embedderKind])
+            return rows.map {
+                SpeakerEmbeddingRow(
+                    recordingID: $0["recording_id"],
+                    speakerIndex: $0["speaker_index"],
+                    embedding: $0["embedding"],
+                    segmentCount: $0["segment_count"],
+                    totalMs: $0["total_ms"],
+                    embedderKind: $0["embedder_kind"]
+                )
+            }
+        }
+    }
+
+    /// All embeddings linked to a Person via `person_speakers`, filtered by embedder kind.
+    func fetchEmbeddingsForPerson(_ personID: Int64, embedderKind: String) async throws -> [SpeakerEmbeddingRow] {
+        try await db.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT e.recording_id, e.speaker_index, e.embedding, e.segment_count, e.total_ms, e.embedder_kind
+                FROM speaker_embeddings e
+                JOIN person_speakers ps
+                  ON ps.recording_id = e.recording_id
+                 AND ps.speaker_index = e.speaker_index
+                WHERE ps.person_id = ? AND e.embedder_kind = ?
+                """, arguments: [personID, embedderKind])
+            return rows.map {
+                SpeakerEmbeddingRow(
+                    recordingID: $0["recording_id"],
+                    speakerIndex: $0["speaker_index"],
+                    embedding: $0["embedding"],
+                    segmentCount: $0["segment_count"],
+                    totalMs: $0["total_ms"],
+                    embedderKind: $0["embedder_kind"]
+                )
+            }
+        }
+    }
+
+    /// Every embedding in the library filtered by embedder kind (no recording exclusion).
+    func fetchAllSpeakerEmbeddings(embedderKind: String) async throws -> [SpeakerEmbeddingRow] {
+        try await db.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
+                FROM speaker_embeddings
+                WHERE embedder_kind = ?
+                """, arguments: [embedderKind])
+            return rows.map {
+                SpeakerEmbeddingRow(
+                    recordingID: $0["recording_id"],
+                    speakerIndex: $0["speaker_index"],
+                    embedding: $0["embedding"],
+                    segmentCount: $0["segment_count"],
+                    totalMs: $0["total_ms"],
+                    embedderKind: $0["embedder_kind"]
+                )
+            }
+        }
+    }
+
     // MARK: - Group D: resolvedSpeakerName
 
     /// Resolution order:
