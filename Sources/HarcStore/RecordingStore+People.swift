@@ -392,6 +392,111 @@ public extension RecordingStore {
         }
     }
 
+    // MARK: - Phase 6: person stats + utterance excerpts
+
+    func fetchPersonStats(personID: Int64) async throws -> PersonStats {
+        try await db.read { db in
+            let recCount = try Int.fetchOne(db,
+                sql: "SELECT COUNT(DISTINCT recording_id) FROM person_speakers WHERE person_id = ?",
+                arguments: [personID]) ?? 0
+            // Total speaking ms is approximated as the sum of total_ms across
+            // linked speaker_embeddings rows. SpeakerSegments live in the
+            // .json sidecar, not the DB — using embeddings' summed totalMs
+            // avoids a per-stats sidecar walk.
+            let totalMs = try Int.fetchOne(db, sql: """
+                SELECT COALESCE(SUM(e.total_ms), 0)
+                FROM person_speakers ps
+                JOIN speaker_embeddings e
+                  ON e.recording_id = ps.recording_id AND e.speaker_index = ps.speaker_index
+                WHERE ps.person_id = ?
+                """, arguments: [personID]) ?? 0
+            let bounds = try Row.fetchOne(db, sql: """
+                SELECT MIN(r.started_at) AS first_seen, MAX(r.started_at) AS last_seen
+                FROM person_speakers ps
+                JOIN recordings r ON r.id = ps.recording_id
+                WHERE ps.person_id = ?
+                """, arguments: [personID])
+            // recordings.started_at is stored as a unix timestamp (REAL).
+            // Extract via Double and construct Date to match the pattern used
+            // throughout RecordingStore (e.g. createdAt, updatedAt).
+            let firstSeen: Date?
+            let lastSeen: Date?
+            if let bounds {
+                firstSeen = (bounds["first_seen"] as Double?).map { Date(timeIntervalSince1970: $0) }
+                lastSeen  = (bounds["last_seen"]  as Double?).map { Date(timeIntervalSince1970: $0) }
+            } else {
+                firstSeen = nil
+                lastSeen  = nil
+            }
+            return PersonStats(
+                recordingCount: recCount,
+                totalSpeakingMs: totalMs,
+                firstSeen: firstSeen,
+                lastSeen: lastSeen
+            )
+        }
+    }
+
+    func fetchUtterancesForPerson(personID: Int64, limit: Int) async throws -> [UtteranceExcerpt] {
+        // Pull (recording_id, speaker_index, json_path, title, suggested_title) for
+        // each of the Person's linked slots (most-recent first), then walk each
+        // .json sidecar to harvest top-3 utterances per recording.
+        let links = try await db.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT ps.recording_id, ps.speaker_index, r.title, r.json_path, r.started_at, r.suggested_title
+                FROM person_speakers ps
+                JOIN recordings r ON r.id = ps.recording_id
+                WHERE ps.person_id = ?
+                ORDER BY r.started_at DESC
+                LIMIT ?
+                """, arguments: [personID, limit])
+        }
+        var out: [UtteranceExcerpt] = []
+        for row in links {
+            guard let jsonPath: String = row["json_path"] else { continue }
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else { continue }
+            // Local DTO so we don't need to import HarcClient here.
+            struct SessionPartial: Decodable {
+                struct Word: Decodable {
+                    let text: String
+                    let startMs: Int
+                    let endMs: Int
+                }
+                struct Speaker: Decodable {
+                    let speaker: Int
+                    let startMs: Int
+                    let endMs: Int
+                }
+                let words: [Word]
+                let speakers: [Speaker]
+            }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .secondsSince1970
+            guard let session = try? decoder.decode(SessionPartial.self, from: data) else { continue }
+            let speakerIndex: Int = row["speaker_index"]
+            let segments = session.speakers.filter { $0.speaker == speakerIndex }
+            for seg in segments.prefix(3) {
+                let words = session.words.filter {
+                    let mid = ($0.startMs + $0.endMs) / 2
+                    return mid >= seg.startMs && mid < seg.endMs
+                }
+                let snippet = String(words.map(\.text).joined(separator: " ").prefix(160))
+                guard !snippet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                let title: String = (row["title"] as String?)
+                    ?? (row["suggested_title"] as String?)
+                    ?? "Recording"
+                out.append(UtteranceExcerpt(
+                    recordingID: row["recording_id"],
+                    recordingTitle: title,
+                    speakerIndex: speakerIndex,
+                    startMs: seg.startMs,
+                    snippet: snippet
+                ))
+            }
+        }
+        return out
+    }
+
     // MARK: - Group D: resolvedSpeakerName
 
     /// Resolution order:

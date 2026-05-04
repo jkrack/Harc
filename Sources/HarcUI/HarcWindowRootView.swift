@@ -487,17 +487,27 @@ public struct HarcWindowRootView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let recording = selectedRecording {
-            detailContent(recording: recording)
-                .inspector(isPresented: $inspectorOpen) {
-                    inspectorContent(recording: recording)
+        switch selection {
+        case .person(let id):
+            PersonDetailView(personID: id, store: store) { recID, _ in
+                // Swap to the recording's detail pane when the user taps an utterance.
+                if let rec = libraryVM.recordings.first(where: { $0.id == recID }) {
+                    selection = .recording(wavPath: rec.wavPath)
                 }
-        } else {
-            ContentUnavailableView(
-                "No Recording Selected",
-                systemImage: "waveform",
-                description: Text("Pick a recording from the sidebar.")
-            )
+            }
+        case .recording, .none:
+            if let recording = selectedRecording {
+                detailContent(recording: recording)
+                    .inspector(isPresented: $inspectorOpen) {
+                        inspectorContent(recording: recording)
+                    }
+            } else {
+                ContentUnavailableView(
+                    "No Recording Selected",
+                    systemImage: "waveform",
+                    description: Text("Pick a recording from the sidebar.")
+                )
+            }
         }
     }
 
