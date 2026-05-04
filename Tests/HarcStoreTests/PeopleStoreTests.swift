@@ -100,6 +100,72 @@ final class PeopleStoreTests: XCTestCase {
         XCTAssertEqual(name, "Speaker 3")
     }
 
+    // MARK: - Phase 2.5: suggestion CRUD
+
+    func test_insertAndFetchPendingSuggestion() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recID = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let personID = try await store.createPerson(displayName: "Sarah")
+
+        try await store.insertPendingSuggestion(personID: personID, recordingID: recID, speakerIndex: 0, score: 0.82)
+        let perPerson = try await store.fetchPendingSuggestions(personID: personID)
+        XCTAssertEqual(perPerson.count, 1)
+        XCTAssertEqual(perPerson[0].score, 0.82, accuracy: 0.001)
+
+        let perRecording = try await store.fetchPendingSuggestionsForRecording(recID)
+        XCTAssertEqual(perRecording.count, 1)
+        XCTAssertEqual(perRecording[0].personID, personID)
+    }
+
+    func test_confirmSuggestion_writesLinkAndClearsAllSuggestionsForSlot() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recID = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let sarah = try await store.createPerson(displayName: "Sarah")
+        let david = try await store.createPerson(displayName: "David")
+
+        try await store.insertPendingSuggestion(personID: sarah, recordingID: recID, speakerIndex: 0, score: 0.82)
+        try await store.insertPendingSuggestion(personID: david, recordingID: recID, speakerIndex: 0, score: 0.71)
+
+        try await store.confirmSuggestion(personID: sarah, recordingID: recID, speakerIndex: 0)
+
+        let links = try await store.fetchPersonSpeakerLinks(recordingID: recID)
+        XCTAssertEqual(links.count, 1)
+        XCTAssertEqual(links[0].personID, sarah)
+        let remaining = try await store.fetchPendingSuggestionsForRecording(recID)
+        XCTAssertEqual(remaining.count, 0)
+    }
+
+    func test_dismissSuggestion_writesDismissalAndClearsSpecificSuggestion() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recID = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let sarah = try await store.createPerson(displayName: "Sarah")
+        let david = try await store.createPerson(displayName: "David")
+
+        try await store.insertPendingSuggestion(personID: sarah, recordingID: recID, speakerIndex: 0, score: 0.82)
+        try await store.insertPendingSuggestion(personID: david, recordingID: recID, speakerIndex: 0, score: 0.71)
+
+        try await store.dismissSuggestion(personID: sarah, recordingID: recID, speakerIndex: 0)
+
+        let remaining = try await store.fetchPendingSuggestionsForRecording(recID)
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertEqual(remaining[0].personID, david)
+        let isDismissed = try await store.isDismissed(personID: sarah, recordingID: recID, speakerIndex: 0)
+        XCTAssertTrue(isDismissed)
+    }
+
+    func test_pendingSuggestionCount() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recA = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let recB = try await seedRecording(in: store, wav: "/tmp/b.wav")
+        let personID = try await store.createPerson(displayName: "Sarah")
+
+        try await store.insertPendingSuggestion(personID: personID, recordingID: recA, speakerIndex: 0, score: 0.82)
+        try await store.insertPendingSuggestion(personID: personID, recordingID: recB, speakerIndex: 1, score: 0.79)
+
+        let count = try await store.pendingSuggestionCount(personID: personID)
+        XCTAssertEqual(count, 2)
+    }
+
     // MARK: - Helpers
 
     private func seedRecording(in store: RecordingStore, wav: String) async throws -> Int64 {

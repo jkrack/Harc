@@ -104,6 +104,111 @@ public extension RecordingStore {
         }
     }
 
+    // MARK: - Phase 2.5: suggestion CRUD
+
+    func insertPendingSuggestion(personID: Int64, recordingID: Int64, speakerIndex: Int, score: Double) async throws {
+        try await db.write { db in
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO pending_suggestions
+                        (person_id, recording_id, speaker_index, score, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                arguments: [personID, recordingID, speakerIndex, score, Date().timeIntervalSince1970]
+            )
+        }
+    }
+
+    func fetchPendingSuggestions(personID: Int64) async throws -> [PendingSuggestion] {
+        try await db.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT person_id, recording_id, speaker_index, score, created_at
+                FROM pending_suggestions
+                WHERE person_id = ?
+                ORDER BY score DESC
+                """, arguments: [personID])
+            return rows.map(Self.suggestion(from:))
+        }
+    }
+
+    func fetchPendingSuggestionsForRecording(_ recordingID: Int64) async throws -> [PendingSuggestion] {
+        try await db.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT person_id, recording_id, speaker_index, score, created_at
+                FROM pending_suggestions
+                WHERE recording_id = ?
+                ORDER BY score DESC
+                """, arguments: [recordingID])
+            return rows.map(Self.suggestion(from:))
+        }
+    }
+
+    func confirmSuggestion(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws {
+        try await db.write { db in
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO person_speakers
+                        (person_id, recording_id, speaker_index, confirmed_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                arguments: [personID, recordingID, speakerIndex, Date().timeIntervalSince1970]
+            )
+            try db.execute(
+                sql: """
+                    DELETE FROM pending_suggestions
+                    WHERE recording_id = ? AND speaker_index = ?
+                    """,
+                arguments: [recordingID, speakerIndex]
+            )
+        }
+    }
+
+    func dismissSuggestion(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws {
+        try await db.write { db in
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO dismissed_suggestions
+                        (person_id, recording_id, speaker_index, dismissed_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                arguments: [personID, recordingID, speakerIndex, Date().timeIntervalSince1970]
+            )
+            try db.execute(
+                sql: """
+                    DELETE FROM pending_suggestions
+                    WHERE person_id = ? AND recording_id = ? AND speaker_index = ?
+                    """,
+                arguments: [personID, recordingID, speakerIndex]
+            )
+        }
+    }
+
+    func isDismissed(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws -> Bool {
+        try await db.read { db in
+            let n = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM dismissed_suggestions
+                WHERE person_id = ? AND recording_id = ? AND speaker_index = ?
+                """, arguments: [personID, recordingID, speakerIndex]) ?? 0
+            return n > 0
+        }
+    }
+
+    func pendingSuggestionCount(personID: Int64) async throws -> Int {
+        try await db.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM pending_suggestions WHERE person_id = ?", arguments: [personID]) ?? 0
+        }
+    }
+
+    fileprivate static func suggestion(from row: Row) -> PendingSuggestion {
+        PendingSuggestion(
+            personID: row["person_id"],
+            recordingID: row["recording_id"],
+            speakerIndex: row["speaker_index"],
+            score: row["score"],
+            createdAt: Date(timeIntervalSince1970: row["created_at"])
+        )
+    }
+
     // MARK: - Group D: resolvedSpeakerName
 
     /// Resolution order:
