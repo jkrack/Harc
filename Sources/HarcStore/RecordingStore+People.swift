@@ -497,6 +497,17 @@ public extension RecordingStore {
         return out
     }
 
+    // MARK: - Phase 7.3: per-Person threshold override
+
+    func updatePersonThreshold(personID: Int64, threshold: Double?) async throws {
+        try await db.write { db in
+            try db.execute(
+                sql: "UPDATE people SET match_threshold = ?, updated_at = ? WHERE id = ?",
+                arguments: [threshold, Date().timeIntervalSince1970, personID]
+            )
+        }
+    }
+
     // MARK: - Group D: resolvedSpeakerName
 
     /// Resolution order:
