@@ -209,6 +209,101 @@ public extension RecordingStore {
         )
     }
 
+    // MARK: - Phase 2.6: mergePeople + splitEmbeddings
+
+    /// Move all linkages, suggestions, and dismissals from `sourceIDs` to
+    /// `targetID`, then delete the source People rows.
+    func mergePeople(sourceIDs: [Int64], into targetID: Int64) async throws {
+        guard !sourceIDs.isEmpty else { return }
+        try await db.write { db in
+            for sourceID in sourceIDs where sourceID != targetID {
+                // Re-attribute confirmed linkages.
+                try db.execute(
+                    sql: "UPDATE person_speakers SET person_id = ? WHERE person_id = ?",
+                    arguments: [targetID, sourceID]
+                )
+                // Re-attribute pending suggestions: collapse + take MAX(score)
+                // when both source and target had a row for the same slot.
+                try db.execute(
+                    sql: """
+                        INSERT OR REPLACE INTO pending_suggestions
+                            (person_id, recording_id, speaker_index, score, created_at)
+                        SELECT ?, recording_id, speaker_index,
+                               MAX(score),
+                               MIN(created_at)
+                        FROM (
+                            SELECT recording_id, speaker_index, score, created_at
+                            FROM pending_suggestions WHERE person_id = ?
+                            UNION ALL
+                            SELECT recording_id, speaker_index, score, created_at
+                            FROM pending_suggestions WHERE person_id = ?
+                        )
+                        GROUP BY recording_id, speaker_index
+                        """,
+                    arguments: [targetID, sourceID, targetID]
+                )
+                try db.execute(
+                    sql: "DELETE FROM pending_suggestions WHERE person_id = ?",
+                    arguments: [sourceID]
+                )
+                // Re-attribute dismissals (any dismissal sticks).
+                try db.execute(
+                    sql: """
+                        INSERT OR REPLACE INTO dismissed_suggestions
+                            (person_id, recording_id, speaker_index, dismissed_at)
+                        SELECT ?, recording_id, speaker_index, MIN(dismissed_at)
+                        FROM (
+                            SELECT recording_id, speaker_index, dismissed_at
+                            FROM dismissed_suggestions WHERE person_id = ?
+                            UNION ALL
+                            SELECT recording_id, speaker_index, dismissed_at
+                            FROM dismissed_suggestions WHERE person_id = ?
+                        )
+                        GROUP BY recording_id, speaker_index
+                        """,
+                    arguments: [targetID, sourceID, targetID]
+                )
+                try db.execute(
+                    sql: "DELETE FROM dismissed_suggestions WHERE person_id = ?",
+                    arguments: [sourceID]
+                )
+                // Finally drop the source person row.
+                try db.execute(
+                    sql: "DELETE FROM people WHERE id = ?",
+                    arguments: [sourceID]
+                )
+            }
+        }
+    }
+
+    /// Move the selected (recording, speaker) linkages off their current
+    /// Persons and onto a brand-new Person with the given name. Returns
+    /// the new Person ID.
+    func splitEmbeddings(slots: [(recordingID: Int64, speakerIndex: Int)], intoNewPersonNamed name: String) async throws -> Int64 {
+        try await db.write { db in
+            let now = Date().timeIntervalSince1970
+            try db.execute(
+                sql: """
+                    INSERT INTO people (display_name, match_threshold, created_at, updated_at)
+                    VALUES (?, NULL, ?, ?)
+                    """,
+                arguments: [name, now, now]
+            )
+            let newID = db.lastInsertedRowID
+            for slot in slots {
+                try db.execute(
+                    sql: """
+                        UPDATE person_speakers
+                        SET person_id = ?, confirmed_at = ?
+                        WHERE recording_id = ? AND speaker_index = ?
+                        """,
+                    arguments: [newID, now, slot.recordingID, slot.speakerIndex]
+                )
+            }
+            return newID
+        }
+    }
+
     // MARK: - Group D: resolvedSpeakerName
 
     /// Resolution order:

@@ -166,6 +166,57 @@ final class PeopleStoreTests: XCTestCase {
         XCTAssertEqual(count, 2)
     }
 
+    // MARK: - Phase 2.6: mergePeople + splitEmbeddings
+
+    func test_mergePeople_movesLinksAndSuggestionsAndDeletesSource() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recA = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let recB = try await seedRecording(in: store, wav: "/tmp/b.wav")
+        let sarah = try await store.createPerson(displayName: "Sarah")
+        let sarahB = try await store.createPerson(displayName: "Sarah B")
+
+        try await store.linkSpeaker(personID: sarah, recordingID: recA, speakerIndex: 0)
+        try await store.linkSpeaker(personID: sarahB, recordingID: recB, speakerIndex: 1)
+        try await store.insertPendingSuggestion(personID: sarahB, recordingID: recA, speakerIndex: 1, score: 0.7)
+
+        try await store.mergePeople(sourceIDs: [sarahB], into: sarah)
+
+        let people = try await store.fetchPeople()
+        XCTAssertEqual(people.count, 1)
+        XCTAssertEqual(people[0].id, sarah)
+
+        let linksB = try await store.fetchPersonSpeakerLinks(recordingID: recB)
+        XCTAssertEqual(linksB.count, 1)
+        XCTAssertEqual(linksB[0].personID, sarah)
+
+        let suggestions = try await store.fetchPendingSuggestions(personID: sarah)
+        XCTAssertEqual(suggestions.count, 1)
+        XCTAssertEqual(suggestions[0].recordingID, recA)
+    }
+
+    func test_splitEmbeddings_movesSelectedSlotsToNewPerson() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recA = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let recB = try await seedRecording(in: store, wav: "/tmp/b.wav")
+        let sarah = try await store.createPerson(displayName: "Sarah")
+        try await store.linkSpeaker(personID: sarah, recordingID: recA, speakerIndex: 0)
+        try await store.linkSpeaker(personID: sarah, recordingID: recB, speakerIndex: 0)
+
+        let newID = try await store.splitEmbeddings(
+            slots: [(recordingID: recB, speakerIndex: 0)],
+            intoNewPersonNamed: "Sarah work"
+        )
+
+        let people = try await store.fetchPeople()
+        XCTAssertEqual(people.count, 2)
+        XCTAssertTrue(people.contains { $0.id == newID && $0.displayName == "Sarah work" })
+
+        let linksA = try await store.fetchPersonSpeakerLinks(recordingID: recA)
+        let linksB2 = try await store.fetchPersonSpeakerLinks(recordingID: recB)
+        XCTAssertEqual(linksA[0].personID, sarah)
+        XCTAssertEqual(linksB2[0].personID, newID)
+    }
+
     // MARK: - Helpers
 
     private func seedRecording(in store: RecordingStore, wav: String) async throws -> Int64 {
