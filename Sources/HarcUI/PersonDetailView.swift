@@ -32,6 +32,7 @@ public struct PersonDetailView: View {
                 suggestionsSection
                 utterancesSection
                 voicePrintsSection
+                thresholdSection
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -197,6 +198,35 @@ public struct PersonDetailView: View {
                     selectedSlots.removeAll()
                     showingSplitSheet = false
                 }
+            }
+        }
+    }
+
+    // MARK: - Threshold
+
+    @ViewBuilder
+    private var thresholdSection: some View {
+        if let person = viewModel.person {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Match threshold").font(.headline)
+                HStack {
+                    Slider(value: Binding(
+                        get: { person.matchThreshold ?? 0.65 },
+                        set: { v in Task { await viewModel.updateThreshold(v) } }
+                    ), in: 0.50...0.95)
+                    Text(String(format: "%.2f", person.matchThreshold ?? 0.65))
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minWidth: 40)
+                    if person.matchThreshold != nil {
+                        Button("Reset") {
+                            Task { await viewModel.updateThreshold(nil) }
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                    }
+                }
+                Text("Higher threshold = fewer false matches, more missed matches.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
