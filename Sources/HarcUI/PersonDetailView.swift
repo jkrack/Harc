@@ -11,6 +11,7 @@ public struct PersonDetailView: View {
     @State private var selectedSlots: Set<String> = []
     @State private var showingMergeSheet = false
     @State private var showingSplitSheet = false
+    @State private var showingDeleteConfirm = false
 
     public init(
         personID: Int64,
@@ -45,10 +46,28 @@ public struct PersonDetailView: View {
     private var header: some View {
         HStack(spacing: 12) {
             PersonAvatar(displayName: viewModel.person?.displayName ?? "?", size: 44)
-            Text(viewModel.person?.displayName ?? "Loading\u{2026}")
-                .font(.title2)
-                .fontWeight(.semibold)
+            TextField("Name", text: Binding(
+                get: { viewModel.person?.displayName ?? "" },
+                set: { newName in Task { await viewModel.rename(to: newName) } }
+            ))
+            .textFieldStyle(.plain)
+            .font(.title2)
+            .fontWeight(.semibold)
             Spacer()
+            Button(role: .destructive) { showingDeleteConfirm = true } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .alert("Delete \(viewModel.person?.displayName ?? "")?", isPresented: $showingDeleteConfirm) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    try? await viewModel.delete()
+                    onPersonDeleted?()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(viewModel.embeddings.count) voice prints unlink, \(viewModel.stats?.recordingCount ?? 0) recordings revert to \u{2018}Speaker N\u{2019} labels. Audio + embeddings are not deleted.")
         }
     }
 
