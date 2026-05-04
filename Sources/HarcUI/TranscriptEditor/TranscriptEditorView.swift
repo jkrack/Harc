@@ -12,6 +12,11 @@ public struct TranscriptEditorView: View {
     @State private var exportError: String?
     @State private var inspectorOpen: Bool = false
 
+    // People picker state for the inspector (Task 8.2)
+    @State private var allPeople: [Person] = []
+    @State private var allPeopleByID: [Int64: String] = [:]
+    @State private var inspectorPendingSuggestions: [PendingSuggestion] = []
+
     public init(vm: TranscriptEditorViewModel, store: RecordingStore) {
         self.vm = vm
         self.store = store
@@ -78,7 +83,54 @@ public struct TranscriptEditorView: View {
                     guard let id = vm.recording.id else { return }
                     Task { try? await store.updateSpeakerNames(id: id, names: newNames) }
                 },
-                suggestionsProvider: nil
+                suggestionsProvider: nil,
+                pendingSuggestions: inspectorPendingSuggestions,
+                personNamesByID: allPeopleByID,
+                onConfirmSuggestion: { s in
+                    Task {
+                        try? await store.confirmSuggestion(
+                            personID: s.personID,
+                            recordingID: s.recordingID,
+                            speakerIndex: s.speakerIndex
+                        )
+                        if let id = vm.recording.id {
+                            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+                        }
+                    }
+                },
+                onDismissSuggestion: { s in
+                    Task {
+                        try? await store.dismissSuggestion(
+                            personID: s.personID,
+                            recordingID: s.recordingID,
+                            speakerIndex: s.speakerIndex
+                        )
+                        if let id = vm.recording.id {
+                            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+                        }
+                    }
+                },
+                recordingID: vm.recording.id,
+                allPeople: allPeople,
+                onLinkPerson: { personID, speakerIndex in
+                    guard let rid = vm.recording.id else { return }
+                    Task { try? await store.linkSpeaker(personID: personID, recordingID: rid, speakerIndex: speakerIndex) }
+                },
+                onCreatePerson: { name, speakerIndex in
+                    guard let rid = vm.recording.id else { return }
+                    Task {
+                        if let pid = try? await store.createPerson(displayName: name, matchThreshold: nil) {
+                            try? await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
+                            let people = (try? await store.fetchPeople()) ?? []
+                            allPeople = people
+                            allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
+                        }
+                    }
+                },
+                onUnlinkPerson: { speakerIndex in
+                    guard let rid = vm.recording.id else { return }
+                    Task { try? await store.unlinkSpeaker(recordingID: rid, speakerIndex: speakerIndex) }
+                }
             )
 
             FileInspectorSection(recording: vm.recording)
@@ -86,6 +138,16 @@ public struct TranscriptEditorView: View {
         .formStyle(.grouped)
         .background(.thinMaterial)
         .navigationTitle("Inspector")
+        .task(id: vm.recording.id) {
+            let people = (try? await store.fetchPeople()) ?? []
+            allPeople = people
+            allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
+            if let id = vm.recording.id {
+                inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+            } else {
+                inspectorPendingSuggestions = []
+            }
+        }
     }
 
     // MARK: - Toolbar fields
