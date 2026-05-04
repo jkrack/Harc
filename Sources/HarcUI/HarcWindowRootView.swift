@@ -668,6 +668,11 @@ public struct HarcWindowRootView: View {
                     Task {
                         if let pid = try? await store.createPerson(displayName: name, matchThreshold: nil) {
                             try? await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
+                            // Best-effort, non-blocking: backfill suggestions for the new person.
+                            Task.detached { [store] in
+                                let engine = SpeakerSuggestionEngine(store: store, embedderKind: "wespeaker_v2")
+                                try? await engine.suggestForNewPerson(personID: pid, fromRecording: rid, speakerIndex: speakerIndex)
+                            }
                             let people = (try? await store.fetchPeople()) ?? []
                             allPeople = people
                             allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })

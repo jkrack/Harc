@@ -454,6 +454,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                         do {
                             try await store.upsertSpeakerEmbeddings(recordingID: id, rows: dbRows)
                             await postProcessingState.succeed(recordingID: id, speakerCount: embeddings.count)
+                            // Best-effort, non-blocking: surface speaker match suggestions.
+                            Task.detached { [store] in
+                                let engine = SpeakerSuggestionEngine(store: store, embedderKind: EmbedderKind.wespeakerV2)
+                                try? await engine.suggestForRecording(recordingID: id)
+                            }
                         } catch {
                             await postProcessingState.fail(recordingID: id, message: error.localizedDescription)
                         }
@@ -659,6 +664,11 @@ private func openDetail(for recording: Recording) {
                 }
                 try await store.upsertSpeakerEmbeddings(recordingID: recordingID, rows: dbRows)
                 postProcessingState.succeed(recordingID: recordingID, speakerCount: result.speakers.count)
+                // Best-effort, non-blocking: surface speaker match suggestions.
+                Task.detached { [store] in
+                    let engine = SpeakerSuggestionEngine(store: store, embedderKind: EmbedderKind.wespeakerV2)
+                    try? await engine.suggestForRecording(recordingID: recordingID)
+                }
             } catch {
                 postProcessingState.fail(recordingID: recordingID, message: error.localizedDescription)
             }
