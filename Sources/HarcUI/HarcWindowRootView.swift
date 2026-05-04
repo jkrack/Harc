@@ -50,6 +50,13 @@ public struct HarcWindowRootView: View {
     @State private var transcriptSegments: [TranscriptDisplaySegment] = []
     @State private var transcriptLoadError: String? = nil
     @State private var detailEnvelope: [Float] = []
+    /// Resolved speaker labels for the current selection, keyed by speaker
+    /// index. Populated asynchronously on selection change via
+    /// `loadResolvedLabels()` so Person-linked names show up in transcript
+    /// turns. Falls back to the raw `recordings.speaker_names` JSON or
+    /// "Speaker N+1" when no Person link exists (same resolution order as
+    /// `RecordingStore.resolvedSpeakerName`).
+    @State private var resolvedSpeakerLabels: [Int: String] = [:]
 
     // MARK: Environment
 
@@ -92,6 +99,7 @@ public struct HarcWindowRootView: View {
         .onChange(of: selection) { _, _ in
             loadTranscript()
             Task { await loadEnvelope() }
+            Task { await loadResolvedLabels() }
         }
         .alert(
             "Delete recording?",
@@ -532,7 +540,11 @@ public struct HarcWindowRootView: View {
                 // Derive speaker indices from the JSON sidecar via ExportInputBuilder.
                 // TODO(Task 3.3/3.4): wire suggestions via reIDService.
                 speakerIndices: speakerIndices(for: recording),
-                initialNames: recording.speakerNames,
+                // Use resolvedSpeakerLabels so Person-linked display names
+                // appear in the inspector TextFields. Falls back to
+                // recording.speakerNames (via the resolver) for recordings
+                // without People links.
+                initialNames: resolvedSpeakerLabels.isEmpty ? recording.speakerNames : resolvedSpeakerLabels,
                 onCommit: { newNames in
                     guard let id = recording.id else { return }
                     Task { try? await store.updateSpeakerNames(id: id, names: newNames) }
@@ -603,6 +615,33 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    /// Pre-resolves speaker labels for the current selection via
+    /// `RecordingStore.resolvedSpeakerName`. Covers up to 12 speaker indices —
+    /// enough for any realistic meeting; the bound keeps store calls
+    /// predictable. Results are cached in `resolvedSpeakerLabels` and used by
+    /// `buildDisplaySegments` so Person-linked display names appear in the
+    /// transcript turns.
+    private func loadResolvedLabels() async {
+        guard let rec = currentRecording, let id = rec.id else {
+            await MainActor.run { resolvedSpeakerLabels = [:] }
+            return
+        }
+        var out: [Int: String] = [:]
+        for i in 0..<12 {
+            if let name = try? await store.resolvedSpeakerName(recordingID: id, speakerIndex: i) {
+                out[i] = name
+            }
+        }
+        await MainActor.run {
+            resolvedSpeakerLabels = out
+            // Rebuild transcript segments with the freshly-resolved labels so
+            // Person-linked names appear in the transcript turns. This handles
+            // the case where loadTranscript() ran before this async read
+            // completed and built segments with an empty dict.
+            rebuildTranscriptSegments()
+        }
+    }
+
     /// Loads `transcriptText` from cache or disk. Called on selection change.
     /// Also loads the structured .json sidecar when available so the detail
     /// pane can render per-turn timestamps instead of the flat .txt blob.
@@ -626,6 +665,10 @@ public struct HarcWindowRootView: View {
         }
 
         // Structured turns (preferred render path).
+        // Note: resolvedSpeakerLabels may still be loading at this point
+        // (loadResolvedLabels runs concurrently); if so, segments are built
+        // with an empty dict — falling back to "Speaker N+1" — and rebuilt
+        // once loadResolvedLabels completes and calls rebuildTranscriptSegments.
         if let jsonPath = recording.jsonPath,
            let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) {
             let decoder = JSONDecoder()
@@ -633,9 +676,28 @@ public struct HarcWindowRootView: View {
             if let session = try? decoder.decode(SessionTranscript.self, from: data) {
                 transcriptSegments = Self.buildDisplaySegments(
                     session: session,
-                    speakerNames: recording.speakerNames
+                    speakerNames: resolvedSpeakerLabels
                 )
             }
+        }
+    }
+
+    /// Rebuilds `transcriptSegments` for the current selection using the
+    /// already-resolved `resolvedSpeakerLabels`. Called from
+    /// `loadResolvedLabels()` after labels are populated so Person-linked names
+    /// appear in the transcript once the async store read completes.
+    @MainActor
+    private func rebuildTranscriptSegments() {
+        guard let recording = selectedRecording,
+              let jsonPath = recording.jsonPath,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        if let session = try? decoder.decode(SessionTranscript.self, from: data) {
+            transcriptSegments = Self.buildDisplaySegments(
+                session: session,
+                speakerNames: resolvedSpeakerLabels
+            )
         }
     }
 

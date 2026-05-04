@@ -23,7 +23,20 @@ import HarcCore
 /// in `HarcSummarize.PromptTranscriptAdapter`; if you fix a bug in one,
 /// fix the same bug in the other.
 public enum TranscriptPlainTextRenderer {
-    public static func render(_ transcript: SessionTranscript) -> String {
+    /// Renders a `SessionTranscript` to plain text.
+    ///
+    /// - Parameters:
+    ///   - transcript: The session transcript to render.
+    ///   - nameForSpeaker: Optional override closure. When provided, called for
+    ///     every speaker index and its return value is used as the label prefix.
+    ///     When `nil`, labels fall back to `"Speaker N+1"`. Keeping this as an
+    ///     optional closure (rather than a HarcStore dependency) keeps HarcClient
+    ///     pure: callers that have a resolved `[Int: String]` dictionary can pass
+    ///     `{ dict[$0] ?? "Speaker \($0 + 1)" }` at the call site.
+    public static func render(
+        _ transcript: SessionTranscript,
+        nameForSpeaker: ((Int) -> String)? = nil
+    ) -> String {
         let joinedFallback = transcript.joinedText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !transcript.speakers.isEmpty, !transcript.words.isEmpty else {
@@ -40,7 +53,8 @@ public enum TranscriptPlainTextRenderer {
             let trimmed = bucket.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 if let s = currentSpeaker {
-                    paragraphs.append("Speaker \(s + 1): \(trimmed)")
+                    let label = nameForSpeaker?(s) ?? "Speaker \(s + 1)"
+                    paragraphs.append("\(label): \(trimmed)")
                 } else {
                     paragraphs.append(trimmed)
                 }
