@@ -70,6 +70,12 @@ public struct HarcWindowRootView: View {
     /// `RecordingStore.resolvedSpeakerName`).
     @State private var resolvedSpeakerLabels: [Int: String] = [:]
 
+    // Task 8.1: pending suggestions for the inspector chip system
+    @State private var inspectorPendingSuggestions: [PendingSuggestion] = []
+    // Task 8.1/8.2: Person name lookup and full list for the picker
+    @State private var allPeopleByID: [Int64: String] = [:]
+    @State private var allPeople: [Person] = []
+
     // MARK: Environment
 
     @EnvironmentObject private var prefs: HarcPreferences
@@ -610,11 +616,9 @@ public struct HarcWindowRootView: View {
     private func inspectorContent(recording: Recording) -> some View {
         Form {
             SpeakerInspectorSection(
-                // Derive speaker indices from the JSON sidecar via ExportInputBuilder.
-                // TODO(Task 3.3/3.4): wire suggestions via reIDService.
                 speakerIndices: speakerIndices(for: recording),
                 // Use resolvedSpeakerLabels so Person-linked display names
-                // appear in the inspector TextFields. Falls back to
+                // appear in the inspector menu labels. Falls back to
                 // recording.speakerNames (via the resolver) for recordings
                 // without People links.
                 initialNames: resolvedSpeakerLabels.isEmpty ? recording.speakerNames : resolvedSpeakerLabels,
@@ -622,7 +626,62 @@ public struct HarcWindowRootView: View {
                     guard let id = recording.id else { return }
                     Task { try? await store.updateSpeakerNames(id: id, names: newNames) }
                 },
-                suggestionsProvider: nil
+                suggestionsProvider: nil,
+                pendingSuggestions: inspectorPendingSuggestions,
+                personNamesByID: allPeopleByID,
+                onConfirmSuggestion: { s in
+                    Task {
+                        try? await store.confirmSuggestion(
+                            personID: s.personID,
+                            recordingID: s.recordingID,
+                            speakerIndex: s.speakerIndex
+                        )
+                        if let id = recording.id {
+                            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+                        }
+                        await loadResolvedLabels()
+                    }
+                },
+                onDismissSuggestion: { s in
+                    Task {
+                        try? await store.dismissSuggestion(
+                            personID: s.personID,
+                            recordingID: s.recordingID,
+                            speakerIndex: s.speakerIndex
+                        )
+                        if let id = recording.id {
+                            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+                        }
+                    }
+                },
+                recordingID: recording.id,
+                allPeople: allPeople,
+                onLinkPerson: { personID, speakerIndex in
+                    guard let rid = recording.id else { return }
+                    Task {
+                        try? await store.linkSpeaker(personID: personID, recordingID: rid, speakerIndex: speakerIndex)
+                        await loadResolvedLabels()
+                    }
+                },
+                onCreatePerson: { name, speakerIndex in
+                    guard let rid = recording.id else { return }
+                    Task {
+                        if let pid = try? await store.createPerson(displayName: name, matchThreshold: nil) {
+                            try? await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
+                            let people = (try? await store.fetchPeople()) ?? []
+                            allPeople = people
+                            allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
+                            await loadResolvedLabels()
+                        }
+                    }
+                },
+                onUnlinkPerson: { speakerIndex in
+                    guard let rid = recording.id else { return }
+                    Task {
+                        try? await store.unlinkSpeaker(recordingID: rid, speakerIndex: speakerIndex)
+                        await loadResolvedLabels()
+                    }
+                }
             )
 
             FileInspectorSection(recording: recording)
@@ -630,6 +689,16 @@ public struct HarcWindowRootView: View {
         .formStyle(.grouped)
         .background(.thinMaterial)
         .navigationTitle("Inspector")
+        .task(id: recording.id) {
+            let people = (try? await store.fetchPeople()) ?? []
+            allPeople = people
+            allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
+            if let id = recording.id {
+                inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+            } else {
+                inspectorPendingSuggestions = []
+            }
+        }
     }
 
     // MARK: - Helpers

@@ -23,23 +23,56 @@ public struct SpeakerNameEditor: View {
     private let suggestionsProvider: SuggestionsProvider?
     private let showsHeader: Bool
 
+    // Task 8.1: pending suggestions from the store-backed system
+    private let pendingSuggestions: [PendingSuggestion]
+    private let personNamesByID: [Int64: String]
+    private let onConfirmSuggestion: (PendingSuggestion) -> Void
+    private let onDismissSuggestion: (PendingSuggestion) -> Void
+
+    // Task 8.2: People picker
+    private let recordingID: Int64?
+    private let allPeople: [Person]
+    private let onLinkPerson: (_ personID: Int64, _ speakerIndex: Int) -> Void
+    private let onCreatePerson: (_ displayName: String, _ speakerIndex: Int) -> Void
+    private let onUnlinkPerson: (_ speakerIndex: Int) -> Void
+
     @State private var draftNames: [Int: String]
     @State private var suggestions: [Int: [SpeakerSuggestion]] = [:]
     /// Chips the user has ×-dismissed for this speaker in this session.
     @State private var dismissedSuggestionIDs: [Int: Set<String>] = [:]
+    /// Non-nil when the "Add new person…" menu item was tapped.
+    @State private var addingPersonForIndex: Int?
 
     public init(
         speakerIndices: [Int],
         initialNames: [Int: String],
         onCommit: @escaping ([Int: String]) -> Void,
         suggestionsProvider: SuggestionsProvider? = nil,
-        showsHeader: Bool = true
+        showsHeader: Bool = true,
+        pendingSuggestions: [PendingSuggestion] = [],
+        personNamesByID: [Int64: String] = [:],
+        onConfirmSuggestion: @escaping (PendingSuggestion) -> Void = { _ in },
+        onDismissSuggestion: @escaping (PendingSuggestion) -> Void = { _ in },
+        recordingID: Int64? = nil,
+        allPeople: [Person] = [],
+        onLinkPerson: @escaping (_ personID: Int64, _ speakerIndex: Int) -> Void = { _, _ in },
+        onCreatePerson: @escaping (_ displayName: String, _ speakerIndex: Int) -> Void = { _, _ in },
+        onUnlinkPerson: @escaping (_ speakerIndex: Int) -> Void = { _ in }
     ) {
         self.speakerIndices = speakerIndices.sorted()
         self.initialNames = initialNames
         self.onCommit = onCommit
         self.suggestionsProvider = suggestionsProvider
         self.showsHeader = showsHeader
+        self.pendingSuggestions = pendingSuggestions
+        self.personNamesByID = personNamesByID
+        self.onConfirmSuggestion = onConfirmSuggestion
+        self.onDismissSuggestion = onDismissSuggestion
+        self.recordingID = recordingID
+        self.allPeople = allPeople
+        self.onLinkPerson = onLinkPerson
+        self.onCreatePerson = onCreatePerson
+        self.onUnlinkPerson = onUnlinkPerson
         self._draftNames = State(initialValue: initialNames)
     }
 
@@ -57,26 +90,86 @@ public struct SpeakerNameEditor: View {
                 ForEach(speakerIndices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 4) {
                         row(for: index)
+                        pendingSuggestionChip(for: index)
                         if let provider = suggestionsProvider {
                             suggestionChips(for: index, provider: provider)
                         }
                     }
                 }
             }
+            .sheet(item: Binding(
+                get: { addingPersonForIndex.map { IdxBox(value: $0) } },
+                set: { addingPersonForIndex = $0?.value }
+            )) { box in
+                AddPersonNameSheet { name in
+                    onCreatePerson(name, box.value)
+                    addingPersonForIndex = nil
+                } onCancel: {
+                    addingPersonForIndex = nil
+                }
+            }
         }
     }
 
     private func row(for index: Int) -> some View {
-        HStack(spacing: 12) {
+        let currentLabel = draftNames[index] ?? "Speaker \(index + 1)"
+        return HStack(spacing: 12) {
             Text("Speaker \(index + 1)")
                 .font(.body)
                 .foregroundStyle(Color.primary)
                 .frame(width: 90, alignment: .leading)
-            TextField("Name (e.g. Jason)", text: binding(for: index))
-                .textFieldStyle(.roundedBorder)
-                .font(.body)
-                .focusable(false)
-                .onSubmit { commit() }
+            Menu {
+                ForEach(allPeople) { p in
+                    Button(p.displayName) {
+                        onLinkPerson(p.id, index)
+                    }
+                }
+                if !allPeople.isEmpty {
+                    Divider()
+                }
+                Button("Add new person…") {
+                    addingPersonForIndex = index
+                }
+                Divider()
+                Button("Unassign") {
+                    onUnlinkPerson(index)
+                }
+            } label: {
+                HStack {
+                    Text(currentLabel)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.1)))
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
+    @ViewBuilder
+    private func pendingSuggestionChip(for index: Int) -> some View {
+        if let suggestion = pendingSuggestions.first(where: { $0.speakerIndex == index }) {
+            let personName = personNamesByID[suggestion.personID] ?? "someone"
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.circle.fill").foregroundStyle(Color.yellow)
+                Text("May be \(personName) · \(String(format: "%.2f", suggestion.score))")
+                    .font(.caption)
+                Spacer()
+                Button("Confirm") { onConfirmSuggestion(suggestion) }
+                    .buttonStyle(.borderedProminent).controlSize(.mini)
+                Button("Dismiss") { onDismissSuggestion(suggestion) }
+                    .buttonStyle(.bordered).controlSize(.mini)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.yellow.opacity(0.12)))
+            .padding(.leading, 98) // align with Menu left edge
         }
     }
 
@@ -143,5 +236,35 @@ public struct SpeakerNameEditor: View {
         if normalised != initialNames {
             onCommit(normalised)
         }
+    }
+}
+
+// MARK: - Supporting types
+
+private struct IdxBox: Identifiable {
+    let value: Int
+    var id: Int { value }
+}
+
+private struct AddPersonNameSheet: View {
+    let onSubmit: (String) -> Void
+    let onCancel: () -> Void
+    @State private var name = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New person").font(.headline)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button("Add") { onSubmit(name.trimmingCharacters(in: .whitespaces)) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
     }
 }
