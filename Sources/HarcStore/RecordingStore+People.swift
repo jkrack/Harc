@@ -304,6 +304,26 @@ public extension RecordingStore {
         }
     }
 
+    // MARK: - Phase 2.7: personRowItems
+
+    func personRowItems() async throws -> [PersonRowItem] {
+        try await db.read { db in
+            let people = try Self.fetchPeople(db: db)
+            return try people.map { person in
+                let count = try Int.fetchOne(db,
+                    sql: "SELECT COUNT(*) FROM pending_suggestions WHERE person_id = ?",
+                    arguments: [person.id]) ?? 0
+                let lastSeen = try Date.fetchOne(db, sql: """
+                    SELECT MAX(r.started_at)
+                    FROM person_speakers ps
+                    JOIN recordings r ON r.id = ps.recording_id
+                    WHERE ps.person_id = ?
+                    """, arguments: [person.id])
+                return PersonRowItem(person: person, suggestionCount: count, lastSeen: lastSeen)
+            }
+        }
+    }
+
     // MARK: - Group D: resolvedSpeakerName
 
     /// Resolution order:

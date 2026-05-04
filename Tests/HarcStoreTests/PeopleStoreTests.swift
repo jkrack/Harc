@@ -217,6 +217,22 @@ final class PeopleStoreTests: XCTestCase {
         XCTAssertEqual(linksB2[0].personID, newID)
     }
 
+    // MARK: - Phase 2.7: personRowItems
+
+    func test_personRowItems_includesSuggestionCountAndLastSeen() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recA = try await seedRecording(in: store, wav: "/tmp/a.wav")
+        let personID = try await store.createPerson(displayName: "Sarah")
+        try await store.linkSpeaker(personID: personID, recordingID: recA, speakerIndex: 0)
+        try await store.insertPendingSuggestion(personID: personID, recordingID: recA, speakerIndex: 1, score: 0.8)
+
+        let items = try await store.personRowItems()
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].person.displayName, "Sarah")
+        XCTAssertEqual(items[0].suggestionCount, 1)
+        XCTAssertNotNil(items[0].lastSeen)
+    }
+
     // MARK: - Helpers
 
     private func seedRecording(in store: RecordingStore, wav: String) async throws -> Int64 {
