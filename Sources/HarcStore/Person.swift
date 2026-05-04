@@ -81,3 +81,37 @@ public struct PersonRowItem: Sendable, Equatable, Identifiable {
         self.lastSeen = lastSeen
     }
 }
+
+/// Aggregate statistics for a Person's detail view.
+public struct PersonStats: Sendable, Equatable {
+    public var recordingCount: Int
+    public var totalSpeakingMs: Int
+    public var firstSeen: Date?
+    public var lastSeen: Date?
+
+    public init(recordingCount: Int, totalSpeakingMs: Int, firstSeen: Date?, lastSeen: Date?) {
+        self.recordingCount = recordingCount
+        self.totalSpeakingMs = totalSpeakingMs
+        self.firstSeen = firstSeen
+        self.lastSeen = lastSeen
+    }
+}
+
+/// A single spoken utterance excerpt, harvested from a recording's .json sidecar.
+/// Used in `PersonDetailView` to show recent speech samples.
+public struct UtteranceExcerpt: Sendable, Equatable, Identifiable {
+    public var id: String { "\(recordingID)-\(speakerIndex)-\(startMs)" }
+    public let recordingID: Int64
+    public let recordingTitle: String
+    public let speakerIndex: Int
+    public let startMs: Int
+    public let snippet: String
+
+    public init(recordingID: Int64, recordingTitle: String, speakerIndex: Int, startMs: Int, snippet: String) {
+        self.recordingID = recordingID
+        self.recordingTitle = recordingTitle
+        self.speakerIndex = speakerIndex
+        self.startMs = startMs
+        self.snippet = snippet
+    }
+}
