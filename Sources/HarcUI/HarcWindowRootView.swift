@@ -489,12 +489,17 @@ public struct HarcWindowRootView: View {
     private var detail: some View {
         switch selection {
         case .person(let id):
-            PersonDetailView(personID: id, store: store) { recID, _ in
-                // Swap to the recording's detail pane when the user taps an utterance.
-                if let rec = libraryVM.recordings.first(where: { $0.id == recID }) {
-                    selection = .recording(wavPath: rec.wavPath)
-                }
-            }
+            PersonDetailView(
+                personID: id,
+                store: store,
+                onSelectRecording: { recID, _ in
+                    // Swap to the recording's detail pane when the user taps an utterance.
+                    if let rec = libraryVM.recordings.first(where: { $0.id == recID }) {
+                        selection = .recording(wavPath: rec.wavPath)
+                    }
+                },
+                onPersonDeleted: { selection = nil }
+            )
         case .recording, .none:
             if let recording = selectedRecording {
                 detailContent(recording: recording)
