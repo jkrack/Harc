@@ -13,6 +13,17 @@ public extension NSNotification.Name {
     static let harcLibraryFocusSearch = NSNotification.Name("HarcLibraryFocusSearch")
 }
 
+// MARK: - LibrarySelection
+
+/// Discriminated union for the sidebar selection. Either a recording (keyed
+/// by wav path) or a Person row (keyed by DB id). Phase 6 wires the
+/// person-detail pane; for now selecting a Person leaves the detail pane
+/// in its empty state.
+public enum LibrarySelection: Hashable {
+    case recording(wavPath: String)
+    case person(id: Int64)
+}
+
 // MARK: - HarcWindowRootView
 
 /// Main window root view. Hosts a `NavigationSplitView` with a recording-list
@@ -25,6 +36,7 @@ public struct HarcWindowRootView: View {
     @ObservedObject var libraryVM: LibraryViewModel
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var bridge: HarcAppBridge
+    @ObservedObject var peopleVM: PeopleViewModel
 
     let store: RecordingStore
     let reIDService: SpeakerReIDService
@@ -34,10 +46,10 @@ public struct HarcWindowRootView: View {
 
     // MARK: View state
 
-    /// Primary selection — keyed on `wavPath` (String), matching how the
-    /// existing VMs index recordings.
-    @State private var selection: String?
+    /// Primary selection — `.recording(wavPath:)` for recordings, `.person(id:)` for People.
+    @State private var selection: LibrarySelection?
     @State private var inspectorOpen: Bool = false
+    @State private var showingAddPerson = false
 
     // Transcript text is loaded lazily on selection change to avoid
     // synchronous disk I/O in the view body.
@@ -69,6 +81,7 @@ public struct HarcWindowRootView: View {
         libraryVM: LibraryViewModel,
         recordingState: RecordingState,
         bridge: HarcAppBridge,
+        peopleVM: PeopleViewModel,
         store: RecordingStore,
         reIDService: SpeakerReIDService,
         onEdit: @escaping (Recording) -> Void,
@@ -78,6 +91,7 @@ public struct HarcWindowRootView: View {
         self.libraryVM = libraryVM
         self.recordingState = recordingState
         self.bridge = bridge
+        self.peopleVM = peopleVM
         self.store = store
         self.reIDService = reIDService
         self.onEdit = onEdit
@@ -94,8 +108,8 @@ public struct HarcWindowRootView: View {
             libraryFooter
         }
         .frame(minWidth: 900, minHeight: 600)
-        .onAppear { libraryVM.start() }
-        .onDisappear { libraryVM.stop() }
+        .onAppear { libraryVM.start(); peopleVM.start() }
+        .onDisappear { libraryVM.stop(); peopleVM.stop() }
         .onChange(of: selection) { _, _ in
             loadTranscript()
             Task { await loadEnvelope() }
@@ -115,7 +129,7 @@ public struct HarcWindowRootView: View {
                 Task {
                     do {
                         try await libraryVM.delete(recording: target)
-                        if selection == target.wavPath { selection = nil }
+                        if selection == .recording(wavPath: target.wavPath) { selection = nil }
                     } catch {
                         // Surface in console; LibraryViewModel logs to its own channel.
                     }
@@ -124,6 +138,14 @@ public struct HarcWindowRootView: View {
             Button("Cancel", role: .cancel) { pendingDeleteRecording = nil }
         } message: { rec in
             Text("\u{201C}\(rec.displayTitle)\u{201D} will be removed from the library and the audio + transcript files will be deleted from disk.")
+        }
+        .sheet(isPresented: $showingAddPerson) {
+            AddPersonSheet { name in
+                Task {
+                    _ = try? await store.createPerson(displayName: name)
+                    showingAddPerson = false
+                }
+            }
         }
     }
 
@@ -334,9 +356,45 @@ public struct HarcWindowRootView: View {
         return fmt.string(from: day)
     }
 
-    // Grouped recordings list: pinned first, then by date-bucket.
+    // Grouped recordings list: People first, then pinned, then by date-bucket.
     private var groupedList: some View {
         List(selection: $selection) {
+            // People section — always first
+            Section("People") {
+                ForEach(peopleVM.people) { item in
+                    HStack(spacing: 8) {
+                        PersonAvatar(displayName: item.person.displayName, size: 22)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.person.displayName)
+                                .font(.body)
+                                .lineLimit(1)
+                            if let lastSeen = item.lastSeen {
+                                Text(Self.relativeDate(lastSeen))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        if item.suggestionCount > 0 {
+                            Text("\(item.suggestionCount)")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.yellow.opacity(0.25)))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    .tag(LibrarySelection.person(id: item.person.id))
+                }
+                Button {
+                    showingAddPerson = true
+                } label: {
+                    Label("Add person\u{2026}", systemImage: "person.crop.circle.badge.plus")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.plain)
+            }
+
             // Pinned section
             let pinned = libraryVM.recordings.filter(\.pinned)
             if !pinned.isEmpty {
@@ -375,9 +433,9 @@ public struct HarcWindowRootView: View {
             List(selection: $selection) {
                 ForEach(libraryVM.hits) { hit in
                     TranscriptHitRow(hit: hit) {
-                        selection = hit.recording.wavPath
+                        selection = .recording(wavPath: hit.recording.wavPath)
                     }
-                    .tag(hit.recording.wavPath)
+                    .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
                     .contextMenu { contextMenu(for: hit.recording) }
                 }
             }
@@ -402,7 +460,7 @@ public struct HarcWindowRootView: View {
             Image(systemName: rec.pinned ? "pin.fill" : "waveform")
                 .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
         }
-        .tag(rec.wavPath)
+        .tag(LibrarySelection.recording(wavPath: rec.wavPath))
         .contextMenu { contextMenu(for: rec) }
     }
 
@@ -561,15 +619,15 @@ public struct HarcWindowRootView: View {
 
     // MARK: - Helpers
 
-    /// Resolved recording for the current selection path.
+    /// Resolved recording for the current selection, or nil when a Person is selected.
     private var selectedRecording: Recording? {
-        guard let path = selection else { return nil }
+        guard case .recording(let wavPath) = selection else { return nil }
         // Check search hits first (they carry the same Recording), then the
         // main recordings list.
-        if let hit = libraryVM.hits.first(where: { $0.recording.wavPath == path }) {
+        if let hit = libraryVM.hits.first(where: { $0.recording.wavPath == wavPath }) {
             return hit.recording
         }
-        return libraryVM.recordings.first { $0.wavPath == path }
+        return libraryVM.recordings.first { $0.wavPath == wavPath }
     }
 
     /// Alias used by the toolbar buttons; identical to `selectedRecording`.
@@ -824,6 +882,38 @@ public struct HarcWindowRootView: View {
     }
 }
 
+// MARK: - AddPersonSheet
+
+private struct AddPersonSheet: View {
+    let onAdd: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add person")
+                .font(.headline)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Add") {
+                    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    onAdd(trimmed)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+}
+
 // MARK: - Transcript display
 
 struct TranscriptDisplaySegment: Identifiable {
@@ -891,6 +981,16 @@ private extension HarcWindowRootView {
             }
         }
         return buckets
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+
+    static func relativeDate(_ date: Date) -> String {
+        relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     /// Format duration between two dates as h:mm:ss or m:ss.
