@@ -442,7 +442,7 @@ public struct HarcWindowRootView: View {
                 contextSearchHeader
                 ForEach(libraryVM.hits) { hit in
                     TranscriptHitRow(hit: hit) {
-                        selection = .recording(wavPath: hit.recording.wavPath)
+                        onEdit(hit.recording)
                     }
                     .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
                     .contextMenu { contextMenu(for: hit.recording) }
@@ -504,6 +504,7 @@ public struct HarcWindowRootView: View {
                 .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
         }
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
+        .onTapGesture(count: 2) { onEdit(rec) }
         .contextMenu { contextMenu(for: rec) }
     }
 
