@@ -16,6 +16,8 @@ struct MigrationTests {
             )
             #expect(tables.contains("recordings"))
             #expect(tables.contains("recordings_fts"))
+            #expect(tables.contains("people"))
+            #expect(tables.contains("transcript_chunks"))
         }
     }
 
@@ -224,6 +226,31 @@ struct MigrationTests {
             let cols = try Row.fetchAll(db, sql: "PRAGMA table_info(speaker_embeddings)")
             let names = cols.compactMap { $0["name"] as String? }
             #expect(names.contains("embedder_kind"))
+        }
+    }
+
+    @Test("v11 adds semantic chunk table and recording index timestamp")
+    func v11SemanticChunkSchema() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.read { db in
+            let recordingColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(recordings)")
+                .compactMap { $0["name"] as String? }
+            #expect(recordingColumns.contains("chunks_indexed_at"))
+
+            let chunkColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(transcript_chunks)")
+                .compactMap { $0["name"] as String? }
+            #expect(chunkColumns.contains("recording_id"))
+            #expect(chunkColumns.contains("ordinal"))
+            #expect(chunkColumns.contains("text"))
+            #expect(chunkColumns.contains("embedding"))
+            #expect(chunkColumns.contains("embedding_model_id"))
+
+            let indexes = try Row.fetchAll(db, sql: "PRAGMA index_list(transcript_chunks)")
+                .compactMap { $0["name"] as String? }
+            #expect(indexes.contains("idx_transcript_chunks_recording"))
+            #expect(indexes.contains("idx_transcript_chunks_model"))
         }
     }
 }

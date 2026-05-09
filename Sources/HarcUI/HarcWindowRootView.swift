@@ -75,6 +75,8 @@ public struct HarcWindowRootView: View {
     // Task 8.1/8.2: Person name lookup and full list for the picker
     @State private var allPeopleByID: [Int64: String] = [:]
     @State private var allPeople: [Person] = []
+    @State private var contextCopyStatus: String?
+    @State private var contextCopyInFlight = false
 
     // MARK: Environment
 
@@ -437,6 +439,7 @@ public struct HarcWindowRootView: View {
             }
         } else {
             List(selection: $selection) {
+                contextSearchHeader
                 ForEach(libraryVM.hits) { hit in
                     TranscriptHitRow(hit: hit) {
                         selection = .recording(wavPath: hit.recording.wavPath)
@@ -446,6 +449,40 @@ public struct HarcWindowRootView: View {
                 }
             }
         }
+    }
+
+    private var contextSearchHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .foregroundStyle(Color.accentColor)
+                    .font(.title3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Context Pack")
+                        .font(.headline)
+                    Text("Copy matching evidence, summaries, action items, and sources as Markdown.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    copySearchContext()
+                } label: {
+                    Label(
+                        contextCopyInFlight ? "Building" : "Copy Context",
+                        systemImage: contextCopyInFlight ? "hourglass" : "doc.on.clipboard"
+                    )
+                }
+                .disabled(contextCopyInFlight)
+            }
+            if let contextCopyStatus {
+                Text(contextCopyStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 8)
     }
 
     /// A `Label`-style row for use inside a `List(selection:)`. The tag is
@@ -727,6 +764,33 @@ public struct HarcWindowRootView: View {
         let text = transcriptText.isEmpty ? (recording.transcriptText ?? "") : transcriptText
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func copySearchContext() {
+        let query = libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            contextCopyStatus = "Enter a search query first."
+            return
+        }
+
+        contextCopyInFlight = true
+        contextCopyStatus = "Building local context..."
+        Task {
+            do {
+                let markdown = try await libraryVM.contextMarkdown(for: query)
+                await MainActor.run {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(markdown, forType: .string)
+                    contextCopyStatus = "Copied Markdown context."
+                    contextCopyInFlight = false
+                }
+            } catch {
+                await MainActor.run {
+                    contextCopyStatus = "Could not build context."
+                    contextCopyInFlight = false
+                }
+            }
+        }
     }
 
     /// True when there is any transcript source available for this recording.

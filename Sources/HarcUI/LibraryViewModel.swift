@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import HarcStore
+import HarcContext
 
 public enum LibraryFilter: Equatable, Sendable {
     case all
@@ -159,5 +160,15 @@ public final class LibraryViewModel: ObservableObject {
 
     public func delete(recording: Recording) async throws {
         try await RecordingDeletionService(store: store).delete(recording: recording)
+    }
+
+    public func contextPack(for query: String? = nil, limit: Int = 8) async throws -> ContextPack {
+        let raw = query ?? searchText
+        return try await ContextPackBuilder(store: store).build(query: raw, limit: limit)
+    }
+
+    public func contextMarkdown(for query: String? = nil, limit: Int = 8) async throws -> String {
+        let pack = try await contextPack(for: query, limit: limit)
+        return ContextPackMarkdownRenderer.render(pack)
     }
 }
