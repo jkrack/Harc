@@ -14,6 +14,8 @@ public struct LibraryWindowRootView: View {
     @State private var showStackedRail: Bool = true
     @State private var exportErrorMessage: String?
     @State private var deleteErrorMessage: String?
+    @State private var contextCopyStatus: String?
+    @State private var contextCopyInFlight: Bool = false
 
     private var selectedRecording: Recording? {
         guard let path = selectedWavPath else { return nil }
@@ -277,6 +279,7 @@ public struct LibraryWindowRootView: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    contextSearchHeader
                     ForEach(vm.hits) { hit in
                         TranscriptHitRow(hit: hit) { onOpen(hit.recording) }
                             .padding(.horizontal, 16)
@@ -299,6 +302,67 @@ public struct LibraryWindowRootView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var contextSearchHeader: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Context Pack")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.harcInkPrimary)
+                Text("Assemble the best matching evidence, summaries, action items, and sources.")
+                    .font(HarcDesign.Font.label)
+                    .foregroundStyle(Color.harcInkTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if let status = contextCopyStatus {
+                Text(status)
+                    .font(HarcDesign.Font.label)
+                    .foregroundStyle(status == "Copied" ? Color.harcAccent : Color.harcError)
+                    .lineLimit(1)
+            }
+
+            Button {
+                copySearchContext()
+            } label: {
+                HStack(spacing: 5) {
+                    if contextCopyInFlight {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    Text("Copy Context")
+                        .font(HarcDesign.Font.meta)
+                }
+                .foregroundStyle(Color.harcInkPrimary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                        .fill(Color.harcSurface3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: HarcDesign.Radius.md, style: .continuous)
+                                .stroke(Color.harcBorderStrong, lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(contextCopyInFlight)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.harcSurface1)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.harcBorderSubtle)
+                .frame(height: 1)
         }
     }
 
@@ -854,6 +918,30 @@ public struct LibraryWindowRootView: View {
         pb.clearContents()
         pb.setString(s, forType: .string)
         exportErrorMessage = nil
+    }
+
+    private func copySearchContext() {
+        let query = vm.searchText
+        contextCopyInFlight = true
+        contextCopyStatus = nil
+
+        Task {
+            do {
+                let markdown = try await vm.contextMarkdown(for: query)
+                await MainActor.run {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(markdown, forType: .string)
+                    contextCopyInFlight = false
+                    contextCopyStatus = "Copied"
+                }
+            } catch {
+                await MainActor.run {
+                    contextCopyInFlight = false
+                    contextCopyStatus = "Could not build context"
+                }
+            }
+        }
     }
 
     private func hasTranscript(_ rec: Recording) -> Bool {
