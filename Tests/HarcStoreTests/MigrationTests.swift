@@ -253,4 +253,89 @@ struct MigrationTests {
             #expect(indexes.contains("idx_transcript_chunks_model"))
         }
     }
+
+    @Test("v11 tolerates databases that already ran the old v10 semantic migration")
+    func v11ToleratesLegacySemanticSchema() throws {
+        let dbq = try DatabaseQueue()
+
+        var legacy = DatabaseMigrator()
+        legacy.registerMigration("v1_recordings_and_fts") { db in
+            try db.create(table: "recordings") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("wav_path", .text).notNull().unique()
+                t.column("txt_path", .text)
+                t.column("json_path", .text)
+                t.column("started_at", .datetime).notNull()
+                t.column("ended_at", .datetime)
+                t.column("title", .text)
+                t.column("transcript_text", .text)
+                t.column("pinned", .boolean).notNull().defaults(to: false)
+                t.column("deleted_at", .datetime)
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+            try db.create(virtualTable: "recordings_fts", using: FTS5()) { t in
+                t.synchronize(withTable: "recordings")
+                t.column("title")
+                t.column("transcript_text")
+                t.tokenizer = .porter(wrapping: .unicode61())
+            }
+        }
+        legacy.registerMigration("v6_speaker_embeddings") { db in
+            try db.create(table: "speaker_embeddings") { t in
+                t.column("recording_id", .integer).notNull()
+                    .references("recordings", onDelete: .cascade)
+                t.column("speaker_index", .integer).notNull()
+                t.column("embedding", .blob).notNull()
+                t.column("segment_count", .integer).notNull()
+                t.column("total_ms", .integer).notNull()
+                t.primaryKey(["recording_id", "speaker_index"])
+            }
+        }
+        legacy.registerMigration("v10_semantic_transcript_chunks") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "chunks_indexed_at", .integer)
+            }
+            try db.create(table: "transcript_chunks") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("recording_id", .integer)
+                    .notNull()
+                    .references("recordings", onDelete: .cascade)
+                t.column("ordinal", .integer).notNull()
+                t.column("start_ms", .integer).notNull()
+                t.column("end_ms", .integer).notNull()
+                t.column("text", .text).notNull()
+                t.column("embedding", .blob).notNull()
+                t.column("embedding_model_id", .text).notNull()
+                t.column("created_at", .integer).notNull()
+                t.uniqueKey(["recording_id", "ordinal"])
+            }
+            try db.execute(sql: """
+                CREATE INDEX idx_transcript_chunks_recording
+                ON transcript_chunks(recording_id)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX idx_transcript_chunks_model
+                ON transcript_chunks(embedding_model_id)
+                """)
+        }
+        try legacy.migrate(dbq)
+
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.read { db in
+            let tables = try String.fetchAll(db, sql:
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            )
+            #expect(tables.contains("people"))
+            #expect(tables.contains("transcript_chunks"))
+
+            let applied = try String.fetchAll(db, sql:
+                "SELECT identifier FROM grdb_migrations ORDER BY identifier"
+            )
+            #expect(applied.contains("v10_semantic_transcript_chunks"))
+            #expect(applied.contains("v10_people"))
+            #expect(applied.contains("v11_semantic_transcript_chunks"))
+        }
+    }
 }
