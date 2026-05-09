@@ -17,20 +17,12 @@ public final class PeopleViewModel: ObservableObject {
 
     public func start() {
         guard cancellable == nil else { return }
-        // Fire whenever any of the four People-related tables change.
-        let observation = ValueObservation.tracking { db -> Int in
-            let a = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM people") ?? 0
-            let b = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM person_speakers") ?? 0
-            let c = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM pending_suggestions") ?? 0
-            let d = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM dismissed_suggestions") ?? 0
-            return a &+ b &+ c &+ d
-        }
-        cancellable = observation
+        cancellable = PeopleChangeObservation
             .publisher(in: store.dbReader)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { _ in },
-                receiveValue: { [weak self] _ in
+                receiveValue: { [weak self] (_: Int) in
                     Task { [weak self] in
                         guard let self else { return }
                         let items = (try? await self.store.personRowItems()) ?? []
@@ -50,5 +42,20 @@ public final class PeopleViewModel: ObservableObject {
     public func stop() {
         cancellable?.cancel()
         cancellable = nil
+    }
+}
+
+private enum PeopleChangeObservation {
+    nonisolated static func publisher(in reader: some DatabaseReader) -> AnyPublisher<Int, Error> {
+        // Fire whenever any of the four People-related tables change.
+        ValueObservation.tracking { db -> Int in
+            let a = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM people") ?? 0
+            let b = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM person_speakers") ?? 0
+            let c = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM pending_suggestions") ?? 0
+            let d = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM dismissed_suggestions") ?? 0
+            return a &+ b &+ c &+ d
+        }
+        .publisher(in: reader)
+        .eraseToAnyPublisher()
     }
 }

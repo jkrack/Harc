@@ -74,6 +74,9 @@ public actor RecordingStore {
                 {
                     rec.id = existing.id
                     rec.createdAt = existing.createdAt
+                    rec.chunksIndexedAt = existing.transcriptText == rec.transcriptText
+                        ? existing.chunksIndexedAt
+                        : nil
                     try rec.update(db)
                 } else {
                     rec.createdAt = Date()
@@ -446,10 +449,140 @@ public actor RecordingStore {
                 db,
                 [
                     Recording.Columns.transcriptText.set(to: text),
+                    Recording.Columns.chunksIndexedAt.set(to: nil),
                     Recording.Columns.updatedAt.set(to: Date()),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try db.execute(
+                sql: "DELETE FROM transcript_chunks WHERE recording_id = ?",
+                arguments: [id]
+            )
+        }
+    }
+
+    // MARK: - Semantic transcript chunks
+
+    public func upsertTranscriptChunks(
+        recordingID: Int64,
+        chunks: [TranscriptChunk],
+        indexedAt: Date = Date()
+    ) async throws {
+        let indexedMs = Int64(indexedAt.timeIntervalSince1970 * 1000)
+        try await dbQueue.write { db in
+            guard try Recording.filter(key: recordingID).fetchOne(db) != nil else {
+                throw StoreError.notFound
+            }
+
+            try db.execute(
+                sql: "DELETE FROM transcript_chunks WHERE recording_id = ?",
+                arguments: [recordingID]
+            )
+
+            for chunk in chunks {
+                precondition(
+                    chunk.recordingID == recordingID,
+                    "upsertTranscriptChunks: mixed recording ids in batch"
+                )
+                let createdMs = Int64(chunk.createdAt.timeIntervalSince1970 * 1000)
+                try db.execute(
+                    sql: """
+                    INSERT INTO transcript_chunks
+                    (recording_id, ordinal, start_ms, end_ms, text, embedding, embedding_model_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        chunk.recordingID,
+                        chunk.ordinal,
+                        chunk.startMs,
+                        chunk.endMs,
+                        chunk.text,
+                        chunk.embedding,
+                        chunk.embeddingModelID,
+                        createdMs,
+                    ]
+                )
+            }
+
+            try db.execute(
+                sql: "UPDATE recordings SET chunks_indexed_at = ?, updated_at = ? WHERE id = ?",
+                arguments: [indexedMs, Date(), recordingID]
+            )
+        }
+    }
+
+    public func transcriptChunks(
+        recordingID: Int64,
+        embeddingModelID: String? = nil
+    ) async throws -> [TranscriptChunk] {
+        try await dbQueue.read { db in
+            var clauses = ["recording_id = ?"]
+            var args: [DatabaseValueConvertible] = [recordingID]
+            if let embeddingModelID {
+                clauses.append("embedding_model_id = ?")
+                args.append(embeddingModelID)
+            }
+            let sql = """
+                SELECT id, recording_id, ordinal, start_ms, end_ms, text, embedding, embedding_model_id, created_at
+                FROM transcript_chunks
+                WHERE \(clauses.joined(separator: " AND "))
+                ORDER BY ordinal ASC
+                """
+            return try Self.decodeTranscriptChunks(
+                Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            )
+        }
+    }
+
+    public func allTranscriptChunks(
+        embeddingModelID: String? = nil
+    ) async throws -> [TranscriptChunk] {
+        try await dbQueue.read { db in
+            var sql = """
+                SELECT c.id, c.recording_id, c.ordinal, c.start_ms, c.end_ms, c.text,
+                       c.embedding, c.embedding_model_id, c.created_at
+                FROM transcript_chunks c
+                JOIN recordings r ON r.id = c.recording_id
+                WHERE r.deleted_at IS NULL
+                """
+            var args: [DatabaseValueConvertible] = []
+            if let embeddingModelID {
+                sql += " AND c.embedding_model_id = ?"
+                args.append(embeddingModelID)
+            }
+            sql += " ORDER BY r.started_at DESC, c.ordinal ASC"
+            return try Self.decodeTranscriptChunks(
+                Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            )
+        }
+    }
+
+    public func recordingsNeedingSemanticIndex(limit: Int = 20) async throws -> [Recording] {
+        try await dbQueue.read { db in
+            try Recording
+                .filter(Recording.Columns.deletedAt == nil)
+                .filter(Recording.Columns.transcriptText != nil)
+                .filter(Recording.Columns.chunksIndexedAt == nil)
+                .order(Recording.Columns.startedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
+    private static func decodeTranscriptChunks(_ rows: [Row]) throws -> [TranscriptChunk] {
+        rows.map { row in
+            let createdMs: Int64 = row["created_at"]
+            return TranscriptChunk(
+                id: row["id"],
+                recordingID: row["recording_id"],
+                ordinal: row["ordinal"],
+                startMs: row["start_ms"],
+                endMs: row["end_ms"],
+                text: row["text"],
+                embedding: row["embedding"],
+                embeddingModelID: row["embedding_model_id"],
+                createdAt: Date(timeIntervalSince1970: Double(createdMs) / 1000.0)
+            )
         }
     }
 

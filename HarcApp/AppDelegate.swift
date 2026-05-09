@@ -704,6 +704,14 @@ private func openDetail(for recording: Recording) {
         }
     }
 
+    private func presentLibraryUnavailable(_ reason: String) {
+        let alert = NSAlert()
+        alert.messageText = "Library is not ready"
+        alert.informativeText = reason
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     private func persistStoppedRecording(_ recording: Recording) async -> Int64? {
         guard let store = self.store else {
             presentRecordingPersistenceFailure(
@@ -907,8 +915,18 @@ private func openDetail(for recording: Recording) {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        guard let store, let reIDService = speakerReIDService,
-              let queueStore = summarizationQueueStore else { return }
+        guard let store else {
+            presentLibraryUnavailable("The recording database has not finished opening yet. Try again in a moment.")
+            return
+        }
+        guard let reIDService = speakerReIDService else {
+            presentLibraryUnavailable("Speaker identity services have not finished starting yet. Try again in a moment.")
+            return
+        }
+        guard let queueStore = summarizationQueueStore else {
+            presentLibraryUnavailable("Summarization services have not finished starting yet. Try again in a moment.")
+            return
+        }
         let libraryVM = LibraryViewModel(store: store)
         let controller = HarcWindowController(
             libraryVM: libraryVM,

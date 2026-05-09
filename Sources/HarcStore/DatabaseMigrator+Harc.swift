@@ -176,6 +176,37 @@ extension DatabaseMigrator {
                 """)
         }
 
+        migrator.registerMigration("v11_semantic_transcript_chunks") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "chunks_indexed_at", .integer)
+            }
+
+            try db.create(table: "transcript_chunks") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("recording_id", .integer)
+                    .notNull()
+                    .references("recordings", onDelete: .cascade)
+                t.column("ordinal", .integer).notNull()
+                t.column("start_ms", .integer).notNull()
+                t.column("end_ms", .integer).notNull()
+                t.column("text", .text).notNull()
+                t.column("embedding", .blob).notNull()
+                t.column("embedding_model_id", .text).notNull()
+                t.column("created_at", .integer).notNull()
+                t.uniqueKey(["recording_id", "ordinal"])
+            }
+            try db.create(
+                index: "idx_transcript_chunks_recording",
+                on: "transcript_chunks",
+                columns: ["recording_id"]
+            )
+            try db.create(
+                index: "idx_transcript_chunks_model",
+                on: "transcript_chunks",
+                columns: ["embedding_model_id"]
+            )
+        }
+
         return migrator
     }
 }
