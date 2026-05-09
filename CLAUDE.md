@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Harc** — a macOS speech-to-text menu bar app. Records meetings quietly on a hotkey, transcribes locally on Apple Silicon, and drops the text into an always-on clipboard history for pasting into an LLM.
 
-Status: greenfield. No code yet. This file will grow as the codebase does.
+The app is built and runnable: menu bar shell, daemon-backed STT, mic + system-audio capture, GRDB-backed library, settings, transcript editor, and on-device summarization are all in place. Active dev surface is speaker re-identification (real ECAPA-TDNN replacing the stub) and distribution (notarized direct-download).
 
 ## Hard Constraints
 
@@ -27,69 +27,133 @@ Design implications — these shape every architectural decision:
 - **Toggle, not push-to-talk.** Start/stop via hotkey or menu. Visible recording indicator in the menu bar (e.g. red dot).
 - **Durability is load-bearing.** Write raw audio to disk as a WAV file during recording, not only in memory. An hour of work must survive app crash, system sleep, or power loss. Worst case the user re-runs transcription on the recovered file.
 - **Incremental background transcription during recording.** Not streaming to the UI — process the durable WAV in rolling ~60s chunks in the background while recording continues. Bounded memory, transcript is ~90% done the moment the user hits stop, and chunk boundaries are natural crash-recovery points.
-- **Capture system audio + mic, not just mic.** Single biggest quality win for meetings. Use `ScreenCaptureKit` (macOS 13+) for system audio and `AVAudioEngine` for the mic, mix to a single WAV. Trade-off: requires Screen Recording permission.
+- **Capture system audio + mic, not just mic.** Single biggest quality win for meetings. `ScreenCaptureKit` for system audio + `AVAudioEngine` for the mic, mixed to a single WAV. Trade-off: requires Screen Recording permission.
 - **Diarization on by default.** Speaker labels (`Speaker 1:`, `Speaker 2:`) massively improve what a downstream LLM can do with the transcript.
-- **VAD gating.** Meeting audio from the user's mic is typically 40–70% silence. Voice-activity detection cuts transcription work sharply with no quality loss. Silero or FluidAudio's built-in.
+- **VAD gating.** Meeting audio from the user's mic is typically 40–70% silence. Voice-activity detection cuts transcription work sharply with no quality loss. Currently FluidAudio's built-in.
 
-## Engine Approach
+## Build & Run
 
-The STT engine is a **separate Swift executable** that runs as a long-lived daemon, not an in-process library. The app launches it on demand and talks to it over IPC. This keeps model load cost amortized across recordings, isolates model/audio crashes from the UI, and lets the engine shut itself down when idle.
+Requires Xcode 15.4+ and Homebrew. Apple Silicon only.
 
-Reference pattern (from prior work in `/Users/jlane/GitHub/OpenBrain/swift/openbrain-stt/`):
+```sh
+brew install xcodegen
 
-- SwiftPM executable target, `.macOS(.v14)`.
-- **Model:** [FluidAudio](https://github.com/FluidInference/FluidAudio) running Parakeet TDT 0.6B v3 on ANE/Metal via Core ML. Pre-loaded in the background on daemon startup so the first request isn't blocked by cold load.
-- **IPC:** Unix domain socket at `~/.harc/stt.sock`, newline-delimited JSON — one request per line, one response per line.
-- **Requests:** `transcribe` (file path for the durable WAV; options for timestamps, diarize, language), `status`, `shutdown`. Base64 audio is supported but file paths are the primary path given durable recording.
+# SwiftPM-only loop (fast iteration on libraries + daemon)
+swift test                                # all targets
+swift test --filter HarcCoreTests         # one target
+swift build -c release --product harc-stt --arch arm64
+
+# App target (regenerate the Xcode project from project.yml first)
+xcodegen generate
+xcodebuild -project Harc.xcodeproj -scheme Harc -configuration Debug build
+open Harc.xcodeproj                       # for interactive dev
+
+# Local distributable .app + .dmg (ad-hoc signed)
+scripts/build-local.sh                    # → build/local-dist/Harc.{app,dmg}
+```
+
+The Xcode build runs `scripts/build-daemon.sh` as a post-compile step. That script rebuilds `harc-stt` into `.build-daemon/` and copies + codesigns it into `Harc.app/Contents/MacOS/harc-stt`. If you rename the daemon target or change its Package.swift product, update that script too.
+
+CI (`.github/workflows/ci.yml`) runs `swift test` and an unsigned Debug Xcode build, then verifies `harc-stt --version` from the produced bundle.
+
+## Repository Layout
+
+Two top-level Swift surfaces:
+
+- `Sources/` — SwiftPM library + executable targets (Package.swift). All shared code lives here.
+- `HarcApp/` — the macOS app target (managed by `project.yml` → `xcodegen` → `Harc.xcodeproj`). Thin: `AppDelegate`, `WindowControllers/`, and tiny glue. Real UI lives in the `HarcUI` SwiftPM module.
+
+SwiftPM modules, by role:
+
+| Module | Role |
+|---|---|
+| `HarcCore` | IPC types: `IPCRequest`, `IPCResponse`, `TranscribeResult`, word/speaker timestamps. Shared by app + daemon. |
+| `HarcModels` | Recording domain models. |
+| `HarcAudio` | Mic + system-audio capture, mixer, durable WAV writer, level metering, `RecordingSession`, `RecordingDestination`. |
+| `HarcClient` | Daemon launcher, IPC client, chunked transcriber, WAV chunker, transcript assembly + file writes. |
+| `HarcSTT` | The `harc-stt` executable. `Daemon`, `Transcriber` (FluidAudio wrapper), `Diarizer`, `SocketServer`, signal handlers. |
+| `HarcStore` | GRDB-backed `RecordingStore`, append-only migrations (currently v1–v8), FTS5 transcript search, speaker-embeddings table. |
+| `HarcSummarize` | On-device summarization via MLX-LLM + HuggingFace. |
+| `HarcMeetingDetect` | Heuristics for "is the user in a meeting". |
+| `HarcVoiceprint` | Speaker embeddings (currently `StubSpeakerEmbedder`; real ECAPA-TDNN is the active dev item). |
+| `HarcExport` | Transcript export/serialization. |
+| `HarcUI` | All SwiftUI: popover, recording controls, library, transcription detail, transcript editor, settings tabs, summary cards, design tokens. |
+
+Test targets mirror module names (`HarcCoreTests`, `HarcSTTTests`, etc.).
+
+## Architecture
+
+### Daemon model
+
+The STT engine is a **separate Swift executable** (`harc-stt`) launched as a child process by the app, not an in-process library. Model load cost is amortized across recordings, model/audio crashes are isolated from the UI, and the engine self-shuts when idle.
+
+- **IPC:** Unix domain socket at `~/.harc/stt.sock`, newline-delimited JSON. One request → one response per connection.
+- **Requests:** `transcribe` (file path; options for timestamps, diarize, language), `status`, `shutdown`. Base64 audio is supported but file paths are the primary path given durable recording.
 - **Responses:** `result` (text + speaker segments + word timestamps + processing_ms), `status`, `error`.
-- **Lifecycle:** pre-load model on start → accept loop → idle-timeout self-shutdown (30 min default) → clean socket on SIGTERM/SIGINT.
+- **Model:** [FluidAudio](https://github.com/FluidInference/FluidAudio) running Parakeet TDT 0.6B v3 on ANE/Metal via Core ML. Pre-loaded on daemon start so the first request isn't blocked by cold load.
+- **Lifecycle:** pre-load model → accept loop → 30 min idle-timeout self-shutdown → unlink socket on SIGTERM/SIGINT.
+- **Daemon entry:** [Sources/HarcSTT/HarcSTTCLI.swift](Sources/HarcSTT/HarcSTTCLI.swift), `Daemon.run()` in [Sources/HarcSTT/Daemon.swift](Sources/HarcSTT/Daemon.swift).
+- **App-side launch:** [Sources/HarcClient/DaemonLauncher.swift](Sources/HarcClient/DaemonLauncher.swift) — checks socket liveness, spawns child `Process` if dead, waits up to 60s for the socket. Daemon stdout/stderr → `~/Library/Caches/Harc/daemon.log`.
+- **App-side IPC:** [Sources/HarcClient/HarcSTTClient.swift](Sources/HarcClient/HarcSTTClient.swift) — open-send-read-close roundtrip per call.
 
-Harc implements its own version — own binary (`harc-stt`), own socket path, free to diverge on protocol. Must verify FluidAudio handles hour-long audio gracefully; if not, the daemon chunks with overlap and stitches at boundaries.
+### Audio pipeline
 
-## Harc-Specific Architecture (planned)
+Capture and durable storage in [`Sources/HarcAudio/`](Sources/HarcAudio):
 
-1. **Menu bar app** — SwiftUI popover + AppKit `NSStatusItem`. Owns daemon lifecycle as a child process. Recording state visible in the menu bar icon.
-2. **Audio capture** — `AVAudioEngine` (mic) + `ScreenCaptureKit` (system audio), mixed and written to a rolling WAV in a local cache directory (`~/Library/Caches/Harc/recordings/<uuid>.wav`). Atomically moved to the user-chosen destination folder on successful stop (see Recording Storage below).
-3. **Background transcription worker** — while recording, feed completed ~60s chunks of the WAV to the daemon. Accumulate results. On stop, flush the final chunk and assemble.
-4. **Global hotkey** — toggle start/stop. Requires Accessibility or Input Monitoring entitlement.
-5. **Clipboard history** — persistent, searchable, pinnable store of transcripts. SQLite (likely GRDB) indexes transcripts and points at the on-disk files; popover UI shows a truncated preview and copies the full blob on select.
-6. **Paste behavior** — copy full transcript to pasteboard; optional auto-paste into the frontmost app.
+- **`MicCapture`** — `AVAudioEngine` tap, async stream of PCM buffers in hardware-native format.
+- **`SystemAudioCapture`** — `ScreenCaptureKit` `SCStream`, async stream of system-audio PCM.
+- **`AudioMixer`** — resamples both streams to 16 kHz mono, weighted sum (mic 0.7, system 0.3).
+- **`AudioFileWriter`** — incremental 16 kHz mono Int16 WAV with periodic fsync (5s).
+- **`LevelComputer`** — RMS (dBFS) + 5-band FFT for menu-bar bars and silence detection.
+- **`RecordingSession`** — orchestrator. Starts mic + system, pumps the mix into the writer, hands the growing WAV to the chunked transcriber.
 
-## Recording Storage
+### Transcription during recording
 
-User-configurable destination folder with date-based organization. The user picks a folder in Settings; Harc writes every recording there with a predictable hierarchy.
+[`Sources/HarcClient/ChunkedTranscriber.swift`](Sources/HarcClient/ChunkedTranscriber.swift) polls the growing WAV every ~2s, slices off completed 60s chunks via `WAVChunker`, sends each to the daemon. On stop, the tail chunk is flushed and segments are assembled. Transcript ends up `~90%` done the moment the user hits stop.
 
-**Layout:**
+### Storage
+
+**Recordings on disk** ([`Sources/HarcAudio/RecordingDestination.swift`](Sources/HarcAudio/RecordingDestination.swift)):
 
 ```
 <destination-folder>/
   YYYY/
     YYYY-MM-DD/
-      HH-mm-ss.wav          # raw mixed audio
+      HH-mm-ss.wav          # raw 16 kHz mono mixed audio
       HH-mm-ss.txt          # plain transcript (pasteboard-ready)
       HH-mm-ss.json         # transcript + word timestamps + diarization + metadata
 ```
 
-The doubled year in the date folder keeps each day's directory self-identifying if it's copied, emailed, or moved out of context.
+The doubled year in the date folder keeps each day's directory self-identifying if it's copied, emailed, or moved out of context. Default base: `~/Documents/Harc/`. Filename collisions get `-1`, `-2`, … appended.
 
-**Default destination:** `~/Documents/Harc/`. User-visible so files are easy to find without digging through `~/Library`.
+**Write strategy — record local, then move on stop.** The rolling WAV is always written to `~/Library/Caches/Harc/recordings/<uuid>.wav` during recording. On successful stop, it's atomically moved (`replaceItemAt`) into the destination folder. This protects against iCloud/Dropbox sync latency, external-drive disconnects, and slow network volumes during a live recording. **If the app crashes mid-recording, the cached WAV is the recovery artifact** — point a manual transcribe at it.
 
-**Write strategy — record local, move on stop:** the rolling WAV is always written to `~/Library/Caches/Harc/recordings/<uuid>.wav` during recording. On successful stop, it's atomically moved into the destination folder. This protects against iCloud/Dropbox sync latency, external-drive disconnects, and slow network volumes during a live recording.
+**Sandbox note:** if distribution ever moves to the Mac App Store, arbitrary destination folders require security-scoped bookmarks rather than plain path strings. For notarized direct distribution (current target), a `URL` path persisted in `UserDefaults` is sufficient.
 
-**Sandbox note:** if distribution ever moves to the Mac App Store, arbitrary destination folders require security-scoped bookmarks rather than plain path strings. For notarized direct distribution, a `URL` path persisted in `UserDefaults` is sufficient.
+**Library DB:** GRDB/SQLite at `~/Library/Application Support/Harc/Harc.db`. Schema in [`Sources/HarcStore/DatabaseMigrator+Harc.swift`](Sources/HarcStore/DatabaseMigrator+Harc.swift). FTS5 over transcript text (Porter tokenizer over unicode61). The DB indexes recordings and stores derived data (titles, tags, speaker names, embeddings, summaries); the audio + transcript files on disk are the source of truth.
+
+### App shell
+
+- **Entry:** [`HarcApp/AppDelegate.swift`](HarcApp/AppDelegate.swift) wires up the `NSStatusItem`, popover, daemon launcher, store, summarization queue, and global hotkey listener.
+- **Hotkey:** [sindresorhus/KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts). Definitions in [`Sources/HarcUI/HotkeyNames.swift`](Sources/HarcUI/HotkeyNames.swift).
+- **Window controllers** ([`HarcApp/WindowControllers/`](HarcApp/WindowControllers)): Settings (6 tabs), Library (search, pin, rename, delete), TranscriptionDetail (view + summary + speaker labels), TranscriptEditor (direct text edits).
+- **Popover:** [`Sources/HarcUI/PopoverRootView.swift`](Sources/HarcUI/PopoverRootView.swift) — start/stop, live levels, post-stop tray with copy/paste.
+
+## Non-obvious conventions
+
+- **Audio format is an invariant.** Everything downstream of the mixer assumes 16 kHz mono Int16 WAV — Parakeet's native rate, no resampling on the daemon side. Changing `AudioFileWriter`'s output format requires updating the daemon's FluidAudio call and the chunker.
+- **Chunking is fixed 60s windows.** Decided over VAD-aligned or FluidAudio long-form because FluidAudio's tolerance for hour-long input wasn't proven at the time and fixed windows give cleaner crash-recovery boundaries. Default in `ChunkedTranscriber`.
+- **GRDB migrations are append-only.** Currently v1 → v8. Never delete or reorder; add v9. Earlier versions adjusted FTS scope (v4 narrowed to transcript-only) and added speaker embeddings, summaries, tags.
+- **Daemon binary lookup is multi-path.** `DaemonLauncher` resolves in order: app bundle (`Contents/MacOS/harc-stt`) → `HARC_STT_BINARY` env var → `.build/debug/harc-stt` (test fallback). When developing the daemon outside the app, set `HARC_STT_BINARY` so the app finds your local build.
+- **Speaker embedder is stubbed.** `StubSpeakerEmbedder` returns deterministic placeholder vectors. The schema and UI assume a real ECAPA-TDNN; don't ship features that depend on cross-recording speaker identity until that's swapped in.
+- **Entitlements** ([`HarcApp/Harc.entitlements`](HarcApp/Harc.entitlements)) include `device.audio-input` and `cs.disable-library-validation` (the latter to load FluidAudio's `.dylib` without a full entitlement chain — fine for ad-hoc local builds, revisit before notarized distribution).
+- **`AGENTS.md` exists** for Codex but is currently a stale duplicate of an earlier CLAUDE.md. Don't trust it; trust this file.
 
 ## Open Decisions
 
-Capture the *why* here when these get resolved:
+Capture the *why* here when these get resolved.
 
-- **Chunking strategy.** Fixed 60s windows vs VAD-aligned windows vs FluidAudio's native long-form handling — depends on what FluidAudio/Parakeet tolerates.
-- **Recording format.** WAV 16kHz mono is the model's native rate; writing that directly avoids resampling. Confirm ScreenCaptureKit → 16kHz mono mix is clean.
-- **Clipboard-history storage.** GRDB/SQLite is the default assumption. Pending confirmation.
-- **File naming.** `HH-mm-ss.wav` is the default; optional meeting-name slug (e.g. `HH-mm-ss-standup.wav`) TBD — editable after the fact, or prompted on stop?
-- **Hotkey library.** MASShortcut, KeyboardShortcuts (sindresorhus), or raw Carbon `RegisterEventHotKey`.
-- **Diarization quality.** FluidAudio's diarizer vs a separate pyannote-style model — confirm it's good enough on meeting audio before building UI around it.
-- **Distribution.** Notarized `.app` direct download, Homebrew cask, or both.
-
-## Build & Run
-
-To be documented once the project is scaffolded. Expected shape: top-level SwiftPM workspace or Xcode project with two targets — `Harc` (menu bar app) and `harc-stt` (STT daemon executable, embedded in the app bundle).
+- **Speaker re-identification.** Real ECAPA-TDNN model + cross-recording speaker linking (the embeddings table is sized for it, but only the stub embedder is wired up).
+- **Editable filename slug.** `HH-mm-ss.wav` is fixed at write time; an optional meeting-name slug (`HH-mm-ss-standup.wav`) editable post-hoc or prompted on stop is still TBD.
+- **Distribution.** Notarized `.app` direct download is the current target; `build-local.sh` produces ad-hoc signed artifacts only. Homebrew cask is on the table.
+- **Diarization quality bar.** FluidAudio's diarizer is on by default, but whether it's good enough on noisy multi-speaker meetings to anchor downstream UX (vs. swapping in a pyannote-style model) is an empirical question.
