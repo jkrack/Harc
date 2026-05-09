@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import HarcContext
 import HarcStore
 import HarcContext
 
@@ -163,8 +164,8 @@ public final class LibraryViewModel: ObservableObject {
     }
 
     public func contextPack(for query: String? = nil, limit: Int = 8) async throws -> ContextPack {
-        let raw = query ?? searchText
-        return try await ContextPackBuilder(store: store).build(query: raw, limit: limit)
+        let requestedQuery = query ?? searchText
+        return try await ContextPackBuilder(store: store).build(query: requestedQuery, limit: limit)
     }
 
     public func contextMarkdown(for query: String? = nil, limit: Int = 8) async throws -> String {

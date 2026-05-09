@@ -178,7 +178,7 @@ extension DatabaseMigrator {
 
         migrator.registerMigration("v11_semantic_transcript_chunks") { db in
             try db.alter(table: "recordings") { t in
-                t.add(column: "chunks_indexed_at", .integer)
+                t.add(column: "chunks_indexed_at", .integer)  // Unix ms; NULL = not indexed or stale
             }
 
             try db.create(table: "transcript_chunks") { t in
@@ -192,9 +192,10 @@ extension DatabaseMigrator {
                 t.column("text", .text).notNull()
                 t.column("embedding", .blob).notNull()
                 t.column("embedding_model_id", .text).notNull()
-                t.column("created_at", .integer).notNull()
+                t.column("created_at", .integer).notNull()  // Unix ms
                 t.uniqueKey(["recording_id", "ordinal"])
             }
+
             try db.create(
                 index: "idx_transcript_chunks_recording",
                 on: "transcript_chunks",

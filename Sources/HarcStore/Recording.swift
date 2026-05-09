@@ -80,6 +80,59 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.updatedAt = updatedAt
     }
 
+    public init(
+        id: Int64? = nil,
+        wavPath: String,
+        txtPath: String? = nil,
+        jsonPath: String? = nil,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        title: String? = nil,
+        transcriptText: String? = nil,
+        suggestedTitle: String? = nil,
+        tags: [String] = [],
+        speakerNames: [Int: String] = [:],
+        pinned: Bool = false,
+        deletedAt: Date? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        summaryMarkdown: String? = nil,
+        actionItemsMarkdown: String? = nil,
+        summaryModelID: String? = nil,
+        summaryGeneratedAt: Date? = nil,
+        summarySourceWordCount: Int? = nil,
+        summaryStatusKind: RecordingSummaryStatusKind? = nil,
+        summaryStatusMessage: String? = nil,
+        summaryStatusUpdatedAt: Date? = nil
+    ) {
+        self.init(
+            id: id,
+            wavPath: wavPath,
+            txtPath: txtPath,
+            jsonPath: jsonPath,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            title: title,
+            transcriptText: transcriptText,
+            suggestedTitle: suggestedTitle,
+            tags: tags,
+            speakerNames: speakerNames,
+            pinned: pinned,
+            deletedAt: deletedAt,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            summaryMarkdown: summaryMarkdown,
+            actionItemsMarkdown: actionItemsMarkdown,
+            summaryModelID: summaryModelID,
+            summaryGeneratedAt: summaryGeneratedAt,
+            summarySourceWordCount: summarySourceWordCount,
+            summaryStatusKind: summaryStatusKind,
+            summaryStatusMessage: summaryStatusMessage,
+            summaryStatusUpdatedAt: summaryStatusUpdatedAt,
+            chunksIndexedAt: nil
+        )
+    }
+
     /// Display title: user's custom title if set; else the NLTagger-derived
     /// suggestion if present; else derived from startedAt.
     public var displayTitle: String {
