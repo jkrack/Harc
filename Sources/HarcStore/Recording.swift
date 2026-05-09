@@ -22,6 +22,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var summaryStatusKind: RecordingSummaryStatusKind?
     public var summaryStatusMessage: String?
     public var summaryStatusUpdatedAt: Date?
+    public var chunksIndexedAt: Date?
     public var pinned: Bool
     public var deletedAt: Date?
     public var createdAt: Date
@@ -50,7 +51,8 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         summarySourceWordCount: Int? = nil,
         summaryStatusKind: RecordingSummaryStatusKind? = nil,
         summaryStatusMessage: String? = nil,
-        summaryStatusUpdatedAt: Date? = nil
+        summaryStatusUpdatedAt: Date? = nil,
+        chunksIndexedAt: Date?
     ) {
         self.id = id
         self.wavPath = wavPath
@@ -71,10 +73,64 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.summaryStatusKind = summaryStatusKind
         self.summaryStatusMessage = summaryStatusMessage
         self.summaryStatusUpdatedAt = summaryStatusUpdatedAt
+        self.chunksIndexedAt = chunksIndexedAt
         self.pinned = pinned
         self.deletedAt = deletedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public init(
+        id: Int64? = nil,
+        wavPath: String,
+        txtPath: String? = nil,
+        jsonPath: String? = nil,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        title: String? = nil,
+        transcriptText: String? = nil,
+        suggestedTitle: String? = nil,
+        tags: [String] = [],
+        speakerNames: [Int: String] = [:],
+        pinned: Bool = false,
+        deletedAt: Date? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        summaryMarkdown: String? = nil,
+        actionItemsMarkdown: String? = nil,
+        summaryModelID: String? = nil,
+        summaryGeneratedAt: Date? = nil,
+        summarySourceWordCount: Int? = nil,
+        summaryStatusKind: RecordingSummaryStatusKind? = nil,
+        summaryStatusMessage: String? = nil,
+        summaryStatusUpdatedAt: Date? = nil
+    ) {
+        self.init(
+            id: id,
+            wavPath: wavPath,
+            txtPath: txtPath,
+            jsonPath: jsonPath,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            title: title,
+            transcriptText: transcriptText,
+            suggestedTitle: suggestedTitle,
+            tags: tags,
+            speakerNames: speakerNames,
+            pinned: pinned,
+            deletedAt: deletedAt,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            summaryMarkdown: summaryMarkdown,
+            actionItemsMarkdown: actionItemsMarkdown,
+            summaryModelID: summaryModelID,
+            summaryGeneratedAt: summaryGeneratedAt,
+            summarySourceWordCount: summarySourceWordCount,
+            summaryStatusKind: summaryStatusKind,
+            summaryStatusMessage: summaryStatusMessage,
+            summaryStatusUpdatedAt: summaryStatusUpdatedAt,
+            chunksIndexedAt: nil
+        )
     }
 
     /// Display title: user's custom title if set; else the NLTagger-derived
@@ -155,6 +211,11 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         } else {
             self.summaryStatusUpdatedAt = nil
         }
+        if let ms = try c.decodeIfPresent(Int64.self, forKey: .chunksIndexedAt) {
+            self.chunksIndexedAt = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        } else {
+            self.chunksIndexedAt = nil
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -210,6 +271,12 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         } else {
             try c.encodeNil(forKey: .summaryStatusUpdatedAt)
         }
+        if let d = chunksIndexedAt {
+            let ms = Int64(d.timeIntervalSince1970 * 1000)
+            try c.encode(ms, forKey: .chunksIndexedAt)
+        } else {
+            try c.encodeNil(forKey: .chunksIndexedAt)
+        }
     }
 }
 
@@ -241,6 +308,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         case summaryStatusKind = "summary_status_kind"
         case summaryStatusMessage = "summary_status_message"
         case summaryStatusUpdatedAt = "summary_status_updated_at"
+        case chunksIndexedAt = "chunks_indexed_at"
     }
 
     public enum Columns {
@@ -267,5 +335,6 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let summaryStatusKind = Column("summary_status_kind")
         static let summaryStatusMessage = Column("summary_status_message")
         static let summaryStatusUpdatedAt = Column("summary_status_updated_at")
+        static let chunksIndexedAt = Column("chunks_indexed_at")
     }
 }

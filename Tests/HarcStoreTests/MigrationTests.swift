@@ -16,6 +16,26 @@ struct MigrationTests {
             )
             #expect(tables.contains("recordings"))
             #expect(tables.contains("recordings_fts"))
+            #expect(tables.contains("transcript_chunks"))
+        }
+    }
+
+    @Test("v10 adds semantic chunk table and recording index timestamp")
+    func v10SemanticChunkSchema() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.read { db in
+            let recordingCols = try Row.fetchAll(db, sql: "PRAGMA table_info(recordings)")
+                .compactMap { $0["name"] as String? }
+            #expect(recordingCols.contains("chunks_indexed_at"))
+
+            let chunkCols = try Row.fetchAll(db, sql: "PRAGMA table_info(transcript_chunks)")
+                .compactMap { $0["name"] as String? }
+            #expect(chunkCols.contains("recording_id"))
+            #expect(chunkCols.contains("ordinal"))
+            #expect(chunkCols.contains("embedding"))
+            #expect(chunkCols.contains("embedding_model_id"))
         }
     }
 

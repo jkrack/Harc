@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "HarcModels", targets: ["HarcModels"]),
         .library(name: "HarcSummarize", targets: ["HarcSummarize"]),
         .library(name: "HarcVoiceprint", targets: ["HarcVoiceprint"]),
+        .library(name: "HarcContext", targets: ["HarcContext"]),
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
     ],
     dependencies: [
@@ -65,6 +66,10 @@ let package = Package(
             ]
         ),
         .target(
+            name: "HarcContext",
+            dependencies: ["HarcStore"]
+        ),
+        .target(
             name: "HarcUI",
             dependencies: [
                 "HarcCore",
@@ -72,6 +77,7 @@ let package = Package(
                 "HarcClient",
                 "HarcStore",
                 "HarcExport",
+                "HarcContext",
                 "HarcMeetingDetect",
                 "HarcModels",
                 "HarcSummarize",
@@ -150,6 +156,10 @@ let package = Package(
         .testTarget(
             name: "HarcStoreTests",
             dependencies: ["HarcStore", "HarcCore"]
+        ),
+        .testTarget(
+            name: "HarcContextTests",
+            dependencies: ["HarcContext", "HarcStore"]
         ),
     ]
 )
