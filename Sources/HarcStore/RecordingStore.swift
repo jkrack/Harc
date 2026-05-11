@@ -17,6 +17,7 @@ public actor RecordingStore {
     public static func onDisk(url: URL = defaultURL()) async throws -> RecordingStore {
         let parent = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        try SQLiteVec1Support.register()
         let dbq: DatabaseQueue
         do {
             dbq = try DatabaseQueue(path: url.path)
@@ -33,6 +34,7 @@ public actor RecordingStore {
 
     /// Factory — in-memory DB for tests.
     public static func inMemory() async throws -> RecordingStore {
+        try SQLiteVec1Support.register()
         let dbq: DatabaseQueue
         do {
             dbq = try DatabaseQueue()
@@ -458,6 +460,20 @@ public actor RecordingStore {
                 sql: "DELETE FROM transcript_chunks WHERE recording_id = ?",
                 arguments: [id]
             )
+            let staleKnowledgeIDs = try Int64.fetchAll(
+                db,
+                sql: "SELECT id FROM knowledge_chunks WHERE source_kind = ? AND source_id = ?",
+                arguments: [KnowledgeSourceKind.recording.rawValue, String(id)]
+            )
+            if !staleKnowledgeIDs.isEmpty, (try? SQLiteVec1Support.register(on: db)) != nil {
+                for knowledgeID in staleKnowledgeIDs {
+                    try? db.execute(sql: "DELETE FROM knowledge_vec1 WHERE rowid = ?", arguments: [knowledgeID])
+                }
+            }
+            try db.execute(
+                sql: "DELETE FROM knowledge_chunks WHERE source_kind = ? AND source_id = ?",
+                arguments: [KnowledgeSourceKind.recording.rawValue, String(id)]
+            )
         }
     }
 
@@ -504,10 +520,133 @@ public actor RecordingStore {
                 )
             }
 
+            try Self.replaceKnowledgeChunks(
+                db,
+                sourceKind: .recording,
+                sourceID: String(recordingID),
+                chunks: chunks.map {
+                    KnowledgeChunk(
+                        sourceKind: .recording,
+                        sourceID: String(recordingID),
+                        ordinal: $0.ordinal,
+                        title: "",
+                        text: $0.text,
+                        embedding: $0.embedding,
+                        embeddingModelID: $0.embeddingModelID,
+                        contentHash: $0.text
+                    )
+                }
+            )
+
             try db.execute(
                 sql: "UPDATE recordings SET chunks_indexed_at = ?, updated_at = ? WHERE id = ?",
                 arguments: [indexedMs, Date(), recordingID]
             )
+        }
+    }
+
+    public func upsertKnowledgeChunks(
+        sourceKind: KnowledgeSourceKind,
+        sourceID: String,
+        chunks: [KnowledgeChunk]
+    ) async throws {
+        try await dbQueue.write { db in
+            try Self.replaceKnowledgeChunks(
+                db,
+                sourceKind: sourceKind,
+                sourceID: sourceID,
+                chunks: chunks
+            )
+        }
+    }
+
+    public func deleteKnowledgeChunks(
+        sourceKind: KnowledgeSourceKind,
+        sourceID: String
+    ) async throws {
+        try await dbQueue.write { db in
+            try Self.replaceKnowledgeChunks(
+                db,
+                sourceKind: sourceKind,
+                sourceID: sourceID,
+                chunks: []
+            )
+        }
+    }
+
+    public struct KnowledgeVectorHit: Sendable, Equatable, Identifiable {
+        public var id: Int64 { chunk.id ?? -1 }
+        public var chunk: KnowledgeChunk
+        public var distance: Double
+        public var score: Double
+    }
+
+    public func searchKnowledgeChunks(
+        queryEmbedding: Data,
+        embeddingModelID: String,
+        limit: Int = 8,
+        sourceKind: KnowledgeSourceKind? = nil
+    ) async throws -> [KnowledgeVectorHit] {
+        guard limit > 0 else { return [] }
+        return try await dbQueue.read { db in
+            try SQLiteVec1Support.register(on: db)
+            var sql = """
+                SELECT k.id, k.source_kind, k.source_id, k.ordinal, k.title, k.text,
+                       k.embedding, k.embedding_model_id, k.content_hash,
+                       k.created_at, k.updated_at, v.distance
+                FROM knowledge_vec1(?, ?) AS v
+                JOIN knowledge_chunks k ON k.id = v.rowid
+                WHERE v.embedding_model_id = ?
+                """
+            var args: [DatabaseValueConvertible] = [
+                queryEmbedding,
+                #"{"K": \#(limit)}"#,
+                embeddingModelID,
+            ]
+            if let sourceKind {
+                sql += " AND v.source_kind = ?"
+                args.append(sourceKind.rawValue)
+            }
+            sql += " LIMIT ?"
+            args.append(limit)
+
+            return try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args)).map { row in
+                let chunk = try Self.decodeKnowledgeChunk(row)
+                let distance: Double = row["distance"]
+                return KnowledgeVectorHit(
+                    chunk: chunk,
+                    distance: distance,
+                    score: max(0, 2 - distance)
+                )
+            }
+        }
+    }
+
+    public func knowledgeChunks(
+        sourceKind: KnowledgeSourceKind? = nil,
+        sourceID: String? = nil
+    ) async throws -> [KnowledgeChunk] {
+        try await dbQueue.read { db in
+            var clauses: [String] = []
+            var args: [DatabaseValueConvertible] = []
+            if let sourceKind {
+                clauses.append("source_kind = ?")
+                args.append(sourceKind.rawValue)
+            }
+            if let sourceID {
+                clauses.append("source_id = ?")
+                args.append(sourceID)
+            }
+            var sql = """
+                SELECT id, source_kind, source_id, ordinal, title, text, embedding,
+                       embedding_model_id, content_hash, created_at, updated_at
+                FROM knowledge_chunks
+                """
+            if !clauses.isEmpty {
+                sql += " WHERE \(clauses.joined(separator: " AND "))"
+            }
+            sql += " ORDER BY source_kind, source_id, ordinal"
+            return try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args)).map(Self.decodeKnowledgeChunk)
         }
     }
 
@@ -584,6 +723,96 @@ public actor RecordingStore {
                 createdAt: Date(timeIntervalSince1970: Double(createdMs) / 1000.0)
             )
         }
+    }
+
+    private static func replaceKnowledgeChunks(
+        _ db: Database,
+        sourceKind: KnowledgeSourceKind,
+        sourceID: String,
+        chunks: [KnowledgeChunk]
+    ) throws {
+        try SQLiteVec1Support.register(on: db)
+
+        let staleIDs = try Int64.fetchAll(
+            db,
+            sql: "SELECT id FROM knowledge_chunks WHERE source_kind = ? AND source_id = ?",
+            arguments: [sourceKind.rawValue, sourceID]
+        )
+        for id in staleIDs {
+            try db.execute(sql: "DELETE FROM knowledge_vec1 WHERE rowid = ?", arguments: [id])
+        }
+        try db.execute(
+            sql: "DELETE FROM knowledge_chunks WHERE source_kind = ? AND source_id = ?",
+            arguments: [sourceKind.rawValue, sourceID]
+        )
+
+        for chunk in chunks {
+            precondition(chunk.sourceKind == sourceKind, "replaceKnowledgeChunks: mixed source kinds")
+            precondition(chunk.sourceID == sourceID, "replaceKnowledgeChunks: mixed source ids")
+            let createdMs = Int64(chunk.createdAt.timeIntervalSince1970 * 1000)
+            let updatedMs = Int64(chunk.updatedAt.timeIntervalSince1970 * 1000)
+            try db.execute(
+                sql: """
+                INSERT INTO knowledge_chunks
+                (source_kind, source_id, ordinal, title, text, embedding, embedding_model_id,
+                 content_hash, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    chunk.sourceKind.rawValue,
+                    chunk.sourceID,
+                    chunk.ordinal,
+                    chunk.title,
+                    chunk.text,
+                    chunk.embedding,
+                    chunk.embeddingModelID,
+                    chunk.contentHash,
+                    createdMs,
+                    updatedMs,
+                ]
+            )
+            let id = db.lastInsertedRowID
+            if isVec1CompatibleEmbedding(chunk.embedding) {
+                try db.execute(
+                    sql: """
+                    INSERT INTO knowledge_vec1(rowid, vector, source_kind, embedding_model_id)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        id,
+                        chunk.embedding,
+                        chunk.sourceKind.rawValue,
+                        chunk.embeddingModelID,
+                    ]
+                )
+            }
+        }
+    }
+
+    private static func isVec1CompatibleEmbedding(_ data: Data) -> Bool {
+        data.count >= 16 && data.count.isMultiple(of: MemoryLayout<Float>.size)
+    }
+
+    private static func decodeKnowledgeChunk(_ row: Row) throws -> KnowledgeChunk {
+        let createdMs: Int64 = row["created_at"]
+        let updatedMs: Int64 = row["updated_at"]
+        let rawKind: String = row["source_kind"]
+        guard let sourceKind = KnowledgeSourceKind(rawValue: rawKind) else {
+            throw StoreError.readFailed("Unknown knowledge source kind: \(rawKind)")
+        }
+        return KnowledgeChunk(
+            id: row["id"],
+            sourceKind: sourceKind,
+            sourceID: row["source_id"],
+            ordinal: row["ordinal"],
+            title: row["title"],
+            text: row["text"],
+            embedding: row["embedding"],
+            embeddingModelID: row["embedding_model_id"],
+            contentHash: row["content_hash"],
+            createdAt: Date(timeIntervalSince1970: Double(createdMs) / 1000.0),
+            updatedAt: Date(timeIntervalSince1970: Double(updatedMs) / 1000.0)
+        )
     }
 
     public func setPinned(id: Int64, pinned: Bool) async throws {

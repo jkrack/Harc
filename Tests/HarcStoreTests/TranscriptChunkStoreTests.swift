@@ -44,6 +44,54 @@ struct TranscriptChunkStoreTests {
 
         try await store.upsertTranscriptChunks(recordingID: recording.id!, chunks: [], indexedAt: indexedAt)
         #expect(try await store.transcriptChunks(recordingID: recording.id!).isEmpty)
+        #expect(try await store.knowledgeChunks(sourceKind: .recording, sourceID: String(recording.id!)).isEmpty)
+    }
+
+    @Test("upsertTranscriptChunks mirrors valid embeddings into vec1-backed knowledge chunks")
+    func transcriptChunksMirrorToKnowledgeVec1() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recording = try await store.upsert(Recording(
+            wavPath: "/tmp/vec1.wav",
+            startedAt: Date(),
+            transcriptText: "Atlas migration plan"
+        ))
+
+        try await store.upsertTranscriptChunks(
+            recordingID: recording.id!,
+            chunks: [
+                TranscriptChunk(
+                    recordingID: recording.id!,
+                    ordinal: 0,
+                    startMs: 0,
+                    endMs: 0,
+                    text: "Atlas migration plan",
+                    embedding: Self.vector([1, 0, 0, 0]),
+                    embeddingModelID: "local-test-embedder"
+                ),
+                TranscriptChunk(
+                    recordingID: recording.id!,
+                    ordinal: 1,
+                    startMs: 0,
+                    endMs: 0,
+                    text: "Unrelated pricing note",
+                    embedding: Self.vector([0, 1, 0, 0]),
+                    embeddingModelID: "local-test-embedder"
+                ),
+            ]
+        )
+
+        let chunks = try await store.knowledgeChunks(sourceKind: .recording, sourceID: String(recording.id!))
+        #expect(chunks.count == 2)
+
+        let hits = try await store.searchKnowledgeChunks(
+            queryEmbedding: Self.vector([1, 0, 0, 0]),
+            embeddingModelID: "local-test-embedder",
+            limit: 1
+        )
+
+        #expect(hits.count == 1)
+        #expect(hits[0].chunk.id == chunks[0].id)
+        #expect(hits[0].chunk.text == "Atlas migration plan")
     }
 
     @Test("updateTranscriptText clears stale semantic chunks")
@@ -74,6 +122,7 @@ struct TranscriptChunkStoreTests {
         let refreshed = try #require(try await store.fetch(id: recording.id!))
         #expect(refreshed.chunksIndexedAt == nil)
         #expect(try await store.transcriptChunks(recordingID: recording.id!).isEmpty)
+        #expect(try await store.knowledgeChunks(sourceKind: .recording, sourceID: String(recording.id!)).isEmpty)
     }
 
     @Test("recordingsNeedingSemanticIndex returns transcript rows with stale index")
@@ -99,5 +148,11 @@ struct TranscriptChunkStoreTests {
         let needsIndex = try await store.recordingsNeedingSemanticIndex()
 
         #expect(needsIndex.map(\.wavPath) == ["/tmp/unindexed.wav"])
+    }
+
+    private static func vector(_ values: [Float]) -> Data {
+        values.withUnsafeBufferPointer { buffer in
+            Data(buffer: buffer)
+        }
     }
 }

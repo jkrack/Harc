@@ -16,6 +16,7 @@ let package = Package(
         .library(name: "HarcSummarize", targets: ["HarcSummarize"]),
         .library(name: "HarcVoiceprint", targets: ["HarcVoiceprint"]),
         .library(name: "HarcContext", targets: ["HarcContext"]),
+        .library(name: "SQLiteVec1", targets: ["SQLiteVec1"]),
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
     ],
     dependencies: [
@@ -34,6 +35,10 @@ let package = Package(
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm.git",
             .upToNextMajor(from: "3.31.3")
+        ),
+        .package(
+            url: "https://github.com/ml-explore/mlx-swift.git",
+            .upToNextMinor(from: "0.31.3")
         ),
         .package(
             url: "https://github.com/huggingface/swift-huggingface.git",
@@ -62,12 +67,34 @@ let package = Package(
             name: "HarcStore",
             dependencies: [
                 "HarcCore",
+                "SQLiteVec1",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
         .target(
+            name: "SQLiteVec1",
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("VEC1_STATIC"),
+                .define("NDEBUG"),
+                .unsafeFlags(["-O3"]),
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+            ]
+        ),
+        .target(
             name: "HarcContext",
-            dependencies: ["HarcStore"]
+            dependencies: [
+                "HarcModels",
+                "HarcStore",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
+                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "HuggingFace", package: "swift-huggingface"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+            ]
         ),
         .target(
             name: "HarcUI",
@@ -82,7 +109,15 @@ let package = Package(
                 "HarcModels",
                 "HarcSummarize",
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
-            ]
+            ],
+            exclude: [
+                "Resources/NoteEditor/editor-entry.js",
+                "Resources/NoteEditor/package.json",
+                "Resources/NoteEditor/package-lock.json",
+                "Resources/NoteEditor/Fixtures/full-markdown-capability.md",
+                "Resources/NoteEditor/validate-fixture.mjs",
+            ],
+            resources: [.process("Resources")]
         ),
         .target(
             name: "HarcModels",

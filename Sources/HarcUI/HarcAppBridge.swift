@@ -27,6 +27,7 @@ public final class HarcAppBridge: ObservableObject {
     @Published public private(set) var pasteFlash: PasteFlash? = nil
 
     public var onStartStop: () -> Void = {}
+    public var onStartRecordingForNote: (String) -> Void = { _ in }
     public var onOpenWindow: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteIntoFrontmost: () -> Void = {}

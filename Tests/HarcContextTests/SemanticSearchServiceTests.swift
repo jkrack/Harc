@@ -29,10 +29,10 @@ struct SemanticSearchServiceTests {
         ))
 
         try await store.upsertTranscriptChunks(recordingID: pricing.id!, chunks: [
-            chunk(recordingID: pricing.id!, text: "Sarah raised pricing concerns.", vector: [1, 0, 0]),
+            chunk(recordingID: pricing.id!, text: "Sarah raised pricing concerns.", vector: [1, 0, 0, 0]),
         ])
         try await store.upsertTranscriptChunks(recordingID: roadmap.id!, chunks: [
-            chunk(recordingID: roadmap.id!, text: "The roadmap depends on margin work.", vector: [0, 1, 0]),
+            chunk(recordingID: roadmap.id!, text: "The roadmap depends on margin work.", vector: [0, 1, 0, 0]),
         ])
 
         let hits = try await SemanticSearchService(store: store, embedder: KeywordEmbedder())
@@ -53,21 +53,144 @@ struct SemanticSearchServiceTests {
             summaryMarkdown: "Pricing risk needs owner follow-up.",
             actionItemsMarkdown: "- Sarah to review enterprise pricing."
         ))
+        _ = try await store.upsert(Recording(
+            wavPath: "/tmp/exact-context.wav",
+            startedAt: Date(),
+            title: "Customer rollout",
+            transcriptText: "Neal owns the customer rollout."
+        ))
         try await store.upsertTranscriptChunks(recordingID: recording.id!, chunks: [
             chunk(
                 recordingID: recording.id!,
                 text: "Sarah raised pricing concerns for enterprise buyers.",
-                vector: [1, 0, 0]
+                vector: [1, 0, 0, 0]
             ),
         ])
 
         let semanticSearch = SemanticSearchService(store: store, embedder: KeywordEmbedder())
         let pack = try await ContextPackBuilder(store: store, semanticSearch: semanticSearch)
-            .build(query: "pricing concern", limit: 4)
+            .build(query: "pricing Neal concern", limit: 4)
 
         #expect(pack.blocks.contains { $0.text.contains("enterprise buyers") })
+        #expect(pack.blocks.contains { $0.text.contains("customer rollout") })
         #expect(pack.blocks.contains { $0.kind == .summary })
         #expect(pack.blocks.contains { $0.kind == .actionItems })
+    }
+
+    @Test("knowledge indexer adds notes to vec1-backed semantic context")
+    func knowledgeIndexerAddsNotesToSemanticContext() async throws {
+        let store = try await RecordingStore.inMemory()
+        let noteStore = NoteStore(rootURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-vec1-notes-\(UUID().uuidString)", isDirectory: true))
+        var note = try await noteStore.create(
+            title: "Atlas notes",
+            body: "Neal thinks the Atlas migration should be staged."
+        )
+        note.tags = ["project:Atlas"]
+        note = try await noteStore.update(note)
+
+        try await KnowledgeIndexer(store: store, embedder: KeywordEmbedder()).index(note: note)
+
+        let semanticSearch = SemanticSearchService(store: store, embedder: KeywordEmbedder())
+        let pack = try await ContextPackBuilder(
+            store: store,
+            noteStore: noteStore,
+            semanticSearch: semanticSearch
+        )
+        .build(query: "What does Neal think about Atlas?", limit: 4)
+
+        #expect(pack.sources.map(\.kind) == [.note])
+        #expect(pack.blocks.contains { $0.text.localizedCaseInsensitiveContains("staged") })
+    }
+
+    @Test("wiki knowledge is returned as synthesis before raw evidence")
+    func wikiKnowledgeReturnedAsSynthesis() async throws {
+        let store = try await RecordingStore.inMemory()
+        try await store.upsertKnowledgeChunks(
+            sourceKind: .wikiPage,
+            sourceID: "/tmp/wiki/projects/atlas.md",
+            chunks: [
+                KnowledgeChunk(
+                    sourceKind: .wikiPage,
+                    sourceID: "/tmp/wiki/projects/atlas.md",
+                    ordinal: 0,
+                    title: "Atlas",
+                    text: "Atlas migration should be staged before launch.",
+                    embedding: EmbeddingVectorCodec.encode([0, 0, 1, 0]),
+                    embeddingModelID: "keyword-local-embedder",
+                    contentHash: "hash"
+                ),
+            ]
+        )
+
+        let semanticSearch = SemanticSearchService(store: store, embedder: KeywordEmbedder())
+        let pack = try await ContextPackBuilder(store: store, semanticSearch: semanticSearch)
+            .build(query: "Atlas migration", limit: 4)
+
+        #expect(pack.sources.map(\.kind) == [.wikiPage])
+        #expect(pack.blocks.map(\.kind) == [.synthesis])
+        #expect(pack.blocks.first?.text.contains("staged") == true)
+    }
+
+    @Test("indexer adds raw and repo files as searchable knowledge chunks")
+    func indexerAddsLocalSourceDocuments() async throws {
+        let store = try await RecordingStore.inMemory()
+        let root = LocalSourceRoot(
+            id: "repo-1",
+            path: "/tmp/AtlasRepo",
+            displayName: "AtlasRepo",
+            kind: .repository,
+            readOnly: true
+        )
+        let document = ScannedSourceDocument(
+            title: "Architecture",
+            text: "Atlas migration depends on staged rollout notes.",
+            provenance: SourceProvenance(
+                rootID: root.id,
+                rootPath: root.path,
+                relativePath: "docs/architecture.md",
+                absolutePath: "/tmp/AtlasRepo/docs/architecture.md",
+                lineStart: 1,
+                lineEnd: 1,
+                contentHash: "doc-hash",
+                documentKind: .markdown,
+                scannedAt: Date()
+            )
+        )
+
+        try await KnowledgeIndexer(store: store, embedder: KeywordEmbedder())
+            .index(sourceDocument: document, sourceKind: .repoFile)
+
+        let semanticSearch = SemanticSearchService(store: store, embedder: KeywordEmbedder())
+        let pack = try await ContextPackBuilder(store: store, semanticSearch: semanticSearch)
+            .build(query: "Atlas rollout", limit: 4)
+
+        #expect(pack.sources.map(\.kind) == [.repoFile])
+        #expect(pack.sources.first?.notePath == "/tmp/AtlasRepo/docs/architecture.md")
+        #expect(pack.blocks.contains { $0.text.contains("staged rollout") })
+    }
+
+    @Test("indexer adds approved wiki pages as synthesis chunks")
+    func indexerAddsWikiPages() async throws {
+        let store = try await RecordingStore.inMemory()
+        let page = WikiPage(
+            id: "projects/atlas",
+            title: "Atlas",
+            section: .projects,
+            fileURL: URL(fileURLWithPath: "/tmp/wiki/projects/atlas.md"),
+            body: "# Atlas\n\nAtlas migration should be staged before launch.",
+            updatedAt: Date()
+        )
+
+        try await KnowledgeIndexer(store: store, embedder: KeywordEmbedder()).index(wikiPage: page)
+
+        let semanticSearch = SemanticSearchService(store: store, embedder: KeywordEmbedder())
+        let pack = try await ContextPackBuilder(store: store, semanticSearch: semanticSearch)
+            .build(query: "Atlas launch", limit: 4)
+
+        #expect(pack.sources.map(\.kind) == [.wikiPage])
+        #expect(pack.blocks.map(\.kind) == [.synthesis])
+        #expect(pack.blocks.first?.text.contains("staged") == true)
     }
 
     @Test("search rejects mismatched vector dimensions")
@@ -108,12 +231,15 @@ private struct KeywordEmbedder: LocalTextEmbedder {
         texts.map { text in
             let lowercased = text.lowercased()
             if lowercased.contains("pricing") {
-                return EmbeddingVectorCodec.encode([1, 0, 0])
+                return EmbeddingVectorCodec.encode([1, 0, 0, 0])
             }
             if lowercased.contains("margin") || lowercased.contains("roadmap") {
-                return EmbeddingVectorCodec.encode([0, 1, 0])
+                return EmbeddingVectorCodec.encode([0, 1, 0, 0])
             }
-            return EmbeddingVectorCodec.encode([0, 0, 1])
+            if lowercased.contains("atlas") || lowercased.contains("neal") {
+                return EmbeddingVectorCodec.encode([0, 0, 1, 0])
+            }
+            return EmbeddingVectorCodec.encode([0, 0, 0, 1])
         }
     }
 }

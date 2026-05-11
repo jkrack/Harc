@@ -179,27 +179,37 @@ public enum ModelCatalog {
         manifestVerified: true
     )
 
-    // NOTE — `mlx-community/bge-small-en-v1.5` does NOT exist on HuggingFace
-    // as of 2026-04-23; attempting to download it returns HTTP 401. Keep the
-    // descriptor in the catalog so semantic-search preferences/storage have a
-    // stable planned singleton ID, but Settings hides unverified embedders
-    // until the feature ships with a real repo id and file list.
+    // Verified 2026-05-10 against HuggingFace tree view. This is the MLX
+    // 8-bit conversion of BAAI/bge-small-en-v1.5, a 384-dimensional English
+    // retrieval embedder small enough to keep resident for note/search work.
     private static let bgeSmallEnV15 = ModelDescriptor(
         id: "bge-small-en-v1.5",
         displayName: "English text embedder",
-        summary: "Powers Related-meaning search. Not yet available — pending an MLX-ported embedder.",
+        summary: "Powers related-meaning search for notes and recordings. 35 MB on disk; 8-bit MLX.",
         task: .textEmbedder,
         tier: .singleton,
-        repoID: "mlx-community/bge-small-en-v1.5",
-        revision: "main",
-        files: mlxEmbedderFiles(
-            base: "https://huggingface.co/mlx-community/bge-small-en-v1.5/resolve/main",
-            approximateBytes: 130_000_000
+        repoID: "mlx-community/bge-small-en-v1.5-8bit",
+        revision: "17d007e0406e0e1bb23c046adbbeb01b681824d9",
+        files: verifiedRepoFiles(
+            repo: "mlx-community/bge-small-en-v1.5-8bit",
+            revision: "17d007e0406e0e1bb23c046adbbeb01b681824d9",
+            entries: [
+                ("config.json", 795),
+                ("config_sentence_transformers.json", 124),
+                ("model.safetensors", 35_540_803),
+                ("model.safetensors.index.json", 26_000),
+                ("modules.json", 349),
+                ("sentence_bert_config.json", 52),
+                ("special_tokens_map.json", 695),
+                ("tokenizer.json", 711_396),
+                ("tokenizer_config.json", 1_272),
+                ("vocab.txt", 231_508),
+            ]
         ),
         minRAMGB: 8,
         recommendedRAMGB: 8,
         contextTokens: 512,
-        manifestVerified: false
+        manifestVerified: true
     )
 
     // ─── File-list helpers ────────────────────────────────────────────────
