@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         if let button = item.button {
             button.target = self
-            button.action = #selector(toggleStatusPopover(_:))
+            button.action = #selector(handleStatusItemClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
@@ -96,7 +96,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         updateStatusIcon()
     }
 
-    @objc private func toggleStatusPopover(_ sender: Any?) {
+    @objc private func handleStatusItemClick(_ sender: Any?) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            toggleStatusPopover(sender)
+            return
+        }
+
+        statusPopover?.performClose(sender)
+        openLibrary()
+    }
+
+    private func toggleStatusPopover(_ sender: Any?) {
         guard let button = statusItem?.button, let statusPopover else { return }
         if statusPopover.isShown {
             statusPopover.performClose(sender)
@@ -110,10 +120,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         guard let button = statusItem?.button else { return }
         let isRecording = bridge.iconState.isRecording
         let pasteFlash = bridge.iconState.pasteFlash
-        button.image = MenuBarBarsIcon.image(for: isRecording ? [0.2, 0.55, 0.9, 0.55, 0.2] : [])
+        button.image = menuBarHummingbirdImage()
         button.imagePosition = .imageOnly
         button.contentTintColor = statusIconTint(isRecording: isRecording, pasteFlash: pasteFlash)
         button.toolTip = isRecording ? "Harc is recording" : "Harc"
+    }
+
+    private func menuBarHummingbirdImage() -> NSImage {
+        if let image = NSImage(named: "MenuBarIcon") {
+            image.isTemplate = true
+            return image
+        }
+
+        let fallback = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Harc") ?? NSImage()
+        fallback.isTemplate = true
+        return fallback
     }
 
     private func statusIconTint(isRecording: Bool, pasteFlash: PasteFlash?) -> NSColor? {

@@ -125,6 +125,14 @@ public actor NoteStore {
         _ = try await update(note)
     }
 
+    public func setPinned(id: String, pinned: Bool) async throws {
+        guard var note = try await fetchAll(includeArchived: true).first(where: { $0.id == id }) else {
+            throw StoreError.notFound
+        }
+        note.pinned = pinned
+        _ = try await update(note)
+    }
+
     private func ensureRoot() throws {
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
     }
