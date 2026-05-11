@@ -1,0 +1,18 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild editor-entry.js --bundle --format=iife --outfile=editor.bundle.js",
+    "validate": "node validate-fixture.mjs"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.2",
+    "@codemirror/commands": "^6.10.0",
+    "@codemirror/lang-markdown": "^6.3.4",
+    "@codemirror/language": "^6.11.3",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.8",
+    "@lezer/highlight": "^1.2.3",
+    "esbuild": "^0.27.0"
+  }
+}

@@ -198,6 +198,26 @@ final class SummarizerServiceTests: XCTestCase {
             "v1 deliberately passes no system prompt — the template carries the instructions.")
     }
 
+    func test_answer_usesConversationPromptAndSystemInstruction() async throws {
+        let (loader, containers) = spyLoader(id: "m", response: "Neal wants staged migration.")
+        let service = SummarizerService(loader: loader)
+
+        let answer = try await service.answer(
+            question: "What does Neal think about Atlas?",
+            contextMarkdown: "# Context: Atlas\n\nNeal wants staged migration.",
+            modelID: "m",
+            modelDirectory: URL(fileURLWithPath: "/tmp")
+        )
+
+        XCTAssertEqual(answer, "Neal wants staged migration.")
+        let produced = await containers()
+        XCTAssertEqual(produced.count, 1)
+        XCTAssertEqual(produced[0].lastSystemPrompt, ConversationPrompt.systemPrompt)
+        XCTAssertEqual(produced[0].lastMaxTokens, ConversationPrompt.maxOutputTokens)
+        XCTAssertTrue(produced[0].lastPromptBody?.contains("What does Neal think about Atlas?") ?? false)
+        XCTAssertTrue(produced[0].lastPromptBody?.contains("Neal wants staged migration.") ?? false)
+    }
+
     func test_handleMemoryPressure_callsUnload() async {
         let (loader, _) = spyLoader(id: "m")
         let service = SummarizerService(loader: loader)

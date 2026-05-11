@@ -18,6 +18,8 @@ struct MigrationTests {
             #expect(tables.contains("recordings_fts"))
             #expect(tables.contains("people"))
             #expect(tables.contains("transcript_chunks"))
+            #expect(tables.contains("knowledge_chunks"))
+            #expect(tables.contains("knowledge_vec1"))
         }
     }
 
@@ -251,6 +253,24 @@ struct MigrationTests {
                 .compactMap { $0["name"] as String? }
             #expect(indexes.contains("idx_transcript_chunks_recording"))
             #expect(indexes.contains("idx_transcript_chunks_model"))
+        }
+    }
+
+    @Test("v12 adds unified knowledge chunk and vec1 tables")
+    func v12KnowledgeVec1Schema() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.read { db in
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(knowledge_chunks)")
+                .compactMap { $0["name"] as String? }
+            #expect(columns.contains("source_kind"))
+            #expect(columns.contains("source_id"))
+            #expect(columns.contains("embedding"))
+            #expect(columns.contains("embedding_model_id"))
+
+            let vecInfo = try String.fetchOne(db, sql: "SELECT vec1_info()")
+            #expect(vecInfo?.contains("version") == true)
         }
     }
 

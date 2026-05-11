@@ -4,6 +4,7 @@ import SwiftUI
 import UserNotifications
 import HarcAudio
 import HarcClient
+import HarcContext
 import HarcExport
 import HarcMeetingDetect
 import HarcModels
@@ -24,9 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     let state = RecordingState()
     let prefs = HarcPreferences.shared
 
-    // MARK: - SwiftUI MenuBarExtra bridge
+    // MARK: - Menu bar bridge
     let bridge: HarcAppBridge
     private let trayState = PostStopTrayState()
+    private var statusItem: NSStatusItem?
+    private var statusPopover: NSPopover?
 
     override init() {
         bridge = HarcAppBridge(
@@ -36,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         super.init()
         bridge.onStartStop = { [weak self] in
             Task { await self?.toggleRecording() }
+        }
+        bridge.onStartRecordingForNote = { [weak self] noteID in
+            Task { await self?.recordFromNote(noteID: noteID) }
         }
         bridge.onOpenWindow = { [weak self] in
             self?.openLibrary()
@@ -66,6 +72,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // Paste into frontmost; ignores paste errors (accessibility not granted, etc.)
         try? FrontmostAppPaster.copyAndPaste(text)
     }
+
+    private func installStatusItem() {
+        guard statusItem == nil else { return }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = item
+
+        if let button = item.button {
+            button.target = self
+            button.action = #selector(toggleStatusPopover(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 280, height: 260)
+        popover.contentViewController = NSHostingController(
+            rootView: StatusPopoverRoot(bridge: bridge)
+                .environmentObject(prefs)
+        )
+        statusPopover = popover
+        updateStatusIcon()
+    }
+
+    @objc private func toggleStatusPopover(_ sender: Any?) {
+        guard let button = statusItem?.button, let statusPopover else { return }
+        if statusPopover.isShown {
+            statusPopover.performClose(sender)
+        } else {
+            statusPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            statusPopover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    private func updateStatusIcon() {
+        guard let button = statusItem?.button else { return }
+        let isRecording = bridge.iconState.isRecording
+        let pasteFlash = bridge.iconState.pasteFlash
+        button.image = MenuBarBarsIcon.image(for: isRecording ? [0.2, 0.55, 0.9, 0.55, 0.2] : [])
+        button.imagePosition = .imageOnly
+        button.contentTintColor = statusIconTint(isRecording: isRecording, pasteFlash: pasteFlash)
+        button.toolTip = isRecording ? "Harc is recording" : "Harc"
+    }
+
+    private func statusIconTint(isRecording: Bool, pasteFlash: PasteFlash?) -> NSColor? {
+        if let pasteFlash {
+            switch pasteFlash {
+            case .success: return .systemGreen
+            case .skipped: return .systemYellow
+            case .failure: return .systemRed
+            }
+        }
+        return isRecording ? .systemRed : nil
+    }
+
     private let autoStop = AutoStopController()
     private var autoStopPhaseObserver: AnyCancellable?
     private var autoStopConfigObserver: AnyCancellable?
@@ -73,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private let modelManager = ModelManager()
     lazy var modelStore = ModelManagerStore(manager: modelManager)
     private var summarizerService: SummarizerService?
+    private var semanticSearchService: SemanticSearchService?
+    private var knowledgeIndexer: KnowledgeIndexer?
     private var summarizationQueue: SummarizationQueue?
     private var summarizationQueueStore: SummarizationQueueStore?
     private var memoryObservation: SummarizerService.MemoryPressureObservation?
@@ -87,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
     private var pendingSkipPaste = false
+    private var pendingRecordingNoteID: String?
     private var frontmostPoller: Timer?
     private var hasShownMicOnlyNotice = false
 
@@ -104,6 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private static let minWordsToSummarize = 10
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installStatusItem()
+
         Task { [weak self] in
             await self?.bootstrapStore()
         }
@@ -170,7 +236,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         state.$isRecording
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .assign(to: \.isRecording, on: bridge.iconState)
+            .sink { [weak self] isRecording in
+                self?.bridge.iconState.isRecording = isRecording
+                self?.updateStatusIcon()
+            }
+            .store(in: &cancellables)
+
+        bridge.iconState.$pasteFlash
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateStatusIcon()
+            }
             .store(in: &cancellables)
 
         startFrontmostPolling()
@@ -230,6 +307,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             await stopRecording(autoStopReason: nil)
         } else {
             await startRecording()
+        }
+    }
+
+    private func recordFromNote(noteID: String) async {
+        if state.isRecording {
+            await stopRecording(autoStopReason: nil)
+            return
+        }
+        pendingRecordingNoteID = noteID
+        await startRecording()
+        if !state.isRecording {
+            pendingRecordingNoteID = nil
         }
     }
 
@@ -418,6 +507,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             var savedID: Int64? = nil
             savedID = await persistStoppedRecording(rec)
+            let recordingWasStartedFromNote = pendingRecordingNoteID != nil
+            await linkStoppedRecordingToPendingNote(
+                recording: rec,
+                savedID: savedID,
+                transcriptText: transcriptText
+            )
             if let transcriptText, let store = self.store {
                 Task.detached { [store] in
                     let entities = TitleSuggester.extractEntities(from: transcriptText)
@@ -437,6 +532,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // for the post-stop UX window.
             if let id = savedID, let store = self.store {
                 postProcessingState.begin(recordingID: id)
+                if let knowledgeIndexer {
+                    Task.detached { [knowledgeIndexer] in
+                        try? await knowledgeIndexer.index(recordingID: id)
+                    }
+                }
                 let embeddings = result.speakerEmbeddings
                 let diarizeErr = result.diarizationError
                 Task.detached { [store, postProcessingState = self.postProcessingState] in
@@ -471,7 +571,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     }
                 }
             }
-            runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
+            if !recordingWasStartedFromNote {
+                runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
+            }
             // Show the post-stop tray in the MenuBarExtra panel so the user can
             // copy or paste the transcript. Only fires when there is actual
             // transcript text — avoids an empty/useless tray on silent recordings.
@@ -754,6 +856,36 @@ private func openDetail(for recording: Recording) {
         return (try? await store.fetchByWavPath(recording.wavPath))?.id
     }
 
+    private func linkStoppedRecordingToPendingNote(
+        recording: Recording,
+        savedID: Int64?,
+        transcriptText: String?
+    ) async {
+        guard let noteID = pendingRecordingNoteID else { return }
+        pendingRecordingNoteID = nil
+        guard let savedID else { return }
+
+        var linkedRecording = recording
+        linkedRecording.id = savedID
+        do {
+            let noteStore = NoteStore(rootURL: prefs.notesURL)
+            _ = try await noteStore.link(
+                recording: linkedRecording,
+                toNoteID: noteID,
+                transcriptText: transcriptText
+            )
+            if let knowledgeIndexer,
+               let linkedNote = try? await noteStore.fetchAll(includeArchived: true).first(where: { $0.id == noteID }) {
+                try? await knowledgeIndexer.index(note: linkedNote)
+            }
+            NotificationCenter.default.post(name: .harcNotesDidChange, object: nil)
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc: failed to link recording \(savedID) to note \(noteID): \(error.localizedDescription)\n".utf8
+            ))
+        }
+    }
+
     private func presentRecordingPersistenceFailure(recording: Recording, errorDescription: String) {
         let alert = NSAlert()
         alert.messageText = "Recording saved, but not added to Library"
@@ -927,13 +1059,23 @@ private func openDetail(for recording: Recording) {
             presentLibraryUnavailable("Summarization services have not finished starting yet. Try again in a moment.")
             return
         }
-        let libraryVM = LibraryViewModel(store: store)
+        guard let summarizerService else {
+            presentLibraryUnavailable("The local model service has not finished starting yet. Try again in a moment.")
+            return
+        }
+        if semanticSearchService == nil {
+            configureSemanticServicesIfAvailable(store: store)
+        }
+        let semanticSearch = semanticSearchService ?? makeSemanticSearchServiceIfAvailable(store: store)
+        let libraryVM = LibraryViewModel(store: store, semanticSearch: semanticSearch)
         let controller = HarcWindowController(
             libraryVM: libraryVM,
             recordingState: state,
             bridge: bridge,
             store: store,
             reIDService: reIDService,
+            summarizerService: summarizerService,
+            knowledgeIndexer: knowledgeIndexer,
             prefs: prefs,
             postProcessingState: postProcessingState,
             queueStore: queueStore,
@@ -1013,6 +1155,8 @@ private func openDetail(for recording: Recording) {
             // for an already-installed model and silently skip. Second
             // call is idempotent (re-reads disk markers).
             await modelManager.bootstrap()
+            configureSemanticServicesIfAvailable(store: store)
+            backfillSemanticIndexIfAvailable(store: store)
             if prefs.autoSummarizeEnabled,
                shouldSummarizeGivenPower(),
                await modelManager.state(of: prefs.activeSummarizerID).isInstalled {
@@ -1041,6 +1185,54 @@ private func openDetail(for recording: Recording) {
         guard let store = store else { return }
         let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
         _ = try? await ingestor.ingestAll()
+    }
+
+    private func makeSemanticSearchServiceIfAvailable(store: RecordingStore) -> SemanticSearchService? {
+        let embedderID = prefs.activeEmbedderID
+        guard modelStore.state(of: embedderID).isInstalled else { return nil }
+        let embedder = MLXTextEmbedder(
+            modelID: embedderID,
+            modelDirectory: ModelStorage.defaultBase()
+                .appendingPathComponent(embedderID, isDirectory: true)
+        )
+        return SemanticSearchService(store: store, embedder: embedder)
+    }
+
+    private func configureSemanticServicesIfAvailable(store: RecordingStore) {
+        let embedderID = prefs.activeEmbedderID
+        guard modelStore.state(of: embedderID).isInstalled else {
+            semanticSearchService = nil
+            knowledgeIndexer = nil
+            return
+        }
+        let embedder = MLXTextEmbedder(
+            modelID: embedderID,
+            modelDirectory: ModelStorage.defaultBase()
+                .appendingPathComponent(embedderID, isDirectory: true)
+        )
+        semanticSearchService = SemanticSearchService(store: store, embedder: embedder)
+        knowledgeIndexer = KnowledgeIndexer(store: store, embedder: embedder)
+    }
+
+    private func backfillSemanticIndexIfAvailable(store: RecordingStore) {
+        guard let knowledgeIndexer else { return }
+        let noteURL = prefs.notesURL
+        Task.detached { [store, knowledgeIndexer, noteURL] in
+            let recordings = (try? await store.fetchAll()) ?? []
+            for recording in recordings {
+                guard let id = recording.id,
+                      let transcript = recording.transcriptText,
+                      !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else { continue }
+                try? await knowledgeIndexer.index(recordingID: id)
+            }
+
+            let noteStore = NoteStore(rootURL: noteURL)
+            let notes = (try? await noteStore.fetchAll(includeArchived: false)) ?? []
+            for note in notes {
+                try? await knowledgeIndexer.index(note: note)
+            }
+        }
     }
 
     // MARK: - Summarization
@@ -1266,5 +1458,24 @@ private func openDetail(for recording: Recording) {
     ) {
         // Show the banner even when the app is frontmost.
         completionHandler([.banner, .list])
+    }
+}
+
+private struct StatusPopoverRoot: View {
+    @ObservedObject var bridge: HarcAppBridge
+    @EnvironmentObject private var prefs: HarcPreferences
+
+    var body: some View {
+        MenuBarPanelView(
+            recordingState: bridge.recordingState,
+            trayState: bridge.trayState,
+            amplitudeHistory: bridge.amplitudeHistory,
+            onStartStop: bridge.onStartStop,
+            onOpenWindow: bridge.onOpenWindow,
+            onCopy: bridge.onCopyLastTranscript,
+            onPasteIntoFrontmost: bridge.onPasteIntoFrontmost,
+            frontmostAppName: bridge.frontmostAppName
+        )
+        .preferredColorScheme(prefs.appearance.colorScheme)
     }
 }

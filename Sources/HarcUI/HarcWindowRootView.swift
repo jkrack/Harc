@@ -3,6 +3,9 @@ import HarcStore
 import HarcExport
 import HarcClient
 import HarcCore
+import HarcContext
+import HarcModels
+import HarcSummarize
 import AppKit
 
 // MARK: - Notifications
@@ -11,6 +14,9 @@ public extension NSNotification.Name {
     /// Posted by AppDelegate when the user invokes "open library + focus search".
     /// `HarcWindowRootView` observes this to activate its search field.
     static let harcLibraryFocusSearch = NSNotification.Name("HarcLibraryFocusSearch")
+    /// Posted when notes are changed outside the library window, for example
+    /// when AppDelegate appends a stopped recording transcript to an active note.
+    static let harcNotesDidChange = NSNotification.Name("HarcNotesDidChange")
 }
 
 // MARK: - LibrarySelection
@@ -20,8 +26,60 @@ public extension NSNotification.Name {
 /// person-detail pane; for now selecting a Person leaves the detail pane
 /// in its empty state.
 public enum LibrarySelection: Hashable {
+    case note(id: String)
     case recording(wavPath: String)
     case person(id: Int64)
+    case project(name: String)
+}
+
+private enum HarcLibraryMode: String, CaseIterable, Identifiable {
+    case library = "Library"
+    case wiki = "Wiki"
+    case review = "Review"
+
+    var id: String { rawValue }
+}
+
+private struct ResolvedWikilink: Identifiable {
+    enum Target {
+        case note(id: String)
+        case recording(wavPath: String)
+        case unresolved
+    }
+
+    let id: String
+    let title: String
+    let target: Target
+
+    var isResolved: Bool {
+        if case .unresolved = target { return false }
+        return true
+    }
+
+    var iconName: String {
+        switch target {
+        case .note: return "note.text"
+        case .recording: return "waveform"
+        case .unresolved: return "questionmark.circle"
+        }
+    }
+
+    var helpText: String {
+        switch target {
+        case .note: return "Open linked note"
+        case .recording: return "Open linked recording"
+        case .unresolved: return "No matching note or recording"
+        }
+    }
+}
+
+private struct PersonMention {
+    let name: String
+    let isBracketed: Bool
+}
+
+private struct ProjectMention {
+    let name: String
 }
 
 // MARK: - HarcWindowRootView
@@ -40,6 +98,8 @@ public struct HarcWindowRootView: View {
 
     let store: RecordingStore
     let reIDService: SpeakerReIDService
+    let summarizerService: SummarizerService
+    let knowledgeIndexer: KnowledgeIndexer?
     let onEdit: (Recording) -> Void
     let onExport: (Recording) -> Void
     let onDelete: (Recording) -> Void
@@ -48,6 +108,15 @@ public struct HarcWindowRootView: View {
 
     /// Primary selection — `.recording(wavPath:)` for recordings, `.person(id:)` for People.
     @State private var selection: LibrarySelection?
+    @State private var mode: HarcLibraryMode = .library
+    @State private var wikiSection: WikiSection = .overview
+    @State private var selectedWikiPageID: String?
+    @State private var wikiPages: [WikiPage] = []
+    @State private var wikiLoadError: String?
+    @State private var reviewProposals: [WikiReviewProposal] = []
+    @State private var selectedReviewProposalID: String?
+    @State private var reviewLoadError: String?
+    @State private var sourceScanStatus: String?
     @State private var inspectorOpen: Bool = false
     @State private var showingAddPerson = false
 
@@ -57,6 +126,7 @@ public struct HarcWindowRootView: View {
     /// Set when the user picks Delete from a sidebar context menu — drives
     /// the destructive confirmation alert.
     @State private var pendingDeleteRecording: Recording? = nil
+    @State private var pendingDeleteNote: Note? = nil
     /// When the .json sidecar is available, we render structured turns
     /// (timestamp + speaker + text) instead of the flat .txt blob.
     @State private var transcriptSegments: [TranscriptDisplaySegment] = []
@@ -77,11 +147,33 @@ public struct HarcWindowRootView: View {
     @State private var allPeople: [Person] = []
     @State private var contextCopyStatus: String?
     @State private var contextCopyInFlight = false
+    @State private var conversationAnswer: String?
+    @State private var conversationStatus: String?
+    @State private var conversationInFlight = false
+    @State private var notes: [Note] = []
+    @State private var noteSearchResults: [Note] = []
+    @State private var notesError: String?
+    @State private var noteTitleDraft: String = ""
+    @State private var noteBodyDraft: String = ""
+    @State private var noteDirty: Bool = false
+    @State private var noteSaving: Bool = false
+    @State private var noteSavedAt: Date?
+    @State private var noteAutosaveTask: Task<Void, Never>?
+    @State private var noteSaveError: String?
+    @State private var noteEditorMode: NoteMarkdownEditorMode = .live
+    @State private var noteMentionPeople: [Person] = []
+    @State private var linkedNotes: [Note] = []
+    @State private var linkedNotesError: String?
+    @State private var notesExpanded = true
+    @State private var projectsExpanded = true
+    @State private var peopleExpanded = true
+    @State private var recordingsExpanded = true
 
     // MARK: Environment
 
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var postProcessing: RecordingPostProcessingState
+    @EnvironmentObject private var modelStore: ModelManagerStore
 
     // MARK: Init
 
@@ -92,6 +184,8 @@ public struct HarcWindowRootView: View {
         peopleVM: PeopleViewModel,
         store: RecordingStore,
         reIDService: SpeakerReIDService,
+        summarizerService: SummarizerService,
+        knowledgeIndexer: KnowledgeIndexer? = nil,
         onEdit: @escaping (Recording) -> Void,
         onExport: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void
@@ -102,12 +196,27 @@ public struct HarcWindowRootView: View {
         self.peopleVM = peopleVM
         self.store = store
         self.reIDService = reIDService
+        self.summarizerService = summarizerService
+        self.knowledgeIndexer = knowledgeIndexer
         self.onEdit = onEdit
         self.onExport = onExport
         self.onDelete = onDelete
     }
 
     // MARK: Body
+
+    private var modeSwitcher: some View {
+        Picker("Mode", selection: $mode) {
+            ForEach(HarcLibraryMode.allCases) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .help("Switch between Library, Wiki, and Review")
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -116,12 +225,46 @@ public struct HarcWindowRootView: View {
             libraryFooter
         }
         .frame(minWidth: 900, minHeight: 600)
-        .onAppear { libraryVM.start(); peopleVM.start() }
-        .onDisappear { libraryVM.stop(); peopleVM.stop() }
-        .onChange(of: selection) { _, _ in
+        .onAppear {
+            libraryVM.start()
+            peopleVM.start()
+            Task {
+                await loadNotes()
+                await loadNoteMentionPeople()
+                await loadWikiPages()
+                await loadReviewProposals()
+            }
+        }
+        .onDisappear {
+            noteAutosaveTask?.cancel()
+            libraryVM.stop()
+            peopleVM.stop()
+        }
+        .onChange(of: selection) { oldSelection, _ in
+            flushOutgoingNoteIfNeeded(oldSelection)
             loadTranscript()
+            loadSelectedNoteDraft()
             Task { await loadEnvelope() }
             Task { await loadResolvedLabels() }
+        }
+        .onChange(of: prefs.notesPath) { _, _ in
+            Task { await loadNotes() }
+        }
+        .onChange(of: mode) { _, newMode in
+            switch newMode {
+            case .library:
+                break
+            case .wiki:
+                Task { await loadWikiPages() }
+            case .review:
+                Task { await loadReviewProposals() }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .harcNotesDidChange)) { _ in
+            Task { await loadNotes(resetDraft: !noteDirty) }
+        }
+        .onChange(of: libraryVM.searchText) { _, _ in
+            Task { await searchNotes() }
         }
         .alert(
             "Delete recording?",
@@ -147,10 +290,26 @@ public struct HarcWindowRootView: View {
         } message: { rec in
             Text("\u{201C}\(rec.displayTitle)\u{201D} will be removed from the library and the audio + transcript files will be deleted from disk.")
         }
+        .alert(
+            "Delete note?",
+            isPresented: Binding(
+                get: { pendingDeleteNote != nil },
+                set: { if !$0 { pendingDeleteNote = nil } }
+            ),
+            presenting: pendingDeleteNote
+        ) { note in
+            Button("Delete", role: .destructive) {
+                archiveNote(note)
+            }
+            Button("Cancel", role: .cancel) { pendingDeleteNote = nil }
+        } message: { note in
+            Text("\u{201C}\(note.title)\u{201D} will be removed from the Notes list. The Markdown file is archived, not permanently deleted.")
+        }
         .sheet(isPresented: $showingAddPerson) {
             AddPersonSheet { name in
                 Task {
                     _ = try? await store.createPerson(displayName: name)
+                    await loadNoteMentionPeople()
                     showingAddPerson = false
                 }
             }
@@ -168,7 +327,7 @@ public struct HarcWindowRootView: View {
         .searchable(
             text: $libraryVM.searchText,
             placement: .sidebar,
-            prompt: "Search transcripts"
+            prompt: "Search or ask notes and recordings"
         )
         .toolbar {
             // Leading: compound recording pill — visible only while recording.
@@ -299,19 +458,78 @@ public struct HarcWindowRootView: View {
     @ViewBuilder
     private var sidebar: some View {
         VStack(spacing: 0) {
-            calendarHeader
+            modeSwitcher
             Divider()
-            Group {
-                if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    groupedList
-                } else {
-                    searchResultsList
+            switch mode {
+            case .library:
+                calendarHeader
+                Divider()
+                Group {
+                    if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        groupedList
+                    } else {
+                        searchResultsList
+                    }
+                }
+                .listStyle(.sidebar)
+            case .wiki:
+                wikiSidebar
+            case .review:
+                reviewSidebar
+            }
+        }
+        .navigationTitle(mode.rawValue)
+        .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
+    }
+
+    private var wikiSidebar: some View {
+        List(selection: $wikiSection) {
+            Section("Wiki") {
+                ForEach(WikiSection.allCases) { section in
+                    Label(section.title, systemImage: section.systemImage)
+                        .tag(section)
                 }
             }
-            .listStyle(.sidebar)
+
+            if !wikiPages.filter({ $0.section == wikiSection }).isEmpty {
+                Section("Pages") {
+                    ForEach(wikiPages.filter { $0.section == wikiSection }) { page in
+                        Button {
+                            selectedWikiPageID = page.id
+                        } label: {
+                            Label(page.title, systemImage: "doc.text")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Section("Sources") {
+                if prefs.sourceRoots.isEmpty {
+                    Text("No source folders connected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(prefs.sourceRoots) { root in
+                        Label(root.displayName, systemImage: root.kind == .repository ? "chevron.left.forwardslash.chevron.right" : "folder")
+                            .help(root.path)
+                    }
+                }
+            }
         }
-        .navigationTitle("Library")
-        .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
+        .listStyle(.sidebar)
+    }
+
+    private var reviewSidebar: some View {
+        List(selection: $selectedReviewProposalID) {
+            Section("Queue") {
+                reviewBucket("Pending", statuses: [.pending, .edited])
+                reviewBucket("Approved", statuses: [.approved])
+                reviewBucket("Dismissed", statuses: [.dismissed, .failed])
+            }
+        }
+        .listStyle(.sidebar)
     }
 
     // MARK: - Calendar header
@@ -322,6 +540,7 @@ public struct HarcWindowRootView: View {
                 month: libraryVM.calendarMonth,
                 selectedDay: selectedFilterDay,
                 daysWithRecordings: libraryVM.daysWithRecordings,
+                daysWithNotes: daysWithNotes(inMonthContaining: libraryVM.calendarMonth),
                 onPrevMonth: { libraryVM.advanceMonth(by: -1) },
                 onNextMonth: { libraryVM.advanceMonth(by: 1) },
                 onSelectDay: { day in
@@ -358,17 +577,69 @@ public struct HarcWindowRootView: View {
         return nil
     }
 
+    private var filteredNotes: [Note] {
+        guard let selectedFilterDay else { return notes }
+        return notes.filter { Calendar.current.isDate($0.createdAt, inSameDayAs: selectedFilterDay) }
+    }
+
+    private func daysWithNotes(inMonthContaining month: Date) -> Set<Date> {
+        NoteCalendarIndex.daysWithNotes(notes, inMonthContaining: month)
+    }
+
     private func formatFilterDay(_ day: Date) -> String {
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
         return fmt.string(from: day)
     }
 
-    // Grouped recordings list: People first, then pinned, then by date-bucket.
+    // Grouped library list: collapsible top-level areas keep notes, people,
+    // and recordings from competing at one flat navigation level.
     private var groupedList: some View {
         List(selection: $selection) {
-            // People section — always first
-            Section("People") {
+            DisclosureGroup(isExpanded: $notesExpanded) {
+                Button {
+                    createBlankNote()
+                } label: {
+                    Label("New Note", systemImage: "square.and.pencil")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.plain)
+
+                if filteredNotes.isEmpty {
+                    Text(notesError ?? "No notes yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Self.noteBuckets(from: filteredNotes), id: \.label) { bucket in
+                        Text(bucket.label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        ForEach(bucket.notes) { note in
+                            noteLabel(note)
+                        }
+                    }
+                }
+            } label: {
+                Label("Notes", systemImage: "note.text")
+            }
+
+            DisclosureGroup(isExpanded: $projectsExpanded) {
+                let projects = inferredProjectNames()
+                if projects.isEmpty {
+                    Text("No projects yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(projects, id: \.self) { project in
+                        projectLabel(project)
+                    }
+                }
+            } label: {
+                Label("Projects", systemImage: "folder")
+            }
+
+            DisclosureGroup(isExpanded: $peopleExpanded) {
                 ForEach(peopleVM.people) { item in
                     HStack(spacing: 8) {
                         PersonAvatar(displayName: item.person.displayName, size: 22)
@@ -401,27 +672,35 @@ public struct HarcWindowRootView: View {
                         .font(.subheadline)
                 }
                 .buttonStyle(.plain)
+            } label: {
+                Label("People", systemImage: "person.2")
             }
 
-            // Pinned section
-            let pinned = libraryVM.recordings.filter(\.pinned)
-            if !pinned.isEmpty {
-                Section("Pinned") {
+            DisclosureGroup(isExpanded: $recordingsExpanded) {
+                let pinned = libraryVM.recordings.filter(\.pinned)
+                if !pinned.isEmpty {
+                    Text("Pinned")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
                     ForEach(pinned) { rec in
                         recordingLabel(rec)
                     }
                 }
-            }
 
-            // Date-bucketed sections (unpinned only)
-            let unpinned = libraryVM.recordings.filter { !$0.pinned }
-            let buckets = Self.dateBuckets(from: unpinned)
-            ForEach(buckets, id: \.label) { bucket in
-                Section(bucket.label) {
+                let unpinned = libraryVM.recordings.filter { !$0.pinned }
+                let buckets = Self.dateBuckets(from: unpinned)
+                ForEach(buckets, id: \.label) { bucket in
+                    Text(bucket.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
                     ForEach(bucket.recordings) { rec in
                         recordingLabel(rec)
                     }
                 }
+            } label: {
+                Label("Recordings", systemImage: "waveform")
             }
         }
     }
@@ -429,7 +708,7 @@ public struct HarcWindowRootView: View {
     // Search-results list: uses TranscriptHitRow for snippet highlighting.
     @ViewBuilder
     private var searchResultsList: some View {
-        if libraryVM.hits.isEmpty {
+        if libraryVM.hits.isEmpty && noteSearchResults.isEmpty {
             List {
                 ContentUnavailableView(
                     "No Results",
@@ -440,12 +719,23 @@ public struct HarcWindowRootView: View {
         } else {
             List(selection: $selection) {
                 contextSearchHeader
-                ForEach(libraryVM.hits) { hit in
-                    TranscriptHitRow(hit: hit) {
-                        onEdit(hit.recording)
+                if !noteSearchResults.isEmpty {
+                    Section("Notes") {
+                        ForEach(noteSearchResults) { note in
+                            noteLabel(note)
+                        }
                     }
-                    .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
-                    .contextMenu { contextMenu(for: hit.recording) }
+                }
+                if !libraryVM.hits.isEmpty {
+                    Section("Recordings") {
+                        ForEach(libraryVM.hits) { hit in
+                            TranscriptHitRow(hit: hit) {
+                                onEdit(hit.recording)
+                            }
+                            .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
+                            .contextMenu { contextMenu(for: hit.recording) }
+                        }
+                    }
                 }
             }
         }
@@ -475,11 +765,35 @@ public struct HarcWindowRootView: View {
                     )
                 }
                 .disabled(contextCopyInFlight)
+
+                Button {
+                    answerSearchContext()
+                } label: {
+                    Label(
+                        conversationInFlight ? "Answering" : "Ask",
+                        systemImage: conversationInFlight ? "hourglass" : "bubble.left.and.text.bubble.right"
+                    )
+                }
+                .disabled(conversationInFlight)
             }
             if let contextCopyStatus {
                 Text(contextCopyStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if let conversationStatus {
+                Text(conversationStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let conversationAnswer {
+                Text(conversationAnswer)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
             }
         }
         .padding(.vertical, 8)
@@ -508,6 +822,62 @@ public struct HarcWindowRootView: View {
         .contextMenu { contextMenu(for: rec) }
     }
 
+    private func noteLabel(_ note: Note) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.title)
+                    .font(.body)
+                    .lineLimit(1)
+                if !note.preview.isEmpty {
+                    Text(note.preview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        } icon: {
+            Image(systemName: note.pinned ? "pin.fill" : "note.text")
+                .foregroundStyle(note.pinned ? Color.purple : Color.accentColor)
+        }
+        .tag(LibrarySelection.note(id: note.id))
+        .contextMenu {
+            Button("Open in Harc") { selection = .note(id: note.id) }
+            Button("Open Markdown File") { NSWorkspace.shared.open(note.fileURL) }
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([note.fileURL])
+            }
+            Divider()
+            Button("Delete Note", role: .destructive) {
+                pendingDeleteNote = note
+            }
+        }
+    }
+
+    private func projectLabel(_ project: String) -> some View {
+        let counts = projectCounts(for: project)
+        return Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(project)
+                    .font(.body)
+                    .lineLimit(1)
+                Text(projectSubtitle(noteCount: counts.notes, recordingCount: counts.recordings))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        } icon: {
+            Image(systemName: "folder")
+                .foregroundStyle(Color.accentColor)
+        }
+        .tag(LibrarySelection.project(name: project))
+    }
+
+    private func projectSubtitle(noteCount: Int, recordingCount: Int) -> String {
+        let noteLabel = "\(noteCount) note\(noteCount == 1 ? "" : "s")"
+        let recordingLabel = "\(recordingCount) recording\(recordingCount == 1 ? "" : "s")"
+        return "\(noteLabel) · \(recordingLabel)"
+    }
+
     @ViewBuilder
     private func contextMenu(for rec: Recording) -> some View {
         Button(rec.pinned ? "Unpin" : "Pin") {
@@ -531,7 +901,29 @@ public struct HarcWindowRootView: View {
 
     @ViewBuilder
     private var detail: some View {
+        switch mode {
+        case .library:
+            libraryDetail
+        case .wiki:
+            wikiDetail
+        case .review:
+            reviewDetail
+        }
+    }
+
+    @ViewBuilder
+    private var libraryDetail: some View {
         switch selection {
+        case .note:
+            if let note = selectedNote {
+                noteDetail(note: note)
+            } else {
+                ContentUnavailableView(
+                    "No Note Selected",
+                    systemImage: "note.text",
+                    description: Text("Pick a note from the sidebar.")
+                )
+            }
         case .person(let id):
             PersonDetailView(
                 personID: id,
@@ -544,6 +936,8 @@ public struct HarcWindowRootView: View {
                 },
                 onPersonDeleted: { selection = nil }
             )
+        case .project(let name):
+            projectDetail(name: name)
         case .recording, .none:
             if let recording = selectedRecording {
                 detailContent(recording: recording)
@@ -552,12 +946,551 @@ public struct HarcWindowRootView: View {
                     }
             } else {
                 ContentUnavailableView(
-                    "No Recording Selected",
-                    systemImage: "waveform",
-                    description: Text("Pick a recording from the sidebar.")
+                    "No Item Selected",
+                    systemImage: "sidebar.left",
+                    description: Text("Pick a note, project, person, or recording from the sidebar.")
                 )
             }
         }
+    }
+
+    private var wikiDetail: some View {
+        let pages = wikiPages.filter { $0.section == wikiSection }
+        let selectedPage = selectedWikiPageID.flatMap { id in wikiPages.first { $0.id == id } }
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Label(wikiSection.title, systemImage: wikiSection.systemImage)
+                        .font(.system(size: 28, weight: .semibold))
+                    Spacer()
+                    Button {
+                        Task { await scanConnectedSources() }
+                    } label: {
+                        Label("Scan Sources", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(prefs.sourceRoots.isEmpty)
+                }
+
+                if let sourceScanStatus {
+                    Text(sourceScanStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let wikiLoadError {
+                    Label(wikiLoadError, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(Color.red)
+                } else if let selectedPage {
+                    wikiPageView(selectedPage)
+                } else if pages.isEmpty {
+                    ContentUnavailableView(
+                        wikiEmptyTitle(for: wikiSection),
+                        systemImage: wikiSection.systemImage,
+                        description: Text(wikiEmptyDescription(for: wikiSection))
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 280)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(pages) { page in
+                            Button {
+                                selectedWikiPageID = page.id
+                            } label: {
+                                wikiPageRow(page)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle(wikiSection.title)
+    }
+
+    private var reviewDetail: some View {
+        let selected = selectedReviewProposalID.flatMap { id in reviewProposals.first { $0.id == id } }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .firstTextBaseline) {
+                    Label("Review", systemImage: "checklist")
+                        .font(.system(size: 28, weight: .semibold))
+                    Spacer()
+                    Button {
+                        Task { await loadReviewProposals() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                }
+
+                if let reviewLoadError {
+                    Label(reviewLoadError, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(Color.red)
+                } else if let selected {
+                    reviewProposalView(selected)
+                } else if reviewProposals.isEmpty {
+                    ContentUnavailableView(
+                        "No Wiki Updates",
+                        systemImage: "checklist",
+                        description: Text("Record a meeting, scan a source folder, or ingest a repo to create reviewable wiki proposals.")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 280)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(reviewProposals) { proposal in
+                            Button {
+                                selectedReviewProposalID = proposal.id
+                            } label: {
+                                reviewProposalRow(proposal)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle("Review")
+    }
+
+    private func projectDetail(name: String) -> some View {
+        let relatedNotes = notesForProject(name)
+        let relatedRecordings = recordingsForProject(name)
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(name, systemImage: "folder")
+                        .font(.system(size: 28, weight: .semibold))
+                    Text(projectSubtitle(noteCount: relatedNotes.count, recordingCount: relatedRecordings.count))
+                        .foregroundStyle(.secondary)
+                }
+
+                if relatedNotes.isEmpty && relatedRecordings.isEmpty {
+                    ContentUnavailableView(
+                        "No Project Context",
+                        systemImage: "folder",
+                        description: Text("Use @project[\(name)] or a project:\(name) tag in a note to connect work here.")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 220)
+                } else {
+                    if !relatedNotes.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Notes")
+                                .font(.headline)
+                            ForEach(relatedNotes) { note in
+                                Button {
+                                    selection = .note(id: note.id)
+                                } label: {
+                                    projectNoteRow(note)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    if !relatedRecordings.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Recordings")
+                                .font(.headline)
+                            ForEach(relatedRecordings) { recording in
+                                Button {
+                                    selection = .recording(wavPath: recording.wavPath)
+                                } label: {
+                                    projectRecordingRow(recording)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle(name)
+    }
+
+    private func projectNoteRow(_ note: Note) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "note.text")
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.title)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if !note.preview.isEmpty {
+                    Text(note.preview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func projectRecordingRow(_ recording: Recording) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform")
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(recording.displayTitle)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(recording.startedAt, style: .date)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func wikiPageRow(_ page: WikiPage) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: page.section.systemImage)
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(page.title)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(page.fileURL.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Text(Self.relativeDate(page.updatedAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func wikiPageView(_ page: WikiPage) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(page.title)
+                        .font(.title2.weight(.semibold))
+                    Text(page.fileURL.path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([page.fileURL])
+                } label: {
+                    Label("Reveal", systemImage: "folder")
+                }
+            }
+
+            Text(page.body)
+                .font(.body)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func wikiEmptyTitle(for section: WikiSection) -> String {
+        switch section {
+        case .overview: return "No Wiki Overview"
+        case .index: return "No Wiki Index"
+        case .topics: return "No Topics Yet"
+        case .people: return "No People Pages"
+        case .projects: return "No Project Pages"
+        case .sources: return "No Source Summaries"
+        case .decisions: return "No Decisions"
+        case .contradictions: return "No Contradictions"
+        case .openQuestions: return "No Open Questions"
+        }
+    }
+
+    private func wikiEmptyDescription(for section: WikiSection) -> String {
+        switch section {
+        case .overview, .index:
+            return "Approve review proposals to let Harc build this compiled knowledge surface."
+        case .sources:
+            return prefs.sourceRoots.isEmpty
+                ? "Add a read-only source folder in Settings, then scan it from Wiki."
+                : "Scan connected source folders to create reviewable summaries."
+        case .decisions, .contradictions, .openQuestions:
+            return "These pages appear after Harc reviews meetings, notes, and source folders for durable knowledge."
+        case .topics, .people, .projects:
+            return "Record meetings, write notes, or ingest repos to generate pages for this section."
+        }
+    }
+
+    @ViewBuilder
+    private func reviewBucket(_ title: String, statuses: [WikiReviewProposalStatus]) -> some View {
+        let items = reviewProposals.filter { statuses.contains($0.status) }
+        if !items.isEmpty {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+            ForEach(items) { proposal in
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(proposal.title)
+                            .lineLimit(1)
+                        Text(proposal.status.rawValue.capitalized)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: reviewIcon(for: proposal))
+                        .foregroundStyle(reviewColor(for: proposal))
+                }
+                .tag(Optional(proposal.id))
+            }
+        }
+    }
+
+    private func reviewProposalRow(_ proposal: WikiReviewProposal) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: reviewIcon(for: proposal))
+                .foregroundStyle(reviewColor(for: proposal))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(proposal.title)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(proposal.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Text(proposal.status.rawValue.capitalized)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func reviewProposalView(_ proposal: WikiReviewProposal) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(proposal.title)
+                        .font(.title2.weight(.semibold))
+                    Text("\(proposal.kind.rawValue) · \(proposal.status.rawValue)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task { await approveReviewProposal(proposal) }
+                } label: {
+                    Label("Approve", systemImage: "checkmark.circle")
+                }
+                .disabled(proposal.status == .approved || proposal.status == .dismissed)
+
+                Button(role: .destructive) {
+                    Task { await dismissReviewProposal(proposal) }
+                } label: {
+                    Label("Dismiss", systemImage: "xmark.circle")
+                }
+                .disabled(proposal.status == .approved || proposal.status == .dismissed)
+            }
+
+            Text(proposal.summary)
+                .foregroundStyle(.secondary)
+
+            if !proposal.sourceCitations.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Sources")
+                        .font(.headline)
+                    ForEach(proposal.sourceCitations, id: \.self) { citation in
+                        Text(citation)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+
+            Divider()
+
+            Text(proposal.proposedMarkdown)
+                .font(.body)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func reviewIcon(for proposal: WikiReviewProposal) -> String {
+        switch proposal.status {
+        case .pending: return "circle"
+        case .edited: return "pencil.circle"
+        case .approved: return "checkmark.circle.fill"
+        case .dismissed: return "xmark.circle"
+        case .failed: return "exclamationmark.triangle"
+        }
+    }
+
+    private func reviewColor(for proposal: WikiReviewProposal) -> Color {
+        switch proposal.status {
+        case .pending, .edited: return Color.accentColor
+        case .approved: return Color.green
+        case .dismissed: return Color.secondary
+        case .failed: return Color.red
+        }
+    }
+
+    private func noteDetail(note: Note) -> some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Title", text: Binding(
+                    get: { noteTitleDraft },
+                    set: {
+                        noteTitleDraft = $0
+                        markNoteEdited()
+                    }
+                ))
+                .font(.system(size: 28, weight: .semibold))
+                .textFieldStyle(.plain)
+
+                HStack(spacing: 8) {
+                    Label("Markdown", systemImage: "doc.plaintext")
+                    if !note.recordings.isEmpty {
+                        Label("\(note.recordings.count) recording\(note.recordings.count == 1 ? "" : "s")", systemImage: "waveform")
+                    }
+                    if noteSaving {
+                        Label("Saving", systemImage: "arrow.triangle.2.circlepath")
+                    } else if noteDirty {
+                        Text("Unsaved")
+                    } else if let noteSavedAt {
+                        Text("Saved \(noteSavedAt, style: .relative)")
+                    } else {
+                        Label("Saved", systemImage: "checkmark")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                Picker("Editor Mode", selection: $noteEditorMode) {
+                    ForEach(NoteMarkdownEditorMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 240)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+
+            Divider()
+
+            NoteMarkdownWebView(text: Binding(
+                get: { noteBodyDraft },
+                set: {
+                    noteBodyDraft = $0
+                    markNoteEdited()
+                }
+            ), mode: noteEditorMode, linkTargets: noteLinkTargets(for: note), mentionTargets: noteMentionTargets())
+
+            noteLinksSection(note: note)
+
+            if let noteSaveError {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(noteSaveError)
+                    Spacer()
+                }
+                .font(.caption)
+                .foregroundStyle(Color.red)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 8)
+                .background(Color.red.opacity(0.08))
+            }
+        }
+        .navigationTitle(note.title)
+        .toolbar {
+            ToolbarItemGroup {
+                Button {
+                    if noteDirty {
+                        saveSelectedNote()
+                    }
+                    bridge.onStartRecordingForNote(note.id)
+                } label: {
+                    Label(
+                        recordingState.isRecording ? "Stop Recording" : "Record into Note",
+                        systemImage: recordingState.isRecording ? "stop.circle.fill" : "record.circle"
+                    )
+                }
+                .tint(recordingState.isRecording ? HarcBrand.live : nil)
+
+                Button {
+                    saveSelectedNote()
+                } label: {
+                    Label("Save Note", systemImage: "checkmark.circle")
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!noteDirty)
+
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([note.fileURL])
+                } label: {
+                    Label("Reveal", systemImage: "folder")
+                }
+
+                Button(role: .destructive) {
+                    pendingDeleteNote = note
+                } label: {
+                    Label("Delete Note", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private func noteLinksSection(note: Note) -> some View {
+        let links = resolvedWikilinks(in: noteBodyDraft, currentNoteID: note.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            HStack(spacing: 8) {
+                Label("Links", systemImage: "link")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if links.isEmpty {
+                    Text("Type [[ to link a note or recording.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            if !links.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(links) { link in
+                            Button {
+                                openWikilink(link)
+                            } label: {
+                                Label(link.title, systemImage: link.iconName)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!link.isResolved)
+                            .help(link.helpText)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private func detailContent(recording: Recording) -> some View {
@@ -727,6 +1660,8 @@ public struct HarcWindowRootView: View {
                 }
             )
 
+            linkedNotesSection(recording: recording)
+
             FileInspectorSection(recording: recording)
         }
         .formStyle(.grouped)
@@ -741,10 +1676,696 @@ public struct HarcWindowRootView: View {
             } else {
                 inspectorPendingSuggestions = []
             }
+            await loadLinkedNotes(for: recording)
+        }
+    }
+
+    private func linkedNotesSection(recording: Recording) -> some View {
+        Section("Notes") {
+            if linkedNotes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No notes linked to this recording.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        createNote(for: recording)
+                    } label: {
+                        Label("New note from this recording", systemImage: "square.and.pencil")
+                    }
+                }
+            } else {
+                ForEach(linkedNotes) { note in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(note.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        if !note.preview.isEmpty {
+                            Text(note.preview)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Text(note.updatedAt, style: .relative)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .onTapGesture(count: 2) {
+                        selection = .note(id: note.id)
+                        loadSelectedNoteDraft()
+                    }
+                    .contextMenu {
+                        Button("Open in Harc") {
+                            selection = .note(id: note.id)
+                            loadSelectedNoteDraft()
+                        }
+                        Button("Open Markdown File") {
+                            NSWorkspace.shared.open(note.fileURL)
+                        }
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([note.fileURL])
+                        }
+                    }
+                }
+
+                Button {
+                    createNote(for: recording)
+                } label: {
+                    Label("New note from this recording", systemImage: "plus")
+                }
+            }
+
+            if let linkedNotesError {
+                Text(linkedNotesError)
+                    .font(.caption)
+                    .foregroundStyle(Color.red)
+            }
+        }
+    }
+
+    private func loadLinkedNotes(for recording: Recording) async {
+        do {
+            linkedNotes = try await NoteStore(rootURL: prefs.notesURL).fetchLinked(to: recording)
+            linkedNotesError = nil
+        } catch {
+            linkedNotes = []
+            linkedNotesError = error.localizedDescription
+        }
+    }
+
+    private func createNote(for recording: Recording) {
+        Task {
+            do {
+                let note = try await NoteStore(rootURL: prefs.notesURL).create(for: recording)
+                linkedNotes = try await NoteStore(rootURL: prefs.notesURL).fetchLinked(to: recording)
+                await loadNotes()
+                selection = .note(id: note.id)
+                noteTitleDraft = note.title
+                noteBodyDraft = note.body
+                noteDirty = false
+                linkedNotesError = nil
+            } catch {
+                linkedNotesError = error.localizedDescription
+            }
         }
     }
 
     // MARK: - Helpers
+
+    private var selectedNote: Note? {
+        guard case .note(let id) = selection else { return nil }
+        return notes.first(where: { $0.id == id })
+    }
+
+    private func loadNotes(resetDraft: Bool = true) async {
+        do {
+            notes = try await NoteStore(rootURL: prefs.notesURL).fetchAll()
+            notesError = nil
+            await searchNotes()
+            if resetDraft {
+                loadSelectedNoteDraft()
+            }
+        } catch {
+            notes = []
+            notesError = error.localizedDescription
+        }
+    }
+
+    private func searchNotes() async {
+        let query = libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            noteSearchResults = []
+            return
+        }
+        do {
+            noteSearchResults = try await NoteStore(rootURL: prefs.notesURL).search(query: query)
+        } catch {
+            noteSearchResults = []
+            notesError = error.localizedDescription
+        }
+    }
+
+    private func loadWikiPages() async {
+        do {
+            wikiPages = try await HarcWikiStore(rootURL: prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true))
+                .fetchPages()
+            wikiLoadError = nil
+            if selectedWikiPageID == nil {
+                selectedWikiPageID = wikiPages.first(where: { $0.section == wikiSection })?.id
+            }
+        } catch {
+            wikiPages = []
+            wikiLoadError = error.localizedDescription
+        }
+    }
+
+    private func loadReviewProposals() async {
+        do {
+            reviewProposals = try await WikiReviewStore(
+                fileURL: prefs.notesURL.deletingLastPathComponent()
+                    .appendingPathComponent("Wiki/.review/proposals.json")
+            ).fetchAll()
+            reviewLoadError = nil
+            if selectedReviewProposalID == nil {
+                selectedReviewProposalID = reviewProposals.first(where: { $0.status == .pending || $0.status == .edited })?.id
+            }
+        } catch {
+            reviewProposals = []
+            reviewLoadError = error.localizedDescription
+        }
+    }
+
+    private func scanConnectedSources() async {
+        sourceScanStatus = "Scanning source folders..."
+        var proposalCount = 0
+        let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
+        let reviewStore = WikiReviewStore(
+            fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
+            wikiStore: HarcWikiStore(rootURL: wikiRoot)
+        )
+
+        do {
+            for root in prefs.sourceRoots {
+                let documents = try LocalSourceScanner.scan(root: root)
+                let scanBatch = Array(documents.prefix(40))
+                for document in scanBatch {
+                    if let knowledgeIndexer {
+                        let knowledgeKind: KnowledgeSourceKind = root.kind == .repository ? .repoFile : .rawFile
+                        try await knowledgeIndexer.index(
+                            sourceDocument: document,
+                            sourceKind: knowledgeKind
+                        )
+                    }
+                }
+                for proposal in SourceWikiProposalGenerator.proposals(for: root, documents: scanBatch) {
+                    _ = try await reviewStore.upsert(proposal)
+                    proposalCount += 1
+                }
+            }
+            let indexedSuffix = knowledgeIndexer == nil ? "" : " Indexed source chunks for search."
+            sourceScanStatus = "Created \(proposalCount) review proposal\(proposalCount == 1 ? "" : "s").\(indexedSuffix)"
+            await loadReviewProposals()
+            mode = .review
+        } catch {
+            sourceScanStatus = error.localizedDescription
+        }
+    }
+
+    private func approveReviewProposal(_ proposal: WikiReviewProposal) async {
+        let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
+        let reviewStore = WikiReviewStore(
+            fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
+            wikiStore: HarcWikiStore(rootURL: wikiRoot)
+        )
+        _ = try? await reviewStore.approve(id: proposal.id)
+        if let knowledgeIndexer,
+           let page = try? await HarcWikiStore(rootURL: wikiRoot).fetchPage(
+            id: "\(proposal.targetSection.rawValue)/\(HarcWikiStore.slug(proposal.targetTitle))"
+           ) {
+            try? await knowledgeIndexer.index(wikiPage: page)
+        }
+        await loadReviewProposals()
+        await loadWikiPages()
+    }
+
+    private func dismissReviewProposal(_ proposal: WikiReviewProposal) async {
+        let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
+        let reviewStore = WikiReviewStore(
+            fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
+            wikiStore: HarcWikiStore(rootURL: wikiRoot)
+        )
+        _ = try? await reviewStore.updateStatus(id: proposal.id, status: .dismissed)
+        await loadReviewProposals()
+    }
+
+    private func loadSelectedNoteDraft() {
+        guard let note = selectedNote else { return }
+        noteTitleDraft = note.title
+        noteBodyDraft = note.body
+        noteDirty = false
+        noteSaving = false
+        noteSavedAt = note.updatedAt
+        noteSaveError = nil
+    }
+
+    private func markNoteEdited() {
+        noteDirty = true
+        noteSaveError = nil
+        scheduleNoteAutosave()
+    }
+
+    private func scheduleNoteAutosave() {
+        noteAutosaveTask?.cancel()
+        guard case .note(let id) = selection else { return }
+        let title = noteTitleDraft
+        let body = noteBodyDraft
+        noteAutosaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled else { return }
+            await saveNoteDraft(id: id, title: title, body: body, updateDraftIfSelected: true)
+        }
+    }
+
+    private func createBlankNote() {
+        Task {
+            do {
+                let note = try await NoteStore(rootURL: prefs.notesURL).create()
+                await loadNotes()
+                selection = .note(id: note.id)
+                noteTitleDraft = note.title
+                noteBodyDraft = note.body
+                noteDirty = false
+                noteSaving = false
+                noteSavedAt = note.updatedAt
+                noteSaveError = nil
+            } catch {
+                notesError = error.localizedDescription
+            }
+        }
+    }
+
+    private func archiveNote(_ note: Note) {
+        pendingDeleteNote = nil
+        noteAutosaveTask?.cancel()
+        Task {
+            do {
+                try await NoteStore(rootURL: prefs.notesURL).archive(id: note.id)
+                try? await store.deleteKnowledgeChunks(sourceKind: .note, sourceID: note.id)
+                if selection == .note(id: note.id) {
+                    selection = nil
+                    noteTitleDraft = ""
+                    noteBodyDraft = ""
+                    noteDirty = false
+                    noteSaveError = nil
+                    noteSavedAt = nil
+                }
+                await loadNotes()
+            } catch {
+                notesError = error.localizedDescription
+            }
+        }
+    }
+
+    private func saveSelectedNote() {
+        guard case .note(let id) = selection else { return }
+        noteAutosaveTask?.cancel()
+        let title = noteTitleDraft
+        let body = noteBodyDraft
+        Task {
+            await saveNoteDraft(id: id, title: title, body: body, updateDraftIfSelected: true)
+        }
+    }
+
+    private func flushOutgoingNoteIfNeeded(_ oldSelection: LibrarySelection?) {
+        guard case .note(let id) = oldSelection, noteDirty else { return }
+        noteAutosaveTask?.cancel()
+        let title = noteTitleDraft
+        let body = noteBodyDraft
+        Task {
+            await saveNoteDraft(id: id, title: title, body: body, updateDraftIfSelected: false)
+        }
+    }
+
+    private func saveNoteDraft(
+        id: String,
+        title: String,
+        body: String,
+        updateDraftIfSelected: Bool
+    ) async {
+        guard var note = notes.first(where: { $0.id == id }) else { return }
+        note.title = title
+        note.body = body
+        noteSaving = true
+        do {
+            note.people = try await ensureMentionedPeople(in: body)
+            note.tags = mergedProjectTags(existing: note.tags, body: body)
+            let saved = try await NoteStore(rootURL: prefs.notesURL).update(note)
+            if let knowledgeIndexer {
+                Task.detached { [knowledgeIndexer, saved] in
+                    try? await knowledgeIndexer.index(note: saved)
+                }
+            }
+            await loadNotes(resetDraft: false)
+            if updateDraftIfSelected, selection == .note(id: id) {
+                noteTitleDraft = saved.title
+                noteBodyDraft = saved.body
+                noteDirty = false
+                noteSavedAt = saved.updatedAt
+                noteSaveError = nil
+            }
+            if selection != .note(id: id) {
+                noteSaveError = nil
+            }
+        } catch {
+            if selection == .note(id: id) {
+                noteSaveError = error.localizedDescription
+            } else {
+                notesError = "Could not autosave note: \(error.localizedDescription)"
+            }
+        }
+        noteSaving = false
+    }
+
+    private func noteMentionTargets() -> [NoteMarkdownLinkTarget] {
+        let people = deduplicatedMentionPeople(
+            peopleVM.people.map(\.person) + allPeople + noteMentionPeople
+        )
+        let personTargets = people.map {
+            NoteMarkdownLinkTarget(
+                label: $0.displayName,
+                kind: "person",
+                detail: "Person"
+            )
+        }
+        let projectTargets = inferredProjectNames().map {
+            NoteMarkdownLinkTarget(
+                label: $0,
+                kind: "project",
+                detail: "Project"
+            )
+        }
+        return deduplicatedLinkTargets(personTargets + projectTargets)
+    }
+
+    private func loadNoteMentionPeople() async {
+        noteMentionPeople = (try? await store.fetchPeople()) ?? []
+    }
+
+    private func ensureMentionedPeople(in body: String) async throws -> [String] {
+        let mentions = extractPersonMentions(from: body)
+        guard !mentions.isEmpty else { return [] }
+
+        var people = try await store.fetchPeople()
+        var ids: [String] = []
+        var seenIDs: Set<Int64> = []
+
+        for mention in mentions {
+            let key = normalizeWikilinkLabel(mention.name)
+            if let existing = bestPersonMatch(for: key, in: people) {
+                if seenIDs.insert(existing.id).inserted {
+                    ids.append("person:\(existing.id)")
+                }
+                continue
+            }
+
+            guard mention.isBracketed || key.count >= 3 else {
+                continue
+            }
+
+            let personID = try await store.createPerson(displayName: mention.name, matchThreshold: nil)
+            let now = Date()
+            let person = Person(
+                id: personID,
+                displayName: mention.name,
+                matchThreshold: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+            people.append(person)
+            noteMentionPeople.append(person)
+            if seenIDs.insert(personID).inserted {
+                ids.append("person:\(personID)")
+            }
+        }
+
+        return ids
+    }
+
+    private func bestPersonMatch(for normalizedMention: String, in people: [Person]) -> Person? {
+        let tokenExact = people.filter { person in
+            let normalizedName = normalizeWikilinkLabel(person.displayName)
+            return normalizedName != normalizedMention &&
+                normalizedName.split(separator: " ").contains(Substring(normalizedMention))
+        }
+        if tokenExact.count == 1 { return tokenExact[0] }
+
+        let exact = people.filter {
+            normalizeWikilinkLabel($0.displayName) == normalizedMention
+        }
+        if exact.count == 1 { return exact[0] }
+
+        let prefix = people.filter { person in
+            normalizeWikilinkLabel(person.displayName)
+                .split(separator: " ")
+                .contains { $0.hasPrefix(normalizedMention) }
+        }
+        if prefix.count == 1 { return prefix[0] }
+
+        return nil
+    }
+
+    private func noteLinkTargets(for currentNote: Note) -> [NoteMarkdownLinkTarget] {
+        let noteTargets = notes
+            .filter { $0.id != currentNote.id }
+            .map {
+                NoteMarkdownLinkTarget(
+                    label: $0.title,
+                    kind: "note",
+                    detail: "Note"
+                )
+            }
+        let recordingTargets = libraryVM.recordings.map {
+            NoteMarkdownLinkTarget(
+                label: $0.displayTitle,
+                kind: "recording",
+                detail: formatRecordingLinkDetail($0)
+            )
+        }
+        return deduplicatedLinkTargets(noteTargets + recordingTargets)
+    }
+
+    private func resolvedWikilinks(in body: String, currentNoteID: String) -> [ResolvedWikilink] {
+        extractWikilinkLabels(from: body).map { label in
+            let normalized = normalizeWikilinkLabel(label)
+            if let note = notes.first(where: {
+                $0.id != currentNoteID && normalizeWikilinkLabel($0.title) == normalized
+            }) {
+                return ResolvedWikilink(
+                    id: "note:\(note.id):\(label)",
+                    title: note.title,
+                    target: .note(id: note.id)
+                )
+            }
+            if let recording = libraryVM.recordings.first(where: {
+                normalizeWikilinkLabel($0.displayTitle) == normalized
+            }) {
+                return ResolvedWikilink(
+                    id: "recording:\(recording.wavPath):\(label)",
+                    title: recording.displayTitle,
+                    target: .recording(wavPath: recording.wavPath)
+                )
+            }
+            return ResolvedWikilink(
+                id: "unresolved:\(label)",
+                title: label,
+                target: .unresolved
+            )
+        }
+    }
+
+    private func openWikilink(_ link: ResolvedWikilink) {
+        switch link.target {
+        case .note(let id):
+            selection = .note(id: id)
+        case .recording(let wavPath):
+            selection = .recording(wavPath: wavPath)
+        case .unresolved:
+            break
+        }
+    }
+
+    private func extractWikilinkLabels(from body: String) -> [String] {
+        let pattern = #"\[\[([^\]\n]+)\]\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        var seen: Set<String> = []
+        return regex.matches(in: body, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let swiftRange = Range(match.range(at: 1), in: body) else {
+                return nil
+            }
+            let label = String(body[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalizeWikilinkLabel(label)
+            guard !label.isEmpty, !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return label
+        }
+    }
+
+    private func extractPersonMentions(from body: String) -> [PersonMention] {
+        let pattern = #"@person\[([^\]\n]+)\]|@\[([^\]\n]+)\]|@([\p{L}][\p{L}\p{N}'._-]*)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        var seen: Set<String> = []
+
+        return regex.matches(in: body, range: range).compactMap { match in
+            let typedPersonRange = match.range(at: 1)
+            let bracketedRange = match.range(at: 2)
+            let bareRange = match.range(at: 3)
+            let isBracketed = typedPersonRange.location != NSNotFound || bracketedRange.location != NSNotFound
+            let selectedRange = if typedPersonRange.location != NSNotFound {
+                typedPersonRange
+            } else if bracketedRange.location != NSNotFound {
+                bracketedRange
+            } else {
+                bareRange
+            }
+            guard let swiftRange = Range(selectedRange, in: body) else { return nil }
+
+            let name = String(body[swiftRange])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalizeWikilinkLabel(name)
+            guard !name.isEmpty, !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return PersonMention(name: name, isBracketed: isBracketed)
+        }
+    }
+
+    private func extractProjectMentions(from body: String) -> [ProjectMention] {
+        let pattern = #"@project\[([^\]\n]+)\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        var seen: Set<String> = []
+
+        return regex.matches(in: body, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let swiftRange = Range(match.range(at: 1), in: body) else {
+                return nil
+            }
+            let name = String(body[swiftRange])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalizeWikilinkLabel(name)
+            guard !name.isEmpty, !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return ProjectMention(name: name)
+        }
+    }
+
+    private func mergedProjectTags(existing tags: [String], body: String) -> [String] {
+        var result = tags.filter { !$0.lowercased().hasPrefix("project:") }
+        var seen = Set(result.map(normalizeWikilinkLabel))
+
+        for mention in extractProjectMentions(from: body) {
+            let tag = "project:\(mention.name)"
+            let key = normalizeWikilinkLabel(tag)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            result.append(tag)
+        }
+
+        return result
+    }
+
+    private func inferredProjectNames() -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+
+        func append(_ rawName: String) {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalizeWikilinkLabel(name)
+            guard !name.isEmpty, !seen.contains(key) else { return }
+            seen.insert(key)
+            result.append(name)
+        }
+
+        for note in notes {
+            for tag in note.tags {
+                guard tag.lowercased().hasPrefix("project:") else { continue }
+                append(String(tag.dropFirst("project:".count)))
+            }
+            for mention in extractProjectMentions(from: note.body) {
+                append(mention.name)
+            }
+        }
+        for recording in libraryVM.recordings {
+            for tag in recording.tags {
+                guard tag.lowercased().hasPrefix("project:") else { continue }
+                append(String(tag.dropFirst("project:".count)))
+            }
+        }
+
+        return result.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+    }
+
+    private func projectCounts(for project: String) -> (notes: Int, recordings: Int) {
+        (notesForProject(project).count, recordingsForProject(project).count)
+    }
+
+    private func notesForProject(_ project: String) -> [Note] {
+        let key = normalizeWikilinkLabel(project)
+        return notes.filter { note in
+            note.tags.contains { tag in
+                tag.lowercased().hasPrefix("project:") &&
+                    normalizeWikilinkLabel(String(tag.dropFirst("project:".count))) == key
+            } || extractProjectMentions(from: note.body).contains {
+                normalizeWikilinkLabel($0.name) == key
+            }
+        }
+    }
+
+    private func recordingsForProject(_ project: String) -> [Recording] {
+        let key = normalizeWikilinkLabel(project)
+        let linkedRecordingIDs = Set(notesForProject(project).flatMap(\.recordings))
+        return libraryVM.recordings.filter { recording in
+            if recording.tags.contains(where: { tag in
+                tag.lowercased().hasPrefix("project:") &&
+                    normalizeWikilinkLabel(String(tag.dropFirst("project:".count))) == key
+            }) {
+                return true
+            }
+            if let id = recording.id, linkedRecordingIDs.contains("recording:\(id)") {
+                return true
+            }
+            return linkedRecordingIDs.contains("recording-path:\(recording.wavPath)")
+        }
+    }
+
+    private func normalizeWikilinkLabel(_ label: String) -> String {
+        label
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+    }
+
+    private func deduplicatedLinkTargets(_ targets: [NoteMarkdownLinkTarget]) -> [NoteMarkdownLinkTarget] {
+        var seen: Set<String> = []
+        var result: [NoteMarkdownLinkTarget] = []
+        for target in targets {
+            let key = "\(target.kind):\(normalizeWikilinkLabel(target.label))"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            result.append(target)
+        }
+        return result
+    }
+
+    private func deduplicatedMentionPeople(_ people: [Person]) -> [Person] {
+        var seenIDs: Set<Int64> = []
+        var seenNames: Set<String> = []
+        var result: [Person] = []
+
+        for person in people.sorted(by: {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }) {
+            let name = person.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let normalized = normalizeWikilinkLabel(name)
+            guard !seenIDs.contains(person.id), !seenNames.contains(normalized) else { continue }
+            seenIDs.insert(person.id)
+            seenNames.insert(normalized)
+            result.append(person)
+        }
+
+        return result
+    }
+
+    private func formatRecordingLinkDetail(_ recording: Recording) -> String {
+        if let endedAt = recording.endedAt {
+            return "Recording · \(Self.formatDuration(from: recording.startedAt, to: endedAt))"
+        }
+        return "Recording"
+    }
 
     /// Resolved recording for the current selection, or nil when a Person is selected.
     private var selectedRecording: Recording? {
@@ -778,7 +2399,10 @@ public struct HarcWindowRootView: View {
         contextCopyStatus = "Building local context..."
         Task {
             do {
-                let markdown = try await libraryVM.contextMarkdown(for: query)
+                let markdown = try await libraryVM.contextMarkdown(
+                    for: query,
+                    noteStore: NoteStore(rootURL: prefs.notesURL)
+                )
                 await MainActor.run {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(markdown, forType: .string)
@@ -789,6 +2413,52 @@ public struct HarcWindowRootView: View {
                 await MainActor.run {
                     contextCopyStatus = "Could not build context."
                     contextCopyInFlight = false
+                }
+            }
+        }
+    }
+
+    private func answerSearchContext() {
+        let query = libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            conversationStatus = "Enter a question first."
+            return
+        }
+        guard modelStore.state(of: prefs.activeSummarizerID).isInstalled else {
+            conversationStatus = "Install the active local model in Settings first."
+            return
+        }
+
+        conversationInFlight = true
+        conversationAnswer = nil
+        conversationStatus = "Building local context..."
+        let modelID = prefs.activeSummarizerID
+        let modelDirectory = ModelStorage.defaultBase()
+            .appendingPathComponent(modelID, isDirectory: true)
+        Task {
+            do {
+                let context = try await libraryVM.contextMarkdown(
+                    for: query,
+                    noteStore: NoteStore(rootURL: prefs.notesURL)
+                )
+                await MainActor.run {
+                    conversationStatus = "Answering with \(ModelCatalog.descriptor(for: modelID)?.displayName ?? modelID)..."
+                }
+                let answer = try await summarizerService.answer(
+                    question: query,
+                    contextMarkdown: context,
+                    modelID: modelID,
+                    modelDirectory: modelDirectory
+                )
+                await MainActor.run {
+                    conversationAnswer = answer.isEmpty ? "No answer generated." : answer
+                    conversationStatus = "Answered locally."
+                    conversationInFlight = false
+                }
+            } catch {
+                await MainActor.run {
+                    conversationStatus = "Could not answer locally: \(error.localizedDescription)"
+                    conversationInFlight = false
                 }
             }
         }
@@ -1084,6 +2754,37 @@ private extension HarcWindowRootView {
     struct DateBucket {
         let label: String
         let recordings: [Recording]
+    }
+
+    struct NoteBucket {
+        let label: String
+        let notes: [Note]
+    }
+
+    static func noteBuckets(from notes: [Note]) -> [NoteBucket] {
+        var grouped: [String: [Note]] = [:]
+        var labels: [String] = []
+
+        for note in notes {
+            let label = note.folderPath?.isEmpty == false ? note.folderPath! : "Unfiled"
+            if grouped[label] == nil {
+                grouped[label] = []
+                labels.append(label)
+            }
+            grouped[label, default: []].append(note)
+        }
+
+        labels.sort(by: noteBucketSort)
+        return labels.compactMap { label in
+            guard let notes = grouped[label] else { return nil }
+            return NoteBucket(label: label, notes: notes)
+        }
+    }
+
+    static func noteBucketSort(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == "Unfiled" { return false }
+        if rhs == "Unfiled" { return true }
+        return lhs > rhs
     }
 
     /// Groups recordings (assumed already sorted newest-first by the VM) into

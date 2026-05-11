@@ -15,13 +15,25 @@ public enum ContextPackMarkdownRenderer {
             return lines.joined(separator: "\n")
         }
 
+        appendSection(.synthesis, title: "Wiki Synthesis", from: pack, into: &lines)
         appendSection(.directEvidence, title: "Relevant Evidence", from: pack, into: &lines)
         appendSection(.summary, title: "Summaries", from: pack, into: &lines)
         appendSection(.actionItems, title: "Action Items", from: pack, into: &lines)
 
         lines.append("## Sources")
         for source in pack.sources {
-            lines.append("- \(source.title) - \(source.wavPath)")
+            switch source.kind {
+            case .recording:
+                lines.append("- Recording: \(source.title) - \(source.wavPath)")
+            case .note:
+                lines.append("- Note: \(source.title) - \(source.notePath ?? source.wavPath)")
+            case .rawFile:
+                lines.append("- Raw file: \(source.title) - \(source.notePath ?? source.wavPath)")
+            case .repoFile:
+                lines.append("- Repo file: \(source.title) - \(source.notePath ?? source.wavPath)")
+            case .wikiPage:
+                lines.append("- Wiki page: \(source.title) - \(source.notePath ?? source.wavPath)")
+            }
         }
 
         return lines.joined(separator: "\n")

@@ -3,12 +3,14 @@ import Combine
 import SwiftUI
 import HarcCore
 import HarcMeetingDetect
+import HarcContext
 
 /// App-wide preferences backed by UserDefaults. SwiftUI views observe.
 @MainActor
 public final class HarcPreferences: ObservableObject {
     private enum Key {
         static let destinationPath = "harc.destinationPath"
+        static let notesPath = "harc.notesPath"
         static let diarize = "harc.diarize"
         static let chunkDurationSeconds = "harc.chunkDurationSeconds"
         static let vocabulary = "harc.vocabulary"
@@ -29,6 +31,7 @@ public final class HarcPreferences: ObservableObject {
         static let autoSummarizeOnBatteryEnabled = "harc.autoSummarizeOnBatteryEnabled"
         static let includeSummaryInPrompt = "harc.includeSummaryInPrompt"
         static let appearance = "harc.appearance"
+        static let sourceRoots = "harc.sourceRoots"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -57,6 +60,10 @@ public final class HarcPreferences: ObservableObject {
 
     @Published public var destinationPath: String {
         didSet { UserDefaults.standard.set(destinationPath, forKey: Key.destinationPath) }
+    }
+
+    @Published public var notesPath: String {
+        didSet { UserDefaults.standard.set(notesPath, forKey: Key.notesPath) }
     }
 
     @Published public var diarize: Bool {
@@ -163,12 +170,18 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(includeSummaryInPrompt, forKey: Key.includeSummaryInPrompt) }
     }
 
+    @Published public var sourceRoots: [LocalSourceRoot] {
+        didSet { persistSourceRoots() }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
         let defaults = UserDefaults.standard
         self.destinationPath = defaults.string(forKey: Key.destinationPath)
             ?? Self.defaultDestinationPath
+        self.notesPath = defaults.string(forKey: Key.notesPath)
+            ?? Self.defaultNotesPath
         self.diarize = defaults.object(forKey: Key.diarize) as? Bool ?? true
         self.chunkDurationSeconds = defaults.object(forKey: Key.chunkDurationSeconds) as? Double ?? 60.0
         if let data = defaults.data(forKey: Key.vocabulary),
@@ -203,6 +216,12 @@ public final class HarcPreferences: ObservableObject {
         self.autoSummarizeEnabled = defaults.object(forKey: Key.autoSummarizeEnabled) as? Bool ?? true
         self.autoSummarizeOnBatteryEnabled = defaults.object(forKey: Key.autoSummarizeOnBatteryEnabled) as? Bool ?? false
         self.includeSummaryInPrompt = defaults.object(forKey: Key.includeSummaryInPrompt) as? Bool ?? true
+        if let data = defaults.data(forKey: Key.sourceRoots),
+           let decoded = try? JSONDecoder().decode([LocalSourceRoot].self, from: data) {
+            self.sourceRoots = decoded
+        } else {
+            self.sourceRoots = []
+        }
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
     }
@@ -222,6 +241,10 @@ public final class HarcPreferences: ObservableObject {
         URL(fileURLWithPath: destinationPath, isDirectory: true)
     }
 
+    public var notesURL: URL {
+        URL(fileURLWithPath: notesPath, isDirectory: true)
+    }
+
     /// True iff the persisted destination path resolves to an existing
     /// directory. Cheap synchronous stat — safe to call from the main
     /// thread on launch, on Settings open, and at recording start.
@@ -236,11 +259,25 @@ public final class HarcPreferences: ObservableObject {
         return exists && isDir.boolValue
     }
 
+    public func notesFolderExists() -> Bool {
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(
+            atPath: notesPath,
+            isDirectory: &isDir
+        )
+        return exists && isDir.boolValue
+    }
+
     /// The default destination — `~/Documents/Harc`. Available as a
     /// fallback when the persisted destination becomes unreachable.
     public static var defaultDestinationPath: String {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents/Harc").path
+    }
+
+    public static var defaultNotesPath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/Harc/Notes").path
     }
 
     public func addEntry(from: String, to: String) {
@@ -285,6 +322,12 @@ public final class HarcPreferences: ObservableObject {
     private func persistVocabulary() {
         if let data = try? JSONEncoder().encode(vocabulary) {
             UserDefaults.standard.set(data, forKey: Key.vocabulary)
+        }
+    }
+
+    private func persistSourceRoots() {
+        if let data = try? JSONEncoder().encode(sourceRoots) {
+            UserDefaults.standard.set(data, forKey: Key.sourceRoots)
         }
     }
 }

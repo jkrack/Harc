@@ -134,6 +134,34 @@ public actor SummarizerService {
         return SummaryParser.parse(raw)
     }
 
+    public func answer(
+        question: String,
+        contextMarkdown: String,
+        modelID: String,
+        modelDirectory: URL
+    ) async throws -> String {
+        let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
+        let promptBody = ConversationPrompt.build(
+            question: question,
+            contextMarkdown: contextMarkdown
+        )
+
+        do {
+            return try await cont.generate(
+                promptBody: promptBody,
+                systemPrompt: ConversationPrompt.systemPrompt,
+                maxTokens: ConversationPrompt.maxOutputTokens
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as SummarizerError {
+            throw error
+        } catch {
+            throw SummarizerError.generationFailed(error.localizedDescription)
+        }
+    }
+
     /// Load or reuse the container for `modelID`. Reloads when the id
     /// changes. Validates that the directory exists before calling the
     /// loader — the loader itself is free to assume the directory is

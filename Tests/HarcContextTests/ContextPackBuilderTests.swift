@@ -85,6 +85,26 @@ struct ContextPackBuilderTests {
         #expect(pack.blocks.contains { $0.text.localizedCaseInsensitiveContains("pricing") })
     }
 
+    @Test("builds context from notes as first-class local sources")
+    func buildsContextFromNotes() async throws {
+        let store = try await RecordingStore.inMemory()
+        let noteStore = NoteStore(rootURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-context-notes-\(UUID().uuidString)", isDirectory: true))
+        var note = try await noteStore.create(
+            title: "Atlas notes",
+            body: "Neal thinks the Atlas work needs sharper migration sequencing."
+        )
+        note.tags = ["project:Atlas"]
+        _ = try await noteStore.update(note)
+
+        let pack = try await ContextPackBuilder(store: store, noteStore: noteStore)
+            .build(query: "What does Neal think about the Atlas work?")
+
+        #expect(pack.sources.map(\.kind) == [.note])
+        #expect(pack.sources.map(\.title) == ["Atlas notes"])
+        #expect(pack.blocks.contains { $0.text.localizedCaseInsensitiveContains("migration sequencing") })
+    }
+
     @Test("evidence extractor returns a larger transcript chunk around planned terms")
     func extractsEvidenceChunk() async throws {
         let store = try await RecordingStore.inMemory()
