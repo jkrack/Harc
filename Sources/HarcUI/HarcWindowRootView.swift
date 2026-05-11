@@ -165,6 +165,8 @@ public struct HarcWindowRootView: View {
     @State private var linkedNotes: [Note] = []
     @State private var linkedNotesError: String?
     @State private var notesExpanded = true
+    @State private var expandedNoteBuckets: Set<String> = []
+    @State private var knownNoteBucketIDs: Set<String> = []
     @State private var projectsExpanded = true
     @State private var peopleExpanded = true
     @State private var recordingsExpanded = true
@@ -249,6 +251,9 @@ public struct HarcWindowRootView: View {
         }
         .onChange(of: prefs.notesPath) { _, _ in
             Task { await loadNotes() }
+        }
+        .onChange(of: libraryVM.filter) { _, _ in
+            seedDefaultNoteBucketExpansion()
         }
         .onChange(of: mode) { _, newMode in
             switch newMode {
@@ -577,11 +582,6 @@ public struct HarcWindowRootView: View {
         return nil
     }
 
-    private var filteredNotes: [Note] {
-        guard let selectedFilterDay else { return notes }
-        return notes.filter { Calendar.current.isDate($0.createdAt, inSameDayAs: selectedFilterDay) }
-    }
-
     private func daysWithNotes(inMonthContaining month: Date) -> Set<Date> {
         NoteCalendarIndex.daysWithNotes(notes, inMonthContaining: month)
     }
@@ -597,29 +597,7 @@ public struct HarcWindowRootView: View {
     private var groupedList: some View {
         List(selection: $selection) {
             DisclosureGroup(isExpanded: $notesExpanded) {
-                Button {
-                    createBlankNote()
-                } label: {
-                    Label("New Note", systemImage: "square.and.pencil")
-                        .font(.subheadline)
-                }
-                .buttonStyle(.plain)
-
-                if filteredNotes.isEmpty {
-                    Text(notesError ?? "No notes yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(Self.noteBuckets(from: filteredNotes), id: \.label) { bucket in
-                        Text(bucket.label)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-                        ForEach(bucket.notes) { note in
-                            noteLabel(note)
-                        }
-                    }
-                }
+                noteSidebarList
             } label: {
                 Label("Notes", systemImage: "note.text")
             }
@@ -703,6 +681,95 @@ public struct HarcWindowRootView: View {
                 Label("Recordings", systemImage: "waveform")
             }
         }
+    }
+
+    @ViewBuilder
+    private var noteSidebarList: some View {
+        let grouping = NoteSidebarGrouping.make(notes: notes, selectedDay: selectedFilterDay)
+
+        Button {
+            createBlankNote()
+        } label: {
+            Label("New Note", systemImage: "square.and.pencil")
+                .font(.subheadline)
+        }
+        .buttonStyle(.plain)
+
+        if grouping.isEmpty {
+            Text(notesError ?? "No notes yet")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            if !grouping.pinned.isEmpty {
+                DisclosureGroup(isExpanded: noteBucketBinding("pinned")) {
+                    ForEach(grouping.pinned) { note in
+                        noteLabel(note)
+                    }
+                } label: {
+                    noteBucketLabel("Pinned", count: grouping.pinned.count)
+                }
+            }
+
+            if !grouping.recent.isEmpty {
+                DisclosureGroup(isExpanded: noteBucketBinding("recent")) {
+                    ForEach(grouping.recent) { note in
+                        noteLabel(note)
+                    }
+                } label: {
+                    noteBucketLabel("Recent", count: grouping.recent.count)
+                }
+            }
+
+            ForEach(grouping.buckets) { bucket in
+                DisclosureGroup(isExpanded: noteBucketBinding(bucket.id)) {
+                    ForEach(bucket.notes) { note in
+                        noteLabel(note)
+                    }
+                } label: {
+                    noteBucketLabel(bucket.label, count: bucket.notes.count)
+                }
+            }
+        }
+    }
+
+    private func noteBucketLabel(_ title: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("\(count)")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color(nsColor: .quaternaryLabelColor).opacity(0.35)))
+        }
+        .padding(.top, 4)
+    }
+
+    private func noteBucketBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedNoteBuckets.contains(id) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedNoteBuckets.insert(id)
+                } else {
+                    expandedNoteBuckets.remove(id)
+                }
+                knownNoteBucketIDs.insert(id)
+            }
+        )
+    }
+
+    private func seedDefaultNoteBucketExpansion() {
+        let grouping = NoteSidebarGrouping.make(notes: notes, selectedDay: selectedFilterDay)
+        var currentIDs = Set(grouping.buckets.map(\.id))
+        if !grouping.pinned.isEmpty { currentIDs.insert("pinned") }
+        if !grouping.recent.isEmpty { currentIDs.insert("recent") }
+        let newIDs = currentIDs.subtracting(knownNoteBucketIDs)
+        expandedNoteBuckets.formUnion(grouping.defaultExpandedBucketIDs.intersection(newIDs))
+        knownNoteBucketIDs.formUnion(currentIDs)
+        expandedNoteBuckets.formIntersection(currentIDs)
     }
 
     // Search-results list: uses TranscriptHitRow for snippet highlighting.
@@ -842,6 +909,10 @@ public struct HarcWindowRootView: View {
         .tag(LibrarySelection.note(id: note.id))
         .contextMenu {
             Button("Open in Harc") { selection = .note(id: note.id) }
+            Button(note.pinned ? "Unpin Note" : "Pin Note") {
+                toggleNotePin(note)
+            }
+            Divider()
             Button("Open Markdown File") { NSWorkspace.shared.open(note.fileURL) }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([note.fileURL])
@@ -1440,6 +1511,13 @@ public struct HarcWindowRootView: View {
                 .disabled(!noteDirty)
 
                 Button {
+                    toggleNotePin(note)
+                } label: {
+                    Label(note.pinned ? "Unpin Note" : "Pin Note", systemImage: note.pinned ? "pin.fill" : "pin")
+                }
+                .help(note.pinned ? "Unpin note" : "Pin note")
+
+                Button {
                     NSWorkspace.shared.activateFileViewerSelecting([note.fileURL])
                 } label: {
                     Label("Reveal", systemImage: "folder")
@@ -1780,6 +1858,7 @@ public struct HarcWindowRootView: View {
         do {
             notes = try await NoteStore(rootURL: prefs.notesURL).fetchAll()
             notesError = nil
+            seedDefaultNoteBucketExpansion()
             await searchNotes()
             if resetDraft {
                 loadSelectedNoteDraft()
@@ -1959,6 +2038,17 @@ public struct HarcWindowRootView: View {
                     noteSavedAt = nil
                 }
                 await loadNotes()
+            } catch {
+                notesError = error.localizedDescription
+            }
+        }
+    }
+
+    private func toggleNotePin(_ note: Note) {
+        Task {
+            do {
+                try await NoteStore(rootURL: prefs.notesURL).setPinned(id: note.id, pinned: !note.pinned)
+                await loadNotes(resetDraft: false)
             } catch {
                 notesError = error.localizedDescription
             }

@@ -89,6 +89,29 @@ struct NoteStoreTests {
         _ = second
     }
 
+    @Test("setPinned persists pin state and fetchAll ordering")
+    func setPinnedPersistsAndOrders() async throws {
+        let store = try makeStore()
+        let first = try await store.create(title: "First", body: "Older")
+        let second = try await store.create(title: "Second", body: "Newer")
+
+        try await store.setPinned(id: first.id, pinned: true)
+
+        var notes = try await store.fetchAll()
+        #expect(notes.map(\.id).first == first.id)
+        #expect(notes.first?.pinned == true)
+        let pinnedRaw = try String(contentsOf: first.fileURL, encoding: .utf8)
+        #expect(pinnedRaw.contains("pinned: true"))
+
+        try await store.setPinned(id: first.id, pinned: false)
+
+        notes = try await store.fetchAll()
+        #expect(notes.first(where: { $0.id == first.id })?.pinned == false)
+        let unpinnedRaw = try String(contentsOf: first.fileURL, encoding: .utf8)
+        #expect(unpinnedRaw.contains("pinned: false"))
+        _ = second
+    }
+
     @Test("archived notes are hidden by default")
     func archiveHidesByDefault() async throws {
         let store = try makeStore()
