@@ -332,7 +332,7 @@ public struct HarcWindowRootView: View {
         .searchable(
             text: $libraryVM.searchText,
             placement: .sidebar,
-            prompt: "Search or ask notes and recordings"
+            prompt: "Search titles, transcripts, and notes"
         )
         .toolbar {
             // Leading: compound recording pill — visible only while recording.
@@ -655,26 +655,32 @@ public struct HarcWindowRootView: View {
             }
 
             DisclosureGroup(isExpanded: $recordingsExpanded) {
-                let pinned = libraryVM.recordings.filter(\.pinned)
-                if !pinned.isEmpty {
-                    Text("Pinned")
-                        .font(.caption.weight(.semibold))
+                if libraryVM.recordings.isEmpty {
+                    Text("No recordings yet")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                    ForEach(pinned) { rec in
-                        recordingLabel(rec)
+                } else {
+                    let pinned = libraryVM.recordings.filter(\.pinned)
+                    if !pinned.isEmpty {
+                        Text("Pinned")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        ForEach(pinned) { rec in
+                            recordingLabel(rec)
+                        }
                     }
-                }
 
-                let unpinned = libraryVM.recordings.filter { !$0.pinned }
-                let buckets = Self.dateBuckets(from: unpinned)
-                ForEach(buckets, id: \.label) { bucket in
-                    Text(bucket.label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                    ForEach(bucket.recordings) { rec in
-                        recordingLabel(rec)
+                    let unpinned = libraryVM.recordings.filter { !$0.pinned }
+                    let buckets = Self.dateBuckets(from: unpinned)
+                    ForEach(buckets, id: \.label) { bucket in
+                        Text(bucket.label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        ForEach(bucket.recordings) { rec in
+                            recordingLabel(rec)
+                        }
                     }
                 }
             } label: {
@@ -775,12 +781,20 @@ public struct HarcWindowRootView: View {
     // Search-results list: uses TranscriptHitRow for snippet highlighting.
     @ViewBuilder
     private var searchResultsList: some View {
-        if libraryVM.hits.isEmpty && noteSearchResults.isEmpty {
+        if let searchError = libraryVM.searchError {
+            List {
+                ContentUnavailableView(
+                    "Search Index Unavailable",
+                    systemImage: "exclamationmark.magnifyingglass",
+                    description: Text(searchError)
+                )
+            }
+        } else if libraryVM.hits.isEmpty && noteSearchResults.isEmpty {
             List {
                 ContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
-                    description: Text("No transcripts matched \u{201C}\(libraryVM.searchText)\u{201D}.")
+                    description: Text("No titles, transcripts, or notes matched \u{201C}\(libraryVM.searchText)\u{201D}.")
                 )
             }
         } else {
@@ -951,6 +965,8 @@ public struct HarcWindowRootView: View {
 
     @ViewBuilder
     private func contextMenu(for rec: Recording) -> some View {
+        Button("Copy transcript") { copyTranscript(rec) }
+        Divider()
         Button(rec.pinned ? "Unpin" : "Pin") {
             guard let id = rec.id else { return }
             Task { try? await libraryVM.togglePin(id: id, currentlyPinned: rec.pinned) }
@@ -961,8 +977,6 @@ public struct HarcWindowRootView: View {
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
         }
-        Button("Copy Transcript") { copyTranscript(rec) }
-        Divider()
         Button("Delete", role: .destructive) {
             pendingDeleteRecording = rec
         }
