@@ -1046,7 +1046,7 @@ public struct HarcWindowRootView: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Label(wikiSection.title, systemImage: wikiSection.systemImage)
-                        .font(.system(size: 28, weight: .semibold))
+                        .font(.title.weight(.semibold))
                     Spacer()
                     Button {
                         Task { await scanConnectedSources() }
@@ -1099,7 +1099,7 @@ public struct HarcWindowRootView: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .firstTextBaseline) {
                     Label("Review", systemImage: "checklist")
-                        .font(.system(size: 28, weight: .semibold))
+                        .font(.title.weight(.semibold))
                     Spacer()
                     Button {
                         Task { await loadReviewProposals() }
@@ -1147,7 +1147,7 @@ public struct HarcWindowRootView: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(name, systemImage: "folder")
-                        .font(.system(size: 28, weight: .semibold))
+                        .font(.title.weight(.semibold))
                     Text(projectSubtitle(noteCount: relatedNotes.count, recordingCount: relatedRecordings.count))
                         .foregroundStyle(.secondary)
                 }
@@ -1442,7 +1442,7 @@ public struct HarcWindowRootView: View {
                         markNoteEdited()
                     }
                 ))
-                .font(.system(size: 28, weight: .semibold))
+                .font(.title.weight(.semibold))
                 .textFieldStyle(.plain)
 
                 HStack(spacing: 8) {

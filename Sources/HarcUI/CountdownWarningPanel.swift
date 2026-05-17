@@ -48,10 +48,10 @@ public struct CountdownWarningPanel: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(headline)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.primary)
                     Text(subheadline)
-                        .font(.system(size: 12, weight: .regular))
+                        .font(.caption)
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -65,9 +65,9 @@ public struct CountdownWarningPanel: View {
                 Button(action: onKeepRecording) {
                     HStack(spacing: 6) {
                         Text("Keep Recording")
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.caption.weight(.medium))
                         Text("Space")
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.caption2.monospaced())
                             .foregroundStyle(.white.opacity(0.75))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -90,7 +90,7 @@ public struct CountdownWarningPanel: View {
 
                 Button(action: onStopNow) {
                     Text("Stop Now")
-                        .font(.system(size: 12.5))
+                        .font(.caption)
                         .foregroundStyle(Color.secondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -105,7 +105,7 @@ public struct CountdownWarningPanel: View {
             }
 
             Text("Or do nothing — recording will save and stop.")
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 .frame(maxWidth: .infinity, alignment: .center)
 
@@ -113,12 +113,12 @@ public struct CountdownWarningPanel: View {
 
             HStack {
                 Text(reason == .hardCap ? "hard cap reached" : "silence threshold · \(thresholdMinutes) min")
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.caption2.monospaced())
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 Spacer(minLength: 8)
                 Button("Change in Settings →", action: onOpenSettings)
                     .buttonStyle(.plain)
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.caption2.monospaced())
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
         }
@@ -163,15 +163,15 @@ public struct CountdownWarningPanel: View {
         HStack(spacing: 10) {
             HStack(spacing: 5) {
                 Image(systemName: "mic")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.caption2.weight(.medium))
                 Text("mic \(dbText(micDb))")
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.caption2.monospaced())
             }
             HStack(spacing: 5) {
                 Image(systemName: "speaker.wave.2")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.caption2.weight(.medium))
                 Text("sys \(dbText(systemDb))")
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.caption2.monospaced())
             }
         }
         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
@@ -212,10 +212,9 @@ private struct CountdownRing: View {
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.9), value: progress)
             Text("\(secondsLeft)")
-                .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                .font(.headline.monospaced().weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(Color.yellow)
         }
     }
 }
-

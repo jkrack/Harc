@@ -217,7 +217,7 @@ public struct TranscriptEditorView: View {
     private var staleHintBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             Text("Timestamps approximate after edits. Save to keep transcript text current; re-transcribe to rebuild word-level alignment.")
                 .font(.caption)
@@ -232,7 +232,7 @@ public struct TranscriptEditorView: View {
     private func errorBanner(_ message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(Color.red)
             Text(message)
                 .font(.caption)

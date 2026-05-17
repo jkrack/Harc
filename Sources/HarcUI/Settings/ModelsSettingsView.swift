@@ -192,7 +192,7 @@ private struct ModelRow: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text("Your Mac has \(ramGB) GB — \(descriptor.recommendedRAMGB) GB recommended.")
                     }
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(Color.yellow)
                 }
                 if case .failed(let reason) = state {

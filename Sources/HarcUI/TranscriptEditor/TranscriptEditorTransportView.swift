@@ -81,7 +81,7 @@ struct TranscriptEditorTransportView: View {
     private var audioMissingBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "speaker.slash")
-                .font(.system(size: 11))
+                .font(.caption2)
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             Text("Audio file not found — editing still works; playback is disabled.")
                 .font(.body)
