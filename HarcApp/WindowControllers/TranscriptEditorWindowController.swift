@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import HarcStore
 import HarcUI
@@ -7,6 +8,7 @@ import HarcUI
 final class TranscriptEditorWindowController: NSWindowController, NSWindowDelegate {
     private let vm: TranscriptEditorViewModel
     private let onClose: () -> Void
+    private var cancellables: Set<AnyCancellable> = []
 
     init(vm: TranscriptEditorViewModel, store: RecordingStore, onClose: @escaping () -> Void) {
         self.vm = vm
@@ -19,6 +21,12 @@ final class TranscriptEditorWindowController: NSWindowController, NSWindowDelega
         window.center()
         super.init(window: window)
         window.delegate = self
+        vm.$isDirty
+            .removeDuplicates()
+            .sink { [weak window] isDirty in
+                window?.isDocumentEdited = isDirty
+            }
+            .store(in: &cancellables)
     }
 
     required init?(coder: NSCoder) {
