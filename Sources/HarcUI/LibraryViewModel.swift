@@ -39,6 +39,7 @@ public final class LibraryViewModel: ObservableObject {
     @Published public private(set) var recordings: [Recording] = []
     /// Populated only when `searchText` is non-empty. BM25-ranked.
     @Published public private(set) var hits: [TranscriptHit] = []
+    @Published public private(set) var searchError: String?
     @Published public var filter: LibraryFilter = .all {
         didSet { if oldValue != filter { applyCurrent() } }
     }
@@ -121,6 +122,7 @@ public final class LibraryViewModel: ObservableObject {
                         self.fullList = all
                         self.recordings = self.apply(filter: filter, to: all)
                         self.hits = []
+                        self.searchError = nil
                     }
                 } else {
                     let results = try await Self.searchResults(
@@ -130,6 +132,7 @@ public final class LibraryViewModel: ObservableObject {
                     )
                     await MainActor.run {
                         self.hits = results
+                        self.searchError = nil
                         // `recordings` stays populated with the unfiltered list so
                         // the detail pane can still look up full Recording data
                         // by wavPath. The main view branches on searchText.isEmpty
@@ -137,9 +140,18 @@ public final class LibraryViewModel: ObservableObject {
                     }
                 }
             } catch {
-                // Keep previous state on error.
+                await MainActor.run {
+                    self.hits = []
+                    self.searchError = Self.searchErrorMessage(from: error)
+                }
             }
         }
+    }
+
+    private static func searchErrorMessage(from error: Error) -> String {
+        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return "Search index unavailable." }
+        return "Search index unavailable: \(message)"
     }
 
     private static func searchResults(
