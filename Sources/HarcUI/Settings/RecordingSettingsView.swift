@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import UserNotifications
 import KeyboardShortcuts
+import UniformTypeIdentifiers
 import HarcMeetingDetect
 
 public struct RecordingSettingsView: View {
@@ -65,12 +66,24 @@ public struct RecordingSettingsView: View {
             Section {
                 Toggle("Auto-paste on stop", isOn: $prefs.autoPasteEnabled)
                     .tint(Color.accentColor)
+
+                Divider()
+
+                ForEach(pasteDenyListRows, id: \.self) { bundleID in
+                    pasteDenyListRow(bundleID)
+                }
+
+                Button {
+                    pickPasteDenyListApp()
+                } label: {
+                    Label("Add app…", systemImage: "plus")
+                }
             } header: {
                 Text("Auto-paste")
             } footer: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("When recording stops, the prompt-formatted transcript is pasted into the frontmost app.")
-                    Text("Hold ⇧ while clicking Stop, or ⌥-click the menu-bar icon, to skip for one recording. Paste is always skipped for password managers, Finder, and meeting apps.")
+                    Text("Hold ⇧ while clicking Stop, or ⌥-click the menu-bar icon, to skip for one recording. Locked apps are always skipped; you can add or remove your own apps above.")
                 }
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
@@ -204,6 +217,78 @@ public struct RecordingSettingsView: View {
         .padding(.vertical, 4)
     }
 
+    private var pasteDenyListRows: [String] {
+        prefs.pasteDenyListBundleIDs.sorted { lhs, rhs in
+            let leftLocked = PasteDenyList.lockedBundleIDs.contains(lhs)
+            let rightLocked = PasteDenyList.lockedBundleIDs.contains(rhs)
+            if leftLocked != rightLocked { return leftLocked }
+            return pasteDenyListDisplayName(for: lhs).localizedCaseInsensitiveCompare(
+                pasteDenyListDisplayName(for: rhs)
+            ) == .orderedAscending
+        }
+    }
+
+    private func pasteDenyListRow(_ bundleID: String) -> some View {
+        let locked = PasteDenyList.lockedBundleIDs.contains(bundleID)
+        return HStack(spacing: 12) {
+            Image(systemName: locked ? "lock.fill" : "app.dashed")
+                .foregroundStyle(locked ? Color.secondary : Color.accentColor)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pasteDenyListDisplayName(for: bundleID))
+                    .font(.body)
+                Text(bundleID)
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            if locked {
+                Text("Locked")
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
+            } else {
+                Button(role: .destructive) {
+                    prefs.removePasteDenyListBundleID(bundleID)
+                } label: {
+                    Label("Remove", systemImage: "minus.circle")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Remove from auto-paste deny list")
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func pasteDenyListDisplayName(for bundleID: String) -> String {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
+              let bundle = Bundle(url: url) else {
+            return fallbackPasteDenyListDisplayName(for: bundleID)
+        }
+
+        return bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? url.deletingPathExtension().lastPathComponent
+    }
+
+    private func fallbackPasteDenyListDisplayName(for bundleID: String) -> String {
+        switch bundleID {
+        case "com.apple.loginwindow": return "Login Window"
+        case "com.apple.finder": return "Finder"
+        case "com.apple.systempreferences": return "System Settings"
+        case "com.apple.ScreenSaver.Engine": return "Screen Saver"
+        case "com.agilebits.onepassword7", "com.agilebits.onepassword8": return "1Password"
+        case "com.bitwarden.desktop": return "Bitwarden"
+        case "com.lastpass.LastPass": return "LastPass"
+        case "org.keepassxc.keepassxc": return "KeePassXC"
+        case "us.zoom.xos": return "Zoom"
+        case "com.microsoft.teams2": return "Microsoft Teams"
+        case "com.tinyspeck.slackmacgap": return "Slack"
+        default: return bundleID
+        }
+    }
+
     private var googleMeetComingSoonRow: some View {
         HStack(spacing: 12) {
             Image(systemName: "globe")
@@ -298,5 +383,22 @@ public struct RecordingSettingsView: View {
         if panel.runModal() == .OK, let chosen = panel.url {
             prefs.destinationPath = chosen.path
         }
+    }
+
+    private func pickPasteDenyListApp() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.allowedContentTypes = [.applicationBundle]
+
+        guard panel.runModal() == .OK,
+              let url = panel.url,
+              let bundleID = Bundle(url: url)?.bundleIdentifier else {
+            return
+        }
+
+        prefs.addPasteDenyListBundleID(bundleID)
     }
 }

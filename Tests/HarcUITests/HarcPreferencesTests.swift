@@ -69,6 +69,43 @@ struct HarcPreferencesTests {
         defaults.removeObject(forKey: "harc.autoPasteEnabled")
     }
 
+    @Test("pasteDenyListBundleIDs defaults to the seed list")
+    func pasteDenyListDefaultsToSeedList() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.pasteDenyListBundleIDs")
+        let prefs = HarcPreferences()
+        #expect(prefs.pasteDenyListBundleIDs == PasteDenyList.defaultBundleIDs)
+        defaults.removeObject(forKey: "harc.pasteDenyListBundleIDs")
+    }
+
+    @Test("pasteDenyListBundleIDs persists custom entries")
+    func pasteDenyListPersistsCustomEntries() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.pasteDenyListBundleIDs")
+        let prefs = HarcPreferences()
+        prefs.addPasteDenyListBundleID("com.example.private")
+        let reloaded = HarcPreferences()
+        #expect(reloaded.pasteDenyListBundleIDs.contains("com.example.private"))
+        defaults.removeObject(forKey: "harc.pasteDenyListBundleIDs")
+    }
+
+    @Test("paste deny list removes user entries but preserves locked entries")
+    func pasteDenyListRemovalPreservesLockedEntries() {
+        let defaults = UserDefaults.standard
+        defaults.set([
+            "com.example.private",
+            "com.apple.loginwindow",
+        ], forKey: "harc.pasteDenyListBundleIDs")
+
+        let prefs = HarcPreferences()
+        prefs.removePasteDenyListBundleID("com.example.private")
+        prefs.removePasteDenyListBundleID("com.apple.loginwindow")
+
+        #expect(!prefs.pasteDenyListBundleIDs.contains("com.example.private"))
+        #expect(prefs.pasteDenyListBundleIDs.contains("com.apple.loginwindow"))
+        defaults.removeObject(forKey: "harc.pasteDenyListBundleIDs")
+    }
+
     @Test("vadEnabled defaults to true when UserDefaults has no key")
     func vadEnabledDefaultTrue() {
         let defaults = UserDefaults.standard
