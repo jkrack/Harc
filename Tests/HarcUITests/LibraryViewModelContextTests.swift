@@ -60,6 +60,53 @@ struct LibraryViewModelContextTests {
         #expect(vm.hits.first?.recording.wavPath == "/tmp/semantic-renewal.wav")
         #expect(vm.hits.first?.snippet.contains("enterprise renewal") == true)
     }
+
+    @Test("library storage total tracks observed recordings")
+    func libraryStorageTotalTracksObservedRecordings() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let firstURL = directory.appendingPathComponent("first.wav")
+        let secondURL = directory.appendingPathComponent("second.wav")
+        try Data(repeating: 1, count: 3).write(to: firstURL)
+        try Data(repeating: 2, count: 7).write(to: secondURL)
+
+        let store = try await RecordingStore.inMemory()
+        let vm = LibraryViewModel(store: store)
+        vm.start()
+        defer { vm.stop() }
+
+        let first = try await store.upsert(Recording(
+            wavPath: firstURL.path,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            title: "First"
+        ))
+        _ = try await store.upsert(Recording(
+            wavPath: secondURL.path,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            title: "Second"
+        ))
+
+        #expect(await waitForLibraryState { vm.totalBytes == 10 })
+
+        try await store.softDelete(id: first.id!)
+
+        #expect(await waitForLibraryState { vm.totalBytes == 7 })
+    }
+}
+
+private func waitForLibraryState(
+    timeout: TimeInterval = 1,
+    condition: @MainActor @escaping () -> Bool
+) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    return await condition()
 }
 
 private struct RenewalEmbedder: LocalTextEmbedder {
