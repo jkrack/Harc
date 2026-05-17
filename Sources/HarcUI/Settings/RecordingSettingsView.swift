@@ -16,11 +16,19 @@ public struct RecordingSettingsView: View {
         Group {
             Section {
                 HStack {
-                    Text(prefs.destinationPath)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    Label {
+                        Text(prefs.destinationPath)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } icon: {
+                        Image(systemName: "folder")
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
                     Spacer()
                     Button("Choose…", action: pickFolder)
                 }
@@ -304,9 +312,12 @@ public struct RecordingSettingsView: View {
                     .foregroundStyle(Color.secondary)
             }
             Spacer()
-            Toggle("", isOn: .constant(false))
-                .labelsHidden()
-                .disabled(true)
+            Text("Coming soon")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: Capsule())
         }
         .padding(.vertical, 4)
     }
