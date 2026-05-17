@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import AVFoundation
 @preconcurrency import AVFAudio
+import HarcAudioObjC
 
 /// Minimal protocol so RecordingSession can be tested against fakes.
 public protocol MicCaptureSource: Sendable {
@@ -44,11 +45,17 @@ public actor MicCapture: MicCaptureSource {
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        guard Self.isValidInputFormat(format) else {
+            throw AudioError.audioEngineFailed(
+                "Microphone input format is unavailable. Check the selected input device in System Settings."
+            )
+        }
 
         let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
         self.continuation = cont
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [cont] buffer, _ in
+        var tapError: NSError?
+        let tapInstalled = HarcInstallTapOnAudioNode(input, 0, 4096, format, { [cont] buffer, _ in
             // Copy the buffer — AVAudioEngine reuses the underlying storage.
             guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
                 return
@@ -62,6 +69,13 @@ public actor MicCapture: MicCaptureSource {
                 }
             }
             cont.yield(copy)
+        }, &tapError)
+
+        guard tapInstalled else {
+            cont.finish()
+            continuation = nil
+            let reason = tapError?.localizedDescription ?? "Microphone tap could not be installed."
+            throw AudioError.audioEngineFailed(reason)
         }
 
         do {
@@ -73,6 +87,10 @@ public actor MicCapture: MicCaptureSource {
         }
         isRunning = true
         return stream
+    }
+
+    static func isValidInputFormat(_ format: AVAudioFormat) -> Bool {
+        format.channelCount > 0 && format.sampleRate.isFinite && format.sampleRate > 0
     }
 
     public func stop() async {

@@ -53,7 +53,11 @@ let package = Package(
         .target(name: "HarcCore"),
         .target(
             name: "HarcAudio",
-            dependencies: ["HarcCore", "HarcClient"]
+            dependencies: ["HarcCore", "HarcClient", "HarcAudioObjC"]
+        ),
+        .target(
+            name: "HarcAudioObjC",
+            publicHeadersPath: "include"
         ),
         .target(
             name: "HarcClient",
