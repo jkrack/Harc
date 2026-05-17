@@ -7,6 +7,7 @@ public enum DaemonError: Error, LocalizedError, Equatable {
     case socketCreationFailed(Int32)
     case socketBindFailed(Int32)
     case socketListenFailed(Int32)
+    case socketPathTooLong(String)
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ public enum DaemonError: Error, LocalizedError, Equatable {
             return "Failed to bind socket (errno \(errno))"
         case .socketListenFailed(let errno):
             return "Failed to listen on socket (errno \(errno))"
+        case .socketPathTooLong(let path):
+            return "Socket path is too long for AF_UNIX: \(path)"
         }
     }
 
@@ -31,7 +34,7 @@ public enum DaemonError: Error, LocalizedError, Equatable {
         case .modelNotLoaded: return "model_not_loaded"
         case .audioLoadFailed: return "audio_load_failed"
         case .transcriptionFailed: return "transcription_failed"
-        case .socketCreationFailed, .socketBindFailed, .socketListenFailed: return "socket_error"
+        case .socketCreationFailed, .socketBindFailed, .socketListenFailed, .socketPathTooLong: return "socket_error"
         }
     }
 }

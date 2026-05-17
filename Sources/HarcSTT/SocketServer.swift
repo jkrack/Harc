@@ -17,10 +17,16 @@ public final class SocketServer: @unchecked Sendable {
 
         // Ensure parent dir exists (e.g. ~/.harc/)
         let parent = (socketPath as NSString).deletingLastPathComponent
+        let parentAlreadyExisted = FileManager.default.fileExists(atPath: parent)
         try FileManager.default.createDirectory(
             atPath: parent,
             withIntermediateDirectories: true
         )
+        // The STT daemon accepts sensitive transcript jobs. Keep the socket
+        // directory owner-only when we own a Harc-created private directory.
+        if !parentAlreadyExisted || parent == Self.defaultSocketParent {
+            chmod(parent, 0o700)
+        }
 
         // Remove any stale socket left from a previous run
         if FileManager.default.fileExists(atPath: socketPath) {
@@ -32,6 +38,10 @@ public final class SocketServer: @unchecked Sendable {
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
+        guard socketPath.utf8.count < MemoryLayout.size(ofValue: addr.sun_path) else {
+            close(fd)
+            throw DaemonError.socketPathTooLong(socketPath)
+        }
         _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
             socketPath.withCString { cpath in
                 memcpy(ptr, cpath, min(strlen(cpath) + 1, MemoryLayout.size(ofValue: ptr.pointee)))
@@ -48,6 +58,7 @@ public final class SocketServer: @unchecked Sendable {
             close(fd)
             throw DaemonError.socketBindFailed(err)
         }
+        chmod(socketPath, 0o600)
 
         guard listen(fd, 8) == 0 else {
             let err = errno
@@ -75,7 +86,11 @@ public final class SocketServer: @unchecked Sendable {
                 }
             }
             if clientFd >= 0 {
-                continuation.yield(clientFd)
+                if Self.isAuthorizedPeer(clientFd) {
+                    continuation.yield(clientFd)
+                } else {
+                    close(clientFd)
+                }
             } else if errno == EINTR {
                 continue
             } else {
@@ -95,4 +110,17 @@ public final class SocketServer: @unchecked Sendable {
         continuation.finish()
         try? FileManager.default.removeItem(atPath: socketPath)
     }
+
+    private static func isAuthorizedPeer(_ fd: Int32) -> Bool {
+        var peerUID = uid_t()
+        var peerGID = gid_t()
+        guard getpeereid(fd, &peerUID, &peerGID) == 0 else { return false }
+        return peerUID == geteuid()
+    }
+
+    private static let defaultSocketParent: String = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".harc", isDirectory: true)
+            .path
+    }()
 }

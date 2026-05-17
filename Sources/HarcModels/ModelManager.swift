@@ -33,7 +33,7 @@ public actor ModelManager {
             case .filesystem(let s): return s
             case .verification(let s): return s
             case .manifestUnverified(let id):
-                return "Manifest for \"\(id)\" hasn't been verified. Downloads are blocked until the manifest-refresh script runs."
+                return "Manifest for \"\(id)\" is not fully verified. Downloads require a pinned revision and SHA256 for every file."
             }
         }
     }
@@ -115,7 +115,7 @@ public actor ModelManager {
         guard let descriptor = descriptor(for: id) else {
             throw Failure.unknownModel(id)
         }
-        guard descriptor.manifestVerified else {
+        guard Self.isDownloadManifestTrusted(descriptor) else {
             throw Failure.manifestUnverified(id)
         }
         if case .installed = state(of: id) {
@@ -235,13 +235,12 @@ public actor ModelManager {
 
             // All files in; write the install marker.
             transition(descriptor.id, to: .verifying)
-            let anyUnverified = descriptor.files.contains { $0.sha256.isEmpty }
             let record = ModelStorage.InstallRecord(
                 modelID: descriptor.id,
                 revision: descriptor.revision,
                 installedAt: clock(),
                 bytes: bytesDone,
-                skippedSHAVerification: anyUnverified
+                skippedSHAVerification: false
             )
             try storage.writeInstallRecord(record)
             try? storage.clearPartialRecord(for: descriptor.id)
@@ -266,14 +265,25 @@ public actor ModelManager {
 
     // MARK: - Verification
 
-    /// SHA-verify a downloaded file against its manifest entry. No-op when
-    /// the manifest entry ships with an empty sha256 (see ModelCatalog).
+    /// SHA-verify a downloaded file against its manifest entry.
     private func verifyFile(at url: URL, against file: ModelFile) async throws {
-        guard !file.sha256.isEmpty else { return }
+        guard !file.sha256.isEmpty else {
+            throw Failure.verification("Missing SHA256 for \(file.path).")
+        }
         let actual = try await Self.sha256Hex(of: url)
         if actual.lowercased() != file.sha256.lowercased() {
             throw DownloadError.sha256Mismatch(expected: file.sha256, actual: actual)
         }
+    }
+
+    static func isDownloadManifestTrusted(_ descriptor: ModelDescriptor) -> Bool {
+        descriptor.manifestVerified
+            && descriptor.revision != "main"
+            && !descriptor.revision.isEmpty
+            && descriptor.files.allSatisfy { file in
+                file.sha256.count == 64
+                    && file.sha256.allSatisfy { "0123456789abcdefABCDEF".contains($0) }
+            }
     }
 
     static func sha256Hex(of url: URL) async throws -> String {
