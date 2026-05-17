@@ -188,9 +188,17 @@ public struct TranscriptEditorView: View {
     @ViewBuilder
     private var body_: some View {
         if vm.editedText.isEmpty && vm.audioMissing == false {
-            EmptyTranscriptCard()
+            EmptyStateView(
+                icon: "doc.text.magnifyingglass",
+                title: "No transcript yet",
+                subtitle: "Transcribe this recording on-device to make it editable."
+            )
         } else if vm.editedText.isEmpty && vm.audioMissing {
-            EmptyAudioOnlyCard()
+            EmptyStateView(
+                icon: "speaker.slash",
+                title: "Audio file not found",
+                subtitle: "Playback is disabled because the original .wav is missing. Editing still works if a transcript was previously saved."
+            )
         } else {
             TranscriptTextView(
                 text: Binding(
@@ -284,76 +292,5 @@ public struct TranscriptEditorView: View {
                     ?? error.localizedDescription
             }
         }
-    }
-}
-
-// MARK: - Empty states
-
-private struct EmptyTranscriptCard: View {
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            VStack(spacing: 12) {
-                IdleWaveform()
-                    .frame(width: 240, height: 56)
-                    .opacity(0.6)
-                Text("No transcript yet")
-                    .font(.headline)
-                    .foregroundStyle(Color.primary)
-                Text("This recording is audio only. Transcribe on-device with parakeet-tdt-0.6b-v3 — typically a few seconds on Apple Silicon.")
-                    .font(.body)
-                    .foregroundStyle(Color.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.bottom, 8)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-}
-
-private struct EmptyAudioOnlyCard: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            Image(systemName: "speaker.slash")
-                .font(.system(size: 28))
-                .foregroundStyle(Color(nsColor: .quaternaryLabelColor))
-            Text("Audio file not found")
-                .font(.headline)
-                .foregroundStyle(Color.primary)
-            Text("The original .wav for this recording is missing — playback is disabled. Editing still works if a transcript was previously saved.")
-                .font(.body)
-                .foregroundStyle(Color.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-}
-
-private struct IdleWaveform: View {
-    var body: some View {
-        GeometryReader { geo in
-            HStack(alignment: .center, spacing: 3) {
-                ForEach(0..<40, id: \.self) { i in
-                    Capsule()
-                        .fill(Color(nsColor: .quaternaryLabelColor))
-                        .frame(width: 2, height: barHeight(at: i, totalHeight: geo.size.height))
-                }
-            }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
-        }
-    }
-
-    private func barHeight(at i: Int, totalHeight: CGFloat) -> CGFloat {
-        let h = 8 + abs(sin(Double(i) * 0.5)) * Double(totalHeight - 8)
-        return CGFloat(h)
     }
 }
