@@ -113,6 +113,10 @@ public final class TranscriptEditorViewModel: ObservableObject {
         }
     }
 
+    public func clearSaveError() {
+        saveError = nil
+    }
+
     public func stopPlayback() {
         pollTask?.cancel()
         pollTask = nil

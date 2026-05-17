@@ -139,4 +139,18 @@ struct TranscriptEditorViewModelTests {
         #expect(!vm.isDirty)
         #expect(try String(contentsOf: f.txt, encoding: .utf8) == "yes")
     }
+
+    @Test("save error persists until dismissed")
+    func clearSaveError() async throws {
+        let f = try await makeFixture()
+        let vm = await TranscriptEditorViewModel(recording: f.recording, store: f.store)
+        try FileManager.default.removeItem(at: f.dir)
+
+        vm.markEdited(newText: "cannot write")
+        await vm.save()
+        #expect(vm.saveError != nil)
+
+        vm.clearSaveError()
+        #expect(vm.saveError == nil)
+    }
 }
