@@ -131,6 +131,10 @@ public struct HarcWindowRootView: View {
     /// (timestamp + speaker + text) instead of the flat .txt blob.
     @State private var transcriptSegments: [TranscriptDisplaySegment] = []
     @State private var transcriptLoadError: String? = nil
+    @State private var transcriptFindVisible = false
+    @State private var transcriptSearchText = ""
+    @State private var transcriptSearchIndex = 0
+    @FocusState private var transcriptSearchFocused: Bool
     @State private var detailEnvelope: [Float] = []
     /// Resolved speaker labels for the current selection, keyed by speaker
     /// index. Populated asynchronously on selection change via
@@ -1578,44 +1582,55 @@ public struct HarcWindowRootView: View {
     }
 
     private func detailContent(recording: Recording) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                WaveformPlayerView(
-                    envelope: detailEnvelope,
-                    audioURL: URL(fileURLWithPath: recording.wavPath)
-                )
-                .padding(.horizontal)
-
-                // Summary card — requires SummarizationQueueStore and
-                // ModelManagerStore injected as environment objects by the
-                // window controller.
-                SummaryCardView(
-                    recording: recording,
-                    store: store,
-                    activeSummarizerID: prefs.activeSummarizerID,
-                    hasTranscript: hasTranscriptSource(recording),
-                    onClearSummary: { id in
-                        Task { try? await store.clearSummaryStatus(id: id) }
-                    }
-                )
-                .padding(.horizontal)
-
-                // Transcript text
-                transcriptBody
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    WaveformPlayerView(
+                        envelope: detailEnvelope,
+                        audioURL: URL(fileURLWithPath: recording.wavPath)
+                    )
                     .padding(.horizontal)
+
+                    // Summary card — requires SummarizationQueueStore and
+                    // ModelManagerStore injected as environment objects by the
+                    // window controller.
+                    SummaryCardView(
+                        recording: recording,
+                        store: store,
+                        activeSummarizerID: prefs.activeSummarizerID,
+                        hasTranscript: hasTranscriptSource(recording),
+                        onClearSummary: { id in
+                            Task { try? await store.clearSummaryStatus(id: id) }
+                        }
+                    )
+                    .padding(.horizontal)
+
+                    if transcriptFindVisible {
+                        transcriptFindBar(proxy: proxy)
+                            .padding(.horizontal)
+                    }
+
+                    // Transcript text
+                    transcriptBody(proxy: proxy)
+                        .padding(.horizontal)
+                }
+                .padding(.vertical)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.vertical)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(transcriptKeyboardShortcuts(proxy: proxy))
         }
         .navigationTitle(recording.displayTitle)
         // Reload transcript when the selection's recording row changes in the DB.
         .task(id: recording.wavPath) {
             await observeRecording(recording: recording)
         }
+        .onChange(of: transcriptSearchText) { _, _ in
+            transcriptSearchIndex = 0
+        }
     }
 
     @ViewBuilder
-    private var transcriptBody: some View {
+    private func transcriptBody(proxy: ScrollViewProxy) -> some View {
         if let err = transcriptLoadError {
             Text(err)
                 .font(.body)
@@ -1636,12 +1651,19 @@ public struct HarcWindowRootView: View {
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                         }
-                        Text(seg.text)
+                        Text(highlightedTranscriptText(seg.text))
                             .font(.body)
                             .lineSpacing(4)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .id(seg.id)
+                    .padding(.vertical, activeTranscriptMatchSegmentID == seg.id ? 6 : 0)
+                    .padding(.horizontal, activeTranscriptMatchSegmentID == seg.id ? 8 : 0)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(activeTranscriptMatchSegmentID == seg.id ? Color.accentColor.opacity(0.08) : Color.clear)
+                    )
                 }
             }
         } else if transcriptText.isEmpty {
@@ -1650,12 +1672,235 @@ public struct HarcWindowRootView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            Text(transcriptText)
+            Text(highlightedTranscriptText(transcriptText))
                 .font(.body)
                 .lineSpacing(4)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .id("flat-transcript")
         }
+    }
+
+    private func transcriptFindBar(proxy: ScrollViewProxy) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(Color.secondary)
+            TextField("Find in transcript", text: $transcriptSearchText)
+                .textFieldStyle(.roundedBorder)
+                .focused($transcriptSearchFocused)
+                .onSubmit { jumpToNextTranscriptMatch(proxy: proxy) }
+            Text(transcriptSearchStatus)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.secondary)
+                .frame(minWidth: 58, alignment: .trailing)
+            Button {
+                jumpToPreviousTranscriptMatch(proxy: proxy)
+            } label: {
+                Label("Previous match", systemImage: "chevron.up")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(transcriptSearchMatches.isEmpty)
+            .help("Previous match")
+            Button {
+                jumpToNextTranscriptMatch(proxy: proxy)
+            } label: {
+                Label("Next match", systemImage: "chevron.down")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(transcriptSearchMatches.isEmpty)
+            .help("Next match")
+            Divider()
+                .frame(height: 18)
+            Button {
+                jumpToPreviousSpeakerBoundary(proxy: proxy)
+            } label: {
+                Label("Previous speaker", systemImage: "person.fill.turn.up.left")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(transcriptSegments.isEmpty)
+            .keyboardShortcut(.upArrow, modifiers: [.command])
+            .help("Previous speaker change (⌘↑)")
+            Button {
+                jumpToNextSpeakerBoundary(proxy: proxy)
+            } label: {
+                Label("Next speaker", systemImage: "person.fill.turn.down.right")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(transcriptSegments.isEmpty)
+            .keyboardShortcut(.downArrow, modifiers: [.command])
+            .help("Next speaker change (⌘↓)")
+            Button {
+                transcriptSearchText = ""
+                transcriptFindVisible = false
+            } label: {
+                Label("Close find", systemImage: "xmark.circle.fill")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help("Close find")
+        }
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+    }
+
+    private func transcriptKeyboardShortcuts(proxy: ScrollViewProxy) -> some View {
+        HStack {
+            Button("Find in transcript") {
+                transcriptFindVisible = true
+                transcriptSearchFocused = true
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+            Button("Next speaker") {
+                jumpToNextSpeakerBoundary(proxy: proxy)
+            }
+            .keyboardShortcut(.downArrow, modifiers: [.command])
+            Button("Previous speaker") {
+                jumpToPreviousSpeakerBoundary(proxy: proxy)
+            }
+            .keyboardShortcut(.upArrow, modifiers: [.command])
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private var transcriptSearchQuery: String {
+        transcriptSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var transcriptSearchMatches: [TranscriptSearchMatch] {
+        let query = transcriptSearchQuery
+        guard !query.isEmpty else { return [] }
+
+        if !transcriptSegments.isEmpty {
+            return transcriptSegments.flatMap { segment in
+                Array(repeating: TranscriptSearchMatch(segmentID: segment.id), count: matchCount(in: segment.text, query: query))
+            }
+        }
+
+        let count = matchCount(in: transcriptText, query: query)
+        return Array(repeating: TranscriptSearchMatch(segmentID: nil), count: count)
+    }
+
+    private var transcriptSearchStatus: String {
+        let matches = transcriptSearchMatches
+        guard !transcriptSearchQuery.isEmpty else { return "" }
+        guard !matches.isEmpty else { return "0/0" }
+        return "\(min(transcriptSearchIndex + 1, matches.count))/\(matches.count)"
+    }
+
+    private var activeTranscriptMatchSegmentID: UUID? {
+        let matches = transcriptSearchMatches
+        guard !matches.isEmpty else { return nil }
+        return matches[min(transcriptSearchIndex, matches.count - 1)].segmentID
+    }
+
+    private func jumpToNextTranscriptMatch(proxy: ScrollViewProxy) {
+        let matches = transcriptSearchMatches
+        guard !matches.isEmpty else { return }
+        transcriptSearchIndex = (transcriptSearchIndex + 1) % matches.count
+        scrollToTranscriptMatch(matches[transcriptSearchIndex], proxy: proxy)
+    }
+
+    private func jumpToPreviousTranscriptMatch(proxy: ScrollViewProxy) {
+        let matches = transcriptSearchMatches
+        guard !matches.isEmpty else { return }
+        transcriptSearchIndex = (transcriptSearchIndex + matches.count - 1) % matches.count
+        scrollToTranscriptMatch(matches[transcriptSearchIndex], proxy: proxy)
+    }
+
+    private func scrollToTranscriptMatch(_ match: TranscriptSearchMatch, proxy: ScrollViewProxy) {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            if let segmentID = match.segmentID {
+                proxy.scrollTo(segmentID, anchor: .center)
+            } else {
+                proxy.scrollTo("flat-transcript", anchor: .center)
+            }
+        }
+    }
+
+    private func jumpToNextSpeakerBoundary(proxy: ScrollViewProxy) {
+        guard let id = nextSpeakerBoundaryID(forward: true) else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            proxy.scrollTo(id, anchor: .center)
+        }
+    }
+
+    private func jumpToPreviousSpeakerBoundary(proxy: ScrollViewProxy) {
+        guard let id = nextSpeakerBoundaryID(forward: false) else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            proxy.scrollTo(id, anchor: .center)
+        }
+    }
+
+    private func nextSpeakerBoundaryID(forward: Bool) -> UUID? {
+        let boundaries = transcriptSegments.indices.dropFirst().compactMap { index -> UUID? in
+            transcriptSegments[index].speaker == transcriptSegments[index - 1].speaker
+                ? nil
+                : transcriptSegments[index].id
+        }
+        guard !boundaries.isEmpty else { return transcriptSegments.first?.id }
+
+        let activeID = activeTranscriptMatchSegmentID
+        let activeIndex = activeID.flatMap { id in transcriptSegments.firstIndex { $0.id == id } } ?? 0
+
+        if forward {
+            return transcriptSegments[activeIndex...].dropFirst().first { segment in
+                boundaries.contains(segment.id)
+            }?.id ?? boundaries.first
+        }
+
+        return transcriptSegments[..<max(activeIndex, 1)].reversed().first { segment in
+            boundaries.contains(segment.id)
+        }?.id ?? boundaries.last
+    }
+
+    private func matchCount(in text: String, query: String) -> Int {
+        guard !query.isEmpty else { return 0 }
+        let source = text as NSString
+        var searchRange = NSRange(location: 0, length: source.length)
+        var count = 0
+        while searchRange.length > 0 {
+            let found = source.range(
+                of: query,
+                options: [.caseInsensitive, .diacriticInsensitive],
+                range: searchRange
+            )
+            guard found.location != NSNotFound else { break }
+            count += 1
+            let nextLocation = found.location + max(found.length, 1)
+            searchRange = NSRange(location: nextLocation, length: max(0, source.length - nextLocation))
+        }
+        return count
+    }
+
+    private func highlightedTranscriptText(_ text: String) -> AttributedString {
+        let query = transcriptSearchQuery
+        guard !query.isEmpty else { return AttributedString(text) }
+
+        let source = text as NSString
+        let highlighted = NSMutableAttributedString(string: text)
+        var searchRange = NSRange(location: 0, length: source.length)
+        while searchRange.length > 0 {
+            let found = source.range(
+                of: query,
+                options: [.caseInsensitive, .diacriticInsensitive],
+                range: searchRange
+            )
+            guard found.location != NSNotFound else { break }
+            highlighted.addAttribute(
+                .backgroundColor,
+                value: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35),
+                range: found
+            )
+            let nextLocation = found.location + max(found.length, 1)
+            searchRange = NSRange(location: nextLocation, length: max(0, source.length - nextLocation))
+        }
+        return AttributedString(highlighted)
     }
 
     private func formatTimestamp(seconds: Int) -> String {
@@ -2842,6 +3087,10 @@ struct TranscriptDisplaySegment: Identifiable {
     let speakerName: String
     let startSec: Int
     let text: String
+}
+
+private struct TranscriptSearchMatch {
+    let segmentID: UUID?
 }
 
 // MARK: - Date grouping

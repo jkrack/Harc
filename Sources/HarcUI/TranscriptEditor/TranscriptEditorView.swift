@@ -231,7 +231,10 @@ public struct TranscriptEditorView: View {
                 .foregroundStyle(Color.red)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button("Dismiss") { exportError = nil }
+            Button("Dismiss") {
+                exportError = nil
+                vm.clearSaveError()
+            }
                 .buttonStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(Color.secondary)
