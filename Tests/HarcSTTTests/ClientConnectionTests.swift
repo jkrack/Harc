@@ -96,4 +96,38 @@ struct ClientConnectionTests {
         shutdown(clientFd, SHUT_WR)
         try await connTask.value
     }
+
+    @Test("oversized IPC request is rejected")
+    func oversizedRequestYieldsError() async throws {
+        let (serverFd, clientFd) = try makePair()
+        defer { close(clientFd) }
+
+        let connTask = Task<Void, Error> {
+            let conn = ClientConnection(fd: serverFd)
+            await conn.serve { _ in
+                Issue.record("handler should not be called for oversized request")
+                return IPCResponse.status(DaemonStatus(version: "0", modelLoaded: false, uptimeSeconds: 0))
+            }
+        }
+
+        let payload = Data(repeating: UInt8(ascii: "x"), count: ClientConnection.maxRequestBytes + 1)
+        _ = payload.withUnsafeBytes { write(clientFd, $0.baseAddress, payload.count) }
+
+        var respBuffer = Data()
+        let readBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
+        defer { readBuf.deallocate() }
+        while !respBuffer.contains(0x0A) {
+            let n = read(clientFd, readBuf, 4096)
+            if n > 0 { respBuffer.append(readBuf, count: n) } else { break }
+        }
+        let nl = respBuffer.firstIndex(of: 0x0A) ?? respBuffer.endIndex
+        let decoded = try JSONDecoder().decode(IPCResponse.self, from: respBuffer.prefix(upTo: nl))
+        if case .error(let err) = decoded {
+            #expect(err.code == "request_too_large")
+        } else {
+            Issue.record("expected .error response, got: \(decoded)")
+        }
+
+        try await connTask.value
+    }
 }

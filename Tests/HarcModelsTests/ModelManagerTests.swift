@@ -24,8 +24,16 @@ final class ModelManagerTests: XCTestCase {
         let descriptor = Self.makeDescriptor(
             id: "happy",
             files: [
-                Self.namedFile(path: "config.json", bytes: 5),
-                Self.namedFile(path: "weights.bin", bytes: 11),
+                Self.namedFile(
+                    path: "config.json",
+                    bytes: 5,
+                    sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                ),
+                Self.namedFile(
+                    path: "weights.bin",
+                    bytes: 11,
+                    sha256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                ),
             ]
         )
         let engine = FakeDownloadEngine { url in
@@ -177,6 +185,53 @@ final class ModelManagerTests: XCTestCase {
         XCTAssertEqual(s, .absent)
     }
 
+    func test_manifestMissingSHA_throwsAndDoesNotStart() async throws {
+        let descriptor = Self.makeDescriptor(
+            id: "missing-sha",
+            files: [Self.namedFile(path: "weights.bin", bytes: 5, sha256: "")]
+        )
+        let manager = ModelManager(
+            storage: storage,
+            engine: FakeDownloadEngine { _ in .writeBytes(Data("hello".utf8)) },
+            catalog: [descriptor]
+        )
+
+        do {
+            try await manager.startDownload(descriptor.id)
+            XCTFail("Expected .manifestUnverified to throw")
+        } catch ModelManager.Failure.manifestUnverified(let id) {
+            XCTAssertEqual(id, "missing-sha")
+        } catch {
+            XCTFail("Expected .manifestUnverified, got \(error)")
+        }
+        let s = await manager.state(of: descriptor.id)
+        XCTAssertEqual(s, .absent)
+    }
+
+    func test_manifestMainRevision_throwsAndDoesNotStart() async throws {
+        let descriptor = Self.makeDescriptor(
+            id: "main-revision",
+            files: [Self.namedFile(path: "weights.bin", bytes: 5)],
+            revision: "main"
+        )
+        let manager = ModelManager(
+            storage: storage,
+            engine: FakeDownloadEngine { _ in .writeBytes(Data("hello".utf8)) },
+            catalog: [descriptor]
+        )
+
+        do {
+            try await manager.startDownload(descriptor.id)
+            XCTFail("Expected .manifestUnverified to throw")
+        } catch ModelManager.Failure.manifestUnverified(let id) {
+            XCTAssertEqual(id, "main-revision")
+        } catch {
+            XCTFail("Expected .manifestUnverified, got \(error)")
+        }
+        let s = await manager.state(of: descriptor.id)
+        XCTAssertEqual(s, .absent)
+    }
+
     // MARK: - Helpers
 
     /// Subscribe to the state stream and resolve when `condition` matches or
@@ -208,6 +263,7 @@ final class ModelManagerTests: XCTestCase {
     private static func makeDescriptor(
         id: String,
         files: [ModelFile],
+        revision: String = "0123456789abcdef0123456789abcdef01234567",
         manifestVerified: Bool = true
     ) -> ModelDescriptor {
         ModelDescriptor(
@@ -217,7 +273,7 @@ final class ModelManagerTests: XCTestCase {
             task: .summarizer,
             tier: .standard,
             repoID: "test/\(id)",
-            revision: "main",
+            revision: revision,
             files: files,
             minRAMGB: 4,
             recommendedRAMGB: 4,
@@ -226,7 +282,11 @@ final class ModelManagerTests: XCTestCase {
         )
     }
 
-    private static func namedFile(path: String, bytes: Int64, sha256: String = "") -> ModelFile {
+    private static func namedFile(
+        path: String,
+        bytes: Int64,
+        sha256: String = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    ) -> ModelFile {
         ModelFile(
             path: path,
             bytes: bytes,

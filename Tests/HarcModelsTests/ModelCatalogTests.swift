@@ -17,15 +17,20 @@ final class ModelCatalogTests: XCTestCase {
         }
     }
 
-    func test_sha256_is_64HexOrEmpty() {
+    func test_sha256_is_64Hex() {
         for d in ModelCatalog.v1 {
             for f in d.files {
-                if !f.sha256.isEmpty {
-                    XCTAssertEqual(f.sha256.count, 64, "sha256 in \(d.id)/\(f.path) not 64 hex chars")
-                    XCTAssertTrue(f.sha256.allSatisfy { "0123456789abcdefABCDEF".contains($0) },
-                        "sha256 in \(d.id)/\(f.path) contains non-hex chars")
-                }
+                XCTAssertEqual(f.sha256.count, 64, "sha256 in \(d.id)/\(f.path) not 64 hex chars")
+                XCTAssertTrue(f.sha256.allSatisfy { "0123456789abcdefABCDEF".contains($0) },
+                    "sha256 in \(d.id)/\(f.path) contains non-hex chars")
             }
+        }
+    }
+
+    func test_downloadableDescriptors_usePinnedRevisionsAndCompleteHashes() {
+        for d in ModelCatalog.v1 where d.manifestVerified {
+            XCTAssertNotEqual(d.revision, "main", "\(d.id) must pin an immutable revision")
+            XCTAssertTrue(ModelManager.isDownloadManifestTrusted(d), "\(d.id) is marked verified but is not trusted")
         }
     }
 

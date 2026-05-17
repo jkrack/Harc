@@ -6,6 +6,8 @@ import HarcCore
 /// newline-delimited JSON `IPCRequest` messages, invokes the handler, writes
 /// each returned `IPCResponse` + `\n`. Closes the fd on exit.
 public struct ClientConnection: Sendable {
+    public static let maxRequestBytes = 1 * 1024 * 1024
+
     private let fd: Int32
 
     public init(fd: Int32) {
@@ -30,6 +32,16 @@ public struct ClientConnection: Sendable {
             let n = read(fd, readBuf, chunkSize)
             if n > 0 {
                 buffer.append(readBuf, count: n)
+                if buffer.count > Self.maxRequestBytes {
+                    try? writeResponse(
+                        .error(IPCError(
+                            code: "request_too_large",
+                            message: "IPC request exceeded \(Self.maxRequestBytes) bytes."
+                        )),
+                        encoder: encoder
+                    )
+                    return false
+                }
             } else if n == 0 {
                 return false // EOF
             } else if errno == EINTR {
@@ -58,21 +70,25 @@ public struct ClientConnection: Sendable {
                 }
 
                 do {
-                    var payload = try encoder.encode(response)
-                    payload.append(0x0A)
-                    payload.withUnsafeBytes { raw in
-                        var written = 0
-                        while written < payload.count {
-                            let w = write(fd, raw.baseAddress!.advanced(by: written), payload.count - written)
-                            if w <= 0 { break }
-                            written += w
-                        }
-                    }
+                    try writeResponse(response, encoder: encoder)
                 } catch {
                     // Can't encode response — nothing to do but drop it.
                 }
 
                 if wasShutdown { return true }
+            }
+        }
+    }
+
+    private func writeResponse(_ response: IPCResponse, encoder: JSONEncoder) throws {
+        var payload = try encoder.encode(response)
+        payload.append(0x0A)
+        payload.withUnsafeBytes { raw in
+            var written = 0
+            while written < payload.count {
+                let w = write(fd, raw.baseAddress!.advanced(by: written), payload.count - written)
+                if w <= 0 { break }
+                written += w
             }
         }
     }
