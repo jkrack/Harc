@@ -2,14 +2,15 @@ import SwiftUI
 import HarcStore
 
 /// Single search-results row — recording header + highlighted transcript
-/// snippet. Double-tap opens the detail window (parent passes `onOpen`).
+/// snippet. The row itself is selected by its parent `List`; editing is an
+/// explicit action so search activation stays consistent with note results.
 public struct TranscriptHitRow: View {
     public let hit: TranscriptHit
-    public let onOpen: () -> Void
+    public let onEdit: () -> Void
 
-    public init(hit: TranscriptHit, onOpen: @escaping () -> Void) {
+    public init(hit: TranscriptHit, onEdit: @escaping () -> Void) {
         self.hit = hit
-        self.onOpen = onOpen
+        self.onEdit = onEdit
     }
 
     public var body: some View {
@@ -41,10 +42,16 @@ public struct TranscriptHitRow: View {
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .help("Open transcript editor")
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2, perform: onOpen)
     }
 
     /// Convert a snippet containing literal "<mark>…</mark>" spans into an

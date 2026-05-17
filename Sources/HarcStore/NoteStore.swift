@@ -25,6 +25,10 @@ public actor NoteStore {
         }
     }
 
+    public func fetch(id: String, includeArchived: Bool = false) async throws -> Note? {
+        try await fetchAll(includeArchived: includeArchived).first { $0.id == id }
+    }
+
     public func create(
         title rawTitle: String? = nil,
         body: String = "",

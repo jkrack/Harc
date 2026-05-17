@@ -33,6 +33,7 @@ public final class HarcPreferences: ObservableObject {
         static let includeSummaryInPrompt = "harc.includeSummaryInPrompt"
         static let appearance = "harc.appearance"
         static let sourceRoots = "harc.sourceRoots"
+        static let sourceScanLimit = "harc.sourceScanLimit"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -179,7 +180,20 @@ public final class HarcPreferences: ObservableObject {
         didSet { persistSourceRoots() }
     }
 
+    @Published public var sourceScanLimit: Int {
+        didSet {
+            let clamped = Self.clampedSourceScanLimit(sourceScanLimit)
+            if sourceScanLimit != clamped {
+                sourceScanLimit = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Key.sourceScanLimit)
+        }
+    }
+
     public static let shared = HarcPreferences()
+    public static let defaultSourceScanLimit = 40
+    public static let sourceScanLimitRange = 10...500
 
     public init() {
         let defaults = UserDefaults.standard
@@ -230,6 +244,8 @@ public final class HarcPreferences: ObservableObject {
         self.autoSummarizeEnabled = defaults.object(forKey: Key.autoSummarizeEnabled) as? Bool ?? true
         self.autoSummarizeOnBatteryEnabled = defaults.object(forKey: Key.autoSummarizeOnBatteryEnabled) as? Bool ?? false
         self.includeSummaryInPrompt = defaults.object(forKey: Key.includeSummaryInPrompt) as? Bool ?? true
+        let rawSourceScanLimit = defaults.object(forKey: Key.sourceScanLimit) as? Int ?? Self.defaultSourceScanLimit
+        self.sourceScanLimit = Self.clampedSourceScanLimit(rawSourceScanLimit)
         if let data = defaults.data(forKey: Key.sourceRoots),
            let decoded = try? JSONDecoder().decode([LocalSourceRoot].self, from: data) {
             self.sourceRoots = decoded
@@ -310,6 +326,10 @@ public final class HarcPreferences: ObservableObject {
     public static var defaultNotesPath: String {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents/Harc/Notes").path
+    }
+
+    public static func clampedSourceScanLimit(_ value: Int) -> Int {
+        min(sourceScanLimitRange.upperBound, max(sourceScanLimitRange.lowerBound, value))
     }
 
     public func addEntry(from: String, to: String) {

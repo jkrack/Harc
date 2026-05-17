@@ -11,7 +11,43 @@ public struct MenuBarPanelView: View {
     let onOpenWindow: () -> Void
     let onCopy: () -> Void
     let onPasteIntoFrontmost: () -> Void
+    let onOpenLastRecording: () -> Void
     let frontmostAppName: String?
+    let frontmostPasteDenied: Bool
+    let pasteStatusMessage: String?
+    let autoStopPhase: AutoStopController.Phase
+    let autoStopWarningSeconds: Int
+    let autoStopThresholdMinutes: Int
+    let autoStopMicDb: Float
+    let autoStopSystemDb: Float
+    let autoStopLastDurationText: String?
+    let stopRecovery: StopRecoveryInfo?
+    let noteRecordingLinkFeedback: NoteRecordingLinkFeedback?
+    let onKeepRecording: () -> Void
+    let onStopNow: () -> Void
+    let onOpenSettings: () -> Void
+    let onRevealStopRecovery: () -> Void
+    let onRetryStopRecovery: () -> Void
+    let onDismissStopRecovery: () -> Void
+    let onAttachLatestRecordingToNote: (String) -> Void
+    let onOpenNoteLinkedRecording: (NoteRecordingLinkFeedback) -> Void
+    let onRevealNoteLinkedRecordingFile: (NoteRecordingLinkFeedback) -> Void
+    let onDismissNoteRecordingLinkFeedback: () -> Void
+    let destinationReady: Bool
+    let destinationPath: String
+    let captureReadinessText: String
+    let captureReadinessWarning: Bool
+    let sttReadinessText: String
+    let summarizerReadinessText: String
+    let summarizerReady: Bool
+    let embedderReadinessText: String
+    let embedderReady: Bool
+    let speakerIDReadinessText: String
+    let speakerIDReady: Bool
+    let notificationsReadinessText: String
+    let notificationsReady: Bool
+    let accessibilityReadinessText: String
+    let accessibilityReady: Bool
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -24,7 +60,43 @@ public struct MenuBarPanelView: View {
         onOpenWindow: @escaping () -> Void,
         onCopy: @escaping () -> Void,
         onPasteIntoFrontmost: @escaping () -> Void,
-        frontmostAppName: String?
+        onOpenLastRecording: @escaping () -> Void,
+        frontmostAppName: String?,
+        frontmostPasteDenied: Bool = false,
+        pasteStatusMessage: String? = nil,
+        autoStopPhase: AutoStopController.Phase = .idle,
+        autoStopWarningSeconds: Int = AutoStopController.Config.defaults.warningSeconds,
+        autoStopThresholdMinutes: Int = 5,
+        autoStopMicDb: Float = -.infinity,
+        autoStopSystemDb: Float = -.infinity,
+        autoStopLastDurationText: String? = nil,
+        stopRecovery: StopRecoveryInfo? = nil,
+        noteRecordingLinkFeedback: NoteRecordingLinkFeedback? = nil,
+        onKeepRecording: @escaping () -> Void = {},
+        onStopNow: @escaping () -> Void = {},
+        onOpenSettings: @escaping () -> Void = {},
+        onRevealStopRecovery: @escaping () -> Void = {},
+        onRetryStopRecovery: @escaping () -> Void = {},
+        onDismissStopRecovery: @escaping () -> Void = {},
+        onAttachLatestRecordingToNote: @escaping (String) -> Void = { _ in },
+        onOpenNoteLinkedRecording: @escaping (NoteRecordingLinkFeedback) -> Void = { _ in },
+        onRevealNoteLinkedRecordingFile: @escaping (NoteRecordingLinkFeedback) -> Void = { _ in },
+        onDismissNoteRecordingLinkFeedback: @escaping () -> Void = {},
+        destinationReady: Bool = true,
+        destinationPath: String = "",
+        captureReadinessText: String = "Mic + system audio",
+        captureReadinessWarning: Bool = false,
+        sttReadinessText: String = "Local STT ready",
+        summarizerReadinessText: String = "Summary unavailable",
+        summarizerReady: Bool = false,
+        embedderReadinessText: String = "Search embedder unavailable",
+        embedderReady: Bool = false,
+        speakerIDReadinessText: String = "Speaker ID ready",
+        speakerIDReady: Bool = true,
+        notificationsReadinessText: String = "Notifications off",
+        notificationsReady: Bool = false,
+        accessibilityReadinessText: String = "Paste permission unknown",
+        accessibilityReady: Bool = false
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -33,37 +105,96 @@ public struct MenuBarPanelView: View {
         self.onOpenWindow = onOpenWindow
         self.onCopy = onCopy
         self.onPasteIntoFrontmost = onPasteIntoFrontmost
+        self.onOpenLastRecording = onOpenLastRecording
         self.frontmostAppName = frontmostAppName
+        self.frontmostPasteDenied = frontmostPasteDenied
+        self.pasteStatusMessage = pasteStatusMessage
+        self.autoStopPhase = autoStopPhase
+        self.autoStopWarningSeconds = autoStopWarningSeconds
+        self.autoStopThresholdMinutes = autoStopThresholdMinutes
+        self.autoStopMicDb = autoStopMicDb
+        self.autoStopSystemDb = autoStopSystemDb
+        self.autoStopLastDurationText = autoStopLastDurationText
+        self.stopRecovery = stopRecovery
+        self.noteRecordingLinkFeedback = noteRecordingLinkFeedback
+        self.onKeepRecording = onKeepRecording
+        self.onStopNow = onStopNow
+        self.onOpenSettings = onOpenSettings
+        self.onRevealStopRecovery = onRevealStopRecovery
+        self.onRetryStopRecovery = onRetryStopRecovery
+        self.onDismissStopRecovery = onDismissStopRecovery
+        self.onAttachLatestRecordingToNote = onAttachLatestRecordingToNote
+        self.onOpenNoteLinkedRecording = onOpenNoteLinkedRecording
+        self.onRevealNoteLinkedRecordingFile = onRevealNoteLinkedRecordingFile
+        self.onDismissNoteRecordingLinkFeedback = onDismissNoteRecordingLinkFeedback
+        self.destinationReady = destinationReady
+        self.destinationPath = destinationPath
+        self.captureReadinessText = captureReadinessText
+        self.captureReadinessWarning = captureReadinessWarning
+        self.sttReadinessText = sttReadinessText
+        self.summarizerReadinessText = summarizerReadinessText
+        self.summarizerReady = summarizerReady
+        self.embedderReadinessText = embedderReadinessText
+        self.embedderReady = embedderReady
+        self.speakerIDReadinessText = speakerIDReadinessText
+        self.speakerIDReady = speakerIDReady
+        self.notificationsReadinessText = notificationsReadinessText
+        self.notificationsReady = notificationsReady
+        self.accessibilityReadinessText = accessibilityReadinessText
+        self.accessibilityReady = accessibilityReady
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            stateLine
-            LiveWaveformView(history: amplitudeHistory, size: .panel, isActive: recordingState.isRecording).frame(height: 28)
-            HStack(spacing: 8) {
-                Button(recordingState.isRecording ? "Stop" : "Record") { onStartStop() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(recordingState.isRecording ? HarcBrand.live : .accentColor)
-                Button {
-                    onOpenWindow()
-                } label: {
-                    Label("Open Library", systemImage: "books.vertical")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                stateLine
+                LiveWaveformView(history: amplitudeHistory, size: .panel, isActive: recordingState.isRecording)
+                    .frame(height: 28)
+                HStack(spacing: 8) {
+                    Button(recordingState.isRecording ? "Stop" : "Record") { onStartStop() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(recordingState.isRecording ? HarcBrand.live : .accentColor)
+                    Button {
+                        onOpenWindow()
+                    } label: {
+                        Label("Open Library", systemImage: "books.vertical")
+                    }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut("l", modifiers: .command)
                 }
-                .buttonStyle(.bordered)
-                .keyboardShortcut("l", modifiers: .command)
-            }
 
-            if trayState.isVisible {
+                readinessSection
+
+                if showsAutoStopSurface {
+                    autoStopSurface
+                }
+
+                if let stopRecovery {
+                    stopRecoveryBanner(stopRecovery)
+                }
+
+                if let noteRecordingLinkFeedback {
+                    noteRecordingLinkBanner(noteRecordingLinkFeedback)
+                }
+
+                if hasLastCapture {
+                    Divider()
+                    if trayState.isVisible {
+                        tray
+                            .transition(.opacity)
+                    } else {
+                        compactLastCapture
+                            .transition(.opacity)
+                    }
+                }
+
                 Divider()
-                tray
-                    .transition(.opacity)
+                footer
             }
-
-            Divider()
-            footer
+            .padding(14)
         }
-        .padding(14)
         .frame(width: 280)
+        .frame(maxHeight: 460)
         .animation(.easeInOut(duration: 0.2), value: trayState.isVisible)
         .onAppear { startTicker() }
         .onDisappear { stopTicker() }
@@ -125,21 +256,310 @@ public struct MenuBarPanelView: View {
         .font(.subheadline)
     }
 
+    private var readinessSection: some View {
+        LocalStackHealthView(
+            items: LocalStackHealthModel.items(for: localStackInput),
+            compact: true,
+            onFix: { _ in onOpenSettings() }
+        )
+    }
+
+    private var localStackInput: LocalStackHealthInput {
+        LocalStackHealthInput(
+            destinationReady: destinationReady,
+            destinationText: destinationReady ? destinationDisplayText : "Destination missing",
+            captureReady: !captureReadinessWarning,
+            captureText: captureReadinessText,
+            sttReady: true,
+            sttText: sttReadinessText,
+            summarizerReady: summarizerReady,
+            summarizerText: summarizerReadinessText,
+            embedderReady: embedderReady,
+            embedderText: embedderReadinessText,
+            speakerIDReady: speakerIDReady,
+            speakerIDText: speakerIDReadinessText,
+            notificationsReady: notificationsReady,
+            notificationsText: notificationsReadinessText,
+            accessibilityReady: accessibilityReady,
+            accessibilityText: accessibilityReadinessText
+        )
+    }
+
+    private func readinessRow(
+        icon: String,
+        text: String,
+        status: ReadinessStatus,
+        help: String? = nil
+    ) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(status.color)
+                .frame(width: 14)
+            Text(text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(status.textStyle)
+            Spacer(minLength: 0)
+        }
+        .help(help ?? text)
+    }
+
     private var tray: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(trayState.lastTitle ?? "Last recording")
                 .font(.headline)
+                .lineLimit(2)
+                .truncationMode(.tail)
             HStack(spacing: 8) {
+                if canOpenLastRecording {
+                    Button("Open") { onOpenLastRecording() }
+                        .buttonStyle(.bordered)
+                }
                 Button("Copy") { onCopy() }
                     .buttonStyle(.bordered)
                 if let frontmostAppName {
-                    Button("Paste \u{2192} \(frontmostAppName)") { onPasteIntoFrontmost() }
-                        .buttonStyle(.borderedProminent)
+                    Button {
+                        onPasteIntoFrontmost()
+                    } label: {
+                        Text("Paste")
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(frontmostPasteDenied)
+                    .help(pasteHelpText(for: frontmostAppName))
                 }
+            }
+            if let pasteStatusMessage {
+                pasteStatus(pasteStatusMessage)
+            } else if frontmostPasteDenied, let frontmostAppName {
+                pasteStatus("Paste blocked for \(frontmostAppName). Use Copy instead.")
             }
         }
         .padding(10)
         .glassEffect(in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var autoStopSurface: some View {
+        switch autoStopPhase {
+        case .warning(let secondsLeft, let reason):
+            CountdownWarningPanel(
+                secondsLeft: secondsLeft,
+                totalSeconds: autoStopWarningSeconds,
+                reason: reason,
+                thresholdMinutes: autoStopThresholdMinutes,
+                micDb: autoStopMicDb,
+                systemDb: autoStopSystemDb,
+                onKeepRecording: onKeepRecording,
+                onStopNow: onStopNow,
+                onOpenSettings: onOpenSettings
+            )
+        case .stoppedBanner(let reason, let at):
+            autoStoppedBanner(reason: reason, at: at)
+        case .idle, .watching:
+            EmptyView()
+        }
+    }
+
+    private func autoStoppedBanner(reason: AutoStopController.StopReason, at: Date) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.badge.checkmark")
+                    .foregroundStyle(Color.yellow)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Auto-stopped")
+                        .font(.subheadline.weight(.semibold))
+                    Text(autoStopSummary(reason: reason, at: at))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            HStack(spacing: 8) {
+                Button("Open") { onOpenLastRecording() }
+                    .buttonStyle(.bordered)
+                Button("Resume") { onStartStop() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(10)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
+        )
+    }
+
+    private func stopRecoveryBanner(_ recovery: StopRecoveryInfo) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: recovery.isRecovering ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(recovery.isRecovering ? Color.accentColor : Color.yellow)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(recovery.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(recovery.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(recovery.cacheDirectoryPath)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            HStack(spacing: 8) {
+                Button("Reveal") { onRevealStopRecovery() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button(recovery.isRecovering ? "Retrying..." : "Retry") { onRetryStopRecovery() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(recovery.isRecovering)
+                Button("Settings") { onOpenSettings() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button("Dismiss") { onDismissStopRecovery() }
+                    .buttonStyle(.plain)
+                    .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
+        )
+    }
+
+    private func noteRecordingLinkBanner(_ feedback: NoteRecordingLinkFeedback) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: feedback.isRecoveryNeeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(feedback.isRecoveryNeeded ? Color.orange : Color.green)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(feedback.isRecoveryNeeded ? "Recording needs note link" : "Recording linked to note")
+                        .font(.subheadline.weight(.semibold))
+                    Text(feedback.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack(spacing: 8) {
+                if feedback.isRecoveryNeeded {
+                    Button("Attach") { onAttachLatestRecordingToNote(feedback.noteID) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+                if feedback.canOpenRecording {
+                    Button("Open") { onOpenNoteLinkedRecording(feedback) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                if feedback.canRevealFile {
+                    Button("Reveal") { onRevealNoteLinkedRecordingFile(feedback) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                Button("Dismiss") { onDismissNoteRecordingLinkFeedback() }
+                    .buttonStyle(.plain)
+                    .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder((feedback.isRecoveryNeeded ? Color.orange : Color.green).opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private var compactLastCapture: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Last capture")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(trayState.lastTitle ?? "Last recording")
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 8)
+                if canOpenLastRecording {
+                    Button("Open") { onOpenLastRecording() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                Button("Copy") { onCopy() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                if let frontmostAppName {
+                    Button("Paste") { onPasteIntoFrontmost() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(frontmostPasteDenied)
+                        .help(pasteHelpText(for: frontmostAppName))
+                }
+            }
+            if let pasteStatusMessage {
+                pasteStatus(pasteStatusMessage)
+            } else if frontmostPasteDenied, let frontmostAppName {
+                pasteStatus("Paste blocked for \(frontmostAppName). Use Copy instead.")
+            }
+        }
+        .help("Last capture actions remain available after the expanded tray collapses.")
+    }
+
+    private func pasteStatus(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var hasLastCapture: Bool {
+        trayState.lastTranscript?.isEmpty == false
+    }
+
+    private var canOpenLastRecording: Bool {
+        trayState.lastRecordingID != nil || trayState.lastWavPath != nil
+    }
+
+    private var destinationDisplayText: String {
+        guard !destinationPath.isEmpty else { return "Destination ready" }
+        return "Saving to \(URL(fileURLWithPath: destinationPath).lastPathComponent)"
+    }
+
+    private var showsAutoStopSurface: Bool {
+        switch autoStopPhase {
+        case .warning, .stoppedBanner:
+            return true
+        case .idle, .watching:
+            return false
+        }
+    }
+
+    private func pasteHelpText(for appName: String) -> String {
+        frontmostPasteDenied
+            ? "Paste is blocked for \(appName). Use Copy instead."
+            : "Paste into \(appName)"
+    }
+
+    private func autoStopSummary(reason: AutoStopController.StopReason, at: Date) -> String {
+        let duration = autoStopLastDurationText.map { "\($0) · " } ?? ""
+        let recency = RelativeTimeFormatter.format(at)
+        switch reason {
+        case .silence:
+            return "\(duration)Stopped \(recency) after \(autoStopThresholdMinutes) min of silence."
+        case .hardCap:
+            return "\(duration)Stopped \(recency) at the hard duration cap."
+        }
     }
 
     // MARK: - Elapsed timer
@@ -170,5 +590,26 @@ public struct MenuBarPanelView: View {
         elapsedText = h > 0
             ? String(format: "%d:%02d:%02d", h, m, s)
             : String(format: "%d:%02d", m, s)
+    }
+}
+
+private enum ReadinessStatus {
+    case ready
+    case warning
+    case muted
+
+    var color: Color {
+        switch self {
+        case .ready: return Color.green
+        case .warning: return Color.yellow
+        case .muted: return Color.secondary
+        }
+    }
+
+    var textStyle: HierarchicalShapeStyle {
+        switch self {
+        case .ready, .warning: return .primary
+        case .muted: return .secondary
+        }
     }
 }
