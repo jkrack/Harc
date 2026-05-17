@@ -21,7 +21,7 @@ public struct TranscriptHitRow: View {
                 .frame(width: 32, height: 32)
                 .overlay(
                     Image(systemName: icon)
-                        .font(.system(size: 14.72, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(accent)
                 )
             VStack(alignment: .leading, spacing: 4) {
