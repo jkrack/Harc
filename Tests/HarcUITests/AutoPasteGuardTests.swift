@@ -20,4 +20,14 @@ struct AutoPasteGuardTests {
     func decide(enabled: Bool, shiftHeld: Bool, bundleID: String?, expected: AutoPasteDecision) {
         #expect(AutoPasteGuard.decide(enabled: enabled, shiftHeld: shiftHeld, frontmostBundleID: bundleID) == expected)
     }
+
+    @Test("decide uses supplied deny list")
+    func decideUsesSuppliedDenyList() {
+        #expect(AutoPasteGuard.decide(
+            enabled: true,
+            shiftHeld: false,
+            frontmostBundleID: "com.example.private",
+            deniedBundleIDs: ["com.example.private"]
+        ) == .skipUnsafeTarget(bundleID: "com.example.private"))
+    }
 }

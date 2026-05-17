@@ -939,7 +939,8 @@ private func openDetail(for recording: Recording) {
         let decision = AutoPasteGuard.decide(
             enabled: prefs.autoPasteEnabled,
             shiftHeld: shiftHeld,
-            frontmostBundleID: FrontmostAppPaster.frontmostBundleID()
+            frontmostBundleID: FrontmostAppPaster.frontmostBundleID(),
+            deniedBundleIDs: prefs.pasteDenyListBundleIDs
         )
 
         switch decision {
