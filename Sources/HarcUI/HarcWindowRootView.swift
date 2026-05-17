@@ -444,18 +444,10 @@ public struct HarcWindowRootView: View {
     }
 
     private var footerStorageString: String {
-        let fm = FileManager.default
-        var total: Int64 = 0
-        for rec in libraryVM.recordings {
-            if let attrs = try? fm.attributesOfItem(atPath: rec.wavPath),
-               let size = attrs[.size] as? Int64 {
-                total += size
-            }
-        }
         let fmt = ByteCountFormatter()
         fmt.allowedUnits = [.useMB, .useGB]
         fmt.countStyle = .file
-        return fmt.string(fromByteCount: total)
+        return fmt.string(fromByteCount: libraryVM.totalBytes)
     }
 
     // MARK: - Sidebar

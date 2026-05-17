@@ -37,6 +37,7 @@ public enum LibraryFilter: Equatable, Sendable {
 public final class LibraryViewModel: ObservableObject {
     @Published public var searchText: String = ""
     @Published public private(set) var recordings: [Recording] = []
+    @Published public private(set) var totalBytes: Int64 = 0
     /// Populated only when `searchText` is non-empty. BM25-ranked.
     @Published public private(set) var hits: [TranscriptHit] = []
     @Published public private(set) var searchError: String?
@@ -75,8 +76,10 @@ public final class LibraryViewModel: ObservableObject {
         observationTask = Task { [weak self, store] in
             guard let self else { return }
             for await list in store.observeAll(pinnedFirst: true) {
+                let totalBytes = await Self.storageBytes(for: list)
                 await MainActor.run {
                     self.fullList = list
+                    self.totalBytes = totalBytes
                     if self.searchText.isEmpty {
                         self.recordings = self.apply(filter: self.filter, to: list)
                     }
@@ -118,8 +121,10 @@ public final class LibraryViewModel: ObservableObject {
             do {
                 if trimmed.isEmpty {
                     let all = try await store.fetchAll()
+                    let totalBytes = await Self.storageBytes(for: all)
                     await MainActor.run {
                         self.fullList = all
+                        self.totalBytes = totalBytes
                         self.recordings = self.apply(filter: filter, to: all)
                         self.hits = []
                         self.searchError = nil
@@ -152,6 +157,16 @@ public final class LibraryViewModel: ObservableObject {
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return "Search index unavailable." }
         return "Search index unavailable: \(message)"
+    }
+
+    nonisolated private static func storageBytes(for recordings: [Recording]) async -> Int64 {
+        recordings.reduce(Int64(0)) { total, recording in
+            let url = URL(fileURLWithPath: recording.wavPath)
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+                return total
+            }
+            return total + Int64(size)
+        }
     }
 
     private static func searchResults(
