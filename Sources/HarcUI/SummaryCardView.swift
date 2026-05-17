@@ -156,11 +156,16 @@ public struct SummaryCardView: View {
 
     private var inFlightCard: some View {
         tintedContainer {
-            HStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
                 ProgressView().controlSize(.small)
-                Text("Summarizing with \(currentTierDisplay)…")
-                    .font(.body)
-                    .foregroundStyle(Color.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Summarizing with \(currentModelDisplay)…")
+                        .font(.body)
+                        .foregroundStyle(Color.primary)
+                    Text(currentModelResourceHint)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                }
                 Spacer()
                 Button("Cancel") { cancelSelf() }
                     .buttonStyle(.bordered)
@@ -385,11 +390,19 @@ public struct SummaryCardView: View {
         return tierName(d.tier, fallback: d.displayName)
     }
 
-    private var currentTierDisplay: String {
+    private var currentModelDisplay: String {
         guard let d = ModelCatalog.descriptor(for: activeSummarizerID) else {
             return activeSummarizerID
         }
-        return tierName(d.tier, fallback: d.displayName)
+        return "\(d.displayName) (\(d.id))"
+    }
+
+    private var currentModelResourceHint: String {
+        guard let d = ModelCatalog.descriptor(for: activeSummarizerID) else {
+            return "Model identity unavailable."
+        }
+        let size = ByteCountFormatter.string(fromByteCount: d.totalBytes, countStyle: .file)
+        return "\(size) on disk · recommends \(d.recommendedRAMGB) GB RAM"
     }
 
     private func tierName(_ tier: ModelTier, fallback: String) -> String {
