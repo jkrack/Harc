@@ -17,6 +17,7 @@ public final class HarcPreferences: ObservableObject {
         static let meetingDetectionEnabled = "harc.meetingDetectionEnabled"
         static let meetingAppEnabled = "harc.meetingAppEnabled"
         static let autoPasteEnabled = "harc.autoPasteEnabled"
+        static let pasteDenyListBundleIDs = "harc.pasteDenyListBundleIDs"
         static let vadEnabled = "harc.vadEnabled"
         static let autoStopEnabled = "harc.autoStopEnabled"
         static let silenceThresholdMinutes = "harc.silenceThresholdMinutes"
@@ -92,6 +93,10 @@ public final class HarcPreferences: ObservableObject {
 
     @Published public var autoPasteEnabled: Bool {
         didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: Key.autoPasteEnabled) }
+    }
+
+    @Published public var pasteDenyListBundleIDs: Set<String> {
+        didSet { persistPasteDenyListBundleIDs() }
     }
 
     @Published public var vadEnabled: Bool {
@@ -202,6 +207,15 @@ public final class HarcPreferences: ObservableObject {
             ]
         }
         self.autoPasteEnabled = defaults.object(forKey: Key.autoPasteEnabled) as? Bool ?? true
+        let storedPasteDenyList = defaults.array(forKey: Key.pasteDenyListBundleIDs) as? [String]
+        let normalizedPasteDenyList: Set<String>
+        if let storedPasteDenyList {
+            normalizedPasteDenyList = Set(storedPasteDenyList).union(PasteDenyList.lockedBundleIDs)
+        } else {
+            normalizedPasteDenyList = PasteDenyList.defaultBundleIDs
+        }
+        self.pasteDenyListBundleIDs = normalizedPasteDenyList
+        let shouldPersistPasteDenyList = Set(storedPasteDenyList ?? []) != normalizedPasteDenyList
         self.vadEnabled = defaults.object(forKey: Key.vadEnabled) as? Bool ?? true
         self.autoStopEnabled = defaults.object(forKey: Key.autoStopEnabled) as? Bool ?? true
         let rawThreshold = defaults.object(forKey: Key.silenceThresholdMinutes) as? Int ?? 5
@@ -224,6 +238,9 @@ public final class HarcPreferences: ObservableObject {
         }
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
+        if shouldPersistPasteDenyList {
+            persistPasteDenyListBundleIDs()
+        }
     }
 
     public func meetingAppBinding(for app: MeetingApp) -> Binding<Bool> {
@@ -266,6 +283,21 @@ public final class HarcPreferences: ObservableObject {
             isDirectory: &isDir
         )
         return exists && isDir.boolValue
+    }
+
+    public func addPasteDenyListBundleID(_ bundleID: String) {
+        let normalized = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        var copy = pasteDenyListBundleIDs
+        copy.insert(normalized)
+        pasteDenyListBundleIDs = copy
+    }
+
+    public func removePasteDenyListBundleID(_ bundleID: String) {
+        guard !PasteDenyList.lockedBundleIDs.contains(bundleID) else { return }
+        var copy = pasteDenyListBundleIDs
+        copy.remove(bundleID)
+        pasteDenyListBundleIDs = copy.union(PasteDenyList.lockedBundleIDs)
     }
 
     /// The default destination — `~/Documents/Harc`. Available as a
@@ -329,5 +361,9 @@ public final class HarcPreferences: ObservableObject {
         if let data = try? JSONEncoder().encode(sourceRoots) {
             UserDefaults.standard.set(data, forKey: Key.sourceRoots)
         }
+    }
+
+    private func persistPasteDenyListBundleIDs() {
+        UserDefaults.standard.set(pasteDenyListBundleIDs.sorted(), forKey: Key.pasteDenyListBundleIDs)
     }
 }

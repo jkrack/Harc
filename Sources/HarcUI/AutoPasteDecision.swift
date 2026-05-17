@@ -22,11 +22,12 @@ public enum AutoPasteGuard {
     public static func decide(
         enabled: Bool,
         shiftHeld: Bool,
-        frontmostBundleID: String?
+        frontmostBundleID: String?,
+        deniedBundleIDs: Set<String> = PasteDenyList.defaultBundleIDs
     ) -> AutoPasteDecision {
         if !enabled { return .skipDisabled }
         if shiftHeld { return .skipModifierHeld }
-        if let id = frontmostBundleID, PasteDenyList.isDenied(id) {
+        if let id = frontmostBundleID, PasteDenyList.isDenied(id, in: deniedBundleIDs) {
             return .skipUnsafeTarget(bundleID: id)
         }
         return .paste
