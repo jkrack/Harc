@@ -46,7 +46,7 @@ public struct WaveformPlayerView: View {
             Task { await model.toggle() }
         } label: {
             Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(tint))

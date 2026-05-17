@@ -47,7 +47,7 @@ public struct MonthCalendarView: View {
         HStack(spacing: 4) {
             Button(action: onPrevMonth) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
             }
             .buttonStyle(.plain)
             Spacer()
@@ -57,7 +57,7 @@ public struct MonthCalendarView: View {
             Spacer()
             Button(action: onNextMonth) {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
             }
             .buttonStyle(.plain)
         }
@@ -69,7 +69,7 @@ public struct MonthCalendarView: View {
         HStack(spacing: 0) {
             ForEach(weekdaySymbols, id: \.self) { s in
                 Text(s)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
             }
@@ -103,7 +103,7 @@ public struct MonthCalendarView: View {
             } label: {
                 VStack(spacing: 1) {
                     Text("\(calendar.component(.day, from: day))")
-                        .font(.system(size: 11))
+                        .font(.caption)
                         .foregroundStyle(
                             isSelected
                                 ? Color.white

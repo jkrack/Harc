@@ -23,13 +23,13 @@ public struct SpeakerSuggestionChip: View {
             Button(action: onAccept) {
                 HStack(spacing: 6) {
                     Image(systemName: "person.wave.2")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(Color.accentColor)
                     Text(titleLine)
                         .font(.subheadline)
                         .foregroundStyle(Color.primary)
                     Text(percentText)
-                        .font(.system(size: 10.5, design: .monospaced))
+                        .font(.caption2.monospaced())
                         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 }
                 .padding(.leading, 8)
@@ -43,7 +43,7 @@ public struct SpeakerSuggestionChip: View {
             if suggestion.name != nil {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                         .padding(4)
                         .contentShape(Rectangle())

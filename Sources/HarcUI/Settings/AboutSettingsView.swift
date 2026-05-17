@@ -23,7 +23,7 @@ public struct AboutSettingsView: View {
                 .frame(width: 44, height: 44)
                 .overlay(
                     Image(systemName: "waveform")
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
                 )
             VStack(alignment: .leading, spacing: 2) {
