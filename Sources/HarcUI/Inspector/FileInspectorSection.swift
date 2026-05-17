@@ -50,6 +50,6 @@ public struct FileInspectorSection: View {
     }
 
     private var startedString: String {
-        recording.startedAt.formatted(date: .abbreviated, time: .shortened)
+        RelativeTimeFormatter.relativeOrDated(recording.startedAt)
     }
 }
