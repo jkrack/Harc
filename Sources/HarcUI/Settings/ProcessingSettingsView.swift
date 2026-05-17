@@ -133,5 +133,6 @@ private struct VocabularyRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 4)
+        .opacity(entry.enabled ? 1 : 0.55)
     }
 }

@@ -11,6 +11,7 @@ public struct SummarizationSettingsView: View {
     public init() {}
 
     public var body: some View {
+        let activeSummarizerMissing = isActiveSummarizerMissing
         Group {
             Section {
                 Text("Harc summarizes finished recordings locally using Gemma 4.")
@@ -33,15 +34,16 @@ public struct SummarizationSettingsView: View {
                     if case .absent = models.state(of: prefs.activeSummarizerID) {
                         Text("The active summarizer is not installed. Auto-summarize and the Generate button will have no effect.")
                             .font(.subheadline)
-                            .foregroundStyle(Color.yellow)
+                            .foregroundStyle(Color.red)
                     }
                 }
             }
 
             Section {
                 Toggle("Automatically summarize after recording", isOn: $prefs.autoSummarizeEnabled)
+                    .disabled(activeSummarizerMissing)
                 Toggle("Also when on battery", isOn: $prefs.autoSummarizeOnBatteryEnabled)
-                    .disabled(!prefs.autoSummarizeEnabled)
+                    .disabled(!prefs.autoSummarizeEnabled || activeSummarizerMissing)
                     .padding(.leading, 16)
                 Toggle("Include summary in exports and Copy for Prompt", isOn: $prefs.includeSummaryInPrompt)
             } header: {
@@ -78,12 +80,19 @@ public struct SummarizationSettingsView: View {
                         .disabled(!models.state(of: d.id).isInstalled)
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .labelsHidden()
         }
     }
 
     private var summarizers: [ModelDescriptor] {
         ModelCatalog.descriptors(for: .summarizer)
+    }
+
+    private var isActiveSummarizerMissing: Bool {
+        if case .absent = models.state(of: prefs.activeSummarizerID) {
+            return true
+        }
+        return false
     }
 }
