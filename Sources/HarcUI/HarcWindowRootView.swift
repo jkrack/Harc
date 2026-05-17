@@ -652,9 +652,12 @@ public struct HarcWindowRootView: View {
 
             DisclosureGroup(isExpanded: $recordingsExpanded) {
                 if libraryVM.recordings.isEmpty {
-                    Text("No recordings yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    EmptyStateView(
+                        icon: "waveform.slash",
+                        title: "No recordings yet",
+                        subtitle: "Start from the menu bar icon or set a global hotkey in Settings.",
+                        action: (label: "Open Settings", run: openSettings)
+                    )
                 } else {
                     let pinned = libraryVM.recordings.filter(\.pinned)
                     if !pinned.isEmpty {
@@ -779,18 +782,18 @@ public struct HarcWindowRootView: View {
     private var searchResultsList: some View {
         if let searchError = libraryVM.searchError {
             List {
-                ContentUnavailableView(
-                    "Search Index Unavailable",
-                    systemImage: "exclamationmark.magnifyingglass",
-                    description: Text(searchError)
+                EmptyStateView(
+                    icon: "exclamationmark.magnifyingglass",
+                    title: "Search index unavailable",
+                    subtitle: searchError
                 )
             }
         } else if libraryVM.hits.isEmpty && noteSearchResults.isEmpty {
             List {
-                ContentUnavailableView(
-                    "No Results",
-                    systemImage: "magnifyingglass",
-                    description: Text("No titles, transcripts, or notes matched \u{201C}\(libraryVM.searchText)\u{201D}.")
+                EmptyStateView(
+                    icon: "magnifyingglass",
+                    title: "No results",
+                    subtitle: "No titles, transcripts, or notes matched \u{201C}\(libraryVM.searchText)\u{201D}."
                 )
             }
         } else {
@@ -1667,10 +1670,11 @@ public struct HarcWindowRootView: View {
                 }
             }
         } else if transcriptText.isEmpty {
-            Text("No transcript available.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            EmptyStateView(
+                icon: "doc.text.magnifyingglass",
+                title: "No transcript available",
+                subtitle: "Transcribe this recording to make the transcript searchable and editable."
+            )
         } else {
             Text(highlightedTranscriptText(transcriptText))
                 .font(.body)
@@ -2099,6 +2103,11 @@ public struct HarcWindowRootView: View {
     }
 
     // MARK: - Helpers
+
+    private func openSettings() {
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
     private var selectedNote: Note? {
         guard case .note(let id) = selection else { return nil }
