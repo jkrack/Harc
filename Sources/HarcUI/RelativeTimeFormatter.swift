@@ -30,4 +30,18 @@ public enum RelativeTimeFormatter {
         let f = DateFormatter(); f.dateFormat = "MMM d yyyy"
         return f.string(from: date)
     }
+
+    public static func relativeOrDated(
+        _ date: Date,
+        now: Date = Date(),
+        threshold: TimeInterval = 180 * 86_400
+    ) -> String {
+        if now.timeIntervalSince(date) <= threshold {
+            return format(date, now: now)
+        }
+
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy, h:mm a"
+        return f.string(from: date)
+    }
 }

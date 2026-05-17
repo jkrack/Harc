@@ -55,4 +55,18 @@ struct RelativeTimeFormatterTests {
         let d = ref(2025, 11, 12)
         #expect(RelativeTimeFormatter.format(d, now: now) == "Nov 12 2025")
     }
+
+    @Test("relativeOrDated uses relative format within threshold")
+    func relativeOrDatedRecent() {
+        let now = ref(2026, 4, 18, 12)
+        let d = ref(2026, 4, 18, 10)
+        #expect(RelativeTimeFormatter.relativeOrDated(d, now: now) == "2h ago")
+    }
+
+    @Test("relativeOrDated includes year and time beyond threshold")
+    func relativeOrDatedOld() {
+        let now = ref(2026, 4, 18, 12)
+        let d = ref(2025, 10, 1, 7, 25)
+        #expect(RelativeTimeFormatter.relativeOrDated(d, now: now) == "Oct 1, 2025, 7:25 AM")
+    }
 }
