@@ -59,7 +59,7 @@ public struct TranscriptEditorView: View {
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!vm.isDirty)
-                .help("Save edits to disk")
+                .help("Save (⌘S)")
 
                 Button { inspectorOpen.toggle() } label: {
                     Label("Inspector", systemImage: "sidebar.right")
@@ -153,7 +153,7 @@ public struct TranscriptEditorView: View {
     // MARK: - Toolbar fields
 
     private var titleField: some View {
-        TextField("Title", text: $titleDraft)
+        TextField("Recording title…", text: $titleDraft)
             .textFieldStyle(.roundedBorder)
             .frame(minWidth: 200, maxWidth: 360)
             .focused($titleFocused)
@@ -211,7 +211,7 @@ public struct TranscriptEditorView: View {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 11))
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            Text("Timestamps approximate after edits.")
+            Text("Timestamps approximate after edits. Save to keep transcript text current; re-transcribe to rebuild word-level alignment.")
                 .font(.caption)
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             Spacer()

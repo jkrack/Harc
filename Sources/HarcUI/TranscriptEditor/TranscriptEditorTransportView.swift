@@ -122,29 +122,52 @@ private struct ScrubWaveform: View {
     let fraction: Double
     let onSeek: (Double) -> Void
 
+    @State private var isHovering = false
+    @State private var scrubX: CGFloat?
+
     var body: some View {
         GeometryReader { geo in
             let total = 200
             let spacing: CGFloat = 1.5
             let barW = max(1, (geo.size.width - spacing * CGFloat(total - 1)) / CGFloat(total))
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(0..<total, id: \.self) { i in
+            ZStack(alignment: .leading) {
+                HStack(alignment: .center, spacing: spacing) {
+                    ForEach(0..<total, id: \.self) { i in
+                        Rectangle()
+                            .fill(played(i, total: total) ? Color.accentColor : Color(nsColor: .quaternaryLabelColor))
+                            .frame(width: barW, height: barHeight(i: i, height: geo.size.height))
+                            .cornerRadius(0.5)
+                    }
+                }
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+
+                if let x = scrubberX(width: geo.size.width) {
                     Rectangle()
-                        .fill(played(i, total: total) ? Color.accentColor : Color(nsColor: .quaternaryLabelColor))
-                        .frame(width: barW, height: barHeight(i: i, height: geo.size.height))
-                        .cornerRadius(0.5)
+                        .fill(Color.primary.opacity(0.55))
+                        .frame(width: 1, height: geo.size.height)
+                        .offset(x: x)
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
             .contentShape(Rectangle())
+            .onHover { isHovering = $0 }
+            .pointingHandCursor()
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
                         let f = max(0, min(1, v.location.x / max(geo.size.width, 1)))
+                        scrubX = f * geo.size.width
                         onSeek(f)
                     }
+                    .onEnded { _ in scrubX = nil }
             )
         }
+    }
+
+    private func scrubberX(width: CGFloat) -> CGFloat? {
+        if let scrubX {
+            return max(0, min(width, scrubX))
+        }
+        return isHovering ? width * min(1, max(0, fraction)) : nil
     }
 
     private func played(_ i: Int, total: Int) -> Bool {
@@ -157,5 +180,23 @@ private struct ScrubWaveform: View {
         let envelope = 0.3 + 0.7 * abs(sin(Double(i) * 0.27 + Double(seed) * 0.11))
         let frac = 0.18 + 0.82 * (0.6 * envelope + 0.4 * r)
         return max(2, height * CGFloat(min(1.0, frac)))
+    }
+}
+
+private extension View {
+    func pointingHandCursor() -> some View {
+        modifier(PointingHandCursorModifier())
+    }
+}
+
+private struct PointingHandCursorModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content.onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
     }
 }
