@@ -1,14 +1,30 @@
 import SwiftUI
 import AppKit
+import ApplicationServices
 import HarcContext
+import HarcModels
 
 public struct LibrarySettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
+    @EnvironmentObject private var models: ModelManagerStore
     @State private var notesMissing: Bool = false
 
     public init() {}
 
     public var body: some View {
+        Section {
+            LocalStackHealthView(
+                items: LocalStackHealthModel.items(for: settingsLocalStackInput),
+                onFix: { item in openFixTarget(for: item) }
+            )
+        } header: {
+            Text("Local Stack")
+        } footer: {
+            Text("These local dependencies affect capture, paste, search, summaries, speaker naming, and macOS notifications.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+        }
+
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Notes folder")
@@ -77,15 +93,66 @@ public struct LibrarySettingsView: View {
             HStack {
                 Button("Add Source Folder...") { chooseSourceFolder() }
             }
+
+            Stepper(value: $prefs.sourceScanLimit, in: HarcPreferences.sourceScanLimitRange, step: 10) {
+                Text("Scan up to \(prefs.sourceScanLimit) documents per source")
+            }
         } header: {
             Text("Context Sources")
         } footer: {
-            Text("Source folders and repos are indexed read-only. Harc writes synthesized wiki pages into its managed Wiki folder.")
+            Text("Source folders and repos are indexed read-only. Harc skips generated/vendor folders by default: \(LocalSourceScanner.defaultExcludeGlobs.joined(separator: ", ")). Raise the scan limit for broader reviews, or narrow the folder for more focused proposals.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
         }
         .onAppear { refreshMissingState() }
         .onChange(of: prefs.notesPath) { _, _ in refreshMissingState() }
+    }
+
+    private var settingsLocalStackInput: LocalStackHealthInput {
+        let summarizer = ModelCatalog.descriptor(for: prefs.activeSummarizerID)
+        let summarizerName = summarizer?.tierDisplayName ?? summarizer?.displayName ?? "Summarizer"
+        let summarizerInstalled = models.state(of: prefs.activeSummarizerID).isInstalled
+        let embedder = ModelCatalog.descriptor(for: prefs.activeEmbedderID)
+        let embedderName = embedder?.displayName ?? "Search embedder"
+        let embedderInstalled = models.state(of: prefs.activeEmbedderID).isInstalled
+
+        return LocalStackHealthInput(
+            destinationReady: prefs.destinationFolderExists(),
+            destinationText: prefs.destinationFolderExists() ? prefs.destinationPath : "Destination folder missing",
+            captureReady: true,
+            captureText: "Mic and system-audio permissions are checked during recording",
+            sttReady: true,
+            sttText: "Local STT daemon installed with Harc",
+            summarizerReady: summarizerInstalled && prefs.autoSummarizeEnabled,
+            summarizerText: summarizerInstalled ? "\(summarizerName) installed" : "\(summarizerName) not installed",
+            embedderReady: embedderInstalled,
+            embedderText: embedderInstalled ? "\(embedderName) installed" : "\(embedderName) not installed",
+            speakerIDReady: prefs.speakerReIDEnabled,
+            speakerIDText: prefs.speakerReIDEnabled ? "Speaker ID enabled" : "Speaker ID disabled",
+            notificationsReady: prefs.postStopNotificationEnabled,
+            notificationsText: prefs.postStopNotificationEnabled ? "Post-stop notifications enabled" : "Post-stop notifications off",
+            accessibilityReady: AXIsProcessTrusted(),
+            accessibilityText: AXIsProcessTrusted() ? "Paste permission granted" : "Paste needs Accessibility permission"
+        )
+    }
+
+    private func openFixTarget(for item: LocalStackHealthItem) {
+        switch item.id {
+        case .capture:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                NSWorkspace.shared.open(url)
+            }
+        case .notifications:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+                NSWorkspace.shared.open(url)
+            }
+        case .accessibility:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        default:
+            break
+        }
     }
 
     private func refreshMissingState() {
