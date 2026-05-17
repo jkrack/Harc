@@ -269,7 +269,7 @@ public struct SummaryCardView: View {
                 .font(.subheadline)
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             if let when = recording.summaryGeneratedAt {
-                Text("· \(when, format: .relative(presentation: .named))")
+                Text("· \(RelativeTimeFormatter.relativeOrDated(when))")
                     .font(.subheadline)
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
