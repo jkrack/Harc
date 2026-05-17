@@ -21,7 +21,6 @@ final class HarcWindowController: NSWindowController {
         queueStore: SummarizationQueueStore,
         modelStore: ModelManagerStore,
         onEdit: @escaping (Recording) -> Void,
-        onExport: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void
     ) {
         let peopleVM = PeopleViewModel(store: store)
@@ -35,7 +34,6 @@ final class HarcWindowController: NSWindowController {
             summarizerService: summarizerService,
             knowledgeIndexer: knowledgeIndexer,
             onEdit: onEdit,
-            onExport: onExport,
             onDelete: onDelete
         )
         .environmentObject(prefs)

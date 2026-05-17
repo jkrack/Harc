@@ -40,6 +40,22 @@ private enum HarcLibraryMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private enum ContextPackScope: String, CaseIterable, Identifiable {
+    case topResults = "Top"
+    case visibleResults = "Visible"
+    case selectedResult = "Selected"
+
+    var id: String { rawValue }
+}
+
+private enum ContextScopeError: LocalizedError {
+    case noSelectedSource
+
+    var errorDescription: String? {
+        "Select a note or recording before using Selected scope."
+    }
+}
+
 private struct ResolvedWikilink: Identifiable {
     enum Target {
         case note(id: String)
@@ -73,11 +89,6 @@ private struct ResolvedWikilink: Identifiable {
     }
 }
 
-private struct PersonMention {
-    let name: String
-    let isBracketed: Bool
-}
-
 private struct ProjectMention {
     let name: String
 }
@@ -101,7 +112,6 @@ public struct HarcWindowRootView: View {
     let summarizerService: SummarizerService
     let knowledgeIndexer: KnowledgeIndexer?
     let onEdit: (Recording) -> Void
-    let onExport: (Recording) -> Void
     let onDelete: (Recording) -> Void
 
     // MARK: View state
@@ -116,7 +126,11 @@ public struct HarcWindowRootView: View {
     @State private var reviewProposals: [WikiReviewProposal] = []
     @State private var selectedReviewProposalID: String?
     @State private var reviewLoadError: String?
+    @State private var reviewActionInFlight: Set<String> = []
+    @State private var reviewActionStatus: [String: String] = [:]
+    @State private var reviewApprovedPageID: [String: String] = [:]
     @State private var sourceScanStatus: String?
+    @State private var mutationFailure: LibraryMutationFailure?
     @State private var inspectorOpen: Bool = false
     @State private var showingAddPerson = false
 
@@ -151,10 +165,12 @@ public struct HarcWindowRootView: View {
     @State private var allPeople: [Person] = []
     @State private var contextCopyStatus: String?
     @State private var contextCopyInFlight = false
+    @State private var contextPackScope: ContextPackScope = .topResults
     @State private var conversationAnswer: String?
     @State private var conversationStatus: String?
     @State private var conversationInFlight = false
     @State private var notes: [Note] = []
+    @State private var didLoadNotes = false
     @State private var noteSearchResults: [Note] = []
     @State private var notesError: String?
     @State private var noteTitleDraft: String = ""
@@ -162,8 +178,12 @@ public struct HarcWindowRootView: View {
     @State private var noteDirty: Bool = false
     @State private var noteSaving: Bool = false
     @State private var noteSavedAt: Date?
+    @State private var noteSaveGeneration = 0
+    @State private var noteLastLoadedUpdatedAt: Date?
     @State private var noteAutosaveTask: Task<Void, Never>?
     @State private var noteSaveError: String?
+    @State private var noteSaveConflict: NoteSaveConflict?
+    @State private var unresolvedBarePersonMentions: [String] = []
     @State private var noteEditorMode: NoteMarkdownEditorMode = .live
     @State private var noteMentionPeople: [Person] = []
     @State private var linkedNotes: [Note] = []
@@ -171,9 +191,12 @@ public struct HarcWindowRootView: View {
     @State private var notesExpanded = true
     @State private var expandedNoteBuckets: Set<String> = []
     @State private var knownNoteBucketIDs: Set<String> = []
-    @State private var projectsExpanded = true
-    @State private var peopleExpanded = true
+    @State private var projectsExpanded = false
+    @State private var peopleExpanded = false
     @State private var recordingsExpanded = true
+    @State private var restoredSelection: LibrarySelection?
+    @State private var exportRecording: Recording?
+    @State private var exportDraft = RecordingExportDraft(includeSummary: true)
 
     // MARK: Environment
 
@@ -193,7 +216,6 @@ public struct HarcWindowRootView: View {
         summarizerService: SummarizerService,
         knowledgeIndexer: KnowledgeIndexer? = nil,
         onEdit: @escaping (Recording) -> Void,
-        onExport: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void
     ) {
         self.libraryVM = libraryVM
@@ -205,7 +227,6 @@ public struct HarcWindowRootView: View {
         self.summarizerService = summarizerService
         self.knowledgeIndexer = knowledgeIndexer
         self.onEdit = onEdit
-        self.onExport = onExport
         self.onDelete = onDelete
     }
 
@@ -224,30 +245,56 @@ public struct HarcWindowRootView: View {
         .help("Switch between Library, Wiki, and Review")
     }
 
+    private var pendingDeleteRecordingBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteRecording != nil },
+            set: { isPresented in
+                if !isPresented { pendingDeleteRecording = nil }
+            }
+        )
+    }
+
+    private var pendingDeleteNoteBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteNote != nil },
+            set: { isPresented in
+                if !isPresented { pendingDeleteNote = nil }
+            }
+        )
+    }
+
+    private var noteIDsForNavigation: [String] {
+        notes.map(\.id)
+    }
+
+    private var recordingPathsForNavigation: [String] {
+        libraryVM.recordings.map(\.wavPath)
+    }
+
+    private var personIDsForNavigation: [Int64] {
+        peopleVM.people.map { $0.person.id }
+    }
+
+    private var navigationValidationToken: String {
+        [
+            noteIDsForNavigation.joined(separator: "\u{1f}"),
+            recordingPathsForNavigation.joined(separator: "\u{1f}"),
+            personIDsForNavigation.map(String.init).joined(separator: "\u{1f}"),
+        ].joined(separator: "\u{1e}")
+    }
+
     public var body: some View {
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             split
             Divider()
             libraryFooter
         }
         .frame(minWidth: 900, minHeight: 600)
-        .onAppear {
-            libraryVM.start()
-            peopleVM.start()
-            Task {
-                await loadNotes()
-                await loadNoteMentionPeople()
-                await loadWikiPages()
-                await loadReviewProposals()
-            }
-        }
-        .onDisappear {
-            noteAutosaveTask?.cancel()
-            libraryVM.stop()
-            peopleVM.stop()
-        }
+        .onAppear(perform: handleAppear)
+        .onDisappear(perform: handleDisappear)
         .onChange(of: selection) { oldSelection, _ in
             flushOutgoingNoteIfNeeded(oldSelection)
+            persistNavigationSnapshot()
             loadTranscript()
             loadSelectedNoteDraft()
             Task { await loadEnvelope() }
@@ -260,6 +307,7 @@ public struct HarcWindowRootView: View {
             seedDefaultNoteBucketExpansion()
         }
         .onChange(of: mode) { _, newMode in
+            persistNavigationSnapshot()
             switch newMode {
             case .library:
                 break
@@ -269,6 +317,7 @@ public struct HarcWindowRootView: View {
                 Task { await loadReviewProposals() }
             }
         }
+        .onChange(of: navigationValidationToken) { _, _ in restoreOrValidateSelection() }
         .onReceive(NotificationCenter.default.publisher(for: .harcNotesDidChange)) { _ in
             Task { await loadNotes(resetDraft: !noteDirty) }
         }
@@ -277,10 +326,7 @@ public struct HarcWindowRootView: View {
         }
         .alert(
             "Delete recording?",
-            isPresented: Binding(
-                get: { pendingDeleteRecording != nil },
-                set: { if !$0 { pendingDeleteRecording = nil } }
-            ),
+            isPresented: pendingDeleteRecordingBinding,
             presenting: pendingDeleteRecording
         ) { rec in
             Button("Delete", role: .destructive) {
@@ -290,8 +336,9 @@ public struct HarcWindowRootView: View {
                     do {
                         try await libraryVM.delete(recording: target)
                         if selection == .recording(wavPath: target.wavPath) { selection = nil }
+                        mutationFailure = nil
                     } catch {
-                        // Surface in console; LibraryViewModel logs to its own channel.
+                        reportMutationFailure(.deleteRecording(target.displayTitle), error: error)
                     }
                 }
             }
@@ -301,10 +348,7 @@ public struct HarcWindowRootView: View {
         }
         .alert(
             "Delete note?",
-            isPresented: Binding(
-                get: { pendingDeleteNote != nil },
-                set: { if !$0 { pendingDeleteNote = nil } }
-            ),
+            isPresented: pendingDeleteNoteBinding,
             presenting: pendingDeleteNote
         ) { note in
             Button("Delete", role: .destructive) {
@@ -317,12 +361,47 @@ public struct HarcWindowRootView: View {
         .sheet(isPresented: $showingAddPerson) {
             AddPersonSheet { name in
                 Task {
-                    _ = try? await store.createPerson(displayName: name)
-                    await loadNoteMentionPeople()
-                    showingAddPerson = false
+                    do {
+                        _ = try await store.createPerson(displayName: name)
+                        await loadNoteMentionPeople()
+                        showingAddPerson = false
+                        mutationFailure = nil
+                    } catch {
+                        reportMutationFailure(.addPerson(name), error: error)
+                    }
                 }
             }
         }
+        .sheet(item: $exportRecording) { recording in
+            RecordingExportSheet(
+                recording: recording,
+                draft: $exportDraft,
+                onCancel: { exportRecording = nil },
+                onExported: { exportRecording = nil }
+            )
+        }
+    }
+
+    private func handleAppear() {
+        restoreNavigationSnapshot()
+        libraryVM.start()
+        peopleVM.start()
+        Task {
+            await loadInitialData()
+        }
+    }
+
+    private func handleDisappear() {
+        noteAutosaveTask?.cancel()
+        libraryVM.stop()
+        peopleVM.stop()
+    }
+
+    private func loadInitialData() async {
+        await loadNotes()
+        await loadNoteMentionPeople()
+        await loadWikiPages()
+        await loadReviewProposals()
     }
 
     @ViewBuilder
@@ -382,7 +461,7 @@ public struct HarcWindowRootView: View {
                 .disabled(currentRecording == nil)
 
                 Button {
-                    if let rec = currentRecording { onExport(rec) }
+                    if let rec = currentRecording { presentExport(rec) }
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
@@ -400,11 +479,20 @@ public struct HarcWindowRootView: View {
                 Button {
                     inspectorOpen.toggle()
                 } label: {
-                    Label("Inspector", systemImage: "sidebar.right")
+                    Label(inspectorToolbarTitle, systemImage: "sidebar.right")
                 }
                 .help("Toggle inspector panel")
             }
         }
+    }
+
+    private var inspectorToolbarTitle: String {
+        let count = inspectorAttentionCount
+        return count > 0 ? "Inspector (\(count))" : "Inspector"
+    }
+
+    private var inspectorAttentionCount: Int {
+        inspectorPendingSuggestions.count + linkedNotes.count
     }
 
     // MARK: - Library footer (status bar)
@@ -573,6 +661,26 @@ public struct HarcWindowRootView: View {
         .padding(.vertical, 8)
     }
 
+    private var contextScopeDescription: String {
+        let noteCount = noteSearchResults.count
+        let recordingCount = libraryVM.hits.count
+        switch contextPackScope {
+        case .topResults:
+            return "Top 8 ranked matches from notes and recordings."
+        case .visibleResults:
+            return "\(noteCount) note\(noteCount == 1 ? "" : "s") and \(recordingCount) recording\(recordingCount == 1 ? "" : "s") currently visible."
+        case .selectedResult:
+            switch selection {
+            case .note:
+                return "Selected note only."
+            case .recording:
+                return "Selected recording only."
+            default:
+                return "Select a note or recording first."
+            }
+        }
+    }
+
     private var selectedFilterDay: Date? {
         if case .day(let d) = libraryVM.filter { return d }
         return nil
@@ -588,104 +696,182 @@ public struct HarcWindowRootView: View {
         return fmt.string(from: day)
     }
 
-    // Grouped library list: collapsible top-level areas keep notes, people,
-    // and recordings from competing at one flat navigation level.
+    // Grouped library list: capture work stays first; organization surfaces
+    // remain available without competing with the common record-review loop.
     private var groupedList: some View {
         List(selection: $selection) {
-            DisclosureGroup(isExpanded: $notesExpanded) {
+            Section {
+                captureSidebarActions
+            }
+
+            DisclosureGroup(isExpanded: persistedExpansionBinding(.recordings)) {
+                recordingSidebarList
+            } label: {
+                Label("Recent Recordings", systemImage: "waveform")
+            }
+
+            DisclosureGroup(isExpanded: persistedExpansionBinding(.notes)) {
                 noteSidebarList
             } label: {
-                Label("Notes", systemImage: "note.text")
+                Label("Active Notes", systemImage: "note.text")
             }
 
-            DisclosureGroup(isExpanded: $projectsExpanded) {
-                let projects = inferredProjectNames()
-                if projects.isEmpty {
-                    Text("No projects yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(projects, id: \.self) { project in
-                        projectLabel(project)
-                    }
-                }
-            } label: {
-                Label("Projects", systemImage: "folder")
-            }
-
-            DisclosureGroup(isExpanded: $peopleExpanded) {
-                ForEach(peopleVM.people) { item in
-                    HStack(spacing: 8) {
-                        PersonAvatar(displayName: item.person.displayName, size: 22)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.person.displayName)
-                                .font(.body)
-                                .lineLimit(1)
-                            if let lastSeen = item.lastSeen {
-                                Text(Self.relativeDate(lastSeen))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer(minLength: 4)
-                        if item.suggestionCount > 0 {
-                            Text("\(item.suggestionCount)")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(Color.yellow.opacity(0.25)))
-                                .foregroundStyle(.primary)
-                        }
-                    }
-                    .tag(LibrarySelection.person(id: item.person.id))
-                }
-                Button {
-                    showingAddPerson = true
+            Section("Organize") {
+                DisclosureGroup(isExpanded: persistedExpansionBinding(.projects)) {
+                    projectSidebarList
                 } label: {
-                    Label("Add person\u{2026}", systemImage: "person.crop.circle.badge.plus")
-                        .font(.subheadline)
+                    Label("Projects", systemImage: "folder")
                 }
-                .buttonStyle(.plain)
-            } label: {
-                Label("People", systemImage: "person.2")
-            }
 
-            DisclosureGroup(isExpanded: $recordingsExpanded) {
-                if libraryVM.recordings.isEmpty {
-                    EmptyStateView(
-                        icon: "waveform.slash",
-                        title: "No recordings yet",
-                        subtitle: "Start from the menu bar icon or set a global hotkey in Settings.",
-                        action: (label: "Open Settings", run: openSettings)
-                    )
-                } else {
-                    let pinned = libraryVM.recordings.filter(\.pinned)
-                    if !pinned.isEmpty {
-                        Text("Pinned")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-                        ForEach(pinned) { rec in
-                            recordingLabel(rec)
-                        }
-                    }
-
-                    let unpinned = libraryVM.recordings.filter { !$0.pinned }
-                    let buckets = Self.dateBuckets(from: unpinned)
-                    ForEach(buckets, id: \.label) { bucket in
-                        Text(bucket.label)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-                        ForEach(bucket.recordings) { rec in
-                            recordingLabel(rec)
-                        }
-                    }
+                DisclosureGroup(isExpanded: persistedExpansionBinding(.people)) {
+                    peopleSidebarList
+                } label: {
+                    Label("People", systemImage: "person.2")
                 }
-            } label: {
-                Label("Recordings", systemImage: "waveform")
             }
         }
+    }
+
+    private var captureSidebarActions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                bridge.onStartStop()
+            } label: {
+                Label(recordingState.isRecording ? "Stop Recording" : "Record", systemImage: recordingState.isRecording ? "stop.circle.fill" : "record.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.borderedProminent)
+            Text("Use the menu bar icon or configure the global hotkey in Settings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Open Settings", action: openSettings)
+                .font(.caption)
+                .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var recordingSidebarList: some View {
+        if libraryVM.recordings.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                EmptyStateView(
+                    icon: "waveform.slash",
+                    title: "No recordings yet",
+                    subtitle: "Start a capture here, from the menu bar icon, or set a global hotkey in Settings."
+                )
+                HStack(spacing: 8) {
+                    Button("Record") { bridge.onStartStop() }
+                        .buttonStyle(.borderedProminent)
+                    Button("Settings") { openSettings() }
+                        .buttonStyle(.bordered)
+                }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity)
+            }
+        } else {
+            let pinned = libraryVM.recordings.filter(\.pinned)
+            if !pinned.isEmpty {
+                Text("Pinned")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+                ForEach(pinned) { rec in
+                    recordingLabel(rec)
+                }
+            }
+
+            let unpinned = libraryVM.recordings.filter { !$0.pinned }
+            let buckets = Self.dateBuckets(from: unpinned)
+            ForEach(buckets, id: \.label) { bucket in
+                Text(bucket.label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+                ForEach(bucket.recordings) { rec in
+                    recordingLabel(rec)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var projectSidebarList: some View {
+        let projects = inferredProjectNames()
+        if projects.isEmpty {
+            Text("No projects yet")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(projects, id: \.self) { project in
+                projectLabel(project)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var peopleSidebarList: some View {
+        ForEach(peopleVM.people) { item in
+            HStack(spacing: 8) {
+                PersonAvatar(displayName: item.person.displayName, size: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.person.displayName)
+                        .font(.body)
+                        .lineLimit(1)
+                    if let lastSeen = item.lastSeen {
+                        Text(Self.relativeDate(lastSeen))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 4)
+                if item.suggestionCount > 0 {
+                    Text("\(item.suggestionCount)")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.yellow.opacity(0.25)))
+                        .foregroundStyle(.primary)
+                }
+            }
+            .tag(LibrarySelection.person(id: item.person.id))
+        }
+        Button {
+            showingAddPerson = true
+        } label: {
+            Label("Add person\u{2026}", systemImage: "person.crop.circle.badge.plus")
+                .font(.subheadline)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private enum SidebarExpansionGroup {
+        case notes
+        case projects
+        case people
+        case recordings
+    }
+
+    private func persistedExpansionBinding(_ group: SidebarExpansionGroup) -> Binding<Bool> {
+        Binding(
+            get: {
+                switch group {
+                case .notes: return notesExpanded
+                case .projects: return projectsExpanded
+                case .people: return peopleExpanded
+                case .recordings: return recordingsExpanded
+                }
+            },
+            set: { newValue in
+                switch group {
+                case .notes: notesExpanded = newValue
+                case .projects: projectsExpanded = newValue
+                case .people: peopleExpanded = newValue
+                case .recordings: recordingsExpanded = newValue
+                }
+                persistNavigationSnapshot()
+            }
+        )
     }
 
     @ViewBuilder
@@ -762,6 +948,7 @@ public struct HarcWindowRootView: View {
                     expandedNoteBuckets.remove(id)
                 }
                 knownNoteBucketIDs.insert(id)
+                persistNavigationSnapshot()
             }
         )
     }
@@ -775,6 +962,56 @@ public struct HarcWindowRootView: View {
         expandedNoteBuckets.formUnion(grouping.defaultExpandedBucketIDs.intersection(newIDs))
         knownNoteBucketIDs.formUnion(currentIDs)
         expandedNoteBuckets.formIntersection(currentIDs)
+    }
+
+    private func restoreNavigationSnapshot() {
+        let snapshot = LibraryNavigationStateStore.load()
+        if let restoredMode = HarcLibraryMode(rawValue: snapshot.modeRawValue) {
+            mode = restoredMode
+        }
+        notesExpanded = snapshot.notesExpanded
+        projectsExpanded = snapshot.projectsExpanded
+        peopleExpanded = snapshot.peopleExpanded
+        recordingsExpanded = snapshot.recordingsExpanded
+        expandedNoteBuckets = Set(snapshot.expandedNoteBuckets)
+        knownNoteBucketIDs = Set(snapshot.knownNoteBuckets)
+        restoredSelection = snapshot.selection?.librarySelection
+        if let restoredSelection {
+            selection = restoredSelection
+        }
+    }
+
+    private func persistNavigationSnapshot() {
+        LibraryNavigationStateStore.save(LibraryNavigationSnapshot(
+            modeRawValue: mode.rawValue,
+            selection: selection.map(PersistedLibrarySelection.init),
+            notesExpanded: notesExpanded,
+            projectsExpanded: projectsExpanded,
+            peopleExpanded: peopleExpanded,
+            recordingsExpanded: recordingsExpanded,
+            expandedNoteBuckets: expandedNoteBuckets.sorted(),
+            knownNoteBuckets: knownNoteBucketIDs.sorted()
+        ))
+    }
+
+    private func restoreOrValidateSelection() {
+        guard didLoadNotes else { return }
+        let candidate = restoredSelection ?? selection
+        let resolved = LibraryNavigationResolver.resolvedSelection(
+            restored: candidate,
+            noteIDs: Set(notes.map(\.id)),
+            recordingPaths: Set(libraryVM.recordings.map(\.wavPath)),
+            personIDs: Set(peopleVM.people.map { $0.person.id }),
+            projectNames: Set(inferredProjectNames()),
+            fallbackNoteID: notes.first?.id,
+            fallbackRecordingPath: libraryVM.recordings.first?.wavPath
+        )
+        restoredSelection = nil
+        if selection != resolved {
+            selection = resolved
+        } else {
+            persistNavigationSnapshot()
+        }
     }
 
     // Search-results list: uses TranscriptHitRow for snippet highlighting.
@@ -809,9 +1046,9 @@ public struct HarcWindowRootView: View {
                 if !libraryVM.hits.isEmpty {
                     Section("Recordings") {
                         ForEach(libraryVM.hits) { hit in
-                            TranscriptHitRow(hit: hit) {
+                            TranscriptHitRow(hit: hit, onEdit: {
                                 onEdit(hit.recording)
-                            }
+                            })
                             .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
                             .contextMenu { contextMenu(for: hit.recording) }
                         }
@@ -855,6 +1092,34 @@ public struct HarcWindowRootView: View {
                     )
                 }
                 .disabled(conversationInFlight)
+            }
+            HStack(spacing: 8) {
+                Picker("Scope", selection: $contextPackScope) {
+                    ForEach(ContextPackScope.allCases) { scope in
+                        Text(scope.rawValue).tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 190)
+                .disabled(contextCopyInFlight || conversationInFlight)
+
+                Text(contextScopeDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+            if !modelStore.state(of: prefs.activeSummarizerID).isInstalled {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles.rectangle.stack")
+                        .foregroundStyle(.secondary)
+                    Text("Ask needs \(ModelCatalog.descriptor(for: prefs.activeSummarizerID)?.displayName ?? "the active model").")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open Models") { openSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
             }
             if let contextCopyStatus {
                 Text(contextCopyStatus)
@@ -968,10 +1233,17 @@ public struct HarcWindowRootView: View {
         Divider()
         Button(rec.pinned ? "Unpin" : "Pin") {
             guard let id = rec.id else { return }
-            Task { try? await libraryVM.togglePin(id: id, currentlyPinned: rec.pinned) }
+            Task {
+                do {
+                    try await libraryVM.togglePin(id: id, currentlyPinned: rec.pinned)
+                    mutationFailure = nil
+                } catch {
+                    reportMutationFailure(.pinRecording(rec.displayTitle), error: error)
+                }
+            }
         }
         Button("Open in Editor…") { onEdit(rec) }
-        Button("Export…") { onExport(rec) }
+        Button("Export…") { presentExport(rec) }
         Divider()
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])
@@ -981,10 +1253,28 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    private func presentExport(_ recording: Recording) {
+        exportDraft = RecordingExportDraft(includeSummary: prefs.includeSummaryInPrompt)
+        exportRecording = recording
+    }
+
     // MARK: - Detail
 
     @ViewBuilder
     private var detail: some View {
+        detailBody
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let mutationFailure {
+                    mutationFailureBanner(mutationFailure)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 8)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var detailBody: some View {
         switch mode {
         case .library:
             libraryDetail
@@ -993,6 +1283,37 @@ public struct HarcWindowRootView: View {
         case .review:
             reviewDetail
         }
+    }
+
+    private func mutationFailureBanner(_ failure: LibraryMutationFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.red)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(failure.title)
+                    .font(.caption.weight(.semibold))
+                Text(failure.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 0)
+            Button {
+                mutationFailure = nil
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help("Dismiss")
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.red.opacity(0.25), lineWidth: 1)
+        )
     }
 
     @ViewBuilder
@@ -1068,11 +1389,7 @@ public struct HarcWindowRootView: View {
                 } else if let selectedPage {
                     wikiPageView(selectedPage)
                 } else if pages.isEmpty {
-                    ContentUnavailableView(
-                        wikiEmptyTitle(for: wikiSection),
-                        systemImage: wikiSection.systemImage,
-                        description: Text(wikiEmptyDescription(for: wikiSection))
-                    )
+                    wikiEmptyState(for: wikiSection)
                     .frame(maxWidth: .infinity, minHeight: 280)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
@@ -1114,11 +1431,7 @@ public struct HarcWindowRootView: View {
                 } else if let selected {
                     reviewProposalView(selected)
                 } else if reviewProposals.isEmpty {
-                    ContentUnavailableView(
-                        "No Wiki Updates",
-                        systemImage: "checklist",
-                        description: Text("Record a meeting, scan a source folder, or ingest a repo to create reviewable wiki proposals.")
-                    )
+                    reviewEmptyState
                     .frame(maxWidth: .infinity, minHeight: 280)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
@@ -1314,6 +1627,79 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    private func wikiEmptyState(for section: WikiSection) -> some View {
+        VStack(spacing: 14) {
+            EmptyStateView(
+                icon: section.systemImage,
+                title: wikiEmptyTitle(for: section),
+                subtitle: "\(section.title) pages are compiled from approved review proposals, recordings, notes, and connected source folders."
+            )
+            prerequisiteGrid([
+                ("Notes", "\(notes.count)", !notes.isEmpty),
+                ("Recordings", "\(libraryVM.recordings.count)", !libraryVM.recordings.isEmpty),
+                ("Source folders", "\(prefs.sourceRoots.count)", !prefs.sourceRoots.isEmpty),
+                ("Review proposals", "\(reviewProposals.count)", !reviewProposals.isEmpty),
+            ])
+            HStack(spacing: 8) {
+                Button("Create Note") { createBlankNote() }
+                    .buttonStyle(.bordered)
+                Button("Record") { bridge.onStartStop() }
+                    .buttonStyle(.bordered)
+                Button("Add Source Folder") { openSettings() }
+                    .buttonStyle(.bordered)
+                Button("Scan Sources") { Task { await scanConnectedSources() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(prefs.sourceRoots.isEmpty)
+            }
+        }
+    }
+
+    private var reviewEmptyState: some View {
+        VStack(spacing: 14) {
+            EmptyStateView(
+                icon: "checklist",
+                title: "No Wiki Updates",
+                subtitle: "Review turns recordings, notes, and source folders into proposed wiki pages before they become durable knowledge."
+            )
+            prerequisiteGrid([
+                ("Notes", "\(notes.count)", !notes.isEmpty),
+                ("Recordings", "\(libraryVM.recordings.count)", !libraryVM.recordings.isEmpty),
+                ("Source folders", "\(prefs.sourceRoots.count)", !prefs.sourceRoots.isEmpty),
+                ("Pending proposals", "\(reviewProposals.filter { $0.status == .pending || $0.status == .edited }.count)", false),
+            ])
+            HStack(spacing: 8) {
+                Button("Create Note") { createBlankNote() }
+                    .buttonStyle(.bordered)
+                Button("Record") { bridge.onStartStop() }
+                    .buttonStyle(.bordered)
+                Button("Add Source Folder") { openSettings() }
+                    .buttonStyle(.bordered)
+                Button("Scan Sources") { Task { await scanConnectedSources() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(prefs.sourceRoots.isEmpty)
+            }
+        }
+    }
+
+    private func prerequisiteGrid(_ rows: [(String, String, Bool)]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+            ForEach(rows, id: \.0) { row in
+                GridRow {
+                    Image(systemName: row.2 ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(row.2 ? Color.green : Color.secondary)
+                    Text(row.0)
+                        .foregroundStyle(.secondary)
+                    Text(row.1)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(row.2 ? Color.primary : Color.secondary)
+                }
+            }
+        }
+        .font(.caption)
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
     @ViewBuilder
     private func reviewBucket(_ title: String, statuses: [WikiReviewProposalStatus]) -> some View {
         let items = reviewProposals.filter { statuses.contains($0.status) }
@@ -1363,7 +1749,8 @@ public struct HarcWindowRootView: View {
     }
 
     private func reviewProposalView(_ proposal: WikiReviewProposal) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let busy = reviewActionInFlight.contains(proposal.id)
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(proposal.title)
@@ -1376,16 +1763,33 @@ public struct HarcWindowRootView: View {
                 Button {
                     Task { await approveReviewProposal(proposal) }
                 } label: {
-                    Label("Approve", systemImage: "checkmark.circle")
+                    Label(busy ? "Working" : "Approve", systemImage: busy ? "hourglass" : "checkmark.circle")
                 }
-                .disabled(proposal.status == .approved || proposal.status == .dismissed)
+                .disabled(busy || proposal.status == .approved || proposal.status == .dismissed)
 
                 Button(role: .destructive) {
                     Task { await dismissReviewProposal(proposal) }
                 } label: {
                     Label("Dismiss", systemImage: "xmark.circle")
                 }
-                .disabled(proposal.status == .approved || proposal.status == .dismissed)
+                .disabled(busy || proposal.status == .approved || proposal.status == .dismissed)
+            }
+
+            if let status = reviewActionStatus[proposal.id] {
+                HStack(spacing: 8) {
+                    Label(status, systemImage: reviewActionStatusIcon(status))
+                        .font(.caption)
+                        .foregroundStyle(status.localizedCaseInsensitiveContains("failed") ? Color.red : Color.secondary)
+                    if let pageID = reviewApprovedPageID[proposal.id] {
+                        Button("Open Page") {
+                            mode = .wiki
+                            selectedWikiPageID = pageID
+                            wikiSection = proposal.targetSection
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
             }
 
             Text(proposal.summary)
@@ -1432,8 +1836,19 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    private func reviewActionStatusIcon(_ status: String) -> String {
+        status.localizedCaseInsensitiveContains("failed")
+            ? "exclamationmark.triangle"
+            : "info.circle"
+    }
+
     private func noteDetail(note: Note) -> some View {
-        VStack(spacing: 0) {
+        let recordingToolbarState = NoteRecordingToolbarState.resolve(
+            isRecording: recordingState.isRecording,
+            activeNoteID: bridge.activeNoteRecordingID,
+            currentNoteID: note.id
+        )
+        return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 TextField("Title", text: Binding(
                     get: { noteTitleDraft },
@@ -1498,22 +1913,53 @@ public struct HarcWindowRootView: View {
                 .padding(.vertical, 8)
                 .background(Color.red.opacity(0.08))
             }
+
+            if let noteSaveConflict, noteSaveConflict.noteID == note.id {
+                noteSaveConflictBanner(noteSaveConflict)
+            }
+
+            if let feedback = bridge.noteRecordingLinkFeedback, feedback.noteID == note.id {
+                noteRecordingLinkBanner(feedback)
+            }
+
+            if let conflict = bridge.noteRecordingConflict, conflict.requestedNoteID == note.id {
+                noteRecordingConflictBanner(conflict)
+            }
+
+            if !unresolvedBarePersonMentions.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                    Text("Unlinked people mentions: \(unresolvedBarePersonMentions.joined(separator: ", ")). Use @[Name] to create a Person.")
+                    Spacer()
+                    Button("Dismiss") { unresolvedBarePersonMentions = [] }
+                        .buttonStyle(.plain)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 8)
+                .background(Color.yellow.opacity(0.08))
+            }
         }
         .navigationTitle(note.title)
         .toolbar {
             ToolbarItemGroup {
                 Button {
-                    if noteDirty {
-                        saveSelectedNote()
+                    if recordingToolbarState.canToggleDirectly {
+                        if noteDirty {
+                            saveSelectedNote()
+                        }
+                        bridge.onStartRecordingForNote(note.id)
+                    } else {
+                        bridge.showNoteRecordingConflict(requestedNoteID: note.id)
                     }
-                    bridge.onStartRecordingForNote(note.id)
                 } label: {
                     Label(
-                        recordingState.isRecording ? "Stop Recording" : "Record into Note",
-                        systemImage: recordingState.isRecording ? "stop.circle.fill" : "record.circle"
+                        recordingToolbarState.title,
+                        systemImage: recordingToolbarState.systemImage
                     )
                 }
-                .tint(recordingState.isRecording ? HarcBrand.live : nil)
+                .tint(recordingToolbarState == .recordingIntoThisNote ? HarcBrand.live : nil)
 
                 Button {
                     saveSelectedNote()
@@ -1543,6 +1989,128 @@ public struct HarcWindowRootView: View {
                 }
             }
         }
+    }
+
+    private func noteRecordingLinkBanner(_ feedback: NoteRecordingLinkFeedback) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: feedback.isRecoveryNeeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(feedback.isRecoveryNeeded ? Color.orange : Color.green)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(feedback.isRecoveryNeeded ? "Recording needs note link" : "Recording linked")
+                    .font(.caption.weight(.semibold))
+                Text(feedback.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                HStack(spacing: 8) {
+                    if feedback.isRecoveryNeeded {
+                        Button("Attach latest recording") {
+                            bridge.onAttachLatestRecordingToNote(feedback.noteID)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    if feedback.canOpenRecording {
+                        Button("Open recording") {
+                            bridge.onOpenNoteLinkedRecording(feedback)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    if feedback.canRevealFile {
+                        Button("Reveal file") {
+                            bridge.onRevealNoteLinkedRecordingFile(feedback)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            Button {
+                bridge.clearNoteRecordingLinkFeedback()
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help("Dismiss")
+        }
+        .font(.caption)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background((feedback.isRecoveryNeeded ? Color.orange : Color.green).opacity(0.08))
+    }
+
+    private func noteRecordingConflictBanner(_ conflict: NoteRecordingConflict) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "record.circle")
+                .foregroundStyle(Color.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Recording already active")
+                    .font(.caption.weight(.semibold))
+                Text(conflict.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                HStack(spacing: 8) {
+                    Button("Open active recording") {
+                        bridge.onOpenWindow()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button("Dismiss") {
+                        bridge.clearNoteRecordingConflict()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.08))
+    }
+
+    private func noteSaveConflictBanner(_ conflict: NoteSaveConflict) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "doc.badge.clock")
+                .foregroundStyle(Color.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Note changed on disk")
+                    .font(.caption.weight(.semibold))
+                Text("Reload the file version saved \(conflict.diskUpdatedAt, style: .relative), or overwrite it with your current draft.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                HStack(spacing: 8) {
+                    Button("Reload File") {
+                        reloadConflictedNote(conflict)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button("Overwrite") {
+                        overwriteConflictedNote(conflict)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button("Dismiss") {
+                        noteSaveConflict = nil
+                        noteSaveError = nil
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.08))
     }
 
     private func noteLinksSection(note: Note) -> some View {
@@ -1594,6 +2162,9 @@ public struct HarcWindowRootView: View {
                     )
                     .padding(.horizontal)
 
+                    inspectorSummaryChips(for: recording)
+                        .padding(.horizontal)
+
                     // Summary card — requires SummarizationQueueStore and
                     // ModelManagerStore injected as environment objects by the
                     // window controller.
@@ -1603,7 +2174,14 @@ public struct HarcWindowRootView: View {
                         activeSummarizerID: prefs.activeSummarizerID,
                         hasTranscript: hasTranscriptSource(recording),
                         onClearSummary: { id in
-                            Task { try? await store.clearSummaryStatus(id: id) }
+                            Task {
+                                do {
+                                    try await store.clearSummaryStatus(id: id)
+                                    mutationFailure = nil
+                                } catch {
+                                    reportMutationFailure(.clearSummary(recording.displayTitle), error: error)
+                                }
+                            }
                         }
                     )
                     .padding(.horizontal)
@@ -1626,10 +2204,47 @@ public struct HarcWindowRootView: View {
         // Reload transcript when the selection's recording row changes in the DB.
         .task(id: recording.wavPath) {
             await observeRecording(recording: recording)
+            await loadInspectorSummaryData(for: recording)
         }
         .onChange(of: transcriptSearchText) { _, _ in
             transcriptSearchIndex = 0
         }
+    }
+
+    private func inspectorSummaryChips(for recording: Recording) -> some View {
+        let speakerCount = speakerIndices(for: recording).count
+        let fileCount = [recording.wavPath, recording.txtPath, recording.jsonPath].compactMap(\.self).count
+        return HStack(spacing: 8) {
+            inspectorChip(
+                title: inspectorPendingSuggestions.isEmpty ? "\(speakerCount) speakers" : "\(inspectorPendingSuggestions.count) speaker review",
+                icon: inspectorPendingSuggestions.isEmpty ? "person.wave.2" : "person.crop.circle.badge.questionmark",
+                tint: inspectorPendingSuggestions.isEmpty ? .secondary : .yellow
+            )
+            inspectorChip(
+                title: linkedNotes.isEmpty ? "No linked notes" : "\(linkedNotes.count) linked notes",
+                icon: linkedNotes.isEmpty ? "note.text" : "note.text.badge.plus",
+                tint: linkedNotes.isEmpty ? .secondary : .accentColor
+            )
+            inspectorChip(
+                title: "\(fileCount) files",
+                icon: "folder",
+                tint: .secondary
+            )
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func inspectorChip(title: String, icon: String, tint: Color) -> some View {
+        Button {
+            inspectorOpen = true
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.caption)
+                .lineLimit(1)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(tint)
     }
 
     @ViewBuilder
@@ -1654,7 +2269,7 @@ public struct HarcWindowRootView: View {
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                         }
-                        Text(highlightedTranscriptText(seg.text))
+                    Text(highlightedTranscriptText(seg.text, activeMatch: activeTranscriptMatch(for: seg.id)))
                             .font(.body)
                             .lineSpacing(4)
                             .textSelection(.enabled)
@@ -1676,7 +2291,7 @@ public struct HarcWindowRootView: View {
                 subtitle: "Transcribe this recording to make the transcript searchable and editable."
             )
         } else {
-            Text(highlightedTranscriptText(transcriptText))
+            Text(highlightedTranscriptText(transcriptText, activeMatch: activeTranscriptMatch))
                 .font(.body)
                 .lineSpacing(4)
                 .textSelection(.enabled)
@@ -1782,12 +2397,11 @@ public struct HarcWindowRootView: View {
 
         if !transcriptSegments.isEmpty {
             return transcriptSegments.flatMap { segment in
-                Array(repeating: TranscriptSearchMatch(segmentID: segment.id), count: matchCount(in: segment.text, query: query))
+                TranscriptFind.matches(in: segment.text, query: query, segmentID: segment.id)
             }
         }
 
-        let count = matchCount(in: transcriptText, query: query)
-        return Array(repeating: TranscriptSearchMatch(segmentID: nil), count: count)
+        return TranscriptFind.matches(in: transcriptText, query: query)
     }
 
     private var transcriptSearchStatus: String {
@@ -1798,9 +2412,18 @@ public struct HarcWindowRootView: View {
     }
 
     private var activeTranscriptMatchSegmentID: UUID? {
+        activeTranscriptMatch?.segmentID
+    }
+
+    private var activeTranscriptMatch: TranscriptSearchMatch? {
         let matches = transcriptSearchMatches
         guard !matches.isEmpty else { return nil }
-        return matches[min(transcriptSearchIndex, matches.count - 1)].segmentID
+        return matches[min(transcriptSearchIndex, matches.count - 1)]
+    }
+
+    private func activeTranscriptMatch(for segmentID: UUID) -> TranscriptSearchMatch? {
+        guard let match = activeTranscriptMatch, match.segmentID == segmentID else { return nil }
+        return match
     }
 
     private func jumpToNextTranscriptMatch(proxy: ScrollViewProxy) {
@@ -1863,46 +2486,21 @@ public struct HarcWindowRootView: View {
         }?.id ?? boundaries.last
     }
 
-    private func matchCount(in text: String, query: String) -> Int {
-        guard !query.isEmpty else { return 0 }
-        let source = text as NSString
-        var searchRange = NSRange(location: 0, length: source.length)
-        var count = 0
-        while searchRange.length > 0 {
-            let found = source.range(
-                of: query,
-                options: [.caseInsensitive, .diacriticInsensitive],
-                range: searchRange
-            )
-            guard found.location != NSNotFound else { break }
-            count += 1
-            let nextLocation = found.location + max(found.length, 1)
-            searchRange = NSRange(location: nextLocation, length: max(0, source.length - nextLocation))
-        }
-        return count
-    }
-
-    private func highlightedTranscriptText(_ text: String) -> AttributedString {
+    private func highlightedTranscriptText(_ text: String, activeMatch: TranscriptSearchMatch?) -> AttributedString {
         let query = transcriptSearchQuery
         guard !query.isEmpty else { return AttributedString(text) }
 
-        let source = text as NSString
         let highlighted = NSMutableAttributedString(string: text)
-        var searchRange = NSRange(location: 0, length: source.length)
-        while searchRange.length > 0 {
-            let found = source.range(
-                of: query,
-                options: [.caseInsensitive, .diacriticInsensitive],
-                range: searchRange
-            )
-            guard found.location != NSNotFound else { break }
+        for match in TranscriptFind.matches(in: text, query: query, segmentID: activeMatch?.segmentID) {
+            let isActive = activeMatch?.range == match.range
             highlighted.addAttribute(
                 .backgroundColor,
-                value: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35),
-                range: found
+                value: NSColor.selectedTextBackgroundColor.withAlphaComponent(isActive ? 0.72 : 0.30),
+                range: match.range
             )
-            let nextLocation = found.location + max(found.length, 1)
-            searchRange = NSRange(location: nextLocation, length: max(0, source.length - nextLocation))
+            if isActive {
+                highlighted.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range)
+            }
         }
         return AttributedString(highlighted)
     }
@@ -1928,33 +2526,47 @@ public struct HarcWindowRootView: View {
                 initialNames: resolvedSpeakerLabels.isEmpty ? recording.speakerNames : resolvedSpeakerLabels,
                 onCommit: { newNames in
                     guard let id = recording.id else { return }
-                    Task { try? await store.updateSpeakerNames(id: id, names: newNames) }
+                    Task {
+                        do {
+                            try await store.updateSpeakerNames(id: id, names: newNames)
+                            await loadResolvedLabels()
+                            mutationFailure = nil
+                        } catch {
+                            reportMutationFailure(.renameSpeaker, error: error)
+                        }
+                    }
                 },
                 suggestionsProvider: nil,
                 pendingSuggestions: inspectorPendingSuggestions,
                 personNamesByID: allPeopleByID,
                 onConfirmSuggestion: { s in
                     Task {
-                        try? await store.confirmSuggestion(
-                            personID: s.personID,
-                            recordingID: s.recordingID,
-                            speakerIndex: s.speakerIndex
-                        )
-                        if let id = recording.id {
-                            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+                        do {
+                            try await store.confirmSuggestion(
+                                personID: s.personID,
+                                recordingID: s.recordingID,
+                                speakerIndex: s.speakerIndex
+                            )
+                            await loadInspectorSummaryData(for: recording)
+                            await loadResolvedLabels()
+                            mutationFailure = nil
+                        } catch {
+                            reportMutationFailure(.confirmSpeakerSuggestion, error: error)
                         }
-                        await loadResolvedLabels()
                     }
                 },
                 onDismissSuggestion: { s in
                     Task {
-                        try? await store.dismissSuggestion(
-                            personID: s.personID,
-                            recordingID: s.recordingID,
-                            speakerIndex: s.speakerIndex
-                        )
-                        if let id = recording.id {
-                            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+                        do {
+                            try await store.dismissSuggestion(
+                                personID: s.personID,
+                                recordingID: s.recordingID,
+                                speakerIndex: s.speakerIndex
+                            )
+                            await loadInspectorSummaryData(for: recording)
+                            mutationFailure = nil
+                        } catch {
+                            reportMutationFailure(.dismissSpeakerSuggestion, error: error)
                         }
                     }
                 },
@@ -1963,32 +2575,46 @@ public struct HarcWindowRootView: View {
                 onLinkPerson: { personID, speakerIndex in
                     guard let rid = recording.id else { return }
                     Task {
-                        try? await store.linkSpeaker(personID: personID, recordingID: rid, speakerIndex: speakerIndex)
-                        await loadResolvedLabels()
+                        do {
+                            try await store.linkSpeaker(personID: personID, recordingID: rid, speakerIndex: speakerIndex)
+                            await loadInspectorSummaryData(for: recording)
+                            await loadResolvedLabels()
+                            mutationFailure = nil
+                        } catch {
+                            reportMutationFailure(.linkSpeaker, error: error)
+                        }
                     }
                 },
                 onCreatePerson: { name, speakerIndex in
                     guard let rid = recording.id else { return }
                     Task {
-                        if let pid = try? await store.createPerson(displayName: name, matchThreshold: nil) {
-                            try? await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
+                        do {
+                            let pid = try await store.createPerson(displayName: name, matchThreshold: nil)
+                            try await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
                             // Best-effort, non-blocking: backfill suggestions for the new person.
                             Task.detached { [store] in
                                 let engine = SpeakerSuggestionEngine(store: store, embedderKind: "wespeaker_v2")
                                 try? await engine.suggestForNewPerson(personID: pid, fromRecording: rid, speakerIndex: speakerIndex)
                             }
-                            let people = (try? await store.fetchPeople()) ?? []
-                            allPeople = people
-                            allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
+                            await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
+                            mutationFailure = nil
+                        } catch {
+                            reportMutationFailure(.createAndLinkPerson(name), error: error)
                         }
                     }
                 },
                 onUnlinkPerson: { speakerIndex in
                     guard let rid = recording.id else { return }
                     Task {
-                        try? await store.unlinkSpeaker(recordingID: rid, speakerIndex: speakerIndex)
-                        await loadResolvedLabels()
+                        do {
+                            try await store.unlinkSpeaker(recordingID: rid, speakerIndex: speakerIndex)
+                            await loadInspectorSummaryData(for: recording)
+                            await loadResolvedLabels()
+                            mutationFailure = nil
+                        } catch {
+                            reportMutationFailure(.unlinkSpeaker, error: error)
+                        }
                     }
                 }
             )
@@ -2001,16 +2627,20 @@ public struct HarcWindowRootView: View {
         .background(.thinMaterial)
         .navigationTitle("Inspector")
         .task(id: recording.id) {
-            let people = (try? await store.fetchPeople()) ?? []
-            allPeople = people
-            allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
-            if let id = recording.id {
-                inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
-            } else {
-                inspectorPendingSuggestions = []
-            }
-            await loadLinkedNotes(for: recording)
+            await loadInspectorSummaryData(for: recording)
         }
+    }
+
+    private func loadInspectorSummaryData(for recording: Recording) async {
+        let people = (try? await store.fetchPeople()) ?? []
+        allPeople = people
+        allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
+        if let id = recording.id {
+            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+        } else {
+            inspectorPendingSuggestions = []
+        }
+        await loadLinkedNotes(for: recording)
     }
 
     private func linkedNotesSection(recording: Recording) -> some View {
@@ -2091,6 +2721,7 @@ public struct HarcWindowRootView: View {
                 let note = try await NoteStore(rootURL: prefs.notesURL).create(for: recording)
                 linkedNotes = try await NoteStore(rootURL: prefs.notesURL).fetchLinked(to: recording)
                 await loadNotes()
+                mutationFailure = nil
                 selection = .note(id: note.id)
                 noteTitleDraft = note.title
                 noteBodyDraft = note.body
@@ -2117,14 +2748,17 @@ public struct HarcWindowRootView: View {
     private func loadNotes(resetDraft: Bool = true) async {
         do {
             notes = try await NoteStore(rootURL: prefs.notesURL).fetchAll()
+            didLoadNotes = true
             notesError = nil
             seedDefaultNoteBucketExpansion()
             await searchNotes()
+            restoreOrValidateSelection()
             if resetDraft {
                 loadSelectedNoteDraft()
             }
         } catch {
             notes = []
+            didLoadNotes = true
             notesError = error.localizedDescription
         }
     }
@@ -2175,7 +2809,7 @@ public struct HarcWindowRootView: View {
 
     private func scanConnectedSources() async {
         sourceScanStatus = "Scanning source folders..."
-        var proposalCount = 0
+        var scanSummary = SourceScanRunSummary(perSourceLimit: prefs.sourceScanLimit)
         let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
         let reviewStore = WikiReviewStore(
             fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
@@ -2185,7 +2819,11 @@ public struct HarcWindowRootView: View {
         do {
             for root in prefs.sourceRoots {
                 let documents = try LocalSourceScanner.scan(root: root)
-                let scanBatch = Array(documents.prefix(40))
+                scanSummary.discoveredCount += documents.count
+                let limited = SourceScanRunSummary.limitedBatch(documents, limit: prefs.sourceScanLimit)
+                let scanBatch = limited.batch
+                scanSummary.scannedCount += scanBatch.count
+                scanSummary.skippedCount += limited.skippedCount
                 for document in scanBatch {
                     if let knowledgeIndexer {
                         let knowledgeKind: KnowledgeSourceKind = root.kind == .repository ? .repoFile : .rawFile
@@ -2193,15 +2831,15 @@ public struct HarcWindowRootView: View {
                             sourceDocument: document,
                             sourceKind: knowledgeKind
                         )
+                        scanSummary.indexedCount += 1
                     }
                 }
                 for proposal in SourceWikiProposalGenerator.proposals(for: root, documents: scanBatch) {
                     _ = try await reviewStore.upsert(proposal)
-                    proposalCount += 1
+                    scanSummary.proposalCount += 1
                 }
             }
-            let indexedSuffix = knowledgeIndexer == nil ? "" : " Indexed source chunks for search."
-            sourceScanStatus = "Created \(proposalCount) review proposal\(proposalCount == 1 ? "" : "s").\(indexedSuffix)"
+            sourceScanStatus = scanSummary.statusText
             await loadReviewProposals()
             mode = .review
         } catch {
@@ -2210,30 +2848,48 @@ public struct HarcWindowRootView: View {
     }
 
     private func approveReviewProposal(_ proposal: WikiReviewProposal) async {
+        reviewActionInFlight.insert(proposal.id)
+        reviewActionStatus[proposal.id] = "Approving..."
+        defer { reviewActionInFlight.remove(proposal.id) }
+
         let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
         let reviewStore = WikiReviewStore(
             fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
             wikiStore: HarcWikiStore(rootURL: wikiRoot)
         )
-        _ = try? await reviewStore.approve(id: proposal.id)
-        if let knowledgeIndexer,
-           let page = try? await HarcWikiStore(rootURL: wikiRoot).fetchPage(
-            id: "\(proposal.targetSection.rawValue)/\(HarcWikiStore.slug(proposal.targetTitle))"
-           ) {
-            try? await knowledgeIndexer.index(wikiPage: page)
+        do {
+            _ = try await reviewStore.approve(id: proposal.id)
+            let pageID = "\(proposal.targetSection.rawValue)/\(HarcWikiStore.slug(proposal.targetTitle))"
+            if let knowledgeIndexer,
+               let page = try? await HarcWikiStore(rootURL: wikiRoot).fetchPage(id: pageID) {
+                try await knowledgeIndexer.index(wikiPage: page)
+            }
+            reviewApprovedPageID[proposal.id] = pageID
+            reviewActionStatus[proposal.id] = "Approved and written to Wiki."
+            await loadReviewProposals()
+            await loadWikiPages()
+        } catch {
+            reviewActionStatus[proposal.id] = "Approve failed: \(error.localizedDescription)"
         }
-        await loadReviewProposals()
-        await loadWikiPages()
     }
 
     private func dismissReviewProposal(_ proposal: WikiReviewProposal) async {
+        reviewActionInFlight.insert(proposal.id)
+        reviewActionStatus[proposal.id] = "Dismissing..."
+        defer { reviewActionInFlight.remove(proposal.id) }
+
         let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
         let reviewStore = WikiReviewStore(
             fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
             wikiStore: HarcWikiStore(rootURL: wikiRoot)
         )
-        _ = try? await reviewStore.updateStatus(id: proposal.id, status: .dismissed)
-        await loadReviewProposals()
+        do {
+            _ = try await reviewStore.updateStatus(id: proposal.id, status: .dismissed)
+            reviewActionStatus[proposal.id] = "Dismissed."
+            await loadReviewProposals()
+        } catch {
+            reviewActionStatus[proposal.id] = "Dismiss failed: \(error.localizedDescription)"
+        }
     }
 
     private func loadSelectedNoteDraft() {
@@ -2243,24 +2899,35 @@ public struct HarcWindowRootView: View {
         noteDirty = false
         noteSaving = false
         noteSavedAt = note.updatedAt
+        noteLastLoadedUpdatedAt = note.updatedAt
         noteSaveError = nil
+        noteSaveConflict = nil
     }
 
     private func markNoteEdited() {
+        noteSaveGeneration += 1
         noteDirty = true
         noteSaveError = nil
+        noteSaveConflict = nil
         scheduleNoteAutosave()
     }
 
     private func scheduleNoteAutosave() {
         noteAutosaveTask?.cancel()
         guard case .note(let id) = selection else { return }
-        let title = noteTitleDraft
-        let body = noteBodyDraft
+        let request = NoteSaveRequest(
+            id: id,
+            title: noteTitleDraft,
+            body: noteBodyDraft,
+            generation: noteSaveGeneration,
+            baseUpdatedAt: noteLastLoadedUpdatedAt,
+            updateDraftIfSelected: true
+        )
         noteAutosaveTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000)
             guard !Task.isCancelled else { return }
-            await saveNoteDraft(id: id, title: title, body: body, updateDraftIfSelected: true)
+            guard request.generation == noteSaveGeneration else { return }
+            await saveNoteDraft(request)
         }
     }
 
@@ -2275,7 +2942,9 @@ public struct HarcWindowRootView: View {
                 noteDirty = false
                 noteSaving = false
                 noteSavedAt = note.updatedAt
+                noteLastLoadedUpdatedAt = note.updatedAt
                 noteSaveError = nil
+                noteSaveConflict = nil
             } catch {
                 notesError = error.localizedDescription
             }
@@ -2295,11 +2964,15 @@ public struct HarcWindowRootView: View {
                     noteBodyDraft = ""
                     noteDirty = false
                     noteSaveError = nil
+                    noteSaveConflict = nil
                     noteSavedAt = nil
+                    noteLastLoadedUpdatedAt = nil
                 }
                 await loadNotes()
+                mutationFailure = nil
             } catch {
                 notesError = error.localizedDescription
+                reportMutationFailure(.archiveNote(note.title), error: error)
             }
         }
     }
@@ -2309,8 +2982,10 @@ public struct HarcWindowRootView: View {
             do {
                 try await NoteStore(rootURL: prefs.notesURL).setPinned(id: note.id, pinned: !note.pinned)
                 await loadNotes(resetDraft: false)
+                mutationFailure = nil
             } catch {
                 notesError = error.localizedDescription
+                reportMutationFailure(.pinNote(note.title), error: error)
             }
         }
     }
@@ -2318,61 +2993,146 @@ public struct HarcWindowRootView: View {
     private func saveSelectedNote() {
         guard case .note(let id) = selection else { return }
         noteAutosaveTask?.cancel()
-        let title = noteTitleDraft
-        let body = noteBodyDraft
+        let request = NoteSaveRequest(
+            id: id,
+            title: noteTitleDraft,
+            body: noteBodyDraft,
+            generation: noteSaveGeneration,
+            baseUpdatedAt: noteLastLoadedUpdatedAt,
+            updateDraftIfSelected: true
+        )
         Task {
-            await saveNoteDraft(id: id, title: title, body: body, updateDraftIfSelected: true)
+            await saveNoteDraft(request)
         }
     }
 
     private func flushOutgoingNoteIfNeeded(_ oldSelection: LibrarySelection?) {
         guard case .note(let id) = oldSelection, noteDirty else { return }
         noteAutosaveTask?.cancel()
-        let title = noteTitleDraft
-        let body = noteBodyDraft
+        let request = NoteSaveRequest(
+            id: id,
+            title: noteTitleDraft,
+            body: noteBodyDraft,
+            generation: noteSaveGeneration,
+            baseUpdatedAt: noteLastLoadedUpdatedAt,
+            updateDraftIfSelected: false
+        )
         Task {
-            await saveNoteDraft(id: id, title: title, body: body, updateDraftIfSelected: false)
+            await saveNoteDraft(request)
         }
     }
 
-    private func saveNoteDraft(
-        id: String,
-        title: String,
-        body: String,
-        updateDraftIfSelected: Bool
-    ) async {
-        guard var note = notes.first(where: { $0.id == id }) else { return }
-        note.title = title
-        note.body = body
+    private func saveNoteDraft(_ request: NoteSaveRequest, allowOverwrite: Bool = false) async {
+        guard var note = notes.first(where: { $0.id == request.id }) else { return }
+        let noteStore = NoteStore(rootURL: prefs.notesURL)
+        let diskNote = try? await noteStore.fetch(id: request.id, includeArchived: true)
+        switch NoteAutosaveGuard.shouldSave(
+            request: request,
+            currentGeneration: noteSaveGeneration,
+            selectedNoteID: selectedNoteID,
+            diskNote: diskNote,
+            allowOverwrite: allowOverwrite
+        ) {
+        case .save:
+            break
+        case .stale:
+            return
+        case .conflict(let conflict):
+            if selection == .note(id: request.id) {
+                noteSaveConflict = conflict
+                noteSaveError = "This note changed on disk. Reload it or overwrite the file with your draft."
+                noteSaving = false
+            } else {
+                notesError = "Could not autosave note because it changed on disk."
+            }
+            return
+        }
+
+        note.title = request.title
+        note.body = request.body
         noteSaving = true
         do {
-            note.people = try await ensureMentionedPeople(in: body)
-            note.tags = mergedProjectTags(existing: note.tags, body: body)
-            let saved = try await NoteStore(rootURL: prefs.notesURL).update(note)
+            note.people = try await ensureMentionedPeople(in: request.body)
+            note.tags = mergedProjectTags(existing: note.tags, body: request.body)
+            let saved = try await noteStore.update(note)
             if let knowledgeIndexer {
                 Task.detached { [knowledgeIndexer, saved] in
                     try? await knowledgeIndexer.index(note: saved)
                 }
             }
             await loadNotes(resetDraft: false)
-            if updateDraftIfSelected, selection == .note(id: id) {
+            if request.updateDraftIfSelected,
+               selection == .note(id: request.id),
+               request.generation == noteSaveGeneration || allowOverwrite {
                 noteTitleDraft = saved.title
                 noteBodyDraft = saved.body
                 noteDirty = false
                 noteSavedAt = saved.updatedAt
+                noteLastLoadedUpdatedAt = saved.updatedAt
                 noteSaveError = nil
+                noteSaveConflict = nil
             }
-            if selection != .note(id: id) {
+            if selection != .note(id: request.id) {
                 noteSaveError = nil
             }
         } catch {
-            if selection == .note(id: id) {
+            if selection == .note(id: request.id) {
                 noteSaveError = error.localizedDescription
             } else {
                 notesError = "Could not autosave note: \(error.localizedDescription)"
             }
         }
         noteSaving = false
+    }
+
+    private var selectedNoteID: String? {
+        if case .note(let id) = selection { return id }
+        return nil
+    }
+
+    private func reloadConflictedNote(_ conflict: NoteSaveConflict) {
+        Task {
+            do {
+                guard let note = try await NoteStore(rootURL: prefs.notesURL).fetch(id: conflict.noteID, includeArchived: true) else {
+                    noteSaveError = "Could not reload the note from disk."
+                    return
+                }
+                if selection == .note(id: conflict.noteID) {
+                    noteTitleDraft = note.title
+                    noteBodyDraft = note.body
+                    noteDirty = false
+                    noteSaving = false
+                    noteSavedAt = note.updatedAt
+                    noteLastLoadedUpdatedAt = note.updatedAt
+                    noteSaveError = nil
+                    noteSaveConflict = nil
+                    noteSaveGeneration += 1
+                }
+                await loadNotes(resetDraft: false)
+            } catch {
+                noteSaveError = error.localizedDescription
+            }
+        }
+    }
+
+    private func overwriteConflictedNote(_ conflict: NoteSaveConflict) {
+        noteSaveConflict = nil
+        noteSaveError = nil
+        let request = NoteSaveRequest(
+            id: conflict.noteID,
+            title: conflict.draftTitle,
+            body: conflict.draftBody,
+            generation: noteSaveGeneration,
+            baseUpdatedAt: nil,
+            updateDraftIfSelected: true
+        )
+        Task {
+            await saveNoteDraft(request, allowOverwrite: true)
+        }
+    }
+
+    private func reportMutationFailure(_ action: LibraryMutationAction, error: Error) {
+        mutationFailure = LibraryMutationFailure(action: action, error: error)
     }
 
     private func noteMentionTargets() -> [NoteMarkdownLinkTarget] {
@@ -2401,66 +3161,39 @@ public struct HarcWindowRootView: View {
     }
 
     private func ensureMentionedPeople(in body: String) async throws -> [String] {
-        let mentions = extractPersonMentions(from: body)
-        guard !mentions.isEmpty else { return [] }
-
         var people = try await store.fetchPeople()
         var ids: [String] = []
         var seenIDs: Set<Int64> = []
+        var unresolved: [String] = []
 
-        for mention in mentions {
-            let key = normalizeWikilinkLabel(mention.name)
-            if let existing = bestPersonMatch(for: key, in: people) {
-                if seenIDs.insert(existing.id).inserted {
-                    ids.append("person:\(existing.id)")
+        for action in NotePersonMentionResolver.actions(for: body, people: people) {
+            switch action {
+            case .link(let personID):
+                if seenIDs.insert(personID).inserted {
+                    ids.append("person:\(personID)")
                 }
-                continue
-            }
-
-            guard mention.isBracketed || key.count >= 3 else {
-                continue
-            }
-
-            let personID = try await store.createPerson(displayName: mention.name, matchThreshold: nil)
-            let now = Date()
-            let person = Person(
-                id: personID,
-                displayName: mention.name,
-                matchThreshold: nil,
-                createdAt: now,
-                updatedAt: now
-            )
-            people.append(person)
-            noteMentionPeople.append(person)
-            if seenIDs.insert(personID).inserted {
-                ids.append("person:\(personID)")
+            case .create(let name):
+                let personID = try await store.createPerson(displayName: name, matchThreshold: nil)
+                let now = Date()
+                let person = Person(
+                    id: personID,
+                    displayName: name,
+                    matchThreshold: nil,
+                    createdAt: now,
+                    updatedAt: now
+                )
+                people.append(person)
+                noteMentionPeople.append(person)
+                if seenIDs.insert(personID).inserted {
+                    ids.append("person:\(personID)")
+                }
+            case .unresolvedBare(let name):
+                unresolved.append(name)
             }
         }
 
+        unresolvedBarePersonMentions = unresolved
         return ids
-    }
-
-    private func bestPersonMatch(for normalizedMention: String, in people: [Person]) -> Person? {
-        let tokenExact = people.filter { person in
-            let normalizedName = normalizeWikilinkLabel(person.displayName)
-            return normalizedName != normalizedMention &&
-                normalizedName.split(separator: " ").contains(Substring(normalizedMention))
-        }
-        if tokenExact.count == 1 { return tokenExact[0] }
-
-        let exact = people.filter {
-            normalizeWikilinkLabel($0.displayName) == normalizedMention
-        }
-        if exact.count == 1 { return exact[0] }
-
-        let prefix = people.filter { person in
-            normalizeWikilinkLabel(person.displayName)
-                .split(separator: " ")
-                .contains { $0.hasPrefix(normalizedMention) }
-        }
-        if prefix.count == 1 { return prefix[0] }
-
-        return nil
     }
 
     private func noteLinkTargets(for currentNote: Note) -> [NoteMarkdownLinkTarget] {
@@ -2538,35 +3271,6 @@ public struct HarcWindowRootView: View {
             guard !label.isEmpty, !seen.contains(key) else { return nil }
             seen.insert(key)
             return label
-        }
-    }
-
-    private func extractPersonMentions(from body: String) -> [PersonMention] {
-        let pattern = #"@person\[([^\]\n]+)\]|@\[([^\]\n]+)\]|@([\p{L}][\p{L}\p{N}'._-]*)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        var seen: Set<String> = []
-
-        return regex.matches(in: body, range: range).compactMap { match in
-            let typedPersonRange = match.range(at: 1)
-            let bracketedRange = match.range(at: 2)
-            let bareRange = match.range(at: 3)
-            let isBracketed = typedPersonRange.location != NSNotFound || bracketedRange.location != NSNotFound
-            let selectedRange = if typedPersonRange.location != NSNotFound {
-                typedPersonRange
-            } else if bracketedRange.location != NSNotFound {
-                bracketedRange
-            } else {
-                bareRange
-            }
-            guard let swiftRange = Range(selectedRange, in: body) else { return nil }
-
-            let name = String(body[swiftRange])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = normalizeWikilinkLabel(name)
-            guard !name.isEmpty, !seen.contains(key) else { return nil }
-            seen.insert(key)
-            return PersonMention(name: name, isBracketed: isBracketed)
         }
     }
 
@@ -2749,10 +3453,7 @@ public struct HarcWindowRootView: View {
         contextCopyStatus = "Building local context..."
         Task {
             do {
-                let markdown = try await libraryVM.contextMarkdown(
-                    for: query,
-                    noteStore: NoteStore(rootURL: prefs.notesURL)
-                )
+                let markdown = try await scopedContextMarkdown(for: query)
                 await MainActor.run {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(markdown, forType: .string)
@@ -2787,10 +3488,7 @@ public struct HarcWindowRootView: View {
             .appendingPathComponent(modelID, isDirectory: true)
         Task {
             do {
-                let context = try await libraryVM.contextMarkdown(
-                    for: query,
-                    noteStore: NoteStore(rootURL: prefs.notesURL)
-                )
+                let context = try await scopedContextMarkdown(for: query)
                 await MainActor.run {
                     conversationStatus = "Answering with \(ModelCatalog.descriptor(for: modelID)?.displayName ?? modelID)..."
                 }
@@ -2812,6 +3510,68 @@ public struct HarcWindowRootView: View {
                 }
             }
         }
+    }
+
+    private func scopedContextMarkdown(for query: String) async throws -> String {
+        switch contextPackScope {
+        case .topResults:
+            return try await libraryVM.contextMarkdown(
+                for: query,
+                limit: 8,
+                noteStore: NoteStore(rootURL: prefs.notesURL)
+            )
+        case .visibleResults:
+            return try await libraryVM.contextMarkdown(
+                for: query,
+                limit: max(1, max(libraryVM.hits.count, noteSearchResults.count)),
+                noteStore: NoteStore(rootURL: prefs.notesURL)
+            )
+        case .selectedResult:
+            if let note = selectedNote {
+                return selectedNoteContextMarkdown(note, query: query)
+            }
+            if let recording = selectedRecording {
+                return selectedRecordingContextMarkdown(recording, query: query)
+            }
+            throw ContextScopeError.noSelectedSource
+        }
+    }
+
+    private func selectedNoteContextMarkdown(_ note: Note, query: String) -> String {
+        """
+        # Context: \(query)
+
+        Scope: Selected note
+
+        ## Relevant Evidence
+
+        ### \(note.title)
+        \(note.body)
+
+        ## Sources
+        - Note: \(note.title) - \(note.fileURL.path)
+        """
+    }
+
+    private func selectedRecordingContextMarkdown(_ recording: Recording, query: String) -> String {
+        var sections: [String] = [
+            "# Context: \(query)",
+            "",
+            "Scope: Selected recording",
+            "",
+            "## Relevant Evidence",
+            "",
+            "### \(recording.displayTitle)",
+            recording.transcriptText?.harcTrimmedNonEmpty ?? transcriptText.harcTrimmedNonEmpty ?? "_No transcript text available._",
+        ]
+        if let summary = recording.summaryMarkdown?.harcTrimmedNonEmpty {
+            sections += ["", "## Summaries", "", "### \(recording.displayTitle)", summary]
+        }
+        if let actions = recording.actionItemsMarkdown?.harcTrimmedNonEmpty {
+            sections += ["", "## Action Items", "", "### \(recording.displayTitle)", actions]
+        }
+        sections += ["", "## Sources", "- Recording: \(recording.displayTitle) - \(recording.wavPath)"]
+        return sections.joined(separator: "\n")
     }
 
     /// True when there is any transcript source available for this recording.
@@ -3098,10 +3858,6 @@ struct TranscriptDisplaySegment: Identifiable {
     let text: String
 }
 
-private struct TranscriptSearchMatch {
-    let segmentID: UUID?
-}
-
 // MARK: - Date grouping
 
 private extension HarcWindowRootView {
@@ -3212,5 +3968,12 @@ private extension HarcWindowRootView {
             return String(format: "%d:%02d:%02d", h, m, s)
         }
         return String(format: "%d:%02d", m, s)
+    }
+}
+
+private extension String {
+    var harcTrimmedNonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

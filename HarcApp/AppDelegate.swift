@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import SwiftUI
 import UserNotifications
@@ -52,6 +53,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onPasteIntoFrontmost = { [weak self] in
             self?.pasteLastTranscriptIntoFrontmost()
         }
+        bridge.onOpenLastRecording = { [weak self] in
+            Task { await self?.openLastRecordingFromTray() }
+        }
+        bridge.onKeepRecording = { [weak self] in
+            self?.autoStop.keepRecording()
+        }
+        bridge.onStopNow = { [weak self] in
+            self?.autoStop.stopNow()
+        }
+        bridge.onOpenSettings = { [weak self] in
+            self?.openSettings()
+        }
+        bridge.onRevealStopRecovery = {
+            NSWorkspace.shared.activateFileViewerSelecting([RecordingDestination.cacheDirectory()])
+        }
+        bridge.onRetryStopRecovery = { [weak self] in
+            Task { await self?.retryStopRecovery() }
+        }
+        bridge.onDismissStopRecovery = { [weak self] in
+            self?.bridge.clearStopRecovery()
+        }
+        bridge.onAttachLatestRecordingToNote = { [weak self] noteID in
+            Task { await self?.attachLatestRecording(toNoteID: noteID) }
+        }
+        bridge.onOpenNoteLinkedRecording = { [weak self] feedback in
+            Task { await self?.openRecording(from: feedback) }
+        }
+        bridge.onRevealNoteLinkedRecordingFile = { feedback in
+            guard let wavPath = feedback.wavPath else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: wavPath)])
+        }
     }
 
     private func applyAppearance(_ pref: HarcPreferences.Appearance) {
@@ -69,8 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func pasteLastTranscriptIntoFrontmost() {
         guard let text = trayState.lastTranscript, !text.isEmpty else { return }
-        // Paste into frontmost; ignores paste errors (accessibility not granted, etc.)
-        try? FrontmostAppPaster.copyAndPaste(text)
+        pastePromptString(text, shiftHeld: false)
     }
 
     private func installStatusItem() {
@@ -102,8 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
 
-        statusPopover?.performClose(sender)
-        openLibrary()
+        toggleStatusPopover(sender)
     }
 
     private func toggleStatusPopover(_ sender: Any?) {
@@ -123,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         button.image = menuBarHummingbirdImage()
         button.imagePosition = .imageOnly
         button.contentTintColor = statusIconTint(isRecording: isRecording, pasteFlash: pasteFlash)
-        button.toolTip = isRecording ? "Harc is recording" : "Harc"
+        button.toolTip = isRecording ? "Harc is recording. Click for controls." : "Harc. Click to record."
     }
 
     private func menuBarHummingbirdImage() -> NSImage {
@@ -220,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         observeMeetingStateForPulse()
         observePostProcessingState()
         applyAutoStopConfigFromPrefs()
+        updateMenuBarReadiness()
         observeAutoStopPrefs()
         observeAutoStopPhase()
         autoStop.onAutoStop = { [weak self] reason in
@@ -250,6 +281,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .receive(on: DispatchQueue.main)
             .assign(to: \.amplitudeHistory, on: bridge)
             .store(in: &cancellables)
+        autoStop.$lastMicDb
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.autoStopMicDb, on: bridge)
+            .store(in: &cancellables)
+        autoStop.$lastSystemDb
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.autoStopSystemDb, on: bridge)
+            .store(in: &cancellables)
 
         // Mirror RecordingState.isRecording to bridge.iconState so the
         // always-visible menu-bar label updates on start/stop without
@@ -269,6 +308,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .sink { [weak self] _ in
                 self?.updateStatusIcon()
             }
+            .store(in: &cancellables)
+
+        prefs.$destinationPath
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
+            .store(in: &cancellables)
+        prefs.$activeSummarizerID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
+            .store(in: &cancellables)
+        prefs.$autoSummarizeEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
+            .store(in: &cancellables)
+        prefs.$activeEmbedderID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
+            .store(in: &cancellables)
+        prefs.$speakerReIDEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
+            .store(in: &cancellables)
+        prefs.$postStopNotificationEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
+            .store(in: &cancellables)
+        modelStore.$states
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
             .store(in: &cancellables)
 
         startFrontmostPolling()
@@ -333,6 +401,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func recordFromNote(noteID: String) async {
         if state.isRecording {
+            guard pendingRecordingNoteID == noteID else {
+                bridge.showNoteRecordingConflict(requestedNoteID: noteID)
+                return
+            }
             await stopRecording(autoStopReason: nil)
             return
         }
@@ -340,6 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         await startRecording()
         if !state.isRecording {
             pendingRecordingNoteID = nil
+            bridge.setActiveNoteRecordingID(nil)
         }
     }
 
@@ -350,6 +423,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             hardCapEnabled: prefs.hardCapEnabled,
             hardCapMinutes: prefs.hardCapMinutes
         )
+        bridge.autoStopWarningSeconds = autoStop.config.warningSeconds
+        bridge.autoStopThresholdMinutes = prefs.silenceThresholdMinutes
+        updateMenuBarReadiness()
+    }
+
+    private func updateMenuBarReadiness() {
+        bridge.destinationReady = prefs.destinationFolderExists()
+        bridge.destinationPath = prefs.destinationPath
+        bridge.sttReadinessText = "Local STT ready"
+
+        let activeSummarizer = ModelCatalog.descriptor(for: prefs.activeSummarizerID)
+        let summarizerName = activeSummarizer?.tierDisplayName ?? activeSummarizer?.displayName ?? "Summarizer"
+        let summarizerInstalled = modelStore.state(of: prefs.activeSummarizerID).isInstalled
+        bridge.summarizerReady = summarizerInstalled && prefs.autoSummarizeEnabled
+        if !prefs.autoSummarizeEnabled {
+            bridge.summarizerReadinessText = "\(summarizerName) · auto-summary off"
+        } else if summarizerInstalled {
+            bridge.summarizerReadinessText = "\(summarizerName) · auto-summary on"
+        } else {
+            bridge.summarizerReadinessText = "\(summarizerName) not installed"
+        }
+
+        let activeEmbedder = ModelCatalog.descriptor(for: prefs.activeEmbedderID)
+        let embedderName = activeEmbedder?.displayName ?? "Search embedder"
+        let embedderInstalled = modelStore.state(of: prefs.activeEmbedderID).isInstalled
+        bridge.embedderReady = embedderInstalled
+        bridge.embedderReadinessText = embedderInstalled ? "\(embedderName) installed" : "\(embedderName) not installed"
+
+        bridge.speakerIDReady = prefs.speakerReIDEnabled
+        bridge.speakerIDReadinessText = prefs.speakerReIDEnabled ? "Speaker ID enabled" : "Speaker ID disabled"
+
+        bridge.notificationsReady = prefs.postStopNotificationEnabled
+        bridge.notificationsReadinessText = prefs.postStopNotificationEnabled ? "Post-stop notifications enabled" : "Post-stop notifications off"
+
+        bridge.accessibilityReady = AXIsProcessTrusted()
+        bridge.accessibilityReadinessText = bridge.accessibilityReady ? "Paste permission granted" : "Paste needs Accessibility permission"
     }
 
     private func observeAutoStopPrefs() {
@@ -371,8 +480,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         autoStopPhaseObserver = autoStop.$phase
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { _ in
-                // Phase changes are reflected by the SwiftUI MenuBarExtra label.
+            .sink { [weak self] phase in
+                self?.bridge.autoStopPhase = phase
             }
     }
 
@@ -382,9 +491,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         frontmostPoller?.invalidate()
         frontmostPoller = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            let name = NSWorkspace.shared.frontmostApplication?.localizedName
+            let app = NSWorkspace.shared.frontmostApplication
+            let name = app?.localizedName
+            let denied = PasteDenyList.isDenied(app?.bundleIdentifier, in: prefs.pasteDenyListBundleIDs)
             if self.bridge.frontmostAppName != name {
                 self.bridge.frontmostAppName = name
+            }
+            if self.bridge.frontmostPasteDenied != denied {
+                self.bridge.frontmostPasteDenied = denied
             }
         }
     }
@@ -403,6 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         meetingState.clearAll()
         autoStop.resetPostStop()
+        bridge.autoStopLastDurationText = nil
         stoppedFlashTask?.cancel()
         stoppedFlashTask = nil
         let startedAt = Date()
@@ -438,6 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
             try await session.start(at: startedAt)
             state.markStarted(at: startedAt)
+            bridge.setActiveNoteRecordingID(pendingRecordingNoteID)
             autoStop.begin(
                 session: session,
                 startedAt: startedAt
@@ -448,6 +564,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // (no nagging on every recording).
             if await session.systemAudioFellBack, !hasShownMicOnlyNotice {
                 hasShownMicOnlyNotice = true
+                bridge.captureReadinessText = "Mic only; system audio needs permission"
+                bridge.captureReadinessWarning = true
                 presentMicOnlyFallbackNotification()
             }
         } catch {
@@ -501,6 +619,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             ))
             self.session = nil
             state.markIdle()
+            bridge.setActiveNoteRecordingID(nil)
+            presentStopTimeoutRecovery()
             resetUI()
             return
         } catch {
@@ -603,9 +723,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     for: rec,
                     includeSummary: prefs.includeSummaryInPrompt
                 )
-                bridge.trayState.show(title: rec.displayTitle, transcript: trayBlob)
+                bridge.trayState.show(
+                    title: rec.displayTitle,
+                    transcript: trayBlob,
+                    recordingID: savedID,
+                    wavPath: rec.wavPath
+                )
             }
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
+            bridge.autoStopLastDurationText = rec.endedAt.map { formatAutoStopDuration($0.timeIntervalSince(rec.startedAt)) }
             autoStop.end(autoStopReason: autoStopReason)
             if let autoStopReason, prefs.postStopNotificationEnabled {
                 AutoStopNotification.post(
@@ -614,15 +740,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     thresholdMinutes: prefs.silenceThresholdMinutes,
                     previewText: transcriptText
                 )
-            }
+        }
         previewTask?.cancel()
         previewTask = nil
+        bridge.setActiveNoteRecordingID(nil)
         resetUI()
     }
 
     private func resetUI() {
         session = nil
         state.markIdle()
+    }
+
+    private func presentStopTimeoutRecovery() {
+        let cacheDirectory = RecordingDestination.cacheDirectory()
+        bridge.showStopRecovery(StopRecoveryInfo(
+            title: "Finalization is still running",
+            message: "Audio capture stopped, but Harc timed out while finishing the transcript. Recovery files are kept in the cache and can be imported again.",
+            cacheDirectoryPath: cacheDirectory.path
+        ))
+    }
+
+    private func retryStopRecovery() async {
+        guard let store else {
+            openSettings()
+            return
+        }
+
+        let cacheDirectory = RecordingDestination.cacheDirectory()
+        bridge.showStopRecovery(StopRecoveryInfo(
+            title: "Retrying recovery",
+            message: "Checking cached recording files and importing anything complete enough to recover.",
+            cacheDirectoryPath: cacheDirectory.path,
+            isRecovering: true
+        ))
+
+        do {
+            let recovery = RecordingCacheRecovery(
+                cacheDirectory: cacheDirectory,
+                destinationDirectory: prefs.destinationURL,
+                store: store
+            )
+            let result = try await recovery.recoverAll()
+            let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
+            _ = try? await ingestor.ingestAll()
+            if result.recovered > 0 {
+                bridge.showStopRecovery(StopRecoveryInfo(
+                    title: "Recovered \(result.recovered) recording\(result.recovered == 1 ? "" : "s")",
+                    message: "Recovered audio was moved into your recordings folder and added to the Library.",
+                    cacheDirectoryPath: cacheDirectory.path
+                ))
+                openLibrary()
+            } else {
+                bridge.showStopRecovery(StopRecoveryInfo(
+                    title: "No recoverable files yet",
+                    message: "Finalization may still be running. You can try again, reveal the cache, or restart Harc to retry recovery automatically.",
+                    cacheDirectoryPath: cacheDirectory.path
+                ))
+            }
+        } catch {
+            bridge.showStopRecovery(StopRecoveryInfo(
+                title: "Recovery failed",
+                message: error.localizedDescription,
+                cacheDirectoryPath: cacheDirectory.path
+            ))
+        }
     }
 
     // MARK: - Meeting detection
@@ -721,10 +903,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
-private func openDetail(for recording: Recording) {
+    private func openDetail(for recording: Recording) {
         // Detail is shown inline in HarcWindowRootView; opening the library window
         // is sufficient until HarcWindowRootView gains a selection API.
         _ = recording
+        openLibrary()
+    }
+
+    private func openLastRecordingFromTray() async {
+        guard let store else {
+            openLibrary()
+            return
+        }
+
+        if let id = trayState.lastRecordingID,
+           let recording = try? await store.fetch(id: id) {
+            openDetail(for: recording)
+            return
+        }
+
+        if let wavPath = trayState.lastWavPath,
+           let recording = try? await store.fetchByWavPath(wavPath) {
+            openDetail(for: recording)
+            return
+        }
+
         openLibrary()
     }
 
@@ -884,7 +1087,14 @@ private func openDetail(for recording: Recording) {
     ) async {
         guard let noteID = pendingRecordingNoteID else { return }
         pendingRecordingNoteID = nil
-        guard let savedID else { return }
+        guard let savedID else {
+            bridge.showNoteRecordingMissingSavedID(
+                noteID: noteID,
+                recordingTitle: recording.displayTitle,
+                wavPath: recording.wavPath
+            )
+            return
+        }
 
         var linkedRecording = recording
         linkedRecording.id = savedID
@@ -900,11 +1110,100 @@ private func openDetail(for recording: Recording) {
                 try? await knowledgeIndexer.index(note: linkedNote)
             }
             NotificationCenter.default.post(name: .harcNotesDidChange, object: nil)
+            bridge.showNoteRecordingLinked(
+                noteID: noteID,
+                recordingTitle: linkedRecording.displayTitle,
+                recordingID: savedID,
+                wavPath: linkedRecording.wavPath
+            )
         } catch {
+            bridge.showNoteRecordingLinkFailed(
+                noteID: noteID,
+                recordingTitle: linkedRecording.displayTitle,
+                recordingID: savedID,
+                wavPath: linkedRecording.wavPath,
+                errorDescription: error.localizedDescription
+            )
             FileHandle.standardError.write(Data(
                 "harc: failed to link recording \(savedID) to note \(noteID): \(error.localizedDescription)\n".utf8
             ))
         }
+    }
+
+    private func attachLatestRecording(toNoteID noteID: String) async {
+        guard let feedback = bridge.noteRecordingLinkFeedback else { return }
+        guard let store else {
+            bridge.showNoteRecordingLinkFailed(
+                noteID: noteID,
+                recordingTitle: feedback.recordingTitle,
+                recordingID: feedback.recordingID,
+                wavPath: feedback.wavPath,
+                errorDescription: "Recording database is not available."
+            )
+            return
+        }
+
+        do {
+            guard var recording = try await recording(from: feedback, store: store),
+                  let recordingID = recording.id
+            else {
+                bridge.showNoteRecordingMissingSavedID(
+                    noteID: noteID,
+                    recordingTitle: feedback.recordingTitle,
+                    wavPath: feedback.wavPath
+                )
+                return
+            }
+            let transcriptText = recording.txtPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+            recording.id = recordingID
+            let noteStore = NoteStore(rootURL: prefs.notesURL)
+            _ = try await noteStore.link(
+                recording: recording,
+                toNoteID: noteID,
+                transcriptText: transcriptText
+            )
+            NotificationCenter.default.post(name: .harcNotesDidChange, object: nil)
+            bridge.showNoteRecordingLinked(
+                noteID: noteID,
+                recordingTitle: recording.displayTitle,
+                recordingID: recordingID,
+                wavPath: recording.wavPath
+            )
+        } catch {
+            bridge.showNoteRecordingLinkFailed(
+                noteID: noteID,
+                recordingTitle: feedback.recordingTitle,
+                recordingID: feedback.recordingID,
+                wavPath: feedback.wavPath,
+                errorDescription: error.localizedDescription
+            )
+        }
+    }
+
+    private func openRecording(from feedback: NoteRecordingLinkFeedback) async {
+        guard let store else {
+            openLibrary()
+            return
+        }
+        if let recording = try? await recording(from: feedback, store: store) {
+            openDetail(for: recording)
+            return
+        }
+        openLibrary()
+    }
+
+    private func recording(from feedback: NoteRecordingLinkFeedback, store: RecordingStore) async throws -> Recording? {
+        if let id = feedback.recordingID,
+           let recording = try? await store.fetch(id: id) {
+            return recording
+        }
+        guard let wavPath = feedback.wavPath else { return nil }
+        if let recording = try? await store.fetchByWavPath(wavPath) {
+            return recording
+        }
+        let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
+        _ = try? await ingestor.ingestAll()
+        return try? await store.fetchByWavPath(wavPath)
     }
 
     private func presentRecordingPersistenceFailure(recording: Recording, errorDescription: String) {
@@ -930,29 +1229,41 @@ private func openDetail(for recording: Recording) {
     @MainActor
     private func runAutoPaste(for rec: Recording, shiftHeld: Bool) {
         let blob = ExportService.promptString(for: rec, includeSummary: prefs.includeSummaryInPrompt)
+        pastePromptString(blob, shiftHeld: shiftHeld)
+    }
 
+    @MainActor
+    private func pastePromptString(_ blob: String, shiftHeld: Bool) {
         // Per spec §3: clipboard always holds the prompt blob, regardless
         // of decision. copyAndPaste (below, on the .paste branch) re-writes
         // the same bytes — harmless duplication.
         FrontmostAppPaster.copyOnly(blob)
 
+        let frontmostBundleID = FrontmostAppPaster.frontmostBundleID()
         let decision = AutoPasteGuard.decide(
             enabled: prefs.autoPasteEnabled,
             shiftHeld: shiftHeld,
-            frontmostBundleID: FrontmostAppPaster.frontmostBundleID(),
+            frontmostBundleID: frontmostBundleID,
             deniedBundleIDs: prefs.pasteDenyListBundleIDs
         )
 
         switch decision {
-        case .skipDisabled, .skipModifierHeld, .skipUnsafeTarget:
-            bridge.flashPaste(.skipped)
+        case .skipDisabled:
+            bridge.reportPaste(.skipped, message: "Copied. Auto-paste is off.")
+            return
+        case .skipModifierHeld:
+            bridge.reportPaste(.skipped, message: "Copied. Paste skipped.")
+            return
+        case .skipUnsafeTarget:
+            let target = bridge.frontmostAppName ?? "this app"
+            bridge.reportPaste(.skipped, message: "Copied. Paste blocked for \(target).")
             return
         case .paste:
             do {
                 try FrontmostAppPaster.copyAndPaste(blob)
-                bridge.flashPaste(.success)
+                bridge.reportPaste(.success, message: "Pasted into \(bridge.frontmostAppName ?? "frontmost app").")
             } catch FrontmostAppPaster.PasteError.accessibilityDenied {
-                bridge.flashPaste(.failure)
+                bridge.reportPaste(.failure, message: "Copied. Enable Accessibility to paste.")
                 // Re-prompt every paste failure: the prompt itself notes that
                 // the transcript is already on the clipboard, so re-showing it
                 // is informative rather than annoying. A user who chose
@@ -960,7 +1271,7 @@ private func openDetail(for recording: Recording) {
                 // silently failed.
                 presentAccessibilityPrompt()
             } catch {
-                bridge.flashPaste(.failure)
+                bridge.reportPaste(.failure, message: "Copied. Paste failed.")
                 // Paste error is silently swallowed; transcript is already on clipboard.
                 break
             }
@@ -977,49 +1288,6 @@ private func openDetail(for recording: Recording) {
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             openSettings()
-        }
-    }
-
-    @MainActor
-    private func presentExportPanel(for recording: Recording) {
-        let alert = NSAlert()
-        alert.messageText = "Export \u{201C}\(recording.displayTitle)\u{201D}"
-        alert.informativeText = "Pick a format. The transcript and speaker labels are written; audio is not included."
-        alert.addButton(withTitle: "Markdown…")        // .alertFirstButtonReturn
-        alert.addButton(withTitle: "DOCX…")            // .alertSecondButtonReturn
-        alert.addButton(withTitle: "LLM Prompt…")      // .alertThirdButtonReturn
-        alert.addButton(withTitle: "Cancel")           // last
-        let chosen = alert.runModal()
-        let format: ExportFormat
-        switch chosen {
-        case .alertFirstButtonReturn:  format = .markdown
-        case .alertSecondButtonReturn: format = .docx
-        case .alertThirdButtonReturn:  format = .prompt
-        default: return
-        }
-
-        let savePanel = NSSavePanel()
-        let defaultURL = ExportService.defaultDestination(for: recording, format: format)
-        savePanel.directoryURL = defaultURL.deletingLastPathComponent()
-        savePanel.nameFieldStringValue = defaultURL.lastPathComponent
-        savePanel.canCreateDirectories = true
-        savePanel.allowedContentTypes = []   // free-form filename
-        let panelResult = savePanel.runModal()
-        guard panelResult == .OK, let destURL = savePanel.url else { return }
-
-        do {
-            try ExportService.write(
-                recording: recording,
-                format: format,
-                to: destURL,
-                includeSummary: prefs.includeSummaryInPrompt
-            )
-        } catch {
-            let err = NSAlert()
-            err.messageText = "Export failed"
-            err.informativeText = error.localizedDescription
-            err.addButton(withTitle: "OK")
-            err.runModal()
         }
     }
 
@@ -1055,6 +1323,15 @@ private func openDetail(for recording: Recording) {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
         else { return bundleID }
         return FileManager.default.displayName(atPath: url.path)
+    }
+
+    private func formatAutoStopDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let hours = total / 3600
+        let minutes = (total / 60) % 60
+        let remainingSeconds = total % 60
+        if hours > 0 { return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds) }
+        return String(format: "%d:%02d", minutes, remainingSeconds)
     }
 
     @objc private func openSettings() {
@@ -1103,7 +1380,6 @@ private func openDetail(for recording: Recording) {
             queueStore: queueStore,
             modelStore: modelStore,
             onEdit: { [weak self] rec in self?.openEditor(for: rec) },
-            onExport: { [weak self] rec in self?.presentExportPanel(for: rec) },
             onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) }
         )
         harcWindow = controller
@@ -1496,7 +1772,43 @@ private struct StatusPopoverRoot: View {
             onOpenWindow: bridge.onOpenWindow,
             onCopy: bridge.onCopyLastTranscript,
             onPasteIntoFrontmost: bridge.onPasteIntoFrontmost,
-            frontmostAppName: bridge.frontmostAppName
+            onOpenLastRecording: bridge.onOpenLastRecording,
+            frontmostAppName: bridge.frontmostAppName,
+            frontmostPasteDenied: bridge.frontmostPasteDenied,
+            pasteStatusMessage: bridge.pasteStatusMessage,
+            autoStopPhase: bridge.autoStopPhase,
+            autoStopWarningSeconds: bridge.autoStopWarningSeconds,
+            autoStopThresholdMinutes: bridge.autoStopThresholdMinutes,
+            autoStopMicDb: bridge.autoStopMicDb,
+            autoStopSystemDb: bridge.autoStopSystemDb,
+            autoStopLastDurationText: bridge.autoStopLastDurationText,
+            stopRecovery: bridge.stopRecovery,
+            noteRecordingLinkFeedback: bridge.noteRecordingLinkFeedback,
+            onKeepRecording: bridge.onKeepRecording,
+            onStopNow: bridge.onStopNow,
+            onOpenSettings: bridge.onOpenSettings,
+            onRevealStopRecovery: bridge.onRevealStopRecovery,
+            onRetryStopRecovery: bridge.onRetryStopRecovery,
+            onDismissStopRecovery: bridge.onDismissStopRecovery,
+            onAttachLatestRecordingToNote: bridge.onAttachLatestRecordingToNote,
+            onOpenNoteLinkedRecording: bridge.onOpenNoteLinkedRecording,
+            onRevealNoteLinkedRecordingFile: bridge.onRevealNoteLinkedRecordingFile,
+            onDismissNoteRecordingLinkFeedback: bridge.clearNoteRecordingLinkFeedback,
+            destinationReady: bridge.destinationReady,
+            destinationPath: bridge.destinationPath,
+            captureReadinessText: bridge.captureReadinessText,
+            captureReadinessWarning: bridge.captureReadinessWarning,
+            sttReadinessText: bridge.sttReadinessText,
+            summarizerReadinessText: bridge.summarizerReadinessText,
+            summarizerReady: bridge.summarizerReady,
+            embedderReadinessText: bridge.embedderReadinessText,
+            embedderReady: bridge.embedderReady,
+            speakerIDReadinessText: bridge.speakerIDReadinessText,
+            speakerIDReady: bridge.speakerIDReady,
+            notificationsReadinessText: bridge.notificationsReadinessText,
+            notificationsReady: bridge.notificationsReady,
+            accessibilityReadinessText: bridge.accessibilityReadinessText,
+            accessibilityReady: bridge.accessibilityReady
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }

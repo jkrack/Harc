@@ -164,4 +164,33 @@ struct HarcPreferencesTests {
         // Restore default for subsequent tests.
         defaults.removeObject(forKey: "harc.speakerReIDAutoApply")
     }
+
+    @Test("sourceScanLimit defaults to forty documents")
+    func sourceScanLimitDefaultsToForty() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.sourceScanLimit")
+        let prefs = HarcPreferences()
+        #expect(prefs.sourceScanLimit == 40)
+        defaults.removeObject(forKey: "harc.sourceScanLimit")
+    }
+
+    @Test("sourceScanLimit persists and clamps to the supported range")
+    func sourceScanLimitPersistsAndClamps() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.sourceScanLimit")
+
+        let prefs = HarcPreferences()
+        prefs.sourceScanLimit = 80
+        #expect(HarcPreferences().sourceScanLimit == 80)
+
+        prefs.sourceScanLimit = 1
+        #expect(prefs.sourceScanLimit == HarcPreferences.sourceScanLimitRange.lowerBound)
+        #expect(HarcPreferences().sourceScanLimit == HarcPreferences.sourceScanLimitRange.lowerBound)
+
+        prefs.sourceScanLimit = 999
+        #expect(prefs.sourceScanLimit == HarcPreferences.sourceScanLimitRange.upperBound)
+        #expect(HarcPreferences().sourceScanLimit == HarcPreferences.sourceScanLimitRange.upperBound)
+
+        defaults.removeObject(forKey: "harc.sourceScanLimit")
+    }
 }

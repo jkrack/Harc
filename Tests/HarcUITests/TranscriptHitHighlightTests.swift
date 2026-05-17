@@ -3,6 +3,7 @@ import SwiftUI
 @testable import HarcUI
 
 @Suite("TranscriptHitRow.highlight")
+@MainActor
 struct TranscriptHitHighlightTests {
     @Test("plain text without marks round-trips as plain AttributedString")
     func plainText() {
