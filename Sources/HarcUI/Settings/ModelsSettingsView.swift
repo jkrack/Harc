@@ -34,9 +34,15 @@ public struct ModelsSettingsView: View {
                 }
                 activeSummarizerPicker
             } header: {
-                Text("Summarization")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Summarization")
+                    Text("Your Mac has \(ramGB) GB RAM")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                        .textCase(nil)
+                }
             } footer: {
-                Text("Pick one tier. Higher tiers produce better summaries at higher RAM and time cost. Your Mac has \(ramGB) GB.")
+                Text("Pick one tier. Higher tiers produce better summaries at higher RAM and time cost.")
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
             }
@@ -118,7 +124,7 @@ public struct ModelsSettingsView: View {
                         .disabled(!models.state(of: d.id).isInstalled)
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .labelsHidden()
         }
         .padding(.top, 4)
