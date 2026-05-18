@@ -125,6 +125,137 @@ struct RecordingCacheRecoveryTests {
         #expect(rows.count == 1)
     }
 
+    @Test("recovery queue creates deterministic artifact IDs")
+    func recoveryQueueCreatesDeterministicIDs() async throws {
+        let date = Date(timeIntervalSince1970: 1_779_000_000)
+        let url = URL(fileURLWithPath: "/tmp/Harc Cache/orphan.wav")
+
+        let first = RecoveryQueue.deterministicID(for: url, fileSize: 4096, modifiedAt: date)
+        let second = RecoveryQueue.deterministicID(for: url, fileSize: 4096, modifiedAt: date)
+
+        #expect(first == second)
+        #expect(first.contains(url.path))
+        #expect(first.contains("4096"))
+    }
+
+    @Test("recovery queue scan is idempotent and persists artifacts")
+    func recoveryQueueScanIsIdempotent() async throws {
+        let cache = try tempDir("harc-cache")
+        let destination = try tempDir("harc-dest")
+        let queueFile = try tempDir("harc-queue").appendingPathComponent("recovery.json")
+        defer {
+            try? FileManager.default.removeItem(at: cache)
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: queueFile.deletingLastPathComponent())
+        }
+
+        let cacheWAV = cache.appendingPathComponent("orphan.wav")
+        try canonicalWAV(pcmBytes: 3200).write(to: cacheWAV)
+
+        let store = try await RecordingStore.inMemory()
+        let queue = RecoveryQueue(fileURL: queueFile, store: store)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+
+        let artifacts = try await queue.fetchAll()
+        #expect(artifacts.count == 1)
+        #expect(artifacts[0].status == .pending)
+        #expect(artifacts[0].sourceURL == cacheWAV)
+
+        let reloaded = RecoveryQueue(fileURL: queueFile, store: store)
+        let reloadedArtifacts = try await reloaded.fetchAll()
+        #expect(reloadedArtifacts.count == 1)
+        #expect(reloadedArtifacts[0].id == artifacts[0].id)
+        #expect(reloadedArtifacts[0].status == artifacts[0].status)
+        #expect(reloadedArtifacts[0].sourceURL == artifacts[0].sourceURL)
+    }
+
+    @Test("recovery queue recovers an artifact once")
+    func recoveryQueueRecoversOnce() async throws {
+        let cache = try tempDir("harc-cache")
+        let destination = try tempDir("harc-dest")
+        let queueFile = try tempDir("harc-queue").appendingPathComponent("recovery.json")
+        defer {
+            try? FileManager.default.removeItem(at: cache)
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: queueFile.deletingLastPathComponent())
+        }
+
+        let cacheWAV = cache.appendingPathComponent("orphan.wav")
+        try canonicalWAV(pcmBytes: 3200).write(to: cacheWAV)
+
+        let store = try await RecordingStore.inMemory()
+        let queue = RecoveryQueue(fileURL: queueFile, store: store)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+        let id = try #require(await queue.fetchAll().first?.id)
+
+        let first = try await queue.recover(id: id)
+        let second = try await queue.recover(id: id)
+        let rows = try await store.fetchAll()
+
+        #expect(first.status == .recovered)
+        #expect(second.status == .recovered)
+        #expect(first.recordingID == second.recordingID)
+        #expect(rows.count == 1)
+        #expect(FileManager.default.fileExists(atPath: cacheWAV.path) == false)
+    }
+
+    @Test("recovery queue discard hides without deleting source")
+    func recoveryQueueDiscardKeepsSource() async throws {
+        let cache = try tempDir("harc-cache")
+        let destination = try tempDir("harc-dest")
+        let queueFile = try tempDir("harc-queue").appendingPathComponent("recovery.json")
+        defer {
+            try? FileManager.default.removeItem(at: cache)
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: queueFile.deletingLastPathComponent())
+        }
+
+        let cacheWAV = cache.appendingPathComponent("orphan.wav")
+        try canonicalWAV(pcmBytes: 3200).write(to: cacheWAV)
+
+        let store = try await RecordingStore.inMemory()
+        let queue = RecoveryQueue(fileURL: queueFile, store: store)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+        let id = try #require(await queue.fetchAll().first?.id)
+
+        let discarded = try await queue.discard(id: id)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+        let artifacts = try await queue.fetchAll()
+
+        #expect(discarded.status == .discarded)
+        #expect(FileManager.default.fileExists(atPath: cacheWAV.path))
+        #expect(artifacts.count == 1)
+        #expect(artifacts[0].status == .discarded)
+    }
+
+    @Test("recovery queue marks corrupted WAVs as failed")
+    func recoveryQueueMarksCorruptedWAVsFailed() async throws {
+        let cache = try tempDir("harc-cache")
+        let destination = try tempDir("harc-dest")
+        let queueFile = try tempDir("harc-queue").appendingPathComponent("recovery.json")
+        defer {
+            try? FileManager.default.removeItem(at: cache)
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: queueFile.deletingLastPathComponent())
+        }
+
+        let badWAV = cache.appendingPathComponent("bad.wav")
+        try Data(repeating: 7, count: 64).write(to: badWAV)
+
+        let store = try await RecordingStore.inMemory()
+        let queue = RecoveryQueue(fileURL: queueFile, store: store)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+        let id = try #require(await queue.fetchAll().first?.id)
+
+        let failed = try await queue.recover(id: id)
+
+        #expect(failed.status == .failed)
+        #expect(failed.lastError?.contains("not recoverable") == true)
+        #expect(FileManager.default.fileExists(atPath: badWAV.path))
+        #expect(try await store.fetchAll().isEmpty)
+    }
+
     private func canonicalWAV(pcmBytes: Int) -> Data {
         wav(pcmBytes: pcmBytes, riffSize: 36 + pcmBytes, dataSize: pcmBytes)
     }
