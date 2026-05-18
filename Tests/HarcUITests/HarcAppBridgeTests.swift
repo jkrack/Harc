@@ -95,6 +95,37 @@ struct HarcAppBridgeTests {
         #expect(byID["discarded"] == nil)
     }
 
+    @Test("active capture status publishes source and transcript updates")
+    func activeCaptureStatusPublishesTransitions() {
+        let bridge = HarcAppBridge(
+            recordingState: RecordingState(),
+            trayState: PostStopTrayState()
+        )
+        let startedAt = Date(timeIntervalSince1970: 1_779_000_000)
+        let transcriptAt = startedAt.addingTimeInterval(8)
+
+        bridge.setActiveCaptureStatus(ActiveCaptureStatus(
+            sourceState: .micAndSystemAudio,
+            cachePath: "/tmp/harc-cache",
+            destinationPath: "/Users/me/Harc",
+            startedAt: startedAt
+        ))
+
+        #expect(bridge.activeCaptureStatus?.sourceState == .micAndSystemAudio)
+        #expect(bridge.activeCaptureStatus?.cachePath == "/tmp/harc-cache")
+        #expect(bridge.activeCaptureStatus?.transcriptAgeText(referenceDate: transcriptAt) == "Transcript waiting")
+
+        bridge.updateActiveCaptureSource(.micOnly)
+        bridge.markActiveTranscriptUpdate(at: transcriptAt)
+
+        #expect(bridge.activeCaptureStatus?.sourceState == .micOnly)
+        #expect(bridge.activeCaptureStatus?.sourceState.warningText?.contains("System audio") == true)
+        #expect(bridge.activeCaptureStatus?.transcriptAgeText(referenceDate: transcriptAt.addingTimeInterval(12)) == "Transcript updated 12s ago")
+
+        bridge.setActiveCaptureStatus(nil)
+        #expect(bridge.activeCaptureStatus == nil)
+    }
+
     @Test("note recording link success publishes confirmation state")
     func noteRecordingLinkSuccessPublishesConfirmationState() {
         let bridge = HarcAppBridge(

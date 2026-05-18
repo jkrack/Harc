@@ -557,12 +557,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 for await update in await transcriber.updates {
                     await MainActor.run {
                         self?.state.appendPreview(update.joinedTextSoFar)
+                        self?.bridge.markActiveTranscriptUpdate()
                     }
                 }
             }
 
             try await session.start(at: startedAt)
             state.markStarted(at: startedAt)
+            bridge.setActiveCaptureStatus(ActiveCaptureStatus(
+                sourceState: .micAndSystemAudio,
+                cachePath: RecordingDestination.cacheDirectory().path,
+                destinationPath: prefs.destinationPath,
+                startedAt: startedAt
+            ))
             bridge.setActiveNoteRecordingID(pendingRecordingNoteID)
             autoStop.begin(
                 session: session,
@@ -572,11 +579,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // notice so the user knows other meeting participants will be
             // missing from the transcript. Gated to once per app session
             // (no nagging on every recording).
-            if await session.systemAudioFellBack, !hasShownMicOnlyNotice {
-                hasShownMicOnlyNotice = true
+            if await session.systemAudioFellBack {
                 bridge.captureReadinessText = "Mic only; system audio needs permission"
                 bridge.captureReadinessWarning = true
-                presentMicOnlyFallbackNotification()
+                bridge.updateActiveCaptureSource(.micOnly)
+                if !hasShownMicOnlyNotice {
+                    hasShownMicOnlyNotice = true
+                    presentMicOnlyFallbackNotification()
+                }
             }
         } catch {
             // session.start may have brought up mic / system-audio captures
@@ -630,6 +640,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             self.session = nil
             state.markIdle()
             bridge.setActiveNoteRecordingID(nil)
+            bridge.setActiveCaptureStatus(nil)
             presentStopTimeoutRecovery()
             resetUI()
             return
@@ -760,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func resetUI() {
         session = nil
         state.markIdle()
+        bridge.setActiveCaptureStatus(nil)
     }
 
     private func presentStopTimeoutRecovery() {
@@ -1826,6 +1838,7 @@ private struct StatusPopoverRoot: View {
             autoStopSystemDb: bridge.autoStopSystemDb,
             autoStopLastDurationText: bridge.autoStopLastDurationText,
             stopRecovery: bridge.stopRecovery,
+            activeCaptureStatus: bridge.activeCaptureStatus,
             noteRecordingLinkFeedback: bridge.noteRecordingLinkFeedback,
             onKeepRecording: bridge.onKeepRecording,
             onStopNow: bridge.onStopNow,

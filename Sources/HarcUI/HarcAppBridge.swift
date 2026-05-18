@@ -30,6 +30,7 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var autoStopSystemDb: Float = -.infinity
     @Published public var autoStopLastDurationText: String? = nil
     @Published public private(set) var stopRecovery: StopRecoveryInfo? = nil
+    @Published public private(set) var activeCaptureStatus: ActiveCaptureStatus? = nil
     @Published public var destinationReady: Bool = true
     @Published public var destinationPath: String = ""
     @Published public var captureReadinessText: String = "Mic + system audio"
@@ -117,6 +118,18 @@ public final class HarcAppBridge: ObservableObject {
 
     public func setRecoveryArtifacts(_ artifacts: [RecoveryArtifact]) {
         recoveryArtifacts = artifacts
+    }
+
+    public func setActiveCaptureStatus(_ status: ActiveCaptureStatus?) {
+        activeCaptureStatus = status
+    }
+
+    public func updateActiveCaptureSource(_ sourceState: ActiveCaptureStatus.SourceState) {
+        activeCaptureStatus = activeCaptureStatus?.updatingSource(sourceState)
+    }
+
+    public func markActiveTranscriptUpdate(at date: Date = Date()) {
+        activeCaptureStatus = activeCaptureStatus?.markingTranscriptUpdate(at: date)
     }
 
     public func showNoteRecordingLinked(
