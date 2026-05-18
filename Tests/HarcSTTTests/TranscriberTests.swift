@@ -3,6 +3,38 @@ import Foundation
 import HarcCore
 @testable import HarcSTT
 
+@Suite("Transcriber VAD policy")
+struct TranscriberVADPolicyTests {
+    @Test("VAD bypasses short clips even when requested")
+    func bypassesShortClips() {
+        let rate = 16_000
+        #expect(!Transcriber.shouldRunVAD(
+            requested: true,
+            sampleCount: 24 * rate,
+            sampleRate: rate
+        ))
+    }
+
+    @Test("VAD runs for longer clips when requested")
+    func runsForLongerClips() {
+        let rate = 16_000
+        #expect(Transcriber.shouldRunVAD(
+            requested: true,
+            sampleCount: 31 * rate,
+            sampleRate: rate
+        ))
+    }
+
+    @Test("VAD stays off when disabled")
+    func disabledStaysOff() {
+        #expect(!Transcriber.shouldRunVAD(
+            requested: false,
+            sampleCount: 120 * 16_000,
+            sampleRate: 16_000
+        ))
+    }
+}
+
 @Suite("Transcriber", .tags(.slow))
 struct TranscriberTests {
     @Test("transcribing short-speech.wav with vad: false produces non-empty text and word timings")
