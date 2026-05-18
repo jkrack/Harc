@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcStore
 
 /// Glue between AppDelegate (which owns the recording lifecycle, daemon
 /// launcher, store, etc.) and the SwiftUI `MenuBarExtra` scene. AppDelegate
@@ -44,6 +45,7 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var notificationsReady: Bool = false
     @Published public var accessibilityReadinessText: String = "Paste permission unknown"
     @Published public var accessibilityReady: Bool = false
+    @Published public private(set) var recoveryArtifacts: [RecoveryArtifact] = []
     /// Mirror for the panel + recording-pill consumers that DO want the
     /// flash. Kept on the bridge as well so existing bridge-observers
     /// (panel) react. Always set in lockstep with `iconState.pasteFlash`.
@@ -68,6 +70,9 @@ public final class HarcAppBridge: ObservableObject {
     public var onAttachLatestRecordingToNote: (String) -> Void = { _ in }
     public var onOpenNoteLinkedRecording: (NoteRecordingLinkFeedback) -> Void = { _ in }
     public var onRevealNoteLinkedRecordingFile: (NoteRecordingLinkFeedback) -> Void = { _ in }
+    public var onRecoverRecoveryArtifact: (String) -> Void = { _ in }
+    public var onRevealRecoveryArtifact: (String) -> Void = { _ in }
+    public var onDiscardRecoveryArtifact: (String) -> Void = { _ in }
 
     public init(recordingState: RecordingState, trayState: PostStopTrayState) {
         self.recordingState = recordingState
@@ -108,6 +113,10 @@ public final class HarcAppBridge: ObservableObject {
 
     public func clearStopRecovery() {
         stopRecovery = nil
+    }
+
+    public func setRecoveryArtifacts(_ artifacts: [RecoveryArtifact]) {
+        recoveryArtifacts = artifacts
     }
 
     public func showNoteRecordingLinked(

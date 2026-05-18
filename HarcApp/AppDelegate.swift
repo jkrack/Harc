@@ -84,6 +84,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             guard let wavPath = feedback.wavPath else { return }
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: wavPath)])
         }
+        bridge.onRecoverRecoveryArtifact = { [weak self] id in
+            Task { await self?.recoverRecoveryArtifact(id: id) }
+        }
+        bridge.onRevealRecoveryArtifact = { [weak self] id in
+            self?.revealRecoveryArtifact(id: id)
+        }
+        bridge.onDiscardRecoveryArtifact = { [weak self] id in
+            Task { await self?.discardRecoveryArtifact(id: id) }
+        }
     }
 
     private func applyAppearance(_ pref: HarcPreferences.Appearance) {
@@ -189,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var knowledgeIndexer: KnowledgeIndexer?
     private var summarizationQueue: SummarizationQueue?
     private var summarizationQueueStore: SummarizationQueueStore?
+    private var recoveryQueue: RecoveryQueue?
     private var memoryObservation: SummarizerService.MemoryPressureObservation?
     private let postProcessingState = RecordingPostProcessingState()
     /// Retained so runIdentifySpeakers can call diarize() outside of a recording session.
@@ -776,17 +786,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         ))
 
         do {
-            let recovery = RecordingCacheRecovery(
-                cacheDirectory: cacheDirectory,
-                destinationDirectory: prefs.destinationURL,
-                store: store
-            )
-            let result = try await recovery.recoverAll()
+            let queue = recoveryQueue ?? RecoveryQueue(fileURL: RecoveryQueue.defaultURL(), store: store)
+            recoveryQueue = queue
+            try await queue.scanCache(cacheDirectory: cacheDirectory, destinationDirectory: prefs.destinationURL)
+            let pending = try await queue.fetchAll().filter { artifact in
+                artifact.status == .pending || artifact.status == .failed || artifact.status == .skipped
+            }
+            var recoveredCount = 0
+            for artifact in pending {
+                let recovered = try await queue.recover(id: artifact.id)
+                if recovered.status == .recovered {
+                    recoveredCount += 1
+                }
+            }
+            await refreshRecoveryArtifacts()
             let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
             _ = try? await ingestor.ingestAll()
-            if result.recovered > 0 {
+            if recoveredCount > 0 {
                 bridge.showStopRecovery(StopRecoveryInfo(
-                    title: "Recovered \(result.recovered) recording\(result.recovered == 1 ? "" : "s")",
+                    title: "Recovered \(recoveredCount) recording\(recoveredCount == 1 ? "" : "s")",
                     message: "Recovered audio was moved into your recordings folder and added to the Library.",
                     cacheDirectoryPath: cacheDirectory.path
                 ))
@@ -805,6 +823,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 cacheDirectoryPath: cacheDirectory.path
             ))
         }
+    }
+
+    private func recoverRecoveryArtifact(id: String) async {
+        guard let queue = recoveryQueue else { return }
+        _ = try? await queue.recover(id: id)
+        await refreshRecoveryArtifacts()
+        openLibrary()
+    }
+
+    private func discardRecoveryArtifact(id: String) async {
+        guard let queue = recoveryQueue else { return }
+        _ = try? await queue.discard(id: id)
+        await refreshRecoveryArtifacts()
+    }
+
+    private func revealRecoveryArtifact(id: String) {
+        guard let artifact = bridge.recoveryArtifacts.first(where: { $0.id == id }) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([artifact.sourceURL])
+    }
+
+    private func refreshRecoveryArtifacts() async {
+        guard let recoveryQueue else { return }
+        let artifacts = (try? await recoveryQueue.fetchAll()) ?? []
+        bridge.setRecoveryArtifacts(artifacts)
     }
 
     // MARK: - Meeting detection
@@ -1393,19 +1435,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         do {
             let store = try await RecordingStore.onDisk()
             self.store = store
+            let recoveryQueue = RecoveryQueue(fileURL: RecoveryQueue.defaultURL(), store: store)
+            self.recoveryQueue = recoveryQueue
 
-            // Recover recordings that were interrupted before RecordingSession
-            // could finalize and move them out of the cache directory.
-            let recovery = RecordingCacheRecovery(
+            // Keep interrupted cache artifacts visible until the user chooses
+            // Recover or Discard from the recovery inbox.
+            try? await recoveryQueue.scanCache(
                 cacheDirectory: RecordingDestination.cacheDirectory(),
-                destinationDirectory: prefs.destinationURL,
-                store: store
+                destinationDirectory: prefs.destinationURL
             )
-            if let recovered = try? await recovery.recoverAll(), recovered.recovered > 0 {
-                FileHandle.standardError.write(Data(
-                    "harc: recovered \(recovered.recovered) interrupted recording(s)\n".utf8
-                ))
-            }
+            await refreshRecoveryArtifacts()
 
             // Ingest existing filesystem recordings.
             let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
@@ -1808,7 +1847,11 @@ private struct StatusPopoverRoot: View {
             notificationsReadinessText: bridge.notificationsReadinessText,
             notificationsReady: bridge.notificationsReady,
             accessibilityReadinessText: bridge.accessibilityReadinessText,
-            accessibilityReady: bridge.accessibilityReady
+            accessibilityReady: bridge.accessibilityReady,
+            recoveryArtifacts: bridge.recoveryArtifacts,
+            onRecoverRecoveryArtifact: bridge.onRecoverRecoveryArtifact,
+            onRevealRecoveryArtifact: bridge.onRevealRecoveryArtifact,
+            onDiscardRecoveryArtifact: bridge.onDiscardRecoveryArtifact
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }

@@ -1,4 +1,6 @@
 import Testing
+import Foundation
+import HarcStore
 @testable import HarcUI
 
 @Suite("HarcAppBridge")
@@ -56,6 +58,41 @@ struct HarcAppBridgeTests {
         #expect(bridge.destinationPath == "/Volumes/Missing/Harc")
         #expect(bridge.captureReadinessWarning == true)
         #expect(bridge.summarizerReadinessText == "Standard not installed")
+    }
+
+    @Test("recovery artifacts publish through bridge")
+    func recoveryArtifactsPublishThroughBridge() {
+        let bridge = HarcAppBridge(
+            recordingState: RecordingState(),
+            trayState: PostStopTrayState()
+        )
+        let artifact = recoveryArtifact(status: .pending)
+
+        bridge.setRecoveryArtifacts([artifact])
+
+        #expect(bridge.recoveryArtifacts == [artifact])
+        #expect(RecoveryInboxModel.unresolvedCount(in: bridge.recoveryArtifacts) == 1)
+    }
+
+    @Test("recovery inbox action availability follows artifact status")
+    func recoveryInboxActionAvailability() {
+        let rows = RecoveryInboxModel.rows(for: [
+            recoveryArtifact(id: "pending", status: .pending),
+            recoveryArtifact(id: "recovering", status: .recovering),
+            recoveryArtifact(id: "recovered", status: .recovered),
+            recoveryArtifact(id: "discarded", status: .discarded),
+            recoveryArtifact(id: "failed", status: .failed),
+        ])
+        let byID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+
+        #expect(byID["pending"]?.canRecover == true)
+        #expect(byID["pending"]?.canDiscard == true)
+        #expect(byID["recovering"]?.canRecover == false)
+        #expect(byID["recovering"]?.canReveal == false)
+        #expect(byID["recovered"]?.canRecover == false)
+        #expect(byID["recovered"]?.canReveal == true)
+        #expect(byID["failed"]?.canRecover == true)
+        #expect(byID["discarded"] == nil)
     }
 
     @Test("note recording link success publishes confirmation state")
@@ -141,5 +178,20 @@ struct HarcAppBridgeTests {
         bridge.setActiveNoteRecordingID(nil)
         #expect(bridge.activeNoteRecordingID == nil)
         #expect(bridge.noteRecordingConflict == nil)
+    }
+
+    private func recoveryArtifact(
+        id: String = "artifact-1",
+        status: RecoveryArtifact.Status
+    ) -> RecoveryArtifact {
+        RecoveryArtifact(
+            id: id,
+            kind: .interruptedWAV,
+            status: status,
+            sourceURL: URL(fileURLWithPath: "/tmp/\(id).wav"),
+            destinationURL: URL(fileURLWithPath: "/tmp/Harc"),
+            title: "Interrupted recording",
+            detail: "cache WAV"
+        )
     }
 }

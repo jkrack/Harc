@@ -3,10 +3,12 @@ import AppKit
 import ApplicationServices
 import HarcContext
 import HarcModels
+import HarcStore
 
 public struct LibrarySettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var models: ModelManagerStore
+    @EnvironmentObject private var bridge: HarcAppBridge
     @State private var notesMissing: Bool = false
 
     public init() {}
@@ -53,6 +55,58 @@ public struct LibrarySettingsView: View {
             Text("Library")
         } footer: {
             Text("Notes are Markdown files saved as YYYY/MM/DD/<id>.md. A note can stand alone or link back to one or more recordings.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+        }
+
+        Section {
+            let rows = RecoveryInboxModel.rows(for: bridge.recoveryArtifacts)
+            if rows.isEmpty {
+                Label("No recording artifacts need recovery.", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: row.artifact.status == .recovered ? "checkmark.circle.fill" : "externaldrive.badge.exclamationmark")
+                                .foregroundStyle(row.artifact.status == .recovered ? Color.green : Color.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.title)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(row.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            Text(row.statusText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(row.sourcePath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        HStack(spacing: 8) {
+                            Button("Recover") { bridge.onRecoverRecoveryArtifact(row.id) }
+                                .disabled(!row.canRecover)
+                            Button("Reveal") { bridge.onRevealRecoveryArtifact(row.id) }
+                                .disabled(!row.canReveal)
+                            Button("Discard") { bridge.onDiscardRecoveryArtifact(row.id) }
+                                .disabled(!row.canDiscard)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        } header: {
+            Text("Recovery")
+        } footer: {
+            Text("Recover imports a preserved artifact into the Library. Discard hides it from Harc recovery without deleting the source file.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
         }
@@ -132,7 +186,8 @@ public struct LibrarySettingsView: View {
             notificationsReady: prefs.postStopNotificationEnabled,
             notificationsText: prefs.postStopNotificationEnabled ? "Post-stop notifications enabled" : "Post-stop notifications off",
             accessibilityReady: AXIsProcessTrusted(),
-            accessibilityText: AXIsProcessTrusted() ? "Paste permission granted" : "Paste needs Accessibility permission"
+            accessibilityText: AXIsProcessTrusted() ? "Paste permission granted" : "Paste needs Accessibility permission",
+            pendingRecoveryCount: RecoveryInboxModel.unresolvedCount(in: bridge.recoveryArtifacts)
         )
     }
 

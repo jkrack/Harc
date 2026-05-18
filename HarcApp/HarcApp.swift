@@ -10,6 +10,7 @@ struct HarcApp: App {
             SettingsRoot()
                 .environmentObject(appDelegate.prefs)
                 .environmentObject(appDelegate.modelStore)
+                .environmentObject(appDelegate.bridge)
         }
     }
 }

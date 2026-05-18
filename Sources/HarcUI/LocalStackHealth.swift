@@ -334,6 +334,7 @@ struct LocalStackHealthInput: Equatable {
     var notificationsText: String
     var accessibilityReady: Bool
     var accessibilityText: String
+    var pendingRecoveryCount: Int = 0
 }
 
 struct LocalStackHealthItem: Identifiable, Equatable {
@@ -397,7 +398,8 @@ enum LocalStackHealthModel {
             notificationsReady: input.notificationsReady,
             notificationsText: input.notificationsText,
             pastePermissionReady: input.accessibilityReady,
-            pastePermissionText: input.accessibilityText
+            pastePermissionText: input.accessibilityText,
+            pendingRecoveryCount: input.pendingRecoveryCount
         )
     }
 
