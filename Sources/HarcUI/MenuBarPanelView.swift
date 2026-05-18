@@ -23,6 +23,7 @@ public struct MenuBarPanelView: View {
     let autoStopSystemDb: Float
     let autoStopLastDurationText: String?
     let stopRecovery: StopRecoveryInfo?
+    let activeCaptureStatus: ActiveCaptureStatus?
     let noteRecordingLinkFeedback: NoteRecordingLinkFeedback?
     let onKeepRecording: () -> Void
     let onStopNow: () -> Void
@@ -76,6 +77,7 @@ public struct MenuBarPanelView: View {
         autoStopSystemDb: Float = -.infinity,
         autoStopLastDurationText: String? = nil,
         stopRecovery: StopRecoveryInfo? = nil,
+        activeCaptureStatus: ActiveCaptureStatus? = nil,
         noteRecordingLinkFeedback: NoteRecordingLinkFeedback? = nil,
         onKeepRecording: @escaping () -> Void = {},
         onStopNow: @escaping () -> Void = {},
@@ -125,6 +127,7 @@ public struct MenuBarPanelView: View {
         self.autoStopSystemDb = autoStopSystemDb
         self.autoStopLastDurationText = autoStopLastDurationText
         self.stopRecovery = stopRecovery
+        self.activeCaptureStatus = activeCaptureStatus
         self.noteRecordingLinkFeedback = noteRecordingLinkFeedback
         self.onKeepRecording = onKeepRecording
         self.onStopNow = onStopNow
@@ -177,6 +180,10 @@ public struct MenuBarPanelView: View {
                 }
 
                 readinessSection
+
+                if recordingState.isRecording, let activeCaptureStatus {
+                    activeCaptureStatusView(activeCaptureStatus)
+                }
 
                 if showsAutoStopSurface {
                     autoStopSurface
@@ -240,6 +247,49 @@ public struct MenuBarPanelView: View {
                     .font(.system(.subheadline, design: .monospaced))
                     .monospacedDigit()
             }
+        }
+    }
+
+    private func activeCaptureStatusView(_ status: ActiveCaptureStatus) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Image(systemName: status.sourceState == .micOnly ? "mic.fill.badge.exclamationmark" : "waveform")
+                    .foregroundStyle(status.sourceState == .micOnly ? Color.orange : Color.green)
+                    .frame(width: 14)
+                Text(status.sourceState.displayText)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+            }
+            if let warningText = status.sourceState.warningText {
+                Text(warningText)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            activeCapturePathRow(label: "Writing", path: status.cachePath)
+            activeCapturePathRow(label: "Saves to", path: status.destinationPath)
+            Text(status.transcriptAgeText())
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+        )
+    }
+
+    private func activeCapturePathRow(label: String, path: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 52, alignment: .leading)
+            Text(path)
+                .font(.caption2.monospaced())
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 
