@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import HarcStore
 
 /// Slim MenuBarExtra panel: recording state + level bars + Start/Stop + Open + post-stop tray.
 /// Replaces the 520-line PopoverRootView.
@@ -48,6 +49,10 @@ public struct MenuBarPanelView: View {
     let notificationsReady: Bool
     let accessibilityReadinessText: String
     let accessibilityReady: Bool
+    let recoveryArtifacts: [RecoveryArtifact]
+    let onRecoverRecoveryArtifact: (String) -> Void
+    let onRevealRecoveryArtifact: (String) -> Void
+    let onDiscardRecoveryArtifact: (String) -> Void
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -96,7 +101,11 @@ public struct MenuBarPanelView: View {
         notificationsReadinessText: String = "Notifications off",
         notificationsReady: Bool = false,
         accessibilityReadinessText: String = "Paste permission unknown",
-        accessibilityReady: Bool = false
+        accessibilityReady: Bool = false,
+        recoveryArtifacts: [RecoveryArtifact] = [],
+        onRecoverRecoveryArtifact: @escaping (String) -> Void = { _ in },
+        onRevealRecoveryArtifact: @escaping (String) -> Void = { _ in },
+        onDiscardRecoveryArtifact: @escaping (String) -> Void = { _ in }
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -142,6 +151,10 @@ public struct MenuBarPanelView: View {
         self.notificationsReady = notificationsReady
         self.accessibilityReadinessText = accessibilityReadinessText
         self.accessibilityReady = accessibilityReady
+        self.recoveryArtifacts = recoveryArtifacts
+        self.onRecoverRecoveryArtifact = onRecoverRecoveryArtifact
+        self.onRevealRecoveryArtifact = onRevealRecoveryArtifact
+        self.onDiscardRecoveryArtifact = onDiscardRecoveryArtifact
     }
 
     public var body: some View {
@@ -175,6 +188,10 @@ public struct MenuBarPanelView: View {
 
                 if let noteRecordingLinkFeedback {
                     noteRecordingLinkBanner(noteRecordingLinkFeedback)
+                }
+
+                if RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) > 0 {
+                    recoveryInboxBanner
                 }
 
                 if hasLastCapture {
@@ -281,7 +298,8 @@ public struct MenuBarPanelView: View {
             notificationsReady: notificationsReady,
             notificationsText: notificationsReadinessText,
             accessibilityReady: accessibilityReady,
-            accessibilityText: accessibilityReadinessText
+            accessibilityText: accessibilityReadinessText,
+            pendingRecoveryCount: RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
         )
     }
 
@@ -424,6 +442,69 @@ public struct MenuBarPanelView: View {
                 Button("Dismiss") { onDismissStopRecovery() }
                     .buttonStyle(.plain)
                     .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
+        )
+    }
+
+    private var recoveryInboxBanner: some View {
+        let rows = Array(RecoveryInboxModel.rows(for: recoveryArtifacts).prefix(2))
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "externaldrive.badge.exclamationmark")
+                    .foregroundStyle(Color.yellow)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Recovery needed")
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)) recording artifact\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) == 1 ? "" : "s") need attention.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ForEach(rows) { row in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(row.title)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                        Spacer()
+                        Text(row.statusText)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(row.sourcePath)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    HStack(spacing: 8) {
+                        Button("Recover") { onRecoverRecoveryArtifact(row.id) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(!row.canRecover)
+                        Button("Reveal") { onRevealRecoveryArtifact(row.id) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!row.canReveal)
+                        Button("Discard") { onDiscardRecoveryArtifact(row.id) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!row.canDiscard)
+                    }
+                }
+                .padding(.top, 2)
+            }
+
+            if RecoveryInboxModel.rows(for: recoveryArtifacts).count > rows.count {
+                Button("Open Settings") { onOpenSettings() }
+                    .buttonStyle(.plain)
+                    .font(.caption)
             }
         }
         .padding(10)
