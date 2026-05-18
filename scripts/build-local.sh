@@ -19,6 +19,8 @@ mkdir -p "$DIST"
 
 echo "==> Building $SCHEME ($CONFIG, ad-hoc signed)"
 xcodebuild \
+  -skipMacroValidation \
+  -skipPackagePluginValidation \
   -project Harc.xcodeproj \
   -scheme "$SCHEME" \
   -configuration "$CONFIG" \
