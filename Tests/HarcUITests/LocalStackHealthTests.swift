@@ -96,6 +96,55 @@ struct LocalStackHealthTests {
         #expect(CaptureReadinessResolver.summary(for: items) == "Recovery needed")
     }
 
+    @Test("local stack summary text uses product readiness language")
+    func localStackSummaryTextSelection() {
+        #expect(LocalStackHealthModel.summary(for: localItems(for: fullyReadyCaptureInput)) == "Ready to record")
+
+        var optionalOff = fullyReadyCaptureInput
+        optionalOff.summarizerReady = false
+        #expect(LocalStackHealthModel.summary(for: localItems(for: optionalOff)) == "Capture ready")
+
+        var micOnly = fullyReadyCaptureInput
+        micOnly.systemAudio = .denied
+        #expect(LocalStackHealthModel.summary(for: localItems(for: micOnly)) == "Mic only")
+
+        var blocked = fullyReadyCaptureInput
+        blocked.microphone = .denied
+        #expect(LocalStackHealthModel.summary(for: localItems(for: blocked)) == "Recording blocked")
+
+        var recovery = fullyReadyCaptureInput
+        recovery.pendingRecoveryCount = 1
+        #expect(LocalStackHealthModel.summary(for: localItems(for: recovery)) == "Recovery needed")
+    }
+
+    @Test("expanded local stack groups readiness by product area")
+    func expandedLocalStackGroupsByProductArea() {
+        var input = fullyReadyCaptureInput
+        input.pendingRecoveryCount = 1
+
+        let grouped = LocalStackHealthModel.groupedItems(localItems(for: input))
+        let groupIDs: [LocalStackHealthModel.Group: [LocalStackHealthItem.ID]] = Dictionary(
+            uniqueKeysWithValues: grouped.map { group, items in
+                (group, items.map(\.id))
+            }
+        )
+
+        #expect(grouped.map { $0.0 } == [
+            LocalStackHealthModel.Group.required,
+            .quality,
+            .afterRecording,
+            .recovery,
+        ])
+        #expect(groupIDs[.required] == [.destination, .capture, .stt])
+        #expect(groupIDs[.quality] == [.systemAudio, .speakerID])
+        #expect(groupIDs[.afterRecording] == [.summarizer, .embedder, .notifications, .accessibility])
+        #expect(groupIDs[.recovery] == [.recovery])
+    }
+
+    private func localItems(for input: CaptureReadinessInput) -> [LocalStackHealthItem] {
+        LocalStackHealthModel.items(for: CaptureReadinessResolver.resolve(input))
+    }
+
     private var fullyReadyInput: LocalStackHealthInput {
         LocalStackHealthInput(
             destinationReady: true,

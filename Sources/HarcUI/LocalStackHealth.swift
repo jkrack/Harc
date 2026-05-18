@@ -359,6 +359,22 @@ struct LocalStackHealthItem: Identifiable, Equatable {
 }
 
 enum LocalStackHealthModel {
+    enum Group: String, CaseIterable {
+        case required
+        case quality
+        case afterRecording
+        case recovery
+
+        var title: String {
+            switch self {
+            case .required: return "Required for capture"
+            case .quality: return "Quality"
+            case .afterRecording: return "After recording"
+            case .recovery: return "Recovery"
+            }
+        }
+    }
+
     static func items(for input: LocalStackHealthInput) -> [LocalStackHealthItem] {
         items(for: CaptureReadinessResolver.resolve(captureReadinessInput(for: input)))
     }
@@ -377,6 +393,45 @@ enum LocalStackHealthModel {
 
     static func summary(for readinessItems: [CaptureReadinessItem]) -> String {
         CaptureReadinessResolver.summary(for: readinessItems)
+    }
+
+    static func summary(for items: [LocalStackHealthItem]) -> String {
+        if items.contains(where: { ($0.id == .destination || $0.id == .capture || $0.id == .stt) && $0.state == .warning }) {
+            return "Recording blocked"
+        }
+        if items.contains(where: { $0.id == .recovery && $0.state == .warning }) {
+            return "Recovery needed"
+        }
+        if items.contains(where: { $0.id == .systemAudio && $0.state == .warning }) {
+            return "Mic only"
+        }
+        if items.contains(where: { $0.state == .warning }) {
+            return "Capture degraded"
+        }
+        if items.contains(where: { $0.state == .muted }) {
+            return "Capture ready"
+        }
+        return "Ready to record"
+    }
+
+    static func group(for item: LocalStackHealthItem) -> Group {
+        switch item.id {
+        case .destination, .capture, .stt:
+            return .required
+        case .systemAudio, .speakerID:
+            return .quality
+        case .summarizer, .embedder, .notifications, .accessibility:
+            return .afterRecording
+        case .recovery:
+            return .recovery
+        }
+    }
+
+    static func groupedItems(_ items: [LocalStackHealthItem]) -> [(Group, [LocalStackHealthItem])] {
+        Group.allCases.compactMap { group in
+            let groupItems = items.filter { self.group(for: $0) == group }
+            return groupItems.isEmpty ? nil : (group, groupItems)
+        }
     }
 
     private static func captureReadinessInput(for input: LocalStackHealthInput) -> CaptureReadinessInput {
@@ -435,26 +490,19 @@ struct LocalStackHealthView: View {
                     .foregroundStyle(summaryColor)
             }
 
-            ForEach(visibleItems) { item in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: item.state.iconName)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(item.state.color)
-                        .frame(width: 14)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(item.title)
+            if compact {
+                ForEach(items) { item in
+                    row(for: item)
+                }
+            } else {
+                ForEach(LocalStackHealthModel.groupedItems(items), id: \.0) { group, groupItems in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(group.title)
                             .font(.caption.weight(.semibold))
-                        Text(item.detail)
-                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(compact ? 1 : 2)
-                            .truncationMode(.middle)
-                    }
-                    Spacer(minLength: 6)
-                    if compact, let fixTitle = item.fixTitle {
-                        Button(fixTitle) { onFix(item) }
-                            .font(.caption)
-                            .buttonStyle(.plain)
+                        ForEach(groupItems) { item in
+                            row(for: item)
+                        }
                     }
                 }
             }
@@ -466,29 +514,32 @@ struct LocalStackHealthView: View {
         )
     }
 
-    private var visibleItems: [LocalStackHealthItem] {
-        compact ? items : items
+    private func row(for item: LocalStackHealthItem) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: item.state.iconName)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(item.state.color)
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title)
+                    .font(.caption.weight(.semibold))
+                Text(item.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(compact ? 1 : 2)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 6)
+            if let fixTitle = item.fixTitle {
+                Button(fixTitle) { onFix(item) }
+                    .font(.caption)
+                    .buttonStyle(.plain)
+            }
+        }
     }
 
     private var summaryText: String {
-        if items.contains(where: { $0.id == .destination && $0.state == .warning })
-            || items.contains(where: { $0.id == .capture && $0.state == .warning })
-            || items.contains(where: { $0.id == .stt && $0.state == .warning }) {
-            return "Recording blocked"
-        }
-        if items.contains(where: { $0.id == .recovery && $0.state == .warning }) {
-            return "Recovery needed"
-        }
-        if items.contains(where: { $0.id == .systemAudio && $0.state == .warning }) {
-            return "Mic only"
-        }
-        if items.contains(where: { $0.state == .warning }) {
-            return "Capture degraded"
-        }
-        if items.contains(where: { $0.state == .muted }) {
-            return "Capture ready"
-        }
-        return "Ready to record"
+        LocalStackHealthModel.summary(for: items)
     }
 
     private var summaryColor: Color {
