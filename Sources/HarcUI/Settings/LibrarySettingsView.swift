@@ -139,6 +139,10 @@ public struct LibrarySettingsView: View {
     private func openFixTarget(for item: LocalStackHealthItem) {
         switch item.id {
         case .capture:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                NSWorkspace.shared.open(url)
+            }
+        case .systemAudio:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                 NSWorkspace.shared.open(url)
             }
