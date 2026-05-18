@@ -13,6 +13,7 @@ struct PostStopTrayStateTests {
         #expect(s.lastTranscript == nil)
         #expect(s.lastRecordingID == nil)
         #expect(s.lastWavPath == nil)
+        #expect(s.lastOutcome == nil)
     }
 
     @Test("show() makes it visible with the given transcript and recording identity")
@@ -24,6 +25,29 @@ struct PostStopTrayStateTests {
         #expect(s.lastTitle == "Standup")
         #expect(s.lastRecordingID == 42)
         #expect(s.lastWavPath == "/tmp/standup.wav")
+        #expect(s.lastOutcome?.kind == .savedSafely)
+        #expect(s.lastOutcome?.title == "Saved safely")
+    }
+
+    @Test("showOutcome makes recovery visible even without transcript")
+    func showOutcomeVisibleWithoutTranscript() {
+        let s = PostStopTrayState()
+        let outcome = StopOutcome.recoveryNeeded(detail: "Finalization timed out.")
+
+        s.showOutcome(title: "Recovery needed", outcome: outcome)
+
+        #expect(s.isVisible == true)
+        #expect(s.lastTranscript == "")
+        #expect(s.lastOutcome == outcome)
+    }
+
+    @Test("savedSafely outcome names durable artifact")
+    func savedSafelyNamesArtifact() {
+        let outcome = StopOutcome.savedSafely(title: "Standup", wavPath: "/tmp/2026-05-18/standup.wav")
+
+        #expect(outcome.kind == .savedSafely)
+        #expect(outcome.title == "Saved safely")
+        #expect(outcome.detail == "Saved to standup.wav")
     }
 
     @Test("dismiss() hides immediately")

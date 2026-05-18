@@ -725,19 +725,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             if !recordingWasStartedFromNote {
                 runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
             }
-            // Show the post-stop tray in the MenuBarExtra panel so the user can
-            // copy or paste the transcript. Only fires when there is actual
-            // transcript text — avoids an empty/useless tray on silent recordings.
-            if let txt = transcriptText, !txt.isEmpty {
+            // Show the post-stop outcome for every durable save. Copy/Paste
+            // actions remain available only when transcript text exists.
+            do {
                 let trayBlob = ExportService.promptString(
                     for: rec,
                     includeSummary: prefs.includeSummaryInPrompt
                 )
                 bridge.trayState.show(
                     title: rec.displayTitle,
-                    transcript: trayBlob,
+                    transcript: (transcriptText?.isEmpty == false) ? trayBlob : "",
                     recordingID: savedID,
-                    wavPath: rec.wavPath
+                    wavPath: rec.wavPath,
+                    outcome: .savedSafely(title: rec.displayTitle, wavPath: rec.wavPath)
                 )
             }
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
@@ -764,6 +764,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func presentStopTimeoutRecovery() {
         let cacheDirectory = RecordingDestination.cacheDirectory()
+        bridge.trayState.showOutcome(
+            title: "Recovery needed",
+            outcome: .recoveryNeeded(detail: "Audio capture stopped, but finalization timed out. Use Recovery to import preserved cache files.")
+        )
         bridge.showStopRecovery(StopRecoveryInfo(
             title: "Finalization is still running",
             message: "Audio capture stopped, but Harc timed out while finishing the transcript. Recovery files are kept in the cache and can be imported again.",
