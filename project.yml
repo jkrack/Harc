@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
@@ -48,6 +48,8 @@ targets:
       properties:
         CFBundleName: Harc
         CFBundleDisplayName: Harc
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSUIElement: true
         NSMicrophoneUsageDescription: "Harc uses the microphone to record meetings for transcription."
         NSScreenCaptureUsageDescription: "Harc captures system audio so remote participants appear in transcriptions."
