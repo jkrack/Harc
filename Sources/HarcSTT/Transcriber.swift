@@ -14,6 +14,7 @@ public actor Transcriber {
     /// explicit prevents silent misbehaviour if the pipeline's audio
     /// format ever changes.
     private static let sampleRate: Int = 16000
+    static let shortClipVADBypassSeconds: Double = 30.0
 
     public init(vadGate: VADGate = VADGate()) {
         self.vadGate = vadGate
@@ -47,7 +48,11 @@ public actor Transcriber {
             throw DaemonError.audioLoadFailed(error.localizedDescription)
         }
 
-        if !vad {
+        if !Self.shouldRunVAD(
+            requested: vad,
+            sampleCount: samples.count,
+            sampleRate: Self.sampleRate
+        ) {
             return try await runParakeet(on: samples, with: manager, regions: nil)
         }
 
@@ -110,5 +115,16 @@ public actor Transcriber {
             speakers: [],
             processingMs: Int(elapsedNs / 1_000_000)
         )
+    }
+
+    static func shouldRunVAD(
+        requested: Bool,
+        sampleCount: Int,
+        sampleRate: Int
+    ) -> Bool {
+        guard requested else { return false }
+        guard sampleRate > 0 else { return false }
+        let durationSeconds = Double(sampleCount) / Double(sampleRate)
+        return durationSeconds > shortClipVADBypassSeconds
     }
 }
