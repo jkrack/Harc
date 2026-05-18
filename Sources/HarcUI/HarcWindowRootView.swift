@@ -1163,7 +1163,16 @@ public struct HarcWindowRootView: View {
                 .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
         }
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
-        .onTapGesture(count: 2) { onEdit(rec) }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selection = .recording(wavPath: rec.wavPath)
+        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                selection = .recording(wavPath: rec.wavPath)
+                onEdit(rec)
+            }
+        )
         .contextMenu { contextMenu(for: rec) }
     }
 

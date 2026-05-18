@@ -14,6 +14,7 @@ struct AutoPasteGuardTests {
         (true,  true,  String?.some("com.apple.finder"),     .skipModifierHeld),
         (true,  false, String?.none,                         .paste),
         (true,  false, String?.some("com.example.safe"),     .paste),
+        (true,  false, String?.some("com.harc.Harc"),        .skipUnsafeTarget(bundleID: "com.harc.Harc")),
         (true,  false, String?.some("com.apple.finder"),     .skipUnsafeTarget(bundleID: "com.apple.finder")),
         (true,  false, String?.some("com.agilebits.onepassword8"), .skipUnsafeTarget(bundleID: "com.agilebits.onepassword8")),
     ])
