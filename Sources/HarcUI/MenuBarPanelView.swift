@@ -325,6 +325,9 @@ public struct MenuBarPanelView: View {
 
     private var tray: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let outcome = trayState.lastOutcome {
+                stopOutcomeView(outcome)
+            }
             Text(trayState.lastTitle ?? "Last recording")
                 .font(.headline)
                 .lineLimit(2)
@@ -336,6 +339,7 @@ public struct MenuBarPanelView: View {
                 }
                 Button("Copy") { onCopy() }
                     .buttonStyle(.bordered)
+                    .disabled((trayState.lastTranscript ?? "").isEmpty)
                 if let frontmostAppName {
                     Button {
                         onPasteIntoFrontmost()
@@ -344,7 +348,7 @@ public struct MenuBarPanelView: View {
                             .lineLimit(1)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(frontmostPasteDenied)
+                    .disabled(frontmostPasteDenied || (trayState.lastTranscript ?? "").isEmpty)
                     .help(pasteHelpText(for: frontmostAppName))
                 }
             }
@@ -579,11 +583,12 @@ public struct MenuBarPanelView: View {
                 Button("Copy") { onCopy() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled((trayState.lastTranscript ?? "").isEmpty)
                 if let frontmostAppName {
                     Button("Paste") { onPasteIntoFrontmost() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                        .disabled(frontmostPasteDenied)
+                        .disabled(frontmostPasteDenied || (trayState.lastTranscript ?? "").isEmpty)
                         .help(pasteHelpText(for: frontmostAppName))
                 }
             }
@@ -604,8 +609,45 @@ public struct MenuBarPanelView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    private func stopOutcomeView(_ outcome: StopOutcome) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: stopOutcomeIcon(outcome.kind))
+                .foregroundStyle(stopOutcomeColor(outcome.kind))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(outcome.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(outcome.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(stopOutcomeColor(outcome.kind).opacity(0.08))
+        )
+    }
+
+    private func stopOutcomeIcon(_ kind: StopOutcome.Kind) -> String {
+        switch kind {
+        case .savedSafely: return "checkmark.circle.fill"
+        case .transcriptPending, .summaryQueued, .speakerIDPending: return "clock.badge.checkmark"
+        case .savedWithWarnings: return "exclamationmark.triangle.fill"
+        case .recoveryNeeded: return "externaldrive.badge.exclamationmark"
+        }
+    }
+
+    private func stopOutcomeColor(_ kind: StopOutcome.Kind) -> Color {
+        switch kind {
+        case .savedSafely: return .green
+        case .transcriptPending, .summaryQueued, .speakerIDPending: return .accentColor
+        case .savedWithWarnings, .recoveryNeeded: return .orange
+        }
+    }
+
     private var hasLastCapture: Bool {
-        trayState.lastTranscript?.isEmpty == false
+        trayState.lastOutcome != nil || trayState.lastTranscript?.isEmpty == false
     }
 
     private var canOpenLastRecording: Bool {
