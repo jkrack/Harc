@@ -54,29 +54,37 @@ public struct RecordingCacheRecovery: Sendable {
                 continue
             }
 
-            let pcm: Data
             do {
-                pcm = try recoverPCMData(from: url)
+                _ = try await recover(url)
             } catch RecoveryError.unreadableAudio, RecoveryError.unsupportedAudio {
                 result.skipped += 1
                 continue
             }
-
-            let startedAt = fileDate(url) ?? Date()
-            let destination = try recoveredDestination(for: startedAt)
-            try writeCanonicalWAV(pcmData: pcm, to: destination)
-
-            let recording = Recording(
-                wavPath: destination.path,
-                startedAt: startedAt,
-                endedAt: fileModified(url),
-                title: "Recovered interrupted recording"
-            )
-            _ = try await store.upsert(recording)
-            try? fm.removeItem(at: url)
             result.recovered += 1
         }
         return result
+    }
+
+    @discardableResult
+    public func recover(_ url: URL) async throws -> Recording {
+        if let existing = try await store.fetchByWavPath(url.path) {
+            return existing
+        }
+
+        let pcm = try recoverPCMData(from: url)
+        let startedAt = fileDate(url) ?? Date()
+        let destination = try recoveredDestination(for: startedAt)
+        try writeCanonicalWAV(pcmData: pcm, to: destination)
+
+        let recording = Recording(
+            wavPath: destination.path,
+            startedAt: startedAt,
+            endedAt: fileModified(url),
+            title: "Recovered interrupted recording"
+        )
+        let saved = try await store.upsert(recording)
+        try? FileManager.default.removeItem(at: url)
+        return saved
     }
 
     private func recoveredDestination(for date: Date) throws -> URL {
