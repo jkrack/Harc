@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.2.2"
-    CURRENT_PROJECT_VERSION: "4"
+    MARKETING_VERSION: "0.2.3"
+    CURRENT_PROJECT_VERSION: "5"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
@@ -68,3 +68,15 @@ targets:
           "${SRCROOT}/scripts/build-daemon.sh"
         outputFiles:
           - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/harc-stt
+  HarcAppUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: HarcAppUITests
+    dependencies:
+      - target: Harc
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcAppUITests
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_HARDENED_RUNTIME: NO

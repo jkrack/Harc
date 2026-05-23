@@ -190,7 +190,11 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcUITests",
-            dependencies: ["HarcUI", "HarcCore", "HarcStore"]
+            dependencies: ["HarcUI", "HarcCore", "HarcStore", "HarcExport"]
+        ),
+        .testTarget(
+            name: "HarcQualityTests",
+            dependencies: ["HarcCore", "HarcSTT", "HarcSummarize"]
         ),
         .testTarget(
             name: "HarcStoreTests",

@@ -4,6 +4,10 @@ This paragraph checks **bold**, *italic*, ***bold italic***, `inline code`, ~~st
 
 Use bracketed mentions for full names like @[Amy Williams], typed people like @person[Amy Williams], and projects like @project[Q3 Launch].
 
+Symbol gauntlet: ~ ! @ # $ % ^ & * ( ) _ + - = { } [ ] | \ : ; " ' < > , . ? /
+
+Escaped literals: \*literal asterisk\* \[literal brackets\] \`literal tick\`
+
 ## Decisions
 
 - Ship the local editor bundle.
