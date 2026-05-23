@@ -4,6 +4,7 @@ public enum StoreError: Error, LocalizedError, Equatable {
     case databaseOpenFailed(String)
     case migrationFailed(String)
     case notFound
+    case invalidData(String)
     case readFailed(String)
     case writeFailed(String)
 
@@ -15,6 +16,8 @@ public enum StoreError: Error, LocalizedError, Equatable {
             return "Database migration failed: \(reason)"
         case .notFound:
             return "Recording not found"
+        case .invalidData(let reason):
+            return reason
         case .readFailed(let reason):
             return "Database read failed: \(reason)"
         case .writeFailed(let reason):

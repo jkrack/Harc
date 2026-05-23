@@ -183,6 +183,7 @@ public struct HarcWindowRootView: View {
     @State private var noteAutosaveTask: Task<Void, Never>?
     @State private var noteSaveError: String?
     @State private var noteSaveConflict: NoteSaveConflict?
+    @State private var captioningAttachmentIDs: Set<String> = []
     @State private var unresolvedBarePersonMentions: [String] = []
     @State private var noteEditorMode: NoteMarkdownEditorMode = .live
     @State private var noteMentionPeople: [Person] = []
@@ -1879,6 +1880,9 @@ public struct HarcWindowRootView: View {
                     if !note.recordings.isEmpty {
                         Label("\(note.recordings.count) recording\(note.recordings.count == 1 ? "" : "s")", systemImage: "waveform")
                     }
+                    if !note.attachments.isEmpty {
+                        Label(attachmentStatusText(for: note), systemImage: "photo")
+                    }
                     if noteSaving {
                         Label("Saving", systemImage: "arrow.triangle.2.circlepath")
                     } else if noteDirty {
@@ -1899,6 +1903,8 @@ public struct HarcWindowRootView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 240)
+
+                noteAttachmentsStrip(note: note)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 18)
@@ -1911,7 +1917,13 @@ public struct HarcWindowRootView: View {
                     noteBodyDraft = $0
                     markNoteEdited()
                 }
-            ), mode: noteEditorMode, linkTargets: noteLinkTargets(for: note), mentionTargets: noteMentionTargets())
+            ), mode: noteEditorMode,
+               linkTargets: noteLinkTargets(for: note),
+               mentionTargets: noteMentionTargets(),
+               attachmentBaseURL: note.fileURL.deletingLastPathComponent(),
+               onPasteImage: { image in
+                   try await pasteImage(image, into: note.id)
+               })
 
             noteLinksSection(note: note)
 
@@ -3128,6 +3140,208 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    @MainActor
+    private func pasteImage(_ image: NotePastedImage, into noteID: String) async throws -> String {
+        let result = try await NoteStore(rootURL: prefs.notesURL).attachImage(
+            toNoteID: noteID,
+            data: image.data,
+            mimeType: image.mimeType,
+            preferredFilename: image.filename
+        )
+        await loadNotes(resetDraft: false)
+        if selection == .note(id: noteID) {
+            noteSavedAt = result.note.updatedAt
+            noteLastLoadedUpdatedAt = result.note.updatedAt
+            noteSaveError = nil
+        }
+        startCaptionIfAvailable(noteID: noteID, attachmentID: result.attachment.id)
+        return result.markdown
+    }
+
+    private func attachmentStatusText(for note: Note) -> String {
+        let count = note.attachments.count
+        let captioned = note.attachments.filter { $0.captionStatus == .captioned }.count
+        if captioned > 0 {
+            return "\(count) image\(count == 1 ? "" : "s"), \(captioned) captioned"
+        }
+        return "\(count) image\(count == 1 ? "" : "s")"
+    }
+
+    @ViewBuilder
+    private func noteAttachmentsStrip(note: Note) -> some View {
+        if !note.attachments.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(note.attachments) { attachment in
+                        Menu {
+                            Button {
+                                revealAttachment(attachment, in: note)
+                            } label: {
+                                Label("Reveal File", systemImage: "folder")
+                            }
+                            Button {
+                                copyAttachmentImage(attachment, in: note)
+                            } label: {
+                                Label("Copy Image", systemImage: "doc.on.doc")
+                            }
+                            Button {
+                                startCaption(noteID: note.id, attachmentID: attachment.id)
+                            } label: {
+                                Label("Regenerate Caption", systemImage: "sparkles")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                removeAttachment(attachment, from: note)
+                            } label: {
+                                Label("Remove Image", systemImage: "trash")
+                            }
+                        } label: {
+                            Label(attachmentMenuTitle(attachment), systemImage: attachmentIconName(attachment))
+                                .font(.caption)
+                                .lineLimit(1)
+                        }
+                        .menuStyle(.button)
+                        .fixedSize()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func attachmentMenuTitle(_ attachment: NoteAttachment) -> String {
+        if captioningAttachmentIDs.contains(attachment.id) {
+            return "Captioning..."
+        }
+        switch attachment.captionStatus {
+        case .captioned:
+            return attachment.altText
+        case .failed:
+            return "Caption failed"
+        case .pending:
+            return "Caption pending"
+        case .unavailable:
+            return attachment.altText
+        }
+    }
+
+    private func attachmentIconName(_ attachment: NoteAttachment) -> String {
+        if captioningAttachmentIDs.contains(attachment.id) { return "sparkles" }
+        switch attachment.captionStatus {
+        case .captioned: return "photo.badge.checkmark"
+        case .failed: return "photo.badge.exclamationmark"
+        case .pending: return "sparkles"
+        case .unavailable: return "photo"
+        }
+    }
+
+    private func attachmentURL(_ attachment: NoteAttachment, in note: Note) -> URL {
+        note.fileURL.deletingLastPathComponent().appendingPathComponent(attachment.relativePath)
+    }
+
+    private func revealAttachment(_ attachment: NoteAttachment, in note: Note) {
+        NSWorkspace.shared.activateFileViewerSelecting([attachmentURL(attachment, in: note)])
+    }
+
+    private func copyAttachmentImage(_ attachment: NoteAttachment, in note: Note) {
+        guard let image = NSImage(contentsOf: attachmentURL(attachment, in: note)) else {
+            noteSaveError = "Could not load image for copying."
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([image])
+    }
+
+    private func removeAttachment(_ attachment: NoteAttachment, from note: Note) {
+        Task {
+            do {
+                let saved = try await NoteStore(rootURL: prefs.notesURL).removeAttachment(
+                    noteID: note.id,
+                    attachmentID: attachment.id
+                )
+                await loadNotes(resetDraft: false)
+                if selection == .note(id: note.id) {
+                    noteBodyDraft = saved.body
+                    noteSavedAt = saved.updatedAt
+                    noteLastLoadedUpdatedAt = saved.updatedAt
+                    noteDirty = false
+                }
+            } catch {
+                noteSaveError = error.localizedDescription
+            }
+        }
+    }
+
+    private func startCaptionIfAvailable(noteID: String, attachmentID: String) {
+        let captionerID = ModelCatalog.descriptors(for: .visionCaptioner).first?.id
+        guard let captionerID, modelStore.state(of: captionerID).isInstalled else { return }
+        startCaption(noteID: noteID, attachmentID: attachmentID)
+    }
+
+    private func startCaption(noteID: String, attachmentID: String) {
+        Task {
+            let noteStore = NoteStore(rootURL: prefs.notesURL)
+            let captionerID = ModelCatalog.descriptors(for: .visionCaptioner).first?.id
+            guard let captionerID else { return }
+            guard modelStore.state(of: captionerID).isInstalled else {
+                noteSaveError = "Image caption model is not installed."
+                _ = try? await noteStore.updateAttachmentCaption(
+                    noteID: noteID,
+                    attachmentID: attachmentID,
+                    caption: nil,
+                    status: .unavailable
+                )
+                await loadNotes(resetDraft: false)
+                return
+            }
+            captioningAttachmentIDs.insert(attachmentID)
+            defer { captioningAttachmentIDs.remove(attachmentID) }
+            do {
+                let pending = try await noteStore.updateAttachmentCaption(
+                    noteID: noteID,
+                    attachmentID: attachmentID,
+                    caption: nil,
+                    status: .pending,
+                    modelID: captionerID
+                )
+                await loadNotes(resetDraft: false)
+                guard let attachment = pending.attachments.first(where: { $0.id == attachmentID }) else {
+                    throw StoreError.notFound
+                }
+                let modelDirectory = try await modelStore.manager.requireInstalled(captionerID)
+                let imageURL = attachmentURL(attachment, in: pending)
+                let caption = try await VisionCaptionService().caption(VisionCaptionRequest(
+                    imageURL: imageURL,
+                    modelID: captionerID,
+                    modelDirectory: modelDirectory
+                ))
+                let saved = try await noteStore.updateAttachmentCaption(
+                    noteID: noteID,
+                    attachmentID: attachmentID,
+                    caption: caption,
+                    status: .captioned,
+                    modelID: captionerID
+                )
+                if let knowledgeIndexer {
+                    Task.detached { [knowledgeIndexer, saved] in
+                        try? await knowledgeIndexer.index(note: saved)
+                    }
+                }
+                await loadNotes(resetDraft: false)
+            } catch {
+                _ = try? await noteStore.updateAttachmentCaption(
+                    noteID: noteID,
+                    attachmentID: attachmentID,
+                    caption: error.localizedDescription,
+                    status: .failed,
+                    modelID: captionerID
+                )
+                noteSaveError = error.localizedDescription
+                await loadNotes(resetDraft: false)
+            }
+        }
+    }
+
     private func overwriteConflictedNote(_ conflict: NoteSaveConflict) {
         noteSaveConflict = nil
         noteSaveError = nil
@@ -3560,10 +3774,21 @@ public struct HarcWindowRootView: View {
 
         ### \(note.title)
         \(note.body)
+        \(noteAttachmentContext(note))
 
         ## Sources
         - Note: \(note.title) - \(note.fileURL.path)
         """
+    }
+
+    private func noteAttachmentContext(_ note: Note) -> String {
+        let lines = note.attachments.compactMap { attachment -> String? in
+            let text = attachment.searchableText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return "- Image: \(text)"
+        }
+        guard !lines.isEmpty else { return "" }
+        return "\n\n### Images\n" + lines.joined(separator: "\n")
     }
 
     private func selectedRecordingContextMarkdown(_ recording: Recording, query: String) -> String {

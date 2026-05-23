@@ -6,6 +6,7 @@ public struct Note: Equatable, Hashable, Identifiable, Sendable {
     public var body: String
     public var tags: [String]
     public var recordings: [String]
+    public var attachments: [NoteAttachment]
     public var people: [String]
     public var derivedFrom: String?
     public var folderPath: String?
@@ -21,6 +22,7 @@ public struct Note: Equatable, Hashable, Identifiable, Sendable {
         body: String,
         tags: [String] = [],
         recordings: [String] = [],
+        attachments: [NoteAttachment] = [],
         people: [String] = [],
         derivedFrom: String? = nil,
         folderPath: String? = nil,
@@ -35,6 +37,7 @@ public struct Note: Equatable, Hashable, Identifiable, Sendable {
         self.body = body
         self.tags = tags
         self.recordings = recordings
+        self.attachments = attachments
         self.people = people
         self.derivedFrom = derivedFrom
         self.folderPath = folderPath
@@ -50,5 +53,62 @@ public struct Note: Equatable, Hashable, Identifiable, Sendable {
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first(where: { !$0.isEmpty }) ?? ""
+    }
+}
+
+public enum NoteAttachmentCaptionStatus: String, Codable, Equatable, Hashable, Sendable {
+    case unavailable
+    case pending
+    case captioned
+    case failed
+}
+
+public struct NoteAttachment: Codable, Equatable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var kind: String
+    public var filename: String
+    public var relativePath: String
+    public var mimeType: String
+    public var byteCount: Int
+    public var altText: String
+    public var caption: String?
+    public var captionedAt: Date?
+    public var captionModelID: String?
+    public var captionStatus: NoteAttachmentCaptionStatus
+    public var createdAt: Date
+
+    public init(
+        id: String,
+        kind: String = "image",
+        filename: String,
+        relativePath: String,
+        mimeType: String,
+        byteCount: Int,
+        altText: String,
+        caption: String? = nil,
+        captionedAt: Date? = nil,
+        captionModelID: String? = nil,
+        captionStatus: NoteAttachmentCaptionStatus = .unavailable,
+        createdAt: Date
+    ) {
+        self.id = id
+        self.kind = kind
+        self.filename = filename
+        self.relativePath = relativePath
+        self.mimeType = mimeType
+        self.byteCount = byteCount
+        self.altText = altText
+        self.caption = caption
+        self.captionedAt = captionedAt
+        self.captionModelID = captionModelID
+        self.captionStatus = captionStatus
+        self.createdAt = createdAt
+    }
+
+    public var searchableText: String {
+        [altText, caption, filename]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }

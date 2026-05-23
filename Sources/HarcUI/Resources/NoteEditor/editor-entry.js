@@ -76,6 +76,7 @@ let linkTargets = [];
 let mentionTargets = standaloneMentionTargets[
   new URLSearchParams(location.search).get("fixture")
 ] ?? [];
+let attachmentBaseURL = "";
 
 const markdownHighlight = HighlightStyle.define([
   {tag: tags.heading1, class: "cm-md-heading-token"},
@@ -129,6 +130,34 @@ class ListMarkerWidget extends WidgetType {
   }
 }
 
+class ImageAttachmentWidget extends WidgetType {
+  constructor(alt, path) {
+    super();
+    this.alt = alt;
+    this.path = path;
+  }
+
+  eq(other) {
+    return other.alt === this.alt && other.path === this.path;
+  }
+
+  toDOM() {
+    const figure = document.createElement("figure");
+    figure.className = "cm-md-image";
+
+    const img = document.createElement("img");
+    img.src = resolveAttachmentURL(this.path);
+    img.alt = this.alt || "Note image";
+    img.loading = "lazy";
+    figure.appendChild(img);
+
+    const caption = document.createElement("figcaption");
+    caption.textContent = this.alt || attachmentFilename(this.path);
+    figure.appendChild(caption);
+    return figure;
+  }
+}
+
 function syntaxDecorationFor(view, line) {
   return editorMode === "read" || !lineHasSelection(view, line)
     ? Decoration.mark({class: "cm-md-syntax-hidden"})
@@ -176,6 +205,7 @@ const livePreviewPlugin = ViewPlugin.fromClass(
       const wikilink = /\[\[[^\]\n]+\]\]/g;
       const mention = /@([A-Za-z][A-Za-z0-9_-]*)?\[([^\]\n]+)\]|@([A-Za-z][A-Za-z0-9'._-]*)/g;
       const inlineCode = /`[^`\n]+`/g;
+      const imageLink = /!\[([^\]\n]*)\]\(([^)\s]+)\)/g;
       const externalLink = /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
       let fencedCodeLanguage = null;
 
@@ -297,6 +327,23 @@ const livePreviewPlugin = ViewPlugin.fromClass(
             }
 
             addInlineMarkdownMarks(marks, line);
+
+            for (const match of text.matchAll(imageLink)) {
+              const from = line.from + match.index;
+              const to = from + match[0].length;
+              if (editorMode !== "source" && !lineHasSelection(view, line)) {
+                marks.push([
+                  from,
+                  to,
+                  Decoration.replace({
+                    widget: new ImageAttachmentWidget(match[1], match[2]),
+                    block: true,
+                  }),
+                ]);
+              } else {
+                marks.push([from, to, Decoration.mark({class: "cm-md-link"})]);
+              }
+            }
           }
 
           for (const match of text.matchAll(wikilink)) {
@@ -321,6 +368,7 @@ const livePreviewPlugin = ViewPlugin.fromClass(
           }
 
           for (const match of text.matchAll(externalLink)) {
+            if (match.index > 0 && text[match.index - 1] === "!") continue;
             const from = line.from + match.index;
             const textFrom = from + 1;
             const textTo = textFrom + match[1].length;
@@ -416,6 +464,18 @@ const view = new EditorView({
           },
         },
       ])),
+      Prec.high(EditorView.domEventHandlers({
+        paste(event) {
+          const items = Array.from(event.clipboardData?.items ?? []);
+          const imageItem = items.find((item) => item.type?.startsWith("image/"));
+          if (!imageItem) return false;
+          const file = imageItem.getAsFile();
+          if (!file) return false;
+          event.preventDefault();
+          readClipboardImage(file);
+          return true;
+        },
+      })),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !suppressChange) {
           postChange(update.state.doc.toString());
@@ -467,6 +527,22 @@ window.HarcEditor = {
         detail: typeof target.detail === "string" ? target.detail : "",
       }));
   },
+  setAttachmentBaseURL(url) {
+    attachmentBaseURL = typeof url === "string" ? url : "";
+  },
+  insertMarkdown(markdown) {
+    if (typeof markdown !== "string" || markdown.length === 0) return;
+    const insert = `\n\n${markdown}\n\n`;
+    view.dispatch({
+      changes: view.state.replaceSelection(insert),
+      selection: {anchor: view.state.selection.main.from + insert.length},
+      userEvent: "input.paste",
+    });
+    postChange(view.state.doc.toString());
+  },
+  showAttachmentError(message) {
+    showAttachmentError(message);
+  },
   setMode(mode) {
     if (!["source", "live", "read"].includes(mode)) return;
     editorMode = mode;
@@ -478,6 +554,45 @@ window.HarcEditor = {
     });
   },
 };
+
+function readClipboardImage(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = typeof reader.result === "string" ? reader.result : "";
+    const comma = result.indexOf(",");
+    const data = comma >= 0 ? result.slice(comma + 1) : result;
+    window.webkit?.messageHandlers?.harc?.postMessage({
+      type: "pasteImage",
+      data,
+      mimeType: file.type || "image/png",
+      filename: file.name || "",
+    });
+  };
+  reader.onerror = () => showAttachmentError("Could not read the pasted image.");
+  reader.readAsDataURL(file);
+}
+
+function resolveAttachmentURL(path) {
+  if (/^(file|https?):\/\//i.test(path)) return path;
+  const clean = path.replace(/^\.\//, "");
+  if (!attachmentBaseURL) return clean;
+  return new URL(clean, attachmentBaseURL).toString();
+}
+
+function attachmentFilename(path) {
+  const clean = path.split(/[?#]/)[0].replace(/\/+$/, "");
+  return clean.slice(clean.lastIndexOf("/") + 1) || "Note image";
+}
+
+function showAttachmentError(message) {
+  const existing = document.querySelector(".attachment-error");
+  existing?.remove();
+  const banner = document.createElement("div");
+  banner.className = "attachment-error";
+  banner.textContent = message || "Could not attach image.";
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 4000);
+}
 
 function wikilinkCompletions(context) {
   const before = context.matchBefore(/\[\[([^\]\[]*)$/);

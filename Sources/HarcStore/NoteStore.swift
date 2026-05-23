@@ -104,7 +104,8 @@ public actor NoteStore {
             let haystack = (
                 [note.title, note.body, note.folderPath ?? ""] +
                 note.tags +
-                note.people
+                note.people +
+                note.attachments.map(\.searchableText)
             )
             .joined(separator: " ")
             .lowercased()
@@ -117,8 +118,92 @@ public actor NoteStore {
         var next = note
         next.title = cleanedTitle(note.title) ?? Self.defaultTitle(createdAt: note.createdAt)
         next.updatedAt = Date()
+        let removed = note.attachments.filter { !Self.bodyReferencesAttachment(note.body, attachment: $0) }
+        if !removed.isEmpty {
+            next.attachments.removeAll { removed.contains($0) }
+            try Self.deleteAttachmentFiles(removed, for: next.fileURL)
+        }
+        try Self.pruneOrphanedAssetFiles(for: next)
         try Self.write(next)
         return next
+    }
+
+    public func attachImage(
+        toNoteID noteID: String,
+        data: Data,
+        mimeType: String,
+        preferredFilename: String? = nil
+    ) async throws -> (note: Note, attachment: NoteAttachment, markdown: String) {
+        guard var note = try await fetch(id: noteID, includeArchived: true) else {
+            throw StoreError.notFound
+        }
+        let normalized = try Self.normalizedImageType(mimeType: mimeType, data: data)
+        let now = Date()
+        let attachmentID = Self.makeULID()
+        let assetsFolderName = "\(note.id).assets"
+        let safeBase = Self.safeFilenameStem(preferredFilename) ?? "image-\(note.attachments.count + 1)"
+        let filename = "\(safeBase)-\(attachmentID).\(normalized.extension)"
+        let relativePath = "\(assetsFolderName)/\(filename)"
+        let destination = note.fileURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: destination, options: [.atomic])
+
+        let altText = Self.defaultImageAltText(filename: preferredFilename, createdAt: now)
+        let attachment = NoteAttachment(
+            id: attachmentID,
+            filename: filename,
+            relativePath: relativePath,
+            mimeType: normalized.mimeType,
+            byteCount: data.count,
+            altText: altText,
+            createdAt: now
+        )
+        note.attachments.append(attachment)
+        note.updatedAt = now
+        try Self.write(note)
+
+        let markdown = "![\(Self.markdownEscapedAltText(altText))](./\(relativePath))"
+        return (note, attachment, markdown)
+    }
+
+    public func updateAttachmentCaption(
+        noteID: String,
+        attachmentID: String,
+        caption: String?,
+        status: NoteAttachmentCaptionStatus,
+        modelID: String? = nil
+    ) async throws -> Note {
+        guard var note = try await fetch(id: noteID, includeArchived: true) else {
+            throw StoreError.notFound
+        }
+        guard let index = note.attachments.firstIndex(where: { $0.id == attachmentID }) else {
+            throw StoreError.notFound
+        }
+        note.attachments[index].caption = caption
+        note.attachments[index].captionStatus = status
+        note.attachments[index].captionModelID = modelID
+        note.attachments[index].captionedAt = status == .captioned ? Date() : nil
+        note.updatedAt = Date()
+        try Self.write(note)
+        return note
+    }
+
+    public func removeAttachment(noteID: String, attachmentID: String) async throws -> Note {
+        guard var note = try await fetch(id: noteID, includeArchived: true) else {
+            throw StoreError.notFound
+        }
+        guard let attachment = note.attachments.first(where: { $0.id == attachmentID }) else {
+            throw StoreError.notFound
+        }
+        note.attachments.removeAll { $0.id == attachmentID }
+        note.body = Self.removingMarkdownReferences(to: attachment, from: note.body)
+        try Self.deleteAttachmentFiles([attachment], for: note.fileURL)
+        return try await update(note)
     }
 
     public func archive(id: String) async throws {
@@ -126,6 +211,10 @@ public actor NoteStore {
             throw StoreError.notFound
         }
         note.archived = true
+        try Self.deleteAttachmentFiles(note.attachments, for: note.fileURL)
+        try? FileManager.default.removeItem(at: Self.assetsDirectoryURL(for: note.fileURL))
+        note.attachments = []
+        note.body = Self.removingAllImageReferences(from: note.body)
         _ = try await update(note)
     }
 
@@ -189,6 +278,7 @@ private extension NoteStore {
             body: parsed.body,
             tags: parsed.list["tags"] ?? [],
             recordings: parsed.list["recordings"] ?? [],
+            attachments: loadAttachments(for: url),
             people: parsed.list["people"] ?? [],
             derivedFrom: emptyToNil(parsed.scalar["derived_from"]),
             folderPath: emptyToNil(parsed.scalar["folder_path"]) ?? inferredFolderPath,
@@ -207,6 +297,7 @@ private extension NoteStore {
             withIntermediateDirectories: true
         )
         try text.write(to: note.fileURL, atomically: true, encoding: .utf8)
+        try writeAttachments(note.attachments, for: note.fileURL)
     }
 
     static func folderPath(for date: Date) -> String {
@@ -300,6 +391,126 @@ private extension NoteStore {
         for value in values {
             lines.append("  - \(oneLine(value))")
         }
+    }
+
+    static func attachmentsSidecarURL(for noteURL: URL) -> URL {
+        noteURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".harc", isDirectory: true)
+            .appendingPathComponent("\(noteURL.deletingPathExtension().lastPathComponent).attachments.json")
+    }
+
+    static func loadAttachments(for noteURL: URL) -> [NoteAttachment] {
+        let sidecar = attachmentsSidecarURL(for: noteURL)
+        guard let data = try? Data(contentsOf: sidecar) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([NoteAttachment].self, from: data)) ?? []
+    }
+
+    static func writeAttachments(_ attachments: [NoteAttachment], for noteURL: URL) throws {
+        let sidecar = attachmentsSidecarURL(for: noteURL)
+        if attachments.isEmpty {
+            try? FileManager.default.removeItem(at: sidecar)
+            return
+        }
+        try FileManager.default.createDirectory(
+            at: sidecar.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(attachments)
+        try data.write(to: sidecar, options: [.atomic])
+    }
+
+    static func assetsDirectoryURL(for noteURL: URL) -> URL {
+        noteURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("\(noteURL.deletingPathExtension().lastPathComponent).assets", isDirectory: true)
+    }
+
+    static func deleteAttachmentFiles(_ attachments: [NoteAttachment], for noteURL: URL) throws {
+        for attachment in attachments {
+            let url = noteURL.deletingLastPathComponent().appendingPathComponent(attachment.relativePath)
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    static func pruneOrphanedAssetFiles(for note: Note) throws {
+        let assetsURL = assetsDirectoryURL(for: note.fileURL)
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: assetsURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        let keep = Set(note.attachments.map(\.filename))
+        for url in urls {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true, !keep.contains(url.lastPathComponent) else { continue }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    static func bodyReferencesAttachment(_ body: String, attachment: NoteAttachment) -> Bool {
+        body.contains("](./\(attachment.relativePath))") ||
+        body.contains("](\(attachment.relativePath))")
+    }
+
+    static func removingMarkdownReferences(to attachment: NoteAttachment, from body: String) -> String {
+        let escapedRelative = NSRegularExpression.escapedPattern(for: attachment.relativePath)
+        let pattern = #"(?m)^\s*!\[[^\]\n]*\]\((?:\./)?"# + escapedRelative + #"\)\s*\n{0,2}"#
+        return replacing(pattern: pattern, in: body)
+    }
+
+    static func removingAllImageReferences(from body: String) -> String {
+        replacing(pattern: #"(?m)^\s*!\[[^\]\n]*\]\([^)]+\)\s*\n{0,2}"#, in: body)
+    }
+
+    static func replacing(pattern: String, in body: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return body }
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        return regex.stringByReplacingMatches(in: body, range: range, withTemplate: "")
+    }
+
+    static func normalizedImageType(mimeType: String, data: Data) throws -> (mimeType: String, extension: String) {
+        let lowered = mimeType.lowercased()
+        if lowered == "image/png" || data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+            return ("image/png", "png")
+        }
+        if lowered == "image/jpeg" || lowered == "image/jpg" || data.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return ("image/jpeg", "jpg")
+        }
+        throw StoreError.invalidData("Only PNG and JPEG note images are supported.")
+    }
+
+    static func safeFilenameStem(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let stem = URL(fileURLWithPath: raw).deletingPathExtension().lastPathComponent
+        let cleaned = stem
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+        return cleaned.isEmpty ? nil : String(cleaned.prefix(48))
+    }
+
+    static func defaultImageAltText(filename: String?, createdAt: Date) -> String {
+        if let stem = safeFilenameStem(filename), !stem.isEmpty {
+            return stem.replacingOccurrences(of: "-", with: " ")
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return "Meeting image \(formatter.string(from: createdAt))"
+    }
+
+    static func markdownEscapedAltText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "]", with: "\\]")
     }
 
     static func oneLine(_ value: String) -> String {
