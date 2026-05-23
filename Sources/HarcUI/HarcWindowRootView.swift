@@ -243,6 +243,7 @@ public struct HarcWindowRootView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .help("Switch between Library, Wiki, and Review")
+        .accessibilityIdentifier("harc.library.modeSwitcher")
     }
 
     private var pendingDeleteRecordingBinding: Binding<Bool> {
@@ -290,6 +291,7 @@ public struct HarcWindowRootView: View {
             libraryFooter
         }
         .frame(minWidth: 900, minHeight: 600)
+        .accessibilityIdentifier("harc.library.root")
         .onAppear(perform: handleAppear)
         .onDisappear(perform: handleDisappear)
         .onChange(of: selection) { oldSelection, _ in
@@ -741,6 +743,7 @@ public struct HarcWindowRootView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("harc.library.capture.recordButton")
             Text("Use the menu bar icon or configure the global hotkey in Settings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1163,6 +1166,7 @@ public struct HarcWindowRootView: View {
                 .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
         }
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
+        .accessibilityIdentifier("harc.library.recording.\(rec.id.map(String.init) ?? rec.wavPath)")
         .contentShape(Rectangle())
         .onTapGesture {
             selection = .recording(wavPath: rec.wavPath)
@@ -1194,6 +1198,7 @@ public struct HarcWindowRootView: View {
                 .foregroundStyle(note.pinned ? Color.purple : Color.accentColor)
         }
         .tag(LibrarySelection.note(id: note.id))
+        .accessibilityIdentifier("harc.library.note.\(note.id)")
         .contextMenu {
             Button("Open in Harc") { selection = .note(id: note.id) }
             Button(note.pinned ? "Unpin Note" : "Pin Note") {
@@ -2745,8 +2750,7 @@ public struct HarcWindowRootView: View {
     // MARK: - Helpers
 
     private func openSettings() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        NSApp.activate(ignoringOtherApps: true)
+        bridge.onOpenSettings()
     }
 
     private var selectedNote: Note? {

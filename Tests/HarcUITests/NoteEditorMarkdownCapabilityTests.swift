@@ -31,6 +31,8 @@ struct NoteEditorMarkdownCapabilityTests {
             ("bracketed person mention", #"@\[Amy Williams\]"#),
             ("typed person mention", #"@person\[Amy Williams\]"#),
             ("typed project mention", #"@project\[Q3 Launch\]"#),
+            ("symbol gauntlet", #"Symbol gauntlet: ~ ! @ # \$ % \^ & \* \( \) _ \+ - = \{ \} \[ \] \| \\ : ; " ' < > , \. \? /"#),
+            ("escaped literals", #"\\\*literal asterisk\\\* \\\[literal brackets\\\] \\\`literal tick\\\`"#),
             ("unordered list", #"(?m)^- Ship the local editor bundle\.$"#),
             ("checked task", #"(?m)^- \[x\] Record audio locally$"#),
             ("unchecked task", #"(?m)^- \[ \] Link a note to a recording$"#),

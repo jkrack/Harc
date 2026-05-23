@@ -6,6 +6,7 @@ import UserNotifications
 import HarcAudio
 import HarcClient
 import HarcContext
+import HarcCore
 import HarcExport
 import HarcMeetingDetect
 import HarcModels
@@ -208,10 +209,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var recordingsVM: RecordingsViewModel?
     private var editorWindows: [String: TranscriptEditorWindowController] = [:]
     private var harcWindow: HarcWindowController?
+    private var settingsWindow: NSWindowController?
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
     private var pendingSkipPaste = false
     private var pendingRecordingNoteID: String?
+    private var uiTestRecordingStartedAt: Date?
     private var frontmostPoller: Timer?
     private var hasShownMicOnlyNotice = false
 
@@ -229,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private static let minWordsToSummarize = 10
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        applyUITestConfigurationIfNeeded()
         installStatusItem()
 
         Task { [weak self] in
@@ -237,13 +241,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         // Pre-launch the daemon in the background so ⌘R doesn't have to wait for
         // model load. Failure is logged and retried lazily on next recording start.
-        Task { [launcher] in
-            do {
-                _ = try await launcher.ensureRunning()
-            } catch {
-                FileHandle.standardError.write(Data(
-                    "harc: background daemon launch failed: \(error.localizedDescription)\n".utf8
-                ))
+        if !isUITesting {
+            Task { [launcher] in
+                do {
+                    _ = try await launcher.ensureRunning()
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "harc: background daemon launch failed: \(error.localizedDescription)\n".utf8
+                    ))
+                }
             }
         }
 
@@ -349,7 +355,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .sink { [weak self] _ in self?.updateMenuBarReadiness() }
             .store(in: &cancellables)
 
-        startFrontmostPolling()
+        if !isUITesting {
+            startFrontmostPolling()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -532,6 +540,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         stoppedFlashTask = nil
         let startedAt = Date()
 
+        if shouldUseUITestRecordingLoop {
+            await startUITestRecording(at: startedAt)
+            return
+        }
+
         do {
             _ = try await launcher.ensureRunning()
             let client = HarcSTTClient()
@@ -608,7 +621,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         let shiftHeldAtStopTrigger = NSEvent.modifierFlags.contains(.shift)
         let skipFromOptionClick = pendingSkipPaste
         pendingSkipPaste = false
-        guard let session else { return }
+        guard let session else {
+            if shouldUseUITestRecordingLoop, state.isRecording {
+                await stopUITestRecording(startedAt: uiTestRecordingStartedAt, autoStopReason: autoStopReason)
+            }
+            return
+        }
         // Hard cap on how long session.stop() can block. session.stop() runs
         // the post-stop transcribe finalize + full-WAV diarize through the
         // daemon. Either can hang (no timeout on HarcSTTClient.roundTrip yet).
@@ -1393,7 +1411,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     @objc private func openSettings() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        if let controller = settingsWindow, let window = controller.window {
+            controller.showWindow(nil)
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let root = HarcSettingsForm()
+            .environmentObject(prefs)
+            .environmentObject(modelStore)
+            .environmentObject(bridge)
+            .preferredColorScheme(prefs.appearance.colorScheme)
+        let window = NSWindow(contentViewController: NSHostingController(rootView: root))
+        window.title = "Harc Settings"
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 760, height: 720))
+        window.minSize = NSSize(width: 640, height: 560)
+        window.isReleasedWhenClosed = false
+
+        let controller = NSWindowController(window: window)
+        settingsWindow = controller
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.settingsWindow = nil
+            }
+        }
+
+        controller.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+        trackManagedWindow(window)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -1449,9 +1500,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func bootstrapStore() async {
         do {
-            let store = try await RecordingStore.onDisk()
+            let store = try await RecordingStore.onDisk(url: uiTestDatabaseURL ?? RecordingStore.defaultURL())
             self.store = store
-            let recoveryQueue = RecoveryQueue(fileURL: RecoveryQueue.defaultURL(), store: store)
+            let recoveryQueue = RecoveryQueue(fileURL: uiTestRecoveryQueueURL ?? RecoveryQueue.defaultURL(), store: store)
             self.recoveryQueue = recoveryQueue
 
             // Keep interrupted cache artifacts visible until the user chooses
@@ -1465,6 +1516,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // Ingest existing filesystem recordings.
             let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
             _ = try? await ingestor.ingestAll()
+            if isUITesting {
+                try? await seedUITestLibraryIfNeeded(store: store)
+            }
 
             let vm = RecordingsViewModel(store: store)
             vm.start()
@@ -1518,6 +1572,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
 
             observeDestinationChanges()
+            if shouldOpenLibraryForUITest {
+                openLibrary()
+            }
         } catch {
             FileHandle.standardError.write(Data(
                 "harc: store init failed: \(error.localizedDescription)\n".utf8
@@ -1812,6 +1869,314 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // Show the banner even when the app is frontmost.
         completionHandler([.banner, .list])
     }
+}
+
+#if DEBUG
+private extension AppDelegate {
+    var isUITesting: Bool {
+        ProcessInfo.processInfo.environment["HARC_UI_TESTING"] == "1"
+    }
+
+    var shouldOpenLibraryForUITest: Bool {
+        ProcessInfo.processInfo.environment["HARC_UI_TEST_OPEN_LIBRARY"] == "1"
+    }
+
+    var shouldUseUITestRecordingLoop: Bool {
+        ProcessInfo.processInfo.environment["HARC_UI_TEST_FAKE_RECORDING"] == "1"
+    }
+
+    var uiTestRootURL: URL? {
+        guard let raw = ProcessInfo.processInfo.environment["HARC_UI_TEST_ROOT"],
+              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return URL(fileURLWithPath: raw, isDirectory: true)
+    }
+
+    var uiTestDatabaseURL: URL? {
+        uiTestRootURL?.appendingPathComponent("HarcUITest.db")
+    }
+
+    var uiTestRecoveryQueueURL: URL? {
+        uiTestRootURL?.appendingPathComponent("recovery.json")
+    }
+
+    func applyUITestConfigurationIfNeeded() {
+        guard isUITesting, let root = uiTestRootURL else { return }
+        let recordingsURL = root.appendingPathComponent("Recordings", isDirectory: true)
+        let notesURL = root.appendingPathComponent("Notes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: recordingsURL, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: notesURL, withIntermediateDirectories: true)
+
+        prefs.destinationPath = recordingsURL.path
+        prefs.notesPath = notesURL.path
+        prefs.autoSummarizeEnabled = false
+        prefs.meetingDetectionEnabled = false
+        prefs.postStopNotificationEnabled = false
+    }
+
+    func startUITestRecording(at startedAt: Date) async {
+        uiTestRecordingStartedAt = startedAt
+        state.markStarted(at: startedAt)
+        bridge.setActiveCaptureStatus(ActiveCaptureStatus(
+            sourceState: .micAndSystemAudio,
+            cachePath: RecordingDestination.cacheDirectory().path,
+            destinationPath: prefs.destinationPath,
+            startedAt: startedAt
+        ))
+        bridge.setActiveNoteRecordingID(pendingRecordingNoteID)
+        state.appendPreview(uiTestRecordingTranscript)
+        bridge.markActiveTranscriptUpdate(at: startedAt.addingTimeInterval(1))
+    }
+
+    func stopUITestRecording(
+        startedAt: Date?,
+        autoStopReason: AutoStopController.StopReason?
+    ) async {
+        let startedAt = startedAt ?? Date()
+        let endedAt = Date()
+
+        do {
+            let destination = RecordingDestination(baseDirectory: prefs.destinationURL)
+            let wavURL = try destination.publicPath(for: startedAt)
+            try FileManager.default.createDirectory(
+                at: wavURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data(repeating: 42, count: 4096).write(to: wavURL, options: .atomic)
+
+            let transcript = uiTestRecordingTranscript
+            let sessionTranscript = SessionTranscript(
+                startedAt: startedAt,
+                endedAt: endedAt,
+                audioPath: wavURL.path,
+                joinedText: transcript,
+                words: uiTestWords(for: transcript),
+                speakers: [
+                    SpeakerSegment(speaker: 0, startMs: 0, endMs: 4_000),
+                    SpeakerSegment(speaker: 1, startMs: 4_000, endMs: 9_000),
+                ],
+                chunks: [
+                    ChunkResult(
+                        startMs: 0,
+                        endMs: 9_000,
+                        text: transcript,
+                        words: uiTestWords(for: transcript),
+                        speakers: [
+                            SpeakerSegment(speaker: 0, startMs: 0, endMs: 4_000),
+                            SpeakerSegment(speaker: 1, startMs: 4_000, endMs: 9_000),
+                        ],
+                        processingMs: 12
+                    ),
+                ]
+            )
+            try TranscriptWriter.writeSiblings(transcript: sessionTranscript, nextTo: wavURL)
+            let txtURL = wavURL.deletingPathExtension().appendingPathExtension("txt")
+            let jsonURL = wavURL.deletingPathExtension().appendingPathExtension("json")
+
+            state.markStopped(wavURL: wavURL, txtURL: txtURL, jsonURL: jsonURL)
+            let recording = Recording(
+                wavPath: wavURL.path,
+                txtPath: txtURL.path,
+                jsonPath: jsonURL.path,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                title: uiTestRecordingTitle,
+                transcriptText: transcript,
+                tags: ["ui-test", "live-loop"],
+                speakerNames: [0: "Alyssa", 1: "Marco"]
+            )
+            let savedID = await persistStoppedRecording(recording)
+            if let savedID, let store {
+                postProcessingState.begin(recordingID: savedID)
+                postProcessingState.succeed(recordingID: savedID, speakerCount: 0)
+                if let persisted = try? await store.fetch(id: savedID), let knowledgeIndexer {
+                    Task.detached { [knowledgeIndexer] in
+                        try? await knowledgeIndexer.index(recordingID: savedID)
+                    }
+                    bridge.trayState.show(
+                        title: persisted.displayTitle,
+                        transcript: persisted.transcriptText ?? "",
+                        recordingID: savedID,
+                        wavPath: persisted.wavPath,
+                        outcome: .savedSafely(title: persisted.displayTitle, wavPath: persisted.wavPath)
+                    )
+                } else {
+                    bridge.trayState.show(
+                        title: uiTestRecordingTitle,
+                        transcript: transcript,
+                        recordingID: savedID,
+                        wavPath: wavURL.path,
+                        outcome: .savedSafely(title: uiTestRecordingTitle, wavPath: wavURL.path)
+                    )
+                }
+            }
+            autoStop.end(autoStopReason: autoStopReason)
+        } catch {
+            presentError(error)
+        }
+
+        uiTestRecordingStartedAt = nil
+        previewTask?.cancel()
+        previewTask = nil
+        bridge.setActiveNoteRecordingID(nil)
+        resetUI()
+    }
+
+    func seedUITestLibraryIfNeeded(store: RecordingStore) async throws {
+        guard ProcessInfo.processInfo.environment["HARC_UI_TEST_SEED_LIBRARY"] == "1",
+              let root = uiTestRootURL else {
+            return
+        }
+        if !(try await store.fetchAll(includeDeleted: true)).isEmpty {
+            return
+        }
+
+        let recordingsURL = root.appendingPathComponent("Recordings", isDirectory: true)
+        let startedAt = Date(timeIntervalSince1970: 1_779_032_400)
+        let dayURL = recordingsURL
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("2026-05-18", isDirectory: true)
+        try FileManager.default.createDirectory(at: dayURL, withIntermediateDirectories: true)
+
+        let wavURL = dayURL.appendingPathComponent("09-00-00.wav")
+        let txtURL = dayURL.appendingPathComponent("09-00-00.txt")
+        let jsonURL = dayURL.appendingPathComponent("09-00-00.json")
+        let transcript = "Amy: The customer renewal is healthy, but pricing risk is still open. Jason: Send the renewal plan by Friday."
+        try Data(repeating: 12, count: 512).write(to: wavURL, options: .atomic)
+        try transcript.write(to: txtURL, atomically: true, encoding: .utf8)
+        try uiTestTranscriptJSON(
+            audioPath: wavURL.path,
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(90),
+            text: transcript
+        )
+        .write(to: jsonURL, atomically: true, encoding: .utf8)
+
+        let recording = try await store.upsert(Recording(
+            wavPath: wavURL.path,
+            txtPath: txtURL.path,
+            jsonPath: jsonURL.path,
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(90),
+            title: "UI Test Customer Renewal",
+            transcriptText: transcript,
+            tags: ["customer", "renewal"],
+            speakerNames: [0: "Amy", 1: "Jason"],
+            summaryMarkdown: "The customer renewal is healthy, but pricing risk remains open.",
+            actionItemsMarkdown: "- [ ] Jason: send the renewal plan by Friday",
+            summaryModelID: "ui-test-model",
+            summaryGeneratedAt: startedAt.addingTimeInterval(120),
+            summarySourceWordCount: 18
+        ))
+
+        let noteStore = NoteStore(rootURL: root.appendingPathComponent("Notes", isDirectory: true))
+        _ = try await noteStore.create(
+            title: "UI Test Renewal Note",
+            body: "Follow up with Michelle about the customer renewal.",
+            recordings: recording.id.map { ["recording:\($0)"] } ?? []
+        )
+
+        let wikiStore = HarcWikiStore(rootURL: root.appendingPathComponent("Wiki", isDirectory: true))
+        _ = try await wikiStore.writePage(
+            section: .overview,
+            title: "UI Test Renewal Wiki",
+            body: """
+            # UI Test Renewal Wiki
+
+            The renewal workspace tracks pricing risk, Friday follow-up, and Michelle's customer renewal note.
+            """
+        )
+        let reviewStore = WikiReviewStore(
+            fileURL: root.appendingPathComponent("Wiki/.review/proposals.json"),
+            wikiStore: wikiStore
+        )
+        _ = try await reviewStore.upsert(WikiReviewProposal(
+            id: "ui-test-renewal-proposal",
+            kind: .createPage,
+            title: "UI Test Renewal Proposal",
+            summary: "Create a durable renewal page from the customer call and note.",
+            targetSection: .projects,
+            targetTitle: "UI Test Renewal Project",
+            proposedMarkdown: """
+            # UI Test Renewal Project
+
+            Pricing risk remains open. Jason owns the Friday renewal plan. Michelle needs the customer follow-up.
+            """,
+            sourceCitations: ["UI Test Customer Renewal", "UI Test Renewal Note"],
+            createdAt: startedAt.addingTimeInterval(180),
+            updatedAt: startedAt.addingTimeInterval(180)
+        ))
+    }
+
+    func uiTestTranscriptJSON(audioPath: String, startedAt: Date, endedAt: Date, text: String) -> String {
+        let escapedAudioPath = audioPath.replacingOccurrences(of: #"""#, with: #"\""#)
+        let escapedText = text.replacingOccurrences(of: #"""#, with: #"\""#)
+        return """
+        {
+          "audioPath": "\(escapedAudioPath)",
+          "chunks": [],
+          "endedAt": \(Int(endedAt.timeIntervalSince1970)),
+          "joinedText": "\(escapedText)",
+          "speakers": [
+            {"endMs": 45000, "speaker": 0, "startMs": 0},
+            {"endMs": 90000, "speaker": 1, "startMs": 45000}
+          ],
+          "startedAt": \(Int(startedAt.timeIntervalSince1970)),
+          "words": [
+            {"endMs": 500, "startMs": 0, "text": "Amy"},
+            {"endMs": 1000, "startMs": 500, "text": "customer"},
+            {"endMs": 1500, "startMs": 1000, "text": "renewal"},
+            {"endMs": 45500, "startMs": 45000, "text": "Jason"},
+            {"endMs": 46000, "startMs": 45500, "text": "Friday"}
+          ]
+        }
+        """
+    }
+
+    var uiTestRecordingTitle: String {
+        ProcessInfo.processInfo.environment["HARC_UI_TEST_RECORDING_TITLE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+            ?? "UI Test Live Pipeline Review"
+    }
+
+    var uiTestRecordingTranscript: String {
+        ProcessInfo.processInfo.environment["HARC_UI_TEST_RECORDING_TRANSCRIPT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+            ?? "Alyssa: Budget owner confirmed the launch checklist is complete. Marco: Send the customer recap by Friday and keep the renewal risk visible."
+    }
+
+    func uiTestWords(for transcript: String) -> [Word] {
+        transcript
+            .split(separator: " ")
+            .enumerated()
+            .map { index, word in
+                Word(
+                    text: String(word).trimmingCharacters(in: .punctuationCharacters),
+                    startMs: index * 400,
+                    endMs: (index + 1) * 400
+                )
+            }
+    }
+}
+#else
+private extension AppDelegate {
+    var isUITesting: Bool { false }
+    var shouldOpenLibraryForUITest: Bool { false }
+    var shouldUseUITestRecordingLoop: Bool { false }
+    var uiTestDatabaseURL: URL? { nil }
+    var uiTestRecoveryQueueURL: URL? { nil }
+    func applyUITestConfigurationIfNeeded() {}
+    func startUITestRecording(at startedAt: Date) async {}
+    func stopUITestRecording(startedAt: Date?, autoStopReason: AutoStopController.StopReason?) async {}
+    func seedUITestLibraryIfNeeded(store: RecordingStore) async throws {}
+}
+#endif
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 private struct StatusPopoverRoot: View {
