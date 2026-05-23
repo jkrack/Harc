@@ -194,4 +194,114 @@ struct NoteStoreTests {
 
         #expect(hits.map(\.title) == ["Migration notes"])
     }
+
+    @Test("attachImage writes note-owned asset and sidecar metadata")
+    func attachImageWritesAssetAndMetadata() async throws {
+        let store = try makeStore()
+        let note = try await store.create(title: "Slide review")
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00])
+
+        let result = try await store.attachImage(
+            toNoteID: note.id,
+            data: png,
+            mimeType: "image/png",
+            preferredFilename: "Quarterly Slide.png"
+        )
+
+        #expect(result.attachment.mimeType == "image/png")
+        #expect(result.attachment.relativePath.hasPrefix("\(note.id).assets/"))
+        #expect(result.markdown.contains("](./\(result.attachment.relativePath))"))
+
+        let assetURL = note.fileURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(result.attachment.relativePath)
+        #expect(FileManager.default.fileExists(atPath: assetURL.path))
+
+        let refetched = try await store.fetch(id: note.id)
+        #expect(refetched?.attachments.count == 1)
+        #expect(refetched?.attachments.first?.altText == "quarterly slide")
+    }
+
+    @Test("search matches attachment captions")
+    func searchMatchesAttachmentCaptions() async throws {
+        let store = try makeStore()
+        let note = try await store.create(title: "Board meeting")
+        let jpg = Data([0xFF, 0xD8, 0xFF, 0x00])
+        let result = try await store.attachImage(
+            toNoteID: note.id,
+            data: jpg,
+            mimeType: "image/jpeg",
+            preferredFilename: "Pipeline.jpg"
+        )
+        _ = try await store.updateAttachmentCaption(
+            noteID: note.id,
+            attachmentID: result.attachment.id,
+            caption: "Slide shows enterprise pipeline risk and renewal dates.",
+            status: .captioned,
+            modelID: "test-vision"
+        )
+
+        let hits = try await store.search(query: "enterprise renewal")
+
+        #expect(hits.map(\.id) == [note.id])
+    }
+
+    @Test("removeAttachment deletes note-owned file and markdown reference")
+    func removeAttachmentDeletesFileAndMarkdownReference() async throws {
+        let store = try makeStore()
+        var note = try await store.create(title: "Design review")
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let result = try await store.attachImage(
+            toNoteID: note.id,
+            data: png,
+            mimeType: "image/png",
+            preferredFilename: "Slide.png"
+        )
+        note = result.note
+        note.body = "Before\n\n\(result.markdown)\n\nAfter"
+        note = try await store.update(note)
+        let assetURL = note.fileURL.deletingLastPathComponent().appendingPathComponent(result.attachment.relativePath)
+        #expect(FileManager.default.fileExists(atPath: assetURL.path))
+
+        let saved = try await store.removeAttachment(noteID: note.id, attachmentID: result.attachment.id)
+
+        #expect(saved.attachments.isEmpty)
+        #expect(!saved.body.contains(result.attachment.relativePath))
+        #expect(!FileManager.default.fileExists(atPath: assetURL.path))
+    }
+
+    @Test("update prunes attachment metadata when markdown reference is deleted")
+    func updatePrunesAttachmentWhenMarkdownReferenceDeleted() async throws {
+        let store = try makeStore()
+        var note = try await store.create(title: "Prune image")
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let result = try await store.attachImage(
+            toNoteID: note.id,
+            data: png,
+            mimeType: "image/png",
+            preferredFilename: "Slide.png"
+        )
+        note = result.note
+        note.body = result.markdown
+        note = try await store.update(note)
+        note.body = "Image removed from the note."
+
+        let saved = try await store.update(note)
+
+        #expect(saved.attachments.isEmpty)
+    }
+
+    @Test("attachImage rejects unsupported image data")
+    func attachImageRejectsUnsupportedData() async throws {
+        let store = try makeStore()
+        let note = try await store.create(title: "Bad image")
+
+        await #expect(throws: StoreError.invalidData("Only PNG and JPEG note images are supported.")) {
+            _ = try await store.attachImage(
+                toNoteID: note.id,
+                data: Data("not an image".utf8),
+                mimeType: "image/gif"
+            )
+        }
+    }
 }

@@ -29,26 +29,73 @@ public struct NoteMarkdownLinkTarget: Codable, Equatable, Sendable {
     }
 }
 
+public struct NotePastedImage: Equatable, Sendable {
+    public let data: Data
+    public let mimeType: String
+    public let filename: String?
+}
+
+@MainActor
+protocol NoteImagePasteSink: AnyObject {
+    func insertMarkdown(_ markdown: String)
+    func showAttachmentError(_ message: String)
+}
+
+@MainActor
+final class NoteImagePasteHandler {
+    private let onPasteImage: (@MainActor (NotePastedImage) async throws -> String)?
+
+    init(onPasteImage: (@MainActor (NotePastedImage) async throws -> String)?) {
+        self.onPasteImage = onPasteImage
+    }
+
+    func handle(_ body: [String: Any], sink: NoteImagePasteSink) async {
+        guard let onPasteImage,
+              let base64 = body["data"] as? String,
+              let data = Data(base64Encoded: base64),
+              let mimeType = body["mimeType"] as? String else {
+            sink.showAttachmentError("Could not read the pasted image.")
+            return
+        }
+        do {
+            let markdown = try await onPasteImage(NotePastedImage(
+                data: data,
+                mimeType: mimeType,
+                filename: body["filename"] as? String
+            ))
+            sink.insertMarkdown(markdown)
+        } catch {
+            sink.showAttachmentError(error.localizedDescription)
+        }
+    }
+}
+
 public struct NoteMarkdownWebView: NSViewRepresentable {
     @Binding private var text: String
     private let mode: NoteMarkdownEditorMode
     private let linkTargets: [NoteMarkdownLinkTarget]
     private let mentionTargets: [NoteMarkdownLinkTarget]
+    private let attachmentBaseURL: URL?
+    private let onPasteImage: (@MainActor (NotePastedImage) async throws -> String)?
 
     public init(
         text: Binding<String>,
         mode: NoteMarkdownEditorMode,
         linkTargets: [NoteMarkdownLinkTarget] = [],
-        mentionTargets: [NoteMarkdownLinkTarget] = []
+        mentionTargets: [NoteMarkdownLinkTarget] = [],
+        attachmentBaseURL: URL? = nil,
+        onPasteImage: (@MainActor (NotePastedImage) async throws -> String)? = nil
     ) {
         self._text = text
         self.mode = mode
         self.linkTargets = linkTargets
         self.mentionTargets = mentionTargets
+        self.attachmentBaseURL = attachmentBaseURL
+        self.onPasteImage = onPasteImage
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, onPasteImage: onPasteImage)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -68,7 +115,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         ) ?? Bundle.module.url(forResource: "index", withExtension: "html") {
             webView.loadFileURL(
                 htmlURL,
-                allowingReadAccessTo: htmlURL.deletingLastPathComponent()
+                allowingReadAccessTo: FileManager.default.homeDirectoryForCurrentUser
             )
         }
         return webView
@@ -79,6 +126,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         context.coordinator.updateMode(mode)
         context.coordinator.updateLinkTargets(linkTargets)
         context.coordinator.updateMentionTargets(mentionTargets)
+        context.coordinator.updateAttachmentBaseURL(attachmentBaseURL)
     }
 
     public static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -87,7 +135,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
     }
 
     @MainActor
-    public final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    public final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NoteImagePasteSink {
         private var text: Binding<String>
         private var loaded = false
         private var applyingFromWeb = false
@@ -95,10 +143,18 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         private var lastKnownMode: NoteMarkdownEditorMode = .live
         private var lastKnownLinkTargets: [NoteMarkdownLinkTarget] = []
         private var lastKnownMentionTargets: [NoteMarkdownLinkTarget] = []
+        private var lastKnownAttachmentBaseURL: URL?
+        private let onPasteImage: (@MainActor (NotePastedImage) async throws -> String)?
+        private let imagePasteHandler: NoteImagePasteHandler
         weak var webView: WKWebView?
 
-        init(text: Binding<String>) {
+        init(
+            text: Binding<String>,
+            onPasteImage: (@MainActor (NotePastedImage) async throws -> String)?
+        ) {
             self.text = text
+            self.onPasteImage = onPasteImage
+            self.imagePasteHandler = NoteImagePasteHandler(onPasteImage: onPasteImage)
             self.lastKnownText = text.wrappedValue
         }
 
@@ -108,14 +164,21 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         ) {
             guard message.name == "harc",
                   let body = message.body as? [String: Any],
-                  body["type"] as? String == "change",
-                  let next = body["text"] as? String else {
+                  let type = body["type"] as? String else {
                 return
             }
-            applyingFromWeb = true
-            lastKnownText = next
-            text.wrappedValue = next
-            applyingFromWeb = false
+            switch type {
+            case "change":
+                guard let next = body["text"] as? String else { return }
+                applyingFromWeb = true
+                lastKnownText = next
+                text.wrappedValue = next
+                applyingFromWeb = false
+            case "pasteImage":
+                handlePastedImage(body)
+            default:
+                return
+            }
         }
 
         public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -124,6 +187,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
             pushModeToWeb(lastKnownMode)
             pushLinkTargetsToWeb(lastKnownLinkTargets)
             pushMentionTargetsToWeb(lastKnownMentionTargets)
+            pushAttachmentBaseURLToWeb(lastKnownAttachmentBaseURL)
         }
 
         func updateSwiftText(_ next: String) {
@@ -148,6 +212,12 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
             guard next != lastKnownMentionTargets else { return }
             lastKnownMentionTargets = next
             pushMentionTargetsToWeb(next)
+        }
+
+        func updateAttachmentBaseURL(_ next: URL?) {
+            guard next != lastKnownAttachmentBaseURL else { return }
+            lastKnownAttachmentBaseURL = next
+            pushAttachmentBaseURLToWeb(next)
         }
 
         private func pushTextToWeb(_ next: String) {
@@ -193,6 +263,43 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
                     assertionFailure("Note editor mention target bridge failed: \(error.localizedDescription)")
                 }
             }
+        }
+
+        private func pushAttachmentBaseURLToWeb(_ url: URL?) {
+            guard loaded, let webView else { return }
+            let value = url?.absoluteString ?? ""
+            let encoded = (try? JSONEncoder().encode(value))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+            webView.evaluateJavaScript("window.HarcEditor?.setAttachmentBaseURL(\(encoded));") { _, error in
+                if let error {
+                    assertionFailure("Note editor attachment bridge failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        private func handlePastedImage(_ body: [String: Any]) {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await imagePasteHandler.handle(body, sink: self)
+            }
+        }
+
+        func insertMarkdown(_ markdown: String) {
+            guard loaded, let webView else { return }
+            let encoded = (try? JSONEncoder().encode(markdown))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+            webView.evaluateJavaScript("window.HarcEditor?.insertMarkdown(\(encoded));") { _, error in
+                if let error {
+                    assertionFailure("Note editor insert markdown failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        func showAttachmentError(_ message: String) {
+            guard loaded, let webView else { return }
+            let encoded = (try? JSONEncoder().encode(message))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "\"Could not attach image.\""
+            webView.evaluateJavaScript("window.HarcEditor?.showAttachmentError(\(encoded));") { _, _ in }
         }
     }
 }

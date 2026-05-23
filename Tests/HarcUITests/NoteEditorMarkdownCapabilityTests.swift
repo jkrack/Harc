@@ -70,6 +70,9 @@ struct NoteEditorMarkdownCapabilityTests {
             "setText(text)",
             "getText()",
             "setMode(mode)",
+            "setAttachmentBaseURL(url)",
+            "insertMarkdown(markdown)",
+            "showAttachmentError(message)",
             "setLinkTargets(targets)",
             "setMentionTargets(targets)",
             "autocompletion",
@@ -99,6 +102,13 @@ struct NoteEditorMarkdownCapabilityTests {
             "cm-md-context-line",
             "cm-md-table-line",
             "cm-md-hr",
+            "ImageAttachmentWidget",
+            "const imageLink =",
+            "readClipboardImage(file)",
+            #"type: "pasteImage""#,
+            "resolveAttachmentURL(path)",
+            "cm-md-image",
+            "attachment-error",
         ]
 
         for snippet in requiredSnippets {
@@ -117,6 +127,9 @@ struct NoteEditorMarkdownCapabilityTests {
 
         #expect(css.contains("cm-entity-mention"))
         #expect(css.contains("cm-project-mention"))
+        #expect(css.contains(".cm-md-image"))
+        #expect(css.contains(".cm-md-image img"))
+        #expect(css.contains(".attachment-error"))
     }
 
     @Test("note editor HTML loads only bundled local assets")

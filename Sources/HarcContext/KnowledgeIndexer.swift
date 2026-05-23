@@ -113,6 +113,13 @@ public actor KnowledgeIndexer {
             note.title,
             note.tags.joined(separator: " "),
             note.people.joined(separator: " "),
+            note.attachments
+                .map { attachment in
+                    let text = attachment.searchableText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return text.isEmpty ? "" : "Image: \(text)"
+                }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n"),
         ]
         .joined(separator: "\n")
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -149,6 +156,7 @@ public actor KnowledgeIndexer {
             note.body,
             note.tags.joined(separator: "\u{1f}"),
             note.people.joined(separator: "\u{1f}"),
+            note.attachments.map(\.searchableText).joined(separator: "\u{1f}"),
         ].joined(separator: "\u{1e}")
         let digest = SHA256.hash(data: Data(material.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()

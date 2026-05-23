@@ -67,6 +67,14 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertTrue(embedders.allSatisfy(\.manifestVerified))
     }
 
+    func test_descriptors_visionCaptionerIsVerifiedSingleton() {
+        let captioners = ModelCatalog.descriptors(for: .visionCaptioner)
+        XCTAssertEqual(captioners.map(\.id), ["qwen2.5-vl-3b-instruct-4bit"])
+        XCTAssertEqual(captioners.first?.tier, .singleton)
+        XCTAssertEqual(ModelCatalog.downloadableDescriptors(for: .visionCaptioner).map(\.id), ["qwen2.5-vl-3b-instruct-4bit"])
+        XCTAssertTrue(captioners.first?.manifestVerified == true)
+    }
+
     func test_atLeastOneSummarizerHasVerifiedManifest() {
         let summarizers = ModelCatalog.descriptors(for: .summarizer)
         XCTAssertTrue(summarizers.contains(where: { $0.manifestVerified }),

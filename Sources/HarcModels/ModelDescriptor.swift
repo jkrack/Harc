@@ -1,10 +1,10 @@
 import Foundation
 
-/// What role a model plays in the app. Today: `summarizer` (Gemma 4) and
-/// `textEmbedder` (BGE-small). More tasks may be added as features land.
+/// What role a model plays in the app.
 public enum ModelTask: String, Codable, Sendable {
     case summarizer
     case textEmbedder
+    case visionCaptioner
 }
 
 /// Quality / resource tier. `standard`, `quality`, `max` are ordered; models
