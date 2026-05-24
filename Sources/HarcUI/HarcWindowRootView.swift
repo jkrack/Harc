@@ -2074,27 +2074,7 @@ public struct HarcWindowRootView: View {
     }
 
     private func notePreviewAttributedString(_ markdown: String) -> AttributedString {
-        let normalized = markdownWithLenientHeadingSpacing(markdown)
-        if let rendered = try? AttributedString(
-            markdown: normalized,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
-        ) {
-            return rendered
-        }
-        return AttributedString(markdown)
-    }
-
-    private func markdownWithLenientHeadingSpacing(_ markdown: String) -> String {
-        let pattern = #"(?m)^(#{1,6})([^\s#].*)$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return markdown
-        }
-        let range = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
-        return regex.stringByReplacingMatches(
-            in: markdown,
-            range: range,
-            withTemplate: "$1 $2"
-        )
+        NoteMarkdownPreviewRenderer.rendered(markdown)
     }
 
     private func noteRecordingLinkBanner(_ feedback: NoteRecordingLinkFeedback) -> some View {
