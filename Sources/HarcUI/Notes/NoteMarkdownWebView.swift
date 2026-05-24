@@ -11,8 +11,8 @@ public enum NoteMarkdownEditorMode: String, CaseIterable, Identifiable {
     public var title: String {
         switch self {
         case .source: return "Source"
-        case .live: return "Live"
-        case .read: return "Read"
+        case .live: return "Edit"
+        case .read: return "Preview"
         }
     }
 }

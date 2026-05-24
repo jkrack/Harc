@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import HarcUI
 
 struct NoteEditorMarkdownCapabilityTests {
     private let repoRoot = URL(fileURLWithPath: #filePath)
@@ -52,6 +53,13 @@ struct NoteEditorMarkdownCapabilityTests {
                 "Missing Markdown capability fixture coverage for \(name)"
             )
         }
+    }
+
+    @Test("note editor mode labels distinguish editing from preview")
+    func noteEditorModeLabelsDistinguishEditingFromPreview() {
+        #expect(NoteMarkdownEditorMode.source.title == "Source")
+        #expect(NoteMarkdownEditorMode.live.title == "Edit")
+        #expect(NoteMarkdownEditorMode.read.title == "Preview")
     }
 
     @Test("note editor source keeps CodeMirror Markdown and app bridge capabilities")
