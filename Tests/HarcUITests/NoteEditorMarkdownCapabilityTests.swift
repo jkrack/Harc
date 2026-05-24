@@ -62,6 +62,20 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(NoteMarkdownEditorMode.read.title == "Preview")
     }
 
+    @Test("note detail uses native TextEditor for editable modes")
+    func noteDetailUsesNativeTextEditorForEditableModes() throws {
+        let source = try String(
+            contentsOf: repoRoot.appendingPathComponent("Sources/HarcUI/HarcWindowRootView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("case .source, .live:"))
+        #expect(source.contains("TextEditor(text: Binding("))
+        #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownTextEditor")"#))
+        #expect(source.contains("case .read:"))
+        #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownPreview")"#))
+    }
+
     @Test("note editor source keeps CodeMirror Markdown and app bridge capabilities")
     func noteEditorSourceKeepsCodeMirrorMarkdownAndAppBridgeCapabilities() throws {
         let source = try String(
