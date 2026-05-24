@@ -1924,6 +1924,8 @@ public struct HarcWindowRootView: View {
                onPasteImage: { image in
                    try await pasteImage(image, into: note.id)
                })
+            .frame(minHeight: 360, maxHeight: .infinity)
+            .layoutPriority(1)
 
             noteLinksSection(note: note)
 
