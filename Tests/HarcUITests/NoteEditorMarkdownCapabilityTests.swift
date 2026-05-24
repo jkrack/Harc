@@ -69,10 +69,16 @@ struct NoteEditorMarkdownCapabilityTests {
             encoding: .utf8
         )
 
-        #expect(source.contains("case .source, .live:"))
+        #expect(source.contains("case .source:"))
+        #expect(source.contains("case .live:"))
+        #expect(source.contains("noteTextEditorSurface(font: .body)"))
+        #expect(source.contains("noteRenderedMarkdownSurface()"))
         #expect(source.contains("TextEditor(text: Binding("))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownTextEditor")"#))
         #expect(source.contains("case .read:"))
+        #expect(source.contains("notePreviewAttributedString(noteBodyDraft)"))
+        #expect(source.contains("AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)"))
+        #expect(source.contains("markdownWithLenientHeadingSpacing"))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownPreview")"#))
     }
 
