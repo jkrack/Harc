@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import HarcStore
 import HarcExport
 import HarcClient
@@ -2010,48 +2011,90 @@ public struct HarcWindowRootView: View {
     @ViewBuilder
     private func noteEditorSurface(note: Note) -> some View {
         switch noteEditorMode {
-        case .source, .live:
-            ZStack(alignment: .topLeading) {
-                if noteBodyDraft.isEmpty {
-                    Text("Start writing in Markdown...")
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 22)
-                        .allowsHitTesting(false)
-                }
+        case .source:
+            noteTextEditorSurface(font: .system(.body, design: .monospaced))
 
-                TextEditor(text: Binding(
-                    get: { noteBodyDraft },
-                    set: {
-                        noteBodyDraft = $0
-                        markNoteEdited()
-                    }
-                ))
-                .font(noteEditorMode == .source ? .system(.body, design: .monospaced) : .body)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-                .scrollContentBackground(.hidden)
-                .background(Color(nsColor: .textBackgroundColor))
-                .accessibilityLabel("Markdown note editor")
-                .accessibilityIdentifier("harc.note.markdownTextEditor")
+        case .live:
+            HStack(spacing: 0) {
+                noteTextEditorSurface(font: .body)
+                    .frame(minWidth: 320)
+                Divider()
+                noteRenderedMarkdownSurface()
+                    .frame(minWidth: 320)
             }
             .background(Color(nsColor: .textBackgroundColor))
 
         case .read:
-            ScrollView {
-                Text(noteBodyDraft.isEmpty ? "Start writing in Markdown..." : noteBodyDraft)
-                    .font(.body)
-                    .foregroundStyle(noteBodyDraft.isEmpty ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: 820, alignment: .leading)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(Color(nsColor: .textBackgroundColor))
+            noteRenderedMarkdownSurface()
             .accessibilityLabel("Markdown note preview")
             .accessibilityIdentifier("harc.note.markdownPreview")
         }
+    }
+
+    private func noteTextEditorSurface(font: Font) -> some View {
+        ZStack(alignment: .topLeading) {
+            if noteBodyDraft.isEmpty {
+                Text("Start writing in Markdown...")
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 22)
+                    .allowsHitTesting(false)
+            }
+
+            TextEditor(text: Binding(
+                get: { noteBodyDraft },
+                set: {
+                    noteBodyDraft = $0
+                    markNoteEdited()
+                }
+            ))
+            .font(font)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .textBackgroundColor))
+            .accessibilityLabel("Markdown note editor")
+            .accessibilityIdentifier("harc.note.markdownTextEditor")
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private func noteRenderedMarkdownSurface() -> some View {
+        ScrollView {
+            Text(noteBodyDraft.isEmpty ? AttributedString("Start writing in Markdown...") : notePreviewAttributedString(noteBodyDraft))
+                .font(.body)
+                .foregroundStyle(noteBodyDraft.isEmpty ? .secondary : .primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: 820, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private func notePreviewAttributedString(_ markdown: String) -> AttributedString {
+        let normalized = markdownWithLenientHeadingSpacing(markdown)
+        if let rendered = try? AttributedString(
+            markdown: normalized,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
+        ) {
+            return rendered
+        }
+        return AttributedString(markdown)
+    }
+
+    private func markdownWithLenientHeadingSpacing(_ markdown: String) -> String {
+        let pattern = #"(?m)^(#{1,6})([^\s#].*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return markdown
+        }
+        let range = NSRange(markdown.startIndex..<markdown.endIndex, in: markdown)
+        return regex.stringByReplacingMatches(
+            in: markdown,
+            range: range,
+            withTemplate: "$1 $2"
+        )
     }
 
     private func noteRecordingLinkBanner(_ feedback: NoteRecordingLinkFeedback) -> some View {
