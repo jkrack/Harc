@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 import HarcModels
 import MLX
 import MLXEmbedders
@@ -30,6 +31,8 @@ public actor MLXTextEmbedder: LocalTextEmbedder {
 
     private let modelDirectory: URL
     private var container: EmbedderModelContainer?
+    public private(set) var idleUnloadDelay: TimeInterval?
+    private var idleUnloadTask: Task<Void, Never>?
 
     public init(
         modelID: String = "bge-small-en-v1.5",
@@ -41,6 +44,8 @@ public actor MLXTextEmbedder: LocalTextEmbedder {
     }
 
     public func embed(texts: [String]) async throws -> [Data] {
+        cancelIdleUnload()
+        defer { scheduleIdleUnload(reason: "idle") }
         let cleaned = texts.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -79,16 +84,80 @@ public actor MLXTextEmbedder: LocalTextEmbedder {
         return vectors.map(EmbeddingVectorCodec.encode)
     }
 
+    public var isLoaded: Bool {
+        container != nil
+    }
+
+    public func setIdleUnloadDelay(_ delay: TimeInterval?) {
+        idleUnloadDelay = delay
+        if container != nil {
+            scheduleIdleUnload(reason: "policy-change")
+        }
+    }
+
+    public func unload(reason: String = "manual") {
+        idleUnloadTask?.cancel()
+        idleUnloadTask = nil
+        guard container != nil else { return }
+        ModelRuntimeLog.event("unload.begin", modelID: modelID, reason: reason)
+        container = nil
+        ModelRuntimeLog.event("unload.end", modelID: modelID, reason: reason)
+    }
+
+    public func handleMemoryPressure() {
+        unload(reason: "memory-pressure")
+    }
+
+    public nonisolated func startObservingMemoryPressure() -> MemoryPressureObservation {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: .global(qos: .utility)
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            Task { await self.handleMemoryPressure() }
+        }
+        source.resume()
+        return MemoryPressureObservation(source: source)
+    }
+
+    public final class MemoryPressureObservation: @unchecked Sendable {
+        private let source: DispatchSourceMemoryPressure
+        init(source: DispatchSourceMemoryPressure) { self.source = source }
+        deinit { source.cancel() }
+    }
+
     private func getOrLoad() async throws -> EmbedderModelContainer {
         if let container { return container }
         guard FileManager.default.fileExists(atPath: modelDirectory.path) else {
             throw MLXTextEmbedderError.modelDirectoryMissing(modelDirectory)
         }
+        ModelRuntimeLog.event("load.begin", modelID: modelID, reason: "embedder")
         let loaded = try await EmbedderModelFactory.shared.loadContainer(
             from: modelDirectory,
             using: #huggingFaceTokenizerLoader()
         )
         container = loaded
+        ModelRuntimeLog.event("load.end", modelID: modelID, reason: "embedder")
         return loaded
+    }
+
+    private func cancelIdleUnload() {
+        idleUnloadTask?.cancel()
+        idleUnloadTask = nil
+    }
+
+    private func scheduleIdleUnload(reason: String) {
+        cancelIdleUnload()
+        guard let idleUnloadDelay, container != nil else { return }
+        let nanoseconds = UInt64(max(0, idleUnloadDelay) * 1_000_000_000)
+        idleUnloadTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            await self?.unload(reason: reason)
+        }
     }
 }

@@ -21,6 +21,14 @@ public struct ModelsSettingsView: View {
                 Text("Harc runs all AI work on your Mac. Download only the tiers you need.")
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
+                Picker("Performance", selection: $prefs.modelPerformanceMode) {
+                    ForEach(HarcPreferences.ModelPerformanceMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                Text(prefs.modelPerformanceMode.detail)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
             } header: {
                 Text("Models")
             }
@@ -75,7 +83,7 @@ public struct ModelsSettingsView: View {
                 } header: {
                     Text("Image captions")
                 } footer: {
-                    Text("Optional local vision model for slide and screenshot captions in notes.")
+                    Text("Optional augmentation for slide and screenshot captions in notes. Not required for initial setup, recording, transcription, search, or summaries.")
                         .font(.subheadline)
                         .foregroundStyle(Color.secondary)
                 }

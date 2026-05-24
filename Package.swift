@@ -90,6 +90,7 @@ let package = Package(
         .target(
             name: "HarcContext",
             dependencies: [
+                "HarcCore",
                 "HarcModels",
                 "HarcStore",
                 .product(name: "MLX", package: "mlx-swift"),

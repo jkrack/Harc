@@ -34,6 +34,8 @@ public final class HarcPreferences: ObservableObject {
         static let appearance = "harc.appearance"
         static let sourceRoots = "harc.sourceRoots"
         static let sourceScanLimit = "harc.sourceScanLimit"
+        static let welcomeFlowCompleted = "harc.welcomeFlowCompleted"
+        static let modelPerformanceMode = "harc.modelPerformanceMode"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -52,6 +54,49 @@ public final class HarcPreferences: ObservableObject {
             case .system: return nil
             case .light:  return .light
             case .dark:   return .dark
+            }
+        }
+    }
+
+    public enum ModelPerformanceMode: String, CaseIterable, Identifiable {
+        case balanced
+        case fastResponses
+        case lowMemory
+
+        public var id: String { rawValue }
+
+        public var displayName: String {
+            switch self {
+            case .balanced: return "Balanced"
+            case .fastResponses: return "Fast Responses"
+            case .lowMemory: return "Low Memory"
+            }
+        }
+
+        public var detail: String {
+            switch self {
+            case .balanced:
+                return "Keep recently used models warm briefly, then release them."
+            case .fastResponses:
+                return "Keep recently used models warm longer for faster follow-up questions."
+            case .lowMemory:
+                return "Release models as soon as each job finishes."
+            }
+        }
+
+        public var summarizerIdleUnloadDelay: TimeInterval {
+            switch self {
+            case .balanced: return 10 * 60
+            case .fastResponses: return 30 * 60
+            case .lowMemory: return 0
+            }
+        }
+
+        public var embedderIdleUnloadDelay: TimeInterval {
+            switch self {
+            case .balanced: return 30 * 60
+            case .fastResponses: return 60 * 60
+            case .lowMemory: return 0
             }
         }
     }
@@ -191,6 +236,14 @@ public final class HarcPreferences: ObservableObject {
         }
     }
 
+    @Published public var welcomeFlowCompleted: Bool {
+        didSet { UserDefaults.standard.set(welcomeFlowCompleted, forKey: Key.welcomeFlowCompleted) }
+    }
+
+    @Published public var modelPerformanceMode: ModelPerformanceMode {
+        didSet { UserDefaults.standard.set(modelPerformanceMode.rawValue, forKey: Key.modelPerformanceMode) }
+    }
+
     public static let shared = HarcPreferences()
     public static let defaultSourceScanLimit = 40
     public static let sourceScanLimitRange = 10...500
@@ -252,6 +305,9 @@ public final class HarcPreferences: ObservableObject {
         } else {
             self.sourceRoots = []
         }
+        self.welcomeFlowCompleted = defaults.object(forKey: Key.welcomeFlowCompleted) as? Bool ?? false
+        let rawModelPerformanceMode = defaults.string(forKey: Key.modelPerformanceMode) ?? ModelPerformanceMode.balanced.rawValue
+        self.modelPerformanceMode = ModelPerformanceMode(rawValue: rawModelPerformanceMode) ?? .balanced
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {
@@ -314,6 +370,10 @@ public final class HarcPreferences: ObservableObject {
         var copy = pasteDenyListBundleIDs
         copy.remove(bundleID)
         pasteDenyListBundleIDs = copy.union(PasteDenyList.lockedBundleIDs)
+    }
+
+    public func completeWelcomeFlow() {
+        welcomeFlowCompleted = true
     }
 
     /// The default destination — `~/Documents/Harc`. Available as a

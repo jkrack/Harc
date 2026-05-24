@@ -309,6 +309,14 @@ public struct MenuBarPanelView: View {
             .keyboardShortcut(",", modifiers: .command)
             Spacer(minLength: 12)
             Button {
+                NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Text("Welcome…")
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 12)
+            Button {
                 NSApplication.shared.terminate(nil)
             } label: {
                 HStack(spacing: 4) {
