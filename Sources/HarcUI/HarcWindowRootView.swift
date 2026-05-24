@@ -2015,14 +2015,22 @@ public struct HarcWindowRootView: View {
             noteTextEditorSurface(font: .system(.body, design: .monospaced))
 
         case .live:
-            HStack(spacing: 0) {
-                noteTextEditorSurface(font: .body)
-                    .frame(minWidth: 320)
-                Divider()
-                noteRenderedMarkdownSurface()
-                    .frame(minWidth: 320)
-            }
+            NoteMarkdownWebView(text: Binding(
+                get: { noteBodyDraft },
+                set: {
+                    noteBodyDraft = $0
+                    markNoteEdited()
+                }
+            ), mode: .live,
+               linkTargets: noteLinkTargets(for: note),
+               mentionTargets: noteMentionTargets(),
+               attachmentBaseURL: note.fileURL.deletingLastPathComponent(),
+               onPasteImage: { image in
+                   try await pasteImage(image, into: note.id)
+               })
             .background(Color(nsColor: .textBackgroundColor))
+            .accessibilityLabel("Live Markdown note editor")
+            .accessibilityIdentifier("harc.note.liveMarkdownEditor")
 
         case .read:
             noteRenderedMarkdownSurface()
@@ -2061,20 +2069,73 @@ public struct HarcWindowRootView: View {
 
     private func noteRenderedMarkdownSurface() -> some View {
         ScrollView {
-            Text(noteBodyDraft.isEmpty ? AttributedString("Start writing in Markdown...") : notePreviewAttributedString(noteBodyDraft))
-                .font(.body)
-                .foregroundStyle(noteBodyDraft.isEmpty ? .secondary : .primary)
-                .textSelection(.enabled)
-                .frame(maxWidth: 820, alignment: .leading)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 20)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 10) {
+                if noteBodyDraft.isEmpty {
+                    Text("Start writing in Markdown...")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(notePreviewBlocks(noteBodyDraft).enumerated()), id: \.offset) { _, block in
+                        notePreviewBlockView(block)
+                    }
+                }
+            }
+            .textSelection(.enabled)
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(nsColor: .textBackgroundColor))
     }
 
-    private func notePreviewAttributedString(_ markdown: String) -> AttributedString {
-        NoteMarkdownPreviewRenderer.rendered(markdown)
+    private func notePreviewBlocks(_ markdown: String) -> [NoteMarkdownPreviewRenderer.Block] {
+        NoteMarkdownPreviewRenderer.blocks(markdown)
+    }
+
+    @ViewBuilder
+    private func notePreviewBlockView(_ block: NoteMarkdownPreviewRenderer.Block) -> some View {
+        switch block.kind {
+        case .heading(let level):
+            Text(block.content)
+                .font(level <= 1 ? .title.bold() : level == 2 ? .title2.bold() : .title3.bold())
+                .padding(.top, level <= 2 ? 6 : 2)
+        case .paragraph:
+            Text(block.content)
+                .font(.body)
+        case .unorderedListItem:
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("•")
+                Text(block.content)
+            }
+            .font(.body)
+        case .orderedListItem(let number):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(number).")
+                    .monospacedDigit()
+                Text(block.content)
+            }
+            .font(.body)
+        case .quote:
+            Text(block.content)
+                .font(.body.italic())
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(width: 3)
+                }
+        case .thematicBreak:
+            Divider()
+                .padding(.vertical, 6)
+        case .code:
+            Text(block.content)
+                .font(.system(.body, design: .monospaced))
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
     }
 
     private func noteRecordingLinkBanner(_ feedback: NoteRecordingLinkFeedback) -> some View {
