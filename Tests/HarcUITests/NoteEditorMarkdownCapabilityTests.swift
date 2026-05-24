@@ -77,9 +77,42 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownTextEditor")"#))
         #expect(source.contains("case .read:"))
         #expect(source.contains("notePreviewAttributedString(noteBodyDraft)"))
-        #expect(source.contains("AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)"))
-        #expect(source.contains("markdownWithLenientHeadingSpacing"))
+        #expect(source.contains("NoteMarkdownPreviewRenderer.rendered(markdown)"))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownPreview")"#))
+    }
+
+    @Test("Markdown preview renderer formats common note markdown")
+    func markdownPreviewRendererFormatsCommonNoteMarkdown() {
+        let rendered = NoteMarkdownPreviewRenderer.rendered("""
+        ###Title
+
+        **Bold** text and `code`.
+
+        - First
+        """)
+        let visibleText = String(rendered.characters)
+
+        #expect(visibleText.contains("Title"))
+        #expect(visibleText.contains("Bold text and code."))
+        #expect(visibleText.contains("First"))
+        #expect(!visibleText.contains("###"))
+        #expect(!visibleText.contains("**"))
+        #expect(!visibleText.contains("`"))
+    }
+
+    @Test("Markdown preview renderer normalizes heading shorthand only at line starts")
+    func markdownPreviewRendererNormalizesHeadingShorthandOnlyAtLineStarts() {
+        let raw = """
+        ###Title
+        Body #tag should remain inline.
+        #### Another
+        """
+
+        let normalized = NoteMarkdownPreviewRenderer.markdownWithLenientHeadingSpacing(raw)
+
+        #expect(normalized.contains("### Title"))
+        #expect(normalized.contains("Body #tag should remain inline."))
+        #expect(normalized.contains("#### Another"))
     }
 
     @Test("note editor source keeps CodeMirror Markdown and app bridge capabilities")
