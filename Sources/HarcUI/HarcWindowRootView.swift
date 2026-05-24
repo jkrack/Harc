@@ -1911,21 +1911,9 @@ public struct HarcWindowRootView: View {
 
             Divider()
 
-            NoteMarkdownWebView(text: Binding(
-                get: { noteBodyDraft },
-                set: {
-                    noteBodyDraft = $0
-                    markNoteEdited()
-                }
-            ), mode: noteEditorMode,
-               linkTargets: noteLinkTargets(for: note),
-               mentionTargets: noteMentionTargets(),
-               attachmentBaseURL: note.fileURL.deletingLastPathComponent(),
-               onPasteImage: { image in
-                   try await pasteImage(image, into: note.id)
-               })
-            .frame(minHeight: 360, maxHeight: .infinity)
-            .layoutPriority(1)
+            noteEditorSurface(note: note)
+                .frame(minHeight: 360, maxHeight: .infinity)
+                .layoutPriority(1)
 
             noteLinksSection(note: note)
 
@@ -2016,6 +2004,53 @@ public struct HarcWindowRootView: View {
                     Label("Delete Note", systemImage: "trash")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func noteEditorSurface(note: Note) -> some View {
+        switch noteEditorMode {
+        case .source, .live:
+            ZStack(alignment: .topLeading) {
+                if noteBodyDraft.isEmpty {
+                    Text("Start writing in Markdown...")
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 22)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: Binding(
+                    get: { noteBodyDraft },
+                    set: {
+                        noteBodyDraft = $0
+                        markNoteEdited()
+                    }
+                ))
+                .font(noteEditorMode == .source ? .system(.body, design: .monospaced) : .body)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .textBackgroundColor))
+                .accessibilityLabel("Markdown note editor")
+                .accessibilityIdentifier("harc.note.markdownTextEditor")
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+
+        case .read:
+            ScrollView {
+                Text(noteBodyDraft.isEmpty ? "Start writing in Markdown..." : noteBodyDraft)
+                    .font(.body)
+                    .foregroundStyle(noteBodyDraft.isEmpty ? .secondary : .primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+            .accessibilityLabel("Markdown note preview")
+            .accessibilityIdentifier("harc.note.markdownPreview")
         }
     }
 
