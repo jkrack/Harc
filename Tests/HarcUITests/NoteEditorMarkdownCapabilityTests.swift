@@ -62,8 +62,8 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(NoteMarkdownEditorMode.read.title == "Preview")
     }
 
-    @Test("note detail uses native TextEditor for editable modes")
-    func noteDetailUsesNativeTextEditorForEditableModes() throws {
+    @Test("note detail uses Source, Obsidian-style Edit, and rendered Preview surfaces")
+    func noteDetailUsesExpectedEditorModeSurfaces() throws {
         let source = try String(
             contentsOf: repoRoot.appendingPathComponent("Sources/HarcUI/HarcWindowRootView.swift"),
             encoding: .utf8
@@ -71,33 +71,42 @@ struct NoteEditorMarkdownCapabilityTests {
 
         #expect(source.contains("case .source:"))
         #expect(source.contains("case .live:"))
-        #expect(source.contains("noteTextEditorSurface(font: .body)"))
+        #expect(source.contains("NoteMarkdownWebView(text: Binding("))
+        #expect(source.contains("mode: .live"))
+        #expect(source.contains(#".accessibilityIdentifier("harc.note.liveMarkdownEditor")"#))
+        #expect(!source.contains("HStack(spacing: 0) {\n                noteTextEditorSurface(font: .body)"))
         #expect(source.contains("noteRenderedMarkdownSurface()"))
         #expect(source.contains("TextEditor(text: Binding("))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownTextEditor")"#))
         #expect(source.contains("case .read:"))
-        #expect(source.contains("notePreviewAttributedString(noteBodyDraft)"))
-        #expect(source.contains("NoteMarkdownPreviewRenderer.rendered(markdown)"))
+        #expect(source.contains("notePreviewBlocks(noteBodyDraft)"))
+        #expect(source.contains("notePreviewBlockView(block)"))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownPreview")"#))
     }
 
-    @Test("Markdown preview renderer formats common note markdown")
-    func markdownPreviewRendererFormatsCommonNoteMarkdown() {
-        let rendered = NoteMarkdownPreviewRenderer.rendered("""
+    @Test("Markdown preview renderer creates separate blocks for common note markdown")
+    func markdownPreviewRendererCreatesSeparateBlocksForCommonNoteMarkdown() {
+        let blocks = NoteMarkdownPreviewRenderer.blocks("""
         ###Title
 
         **Bold** text and `code`.
 
         - First
+        1. Ordered
         """)
-        let visibleText = String(rendered.characters)
 
-        #expect(visibleText.contains("Title"))
-        #expect(visibleText.contains("Bold text and code."))
-        #expect(visibleText.contains("First"))
-        #expect(!visibleText.contains("###"))
-        #expect(!visibleText.contains("**"))
-        #expect(!visibleText.contains("`"))
+        #expect(blocks.map(\.kind) == [
+            .heading(level: 3),
+            .paragraph,
+            .unorderedListItem,
+            .orderedListItem(number: 1)
+        ])
+        #expect(blocks.map(\.visibleText) == [
+            "Title",
+            "Bold text and code.",
+            "First",
+            "Ordered"
+        ])
     }
 
     @Test("Markdown preview renderer normalizes heading shorthand only at line starts")
@@ -113,6 +122,21 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(normalized.contains("### Title"))
         #expect(normalized.contains("Body #tag should remain inline."))
         #expect(normalized.contains("#### Another"))
+    }
+
+    @Test("Markdown preview renderer preserves explicit line breaks inside paragraphs")
+    func markdownPreviewRendererPreservesExplicitLineBreaksInsideParagraphs() {
+        let blocks = NoteMarkdownPreviewRenderer.blocks("""
+        First line
+        Second line
+
+        Third line
+        """)
+
+        #expect(blocks.count == 2)
+        #expect(blocks[0].kind == .paragraph)
+        #expect(blocks[0].visibleText == "First line\nSecond line")
+        #expect(blocks[1].visibleText == "Third line")
     }
 
     @Test("note editor source keeps CodeMirror Markdown and app bridge capabilities")
