@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 
 /// Recoverable errors surfaced by `SummarizerService`. Non-recoverable
 /// bugs (contract violations) trap as usual.
@@ -38,26 +39,40 @@ public actor SummarizerService {
 
     private let loader: Loader
     public private(set) var loadedModelID: String?
+    public private(set) var idleUnloadDelay: TimeInterval?
     private var container: (any ContainerLike)?
+    private var idleUnloadTask: Task<Void, Never>?
 
     public init(loader: @escaping Loader) {
         self.loader = loader
+    }
+
+    public func setIdleUnloadDelay(_ delay: TimeInterval?) {
+        idleUnloadDelay = delay
+        if container != nil {
+            scheduleIdleUnload(reason: "policy-change")
+        }
     }
 
     /// Drop the resident model so MLX can reclaim GPU/ANE memory.
     /// Implemented by nil-ing the container — `mlx-swift-lm` 3.x has
     /// no explicit unload method. Next `summarize(...)` pays the load
     /// cost again.
-    public func unload() {
+    public func unload(reason: String = "manual") {
+        idleUnloadTask?.cancel()
+        idleUnloadTask = nil
+        guard let currentModelID = loadedModelID else { return }
+        ModelRuntimeLog.event("unload.begin", modelID: currentModelID, reason: reason)
         container = nil
         loadedModelID = nil
+        ModelRuntimeLog.event("unload.end", modelID: currentModelID, reason: reason)
     }
 
     /// Testing seam: the memory-pressure handler, callable directly by
     /// tests. In production it's invoked by the `DispatchSource` set up
     /// in `startObservingMemoryPressure()`.
     public func handleMemoryPressure() {
-        unload()
+        unload(reason: "memory-pressure")
     }
 
     /// Begin observing OS-level memory pressure warnings and nil-out
@@ -108,7 +123,9 @@ public actor SummarizerService {
         modelDirectory: URL,
         budgetWords: Int
     ) async throws -> SummaryParseResult {
+        cancelIdleUnload()
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
+        defer { scheduleIdleUnload(reason: "idle") }
         let promptBody = SummaryPrompt.build(
             transcript: transcript,
             budgetWords: budgetWords
@@ -140,7 +157,9 @@ public actor SummarizerService {
         modelID: String,
         modelDirectory: URL
     ) async throws -> String {
+        cancelIdleUnload()
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
+        defer { scheduleIdleUnload(reason: "idle") }
         let promptBody = ConversationPrompt.build(
             question: question,
             contextMarkdown: contextMarkdown
@@ -187,6 +206,7 @@ public actor SummarizerService {
 
         let newContainer: any ContainerLike
         do {
+            ModelRuntimeLog.event("load.begin", modelID: modelID, reason: "summarizer")
             newContainer = try await loader(directory)
         } catch let error as SummarizerError {
             throw error
@@ -195,6 +215,31 @@ public actor SummarizerService {
         }
         container = newContainer
         loadedModelID = modelID
+        ModelRuntimeLog.event("load.end", modelID: modelID, reason: "summarizer")
         return newContainer
+    }
+
+    private func cancelIdleUnload() {
+        idleUnloadTask?.cancel()
+        idleUnloadTask = nil
+    }
+
+    private func scheduleIdleUnload(reason: String) {
+        cancelIdleUnload()
+        guard let idleUnloadDelay, let modelID = loadedModelID else { return }
+        let nanoseconds = UInt64(max(0, idleUnloadDelay) * 1_000_000_000)
+        idleUnloadTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            await self?.unloadIfStillLoaded(modelID: modelID, reason: reason)
+        }
+    }
+
+    private func unloadIfStillLoaded(modelID: String, reason: String) {
+        guard loadedModelID == modelID else { return }
+        unload(reason: reason)
     }
 }

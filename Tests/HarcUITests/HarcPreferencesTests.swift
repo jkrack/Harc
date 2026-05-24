@@ -193,4 +193,35 @@ struct HarcPreferencesTests {
 
         defaults.removeObject(forKey: "harc.sourceScanLimit")
     }
+
+    @Test("welcome flow defaults incomplete and persists completion")
+    func welcomeFlowCompletionPersists() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.welcomeFlowCompleted")
+
+        let prefs = HarcPreferences()
+        #expect(prefs.welcomeFlowCompleted == false)
+
+        prefs.completeWelcomeFlow()
+        #expect(HarcPreferences().welcomeFlowCompleted == true)
+
+        defaults.removeObject(forKey: "harc.welcomeFlowCompleted")
+    }
+
+    @Test("model performance mode defaults to balanced and persists")
+    func modelPerformanceModePersists() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.modelPerformanceMode")
+
+        let prefs = HarcPreferences()
+        #expect(prefs.modelPerformanceMode == .balanced)
+        #expect(prefs.modelPerformanceMode.summarizerIdleUnloadDelay == 10 * 60)
+        #expect(prefs.modelPerformanceMode.embedderIdleUnloadDelay == 30 * 60)
+
+        prefs.modelPerformanceMode = .lowMemory
+        #expect(HarcPreferences().modelPerformanceMode == .lowMemory)
+        #expect(HarcPreferences.ModelPerformanceMode.lowMemory.summarizerIdleUnloadDelay == 0)
+
+        defaults.removeObject(forKey: "harc.modelPerformanceMode")
+    }
 }

@@ -242,6 +242,26 @@ final class SummarizerServiceTests: XCTestCase {
         XCTAssertNil(loaded,
             "Memory-pressure handler must unload the model.")
     }
+
+    func test_idleUnloadPolicy_clearsLoadedModelAfterDelay() async throws {
+        let service = SummarizerService(loader: StubContainer.loader(id: "m"))
+        await service.setIdleUnloadDelay(0.01)
+
+        _ = try await service.summarize(
+            transcript: PromptTranscript(utterances: [
+                .init(speaker: nil, text: "hello")
+            ]),
+            modelID: "m",
+            modelDirectory: URL(fileURLWithPath: "/tmp"),
+            budgetWords: 100
+        )
+        var loaded = await service.loadedModelID
+        XCTAssertEqual(loaded, "m")
+
+        try await Task.sleep(nanoseconds: 80_000_000)
+        loaded = await service.loadedModelID
+        XCTAssertNil(loaded, "Idle retention policy must unload the warm summarizer.")
+    }
 }
 
 // MARK: - Test stub

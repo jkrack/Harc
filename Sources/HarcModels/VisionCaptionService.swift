@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import HarcCore
 import MLXHuggingFace
 import MLXLMCommon
 import MLXVLM
@@ -68,10 +69,15 @@ public actor VisionCaptionService {
         var parameters = GenerateParameters()
         parameters.maxTokens = 220
 
+        ModelRuntimeLog.event("load.begin", modelID: request.modelID, reason: "vision-caption")
         let container = try await VLMModelFactory.shared.loadContainer(
             from: request.modelDirectory,
             using: #huggingFaceTokenizerLoader()
         )
+        ModelRuntimeLog.event("load.end", modelID: request.modelID, reason: "vision-caption")
+        defer {
+            ModelRuntimeLog.event("scope.end", modelID: request.modelID, reason: "vision-caption")
+        }
         let session = ChatSession(
             container,
             generateParameters: parameters,

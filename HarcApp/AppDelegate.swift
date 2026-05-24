@@ -197,6 +197,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var summarizerService: SummarizerService?
     private var semanticSearchService: SemanticSearchService?
     private var knowledgeIndexer: KnowledgeIndexer?
+    private var semanticEmbedder: MLXTextEmbedder?
+    private var embedderMemoryObservation: MLXTextEmbedder.MemoryPressureObservation?
     private var summarizationQueue: SummarizationQueue?
     private var summarizationQueueStore: SummarizationQueueStore?
     private var recoveryQueue: RecoveryQueue?
@@ -210,8 +212,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var editorWindows: [String: TranscriptEditorWindowController] = [:]
     private var harcWindow: HarcWindowController?
     private var settingsWindow: NSWindowController?
+    private var welcomeWindow: NSWindowController?
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
+    private var modelPerformanceObserver: AnyCancellable?
     private var pendingSkipPaste = false
     private var pendingRecordingNoteID: String?
     private var uiTestRecordingStartedAt: Date?
@@ -358,6 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if !isUITesting {
             startFrontmostPolling()
         }
+        showWelcomeIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1448,6 +1453,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func showWelcomeWindow(_ sender: Any?) {
+        showWelcome(markAsFirstRun: false)
+    }
+
+    private func showWelcomeIfNeeded() {
+        guard !isUITesting, !prefs.welcomeFlowCompleted else { return }
+        showWelcome(markAsFirstRun: true)
+    }
+
+    private func showWelcome(markAsFirstRun: Bool) {
+        if let controller = welcomeWindow, let window = controller.window {
+            controller.showWindow(nil)
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let root = WelcomeFlowView(
+            onFinish: { [weak self] in
+                self?.completeWelcomeFlow(openLibraryAfterClose: true)
+            },
+            onSkip: { [weak self] in
+                self?.completeWelcomeFlow(openLibraryAfterClose: false)
+            },
+            onOpenSettings: { [weak self] in
+                self?.openSettings()
+            }
+        )
+        .preferredColorScheme(prefs.appearance.colorScheme)
+
+        let window = NSWindow(contentViewController: NSHostingController(rootView: root))
+        window.title = markAsFirstRun ? "Welcome to Harc" : "Harc Welcome"
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.setContentSize(NSSize(width: 860, height: 620))
+        window.minSize = NSSize(width: 780, height: 560)
+        window.isReleasedWhenClosed = false
+
+        let controller = NSWindowController(window: window)
+        welcomeWindow = controller
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.welcomeWindow = nil
+            }
+        }
+
+        controller.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+        trackManagedWindow(window)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func completeWelcomeFlow(openLibraryAfterClose: Bool) {
+        prefs.completeWelcomeFlow()
+        welcomeWindow?.close()
+        welcomeWindow = nil
+        if openLibraryAfterClose {
+            openLibrary()
+        }
+    }
+
     @objc private func openLibrary() {
         if let existing = harcWindow {
             existing.showWindow(nil)
@@ -1537,6 +1606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // lifetime; queue survives panel re-renders.
             let coordinator = BackgroundWorkCoordinator()
             let service = SummarizerService(loader: SummarizerService.defaultLoader)
+            await service.setIdleUnloadDelay(prefs.modelPerformanceMode.summarizerIdleUnloadDelay)
             self.memoryObservation = service.startObservingMemoryPressure()
             let queue = SummarizationQueue(coordinator: coordinator, perform: { [weak self] id in
                 guard let self else { return }
@@ -1545,6 +1615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             self.summarizerService = service
             self.summarizationQueue = queue
             self.summarizationQueueStore = await SummarizationQueueStore(queue: queue)
+            observeModelPerformanceMode()
 
             // Failure surfaces now live on `summarizationQueueStore.lastFailures`
             // (Stage 4) — consumed by `SummaryCardView.failed` state.
@@ -1605,6 +1676,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             modelDirectory: ModelStorage.defaultBase()
                 .appendingPathComponent(embedderID, isDirectory: true)
         )
+        let idleDelay = prefs.modelPerformanceMode.embedderIdleUnloadDelay
+        Task { await embedder.setIdleUnloadDelay(idleDelay) }
         return SemanticSearchService(store: store, embedder: embedder)
     }
 
@@ -1613,6 +1686,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         guard modelStore.state(of: embedderID).isInstalled else {
             semanticSearchService = nil
             knowledgeIndexer = nil
+            semanticEmbedder = nil
+            embedderMemoryObservation = nil
             return
         }
         let embedder = MLXTextEmbedder(
@@ -1620,8 +1695,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             modelDirectory: ModelStorage.defaultBase()
                 .appendingPathComponent(embedderID, isDirectory: true)
         )
+        let idleDelay = prefs.modelPerformanceMode.embedderIdleUnloadDelay
+        Task { await embedder.setIdleUnloadDelay(idleDelay) }
+        embedderMemoryObservation = embedder.startObservingMemoryPressure()
+        semanticEmbedder = embedder
         semanticSearchService = SemanticSearchService(store: store, embedder: embedder)
         knowledgeIndexer = KnowledgeIndexer(store: store, embedder: embedder)
+    }
+
+    private func observeModelPerformanceMode() {
+        modelPerformanceObserver = prefs.$modelPerformanceMode
+            .removeDuplicates()
+            .sink { [weak self] mode in
+                guard let self else { return }
+                Task {
+                    await self.summarizerService?.setIdleUnloadDelay(mode.summarizerIdleUnloadDelay)
+                    await self.semanticEmbedder?.setIdleUnloadDelay(mode.embedderIdleUnloadDelay)
+                }
+            }
     }
 
     private func backfillSemanticIndexIfAvailable(store: RecordingStore) {
