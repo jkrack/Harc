@@ -512,17 +512,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// the display name to the bridge for the "Paste → [App]" button label.
     private func startFrontmostPolling() {
         frontmostPoller?.invalidate()
-        frontmostPoller = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let app = NSWorkspace.shared.frontmostApplication
-            let name = app?.localizedName
-            let denied = PasteDenyList.isDenied(app?.bundleIdentifier, in: prefs.pasteDenyListBundleIDs)
-            if self.bridge.frontmostAppName != name {
-                self.bridge.frontmostAppName = name
-            }
-            if self.bridge.frontmostPasteDenied != denied {
-                self.bridge.frontmostPasteDenied = denied
-            }
+        frontmostPoller = Timer.scheduledTimer(
+            timeInterval: 1.0,
+            target: self,
+            selector: #selector(updateFrontmostAppStatus),
+            userInfo: nil,
+            repeats: true
+        )
+    }
+
+    @objc private func updateFrontmostAppStatus() {
+        let app = NSWorkspace.shared.frontmostApplication
+        let name = app?.localizedName
+        let denied = PasteDenyList.isDenied(app?.bundleIdentifier, in: prefs.pasteDenyListBundleIDs)
+        if bridge.frontmostAppName != name {
+            bridge.frontmostAppName = name
+        }
+        if bridge.frontmostPasteDenied != denied {
+            bridge.frontmostPasteDenied = denied
         }
     }
 
@@ -611,7 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // BEFORE the throw. Best-effort stop so a partial start doesn't
             // leave the mic running with no controller (state would show Idle
             // but the macOS mic indicator would stay on).
-            try? await self.session?.stop()
+            _ = try? await self.session?.stop()
             self.session = nil
             presentError(error)
             resetUI()

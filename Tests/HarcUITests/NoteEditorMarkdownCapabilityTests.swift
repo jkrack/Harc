@@ -72,71 +72,15 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(source.contains("case .source:"))
         #expect(source.contains("case .live:"))
         #expect(source.contains("NoteMarkdownWebView(text: Binding("))
+        #expect(source.contains("mode: .source"))
         #expect(source.contains("mode: .live"))
+        #expect(source.contains("showsFormattingRibbon: prefs.markdownFormattingRibbonEnabled"))
+        #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownTextEditor")"#))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.liveMarkdownEditor")"#))
         #expect(!source.contains("HStack(spacing: 0) {\n                noteTextEditorSurface(font: .body)"))
-        #expect(source.contains("noteRenderedMarkdownSurface()"))
-        #expect(source.contains("TextEditor(text: Binding("))
-        #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownTextEditor")"#))
         #expect(source.contains("case .read:"))
-        #expect(source.contains("notePreviewBlocks(noteBodyDraft)"))
-        #expect(source.contains("notePreviewBlockView(block)"))
+        #expect(source.contains("mode: .read"))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownPreview")"#))
-    }
-
-    @Test("Markdown preview renderer creates separate blocks for common note markdown")
-    func markdownPreviewRendererCreatesSeparateBlocksForCommonNoteMarkdown() {
-        let blocks = NoteMarkdownPreviewRenderer.blocks("""
-        ###Title
-
-        **Bold** text and `code`.
-
-        - First
-        1. Ordered
-        """)
-
-        #expect(blocks.map(\.kind) == [
-            .heading(level: 3),
-            .paragraph,
-            .unorderedListItem,
-            .orderedListItem(number: 1)
-        ])
-        #expect(blocks.map(\.visibleText) == [
-            "Title",
-            "Bold text and code.",
-            "First",
-            "Ordered"
-        ])
-    }
-
-    @Test("Markdown preview renderer normalizes heading shorthand only at line starts")
-    func markdownPreviewRendererNormalizesHeadingShorthandOnlyAtLineStarts() {
-        let raw = """
-        ###Title
-        Body #tag should remain inline.
-        #### Another
-        """
-
-        let normalized = NoteMarkdownPreviewRenderer.markdownWithLenientHeadingSpacing(raw)
-
-        #expect(normalized.contains("### Title"))
-        #expect(normalized.contains("Body #tag should remain inline."))
-        #expect(normalized.contains("#### Another"))
-    }
-
-    @Test("Markdown preview renderer preserves explicit line breaks inside paragraphs")
-    func markdownPreviewRendererPreservesExplicitLineBreaksInsideParagraphs() {
-        let blocks = NoteMarkdownPreviewRenderer.blocks("""
-        First line
-        Second line
-
-        Third line
-        """)
-
-        #expect(blocks.count == 2)
-        #expect(blocks[0].kind == .paragraph)
-        #expect(blocks[0].visibleText == "First line\nSecond line")
-        #expect(blocks[1].visibleText == "Third line")
     }
 
     @Test("note editor source keeps CodeMirror Markdown and app bridge capabilities")
@@ -150,13 +94,23 @@ struct NoteEditorMarkdownCapabilityTests {
 
         let requiredSnippets = [
             #"import {markdown} from "@codemirror/lang-markdown";"#,
+            #"import MarkdownIt from "markdown-it";"#,
             "window.webkit?.messageHandlers?.harc?.postMessage",
             "window.HarcEditor =",
             "setText(text)",
             "getText()",
             "setMode(mode)",
             "setAttachmentBaseURL(url)",
+            "setFormattingRibbonVisible(isVisible)",
             "insertMarkdown(markdown)",
+            "runMarkdownCommand(command)",
+            "wrapSelection(prefix",
+            "transformSelectedLines(transform)",
+            "setHeading(level)",
+            "updateFormattingRibbonVisibility()",
+            "renderPreview(markdown)",
+            "markdownRenderer.render",
+            "renderTaskLists(html)",
             "showAttachmentError(message)",
             "setLinkTargets(targets)",
             "setMentionTargets(targets)",
@@ -212,8 +166,14 @@ struct NoteEditorMarkdownCapabilityTests {
 
         #expect(css.contains("cm-entity-mention"))
         #expect(css.contains("cm-project-mention"))
+        #expect(css.contains("#format-ribbon"))
+        #expect(css.contains(".ribbon-separator"))
+        #expect(css.contains("#preview"))
         #expect(css.contains(".cm-md-image"))
         #expect(css.contains(".cm-md-image img"))
+        #expect(css.contains("#preview hr"))
+        #expect(css.contains("#preview table"))
+        #expect(css.contains(".md-task-checkbox"))
         #expect(css.contains(".attachment-error"))
     }
 
@@ -227,6 +187,11 @@ struct NoteEditorMarkdownCapabilityTests {
         )
 
         #expect(html.contains(#"default-src 'self'"#))
+        #expect(html.contains(#"<nav id="format-ribbon" aria-label="Markdown formatting" hidden>"#))
+        #expect(html.contains(#"data-md-command="bold""#))
+        #expect(html.contains(#"data-md-command="task-list""#))
+        #expect(html.contains(#"data-md-command="table""#))
+        #expect(html.contains(#"<main id="preview" aria-label="Markdown note preview" hidden></main>"#))
         #expect(html.contains(#"<link rel="stylesheet" href="./style.css" />"#))
         #expect(html.contains(#"<script src="./editor.bundle.js"></script>"#))
         #expect(!html.contains("https://"))
