@@ -242,10 +242,24 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         ) ?? Bundle.module.url(forResource: "index", withExtension: "html") {
             webView.loadFileURL(
                 htmlURL,
-                allowingReadAccessTo: FileManager.default.homeDirectoryForCurrentUser
+                allowingReadAccessTo: Self.readAccessURL(forEditorHTMLAt: htmlURL)
             )
         }
         return webView
+    }
+
+    static func readAccessURL(forEditorHTMLAt htmlURL: URL) -> URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        let html = htmlURL.standardizedFileURL
+        if html.path == home.path || html.path.hasPrefix(home.path + "/") {
+            return home
+        }
+
+        // Installed builds load editor assets from /Applications/Harc.app while note
+        // attachments commonly live under ~/Documents/Harc. WKWebView accepts a
+        // single file read-access root, so installed app bundles need the filesystem
+        // root to let both bundled JS/CSS and note-owned images render.
+        return URL(fileURLWithPath: "/", isDirectory: true)
     }
 
     public func updateNSView(_ webView: WKWebView, context: Context) {
