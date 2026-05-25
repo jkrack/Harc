@@ -37,6 +37,15 @@ struct NoteImagePasteFlowTests {
         return NoteStore(rootURL: root)
     }
 
+    private func makeScreenshotTIFFData() throws -> Data {
+        let image = NSImage(size: NSSize(width: 2, height: 2))
+        image.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: 2, height: 2).fill()
+        image.unlockFocus()
+        return try #require(image.tiffRepresentation)
+    }
+
     @Test("valid image paste inserts exactly one Markdown image token")
     func validImagePasteInsertsOneMarkdownToken() async throws {
         let imageData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
@@ -85,6 +94,60 @@ struct NoteImagePasteFlowTests {
             mimeType: "image/png",
             filename: nil
         ))
+        #expect(sink.insertedMarkdown == ["![screenshot](./note.assets/screenshot.png)"])
+        #expect(sink.attachmentErrors.isEmpty)
+    }
+
+    @Test("macOS screenshot TIFF paste payload is normalized to PNG")
+    func macOSScreenshotTIFFPastePayloadNormalizesToPNG() async throws {
+        let tiff = try makeScreenshotTIFFData()
+        var receivedImage: NotePastedImage?
+        let handler = NoteImagePasteHandler { image in
+            receivedImage = image
+            return "![screenshot](./note.assets/screenshot.png)"
+        }
+        let sink = SpySink()
+
+        await handler.handle([
+            "type": "pasteImage",
+            "data": tiff.base64EncodedString(),
+            "mimeType": "image/tiff",
+            "filename": "Screenshot.tiff",
+        ], sink: sink)
+
+        let image = try #require(receivedImage)
+        #expect(image.mimeType == "image/png")
+        #expect(image.filename == "Screenshot.tiff")
+        #expect(image.data.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        #expect(sink.insertedMarkdown == ["![screenshot](./note.assets/screenshot.png)"])
+        #expect(sink.attachmentErrors.isEmpty)
+    }
+
+    @Test("native pasteboard NSImage screenshot is converted into a note image paste")
+    func nativePasteboardNSImageScreenshotConvertsToNoteImagePaste() async throws {
+        let image = NSImage(size: NSSize(width: 2, height: 2))
+        image.lockFocus()
+        NSColor.systemGreen.setFill()
+        NSRect(x: 0, y: 0, width: 2, height: 2).fill()
+        image.unlockFocus()
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("harc-test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([image])
+
+        var receivedImage: NotePastedImage?
+        let handler = NoteImagePasteHandler { pasted in
+            receivedImage = pasted
+            return "![screenshot](./note.assets/screenshot.png)"
+        }
+        let sink = SpySink()
+
+        #expect(handler.handlePasteboard(pasteboard, sink: sink))
+        try await Task.sleep(for: .milliseconds(50))
+
+        let pasted = try #require(receivedImage)
+        #expect(pasted.mimeType == "image/png")
+        #expect(pasted.data.starts(with: [0x89, 0x50, 0x4E, 0x47]))
         #expect(sink.insertedMarkdown == ["![screenshot](./note.assets/screenshot.png)"])
         #expect(sink.attachmentErrors.isEmpty)
     }

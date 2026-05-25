@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import HarcCore
 import HarcStore
 
 /// Slim MenuBarExtra panel: recording state + level bars + Start/Stop + Open + post-stop tray.
@@ -294,41 +295,59 @@ public struct MenuBarPanelView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 0) {
-            Button {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                NSApp.activate(ignoringOtherApps: true)
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Settings…")
-                    Spacer()
-                    Text("⌘,").foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 0) {
+                Button {
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Settings…")
+                        Spacer()
+                        Text("⌘,").foregroundStyle(.secondary)
+                    }
                 }
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(",", modifiers: .command)
-            Spacer(minLength: 12)
-            Button {
-                NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
-                NSApp.activate(ignoringOtherApps: true)
-            } label: {
-                Text("Welcome…")
-            }
-            .buttonStyle(.plain)
-            Spacer(minLength: 12)
-            Button {
-                NSApplication.shared.terminate(nil)
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Quit Harc")
-                    Spacer()
-                    Text("⌘Q").foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .keyboardShortcut(",", modifiers: .command)
+                Spacer(minLength: 12)
+                Button {
+                    NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
+                    Text("Welcome…")
                 }
+                .buttonStyle(.plain)
+                Spacer(minLength: 12)
+                Button {
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Quit Harc")
+                        Spacer()
+                        Text("⌘Q").foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("q", modifiers: .command)
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut("q", modifiers: .command)
+
+            Text(appVersionText)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
         .font(.subheadline)
+    }
+
+    private var appVersionText: String {
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        return Self.versionDisplayText(build: build)
+    }
+
+    static func versionDisplayText(build: String?) -> String {
+        if let build, !build.isEmpty {
+            return "Harc v\(HarcVersion.current) (\(build))"
+        }
+        return "Harc v\(HarcVersion.current)"
     }
 
     private var readinessSection: some View {
