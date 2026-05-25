@@ -3219,20 +3219,36 @@ public struct HarcWindowRootView: View {
 
     @MainActor
     private func pasteImage(_ image: NotePastedImage, into noteID: String) async throws -> String {
-        let result = try await NoteStore(rootURL: prefs.notesURL).attachImage(
+        let noteStore = NoteStore(rootURL: prefs.notesURL)
+        let result = try await noteStore.attachImage(
             toNoteID: noteID,
             data: image.data,
             mimeType: image.mimeType,
             preferredFilename: image.filename
         )
-        await loadNotes(resetDraft: false)
+        let shouldCaption = ModelCatalog.descriptors(for: .visionCaptioner)
+            .first
+            .map { modelStore.state(of: $0.id).isInstalled } ?? false
+        var note = result.note
+        let baseBody = selection == .note(id: noteID) ? noteBodyDraft : note.body
+        note.body = Self.appendingImageBlock(
+            to: baseBody,
+            attachment: result.attachment,
+            caption: shouldCaption ? "Caption pending..." : nil
+        )
+        let saved = try await noteStore.update(note)
+
         if selection == .note(id: noteID) {
-            noteSavedAt = result.note.updatedAt
-            noteLastLoadedUpdatedAt = result.note.updatedAt
+            noteBodyDraft = saved.body
+            noteSavedAt = saved.updatedAt
+            noteLastLoadedUpdatedAt = saved.updatedAt
+            noteDirty = false
+            noteSaveGeneration += 1
             noteSaveError = nil
         }
+        await loadNotes(resetDraft: false)
         startCaptionIfAvailable(noteID: noteID, attachmentID: result.attachment.id)
-        return result.markdown
+        return ""
     }
 
     private func attachmentStatusText(for note: Note) -> String {
@@ -3399,9 +3415,24 @@ public struct HarcWindowRootView: View {
                     status: .captioned,
                     modelID: captionerID
                 )
+                var noteWithVisibleCaption = saved
+                let bodyBase = selection == .note(id: noteID) ? noteBodyDraft : saved.body
+                noteWithVisibleCaption.body = Self.replacingImageCaption(
+                    in: bodyBase,
+                    attachment: attachment,
+                    caption: caption
+                )
+                let visibleCaptionSaved = try await noteStore.update(noteWithVisibleCaption)
+                if selection == .note(id: noteID) {
+                    noteBodyDraft = visibleCaptionSaved.body
+                    noteSavedAt = visibleCaptionSaved.updatedAt
+                    noteLastLoadedUpdatedAt = visibleCaptionSaved.updatedAt
+                    noteDirty = false
+                    noteSaveGeneration += 1
+                }
                 if let knowledgeIndexer {
-                    Task.detached { [knowledgeIndexer, saved] in
-                        try? await knowledgeIndexer.index(note: saved)
+                    Task.detached { [knowledgeIndexer, visibleCaptionSaved] in
+                        try? await knowledgeIndexer.index(note: visibleCaptionSaved)
                     }
                 }
                 await loadNotes(resetDraft: false)
@@ -3417,6 +3448,73 @@ public struct HarcWindowRootView: View {
                 await loadNotes(resetDraft: false)
             }
         }
+    }
+
+    static func imageMarkdownReference(for attachment: NoteAttachment) -> String {
+        "![\(markdownEscapedAltText(attachment.altText))](./\(attachment.relativePath))"
+    }
+
+    static func appendingImageBlock(
+        to body: String,
+        attachment: NoteAttachment,
+        caption: String?
+    ) -> String {
+        let block = imageMarkdownBlock(for: attachment, caption: caption)
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return block }
+        return "\(trimmed)\n\n\(block)"
+    }
+
+    static func replacingImageCaption(
+        in body: String,
+        attachment: NoteAttachment,
+        caption: String
+    ) -> String {
+        let reference = imageMarkdownReference(for: attachment)
+        var lines = body.components(separatedBy: .newlines)
+        guard let imageIndex = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == reference }) else {
+            return appendingImageBlock(to: body, attachment: attachment, caption: caption)
+        }
+
+        var captionIndex = imageIndex + 1
+        if captionIndex < lines.count, lines[captionIndex].trimmingCharacters(in: .whitespaces).isEmpty {
+            captionIndex += 1
+        }
+
+        let nextLine = captionIndex < lines.count
+            ? lines[captionIndex].trimmingCharacters(in: .whitespaces)
+            : ""
+        let captionLine = markdownCaptionLine(caption)
+        if nextLine.hasPrefix("*Caption") && nextLine.hasSuffix("*") {
+            lines[captionIndex] = captionLine
+        } else {
+            lines.insert(contentsOf: ["", captionLine], at: imageIndex + 1)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func imageMarkdownBlock(for attachment: NoteAttachment, caption: String?) -> String {
+        guard let caption, !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return imageMarkdownReference(for: attachment)
+        }
+        return "\(imageMarkdownReference(for: attachment))\n\n\(markdownCaptionLine(caption))"
+    }
+
+    private static func markdownCaptionLine(_ caption: String) -> String {
+        "*Caption: \(markdownInlineText(caption))*"
+    }
+
+    private static func markdownEscapedAltText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "]", with: "\\]")
+    }
+
+    private static func markdownInlineText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "*", with: "\\*")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func overwriteConflictedNote(_ conflict: NoteSaveConflict) {

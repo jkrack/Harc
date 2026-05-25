@@ -152,9 +152,6 @@ class ImageAttachmentWidget extends WidgetType {
     img.loading = "lazy";
     figure.appendChild(img);
 
-    const caption = document.createElement("figcaption");
-    caption.textContent = this.alt || attachmentFilename(this.path);
-    figure.appendChild(caption);
     return figure;
   }
 }
