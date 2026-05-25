@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import AppKit
 
 public enum NoteMarkdownEditorMode: String, CaseIterable, Identifiable {
     case source
@@ -68,6 +69,92 @@ final class NoteImagePasteHandler {
             sink.showAttachmentError(error.localizedDescription)
         }
     }
+
+    func handlePasteboard(_ pasteboard: NSPasteboard, sink: NoteImagePasteSink) -> Bool {
+        guard let image = Self.pastedImage(from: pasteboard) else { return false }
+        Task { @MainActor in
+            await self.handle(image, sink: sink)
+        }
+        return true
+    }
+
+    func handle(_ image: NotePastedImage, sink: NoteImagePasteSink) async {
+        guard let onPasteImage else {
+            sink.showAttachmentError("Could not read the pasted image.")
+            return
+        }
+        do {
+            let markdown = try await onPasteImage(image)
+            sink.insertMarkdown(markdown)
+        } catch {
+            sink.showAttachmentError(error.localizedDescription)
+        }
+    }
+
+    static func pastedImage(from pasteboard: NSPasteboard) -> NotePastedImage? {
+        if let png = pasteboard.data(forType: .png) {
+            return NotePastedImage(data: png, mimeType: "image/png", filename: nil)
+        }
+
+        if let tiff = pasteboard.data(forType: .tiff),
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            return NotePastedImage(data: png, mimeType: "image/png", filename: nil)
+        }
+
+        if let fileURLString = pasteboard.string(forType: .fileURL),
+           let url = URL(string: fileURLString),
+           let loaded = pastedImageFile(from: url) {
+            return loaded
+        }
+
+        return nil
+    }
+
+    private static func pastedImageFile(from url: URL) -> NotePastedImage? {
+        guard let mimeType = mimeType(forImageExtension: url.pathExtension),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return NotePastedImage(data: data, mimeType: mimeType, filename: url.lastPathComponent)
+    }
+
+    private static func mimeType(forImageExtension ext: String) -> String? {
+        switch ext.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "tif", "tiff": return "image/tiff"
+        default: return nil
+        }
+    }
+}
+
+@MainActor
+private final class NoteMarkdownWKWebView: WKWebView {
+    weak var pasteSink: NoteMarkdownWebView.Coordinator?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if isPasteShortcut(event),
+           pasteSink?.handleNativePasteboard(NSPasteboard.general) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if isPasteShortcut(event),
+           pasteSink?.handleNativePasteboard(NSPasteboard.general) == true {
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    private func isPasteShortcut(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command &&
+            event.charactersIgnoringModifiers?.lowercased() == "v"
+    }
 }
 
 public struct NoteMarkdownWebView: NSViewRepresentable {
@@ -76,6 +163,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
     private let linkTargets: [NoteMarkdownLinkTarget]
     private let mentionTargets: [NoteMarkdownLinkTarget]
     private let attachmentBaseURL: URL?
+    private let showsFormattingRibbon: Bool
     private let onPasteImage: (@MainActor (NotePastedImage) async throws -> String)?
 
     public init(
@@ -84,6 +172,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         linkTargets: [NoteMarkdownLinkTarget] = [],
         mentionTargets: [NoteMarkdownLinkTarget] = [],
         attachmentBaseURL: URL? = nil,
+        showsFormattingRibbon: Bool = true,
         onPasteImage: (@MainActor (NotePastedImage) async throws -> String)? = nil
     ) {
         self._text = text
@@ -91,6 +180,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         self.linkTargets = linkTargets
         self.mentionTargets = mentionTargets
         self.attachmentBaseURL = attachmentBaseURL
+        self.showsFormattingRibbon = showsFormattingRibbon
         self.onPasteImage = onPasteImage
     }
 
@@ -103,10 +193,11 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.userContentController.add(context.coordinator, name: "harc")
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = NoteMarkdownWKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         context.coordinator.webView = webView
+        webView.pasteSink = context.coordinator
 
         if let htmlURL = Bundle.module.url(
             forResource: "index",
@@ -127,6 +218,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         context.coordinator.updateLinkTargets(linkTargets)
         context.coordinator.updateMentionTargets(mentionTargets)
         context.coordinator.updateAttachmentBaseURL(attachmentBaseURL)
+        context.coordinator.updateFormattingRibbonVisibility(showsFormattingRibbon)
     }
 
     public static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -144,6 +236,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
         private var lastKnownLinkTargets: [NoteMarkdownLinkTarget] = []
         private var lastKnownMentionTargets: [NoteMarkdownLinkTarget] = []
         private var lastKnownAttachmentBaseURL: URL?
+        private var lastKnownFormattingRibbonVisibility = true
         private let onPasteImage: (@MainActor (NotePastedImage) async throws -> String)?
         private let imagePasteHandler: NoteImagePasteHandler
         weak var webView: WKWebView?
@@ -188,6 +281,7 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
             pushLinkTargetsToWeb(lastKnownLinkTargets)
             pushMentionTargetsToWeb(lastKnownMentionTargets)
             pushAttachmentBaseURLToWeb(lastKnownAttachmentBaseURL)
+            pushFormattingRibbonVisibilityToWeb(lastKnownFormattingRibbonVisibility)
         }
 
         func updateSwiftText(_ next: String) {
@@ -218,6 +312,12 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
             guard next != lastKnownAttachmentBaseURL else { return }
             lastKnownAttachmentBaseURL = next
             pushAttachmentBaseURLToWeb(next)
+        }
+
+        func updateFormattingRibbonVisibility(_ next: Bool) {
+            guard next != lastKnownFormattingRibbonVisibility else { return }
+            lastKnownFormattingRibbonVisibility = next
+            pushFormattingRibbonVisibilityToWeb(next)
         }
 
         private func pushTextToWeb(_ next: String) {
@@ -277,11 +377,25 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
             }
         }
 
+        private func pushFormattingRibbonVisibilityToWeb(_ isVisible: Bool) {
+            guard loaded, let webView else { return }
+            webView.evaluateJavaScript("window.HarcEditor?.setFormattingRibbonVisible(\(isVisible ? "true" : "false"));") { _, error in
+                if let error {
+                    assertionFailure("Note editor formatting ribbon bridge failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
         private func handlePastedImage(_ body: [String: Any]) {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await imagePasteHandler.handle(body, sink: self)
             }
+        }
+
+        func handleNativePasteboard(_ pasteboard: NSPasteboard) -> Bool {
+            guard lastKnownMode != .read else { return false }
+            return imagePasteHandler.handlePasteboard(pasteboard, sink: self)
         }
 
         func insertMarkdown(_ markdown: String) {

@@ -5,6 +5,7 @@ import {defaultKeymap, history, historyKeymap} from "@codemirror/commands";
 import {markdown} from "@codemirror/lang-markdown";
 import {syntaxHighlighting, HighlightStyle} from "@codemirror/language";
 import {tags} from "@lezer/highlight";
+import MarkdownIt from "markdown-it";
 
 const standaloneFixtures = {
   "full-markdown": `# Meeting Notes
@@ -201,6 +202,9 @@ const livePreviewPlugin = ViewPlugin.fromClass(
     }
 
     build(view) {
+      if (editorMode === "source") {
+        return new RangeSetBuilder().finish();
+      }
       const builder = new RangeSetBuilder();
       const wikilink = /\[\[[^\]\n]+\]\]/g;
       const mention = /@([A-Za-z][A-Za-z0-9_-]*)?\[([^\]\n]+)\]|@([A-Za-z][A-Za-z0-9'._-]*)/g;
@@ -408,6 +412,31 @@ let suppressChange = false;
 let editorMode = "live";
 const editableCompartment = new Compartment();
 const modeThemeCompartment = new Compartment();
+const editorElement = document.getElementById("editor");
+const previewElement = document.getElementById("preview");
+const ribbonElement = document.getElementById("format-ribbon");
+const headingCommandElement = document.getElementById("heading-command");
+let formattingRibbonVisible = true;
+
+const markdownRenderer = MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: true,
+  breaks: false,
+});
+
+const defaultImageRenderer =
+  markdownRenderer.renderer.rules.image ||
+  ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options));
+
+markdownRenderer.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  const srcIndex = token.attrIndex("src");
+  if (srcIndex >= 0) {
+    token.attrs[srcIndex][1] = resolveAttachmentURL(token.attrs[srcIndex][1]);
+  }
+  return defaultImageRenderer(tokens, idx, options, env, self);
+};
 
 function editableExtensionFor(mode) {
   return EditorView.editable.of(mode !== "read");
@@ -428,7 +457,7 @@ function modeThemeFor(mode) {
 }
 
 const view = new EditorView({
-  parent: document.getElementById("editor"),
+  parent: editorElement,
   state: EditorState.create({
     doc: initialDoc,
     extensions: [
@@ -478,11 +507,39 @@ const view = new EditorView({
       })),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !suppressChange) {
-          postChange(update.state.doc.toString());
+          const nextText = update.state.doc.toString();
+          renderPreview(nextText);
+          postChange(nextText);
         }
       }),
     ],
   }),
+});
+
+renderPreview(initialDoc);
+editorElement?.addEventListener("mousedown", () => {
+  if (editorMode !== "read") {
+    requestAnimationFrame(() => view.focus());
+  }
+});
+
+ribbonElement?.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+ribbonElement?.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const button = target?.closest("[data-md-command]");
+  if (!button || editorMode === "read") return;
+  runMarkdownCommand(button.dataset.mdCommand);
+});
+
+headingCommandElement?.addEventListener("change", (event) => {
+  const command = event.target.value;
+  if (command && editorMode !== "read") {
+    runMarkdownCommand(command);
+  }
+  event.target.value = "";
 });
 
 window.HarcEditor = {
@@ -494,6 +551,7 @@ window.HarcEditor = {
       changes: {from: 0, to: current.length, insert: text},
     });
     suppressChange = false;
+    renderPreview(text);
   },
   focus() {
     view.focus();
@@ -529,6 +587,11 @@ window.HarcEditor = {
   },
   setAttachmentBaseURL(url) {
     attachmentBaseURL = typeof url === "string" ? url : "";
+    renderPreview(view.state.doc.toString());
+  },
+  setFormattingRibbonVisible(isVisible) {
+    formattingRibbonVisible = Boolean(isVisible);
+    updateFormattingRibbonVisibility();
   },
   insertMarkdown(markdown) {
     if (typeof markdown !== "string" || markdown.length === 0) return;
@@ -546,14 +609,175 @@ window.HarcEditor = {
   setMode(mode) {
     if (!["source", "live", "read"].includes(mode)) return;
     editorMode = mode;
+    const isRead = mode === "read";
+    if (editorElement) editorElement.hidden = isRead;
+    if (previewElement) previewElement.hidden = !isRead;
+    updateFormattingRibbonVisibility();
+    renderPreview(view.state.doc.toString());
     view.dispatch({
       effects: [
         editableCompartment.reconfigure(editableExtensionFor(mode)),
         modeThemeCompartment.reconfigure(modeThemeFor(mode)),
       ],
     });
+    if (!isRead) {
+      requestAnimationFrame(() => view.focus());
+    }
   },
 };
+
+function updateFormattingRibbonVisibility() {
+  if (!ribbonElement) return;
+  ribbonElement.hidden = !formattingRibbonVisible || editorMode === "read";
+  const editorHeight = ribbonElement.hidden ? "100%" : "calc(100% - 42px)";
+  if (editorElement) editorElement.style.height = editorHeight;
+  if (previewElement) previewElement.style.height = "100%";
+}
+
+updateFormattingRibbonVisibility();
+
+function currentText() {
+  return view.state.doc.toString();
+}
+
+function dispatchTextReplacement(from, to, insert, selectionOffset = insert.length) {
+  view.dispatch({
+    changes: {from, to, insert},
+    selection: {anchor: from + selectionOffset},
+    userEvent: "input",
+  });
+  renderPreview(currentText());
+  postChange(currentText());
+  requestAnimationFrame(() => view.focus());
+}
+
+function selectedTextOrPlaceholder(placeholderText) {
+  const selection = view.state.selection.main;
+  const selected = view.state.sliceDoc(selection.from, selection.to);
+  return selected.length > 0 ? selected : placeholderText;
+}
+
+function wrapSelection(prefix, suffix = prefix, placeholderText = "text") {
+  const selection = view.state.selection.main;
+  const selected = selectedTextOrPlaceholder(placeholderText);
+  const insert = `${prefix}${selected}${suffix}`;
+  const cursorOffset = selection.empty ? prefix.length + selected.length : insert.length;
+  dispatchTextReplacement(selection.from, selection.to, insert, cursorOffset);
+}
+
+function insertBlock(markdown, cursorOffset = markdown.length) {
+  const selection = view.state.selection.main;
+  const before = view.state.sliceDoc(Math.max(0, selection.from - 1), selection.from);
+  const after = view.state.sliceDoc(selection.to, Math.min(view.state.doc.length, selection.to + 1));
+  const leading = selection.from > 0 && before !== "\n" ? "\n\n" : "";
+  const trailing = selection.to < view.state.doc.length && after !== "\n" ? "\n\n" : "";
+  const insert = `${leading}${markdown}${trailing}`;
+  dispatchTextReplacement(selection.from, selection.to, insert, leading.length + cursorOffset);
+}
+
+function transformSelectedLines(transform) {
+  const selection = view.state.selection.main;
+  const fromLine = view.state.doc.lineAt(selection.from);
+  const toLine = view.state.doc.lineAt(selection.to);
+  const original = view.state.sliceDoc(fromLine.from, toLine.to);
+  const replacement = original.split("\n").map(transform).join("\n");
+  dispatchTextReplacement(fromLine.from, toLine.to, replacement);
+}
+
+function removeLineMarkdownPrefix(line) {
+  return line
+    .replace(/^\s{0,3}#{1,6}\s+/, "")
+    .replace(/^(\s*)[-*]\s+\[[ xX]\]\s+/, "$1")
+    .replace(/^(\s*)[-*]\s+/, "$1")
+    .replace(/^(\s*)\d+\.\s+/, "$1")
+    .replace(/^(\s*)>\s?/, "$1");
+}
+
+function setHeading(level) {
+  transformSelectedLines((line) => {
+    if (line.trim().length === 0) return line;
+    return `${"#".repeat(level)} ${removeLineMarkdownPrefix(line).trimStart()}`;
+  });
+}
+
+function runMarkdownCommand(command) {
+  switch (command) {
+  case "bold":
+    wrapSelection("**", "**", "bold");
+    break;
+  case "italic":
+    wrapSelection("*", "*", "italic");
+    break;
+  case "strike":
+    wrapSelection("~~", "~~", "text");
+    break;
+  case "inline-code":
+    wrapSelection("`", "`", "code");
+    break;
+  case "heading-1":
+    setHeading(1);
+    break;
+  case "heading-2":
+    setHeading(2);
+    break;
+  case "heading-3":
+    setHeading(3);
+    break;
+  case "bullet-list":
+    transformSelectedLines((line) => line.trim().length === 0 ? line : `${line.match(/^\s*/)[0]}- ${removeLineMarkdownPrefix(line).trimStart()}`);
+    break;
+  case "ordered-list": {
+    let index = 1;
+    transformSelectedLines((line) => line.trim().length === 0 ? line : `${line.match(/^\s*/)[0]}${index++}. ${removeLineMarkdownPrefix(line).trimStart()}`);
+    break;
+  }
+  case "task-list":
+    transformSelectedLines((line) => line.trim().length === 0 ? line : `${line.match(/^\s*/)[0]}- [ ] ${removeLineMarkdownPrefix(line).trimStart()}`);
+    break;
+  case "quote":
+    transformSelectedLines((line) => line.trim().length === 0 ? line : `${line.match(/^\s*/)[0]}> ${removeLineMarkdownPrefix(line).trimStart()}`);
+    break;
+  case "divider":
+    insertBlock("---\n", 3);
+    break;
+  case "code-block": {
+    const selected = selectedTextOrPlaceholder("code");
+    insertBlock(`\`\`\`\n${selected}\n\`\`\`\n`, 4);
+    break;
+  }
+  case "table":
+    insertBlock("| Column | Value |\n| --- | --- |\n| Item | Detail |\n", 2);
+    break;
+  case "link":
+    wrapSelection("[", "](https://)", "link");
+    break;
+  case "image":
+    wrapSelection("![", "](attachments/image.png)", "alt");
+    break;
+  default:
+    break;
+  }
+}
+
+function renderPreview(markdown) {
+  if (!previewElement) return;
+  const html = markdownRenderer.render(markdown || "");
+  previewElement.innerHTML = renderTaskLists(html);
+  previewElement.querySelectorAll("a[href]").forEach((anchor) => {
+    const href = anchor.getAttribute("href") || "";
+    if (/^https?:\/\//i.test(href)) {
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noopener noreferrer");
+    }
+  });
+}
+
+function renderTaskLists(html) {
+  return html.replace(
+    /<li>\s*\[([ xX])\]\s+/g,
+    (_, checked) => `<li class="md-task-list-item"><input class="md-task-checkbox" type="checkbox" disabled ${/[xX]/.test(checked) ? "checked" : ""}>`
+  );
+}
 
 function readClipboardImage(file) {
   const reader = new FileReader();

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AppKit
 @testable import HarcStore
 @testable import HarcUI
 
@@ -59,6 +60,48 @@ struct NoteImagePasteFlowTests {
             filename: "Roadmap Slide.png"
         ))
         #expect(sink.insertedMarkdown == ["![slide](./note.assets/slide.png)"])
+        #expect(sink.attachmentErrors.isEmpty)
+    }
+
+    @Test("native pasteboard PNG is converted into a note image paste")
+    func nativePasteboardPNGConvertsToNoteImagePaste() async throws {
+        let imageData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("harc-test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.setData(imageData, forType: .png)
+
+        var receivedImage: NotePastedImage?
+        let handler = NoteImagePasteHandler { image in
+            receivedImage = image
+            return "![screenshot](./note.assets/screenshot.png)"
+        }
+        let sink = SpySink()
+
+        #expect(handler.handlePasteboard(pasteboard, sink: sink))
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(receivedImage == NotePastedImage(
+            data: imageData,
+            mimeType: "image/png",
+            filename: nil
+        ))
+        #expect(sink.insertedMarkdown == ["![screenshot](./note.assets/screenshot.png)"])
+        #expect(sink.attachmentErrors.isEmpty)
+    }
+
+    @Test("native pasteboard without an image falls through to normal paste handling")
+    func nativePasteboardWithoutImageFallsThrough() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("harc-test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.setString("plain text", forType: .string)
+        let handler = NoteImagePasteHandler { _ in
+            Issue.record("Text-only pasteboard should not call the image attachment closure")
+            return "![unexpected](./unexpected.png)"
+        }
+        let sink = SpySink()
+
+        #expect(!handler.handlePasteboard(pasteboard, sink: sink))
+        #expect(sink.insertedMarkdown.isEmpty)
         #expect(sink.attachmentErrors.isEmpty)
     }
 

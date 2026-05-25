@@ -224,4 +224,18 @@ struct HarcPreferencesTests {
 
         defaults.removeObject(forKey: "harc.modelPerformanceMode")
     }
+
+    @Test("markdown formatting ribbon defaults on and persists")
+    func markdownFormattingRibbonPersists() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.markdownFormattingRibbonEnabled")
+
+        let prefs = HarcPreferences()
+        #expect(prefs.markdownFormattingRibbonEnabled == true)
+
+        prefs.markdownFormattingRibbonEnabled = false
+        #expect(HarcPreferences().markdownFormattingRibbonEnabled == false)
+
+        defaults.removeObject(forKey: "harc.markdownFormattingRibbonEnabled")
+    }
 }

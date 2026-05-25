@@ -10,7 +10,31 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <nav id="format-ribbon" aria-label="Markdown formatting" hidden>
+      <button type="button" data-md-command="bold" aria-label="Bold"><strong>B</strong></button>
+      <button type="button" data-md-command="italic" aria-label="Italic"><em>I</em></button>
+      <button type="button" data-md-command="strike" aria-label="Strikethrough"><s>S</s></button>
+      <button type="button" data-md-command="inline-code" aria-label="Inline code"><code>`</code></button>
+      <select id="heading-command" aria-label="Heading level">
+        <option value="">Text</option>
+        <option value="heading-1">H1</option>
+        <option value="heading-2">H2</option>
+        <option value="heading-3">H3</option>
+      </select>
+      <span class="ribbon-separator" aria-hidden="true"></span>
+      <button type="button" data-md-command="bullet-list" aria-label="Bulleted list">•</button>
+      <button type="button" data-md-command="ordered-list" aria-label="Numbered list">1.</button>
+      <button type="button" data-md-command="task-list" aria-label="Task list">☐</button>
+      <button type="button" data-md-command="quote" aria-label="Quote">”</button>
+      <button type="button" data-md-command="divider" aria-label="Divider">—</button>
+      <span class="ribbon-separator" aria-hidden="true"></span>
+      <button type="button" data-md-command="code-block" aria-label="Code block">{ }</button>
+      <button type="button" data-md-command="table" aria-label="Table">▦</button>
+      <button type="button" data-md-command="link" aria-label="Link">↗</button>
+      <button type="button" data-md-command="image" aria-label="Image">▣</button>
+    </nav>
     <main id="editor" aria-label="Markdown note editor"></main>
+    <main id="preview" aria-label="Markdown note preview" hidden></main>
     <script src="./editor.bundle.js"></script>
   </body>
 </html>

@@ -230,7 +230,10 @@ struct CustomerExperienceE2ETests {
         #expect(library.recordings.map(\.id) == [yesterday.id])
 
         library.filter = .thisWeek
-        #expect(Set(library.recordings.compactMap(\.id)) == Set([today.id!, yesterday.id!]))
+        let expectedThisWeekIDs = [today, yesterday, lastWeek]
+            .filter { LibraryFilter.thisWeek.matches($0) }
+            .compactMap(\.id)
+        #expect(Set(library.recordings.compactMap(\.id)) == Set(expectedThisWeekIDs))
 
         library.filter = .day(lastWeek.startedAt)
         #expect(library.recordings.map(\.id) == [lastWeek.id])

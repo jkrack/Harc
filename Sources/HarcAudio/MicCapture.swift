@@ -44,8 +44,9 @@ public actor MicCapture: MicCaptureSource {
         }
 
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard Self.isValidInputFormat(format) else {
+        let outputFormat = input.outputFormat(forBus: 0)
+        let inputFormat = input.inputFormat(forBus: 0)
+        guard Self.isValidInputFormat(outputFormat) || Self.isValidInputFormat(inputFormat) else {
             throw AudioError.audioEngineFailed(
                 "Microphone input format is unavailable. Check the selected input device in System Settings."
             )
@@ -54,8 +55,7 @@ public actor MicCapture: MicCaptureSource {
         let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
         self.continuation = cont
 
-        var tapError: NSError?
-        let tapInstalled = HarcInstallTapOnAudioNode(input, 0, 4096, format, { [cont] buffer, _ in
+        let tapBlock: AVAudioNodeTapBlock = { [cont] buffer, _ in
             // Copy the buffer — AVAudioEngine reuses the underlying storage.
             guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
                 return
@@ -69,7 +69,16 @@ public actor MicCapture: MicCaptureSource {
                 }
             }
             cont.yield(copy)
-        }, &tapError)
+        }
+
+        var tapError: NSError?
+        let tapInstalled = Self.installInputTap(
+            on: input,
+            bufferSize: 4096,
+            preferredFormats: Self.tapFormatCandidates(outputFormat: outputFormat, inputFormat: inputFormat),
+            block: tapBlock,
+            error: &tapError
+        )
 
         guard tapInstalled else {
             cont.finish()
@@ -91,6 +100,35 @@ public actor MicCapture: MicCaptureSource {
 
     static func isValidInputFormat(_ format: AVAudioFormat) -> Bool {
         format.channelCount > 0 && format.sampleRate.isFinite && format.sampleRate > 0
+    }
+
+    static func tapFormatCandidates(outputFormat: AVAudioFormat, inputFormat: AVAudioFormat) -> [AVAudioFormat?] {
+        var candidates: [AVAudioFormat?] = [nil]
+        if isValidInputFormat(outputFormat) {
+            candidates.append(outputFormat)
+        }
+        if isValidInputFormat(inputFormat), inputFormat != outputFormat {
+            candidates.append(inputFormat)
+        }
+        return candidates
+    }
+
+    private static func installInputTap(
+        on input: AVAudioInputNode,
+        bufferSize: AVAudioFrameCount,
+        preferredFormats: [AVAudioFormat?],
+        block: @escaping AVAudioNodeTapBlock,
+        error: inout NSError?
+    ) -> Bool {
+        for format in preferredFormats {
+            var candidateError: NSError?
+            if HarcInstallTapOnAudioNode(input, 0, bufferSize, format, block, &candidateError) {
+                return true
+            }
+            input.removeTap(onBus: 0)
+            error = candidateError
+        }
+        return false
     }
 
     public func stop() async {
