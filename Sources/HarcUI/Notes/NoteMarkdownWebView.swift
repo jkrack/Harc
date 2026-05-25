@@ -59,11 +59,15 @@ final class NoteImagePasteHandler {
             return
         }
         do {
-            let markdown = try await onPasteImage(NotePastedImage(
+            guard let image = Self.normalizedImage(
                 data: data,
                 mimeType: mimeType,
                 filename: body["filename"] as? String
-            ))
+            ) else {
+                sink.showAttachmentError("Could not read the pasted image.")
+                return
+            }
+            let markdown = try await onPasteImage(image)
             sink.insertMarkdown(markdown)
         } catch {
             sink.showAttachmentError(error.localizedDescription)
@@ -102,6 +106,11 @@ final class NoteImagePasteHandler {
             return NotePastedImage(data: png, mimeType: "image/png", filename: nil)
         }
 
+        if let image = pasteboard.readObjects(forClasses: [NSImage.self])?.first as? NSImage,
+           let png = pngData(from: image) {
+            return NotePastedImage(data: png, mimeType: "image/png", filename: nil)
+        }
+
         if let fileURLString = pasteboard.string(forType: .fileURL),
            let url = URL(string: fileURLString),
            let loaded = pastedImageFile(from: url) {
@@ -109,6 +118,33 @@ final class NoteImagePasteHandler {
         }
 
         return nil
+    }
+
+    static func normalizedImage(data: Data, mimeType: String, filename: String?) -> NotePastedImage? {
+        let lowered = mimeType.lowercased()
+        if lowered == "image/png" || lowered == "image/jpeg" || lowered == "image/jpg" {
+            return NotePastedImage(data: data, mimeType: lowered == "image/jpg" ? "image/jpeg" : lowered, filename: filename)
+        }
+
+        if lowered == "image/tiff" || lowered == "image/tif",
+           let bitmap = NSBitmapImageRep(data: data),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            return NotePastedImage(data: png, mimeType: "image/png", filename: filename)
+        }
+
+        if let image = NSImage(data: data), let png = pngData(from: image) {
+            return NotePastedImage(data: png, mimeType: "image/png", filename: filename)
+        }
+
+        return nil
+    }
+
+    private static func pngData(from image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     private static func pastedImageFile(from url: URL) -> NotePastedImage? {
