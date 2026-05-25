@@ -31597,9 +31597,6 @@ quote: "We should keep the notes tied to the recording."
       img.alt = this.alt || "Note image";
       img.loading = "lazy";
       figure.appendChild(img);
-      const caption = document.createElement("figcaption");
-      caption.textContent = this.alt || attachmentFilename(this.path);
-      figure.appendChild(caption);
       return figure;
     }
   };
@@ -32188,10 +32185,6 @@ ${selected}
     const clean = path.replace(/^\.\//, "");
     if (!attachmentBaseURL) return clean;
     return new URL(clean, attachmentBaseURL).toString();
-  }
-  function attachmentFilename(path) {
-    const clean = path.split(/[?#]/)[0].replace(/\/+$/, "");
-    return clean.slice(clean.lastIndexOf("/") + 1) || "Note image";
   }
   function showAttachmentError(message) {
     const existing = document.querySelector(".attachment-error");

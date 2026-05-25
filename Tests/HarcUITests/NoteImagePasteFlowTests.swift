@@ -248,4 +248,61 @@ struct NoteImagePasteFlowTests {
                 .path
         ))
     }
+
+    @Test("image block includes a visible pending caption")
+    func imageBlockIncludesVisiblePendingCaption() {
+        let attachment = NoteAttachment(
+            id: "01IMAGEATTACHMENT0000000000",
+            filename: "meeting-slide.png",
+            relativePath: "01NOTE.assets/meeting-slide.png",
+            mimeType: "image/png",
+            byteCount: 128,
+            altText: "meeting slide",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let body = HarcWindowRootView.appendingImageBlock(
+            to: "Test",
+            attachment: attachment,
+            caption: "Caption pending..."
+        )
+
+        #expect(body == """
+        Test
+
+        ![meeting slide](./01NOTE.assets/meeting-slide.png)
+
+        *Caption: Caption pending...*
+        """)
+    }
+
+    @Test("generated image caption replaces the visible pending caption")
+    func generatedImageCaptionReplacesVisiblePendingCaption() {
+        let attachment = NoteAttachment(
+            id: "01IMAGEATTACHMENT0000000000",
+            filename: "meeting-slide.png",
+            relativePath: "01NOTE.assets/meeting-slide.png",
+            mimeType: "image/png",
+            byteCount: 128,
+            altText: "meeting slide",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let body = """
+        Test
+
+        ![meeting slide](./01NOTE.assets/meeting-slide.png)
+
+        *Caption: Caption pending...*
+        """
+
+        let updated = HarcWindowRootView.replacingImageCaption(
+            in: body,
+            attachment: attachment,
+            caption: "A roadmap screenshot showing launch milestones and owner assignments."
+        )
+
+        #expect(updated.contains("![meeting slide](./01NOTE.assets/meeting-slide.png)"))
+        #expect(updated.contains("*Caption: A roadmap screenshot showing launch milestones and owner assignments.*"))
+        #expect(!updated.contains("Caption pending"))
+    }
 }
