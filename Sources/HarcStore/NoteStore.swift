@@ -115,14 +115,9 @@ public actor NoteStore {
 
     public func update(_ note: Note) async throws -> Note {
         try ensureRoot()
-        var next = note
+        var next = Self.repairingAttachmentBlocks(in: note)
         next.title = cleanedTitle(note.title) ?? Self.defaultTitle(createdAt: note.createdAt)
         next.updatedAt = Date()
-        let removed = note.attachments.filter { !Self.bodyReferencesAttachment(note.body, attachment: $0) }
-        if !removed.isEmpty {
-            next.attachments.removeAll { removed.contains($0) }
-            try Self.deleteAttachmentFiles(removed, for: next.fileURL)
-        }
         try Self.pruneOrphanedAssetFiles(for: next)
         try Self.write(next)
         return next
@@ -188,6 +183,7 @@ public actor NoteStore {
         note.attachments[index].captionStatus = status
         note.attachments[index].captionModelID = modelID
         note.attachments[index].captionedAt = status == .captioned ? Date() : nil
+        note = Self.repairingAttachmentBlocks(in: note)
         note.updatedAt = Date()
         try Self.write(note)
         return note
@@ -272,7 +268,7 @@ private extension NoteStore {
         let id = parsed.scalar["id"] ?? url.deletingPathExtension().lastPathComponent
         let now = Date()
         let inferredFolderPath = inferFolderPath(for: url, rootURL: rootURL)
-        return Note(
+        let note = Note(
             id: id,
             title: parsed.scalar["title"] ?? "Untitled",
             body: parsed.body,
@@ -288,6 +284,11 @@ private extension NoteStore {
             updatedAt: parseDate(parsed.scalar["updated_at"]) ?? now,
             fileURL: url
         )
+        let repaired = repairingAttachmentBlocks(in: note)
+        if repaired.body != note.body {
+            try write(repaired)
+        }
+        return repaired
     }
 
     static func write(_ note: Note) throws {
@@ -456,6 +457,99 @@ private extension NoteStore {
     static func bodyReferencesAttachment(_ body: String, attachment: NoteAttachment) -> Bool {
         body.contains("](./\(attachment.relativePath))") ||
         body.contains("](\(attachment.relativePath))")
+    }
+
+    static func repairingAttachmentBlocks(in note: Note) -> Note {
+        var next = note
+        for attachment in note.attachments {
+            guard attachmentFileExists(attachment, for: note.fileURL) else { continue }
+            if bodyReferencesAttachment(next.body, attachment: attachment) {
+                next.body = replacingAttachmentCaptionLine(in: next.body, attachment: attachment)
+            } else {
+                next.body = appendingImageBlock(to: next.body, attachment: attachment)
+            }
+        }
+        return next
+    }
+
+    static func attachmentFileExists(_ attachment: NoteAttachment, for noteURL: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: noteURL.deletingLastPathComponent()
+                .appendingPathComponent(attachment.relativePath)
+                .path
+        )
+    }
+
+    static func imageMarkdownReference(for attachment: NoteAttachment) -> String {
+        "![\(markdownEscapedAltText(attachment.altText))](./\(attachment.relativePath))"
+    }
+
+    static func appendingImageBlock(to body: String, attachment: NoteAttachment) -> String {
+        let block = imageMarkdownBlock(for: attachment)
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return block }
+        return "\(trimmed)\n\n\(block)"
+    }
+
+    static func imageMarkdownBlock(for attachment: NoteAttachment) -> String {
+        guard let captionLine = markdownCaptionLine(for: attachment) else {
+            return imageMarkdownReference(for: attachment)
+        }
+        return "\(imageMarkdownReference(for: attachment))\n\n\(captionLine)"
+    }
+
+    static func replacingAttachmentCaptionLine(in body: String, attachment: NoteAttachment) -> String {
+        guard let captionLine = markdownCaptionLine(for: attachment) else { return body }
+        var lines = body.components(separatedBy: .newlines)
+        guard let imageIndex = lines.firstIndex(where: { lineReferencesAttachment($0, attachment: attachment) }) else {
+            return appendingImageBlock(to: body, attachment: attachment)
+        }
+
+        var captionIndex = imageIndex + 1
+        if captionIndex < lines.count, lines[captionIndex].trimmingCharacters(in: .whitespaces).isEmpty {
+            captionIndex += 1
+        }
+        let nextLine = captionIndex < lines.count
+            ? lines[captionIndex].trimmingCharacters(in: .whitespaces)
+            : ""
+        if nextLine.hasPrefix("*Caption") && nextLine.hasSuffix("*") {
+            lines[captionIndex] = captionLine
+        } else {
+            lines.insert(contentsOf: ["", captionLine], at: imageIndex + 1)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func lineReferencesAttachment(_ line: String, attachment: NoteAttachment) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.hasPrefix("![") &&
+        (trimmed.contains("](./\(attachment.relativePath))") ||
+         trimmed.contains("](\(attachment.relativePath))"))
+    }
+
+    static func markdownCaptionLine(for attachment: NoteAttachment) -> String? {
+        switch attachment.captionStatus {
+        case .pending:
+            return markdownCaptionLine("Caption pending...")
+        case .captioned:
+            guard let caption = attachment.caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !caption.isEmpty else {
+                return nil
+            }
+            return markdownCaptionLine(caption)
+        case .failed, .unavailable:
+            return nil
+        }
+    }
+
+    static func markdownCaptionLine(_ caption: String) -> String {
+        "*Caption: \(markdownInlineText(caption))*"
+    }
+
+    static func markdownInlineText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "*", with: "\\*")
     }
 
     static func removingMarkdownReferences(to attachment: NoteAttachment, from body: String) -> String {

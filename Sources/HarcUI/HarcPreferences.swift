@@ -257,8 +257,9 @@ public final class HarcPreferences: ObservableObject {
         let defaults = UserDefaults.standard
         self.destinationPath = defaults.string(forKey: Key.destinationPath)
             ?? Self.defaultDestinationPath
-        self.notesPath = defaults.string(forKey: Key.notesPath)
-            ?? Self.defaultNotesPath
+        let storedNotesPath = defaults.string(forKey: Key.notesPath)
+        let resolvedNotesPath = Self.resolvedNotesPath(storedNotesPath)
+        self.notesPath = resolvedNotesPath
         self.diarize = defaults.object(forKey: Key.diarize) as? Bool ?? true
         self.chunkDurationSeconds = defaults.object(forKey: Key.chunkDurationSeconds) as? Double ?? 60.0
         if let data = defaults.data(forKey: Key.vocabulary),
@@ -318,6 +319,9 @@ public final class HarcPreferences: ObservableObject {
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {
             persistPasteDenyListBundleIDs()
+        }
+        if storedNotesPath != nil, storedNotesPath != resolvedNotesPath {
+            defaults.set(resolvedNotesPath, forKey: Key.notesPath)
         }
     }
 
@@ -392,6 +396,20 @@ public final class HarcPreferences: ObservableObject {
     public static var defaultNotesPath: String {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents/Harc/Notes").path
+    }
+
+    public static func resolvedNotesPath(_ storedPath: String?) -> String {
+        guard let storedPath, !storedPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return defaultNotesPath
+        }
+        guard !isLeakedUITestNotesPath(storedPath) else {
+            return defaultNotesPath
+        }
+        return storedPath
+    }
+
+    public static func isLeakedUITestNotesPath(_ path: String) -> Bool {
+        path.contains("HarcAppUITests.xctrunner") || path.contains("/harc-app-ui-")
     }
 
     public static func clampedSourceScanLimit(_ value: Int) -> Int {
