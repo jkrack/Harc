@@ -220,6 +220,52 @@ struct NoteStoreTests {
         let refetched = try await store.fetch(id: note.id)
         #expect(refetched?.attachments.count == 1)
         #expect(refetched?.attachments.first?.altText == "quarterly slide")
+        #expect(refetched?.body.contains("![quarterly slide](./\(result.attachment.relativePath))") == true)
+    }
+
+    @Test("fetch repairs existing sidecar-only image attachments into visible markdown blocks")
+    func fetchRepairsSidecarOnlyAttachmentReferences() async throws {
+        let store = try makeStore()
+        let note = try await store.create(title: "Broken paste", body: "Test")
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let result = try await store.attachImage(
+            toNoteID: note.id,
+            data: png,
+            mimeType: "image/png",
+            preferredFilename: "Window.png"
+        )
+
+        let rawBeforeRepair = try String(contentsOf: note.fileURL, encoding: .utf8)
+        #expect(!rawBeforeRepair.contains(result.attachment.relativePath))
+
+        let repaired = try #require(try await store.fetch(id: note.id))
+        #expect(repaired.body == """
+        Test
+
+        ![window](./\(result.attachment.relativePath))
+        """)
+
+        let rawAfterRepair = try String(contentsOf: note.fileURL, encoding: .utf8)
+        #expect(rawAfterRepair.contains("](./\(result.attachment.relativePath))"))
+    }
+
+    @Test("attachment repair is idempotent")
+    func attachmentRepairIsIdempotent() async throws {
+        let store = try makeStore()
+        let note = try await store.create(title: "One image")
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let result = try await store.attachImage(
+            toNoteID: note.id,
+            data: png,
+            mimeType: "image/png",
+            preferredFilename: "Only.png"
+        )
+
+        _ = try await store.fetch(id: note.id)
+        let repairedAgain = try #require(try await store.fetch(id: note.id))
+
+        #expect(repairedAgain.body.components(separatedBy: result.attachment.relativePath).count - 1 == 1)
+        #expect(repairedAgain.attachments.count == 1)
     }
 
     @Test("search matches attachment captions")
@@ -270,10 +316,10 @@ struct NoteStoreTests {
         #expect(!FileManager.default.fileExists(atPath: assetURL.path))
     }
 
-    @Test("update prunes attachment metadata when markdown reference is deleted")
-    func updatePrunesAttachmentWhenMarkdownReferenceDeleted() async throws {
+    @Test("update repairs attachment metadata when markdown reference is deleted")
+    func updateRepairsAttachmentWhenMarkdownReferenceDeleted() async throws {
         let store = try makeStore()
-        var note = try await store.create(title: "Prune image")
+        var note = try await store.create(title: "Repair image")
         let png = Data([0x89, 0x50, 0x4E, 0x47])
         let result = try await store.attachImage(
             toNoteID: note.id,
@@ -288,7 +334,39 @@ struct NoteStoreTests {
 
         let saved = try await store.update(note)
 
-        #expect(saved.attachments.isEmpty)
+        #expect(saved.attachments.count == 1)
+        #expect(saved.body.contains("Image removed from the note."))
+        #expect(saved.body.contains("](./\(result.attachment.relativePath))"))
+    }
+
+    @Test("caption updates replace the visible caption line")
+    func captionUpdatesReplaceVisibleCaptionLine() async throws {
+        let store = try makeStore()
+        var note = try await store.create(title: "Caption repair")
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let result = try await store.attachImage(
+            toNoteID: note.id,
+            data: png,
+            mimeType: "image/png",
+            preferredFilename: "Caption.png"
+        )
+        note = result.note
+        note.attachments[0].captionStatus = .pending
+        note.body = "Notes"
+        note = try await store.update(note)
+        #expect(note.body.contains("*Caption: Caption pending...*"))
+
+        let saved = try await store.updateAttachmentCaption(
+            noteID: note.id,
+            attachmentID: result.attachment.id,
+            caption: "A launch dashboard with owners and dates.",
+            status: .captioned,
+            modelID: "test-vision"
+        )
+
+        #expect(saved.body.contains("](./\(result.attachment.relativePath))"))
+        #expect(saved.body.contains("*Caption: A launch dashboard with owners and dates.*"))
+        #expect(!saved.body.contains("Caption pending"))
     }
 
     @Test("attachImage rejects unsupported image data")

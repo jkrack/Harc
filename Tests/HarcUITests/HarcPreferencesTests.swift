@@ -57,6 +57,26 @@ struct HarcPreferencesTests {
         #expect(prefs.autoPasteEnabled == true)
     }
 
+    @Test("notesPath resets leaked UI test temp directories")
+    func notesPathResetsLeakedUITestTempDirectories() {
+        let defaults = UserDefaults.standard
+        let original = defaults.string(forKey: "harc.notesPath")
+        let leakedPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers/com.harc.HarcAppUITests.xctrunner/Data/tmp/harc-app-ui-\(UUID().uuidString)/Notes")
+            .path
+        defaults.set(leakedPath, forKey: "harc.notesPath")
+
+        let prefs = HarcPreferences()
+
+        #expect(prefs.notesPath == HarcPreferences.defaultNotesPath)
+        #expect(defaults.string(forKey: "harc.notesPath") == HarcPreferences.defaultNotesPath)
+        if let original {
+            defaults.set(original, forKey: "harc.notesPath")
+        } else {
+            defaults.removeObject(forKey: "harc.notesPath")
+        }
+    }
+
     @Test("autoPasteEnabled persists and round-trips through UserDefaults")
     func autoPasteEnabledPersists() {
         let defaults = UserDefaults.standard

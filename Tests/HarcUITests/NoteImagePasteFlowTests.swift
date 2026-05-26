@@ -276,6 +276,27 @@ struct NoteImagePasteFlowTests {
         """)
     }
 
+    @Test("image block pasted into an empty note has no leading whitespace")
+    func imageBlockPastedIntoEmptyNoteHasNoLeadingWhitespace() {
+        let attachment = NoteAttachment(
+            id: "01IMAGEATTACHMENT0000000000",
+            filename: "meeting-slide.png",
+            relativePath: "01NOTE.assets/meeting-slide.png",
+            mimeType: "image/png",
+            byteCount: 128,
+            altText: "meeting slide",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let body = HarcWindowRootView.appendingImageBlock(
+            to: " \n\t\n",
+            attachment: attachment,
+            caption: nil
+        )
+
+        #expect(body == "![meeting slide](./01NOTE.assets/meeting-slide.png)")
+    }
+
     @Test("generated image caption replaces the visible pending caption")
     func generatedImageCaptionReplacesVisiblePendingCaption() {
         let attachment = NoteAttachment(
