@@ -95,8 +95,10 @@ public struct SpeakerNameEditor: View {
                             suggestionChips(for: index, provider: provider)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .sheet(item: Binding(
                 get: { addingPersonForIndex.map { IdxBox(value: $0) } },
                 set: { addingPersonForIndex = $0?.value }
@@ -117,7 +119,7 @@ public struct SpeakerNameEditor: View {
             Text("Speaker \(index + 1)")
                 .font(.body)
                 .foregroundStyle(Color.primary)
-                .frame(width: 90, alignment: .leading)
+                .frame(minWidth: 78, idealWidth: 90, alignment: .leading)
             Menu {
                 ForEach(allPeople) { p in
                     Button(p.displayName) {
@@ -147,29 +149,23 @@ public struct SpeakerNameEditor: View {
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.1)))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .menuStyle(.borderlessButton)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private func pendingSuggestionChip(for index: Int) -> some View {
         if let suggestion = pendingSuggestions.first(where: { $0.speakerIndex == index }) {
             let personName = personNamesByID[suggestion.personID] ?? "someone"
-            HStack(spacing: 6) {
-                Image(systemName: "questionmark.circle.fill").foregroundStyle(Color.yellow)
-                Text("May be \(personName) · \(String(format: "%.2f", suggestion.score))")
-                    .font(.caption)
-                Spacer()
-                Button("Confirm") { onConfirmSuggestion(suggestion) }
-                    .buttonStyle(.borderedProminent).controlSize(.mini)
-                Button("Dismiss") { onDismissSuggestion(suggestion) }
-                    .buttonStyle(.bordered).controlSize(.mini)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(Color.yellow.opacity(0.12)))
-            .padding(.leading, 98) // align with Menu left edge
+            PendingSpeakerSuggestionRow(
+                personName: personName,
+                score: suggestion.score,
+                onConfirm: { onConfirmSuggestion(suggestion) },
+                onDismiss: { onDismissSuggestion(suggestion) }
+            )
         }
     }
 
@@ -188,7 +184,7 @@ public struct SpeakerNameEditor: View {
                     )
                 }
             }
-            .padding(.leading, 98) // align with TextField left edge
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         // Fetch once on appear. `provider` is captured on the init — the
         // view holds it as a stored property, so we can re-reference it
@@ -244,6 +240,72 @@ public struct SpeakerNameEditor: View {
 private struct IdxBox: Identifiable {
     let value: Int
     var id: Int { value }
+}
+
+private struct PendingSpeakerSuggestionRow: View {
+    let personName: String
+    let score: Double
+    let onConfirm: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            horizontalLayout
+            compactLayout
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.yellow.opacity(0.12))
+        )
+    }
+
+    private var horizontalLayout: some View {
+        HStack(spacing: 6) {
+            icon
+            suggestionText
+            Spacer(minLength: 8)
+            actions
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var compactLayout: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                icon
+                suggestionText
+            }
+            actions
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var icon: some View {
+        Image(systemName: "questionmark.circle.fill")
+            .foregroundStyle(Color.yellow)
+    }
+
+    private var suggestionText: some View {
+        Text("May be \(personName) · \(String(format: "%.2f", score))")
+            .font(.caption)
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 6) {
+            Button("Confirm", action: onConfirm)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+            Button("Dismiss", action: onDismiss)
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+        }
+    }
 }
 
 private struct AddPersonNameSheet: View {
