@@ -1149,24 +1149,31 @@ public struct HarcWindowRootView: View {
         .padding(.vertical, 8)
     }
 
-    /// A `Label`-style row for use inside a `List(selection:)`. The tag is
-    /// `wavPath` to match `selection`.
+    /// Recording row for use inside a `List(selection:)`. The tag is `wavPath`
+    /// to match `selection`.
     private func recordingLabel(_ rec: Recording) -> some View {
-        Label {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: rec.pinned ? "pin.fill" : "waveform")
+                .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
+                .frame(width: 18, alignment: .center)
+                .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(rec.displayTitle)
                     .font(.body)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let endedAt = rec.endedAt {
                     Text(Self.formatDuration(from: rec.startedAt, to: endedAt))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-        } icon: {
-            Image(systemName: rec.pinned ? "pin.fill" : "waveform")
-                .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.vertical, 4)
+        .frame(minHeight: 44, alignment: .topLeading)
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
         .accessibilityIdentifier("harc.library.recording.\(rec.id.map(String.init) ?? rec.wavPath)")
         .contentShape(Rectangle())
