@@ -54,7 +54,7 @@ public actor WikiMerger {
             title: \(proposal.targetTitle)
             section: \(proposal.targetSection.rawValue)
             sources:
-            \(sourceLines(proposal.sourceCitations))
+            \(sourceLines(proposal.renderedCitations))
             ---
 
             # \(proposal.targetTitle)
@@ -68,7 +68,7 @@ public actor WikiMerger {
             in: existingBody,
             title: proposal.targetTitle,
             section: proposal.targetSection,
-            sources: proposal.sourceCitations
+            sources: proposal.renderedCitations
         )
 
         if let range = managedBlockRange(id: proposal.id, in: withSources) {

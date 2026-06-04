@@ -2015,11 +2015,11 @@ public struct HarcWindowRootView: View {
             Text(proposal.summary)
                 .foregroundStyle(.secondary)
 
-            if !proposal.sourceCitations.isEmpty {
+            if !proposal.renderedCitations.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Sources")
                         .font(.headline)
-                    ForEach(proposal.sourceCitations, id: \.self) { citation in
+                    ForEach(proposal.renderedCitations, id: \.self) { citation in
                         Text(citation)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)

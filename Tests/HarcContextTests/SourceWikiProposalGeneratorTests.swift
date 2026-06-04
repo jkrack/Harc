@@ -51,6 +51,12 @@ struct SourceWikiProposalGeneratorTests {
         #expect(proposals.contains { $0.targetSection == .decisions && $0.proposedMarkdown.contains("raw repositories read-only") })
         #expect(proposals.contains { $0.targetSection == .openQuestions && $0.proposedMarkdown.contains("incremental delete handling") })
         #expect(proposals.allSatisfy { !$0.sourceCitations.isEmpty })
+        #expect(proposals.allSatisfy { !$0.knowledgeCitations.isEmpty })
+        #expect(proposals.flatMap(\.knowledgeCitations).allSatisfy { $0.kind == .sourceFile })
+        #expect(proposals.contains { proposal in
+            proposal.targetSection == .decisions
+                && proposal.knowledgeCitations.contains { $0.displayText == "/tmp/Atlas/README.md:3" }
+        })
     }
 
     @Test("folder scans skip repository project maps")

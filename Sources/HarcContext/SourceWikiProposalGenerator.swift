@@ -78,6 +78,7 @@ public enum SourceWikiProposalGenerator {
             targetTitle: title,
             proposedMarkdown: body,
             sourceCitations: citations(from: documents, limit: 20),
+            knowledgeCitations: knowledgeCitations(from: documents, limit: 20),
             createdAt: generatedAt,
             updatedAt: generatedAt
         )
@@ -130,6 +131,7 @@ public enum SourceWikiProposalGenerator {
             targetTitle: title,
             proposedMarkdown: body,
             sourceCitations: citations(from: documents, limit: 20),
+            knowledgeCitations: knowledgeCitations(from: documents, limit: 20),
             createdAt: generatedAt,
             updatedAt: generatedAt
         )
@@ -165,6 +167,7 @@ public enum SourceWikiProposalGenerator {
             targetTitle: title,
             proposedMarkdown: body,
             sourceCitations: Array(Set(matches.map(\.citation))).sorted(),
+            knowledgeCitations: deduplicatedCitations(matches.map(\.knowledgeCitation)),
             createdAt: generatedAt,
             updatedAt: generatedAt
         )
@@ -201,6 +204,7 @@ public enum SourceWikiProposalGenerator {
             targetTitle: title,
             proposedMarkdown: body,
             sourceCitations: Array(Set(matches.map(\.citation))).sorted(),
+            knowledgeCitations: deduplicatedCitations(matches.map(\.knowledgeCitation)),
             createdAt: generatedAt,
             updatedAt: generatedAt
         )
@@ -239,6 +243,7 @@ public enum SourceWikiProposalGenerator {
             targetTitle: title,
             proposedMarkdown: markdown,
             sourceCitations: [document.provenance.citationPath],
+            knowledgeCitations: [KnowledgeCitation.sourceFile(from: document.provenance)],
             createdAt: generatedAt,
             updatedAt: generatedAt
         )
@@ -292,6 +297,7 @@ public enum SourceWikiProposalGenerator {
     private struct EvidenceLine {
         var text: String
         var citation: String
+        var knowledgeCitation: KnowledgeCitation
     }
 
     private static func evidenceLines(
@@ -311,7 +317,8 @@ public enum SourceWikiProposalGenerator {
                 let lineNumber = index + 1
                 results.append(EvidenceLine(
                     text: String(line.prefix(260)),
-                    citation: "\(document.provenance.absolutePath):\(lineNumber)"
+                    citation: "\(document.provenance.absolutePath):\(lineNumber)",
+                    knowledgeCitation: .sourceFile(document: document, lineStart: lineNumber)
                 ))
             }
         }
@@ -320,6 +327,20 @@ public enum SourceWikiProposalGenerator {
 
     private static func citations(from documents: [ScannedSourceDocument], limit: Int) -> [String] {
         Array(documents.map(\.provenance.citationPath).prefix(limit))
+    }
+
+    private static func knowledgeCitations(from documents: [ScannedSourceDocument], limit: Int) -> [KnowledgeCitation] {
+        deduplicatedCitations(documents.prefix(limit).map { .sourceFile(from: $0.provenance) })
+    }
+
+    private static func deduplicatedCitations(_ citations: [KnowledgeCitation]) -> [KnowledgeCitation] {
+        var seen = Set<String>()
+        var result: [KnowledgeCitation] = []
+        for citation in citations {
+            guard seen.insert(citation.id).inserted else { continue }
+            result.append(citation)
+        }
+        return result
     }
 
     private static func proposalID(
