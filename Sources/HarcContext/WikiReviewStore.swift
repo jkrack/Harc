@@ -26,6 +26,7 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
     public var targetTitle: String
     public var proposedMarkdown: String
     public var sourceCitations: [String]
+    public var knowledgeCitations: [KnowledgeCitation]
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -39,6 +40,7 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
         targetTitle: String,
         proposedMarkdown: String,
         sourceCitations: [String],
+        knowledgeCitations: [KnowledgeCitation] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -51,8 +53,51 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
         self.targetTitle = targetTitle
         self.proposedMarkdown = proposedMarkdown
         self.sourceCitations = sourceCitations
+        self.knowledgeCitations = knowledgeCitations
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public var renderedCitations: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for citation in knowledgeCitations.map(\.displayText) + sourceCitations {
+            let trimmed = citation.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case status
+        case title
+        case summary
+        case targetSection
+        case targetTitle
+        case proposedMarkdown
+        case sourceCitations
+        case knowledgeCitations
+        case createdAt
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.kind = try container.decode(WikiReviewProposalKind.self, forKey: .kind)
+        self.status = try container.decode(WikiReviewProposalStatus.self, forKey: .status)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.summary = try container.decode(String.self, forKey: .summary)
+        self.targetSection = try container.decode(WikiSection.self, forKey: .targetSection)
+        self.targetTitle = try container.decode(String.self, forKey: .targetTitle)
+        self.proposedMarkdown = try container.decode(String.self, forKey: .proposedMarkdown)
+        self.sourceCitations = try container.decodeIfPresent([String].self, forKey: .sourceCitations) ?? []
+        self.knowledgeCitations = try container.decodeIfPresent([KnowledgeCitation].self, forKey: .knowledgeCitations) ?? []
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 }
 
