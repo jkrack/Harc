@@ -31928,9 +31928,15 @@ quote: "We should keep the notes tied to the recording."
           paste(event) {
             const items = Array.from(event.clipboardData?.items ?? []);
             const imageItem = items.find((item) => item.type?.startsWith("image/"));
-            if (!imageItem) return false;
+            if (!imageItem) {
+              requestNativePasteboardImage();
+              return false;
+            }
             const file = imageItem.getAsFile();
-            if (!file) return false;
+            if (!file) {
+              requestNativePasteboardImage();
+              return false;
+            }
             event.preventDefault();
             readClipboardImage(file);
             return true;
@@ -32214,6 +32220,11 @@ ${selected}
     };
     reader.onerror = () => showAttachmentError("Could not read the pasted image.");
     reader.readAsDataURL(file);
+  }
+  function requestNativePasteboardImage() {
+    window.webkit?.messageHandlers?.harc?.postMessage({
+      type: "nativePasteboardImage"
+    });
   }
   function resolveAttachmentURL(path) {
     if (/^(file|https?):\/\//i.test(path)) return path;

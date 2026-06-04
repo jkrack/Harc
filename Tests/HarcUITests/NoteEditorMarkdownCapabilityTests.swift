@@ -151,6 +151,8 @@ struct NoteEditorMarkdownCapabilityTests {
             "ImageAttachmentWidget",
             "const imageLink =",
             "readClipboardImage(file)",
+            "requestNativePasteboardImage()",
+            #"type: "nativePasteboardImage""#,
             #"type: "pasteImage""#,
             "resolveAttachmentURL(path)",
             "cm-md-image",
@@ -182,6 +184,34 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(css.contains("#preview table"))
         #expect(css.contains(".md-task-checkbox"))
         #expect(css.contains(".attachment-error"))
+    }
+
+    @Test("note editor routes native macOS screenshot paste through Swift pasteboard")
+    func noteEditorRoutesNativeMacOSScreenshotPasteThroughSwiftPasteboard() throws {
+        let webViewSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("Sources/HarcUI/Notes/NoteMarkdownWebView.swift"),
+            encoding: .utf8
+        )
+        let editorSource = try String(
+            contentsOf: repoRoot.appendingPathComponent(
+                "Sources/HarcUI/Resources/NoteEditor/editor-entry.js"
+            ),
+            encoding: .utf8
+        )
+        let bundle = try String(
+            contentsOf: repoRoot.appendingPathComponent(
+                "Sources/HarcUI/Resources/NoteEditor/editor.bundle.js"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(webViewSource.contains(#"case "nativePasteboardImage":"#))
+        #expect(webViewSource.contains("override func doCommand(by selector: Selector)"))
+        #expect(webViewSource.contains(#"selector == #selector(NSText.paste(_:))"#))
+        #expect(editorSource.contains("requestNativePasteboardImage();"))
+        #expect(editorSource.contains(#"type: "nativePasteboardImage""#))
+        #expect(bundle.contains("requestNativePasteboardImage();"))
+        #expect(bundle.contains(#"type: "nativePasteboardImage""#))
     }
 
     @Test("note editor HTML loads only bundled local assets")
