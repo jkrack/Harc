@@ -171,6 +171,14 @@ final class NoteImagePasteHandler {
 private final class NoteMarkdownWKWebView: WKWebView {
     weak var pasteSink: NoteMarkdownWebView.Coordinator?
 
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(NSText.paste(_:)),
+           pasteSink?.handleNativePasteboard(NSPasteboard.general) == true {
+            return
+        }
+        super.doCommand(by: selector)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if isPasteShortcut(event),
            pasteSink?.handleNativePasteboard(NSPasteboard.general) == true {
@@ -319,6 +327,8 @@ public struct NoteMarkdownWebView: NSViewRepresentable {
                 applyingFromWeb = false
             case "pasteImage":
                 handlePastedImage(body)
+            case "nativePasteboardImage":
+                _ = handleNativePasteboard(NSPasteboard.general)
             default:
                 return
             }
