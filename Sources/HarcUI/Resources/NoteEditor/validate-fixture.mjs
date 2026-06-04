@@ -37,24 +37,31 @@ const checks = {
   tableFixture: text.includes("| Field | Expected |"),
   linkFixture: text.includes("[Harc repo](https://github.com/jkrack/Harc)"),
   mentionFixture: text.includes("@amy") && text.includes("@Neal") && text.includes("@[Amy Williams]"),
-  headingRendered: entry.includes("cm-md-heading-${level}") || entry.includes("cm-md-heading-1"),
-  emphasisStyled: entry.includes("cm-md-bold") && entry.includes("cm-md-italic") && entry.includes("cm-md-strike"),
-  taskStyled: entry.includes("TaskCheckboxWidget") && entry.includes("cm-md-task-done"),
-  blockquoteStyled: entry.includes("cm-md-blockquote"),
-  codeFenceStyled: entry.includes("cm-md-codeblock-line") && entry.includes("cm-md-context-line"),
-  tableStyled: entry.includes("cm-md-table-line") && entry.includes("cm-md-table-divider"),
-  thematicBreakStyled: entry.includes("cm-md-hr"),
-  wikilinkStyled: entry.includes("cm-wikilink"),
-  mentionStyled: entry.includes("cm-person-mention"),
-  inlineCodeStyled: entry.includes("cm-inline-code"),
-  wikilinkAutocomplete: entry.includes("autocompletion") &&
-    entry.includes("wikilinkCompletions") &&
+  milkdownEditor: entry.includes("Editor.make()") &&
+    entry.includes("@milkdown/kit/core") &&
+    entry.includes("@milkdown/kit/preset/commonmark"),
+  headingRendered: entry.includes("commonmark") && entry.includes("heading-1"),
+  emphasisStyled: entry.includes("bold") && entry.includes("italic") && entry.includes("strike"),
+  taskStyled: entry.includes("renderTaskLists(html)") && entry.includes("md-task-checkbox"),
+  blockquoteStyled: entry.includes("quote"),
+  codeFenceStyled: entry.includes("code-block") && entry.includes("harc-context-block"),
+  tableStyled: entry.includes("table"),
+  thematicBreakStyled: entry.includes("divider"),
+  wikilinkStyled: entry.includes("[[") && entry.includes("linkTargets"),
+  mentionStyled: entry.includes("mentionTargets") && entry.includes("typedMentionInsertText"),
+  inlineCodeStyled: entry.includes("inline-code"),
+  wikilinkAutocomplete: entry.includes("maybeShowCompletions") &&
+    entry.includes("showCompletions(matches, isWiki)") &&
     entry.includes("setLinkTargets(targets)"),
-  mentionAutocomplete: entry.includes("mentionCompletions") &&
+  mentionAutocomplete: entry.includes("maybeShowCompletions") &&
     entry.includes("setMentionTargets(targets)") &&
     entry.includes("standaloneMentionTargets") &&
-    entry.includes("mentionInsertText"),
-  modeSupport: entry.includes("setMode(mode)") && entry.includes("source") && entry.includes("read"),
+    entry.includes("typedMentionInsertText"),
+  modeSupport: entry.includes("setMode(mode)") && entry.includes("sourceElement") && entry.includes("read"),
+  attachmentSupport: entry.includes("readClipboardImage(file)") &&
+    entry.includes("requestNativePasteboardImage()") &&
+    entry.includes("resolveAttachmentURL(path)") &&
+    entry.includes("insertMarkdown(markdown)"),
   fixtureTextPresent: missing.length === 0,
 };
 

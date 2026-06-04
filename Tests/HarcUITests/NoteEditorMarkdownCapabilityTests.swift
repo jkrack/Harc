@@ -62,7 +62,7 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(NoteMarkdownEditorMode.read.title == "Preview")
     }
 
-    @Test("note detail uses Source, Obsidian-style Edit, and rendered Preview surfaces")
+    @Test("note detail uses Source, WYSIWYG Edit, and rendered Preview surfaces")
     func noteDetailUsesExpectedEditorModeSurfaces() throws {
         let source = try String(
             contentsOf: repoRoot.appendingPathComponent("Sources/HarcUI/HarcWindowRootView.swift"),
@@ -86,8 +86,8 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownPreview")"#))
     }
 
-    @Test("note editor source keeps CodeMirror Markdown and app bridge capabilities")
-    func noteEditorSourceKeepsCodeMirrorMarkdownAndAppBridgeCapabilities() throws {
+    @Test("note editor source keeps Milkdown Markdown and app bridge capabilities")
+    func noteEditorSourceKeepsMilkdownMarkdownAndAppBridgeCapabilities() throws {
         let source = try String(
             contentsOf: repoRoot.appendingPathComponent(
                 "Sources/HarcUI/Resources/NoteEditor/editor-entry.js"
@@ -96,7 +96,8 @@ struct NoteEditorMarkdownCapabilityTests {
         )
 
         let requiredSnippets = [
-            #"import {markdown} from "@codemirror/lang-markdown";"#,
+            #"import {Editor, defaultValueCtx, editorViewCtx, rootCtx, serializerCtx} from "@milkdown/kit/core";"#,
+            #"import {commonmark} from "@milkdown/kit/preset/commonmark";"#,
             #"import MarkdownIt from "markdown-it";"#,
             "window.webkit?.messageHandlers?.harc?.postMessage",
             "window.HarcEditor =",
@@ -113,7 +114,6 @@ struct NoteEditorMarkdownCapabilityTests {
             "runMarkdownCommand(command)",
             "wrapSelection(prefix",
             "transformSelectedLines(transform)",
-            "setHeading(level)",
             "updateFormattingRibbonVisibility()",
             "renderPreview(markdown)",
             "markdownRenderer.render",
@@ -121,41 +121,24 @@ struct NoteEditorMarkdownCapabilityTests {
             "showAttachmentError(message)",
             "setLinkTargets(targets)",
             "setMentionTargets(targets)",
-            "autocompletion",
-            "wikilinkCompletions",
-            "mentionCompletions",
-            "mentionTargetMatches",
-            "mentionTargetRank",
+            "maybeShowCompletions",
+            "showCompletions(matches, isWiki)",
             "typedMentionInsertText",
-            "mentionClass",
-            #"from: typed || bracketed ? before.from + before.text.indexOf("[") + 1 : before.from + 1"#,
-            "from: before.from, to, insert",
-            "cm-person-mention",
+            "completion-project",
             #"!["source", "live", "read"].includes(mode)"#,
-            "cm-md-heading-${level}",
-            "cm-md-syntax-hidden",
-            "cm-wikilink",
-            "cm-inline-code",
-            "TaskCheckboxWidget",
-            "ListMarkerWidget",
-            "cm-md-bold",
-            "cm-md-italic",
-            "cm-md-strike",
-            "cm-md-blockquote",
-            "cm-md-list-marker",
-            "cm-md-list-text",
-            "cm-md-codeblock-line",
-            "cm-md-context-line",
-            "cm-md-table-line",
-            "cm-md-hr",
-            "ImageAttachmentWidget",
-            "const imageLink =",
+            "Editor.make()",
+            "commonmark",
+            "replaceAll(markdown)",
+            "serializeMilkdown()",
+            "sourceElement",
+            "source-editor",
+            "harc-context-block",
             "readClipboardImage(file)",
             "requestNativePasteboardImage()",
             #"type: "nativePasteboardImage""#,
             #"type: "pasteImage""#,
             "resolveAttachmentURL(path)",
-            "cm-md-image",
+            "decorateMilkdownSurface",
             "attachment-error",
         ]
 
@@ -173,17 +156,19 @@ struct NoteEditorMarkdownCapabilityTests {
             encoding: .utf8
         )
 
+        #expect(css.contains(".ProseMirror"))
+        #expect(css.contains("#source-editor"))
         #expect(css.contains("cm-entity-mention"))
-        #expect(css.contains("cm-project-mention"))
+        #expect(css.contains("completion-project"))
         #expect(css.contains("#format-ribbon"))
         #expect(css.contains(".ribbon-separator"))
         #expect(css.contains("#preview"))
-        #expect(css.contains(".cm-md-image"))
-        #expect(css.contains(".cm-md-image img"))
+        #expect(css.contains(".ProseMirror img"))
         #expect(css.contains("#preview hr"))
         #expect(css.contains("#preview table"))
         #expect(css.contains(".md-task-checkbox"))
         #expect(css.contains(".attachment-error"))
+        #expect(css.contains("#completion-popover"))
     }
 
     @Test("note editor routes native macOS screenshot paste through Swift pasteboard")
@@ -228,6 +213,7 @@ struct NoteEditorMarkdownCapabilityTests {
         #expect(html.contains(#"data-md-command="bold""#))
         #expect(html.contains(#"data-md-command="task-list""#))
         #expect(html.contains(#"data-md-command="table""#))
+        #expect(html.contains(#"<textarea id="source-editor" aria-label="Raw Markdown note editor""#))
         #expect(html.contains(#"<main id="preview" aria-label="Markdown note preview" hidden></main>"#))
         #expect(html.contains(#"<link rel="stylesheet" href="./style.css" />"#))
         #expect(html.contains(#"<script src="./editor.bundle.js"></script>"#))
