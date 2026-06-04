@@ -71,9 +71,12 @@ struct NoteEditorMarkdownCapabilityTests {
 
         #expect(source.contains("case .source:"))
         #expect(source.contains("case .live:"))
-        #expect(source.contains("NoteMarkdownWebView(text: Binding("))
+        #expect(source.contains("NoteMarkdownWebView(text: noteBodyBinding"))
         #expect(source.contains("mode: .source"))
         #expect(source.contains("mode: .live"))
+        #expect(source.contains("private static let noteWritingModes: [NoteMarkdownEditorMode] = [.live, .source]"))
+        #expect(source.contains(#".accessibilityIdentifier("harc.note.writingModePicker")"#))
+        #expect(source.contains(#".accessibilityIdentifier("harc.note.previewToggle")"#))
         #expect(source.contains("showsFormattingRibbon: prefs.markdownFormattingRibbonEnabled"))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.markdownTextEditor")"#))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.liveMarkdownEditor")"#))
@@ -100,6 +103,10 @@ struct NoteEditorMarkdownCapabilityTests {
             "setText(text)",
             "getText()",
             "setMode(mode)",
+            "flushChanges()",
+            "setChangeCommitDelay(milliseconds)",
+            "changeCommitDelay = 180",
+            "flushPendingChange",
             "setAttachmentBaseURL(url)",
             "setFormattingRibbonVisible(isVisible)",
             "insertMarkdown(markdown)",

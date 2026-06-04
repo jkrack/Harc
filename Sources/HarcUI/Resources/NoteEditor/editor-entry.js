@@ -69,9 +69,37 @@ const standaloneMentionTargets = {
   ],
 };
 
-const postChange = (text) => {
+let pendingChangeText = null;
+let pendingChangeTimer = null;
+let changeCommitDelay = 180;
+
+const sendChange = (text) => {
   window.webkit?.messageHandlers?.harc?.postMessage({type: "change", text});
 };
+
+const postChange = (text, options = {}) => {
+  pendingChangeText = text;
+  if (pendingChangeTimer !== null) {
+    clearTimeout(pendingChangeTimer);
+    pendingChangeTimer = null;
+  }
+  if (options.immediate || changeCommitDelay <= 0) {
+    flushPendingChange();
+    return;
+  }
+  pendingChangeTimer = setTimeout(flushPendingChange, changeCommitDelay);
+};
+
+function flushPendingChange() {
+  if (pendingChangeTimer !== null) {
+    clearTimeout(pendingChangeTimer);
+    pendingChangeTimer = null;
+  }
+  if (pendingChangeText === null) return;
+  const text = pendingChangeText;
+  pendingChangeText = null;
+  sendChange(text);
+}
 
 let linkTargets = [];
 let mentionTargets = standaloneMentionTargets[
@@ -520,6 +548,9 @@ editorElement?.addEventListener("mousedown", () => {
   }
 });
 
+window.addEventListener("blur", flushPendingChange);
+window.addEventListener("pagehide", flushPendingChange);
+
 ribbonElement?.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
@@ -598,13 +629,14 @@ window.HarcEditor = {
       selection: {anchor: view.state.selection.main.from + insert.length},
       userEvent: "input.paste",
     });
-    postChange(view.state.doc.toString());
+    postChange(view.state.doc.toString(), {immediate: true});
   },
   showAttachmentError(message) {
     showAttachmentError(message);
   },
   setMode(mode) {
     if (!["source", "live", "read"].includes(mode)) return;
+    flushPendingChange();
     editorMode = mode;
     const isRead = mode === "read";
     if (editorElement) editorElement.hidden = isRead;
@@ -620,6 +652,13 @@ window.HarcEditor = {
     if (!isRead) {
       requestAnimationFrame(() => view.focus());
     }
+  },
+  flushChanges() {
+    flushPendingChange();
+  },
+  setChangeCommitDelay(milliseconds) {
+    if (typeof milliseconds !== "number" || !Number.isFinite(milliseconds)) return;
+    changeCommitDelay = Math.max(0, milliseconds);
   },
 };
 
@@ -644,7 +683,7 @@ function dispatchTextReplacement(from, to, insert, selectionOffset = insert.leng
     userEvent: "input",
   });
   renderPreview(currentText());
-  postChange(currentText());
+  postChange(currentText(), {immediate: true});
   requestAnimationFrame(() => view.focus());
 }
 

@@ -31530,9 +31530,34 @@ quote: "We should keep the notes tied to the recording."
       { label: "Q3 Launch", kind: "project", detail: "Project" }
     ]
   };
-  var postChange = (text2) => {
+  var pendingChangeText = null;
+  var pendingChangeTimer = null;
+  var changeCommitDelay = 180;
+  var sendChange = (text2) => {
     window.webkit?.messageHandlers?.harc?.postMessage({ type: "change", text: text2 });
   };
+  var postChange = (text2, options = {}) => {
+    pendingChangeText = text2;
+    if (pendingChangeTimer !== null) {
+      clearTimeout(pendingChangeTimer);
+      pendingChangeTimer = null;
+    }
+    if (options.immediate || changeCommitDelay <= 0) {
+      flushPendingChange();
+      return;
+    }
+    pendingChangeTimer = setTimeout(flushPendingChange, changeCommitDelay);
+  };
+  function flushPendingChange() {
+    if (pendingChangeTimer !== null) {
+      clearTimeout(pendingChangeTimer);
+      pendingChangeTimer = null;
+    }
+    if (pendingChangeText === null) return;
+    const text2 = pendingChangeText;
+    pendingChangeText = null;
+    sendChange(text2);
+  }
   var linkTargets = [];
   var mentionTargets = standaloneMentionTargets[new URLSearchParams(location.search).get("fixture")] ?? [];
   var attachmentBaseURL = "";
@@ -31927,6 +31952,8 @@ quote: "We should keep the notes tied to the recording."
       requestAnimationFrame(() => view.focus());
     }
   });
+  window.addEventListener("blur", flushPendingChange);
+  window.addEventListener("pagehide", flushPendingChange);
   ribbonElement?.addEventListener("mousedown", (event) => {
     event.preventDefault();
   });
@@ -32002,13 +32029,14 @@ ${markdown2}
         selection: { anchor: view.state.selection.main.from + insert2.length },
         userEvent: "input.paste"
       });
-      postChange(view.state.doc.toString());
+      postChange(view.state.doc.toString(), { immediate: true });
     },
     showAttachmentError(message) {
       showAttachmentError(message);
     },
     setMode(mode) {
       if (!["source", "live", "read"].includes(mode)) return;
+      flushPendingChange();
       editorMode = mode;
       const isRead = mode === "read";
       if (editorElement) editorElement.hidden = isRead;
@@ -32024,6 +32052,13 @@ ${markdown2}
       if (!isRead) {
         requestAnimationFrame(() => view.focus());
       }
+    },
+    flushChanges() {
+      flushPendingChange();
+    },
+    setChangeCommitDelay(milliseconds) {
+      if (typeof milliseconds !== "number" || !Number.isFinite(milliseconds)) return;
+      changeCommitDelay = Math.max(0, milliseconds);
     }
   };
   function updateFormattingRibbonVisibility() {
@@ -32044,7 +32079,7 @@ ${markdown2}
       userEvent: "input"
     });
     renderPreview(currentText());
-    postChange(currentText());
+    postChange(currentText(), { immediate: true });
     requestAnimationFrame(() => view.focus());
   }
   function selectedTextOrPlaceholder(placeholderText) {

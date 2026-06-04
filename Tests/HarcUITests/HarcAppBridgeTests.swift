@@ -39,6 +39,20 @@ struct HarcAppBridgeTests {
         #expect(bridge.stopRecovery == nil)
     }
 
+    @Test("recording stop in flight publishes loading state")
+    func recordingStopInFlightPublishesLoadingState() {
+        let bridge = HarcAppBridge(
+            recordingState: RecordingState(),
+            trayState: PostStopTrayState()
+        )
+
+        #expect(bridge.recordingStopInFlight == false)
+        bridge.beginRecordingStop()
+        #expect(bridge.recordingStopInFlight == true)
+        bridge.endRecordingStop()
+        #expect(bridge.recordingStopInFlight == false)
+    }
+
     @Test("readiness state publishes menu bar preflight details")
     func readinessStatePublishesPreflightDetails() {
         let bridge = HarcAppBridge(

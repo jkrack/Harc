@@ -55,6 +55,7 @@ public final class HarcAppBridge: ObservableObject {
     @Published public private(set) var noteRecordingLinkFeedback: NoteRecordingLinkFeedback? = nil
     @Published public private(set) var activeNoteRecordingID: String? = nil
     @Published public private(set) var noteRecordingConflict: NoteRecordingConflict? = nil
+    @Published public private(set) var recordingStopInFlight: Bool = false
 
     public var onStartStop: () -> Void = {}
     public var onStartRecordingForNote: (String) -> Void = { _ in }
@@ -114,6 +115,14 @@ public final class HarcAppBridge: ObservableObject {
 
     public func clearStopRecovery() {
         stopRecovery = nil
+    }
+
+    public func beginRecordingStop() {
+        recordingStopInFlight = true
+    }
+
+    public func endRecordingStop() {
+        recordingStopInFlight = false
     }
 
     public func setRecoveryArtifacts(_ artifacts: [RecoveryArtifact]) {

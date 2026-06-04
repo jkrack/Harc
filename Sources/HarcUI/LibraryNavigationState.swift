@@ -1,5 +1,26 @@
 import Foundation
 
+enum LibrarySidebarSection: String, Codable, CaseIterable, Identifiable {
+    case recordings
+    case notes
+    case projects
+    case people
+
+    var id: String { rawValue }
+
+    static let defaultOrder: [LibrarySidebarSection] = [.recordings, .notes, .projects, .people]
+
+    static func normalizedOrder(_ order: [LibrarySidebarSection]) -> [LibrarySidebarSection] {
+        var seen: Set<LibrarySidebarSection> = []
+        var result: [LibrarySidebarSection] = []
+        for section in order + defaultOrder where !seen.contains(section) {
+            seen.insert(section)
+            result.append(section)
+        }
+        return result
+    }
+}
+
 struct PersistedLibrarySelection: Codable, Equatable {
     enum Kind: String, Codable {
         case note
@@ -50,6 +71,7 @@ struct LibraryNavigationSnapshot: Codable, Equatable {
     var projectsExpanded: Bool
     var peopleExpanded: Bool
     var recordingsExpanded: Bool
+    var sidebarSectionOrder: [LibrarySidebarSection]
     var expandedNoteBuckets: [String]
     var knownNoteBuckets: [String]
 
@@ -60,9 +82,59 @@ struct LibraryNavigationSnapshot: Codable, Equatable {
         projectsExpanded: false,
         peopleExpanded: false,
         recordingsExpanded: true,
+        sidebarSectionOrder: LibrarySidebarSection.defaultOrder,
         expandedNoteBuckets: [],
         knownNoteBuckets: []
     )
+
+    private enum CodingKeys: String, CodingKey {
+        case modeRawValue
+        case selection
+        case notesExpanded
+        case projectsExpanded
+        case peopleExpanded
+        case recordingsExpanded
+        case sidebarSectionOrder
+        case expandedNoteBuckets
+        case knownNoteBuckets
+    }
+
+    init(
+        modeRawValue: String,
+        selection: PersistedLibrarySelection?,
+        notesExpanded: Bool,
+        projectsExpanded: Bool,
+        peopleExpanded: Bool,
+        recordingsExpanded: Bool,
+        sidebarSectionOrder: [LibrarySidebarSection],
+        expandedNoteBuckets: [String],
+        knownNoteBuckets: [String]
+    ) {
+        self.modeRawValue = modeRawValue
+        self.selection = selection
+        self.notesExpanded = notesExpanded
+        self.projectsExpanded = projectsExpanded
+        self.peopleExpanded = peopleExpanded
+        self.recordingsExpanded = recordingsExpanded
+        self.sidebarSectionOrder = LibrarySidebarSection.normalizedOrder(sidebarSectionOrder)
+        self.expandedNoteBuckets = expandedNoteBuckets
+        self.knownNoteBuckets = knownNoteBuckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        modeRawValue = try container.decodeIfPresent(String.self, forKey: .modeRawValue) ?? Self.defaults.modeRawValue
+        selection = try container.decodeIfPresent(PersistedLibrarySelection.self, forKey: .selection)
+        notesExpanded = try container.decodeIfPresent(Bool.self, forKey: .notesExpanded) ?? Self.defaults.notesExpanded
+        projectsExpanded = try container.decodeIfPresent(Bool.self, forKey: .projectsExpanded) ?? Self.defaults.projectsExpanded
+        peopleExpanded = try container.decodeIfPresent(Bool.self, forKey: .peopleExpanded) ?? Self.defaults.peopleExpanded
+        recordingsExpanded = try container.decodeIfPresent(Bool.self, forKey: .recordingsExpanded) ?? Self.defaults.recordingsExpanded
+        sidebarSectionOrder = LibrarySidebarSection.normalizedOrder(
+            try container.decodeIfPresent([LibrarySidebarSection].self, forKey: .sidebarSectionOrder) ?? Self.defaults.sidebarSectionOrder
+        )
+        expandedNoteBuckets = try container.decodeIfPresent([String].self, forKey: .expandedNoteBuckets) ?? []
+        knownNoteBuckets = try container.decodeIfPresent([String].self, forKey: .knownNoteBuckets) ?? []
+    }
 }
 
 enum LibraryNavigationStateStore {
