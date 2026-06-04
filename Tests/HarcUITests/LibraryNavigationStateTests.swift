@@ -11,6 +11,7 @@ struct LibraryNavigationStateTests {
         #expect(snapshot.notesExpanded)
         #expect(!snapshot.projectsExpanded)
         #expect(!snapshot.peopleExpanded)
+        #expect(snapshot.sidebarSectionOrder == [.recordings, .notes, .projects, .people])
     }
 
     @Test("snapshot persists mode selection and expansion state")
@@ -29,6 +30,7 @@ struct LibraryNavigationStateTests {
             projectsExpanded: true,
             peopleExpanded: false,
             recordingsExpanded: true,
+            sidebarSectionOrder: [.notes, .projects, .recordings, .people],
             expandedNoteBuckets: ["recent", "pinned"],
             knownNoteBuckets: ["recent", "pinned", "2026-05"]
         )
@@ -36,6 +38,42 @@ struct LibraryNavigationStateTests {
         LibraryNavigationStateStore.save(snapshot, defaults: defaults)
 
         #expect(LibraryNavigationStateStore.load(defaults: defaults) == snapshot)
+    }
+
+    @Test("snapshot normalizes missing sidebar sections")
+    func snapshotNormalizesMissingSidebarSections() {
+        let snapshot = LibraryNavigationSnapshot(
+            modeRawValue: "Library",
+            selection: nil,
+            notesExpanded: true,
+            projectsExpanded: true,
+            peopleExpanded: false,
+            recordingsExpanded: true,
+            sidebarSectionOrder: [.projects, .notes],
+            expandedNoteBuckets: [],
+            knownNoteBuckets: []
+        )
+
+        #expect(snapshot.sidebarSectionOrder == [.projects, .notes, .recordings, .people])
+    }
+
+    @Test("snapshot decodes old state without sidebar order")
+    func snapshotDecodesOldStateWithoutSidebarOrder() throws {
+        let data = Data("""
+        {
+          "modeRawValue": "Library",
+          "notesExpanded": true,
+          "projectsExpanded": false,
+          "peopleExpanded": false,
+          "recordingsExpanded": true,
+          "expandedNoteBuckets": [],
+          "knownNoteBuckets": []
+        }
+        """.utf8)
+
+        let snapshot = try JSONDecoder().decode(LibraryNavigationSnapshot.self, from: data)
+
+        #expect(snapshot.sidebarSectionOrder == LibrarySidebarSection.defaultOrder)
     }
 
     @Test("resolver restores valid selection")

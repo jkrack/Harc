@@ -415,6 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func toggleRecording() async {
+        guard !bridge.recordingStopInFlight else { return }
         if state.isRecording {
             await stopRecording(autoStopReason: nil)
         } else {
@@ -423,6 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func recordFromNote(noteID: String) async {
+        guard !bridge.recordingStopInFlight else { return }
         if state.isRecording {
             guard pendingRecordingNoteID == noteID else {
                 bridge.showNoteRecordingConflict(requestedNoteID: noteID)
@@ -626,6 +628,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func stopRecording(autoStopReason: AutoStopController.StopReason?) async {
+        guard !bridge.recordingStopInFlight else { return }
+        bridge.beginRecordingStop()
+        defer { bridge.endRecordingStop() }
+
         // Sample modifier state NOW, before any await — by the time session.stop()
         // resolves (seconds later), the user may have released Shift. Also consume
         // the ⌥-click escape-hatch flag unconditionally so it can't leak into a

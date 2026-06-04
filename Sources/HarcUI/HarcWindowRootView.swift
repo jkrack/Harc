@@ -57,6 +57,28 @@ private enum ContextScopeError: LocalizedError {
     }
 }
 
+@MainActor
+private final class NoteDraftSession {
+    var body: String = ""
+    var generation: Int = 0
+    var autosaveTask: Task<Void, Never>?
+
+    func load(body: String) {
+        self.body = body
+        generation += 1
+    }
+
+    func edit(body: String) {
+        self.body = body
+        generation += 1
+    }
+
+    func cancelAutosave() {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+    }
+}
+
 private struct ResolvedWikilink: Identifiable {
     enum Target {
         case note(id: String)
@@ -103,6 +125,8 @@ private struct ProjectMention {
 /// Toolbar actions (Edit, Export, Delete, recording pill) are wired in.
 /// This view is hosted by `HarcWindowController`.
 public struct HarcWindowRootView: View {
+    private static let noteWritingModes: [NoteMarkdownEditorMode] = [.live, .source]
+
     @ObservedObject var libraryVM: LibraryViewModel
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var bridge: HarcAppBridge
@@ -179,14 +203,14 @@ public struct HarcWindowRootView: View {
     @State private var noteDirty: Bool = false
     @State private var noteSaving: Bool = false
     @State private var noteSavedAt: Date?
-    @State private var noteSaveGeneration = 0
+    @State private var noteDraftSession = NoteDraftSession()
     @State private var noteLastLoadedUpdatedAt: Date?
-    @State private var noteAutosaveTask: Task<Void, Never>?
     @State private var noteSaveError: String?
     @State private var noteSaveConflict: NoteSaveConflict?
     @State private var captioningAttachmentIDs: Set<String> = []
     @State private var unresolvedBarePersonMentions: [String] = []
     @State private var noteEditorMode: NoteMarkdownEditorMode = .live
+    @State private var noteWritingMode: NoteMarkdownEditorMode = .live
     @State private var noteMentionPeople: [Person] = []
     @State private var linkedNotes: [Note] = []
     @State private var linkedNotesError: String?
@@ -196,9 +220,14 @@ public struct HarcWindowRootView: View {
     @State private var projectsExpanded = false
     @State private var peopleExpanded = false
     @State private var recordingsExpanded = true
+    @State private var sidebarSectionOrder: [LibrarySidebarSection] = LibrarySidebarSection.defaultOrder
     @State private var restoredSelection: LibrarySelection?
     @State private var exportRecording: Recording?
     @State private var exportDraft = RecordingExportDraft(includeSummary: true)
+    @State private var showingNewProject = false
+    @State private var newProjectName = ""
+    @State private var newProjectError: String?
+    @State private var newProjectSaving = false
 
     // MARK: Environment
 
@@ -376,6 +405,22 @@ public struct HarcWindowRootView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingNewProject) {
+            NewProjectSheet(
+                name: $newProjectName,
+                errorMessage: newProjectError,
+                isSaving: newProjectSaving,
+                onCancel: {
+                    showingNewProject = false
+                    newProjectName = ""
+                    newProjectError = nil
+                    newProjectSaving = false
+                },
+                onCreate: {
+                    createProject(named: newProjectName)
+                }
+            )
+        }
         .sheet(item: $exportRecording) { recording in
             RecordingExportSheet(
                 recording: recording,
@@ -396,7 +441,7 @@ public struct HarcWindowRootView: View {
     }
 
     private func handleDisappear() {
-        noteAutosaveTask?.cancel()
+        noteDraftSession.cancelAutosave()
         libraryVM.stop()
         peopleVM.stop()
     }
@@ -708,30 +753,8 @@ public struct HarcWindowRootView: View {
                 captureSidebarActions
             }
 
-            DisclosureGroup(isExpanded: persistedExpansionBinding(.recordings)) {
-                recordingSidebarList
-            } label: {
-                Label("Recent Recordings", systemImage: "waveform")
-            }
-
-            DisclosureGroup(isExpanded: persistedExpansionBinding(.notes)) {
-                noteSidebarList
-            } label: {
-                Label("Active Notes", systemImage: "note.text")
-            }
-
-            Section("Organize") {
-                DisclosureGroup(isExpanded: persistedExpansionBinding(.projects)) {
-                    projectSidebarList
-                } label: {
-                    Label("Projects", systemImage: "folder")
-                }
-
-                DisclosureGroup(isExpanded: persistedExpansionBinding(.people)) {
-                    peopleSidebarList
-                } label: {
-                    Label("People", systemImage: "person.2")
-                }
+            ForEach(sidebarSectionOrder) { section in
+                sidebarSection(section)
             }
         }
     }
@@ -741,11 +764,28 @@ public struct HarcWindowRootView: View {
             Button {
                 bridge.onStartStop()
             } label: {
-                Label(recordingState.isRecording ? "Stop Recording" : "Record", systemImage: recordingState.isRecording ? "stop.circle.fill" : "record.circle")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) {
+                    if isRecordingActionBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: recordingActionIconName)
+                    }
+                    Text(recordingActionTitle)
+                        .fontWeight(.semibold)
+                }
+                .frame(minWidth: 118, alignment: .center)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .tint(recordingState.isRecording ? HarcBrand.live : Color.accentColor)
+            .disabled(isRecordingActionBusy)
             .accessibilityIdentifier("harc.library.capture.recordButton")
+            if let recordingActionStatusText {
+                Text(recordingActionStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Text("Use the menu bar icon or configure the global hotkey in Settings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -754,6 +794,114 @@ public struct HarcWindowRootView: View {
                 .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
+    }
+
+    private var isRecordingActionBusy: Bool {
+        bridge.recordingStopInFlight || isIdentifyingStoppedRecording
+    }
+
+    private var isIdentifyingStoppedRecording: Bool {
+        if case .identifying = postProcessing.current?.phase { return true }
+        return false
+    }
+
+    private var recordingActionTitle: String {
+        if bridge.recordingStopInFlight { return "Stopping..." }
+        if isIdentifyingStoppedRecording { return "Processing..." }
+        return recordingState.isRecording ? "Stop" : "Record"
+    }
+
+    private var recordingActionIconName: String {
+        if bridge.recordingStopInFlight || isIdentifyingStoppedRecording { return "hourglass" }
+        return recordingState.isRecording ? "stop.circle.fill" : "record.circle"
+    }
+
+    private var recordingActionStatusText: String? {
+        if bridge.recordingStopInFlight {
+            return "Finalizing audio and transcript."
+        }
+        if isIdentifyingStoppedRecording {
+            return "Identifying speakers and saving the recording."
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func sidebarSection(_ section: LibrarySidebarSection) -> some View {
+        switch section {
+        case .recordings:
+            DisclosureGroup(isExpanded: persistedExpansionBinding(.recordings)) {
+                recordingSidebarList
+            } label: {
+                sidebarSectionHeader(section)
+            }
+        case .notes:
+            DisclosureGroup(isExpanded: persistedExpansionBinding(.notes)) {
+                noteSidebarList
+            } label: {
+                sidebarSectionHeader(section)
+            }
+        case .projects:
+            DisclosureGroup(isExpanded: persistedExpansionBinding(.projects)) {
+                projectSidebarList
+            } label: {
+                sidebarSectionHeader(section)
+            }
+        case .people:
+            DisclosureGroup(isExpanded: persistedExpansionBinding(.people)) {
+                peopleSidebarList
+            } label: {
+                sidebarSectionHeader(section)
+            }
+        }
+    }
+
+    private func sidebarSectionHeader(_ section: LibrarySidebarSection) -> some View {
+        HStack(spacing: 6) {
+            Label(section.sidebarTitle, systemImage: section.sidebarIconName)
+            Spacer(minLength: 4)
+            Button {
+                moveSidebarSection(section, by: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!canMoveSidebarSection(section, by: -1))
+            .help("Move \(section.sidebarTitle) up")
+
+            Button {
+                moveSidebarSection(section, by: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!canMoveSidebarSection(section, by: 1))
+            .help("Move \(section.sidebarTitle) down")
+        }
+        .contextMenu {
+            Button("Move Up") { moveSidebarSection(section, by: -1) }
+                .disabled(!canMoveSidebarSection(section, by: -1))
+            Button("Move Down") { moveSidebarSection(section, by: 1) }
+                .disabled(!canMoveSidebarSection(section, by: 1))
+            Divider()
+            Button("Reset Sidebar Order") {
+                sidebarSectionOrder = LibrarySidebarSection.defaultOrder
+                persistNavigationSnapshot()
+            }
+        }
+    }
+
+    private func canMoveSidebarSection(_ section: LibrarySidebarSection, by offset: Int) -> Bool {
+        guard let index = sidebarSectionOrder.firstIndex(of: section) else { return false }
+        return sidebarSectionOrder.indices.contains(index + offset)
+    }
+
+    private func moveSidebarSection(_ section: LibrarySidebarSection, by offset: Int) {
+        guard let index = sidebarSectionOrder.firstIndex(of: section) else { return }
+        let destination = index + offset
+        guard sidebarSectionOrder.indices.contains(destination) else { return }
+        sidebarSectionOrder.swapAt(index, destination)
+        persistNavigationSnapshot()
     }
 
     @ViewBuilder
@@ -803,6 +951,18 @@ public struct HarcWindowRootView: View {
     @ViewBuilder
     private var projectSidebarList: some View {
         let projects = inferredProjectNames()
+        Button {
+            newProjectName = ""
+            newProjectError = nil
+            newProjectSaving = false
+            showingNewProject = true
+        } label: {
+            Label("New Project", systemImage: "folder.badge.plus")
+                .font(.subheadline)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("harc.library.project.new")
+
         if projects.isEmpty {
             Text("No projects yet")
                 .font(.caption)
@@ -855,6 +1015,15 @@ public struct HarcWindowRootView: View {
         case projects
         case people
         case recordings
+    }
+
+    private func expansionGroup(for section: LibrarySidebarSection) -> SidebarExpansionGroup {
+        switch section {
+        case .recordings: return .recordings
+        case .notes: return .notes
+        case .projects: return .projects
+        case .people: return .people
+        }
     }
 
     private func persistedExpansionBinding(_ group: SidebarExpansionGroup) -> Binding<Bool> {
@@ -978,6 +1147,7 @@ public struct HarcWindowRootView: View {
         projectsExpanded = snapshot.projectsExpanded
         peopleExpanded = snapshot.peopleExpanded
         recordingsExpanded = snapshot.recordingsExpanded
+        sidebarSectionOrder = LibrarySidebarSection.normalizedOrder(snapshot.sidebarSectionOrder)
         expandedNoteBuckets = Set(snapshot.expandedNoteBuckets)
         knownNoteBucketIDs = Set(snapshot.knownNoteBuckets)
         restoredSelection = snapshot.selection?.librarySelection
@@ -994,6 +1164,7 @@ public struct HarcWindowRootView: View {
             projectsExpanded: projectsExpanded,
             peopleExpanded: peopleExpanded,
             recordingsExpanded: recordingsExpanded,
+            sidebarSectionOrder: sidebarSectionOrder,
             expandedNoteBuckets: expandedNoteBuckets.sorted(),
             knownNoteBuckets: knownNoteBucketIDs.sorted()
         ))
@@ -1242,6 +1413,15 @@ public struct HarcWindowRootView: View {
                 .foregroundStyle(Color.accentColor)
         }
         .tag(LibrarySelection.project(name: project))
+        .accessibilityIdentifier("harc.library.project.\(normalizeWikilinkLabel(project))")
+        .contextMenu {
+            Button("New Note in Project") {
+                createNote(forProject: project)
+            }
+            Button("Copy Project Mention") {
+                copyProjectMention(project)
+            }
+        }
     }
 
     private func projectSubtitle(noteCount: Int, recordingCount: Int) -> String {
@@ -1486,6 +1666,23 @@ public struct HarcWindowRootView: View {
                         .font(.title.weight(.semibold))
                     Text(projectSubtitle(noteCount: relatedNotes.count, recordingCount: relatedRecordings.count))
                         .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button {
+                            createNote(forProject: name)
+                        } label: {
+                            Label("New Note", systemImage: "square.and.pencil")
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            copyProjectMention(name)
+                        } label: {
+                            Label("Copy Mention", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .controlSize(.small)
+                    .padding(.top, 4)
                 }
 
                 if relatedNotes.isEmpty && relatedRecordings.isEmpty {
@@ -1904,13 +2101,38 @@ public struct HarcWindowRootView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-                Picker("Editor Mode", selection: $noteEditorMode) {
-                    ForEach(NoteMarkdownEditorMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                HStack(spacing: 8) {
+                    Picker("Writing Mode", selection: Binding(
+                        get: { noteEditorMode == .read ? noteWritingMode : noteEditorMode },
+                        set: { mode in
+                            guard mode != .read else { return }
+                            noteWritingMode = mode
+                            noteEditorMode = mode
+                        }
+                    )) {
+                        ForEach(Self.noteWritingModes) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                    .accessibilityIdentifier("harc.note.writingModePicker")
+
+                    Button {
+                        if noteEditorMode == .read {
+                            noteEditorMode = noteWritingMode
+                        } else {
+                            if noteEditorMode != .read {
+                                noteWritingMode = noteEditorMode
+                            }
+                            noteEditorMode = .read
+                        }
+                    } label: {
+                        Label("Preview", systemImage: noteEditorMode == .read ? "eye.fill" : "eye")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harc.note.previewToggle")
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 240)
 
                 noteAttachmentsStrip(note: note)
             }
@@ -1969,6 +2191,7 @@ public struct HarcWindowRootView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button {
+                    guard !bridge.recordingStopInFlight else { return }
                     if recordingToolbarState.canToggleDirectly {
                         if noteDirty {
                             saveSelectedNote()
@@ -1980,10 +2203,11 @@ public struct HarcWindowRootView: View {
                 } label: {
                     Label(
                         recordingToolbarState.title,
-                        systemImage: recordingToolbarState.systemImage
+                        systemImage: bridge.recordingStopInFlight ? "hourglass" : recordingToolbarState.systemImage
                     )
                 }
                 .tint(recordingToolbarState == .recordingIntoThisNote ? HarcBrand.live : nil)
+                .disabled(bridge.recordingStopInFlight)
 
                 Button {
                     saveSelectedNote()
@@ -2019,13 +2243,7 @@ public struct HarcWindowRootView: View {
     private func noteEditorSurface(note: Note) -> some View {
         switch noteEditorMode {
         case .source:
-            NoteMarkdownWebView(text: Binding(
-                get: { noteBodyDraft },
-                set: {
-                    noteBodyDraft = $0
-                    markNoteEdited()
-                }
-            ), mode: .source,
+            NoteMarkdownWebView(text: noteBodyBinding, mode: .source,
                linkTargets: noteLinkTargets(for: note),
                mentionTargets: noteMentionTargets(),
                attachmentBaseURL: note.fileURL.deletingLastPathComponent(),
@@ -2038,13 +2256,7 @@ public struct HarcWindowRootView: View {
             .accessibilityIdentifier("harc.note.markdownTextEditor")
 
         case .live:
-            NoteMarkdownWebView(text: Binding(
-                get: { noteBodyDraft },
-                set: {
-                    noteBodyDraft = $0
-                    markNoteEdited()
-                }
-            ), mode: .live,
+            NoteMarkdownWebView(text: noteBodyBinding, mode: .live,
                linkTargets: noteLinkTargets(for: note),
                mentionTargets: noteMentionTargets(),
                attachmentBaseURL: note.fileURL.deletingLastPathComponent(),
@@ -2057,13 +2269,7 @@ public struct HarcWindowRootView: View {
             .accessibilityIdentifier("harc.note.liveMarkdownEditor")
 
         case .read:
-            NoteMarkdownWebView(text: Binding(
-                get: { noteBodyDraft },
-                set: {
-                    noteBodyDraft = $0
-                    markNoteEdited()
-                }
-            ), mode: .read,
+            NoteMarkdownWebView(text: noteBodyBinding, mode: .read,
                linkTargets: noteLinkTargets(for: note),
                mentionTargets: noteMentionTargets(),
                attachmentBaseURL: note.fileURL.deletingLastPathComponent(),
@@ -2073,9 +2279,31 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    private var noteBodyBinding: Binding<String> {
+        Binding(
+            get: { currentNoteBodyDraft },
+            set: { updateNoteBodyDraftFromEditor($0) }
+        )
+    }
+
+    private var currentNoteBodyDraft: String {
+        noteDraftSession.body
+    }
+
+    private func setNoteBodyDraft(_ body: String) {
+        noteBodyDraft = body
+        noteDraftSession.load(body: body)
+    }
+
+    private func updateNoteBodyDraftFromEditor(_ body: String) {
+        guard body != noteDraftSession.body else { return }
+        noteDraftSession.edit(body: body)
+        markNoteEdited(advanceGeneration: false)
+    }
+
     private func noteTextEditorSurface(font: Font) -> some View {
         ZStack(alignment: .topLeading) {
-            if noteBodyDraft.isEmpty {
+            if currentNoteBodyDraft.isEmpty {
                 Text("Start writing in Markdown...")
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 28)
@@ -2084,11 +2312,8 @@ public struct HarcWindowRootView: View {
             }
 
             TextEditor(text: Binding(
-                get: { noteBodyDraft },
-                set: {
-                    noteBodyDraft = $0
-                    markNoteEdited()
-                }
+                get: { currentNoteBodyDraft },
+                set: { updateNoteBodyDraftFromEditor($0) }
             ))
             .font(font)
             .padding(.horizontal, 20)
@@ -2224,7 +2449,7 @@ public struct HarcWindowRootView: View {
     }
 
     private func noteLinksSection(note: Note) -> some View {
-        let links = resolvedWikilinks(in: noteBodyDraft, currentNoteID: note.id)
+        let links = resolvedWikilinks(in: currentNoteBodyDraft, currentNoteID: note.id)
         return VStack(alignment: .leading, spacing: 8) {
             Divider()
             HStack(spacing: 8) {
@@ -2834,7 +3059,7 @@ public struct HarcWindowRootView: View {
                 mutationFailure = nil
                 selection = .note(id: note.id)
                 noteTitleDraft = note.title
-                noteBodyDraft = note.body
+                setNoteBodyDraft(note.body)
                 noteDirty = false
                 linkedNotesError = nil
             } catch {
@@ -3004,7 +3229,7 @@ public struct HarcWindowRootView: View {
     private func loadSelectedNoteDraft() {
         guard let note = selectedNote else { return }
         noteTitleDraft = note.title
-        noteBodyDraft = note.body
+        setNoteBodyDraft(note.body)
         noteDirty = false
         noteSaving = false
         noteSavedAt = note.updatedAt
@@ -3013,29 +3238,37 @@ public struct HarcWindowRootView: View {
         noteSaveConflict = nil
     }
 
-    private func markNoteEdited() {
-        noteSaveGeneration += 1
-        noteDirty = true
-        noteSaveError = nil
-        noteSaveConflict = nil
+    private func markNoteEdited(advanceGeneration: Bool = true) {
+        if advanceGeneration {
+            noteDraftSession.generation += 1
+        }
+        if !noteDirty {
+            noteDirty = true
+        }
+        if noteSaveError != nil {
+            noteSaveError = nil
+        }
+        if noteSaveConflict != nil {
+            noteSaveConflict = nil
+        }
         scheduleNoteAutosave()
     }
 
     private func scheduleNoteAutosave() {
-        noteAutosaveTask?.cancel()
+        noteDraftSession.cancelAutosave()
         guard case .note(let id) = selection else { return }
         let request = NoteSaveRequest(
             id: id,
             title: noteTitleDraft,
-            body: noteBodyDraft,
-            generation: noteSaveGeneration,
+            body: currentNoteBodyDraft,
+            generation: noteDraftSession.generation,
             baseUpdatedAt: noteLastLoadedUpdatedAt,
             updateDraftIfSelected: true
         )
-        noteAutosaveTask = Task { @MainActor in
+        noteDraftSession.autosaveTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000)
             guard !Task.isCancelled else { return }
-            guard request.generation == noteSaveGeneration else { return }
+            guard request.generation == noteDraftSession.generation else { return }
             await saveNoteDraft(request)
         }
     }
@@ -3047,7 +3280,7 @@ public struct HarcWindowRootView: View {
                 await loadNotes()
                 selection = .note(id: note.id)
                 noteTitleDraft = note.title
-                noteBodyDraft = note.body
+                setNoteBodyDraft(note.body)
                 noteDirty = false
                 noteSaving = false
                 noteSavedAt = note.updatedAt
@@ -3060,9 +3293,96 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    private func createProject(named rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let validName = validatedProjectName(name) else {
+            newProjectError = "Use a project name without brackets or line breaks."
+            return
+        }
+        let duplicate = inferredProjectNames().contains {
+            normalizeWikilinkLabel($0) == normalizeWikilinkLabel(validName)
+        }
+        guard !duplicate else {
+            newProjectError = "That project already exists."
+            return
+        }
+
+        newProjectSaving = true
+        newProjectError = nil
+        Task {
+            do {
+                let saved = try await createProjectSeedNote(named: validName)
+                await loadNotes()
+                projectsExpanded = true
+                selection = .project(name: validName)
+                noteTitleDraft = saved.title
+                setNoteBodyDraft(saved.body)
+                showingNewProject = false
+                newProjectName = ""
+                newProjectSaving = false
+                mutationFailure = nil
+                persistNavigationSnapshot()
+            } catch {
+                newProjectSaving = false
+                newProjectError = error.localizedDescription
+            }
+        }
+    }
+
+    private func createNote(forProject project: String) {
+        guard let validName = validatedProjectName(project) else { return }
+        Task {
+            do {
+                let note = try await createProjectSeedNote(named: validName, titleSuffix: " Note")
+                await loadNotes()
+                projectsExpanded = true
+                selection = .note(id: note.id)
+                noteTitleDraft = note.title
+                setNoteBodyDraft(note.body)
+                noteDirty = false
+                mutationFailure = nil
+                persistNavigationSnapshot()
+            } catch {
+                notesError = error.localizedDescription
+            }
+        }
+    }
+
+    private func createProjectSeedNote(named project: String, titleSuffix: String = "") async throws -> Note {
+        let title = "\(project)\(titleSuffix)"
+        let body = """
+        # \(project)
+
+        @project[\(project)]
+
+        """
+        var note = try await NoteStore(rootURL: prefs.notesURL).create(title: title, body: body)
+        note.tags = ["project:\(project)"]
+        return try await NoteStore(rootURL: prefs.notesURL).update(note)
+    }
+
+    private func copyProjectMention(_ project: String) {
+        guard let validName = validatedProjectName(project) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("@project[\(validName)]", forType: .string)
+    }
+
+    private func validatedProjectName(_ name: String) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains("["),
+              !trimmed.contains("]"),
+              !trimmed.contains("\n"),
+              !trimmed.contains("\r")
+        else {
+            return nil
+        }
+        return trimmed
+    }
+
     private func archiveNote(_ note: Note) {
         pendingDeleteNote = nil
-        noteAutosaveTask?.cancel()
+        noteDraftSession.cancelAutosave()
         Task {
             do {
                 try await NoteStore(rootURL: prefs.notesURL).archive(id: note.id)
@@ -3070,7 +3390,7 @@ public struct HarcWindowRootView: View {
                 if selection == .note(id: note.id) {
                     selection = nil
                     noteTitleDraft = ""
-                    noteBodyDraft = ""
+                    setNoteBodyDraft("")
                     noteDirty = false
                     noteSaveError = nil
                     noteSaveConflict = nil
@@ -3101,12 +3421,12 @@ public struct HarcWindowRootView: View {
 
     private func saveSelectedNote() {
         guard case .note(let id) = selection else { return }
-        noteAutosaveTask?.cancel()
+        noteDraftSession.cancelAutosave()
         let request = NoteSaveRequest(
             id: id,
             title: noteTitleDraft,
-            body: noteBodyDraft,
-            generation: noteSaveGeneration,
+            body: currentNoteBodyDraft,
+            generation: noteDraftSession.generation,
             baseUpdatedAt: noteLastLoadedUpdatedAt,
             updateDraftIfSelected: true
         )
@@ -3117,12 +3437,12 @@ public struct HarcWindowRootView: View {
 
     private func flushOutgoingNoteIfNeeded(_ oldSelection: LibrarySelection?) {
         guard case .note(let id) = oldSelection, noteDirty else { return }
-        noteAutosaveTask?.cancel()
+        noteDraftSession.cancelAutosave()
         let request = NoteSaveRequest(
             id: id,
             title: noteTitleDraft,
-            body: noteBodyDraft,
-            generation: noteSaveGeneration,
+            body: currentNoteBodyDraft,
+            generation: noteDraftSession.generation,
             baseUpdatedAt: noteLastLoadedUpdatedAt,
             updateDraftIfSelected: false
         )
@@ -3137,7 +3457,7 @@ public struct HarcWindowRootView: View {
         let diskNote = try? await noteStore.fetch(id: request.id, includeArchived: true)
         switch NoteAutosaveGuard.shouldSave(
             request: request,
-            currentGeneration: noteSaveGeneration,
+            currentGeneration: noteDraftSession.generation,
             selectedNoteID: selectedNoteID,
             diskNote: diskNote,
             allowOverwrite: allowOverwrite
@@ -3172,9 +3492,9 @@ public struct HarcWindowRootView: View {
             await loadNotes(resetDraft: false)
             if request.updateDraftIfSelected,
                selection == .note(id: request.id),
-               request.generation == noteSaveGeneration || allowOverwrite {
+               request.generation == noteDraftSession.generation || allowOverwrite {
                 noteTitleDraft = saved.title
-                noteBodyDraft = saved.body
+                setNoteBodyDraft(saved.body)
                 noteDirty = false
                 noteSavedAt = saved.updatedAt
                 noteLastLoadedUpdatedAt = saved.updatedAt
@@ -3208,14 +3528,13 @@ public struct HarcWindowRootView: View {
                 }
                 if selection == .note(id: conflict.noteID) {
                     noteTitleDraft = note.title
-                    noteBodyDraft = note.body
+                    setNoteBodyDraft(note.body)
                     noteDirty = false
                     noteSaving = false
                     noteSavedAt = note.updatedAt
                     noteLastLoadedUpdatedAt = note.updatedAt
                     noteSaveError = nil
                     noteSaveConflict = nil
-                    noteSaveGeneration += 1
                 }
                 await loadNotes(resetDraft: false)
             } catch {
@@ -3237,7 +3556,7 @@ public struct HarcWindowRootView: View {
             .first
             .map { modelStore.state(of: $0.id).isInstalled } ?? false
         var note = result.note
-        let baseBody = selection == .note(id: noteID) ? noteBodyDraft : note.body
+        let baseBody = selection == .note(id: noteID) ? currentNoteBodyDraft : note.body
         note.body = Self.appendingImageBlock(
             to: baseBody,
             attachment: result.attachment,
@@ -3246,11 +3565,10 @@ public struct HarcWindowRootView: View {
         let saved = try await noteStore.update(note)
 
         if selection == .note(id: noteID) {
-            noteBodyDraft = saved.body
+            setNoteBodyDraft(saved.body)
             noteSavedAt = saved.updatedAt
             noteLastLoadedUpdatedAt = saved.updatedAt
             noteDirty = false
-            noteSaveGeneration += 1
             noteSaveError = nil
         }
         await loadNotes(resetDraft: false)
@@ -3361,7 +3679,7 @@ public struct HarcWindowRootView: View {
                 )
                 await loadNotes(resetDraft: false)
                 if selection == .note(id: note.id) {
-                    noteBodyDraft = saved.body
+                    setNoteBodyDraft(saved.body)
                     noteSavedAt = saved.updatedAt
                     noteLastLoadedUpdatedAt = saved.updatedAt
                     noteDirty = false
@@ -3423,7 +3741,7 @@ public struct HarcWindowRootView: View {
                     modelID: captionerID
                 )
                 var noteWithVisibleCaption = saved
-                let bodyBase = selection == .note(id: noteID) ? noteBodyDraft : saved.body
+                let bodyBase = selection == .note(id: noteID) ? currentNoteBodyDraft : saved.body
                 noteWithVisibleCaption.body = Self.replacingImageCaption(
                     in: bodyBase,
                     attachment: attachment,
@@ -3431,11 +3749,10 @@ public struct HarcWindowRootView: View {
                 )
                 let visibleCaptionSaved = try await noteStore.update(noteWithVisibleCaption)
                 if selection == .note(id: noteID) {
-                    noteBodyDraft = visibleCaptionSaved.body
+                    setNoteBodyDraft(visibleCaptionSaved.body)
                     noteSavedAt = visibleCaptionSaved.updatedAt
                     noteLastLoadedUpdatedAt = visibleCaptionSaved.updatedAt
                     noteDirty = false
-                    noteSaveGeneration += 1
                 }
                 if let knowledgeIndexer {
                     Task.detached { [knowledgeIndexer, visibleCaptionSaved] in
@@ -3531,7 +3848,7 @@ public struct HarcWindowRootView: View {
             id: conflict.noteID,
             title: conflict.draftTitle,
             body: conflict.draftBody,
-            generation: noteSaveGeneration,
+            generation: noteDraftSession.generation,
             baseUpdatedAt: nil,
             updateDraftIfSelected: true
         )
@@ -4233,6 +4550,70 @@ public struct HarcWindowRootView: View {
             // libraryVM.recordings is driven by ValueObservation, so the list
             // updates automatically; selectedRecording re-derives from it.
         }
+    }
+}
+
+private extension LibrarySidebarSection {
+    var sidebarTitle: String {
+        switch self {
+        case .recordings: return "Recent Recordings"
+        case .notes: return "Active Notes"
+        case .projects: return "Projects"
+        case .people: return "People"
+        }
+    }
+
+    var sidebarIconName: String {
+        switch self {
+        case .recordings: return "waveform"
+        case .notes: return "note.text"
+        case .projects: return "folder"
+        case .people: return "person.2"
+        }
+    }
+}
+
+// MARK: - NewProjectSheet
+
+private struct NewProjectSheet: View {
+    @Binding var name: String
+    let errorMessage: String?
+    let isSaving: Bool
+    let onCancel: () -> Void
+    let onCreate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New project")
+                .font(.headline)
+            TextField("Project name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .disabled(isSaving)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(Color.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .disabled(isSaving)
+                Button {
+                    onCreate()
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Create")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
     }
 }
 
