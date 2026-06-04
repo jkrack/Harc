@@ -34,8 +34,8 @@ print(sourceOfTruth)
 | Field | Expected |
 | --- | --- |
 | Storage | Markdown |
-| Editor | CodeMirror 6 |
-| Mode | Live Preview |
+| Editor | Milkdown |
+| Mode | WYSIWYG |
 
 ---
 
