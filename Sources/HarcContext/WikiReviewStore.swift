@@ -59,6 +59,7 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
 public actor WikiReviewStore {
     public let fileURL: URL
     private let wikiStore: HarcWikiStore
+    private let wikiMerger: WikiMerger
 
     public init(
         fileURL: URL = WikiReviewStore.defaultURL(),
@@ -66,6 +67,7 @@ public actor WikiReviewStore {
     ) {
         self.fileURL = fileURL
         self.wikiStore = wikiStore
+        self.wikiMerger = WikiMerger(wikiStore: wikiStore)
     }
 
     public static func defaultURL() -> URL {
@@ -113,11 +115,7 @@ public actor WikiReviewStore {
             throw WikiReviewStoreError.proposalNotFound(id)
         }
         do {
-            _ = try await wikiStore.writePage(
-                section: all[index].targetSection,
-                title: all[index].targetTitle,
-                body: all[index].proposedMarkdown
-            )
+            _ = try await wikiMerger.merge(all[index])
             all[index].status = .approved
         } catch {
             all[index].status = .failed
