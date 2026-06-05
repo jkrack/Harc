@@ -66,6 +66,8 @@ struct KnowledgeCitationTests {
         let proposal = try decoder.decode(WikiReviewProposal.self, from: Data(json.utf8))
 
         #expect(proposal.knowledgeCitations.isEmpty)
+        #expect(proposal.impact == .medium)
+        #expect(proposal.confidence == .medium)
         #expect(proposal.sourceCitations == ["/tmp/atlas.md:3"])
         #expect(proposal.renderedCitations == ["/tmp/atlas.md:3"])
     }

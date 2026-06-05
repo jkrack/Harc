@@ -193,6 +193,53 @@ struct SemanticSearchServiceTests {
         #expect(pack.blocks.first?.text.contains("staged") == true)
     }
 
+    @Test("query context ranks approved wiki knowledge before raw evidence")
+    func queryContextRanksApprovedWikiBeforeEvidence() async throws {
+        let store = try await RecordingStore.inMemory()
+        let page = WikiPage(
+            id: "projects/atlas",
+            title: "Atlas",
+            section: .projects,
+            fileURL: URL(fileURLWithPath: "/tmp/wiki/projects/atlas.md"),
+            body: "# Atlas\n\nApproved Atlas launch knowledge says stage the rollout.",
+            updatedAt: Date()
+        )
+        let root = LocalSourceRoot(
+            id: "repo",
+            path: "/tmp/AtlasRepo",
+            displayName: "AtlasRepo",
+            kind: .repository,
+            readOnly: true
+        )
+        let document = ScannedSourceDocument(
+            title: "README",
+            text: "Raw Atlas launch evidence mentions the rollout.",
+            provenance: SourceProvenance(
+                rootID: root.id,
+                rootPath: root.path,
+                relativePath: "README.md",
+                absolutePath: "/tmp/AtlasRepo/README.md",
+                lineStart: 1,
+                lineEnd: 1,
+                contentHash: "raw-atlas",
+                documentKind: .markdown,
+                scannedAt: Date()
+            )
+        )
+
+        let indexer = KnowledgeIndexer(store: store, embedder: KeywordEmbedder())
+        try await indexer.index(wikiPage: page)
+        try await indexer.index(sourceDocument: document, sourceKind: .repoFile)
+
+        let semanticSearch = SemanticSearchService(store: store, embedder: KeywordEmbedder())
+        let pack = try await ContextPackBuilder(store: store, semanticSearch: semanticSearch)
+            .build(query: "Atlas launch rollout", limit: 4)
+
+        #expect(pack.blocks.first?.source.kind == .wikiPage)
+        #expect(pack.approvedKnowledge.first?.source.title == "Atlas")
+        #expect(pack.supportingEvidence.contains { $0.source.kind == .repoFile })
+    }
+
     @Test("search rejects mismatched vector dimensions")
     func searchRejectsMismatchedDimensions() async throws {
         let store = try await RecordingStore.inMemory()

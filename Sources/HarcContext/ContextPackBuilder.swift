@@ -45,9 +45,9 @@ public actor ContextPackBuilder {
             )
             if semanticHits.isEmpty {
                 let hits = try await search(using: plan.retrievalQueries, limit: limit)
-                blocks = Self.deduplicatedBlocks(
+                blocks = Self.rankedBlocks(Self.deduplicatedBlocks(
                     Array(hits.prefix(max(0, limit))).flatMap { Self.blocks(for: $0, plan: plan) } + noteBlocks
-                )
+                ))
             } else {
                 var semanticBlocks = semanticHits.flatMap(Self.blocks(for:))
                 if semanticHits.count < limit {
@@ -56,13 +56,13 @@ public actor ContextPackBuilder {
                         .flatMap { Self.blocks(for: $0, plan: plan) }
                     semanticBlocks += noteBlocks
                 }
-                blocks = Self.deduplicatedBlocks(semanticBlocks)
+                blocks = Self.rankedBlocks(Self.deduplicatedBlocks(semanticBlocks))
             }
         } else {
             let hits = try await search(using: plan.retrievalQueries, limit: limit)
-            blocks = Self.deduplicatedBlocks(
+            blocks = Self.rankedBlocks(Self.deduplicatedBlocks(
                 Array(hits.prefix(max(0, limit))).flatMap { Self.blocks(for: $0, plan: plan) } + noteBlocks
-            )
+            ))
         }
 
         return ContextPack(
@@ -71,6 +71,57 @@ public actor ContextPackBuilder {
             intent: intent,
             generatedAt: generatedAt,
             blocks: blocks
+        )
+    }
+
+    public static func build(
+        wikiPage page: WikiPage,
+        query rawQuery: String? = nil,
+        generatedAt: Date = Date()
+    ) -> ContextPack {
+        let query = rawQuery?.trimmingCharacters(in: .whitespacesAndNewlines).trimmedNonEmpty ?? page.title
+        let wikiSource = ContextSource(
+            kind: .wikiPage,
+            sourceID: page.id,
+            title: page.title,
+            path: page.fileURL.path,
+            startedAt: page.updatedAt
+        )
+        var blocks: [ContextBlock] = [
+            ContextBlock(
+                id: "wiki:\(page.id):approved",
+                kind: .synthesis,
+                source: wikiSource,
+                text: bodyWithoutFrontMatter(page.body),
+                score: 1
+            ),
+        ]
+
+        for (index, sourceText) in frontMatterSources(in: page.body).enumerated() {
+            let source = ContextSource(
+                kind: sourceText.contains("/.git/") ? .repoFile : .rawFile,
+                sourceID: sourceText,
+                title: sourceTitle(sourceText),
+                path: sourceText,
+                startedAt: page.updatedAt
+            )
+            blocks.append(
+                ContextBlock(
+                    id: "wiki:\(page.id):source-\(index)",
+                    kind: .directEvidence,
+                    source: source,
+                    text: sourceText,
+                    score: 0.8
+                )
+            )
+        }
+
+        return ContextPack(
+            query: query,
+            retrievalQueries: [query],
+            intent: inferIntent(from: query),
+            generatedAt: generatedAt,
+            blocks: rankedBlocks(blocks)
         )
     }
 
@@ -115,6 +166,25 @@ public actor ContextPackBuilder {
             result.append(block)
         }
         return result
+    }
+
+    private static func rankedBlocks(_ blocks: [ContextBlock]) -> [ContextBlock] {
+        blocks.sorted {
+            if blockRank($0) != blockRank($1) {
+                return blockRank($0) < blockRank($1)
+            }
+            return $0.score > $1.score
+        }
+    }
+
+    private static func blockRank(_ block: ContextBlock) -> Int {
+        if block.kind == .synthesis && block.source.kind == .wikiPage { return 0 }
+        switch block.kind {
+        case .synthesis: return 1
+        case .directEvidence: return 2
+        case .summary: return 3
+        case .actionItems: return 4
+        }
     }
 
     private static func blocks(for hit: TranscriptHit, plan: ContextQueryPlan) -> [ContextBlock] {
@@ -295,6 +365,43 @@ public actor ContextPackBuilder {
             return .person
         }
         return .general
+    }
+
+    private static func bodyWithoutFrontMatter(_ body: String) -> String {
+        let lines = body.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "---",
+              let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == "---" }) else {
+            return body.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return lines.dropFirst(end + 1).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func frontMatterSources(in body: String) -> [String] {
+        let lines = body.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "---",
+              let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == "---" }) else {
+            return []
+        }
+        let header = Array(lines[1..<end])
+        guard let sourceIndex = header.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "sources:" }) else {
+            return []
+        }
+        var result: [String] = []
+        for line in header.dropFirst(sourceIndex + 1) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("- ") {
+                result.append(String(trimmed.dropFirst(2)).trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")))
+            } else if !trimmed.isEmpty {
+                break
+            }
+        }
+        return result
+    }
+
+    private static func sourceTitle(_ source: String) -> String {
+        let withoutLine = source.split(separator: ":").first.map(String.init) ?? source
+        let filename = URL(fileURLWithPath: withoutLine).lastPathComponent
+        return filename.isEmpty ? source : filename
     }
 
 }
