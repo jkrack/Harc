@@ -29,8 +29,8 @@ struct LibraryViewModelContextTests {
         let markdown = try await vm.contextMarkdown(for: "pricing pressure")
 
         #expect(markdown.contains("# Context: pricing pressure"))
-        #expect(markdown.contains("## Relevant Evidence"))
-        #expect(markdown.contains("## Summaries"))
+        #expect(markdown.contains("## Supporting Evidence"))
+        #expect(markdown.contains("## Supporting Summaries"))
         #expect(markdown.contains("## Action Items"))
         #expect(markdown.contains("Pricing Review"))
     }

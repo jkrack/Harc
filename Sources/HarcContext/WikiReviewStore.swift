@@ -16,10 +16,40 @@ public enum WikiReviewProposalStatus: String, Sendable, Codable, Equatable, Case
     case failed
 }
 
+public enum WikiReviewProposalImpact: String, Sendable, Codable, Equatable, CaseIterable {
+    case low
+    case medium
+    case high
+
+    public var title: String {
+        switch self {
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        }
+    }
+}
+
+public enum WikiReviewProposalConfidence: String, Sendable, Codable, Equatable, CaseIterable {
+    case low
+    case medium
+    case high
+
+    public var title: String {
+        switch self {
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        }
+    }
+}
+
 public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
     public var id: String
     public var kind: WikiReviewProposalKind
     public var status: WikiReviewProposalStatus
+    public var impact: WikiReviewProposalImpact
+    public var confidence: WikiReviewProposalConfidence
     public var title: String
     public var summary: String
     public var targetSection: WikiSection
@@ -34,6 +64,8 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
         id: String = UUID().uuidString,
         kind: WikiReviewProposalKind,
         status: WikiReviewProposalStatus = .pending,
+        impact: WikiReviewProposalImpact = .medium,
+        confidence: WikiReviewProposalConfidence = .medium,
         title: String,
         summary: String,
         targetSection: WikiSection,
@@ -47,6 +79,8 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
         self.id = id
         self.kind = kind
         self.status = status
+        self.impact = impact
+        self.confidence = confidence
         self.title = title
         self.summary = summary
         self.targetSection = targetSection
@@ -73,6 +107,8 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
         case id
         case kind
         case status
+        case impact
+        case confidence
         case title
         case summary
         case targetSection
@@ -89,6 +125,8 @@ public struct WikiReviewProposal: Sendable, Codable, Equatable, Identifiable {
         self.id = try container.decode(String.self, forKey: .id)
         self.kind = try container.decode(WikiReviewProposalKind.self, forKey: .kind)
         self.status = try container.decode(WikiReviewProposalStatus.self, forKey: .status)
+        self.impact = try container.decodeIfPresent(WikiReviewProposalImpact.self, forKey: .impact) ?? .medium
+        self.confidence = try container.decodeIfPresent(WikiReviewProposalConfidence.self, forKey: .confidence) ?? .medium
         self.title = try container.decode(String.self, forKey: .title)
         self.summary = try container.decode(String.self, forKey: .summary)
         self.targetSection = try container.decode(WikiSection.self, forKey: .targetSection)
@@ -142,12 +180,37 @@ public actor WikiReviewStore {
     }
 
     @discardableResult
+    public func upsertIfReviewable(_ proposal: WikiReviewProposal) async throws -> WikiReviewProposal {
+        let all = try await fetchAll()
+        if let existing = all.first(where: { $0.id == proposal.id }),
+           existing.status == .approved || existing.status == .dismissed {
+            return existing
+        }
+        return try await upsert(proposal)
+    }
+
+    @discardableResult
     public func updateStatus(id: String, status: WikiReviewProposalStatus) async throws -> WikiReviewProposal {
         var all = try await fetchAll()
         guard let index = all.firstIndex(where: { $0.id == id }) else {
             throw WikiReviewStoreError.proposalNotFound(id)
         }
         all[index].status = status
+        all[index].updatedAt = Date()
+        try write(all)
+        return all[index]
+    }
+
+    @discardableResult
+    public func updateMarkdown(id: String, proposedMarkdown: String) async throws -> WikiReviewProposal {
+        var all = try await fetchAll()
+        guard let index = all.firstIndex(where: { $0.id == id }) else {
+            throw WikiReviewStoreError.proposalNotFound(id)
+        }
+        all[index].proposedMarkdown = proposedMarkdown
+        if all[index].status == .pending {
+            all[index].status = .edited
+        }
         all[index].updatedAt = Date()
         try write(all)
         return all[index]

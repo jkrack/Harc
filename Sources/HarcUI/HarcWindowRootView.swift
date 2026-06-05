@@ -154,6 +154,8 @@ public struct HarcWindowRootView: View {
     @State private var reviewActionInFlight: Set<String> = []
     @State private var reviewActionStatus: [String: String] = [:]
     @State private var reviewApprovedPageID: [String: String] = [:]
+    @State private var reviewMarkdownDrafts: [String: String] = [:]
+    @State private var reviewGenerationStatus: String?
     @State private var sourceScanStatus: String?
     @State private var mutationFailure: LibraryMutationFailure?
     @State private var inspectorOpen: Bool = false
@@ -660,11 +662,12 @@ public struct HarcWindowRootView: View {
     }
 
     private var reviewSidebar: some View {
-        List(selection: $selectedReviewProposalID) {
+        let grouping = ReviewProposalGrouping.make(from: reviewProposals)
+        return List(selection: $selectedReviewProposalID) {
             Section("Queue") {
-                reviewBucket("Pending", statuses: [.pending, .edited])
-                reviewBucket("Approved", statuses: [.approved])
-                reviewBucket("Dismissed", statuses: [.dismissed, .failed])
+                ForEach(grouping.buckets) { bucket in
+                    reviewBucket(bucket)
+                }
             }
         }
         .listStyle(.sidebar)
@@ -1615,6 +1618,7 @@ public struct HarcWindowRootView: View {
 
     private var reviewDetail: some View {
         let selected = selectedReviewProposalID.flatMap { id in reviewProposals.first { $0.id == id } }
+        let grouping = ReviewProposalGrouping.make(from: reviewProposals)
         return ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .firstTextBaseline) {
@@ -1622,31 +1626,37 @@ public struct HarcWindowRootView: View {
                         .font(.title.weight(.semibold))
                     Spacer()
                     Button {
+                        Task { await generateReviewFromLibrary() }
+                    } label: {
+                        Label("Generate Review", systemImage: "sparkles")
+                    }
+                    .disabled(libraryVM.recordings.isEmpty && notes.isEmpty)
+
+                    Button {
                         Task { await loadReviewProposals() }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                 }
 
+                if let reviewGenerationStatus {
+                    Text(reviewGenerationStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 if let reviewLoadError {
                     Label(reviewLoadError, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(Color.red)
                 } else if let selected {
+                    reviewQueueSummary(grouping)
                     reviewProposalView(selected)
                 } else if reviewProposals.isEmpty {
                     reviewEmptyState
                     .frame(maxWidth: .infinity, minHeight: 280)
                 } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(reviewProposals) { proposal in
-                            Button {
-                                selectedReviewProposalID = proposal.id
-                            } label: {
-                                reviewProposalRow(proposal)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                    reviewQueueSummary(grouping)
+                    reviewProposalList(grouping)
                 }
             }
             .padding(24)
@@ -1804,6 +1814,11 @@ public struct HarcWindowRootView: View {
                 }
                 Spacer()
                 Button {
+                    copyWikiPageContext(page)
+                } label: {
+                    Label("Copy Context", systemImage: "doc.on.doc")
+                }
+                Button {
                     NSWorkspace.shared.activateFileViewerSelecting([page.fileURL])
                 } label: {
                     Label("Reveal", systemImage: "folder")
@@ -1816,6 +1831,13 @@ public struct HarcWindowRootView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func copyWikiPageContext(_ page: WikiPage) {
+        let pack = ContextPackBuilder.build(wikiPage: page)
+        let markdown = ContextPackMarkdownRenderer.render(pack)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(markdown, forType: .string)
     }
 
     private func wikiEmptyTitle(for section: WikiSection) -> String {
@@ -1870,6 +1892,9 @@ public struct HarcWindowRootView: View {
                 Button("Scan Sources") { Task { await scanConnectedSources() } }
                     .buttonStyle(.borderedProminent)
                     .disabled(prefs.sourceRoots.isEmpty)
+                Button("Generate Review") { Task { await generateReviewFromLibrary() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(libraryVM.recordings.isEmpty && notes.isEmpty)
             }
         }
     }
@@ -1885,7 +1910,7 @@ public struct HarcWindowRootView: View {
                 ("Notes", "\(notes.count)", !notes.isEmpty),
                 ("Recordings", "\(libraryVM.recordings.count)", !libraryVM.recordings.isEmpty),
                 ("Source folders", "\(prefs.sourceRoots.count)", !prefs.sourceRoots.isEmpty),
-                ("Pending proposals", "\(reviewProposals.filter { $0.status == .pending || $0.status == .edited }.count)", false),
+                ("Pending proposals", "\(ReviewProposalGrouping.make(from: reviewProposals).pendingCount)", false),
             ])
             HStack(spacing: 8) {
                 Button("Create Note") { createBlankNote() }
@@ -1920,28 +1945,74 @@ public struct HarcWindowRootView: View {
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 
+    private func reviewQueueSummary(_ grouping: ReviewProposalGrouping) -> some View {
+        let columns = [GridItem(.adaptive(minimum: 116), spacing: 8)]
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            reviewMetric("Pending", value: grouping.pendingCount, icon: "tray.full", color: .accentColor)
+            reviewMetric("Approved", value: grouping.approvedCount, icon: "checkmark.circle", color: .green)
+            reviewMetric("Needs Attention", value: grouping.failedCount, icon: "exclamationmark.triangle", color: .red)
+            reviewMetric("Dismissed", value: grouping.dismissedCount, icon: "xmark.circle", color: .secondary)
+        }
+    }
+
+    private func reviewMetric(_ title: String, value: Int, icon: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(value)")
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(.primary)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
     @ViewBuilder
-    private func reviewBucket(_ title: String, statuses: [WikiReviewProposalStatus]) -> some View {
-        let items = reviewProposals.filter { statuses.contains($0.status) }
-        if !items.isEmpty {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
-            ForEach(items) { proposal in
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(proposal.title)
-                            .lineLimit(1)
-                        Text(proposal.status.rawValue.capitalized)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } icon: {
-                    Image(systemName: reviewIcon(for: proposal))
-                        .foregroundStyle(reviewColor(for: proposal))
+    private func reviewBucket(_ bucket: ReviewProposalBucket) -> some View {
+        Text("\(bucket.title) (\(bucket.count))")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
+        ForEach(bucket.proposals) { proposal in
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(proposal.title)
+                        .lineLimit(1)
+                    Text(reviewSidebarSubtitle(for: proposal))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                .tag(Optional(proposal.id))
+            } icon: {
+                Image(systemName: reviewIcon(for: proposal))
+                    .foregroundStyle(reviewColor(for: proposal))
+            }
+            .tag(Optional(proposal.id))
+        }
+    }
+
+    private func reviewProposalList(_ grouping: ReviewProposalGrouping) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(grouping.buckets) { bucket in
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("\(bucket.title) (\(bucket.count))", systemImage: bucket.systemImage)
+                        .font(.headline)
+                    ForEach(bucket.proposals) { proposal in
+                        Button {
+                            selectedReviewProposalID = proposal.id
+                        } label: {
+                            reviewProposalRow(proposal)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
         }
     }
@@ -1958,6 +2029,11 @@ public struct HarcWindowRootView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                HStack(spacing: 6) {
+                    reviewPill(proposal.targetSection.title, icon: proposal.targetSection.systemImage)
+                    reviewPill("Impact \(proposal.impact.title)", icon: "bolt")
+                    reviewPill("Confidence \(proposal.confidence.title)", icon: "gauge")
+                }
             }
             Spacer()
             Text(proposal.status.rawValue.capitalized)
@@ -1981,6 +2057,13 @@ public struct HarcWindowRootView: View {
                 }
                 Spacer()
                 Button {
+                    copyReviewProposalContext(proposal, markdown: currentReviewMarkdown(for: proposal))
+                } label: {
+                    Label("Copy Context", systemImage: "doc.on.doc")
+                }
+                .disabled(currentReviewMarkdown(for: proposal).isEmpty)
+
+                Button {
                     Task { await approveReviewProposal(proposal) }
                 } label: {
                     Label(busy ? "Working" : "Approve", systemImage: busy ? "hourglass" : "checkmark.circle")
@@ -1993,6 +2076,12 @@ public struct HarcWindowRootView: View {
                     Label("Dismiss", systemImage: "xmark.circle")
                 }
                 .disabled(busy || proposal.status == .approved || proposal.status == .dismissed)
+            }
+
+            HStack(spacing: 6) {
+                reviewPill("Impact \(proposal.impact.title)", icon: "bolt")
+                reviewPill("Confidence \(proposal.confidence.title)", icon: "gauge")
+                reviewPill(proposal.status.rawValue.capitalized, icon: reviewIcon(for: proposal))
             }
 
             if let status = reviewActionStatus[proposal.id] {
@@ -2012,12 +2101,38 @@ public struct HarcWindowRootView: View {
                 }
             }
 
-            Text(proposal.summary)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Target")
+                    .font(.headline)
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    GridRow {
+                        Text("Section")
+                            .foregroundStyle(.secondary)
+                        Label(proposal.targetSection.title, systemImage: proposal.targetSection.systemImage)
+                    }
+                    GridRow {
+                        Text("Page")
+                            .foregroundStyle(.secondary)
+                        Text(proposal.targetTitle)
+                            .textSelection(.enabled)
+                    }
+                }
+                .font(.caption)
+                .padding(10)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Proposed Change")
+                    .font(.headline)
+                Text(proposal.summary)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
 
             if !proposal.renderedCitations.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Sources")
+                    Text("Evidence")
                         .font(.headline)
                     ForEach(proposal.renderedCitations, id: \.self) { citation in
                         Text(citation)
@@ -2029,12 +2144,102 @@ public struct HarcWindowRootView: View {
 
             Divider()
 
-            Text(proposal.proposedMarkdown)
-                .font(.body)
-                .lineSpacing(4)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Markdown")
+                        .font(.headline)
+                    if reviewMarkdownIsDirty(proposal) {
+                        Text("Unsaved edits")
+                            .font(.caption)
+                            .foregroundStyle(Color.orange)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await saveReviewMarkdownDraft(for: proposal) }
+                    } label: {
+                        Label("Save Edits", systemImage: "tray.and.arrow.down")
+                    }
+                    .disabled(
+                        !reviewMarkdownIsDirty(proposal)
+                        || busy
+                        || proposal.status == .approved
+                        || proposal.status == .dismissed
+                    )
+
+                    Button {
+                        reviewMarkdownDrafts[proposal.id] = proposal.proposedMarkdown
+                    } label: {
+                        Label("Revert", systemImage: "arrow.uturn.backward")
+                    }
+                    .disabled(!reviewMarkdownIsDirty(proposal) || busy)
+                }
+
+                TextEditor(text: reviewMarkdownBinding(for: proposal))
+                    .font(.system(.body, design: .monospaced))
+                    .lineSpacing(4)
+                    .frame(minHeight: 280)
+                    .padding(8)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    )
+                    .disabled(proposal.status == .approved || proposal.status == .dismissed)
+            }
         }
+    }
+
+    private func reviewPill(_ title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+    }
+
+    private func reviewSidebarSubtitle(for proposal: WikiReviewProposal) -> String {
+        "\(proposal.targetSection.title) - \(proposal.status.rawValue.capitalized)"
+    }
+
+    private func copyReviewProposalContext(_ proposal: WikiReviewProposal, markdown: String) {
+        var sections: [String] = [
+            "# Review Proposal: \(proposal.title)",
+            "Status: \(proposal.status.rawValue)",
+            "Impact: \(proposal.impact.rawValue)",
+            "Confidence: \(proposal.confidence.rawValue)",
+            "Target: \(proposal.targetSection.title) / \(proposal.targetTitle)",
+            "",
+            "## Summary",
+            proposal.summary,
+            "",
+            "## Proposed Markdown",
+            markdown,
+        ]
+        if !proposal.renderedCitations.isEmpty {
+            sections.append("")
+            sections.append("## Evidence")
+            sections.append(proposal.renderedCitations.map { "- \($0)" }.joined(separator: "\n"))
+        }
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(sections.joined(separator: "\n"), forType: .string)
+        reviewActionStatus[proposal.id] = "Copied proposal context."
+    }
+
+    private func currentReviewMarkdown(for proposal: WikiReviewProposal) -> String {
+        reviewMarkdownDrafts[proposal.id] ?? proposal.proposedMarkdown
+    }
+
+    private func reviewMarkdownIsDirty(_ proposal: WikiReviewProposal) -> Bool {
+        currentReviewMarkdown(for: proposal) != proposal.proposedMarkdown
+    }
+
+    private func reviewMarkdownBinding(for proposal: WikiReviewProposal) -> Binding<String> {
+        Binding(
+            get: { currentReviewMarkdown(for: proposal) },
+            set: { reviewMarkdownDrafts[proposal.id] = $0 }
+        )
     }
 
     private func reviewIcon(for proposal: WikiReviewProposal) -> String {
@@ -3169,7 +3374,7 @@ public struct HarcWindowRootView: View {
                     }
                 }
                 for proposal in SourceWikiProposalGenerator.proposals(for: root, documents: scanBatch) {
-                    _ = try await reviewStore.upsert(proposal)
+                    _ = try await reviewStore.upsertIfReviewable(proposal)
                     scanSummary.proposalCount += 1
                 }
             }
@@ -3178,6 +3383,40 @@ public struct HarcWindowRootView: View {
             mode = .review
         } catch {
             sourceScanStatus = error.localizedDescription
+        }
+    }
+
+    private func generateReviewFromLibrary() async {
+        reviewGenerationStatus = "Generating review proposals..."
+        let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
+        let reviewStore = WikiReviewStore(
+            fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
+            wikiStore: HarcWikiStore(rootURL: wikiRoot)
+        )
+
+        do {
+            let latestNotes = notes.isEmpty ? try await NoteStore(rootURL: prefs.notesURL).fetchAll() : notes
+            let proposals = LibraryReviewProposalGenerator.proposals(
+                recordings: libraryVM.recordings,
+                notes: latestNotes,
+                maxRecordings: 12,
+                maxNotes: 20
+            )
+            var reviewableCount = 0
+            var skippedCount = 0
+            for proposal in proposals {
+                let saved = try await reviewStore.upsertIfReviewable(proposal)
+                if saved.status == .approved || saved.status == .dismissed {
+                    skippedCount += 1
+                } else {
+                    reviewableCount += 1
+                }
+            }
+            reviewGenerationStatus = "Generated \(reviewableCount) review proposals. Skipped \(skippedCount) already resolved."
+            await loadReviewProposals()
+            mode = .review
+        } catch {
+            reviewGenerationStatus = "Generate Review failed: \(error.localizedDescription)"
         }
     }
 
@@ -3192,6 +3431,15 @@ public struct HarcWindowRootView: View {
             wikiStore: HarcWikiStore(rootURL: wikiRoot)
         )
         do {
+            if reviewMarkdownIsDirty(proposal) {
+                reviewActionStatus[proposal.id] = "Saving edits..."
+                let saved = try await reviewStore.updateMarkdown(
+                    id: proposal.id,
+                    proposedMarkdown: currentReviewMarkdown(for: proposal)
+                )
+                reviewMarkdownDrafts[proposal.id] = saved.proposedMarkdown
+                reviewActionStatus[proposal.id] = "Approving..."
+            }
             _ = try await reviewStore.approve(id: proposal.id)
             let pageID = "\(proposal.targetSection.rawValue)/\(HarcWikiStore.slug(proposal.targetTitle))"
             if let knowledgeIndexer,
@@ -3207,6 +3455,30 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    private func saveReviewMarkdownDraft(for proposal: WikiReviewProposal) async {
+        guard reviewMarkdownIsDirty(proposal) else { return }
+        reviewActionInFlight.insert(proposal.id)
+        reviewActionStatus[proposal.id] = "Saving edits..."
+        defer { reviewActionInFlight.remove(proposal.id) }
+
+        let wikiRoot = prefs.notesURL.deletingLastPathComponent().appendingPathComponent("Wiki", isDirectory: true)
+        let reviewStore = WikiReviewStore(
+            fileURL: wikiRoot.appendingPathComponent(".review/proposals.json"),
+            wikiStore: HarcWikiStore(rootURL: wikiRoot)
+        )
+        do {
+            let saved = try await reviewStore.updateMarkdown(
+                id: proposal.id,
+                proposedMarkdown: currentReviewMarkdown(for: proposal)
+            )
+            reviewMarkdownDrafts[proposal.id] = saved.proposedMarkdown
+            reviewActionStatus[proposal.id] = "Edits saved."
+            await loadReviewProposals()
+        } catch {
+            reviewActionStatus[proposal.id] = "Save failed: \(error.localizedDescription)"
+        }
+    }
+
     private func dismissReviewProposal(_ proposal: WikiReviewProposal) async {
         reviewActionInFlight.insert(proposal.id)
         reviewActionStatus[proposal.id] = "Dismissing..."
@@ -3218,6 +3490,15 @@ public struct HarcWindowRootView: View {
             wikiStore: HarcWikiStore(rootURL: wikiRoot)
         )
         do {
+            if reviewMarkdownIsDirty(proposal) {
+                reviewActionStatus[proposal.id] = "Saving edits..."
+                let saved = try await reviewStore.updateMarkdown(
+                    id: proposal.id,
+                    proposedMarkdown: currentReviewMarkdown(for: proposal)
+                )
+                reviewMarkdownDrafts[proposal.id] = saved.proposedMarkdown
+                reviewActionStatus[proposal.id] = "Dismissing..."
+            }
             _ = try await reviewStore.updateStatus(id: proposal.id, status: .dismissed)
             reviewActionStatus[proposal.id] = "Dismissed."
             await loadReviewProposals()

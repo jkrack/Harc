@@ -139,4 +139,12 @@ public struct ContextPack: Sendable, Codable, Equatable {
     }
 
     public var isEmpty: Bool { blocks.isEmpty }
+
+    public var approvedKnowledge: [ContextBlock] {
+        blocks.filter { $0.kind == .synthesis && $0.source.kind == .wikiPage }
+    }
+
+    public var supportingEvidence: [ContextBlock] {
+        blocks.filter { !($0.kind == .synthesis && $0.source.kind == .wikiPage) }
+    }
 }

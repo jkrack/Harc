@@ -15,9 +15,12 @@ public enum ContextPackMarkdownRenderer {
             return lines.joined(separator: "\n")
         }
 
-        appendSection(.synthesis, title: "Wiki Synthesis", from: pack, into: &lines)
-        appendSection(.directEvidence, title: "Relevant Evidence", from: pack, into: &lines)
-        appendSection(.summary, title: "Summaries", from: pack, into: &lines)
+        appendApprovedKnowledge(from: pack, into: &lines)
+        appendSection(.synthesis, title: "Other Synthesis", from: pack, into: &lines) {
+            $0.source.kind != .wikiPage
+        }
+        appendSection(.directEvidence, title: "Supporting Evidence", from: pack, into: &lines)
+        appendSection(.summary, title: "Supporting Summaries", from: pack, into: &lines)
         appendSection(.actionItems, title: "Action Items", from: pack, into: &lines)
 
         lines.append("## Sources")
@@ -43,12 +46,26 @@ public enum ContextPackMarkdownRenderer {
         _ kind: ContextBlockKind,
         title: String,
         from pack: ContextPack,
-        into lines: inout [String]
+        into lines: inout [String],
+        where include: (ContextBlock) -> Bool = { _ in true }
     ) {
-        let blocks = pack.blocks.filter { $0.kind == kind }
+        let blocks = pack.blocks.filter { $0.kind == kind && include($0) }
         guard !blocks.isEmpty else { return }
 
         lines.append("## \(title)")
+        for block in blocks {
+            lines.append("")
+            lines.append("### \(block.source.title)")
+            lines.append(block.text)
+        }
+        lines.append("")
+    }
+
+    private static func appendApprovedKnowledge(from pack: ContextPack, into lines: inout [String]) {
+        let blocks = pack.approvedKnowledge
+        guard !blocks.isEmpty else { return }
+
+        lines.append("## Approved Knowledge")
         for block in blocks {
             lines.append("")
             lines.append("### \(block.source.title)")

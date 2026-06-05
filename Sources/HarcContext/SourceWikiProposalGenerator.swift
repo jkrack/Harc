@@ -72,6 +72,8 @@ public enum SourceWikiProposalGenerator {
         return WikiReviewProposal(
             id: proposalID(prefix: "source-overview", root: root, documents: documents, title: title),
             kind: .createPage,
+            impact: .medium,
+            confidence: .medium,
             title: "Create source overview: \(root.displayName)",
             summary: "Add a synthesized overview of \(root.displayName), grouped by content type and area.",
             targetSection: .sources,
@@ -125,6 +127,8 @@ public enum SourceWikiProposalGenerator {
         return WikiReviewProposal(
             id: proposalID(prefix: "project-map", root: root, documents: documents, title: title),
             kind: .createPage,
+            impact: .high,
+            confidence: .medium,
             title: "Create project map: \(root.displayName)",
             summary: "Add a synthesized project map for the repository structure, docs, code, and tests.",
             targetSection: .projects,
@@ -161,6 +165,8 @@ public enum SourceWikiProposalGenerator {
         return WikiReviewProposal(
             id: proposalID(prefix: "decisions", root: root, documents: documents, title: title),
             kind: .createPage,
+            impact: .high,
+            confidence: .medium,
             title: "Create decisions page: \(root.displayName)",
             summary: "Capture candidate decisions found in \(root.displayName) source files.",
             targetSection: .decisions,
@@ -198,6 +204,8 @@ public enum SourceWikiProposalGenerator {
         return WikiReviewProposal(
             id: proposalID(prefix: "open-questions", root: root, documents: documents, title: title),
             kind: .createPage,
+            impact: .medium,
+            confidence: .medium,
             title: "Create open questions page: \(root.displayName)",
             summary: "Capture candidate open questions and TODOs found in \(root.displayName).",
             targetSection: .openQuestions,
@@ -237,6 +245,8 @@ public enum SourceWikiProposalGenerator {
         return WikiReviewProposal(
             id: "source-\(document.provenance.contentHash)-\(HarcWikiStore.slug(document.provenance.relativePath))",
             kind: .createPage,
+            impact: .low,
+            confidence: .high,
             title: "Create source notes: \(document.title)",
             summary: "Add reviewable notes for \(document.provenance.relativePath).",
             targetSection: .sources,

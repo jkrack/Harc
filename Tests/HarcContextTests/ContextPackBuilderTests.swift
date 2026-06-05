@@ -166,8 +166,85 @@ struct ContextPackBuilderTests {
         let markdown = ContextPackMarkdownRenderer.render(pack)
 
         #expect(markdown.contains("# Context: roadmap"))
-        #expect(markdown.contains("## Relevant Evidence"))
+        #expect(markdown.contains("## Supporting Evidence"))
         #expect(markdown.contains("## Sources"))
         #expect(markdown.contains("/tmp/source.wav"))
+    }
+
+    @Test("markdown renderer separates approved knowledge from supporting evidence")
+    func rendersApprovedKnowledgeSeparately() {
+        let wikiSource = ContextSource(
+            kind: .wikiPage,
+            sourceID: "projects/atlas",
+            title: "Atlas",
+            path: "/tmp/wiki/projects/atlas.md"
+        )
+        let recordingSource = ContextSource(recording: recording(
+            wav: "/tmp/atlas.wav",
+            title: "Atlas Planning",
+            transcript: "Atlas evidence"
+        ))
+        let pack = ContextPack(
+            query: "atlas",
+            intent: .project,
+            blocks: [
+                ContextBlock(
+                    id: "wiki:atlas",
+                    kind: .synthesis,
+                    source: wikiSource,
+                    text: "Approved Atlas knowledge.",
+                    score: 1
+                ),
+                ContextBlock(
+                    id: "recording:atlas",
+                    kind: .directEvidence,
+                    source: recordingSource,
+                    text: "Supporting recording evidence.",
+                    score: 0.8
+                ),
+            ]
+        )
+
+        let markdown = ContextPackMarkdownRenderer.render(pack)
+
+        #expect(markdown.contains("## Approved Knowledge"))
+        #expect(markdown.contains("## Supporting Evidence"))
+        #expect(markdown.range(of: "## Approved Knowledge")!.lowerBound < markdown.range(of: "## Supporting Evidence")!.lowerBound)
+        #expect(pack.approvedKnowledge.map(\.source.kind) == [.wikiPage])
+        #expect(pack.supportingEvidence.map(\.source.kind) == [.recording])
+    }
+
+    @Test("selected wiki page context includes page and cited evidence")
+    func selectedWikiPageContextIncludesPageAndCitedEvidence() {
+        let page = WikiPage(
+            id: "projects/atlas",
+            title: "Atlas",
+            section: .projects,
+            fileURL: URL(fileURLWithPath: "/tmp/wiki/projects/atlas.md"),
+            body: """
+            ---
+            title: Atlas
+            section: projects
+            sources:
+              - /tmp/notes/atlas.md:4
+              - /tmp/recordings/atlas.txt
+            ---
+
+            # Atlas
+
+            Approved Atlas knowledge.
+            """,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+
+        let pack = ContextPackBuilder.build(wikiPage: page)
+        let markdown = ContextPackMarkdownRenderer.render(pack)
+
+        #expect(pack.approvedKnowledge.count == 1)
+        #expect(pack.approvedKnowledge.first?.text.contains("Approved Atlas knowledge.") == true)
+        #expect(pack.supportingEvidence.map(\.text) == ["/tmp/notes/atlas.md:4", "/tmp/recordings/atlas.txt"])
+        #expect(markdown.contains("## Approved Knowledge"))
+        #expect(markdown.contains("## Supporting Evidence"))
+        #expect(markdown.contains("/tmp/notes/atlas.md:4"))
     }
 }
