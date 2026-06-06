@@ -409,6 +409,7 @@ public struct SummaryCardView: View {
         switch tier {
         case .standard: return "Standard"
         case .quality:  return "Quality"
+        case .pro:      return "Pro"
         case .max:      return "Max"
         case .singleton: return fallback
         }

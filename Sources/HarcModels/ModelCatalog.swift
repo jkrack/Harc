@@ -23,6 +23,7 @@ public enum ModelCatalog {
     public static let v1: [ModelDescriptor] = [
         gemma4_E2B_IT_4bit,
         gemma4_E4B_IT_4bit,
+        gemma4_12B_4bit,
         gemma4_26B_A4B_IT_4bit,
         bgeSmallEnV15,
         qwen25VL3BInstruct4bit,
@@ -80,6 +81,7 @@ public enum ModelCatalog {
     // Rationale for the picks (from the design doc):
     //   - Gemma 4 E2B-it-4bit: default, ~1.5 GB, fits any M-series
     //   - Gemma 4 E4B-it-4bit: quality tier, ~2.5 GB
+    //   - Gemma 4 12B-4bit: pro tier, ~11 GB, 32 GB recommended
     //   - Gemma 4 26B-A4B-it-4bit: max tier, ~15 GB (MoE — 26 B params in
     //     memory, ~4 B activated so compute is E4B-equivalent)
     //   - BGE-small-en-v1.5: singleton embedder for semantic search
@@ -137,6 +139,36 @@ public enum ModelCatalog {
         ),
         minRAMGB: 16,
         recommendedRAMGB: 16,
+        contextTokens: 32_000,
+        manifestVerified: true
+    )
+
+    // Verified 2026-06-06 against the HuggingFace API with blobs=true.
+    private static let gemma4_12B_4bit = ModelDescriptor(
+        id: "gemma-4-12b-4bit",
+        displayName: "Gemma 4 · Pro",
+        summary: "Dense 12B unified, 4-bit MLX. 11 GB on disk; stronger multimodal reasoning than Quality. 32 GB RAM recommended.",
+        task: .summarizer,
+        tier: .pro,
+        repoID: "mlx-community/gemma-4-12B-4bit",
+        revision: "7d7c99c4d1b1d2ec2b52e2c46821cef2fa22ce0c",
+        files: verifiedRepoFiles(
+            repo: "mlx-community/gemma-4-12B-4bit",
+            revision: "7d7c99c4d1b1d2ec2b52e2c46821cef2fa22ce0c",
+            entries: [
+                ("config.json", 39_970, "c2be62afb1fd8d64fccb813795b1ea852cf42819f39062141f29bfa81ac8b96f"),
+                ("generation_config.json", 233, "02b56bd11e1cd1e363e701a85a2fd7fbaa2992ec3358c1cd7cc44ead7208f505"),
+                ("model-00001-of-00003.safetensors", 5_343_482_389, "bbf72072181a7631c561c95fed184c9e754a4645f185a78d3dcf7e82641a92ad"),
+                ("model-00002-of-00003.safetensors", 5_315_166_368, "c2333eeb88251c545f472bb6dfa4db1579d72617329267455e49096d7e721de5"),
+                ("model-00003-of-00003.safetensors", 329_123_819, "1ec1bf698ee8e0b28f694af1f27ca023b42b84249f20d15f4aaa6a08b1f981f8"),
+                ("model.safetensors.index.json", 135_330, "b87c93774de5d13ca9d0e21b045793e42e5df032fb5e7622212524f56f9695f2"),
+                ("processor_config.json", 868, "016a1db9c4f41ea0c61919c46855ea5e7c45c6e4ae4bfbedfb5b6bed79a2fe92"),
+                ("tokenizer.json", 32_170_070, "12bac982b793c44b03d52a250a9f0d0b666813da566b910c24a6da0695fd11e6"),
+                ("tokenizer_config.json", 1_533, "be14c0390e941220070bf5c57589899a9dcd1aef54be6c2c30de0afb226bf2cc"),
+            ]
+        ),
+        minRAMGB: 16,
+        recommendedRAMGB: 32,
         contextTokens: 32_000,
         manifestVerified: true
     )

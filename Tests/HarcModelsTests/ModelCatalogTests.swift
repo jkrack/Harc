@@ -43,15 +43,24 @@ final class ModelCatalogTests: XCTestCase {
 
     func test_descriptor_lookupByID() {
         XCTAssertNotNil(ModelCatalog.descriptor(for: "gemma-4-e2b-it-4bit"))
+        XCTAssertNotNil(ModelCatalog.descriptor(for: "gemma-4-12b-4bit"))
+        XCTAssertNil(ModelCatalog.descriptor(for: "gemma-4-12b-it-4bit"))
         XCTAssertNil(ModelCatalog.descriptor(for: "does-not-exist"))
     }
 
-    func test_descriptors_byTask_summarizersOrderedStdQualityMax() {
+    func test_descriptors_byTask_summarizersOrderedStdQualityProMax() {
         let summarizers = ModelCatalog.descriptors(for: .summarizer)
-        XCTAssertGreaterThanOrEqual(summarizers.count, 3)
+        XCTAssertGreaterThanOrEqual(summarizers.count, 4)
         XCTAssertEqual(summarizers[0].tier, .standard)
         XCTAssertEqual(summarizers[1].tier, .quality)
-        XCTAssertEqual(summarizers[2].tier, .max)
+        XCTAssertEqual(summarizers[2].tier, .pro)
+        XCTAssertEqual(summarizers[3].tier, .max)
+        XCTAssertEqual(summarizers.map(\.id), [
+            "gemma-4-e2b-it-4bit",
+            "gemma-4-e4b-it-4bit",
+            "gemma-4-12b-4bit",
+            "gemma-4-26b-a4b-it-4bit",
+        ])
     }
 
     func test_descriptors_embedderIsSingleton() {
