@@ -215,41 +215,43 @@ public struct TranscriptEditorView: View {
     }
 
     private var staleHintBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.caption2)
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            Text("Timestamps approximate after edits. Save to keep transcript text current; re-transcribe to rebuild word-level alignment.")
-                .font(.caption)
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            Spacer()
+        NativeStatusCallout(intent: .info) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(Color.accentColor)
+                Text("Timestamps approximate after edits. Save to keep transcript text current; re-transcribe to rebuild word-level alignment.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.caption2)
-                .foregroundStyle(Color.red)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(Color.red)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button("Dismiss") {
-                exportError = nil
-                vm.clearSaveError()
+        NativeStatusCallout(intent: .danger) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(Color.red)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Dismiss") {
+                    exportError = nil
+                    vm.clearSaveError()
+                }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
             }
-                .buttonStyle(.plain)
-                .font(.caption)
-                .foregroundStyle(Color.secondary)
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.red.opacity(0.08))
     }
 
     // MARK: - Helpers

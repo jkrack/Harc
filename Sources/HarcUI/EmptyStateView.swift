@@ -19,36 +19,18 @@ public struct EmptyStateView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.title2.weight(.semibold))
-                .imageScale(.large)
-                .foregroundStyle(Color.secondary)
-                .accessibilityHidden(true)
-
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(Color.primary)
-                .multilineTextAlignment(.center)
-
+        ContentUnavailableView {
+            Label(title, systemImage: icon)
+        } description: {
             if let subtitle {
                 Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 420)
             }
-
+        } actions: {
             if let action {
                 Button(action.label, action: action.run)
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .padding(.top, 2)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 132)
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
     }
 }

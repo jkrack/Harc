@@ -127,7 +127,7 @@ public actor RecoveryQueue {
                 fileSize: fileSize,
                 modifiedAt: values?.contentModificationDate
             )
-            guard artifacts.firstIndex(where: { $0.id == id }) == nil else { continue }
+            guard artifactIndex(forSourceURL: url) == nil else { continue }
 
             artifacts.append(
                 RecoveryArtifact(
@@ -248,6 +248,13 @@ public actor RecoveryQueue {
             merged.lastError = existing.lastError
         }
         return merged
+    }
+
+    private func artifactIndex(forSourceURL sourceURL: URL) -> Int? {
+        let path = sourceURL.standardizedFileURL.path
+        return artifacts.firstIndex { artifact in
+            artifact.sourceURL.standardizedFileURL.path == path
+        }
     }
 
     private func statusRank(_ status: RecoveryArtifact.Status) -> Int {

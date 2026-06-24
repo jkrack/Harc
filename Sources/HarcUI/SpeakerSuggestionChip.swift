@@ -54,11 +54,11 @@ public struct SpeakerSuggestionChip: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.accentColor.opacity(0.08))
+            Capsule(style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
+            Capsule(style: .continuous)
                 .strokeBorder(Color.accentColor.opacity(0.22), lineWidth: 1)
         )
     }

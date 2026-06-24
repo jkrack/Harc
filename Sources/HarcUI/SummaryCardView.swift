@@ -336,45 +336,29 @@ public struct SummaryCardView: View {
     }
 
     private var stalenessBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.yellow)
-            Text("Summary is based on an older transcript.")
-                .font(.subheadline)
-                .foregroundStyle(Color.yellow)
-            Spacer(minLength: 0)
-            Button("Regenerate") { enqueueSelf() }
-                .buttonStyle(.plain)
-                .font(.subheadline)
-                .foregroundStyle(Color.yellow)
+        NativeStatusCallout(intent: .warning) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.orange)
+                Text("Summary is based on an older transcript.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button("Regenerate") { enqueueSelf() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.yellow.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.yellow.opacity(0.35), lineWidth: 1)
-        )
     }
 
     // MARK: - Helpers
 
     @ViewBuilder
     private func tintedContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.accentColor.opacity(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
-            )
+        GroupBox {
+            content()
+                .padding(.vertical, 2)
+        }
     }
 
     private var parsedActionItems: [ActionItem]? {

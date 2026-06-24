@@ -49,7 +49,7 @@ struct TranscriptEditorTransportView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.bar)
     }
 
     private var playButton: some View {
@@ -79,28 +79,29 @@ struct TranscriptEditorTransportView: View {
     }
 
     private var audioMissingBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "speaker.slash")
-                .font(.caption2)
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            Text("Audio file not found — editing still works; playback is disabled.")
-                .font(.body)
-                .foregroundStyle(Color.secondary)
-            Spacer()
-            if let wav = vm.document.wavURL {
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([wav])
-                } label: {
-                    Text("Reveal in Finder")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.accentColor)
+        NativeStatusCallout(intent: .warning) {
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.slash")
+                    .font(.caption2)
+                    .foregroundStyle(Color.orange)
+                Text("Audio file not found. Editing still works; playback is disabled.")
+                    .font(.callout)
+                    .foregroundStyle(Color.secondary)
+                Spacer()
+                if let wav = vm.document.wavURL {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([wav])
+                    } label: {
+                        Label("Reveal", systemImage: "finder")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 
     private func formatTime(_ seconds: Double) -> String {

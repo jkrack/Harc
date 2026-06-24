@@ -16,22 +16,17 @@ public struct RecordingSettingsView: View {
     public var body: some View {
         Group {
             Section {
-                HStack {
-                    Label {
+                LabeledContent {
+                    HStack {
                         Text(prefs.destinationPath)
-                            .font(.subheadline)
-                            .foregroundStyle(Color.secondary)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                    } icon: {
-                        Image(systemName: "folder")
-                            .foregroundStyle(Color.accentColor)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Button("Choose…", action: pickFolder)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                    Spacer()
-                    Button("Choose…", action: pickFolder)
+                } label: {
+                    Label("Folder", systemImage: "folder")
                 }
                 if destinationMissing {
                     destinationMissingWarning
@@ -362,23 +357,24 @@ public struct RecordingSettingsView: View {
     }
 
     private var notificationsDeniedWarning: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.red)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Notifications disabled")
-                    .font(.caption)
-                    .foregroundStyle(Color.primary)
-                Text("Harc will still pulse the menu bar icon, but can't show a banner until you re-enable notifications.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Open System Settings") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
-                        NSWorkspace.shared.open(url)
+        NativeStatusCallout(intent: .warning) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notifications disabled")
+                        .font(.caption.weight(.semibold))
+                    Text("Harc will still pulse the menu bar icon, but can't show a banner until you re-enable notifications.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open System Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
             }
         }
         .padding(.vertical, 4)
@@ -418,24 +414,25 @@ public struct RecordingSettingsView: View {
     }
 
     private var destinationMissingWarning: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.red)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Destination folder not found")
-                    .font(.caption)
-                    .foregroundStyle(Color.primary)
-                Text("Harc can't write recordings here until you choose a different folder or restore the missing one. New recordings will fail to save until this is resolved.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 12) {
-                    Button("Choose…", action: pickFolder)
+        NativeStatusCallout(intent: .danger) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.red)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Destination folder not found")
+                        .font(.caption.weight(.semibold))
+                    Text("Harc can't write recordings here until you choose a different folder or restore the missing one. New recordings will fail to save until this is resolved.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 12) {
+                        Button("Choose…", action: pickFolder)
+                            .controlSize(.small)
+                        Button("Use Default") {
+                            prefs.destinationPath = HarcPreferences.defaultDestinationPath
+                        }
                         .controlSize(.small)
-                    Button("Use Default") {
-                        prefs.destinationPath = HarcPreferences.defaultDestinationPath
                     }
-                    .controlSize(.small)
                 }
             }
         }

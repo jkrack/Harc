@@ -252,32 +252,29 @@ public struct MenuBarPanelView: View {
     }
 
     private func activeCaptureStatusView(_ status: ActiveCaptureStatus) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Image(systemName: status.sourceState == .micOnly ? "mic.fill.badge.exclamationmark" : "waveform")
-                    .foregroundStyle(status.sourceState == .micOnly ? Color.orange : Color.green)
-                    .frame(width: 14)
-                Text(status.sourceState.displayText)
-                    .font(.caption.weight(.semibold))
-                Spacer()
-            }
-            if let warningText = status.sourceState.warningText {
-                Text(warningText)
+        NativeStatusCallout(intent: status.sourceState == .micOnly ? .warning : .success) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Image(systemName: status.sourceState == .micOnly ? "mic.fill.badge.exclamationmark" : "waveform")
+                        .foregroundStyle(status.sourceState == .micOnly ? Color.orange : Color.green)
+                        .frame(width: 14)
+                    Text(status.sourceState.displayText)
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                }
+                if let warningText = status.sourceState.warningText {
+                    Text(warningText)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                activeCapturePathRow(label: "Writing", path: status.cachePath)
+                activeCapturePathRow(label: "Saves to", path: status.destinationPath)
+                Text(status.transcriptAgeText())
                     .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(.secondary)
             }
-            activeCapturePathRow(label: "Writing", path: status.cachePath)
-            activeCapturePathRow(label: "Saves to", path: status.destinationPath)
-            Text(status.transcriptAgeText())
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-        )
     }
 
     private func activeCapturePathRow(label: String, path: String) -> some View {
@@ -401,42 +398,50 @@ public struct MenuBarPanelView: View {
     }
 
     private var tray: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let outcome = trayState.lastOutcome {
-                stopOutcomeView(outcome)
-            }
-            Text(trayState.lastTitle ?? "Last recording")
-                .font(.headline)
-                .lineLimit(2)
-                .truncationMode(.tail)
-            HStack(spacing: 8) {
-                if canOpenLastRecording {
-                    Button("Open") { onOpenLastRecording() }
-                        .buttonStyle(.bordered)
+        NativeStatusCallout(intent: trayIntent) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let outcome = trayState.lastOutcome {
+                    stopOutcomeView(outcome)
                 }
-                Button("Copy") { onCopy() }
-                    .buttonStyle(.bordered)
-                    .disabled((trayState.lastTranscript ?? "").isEmpty)
-                if let frontmostAppName {
-                    Button {
-                        onPasteIntoFrontmost()
-                    } label: {
-                        Text("Paste")
-                            .lineLimit(1)
+                Text(trayState.lastTitle ?? "Last recording")
+                    .font(.headline)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                HStack(spacing: 8) {
+                    if canOpenLastRecording {
+                        Button("Open") { onOpenLastRecording() }
+                            .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(frontmostPasteDenied || (trayState.lastTranscript ?? "").isEmpty)
-                    .help(pasteHelpText(for: frontmostAppName))
+                    Button("Copy") { onCopy() }
+                        .buttonStyle(.bordered)
+                        .disabled((trayState.lastTranscript ?? "").isEmpty)
+                    if let frontmostAppName {
+                        Button {
+                            onPasteIntoFrontmost()
+                        } label: {
+                            Text("Paste")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(frontmostPasteDenied || (trayState.lastTranscript ?? "").isEmpty)
+                        .help(pasteHelpText(for: frontmostAppName))
+                    }
                 }
-            }
-            if let pasteStatusMessage {
-                pasteStatus(pasteStatusMessage)
-            } else if frontmostPasteDenied, let frontmostAppName {
-                pasteStatus("Paste blocked for \(frontmostAppName). Use Copy instead.")
+                if let pasteStatusMessage {
+                    pasteStatus(pasteStatusMessage)
+                } else if frontmostPasteDenied, let frontmostAppName {
+                    pasteStatus("Paste blocked for \(frontmostAppName). Use Copy instead.")
+                }
             }
         }
-        .padding(10)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var trayIntent: NativeStatusIntent {
+        switch trayState.lastOutcome?.kind {
+        case .savedSafely: return .success
+        case .savedWithWarnings, .recoveryNeeded: return .warning
+        case .transcriptPending, .summaryQueued, .speakerIDPending, .none: return .info
+        }
     }
 
     @ViewBuilder
@@ -462,7 +467,7 @@ public struct MenuBarPanelView: View {
     }
 
     private func autoStoppedBanner(reason: AutoStopController.StopReason, at: Date) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        NativeStatusCallout(intent: .warning) {
             HStack(spacing: 8) {
                 Image(systemName: "clock.badge.checkmark")
                     .foregroundStyle(Color.yellow)
@@ -482,161 +487,143 @@ public struct MenuBarPanelView: View {
                     .buttonStyle(.borderedProminent)
             }
         }
-        .padding(10)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
-        )
     }
 
     private func stopRecoveryBanner(_ recovery: StopRecoveryInfo) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: recovery.isRecovering ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(recovery.isRecovering ? Color.accentColor : Color.yellow)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(recovery.title)
-                        .font(.subheadline.weight(.semibold))
-                    Text(recovery.message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(recovery.cacheDirectoryPath)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        NativeStatusCallout(intent: recovery.isRecovering ? .info : .warning) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: recovery.isRecovering ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(recovery.isRecovering ? Color.accentColor : Color.orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(recovery.title)
+                            .font(.subheadline.weight(.semibold))
+                        Text(recovery.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(recovery.cacheDirectoryPath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Button("Reveal") { onRevealStopRecovery() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    Button(recovery.isRecovering ? "Retrying..." : "Retry") { onRetryStopRecovery() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(recovery.isRecovering)
+                    Button("Settings") { onOpenSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    Button("Dismiss") { onDismissStopRecovery() }
+                        .buttonStyle(.plain)
+                        .controlSize(.small)
                 }
             }
-            HStack(spacing: 8) {
-                Button("Reveal") { onRevealStopRecovery() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button(recovery.isRecovering ? "Retrying..." : "Retry") { onRetryStopRecovery() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(recovery.isRecovering)
-                Button("Settings") { onOpenSettings() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button("Dismiss") { onDismissStopRecovery() }
-                    .buttonStyle(.plain)
-                    .controlSize(.small)
-            }
         }
-        .padding(10)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
-        )
     }
 
     private var recoveryInboxBanner: some View {
         let rows = Array(RecoveryInboxModel.rows(for: recoveryArtifacts).prefix(2))
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "externaldrive.badge.exclamationmark")
-                    .foregroundStyle(Color.yellow)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Recovery needed")
-                        .font(.subheadline.weight(.semibold))
-                    Text("\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)) recording artifact\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) == 1 ? "" : "s") need attention.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            ForEach(rows) { row in
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Text(row.title)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                        Spacer()
-                        Text(row.statusText)
-                            .font(.caption2.weight(.semibold))
+        return NativeStatusCallout(intent: .warning) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "externaldrive.badge.exclamationmark")
+                        .foregroundStyle(Color.orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Recovery needed")
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)) recording artifact\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) == 1 ? "" : "s") need attention.")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Text(row.sourcePath)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    HStack(spacing: 8) {
-                        Button("Recover") { onRecoverRecoveryArtifact(row.id) }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(!row.canRecover)
-                        Button("Reveal") { onRevealRecoveryArtifact(row.id) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!row.canReveal)
-                        Button("Discard") { onDiscardRecoveryArtifact(row.id) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!row.canDiscard)
-                    }
                 }
-                .padding(.top, 2)
-            }
 
-            if RecoveryInboxModel.rows(for: recoveryArtifacts).count > rows.count {
-                Button("Open Settings") { onOpenSettings() }
-                    .buttonStyle(.plain)
-                    .font(.caption)
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 6) {
+                            Text(row.title)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(row.statusText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(row.sourcePath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        HStack(spacing: 8) {
+                            Button("Recover") { onRecoverRecoveryArtifact(row.id) }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(!row.canRecover)
+                            Button("Reveal") { onRevealRecoveryArtifact(row.id) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!row.canReveal)
+                            Button("Discard") { onDiscardRecoveryArtifact(row.id) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!row.canDiscard)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+
+                if RecoveryInboxModel.rows(for: recoveryArtifacts).count > rows.count {
+                    Button("Open Settings") { onOpenSettings() }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                }
             }
         }
-        .padding(10)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
-        )
     }
 
     private func noteRecordingLinkBanner(_ feedback: NoteRecordingLinkFeedback) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: feedback.isRecoveryNeeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(feedback.isRecoveryNeeded ? Color.orange : Color.green)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(feedback.isRecoveryNeeded ? "Recording needs note link" : "Recording linked to note")
-                        .font(.subheadline.weight(.semibold))
-                    Text(feedback.message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        NativeStatusCallout(intent: feedback.isRecoveryNeeded ? .warning : .success) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: feedback.isRecoveryNeeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(feedback.isRecoveryNeeded ? Color.orange : Color.green)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(feedback.isRecoveryNeeded ? "Recording needs note link" : "Recording linked to note")
+                            .font(.subheadline.weight(.semibold))
+                        Text(feedback.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-            }
-            HStack(spacing: 8) {
-                if feedback.isRecoveryNeeded {
-                    Button("Attach") { onAttachLatestRecordingToNote(feedback.noteID) }
-                        .buttonStyle(.borderedProminent)
+                HStack(spacing: 8) {
+                    if feedback.isRecoveryNeeded {
+                        Button("Attach") { onAttachLatestRecordingToNote(feedback.noteID) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
+                    if feedback.canOpenRecording {
+                        Button("Open") { onOpenNoteLinkedRecording(feedback) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                    if feedback.canRevealFile {
+                        Button("Reveal") { onRevealNoteLinkedRecordingFile(feedback) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                    Button("Dismiss") { onDismissNoteRecordingLinkFeedback() }
+                        .buttonStyle(.plain)
                         .controlSize(.small)
                 }
-                if feedback.canOpenRecording {
-                    Button("Open") { onOpenNoteLinkedRecording(feedback) }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                }
-                if feedback.canRevealFile {
-                    Button("Reveal") { onRevealNoteLinkedRecordingFile(feedback) }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                }
-                Button("Dismiss") { onDismissNoteRecordingLinkFeedback() }
-                    .buttonStyle(.plain)
-                    .controlSize(.small)
             }
         }
-        .padding(10)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder((feedback.isRecoveryNeeded ? Color.orange : Color.green).opacity(0.35), lineWidth: 1)
-        )
     }
 
     private var compactLastCapture: some View {
@@ -699,11 +686,6 @@ public struct MenuBarPanelView: View {
                     .lineLimit(2)
             }
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(stopOutcomeColor(outcome.kind).opacity(0.08))
-        )
     }
 
     private func stopOutcomeIcon(_ kind: StopOutcome.Kind) -> String {
