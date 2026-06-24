@@ -64,17 +64,23 @@ struct NoteEditorMarkdownCapabilityTests {
 
     @Test("note detail uses Source, WYSIWYG Edit, and rendered Preview surfaces")
     func noteDetailUsesExpectedEditorModeSurfaces() throws {
-        let source = try String(
-            contentsOf: repoRoot.appendingPathComponent("Sources/HarcUI/HarcWindowRootView.swift"),
-            encoding: .utf8
-        )
+        // The view is split across HarcWindowRootView.swift and its
+        // HarcWindowRootView+*.swift extension files; read them all so this
+        // structural check survives file-layout refactors.
+        let uiDir = repoRoot.appendingPathComponent("Sources/HarcUI")
+        let source = try FileManager.default
+            .contentsOfDirectory(at: uiDir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("HarcWindowRootView") && $0.pathExtension == "swift" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
 
         #expect(source.contains("case .source:"))
         #expect(source.contains("case .live:"))
         #expect(source.contains("NoteMarkdownWebView(text: noteBodyBinding"))
         #expect(source.contains("mode: .source"))
         #expect(source.contains("mode: .live"))
-        #expect(source.contains("private static let noteWritingModes: [NoteMarkdownEditorMode] = [.live, .source]"))
+        #expect(source.contains("static let noteWritingModes: [NoteMarkdownEditorMode] = [.live, .source]"))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.writingModePicker")"#))
         #expect(source.contains(#".accessibilityIdentifier("harc.note.previewToggle")"#))
         #expect(source.contains("showsFormattingRibbon: prefs.markdownFormattingRibbonEnabled"))

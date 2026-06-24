@@ -213,23 +213,37 @@ public actor RecordingSession {
         )
     }
 
-    nonisolated fileprivate func processPair(mic: AVAudioPCMBuffer, system: AVAudioPCMBuffer?) {
+    /// Resample raw system-audio buffers and append them to `fifo`. Called only
+    /// from the mix loop, so the mixer's system converter is never touched
+    /// concurrently with `processPair`'s mic conversion.
+    nonisolated fileprivate func ingestSystem(_ buffers: [AVAudioPCMBuffer], into fifo: SampleFIFO) {
+        for buffer in buffers {
+            do {
+                fifo.append(try mixer.processSystem(buffer))
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harc-audio: system resample failed: \(error.localizedDescription)\n".utf8
+                ))
+            }
+        }
+    }
+
+    /// Mix one mic buffer with whatever system audio has accumulated, write the
+    /// result, and emit display levels.
+    ///
+    /// The mic drives the cadence; `systemFIFO` holds resampled system samples
+    /// that have not yet been consumed. We pull exactly as many system samples
+    /// as the (resampled) mic buffer is long, so the WAV advances at mic
+    /// real-time and any surplus system audio stays queued for the next tick
+    /// rather than being dropped. `systemFIFO` is nil when system capture is
+    /// off — then the mic mono buffer is written straight through.
+    nonisolated fileprivate func processPair(mic: AVAudioPCMBuffer, systemFIFO: SampleFIFO?) {
         do {
             let micMono = try mixer.processMic(mic)
             let micDb = rmsDb(micMono)
-            let sysMono: AVAudioPCMBuffer?
-            let sysDb: Float
-            let mixed: AVAudioPCMBuffer
-            if let system {
-                let mono = try mixer.processSystem(system)
-                sysMono = mono
-                sysDb = rmsDb(mono)
-                mixed = try mixer.sum(mic: micMono, system: mono)
-            } else {
-                sysMono = nil
-                sysDb = -.infinity
-                mixed = micMono
-            }
+            let sysMono = systemFIFO?.take(Int(micMono.frameLength), format: AudioMixer.targetFormat)
+            let sysDb = sysMono.map(rmsDb) ?? -.infinity
+            let mixed = try sysMono.map { try mixer.sum(mic: micMono, system: $0) } ?? micMono
             try writer?.write(mixed)
             let levels = levelComputer.compute(
                 micMono: micMono,
@@ -269,27 +283,32 @@ private func pumpStreams(
 ) async {
     guard let sysStream else {
         for await micBuffer in micStream {
-            session.processPair(mic: micBuffer, system: nil)
+            session.processPair(mic: micBuffer, systemFIFO: nil)
         }
         return
     }
 
-    let latest = LatestSystemBuffer()
+    let queue = SystemBufferQueue()
 
-    // Drain the sys stream into the latest-slot. Consumes every sys buffer
-    // so the writer can't stall; the mic pump picks whichever arrived most
-    // recently on each mic tick. Cancellation-safe.
-    let sysTask = Task.detached { [latest, carrier = StreamCarrier(stream: sysStream)] in
+    // Drain the sys stream into a FIFO of raw buffers. This task only enqueues
+    // — it never touches the mixer — so the mix loop below owns all conversion
+    // single-threaded. Consumes every sys buffer so the producer can't stall.
+    // Cancellation-safe.
+    let sysTask = Task.detached { [queue, carrier = StreamCarrier(stream: sysStream)] in
         for await buf in carrier.stream {
-            await latest.put(buf)
+            await queue.put(buf)
         }
     }
 
-    // Mic drives the mix cadence. Each mic buffer reads the latest sys buffer
-    // (or nil if none has arrived since last read) and mixes accordingly.
+    // Mic drives the mix cadence. On each mic tick we resample every system
+    // buffer that has arrived since the last tick into a sample FIFO, then mix
+    // the mic buffer with an equal span of system samples. Surplus system audio
+    // stays in the FIFO rather than being dropped — the fix for choppy system
+    // audio when ScreenCaptureKit delivers buffers faster than the mic.
+    let systemFIFO = SampleFIFO()
     for await micBuffer in micStream {
-        let sysBox = await latest.take()
-        session.processPair(mic: micBuffer, system: sysBox?.buffer)
+        session.ingestSystem(await queue.drain().buffers, into: systemFIFO)
+        session.processPair(mic: micBuffer, systemFIFO: systemFIFO)
     }
 
     sysTask.cancel()
@@ -310,20 +329,30 @@ private struct StreamCarrier: @unchecked Sendable {
     let stream: AsyncStream<AVAudioPCMBuffer>
 }
 
-/// Single-slot mailbox for the most recent system-audio buffer.
-/// The sys-drain task overwrites the slot; the mic pump consumes it on each tick.
-/// `take()` returns nil if no new sys buffer has arrived since the last read —
-/// the pump treats that as "mic-only for this tick."
-private actor LatestSystemBuffer {
-    private var current: PCMBox?
+/// FIFO mailbox for raw system-audio buffers between the sys-drain task and the
+/// mix loop. The drain task appends every buffer; the mix loop drains the whole
+/// queue on each mic tick. `cap` bounds memory if the mix loop ever stalls —
+/// the oldest buffers are shed rather than growing without limit.
+private actor SystemBufferQueue {
+    private var buffers: [PCMBox] = []
+    private let cap = 256
 
     func put(_ buffer: AVAudioPCMBuffer) {
-        current = PCMBox(buffer: buffer)
+        buffers.append(PCMBox(buffer: buffer))
+        if buffers.count > cap {
+            buffers.removeFirst(buffers.count - cap)
+        }
     }
 
-    func take() -> PCMBox? {
-        let b = current
-        current = nil
-        return b
+    func drain() -> PCMBatch {
+        defer { buffers.removeAll(keepingCapacity: true) }
+        return PCMBatch(buffers: buffers.map(\.buffer))
     }
+}
+
+/// Sendable envelope for a batch of system buffers handed from the drain actor
+/// to the (nonisolated) mix loop. Same rationale as `PCMBox`: the buffers are
+/// effectively immutable once produced by the capture source.
+private struct PCMBatch: @unchecked Sendable {
+    let buffers: [AVAudioPCMBuffer]
 }
