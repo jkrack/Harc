@@ -1,3 +1,3 @@
 public enum HarcVersion {
-    public static let current = "0.2.16"
+    public static let current = "0.2.17"
 }
