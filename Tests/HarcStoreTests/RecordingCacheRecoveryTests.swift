@@ -229,6 +229,38 @@ struct RecordingCacheRecoveryTests {
         #expect(artifacts[0].status == .discarded)
     }
 
+    @Test("recovery queue does not recreate discarded artifacts when file metadata changes")
+    func recoveryQueueDoesNotRecreateDiscardedArtifactsWhenMetadataChanges() async throws {
+        let cache = try tempDir("harc-cache")
+        let destination = try tempDir("harc-dest")
+        let queueFile = try tempDir("harc-queue").appendingPathComponent("recovery.json")
+        defer {
+            try? FileManager.default.removeItem(at: cache)
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: queueFile.deletingLastPathComponent())
+        }
+
+        let cacheWAV = cache.appendingPathComponent("orphan.wav")
+        try canonicalWAV(pcmBytes: 3200).write(to: cacheWAV)
+
+        let store = try await RecordingStore.inMemory()
+        let queue = RecoveryQueue(fileURL: queueFile, store: store)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+        let id = try #require(await queue.fetchAll().first?.id)
+        _ = try await queue.discard(id: id)
+
+        try FileHandle(forWritingTo: cacheWAV).closeAfter {
+            $0.seekToEndOfFile()
+            $0.write(Data([1, 2, 3, 4]))
+        }
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+
+        let artifacts = try await queue.fetchAll()
+        #expect(artifacts.count == 1)
+        #expect(artifacts[0].id == id)
+        #expect(artifacts[0].status == .discarded)
+    }
+
     @Test("recovery queue marks corrupted WAVs as failed")
     func recoveryQueueMarksCorruptedWAVsFailed() async throws {
         let cache = try tempDir("harc-cache")
@@ -254,6 +286,38 @@ struct RecordingCacheRecoveryTests {
         #expect(failed.lastError?.contains("not recoverable") == true)
         #expect(FileManager.default.fileExists(atPath: badWAV.path))
         #expect(try await store.fetchAll().isEmpty)
+    }
+
+    @Test("recovery queue does not duplicate failed artifacts when file metadata changes")
+    func recoveryQueueDoesNotDuplicateFailedArtifactsWhenMetadataChanges() async throws {
+        let cache = try tempDir("harc-cache")
+        let destination = try tempDir("harc-dest")
+        let queueFile = try tempDir("harc-queue").appendingPathComponent("recovery.json")
+        defer {
+            try? FileManager.default.removeItem(at: cache)
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: queueFile.deletingLastPathComponent())
+        }
+
+        let badWAV = cache.appendingPathComponent("bad.wav")
+        try Data(repeating: 7, count: 64).write(to: badWAV)
+
+        let store = try await RecordingStore.inMemory()
+        let queue = RecoveryQueue(fileURL: queueFile, store: store)
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+        let id = try #require(await queue.fetchAll().first?.id)
+        _ = try await queue.recover(id: id)
+
+        try FileHandle(forWritingTo: badWAV).closeAfter {
+            $0.seekToEndOfFile()
+            $0.write(Data([8, 9, 10, 11]))
+        }
+        try await queue.scanCache(cacheDirectory: cache, destinationDirectory: destination)
+
+        let artifacts = try await queue.fetchAll()
+        #expect(artifacts.count == 1)
+        #expect(artifacts[0].id == id)
+        #expect(artifacts[0].status == .failed)
     }
 
     private func canonicalWAV(pcmBytes: Int) -> Data {
@@ -291,5 +355,12 @@ struct RecordingCacheRecoveryTests {
     private func le32(_ value: UInt32) -> Data {
         var le = value.littleEndian
         return Data(bytes: &le, count: MemoryLayout<UInt32>.size)
+    }
+}
+
+private extension FileHandle {
+    func closeAfter(_ work: (FileHandle) throws -> Void) rethrows {
+        defer { try? close() }
+        try work(self)
     }
 }

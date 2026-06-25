@@ -76,6 +76,32 @@ struct RecordingSessionTests {
         func stop() async { continuation?.finish() }
     }
 
+    /// Mic fake that cooperatively yields between buffers (`Task.yield`, not a
+    /// wall-clock sleep) so a concurrently draining, faster system stream gets
+    /// scheduling turns to enqueue buffers between mic ticks. Models the real
+    /// cadence — sparse mic buffers, denser system-audio buffers — without being
+    /// sensitive to thread-pool saturation under parallel test load.
+    actor FakeMicPaced: MicCaptureSource {
+        nonisolated let script: [AVAudioPCMBuffer]
+        private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+        init(script: [AVAudioPCMBuffer]) { self.script = script }
+        func requestPermission() async throws {}
+        func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
+            let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+            self.continuation = cont
+            let box = SendableBuffers(script)
+            Task.detached {
+                for buf in box.buffers {
+                    cont.yield(buf)
+                    await Task.yield()
+                }
+                cont.finish()
+            }
+            return stream
+        }
+        func stop() async { continuation?.finish() }
+    }
+
     private func makeConstantBuffer(
         _ value: Float,
         frames: AVAudioFrameCount,
@@ -184,5 +210,54 @@ struct RecordingSessionTests {
         // If the deadlock bug is present, the file will have ~1600 frames (0.1s).
         let af = try AVAudioFile(forReading: result.wavURL)
         #expect(af.length > 5000, "expected >5000 frames; got \(af.length) (pump deadlocked?)")
+    }
+
+    @Test("fast system stream is mixed continuously, not dropped to ~25% duty cycle")
+    func fastSystemStreamIsNotDropped() async throws {
+        let base = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        // Mic is SILENT and sparse (10 buffers, paced). System is a loud constant
+        // arriving ~5× more often (50 small buffers). Both total 16000 frames = 1s.
+        // The mixed WAV is therefore pure system audio. With the old single-slot
+        // pump, ~4 of every 5 system buffers were dropped and zero-padded, so only
+        // ~20–25% of samples carried the system tone. With the FIFO pump, every
+        // system sample is mixed, so nearly the whole file should carry it.
+        let micBuffers = (0..<10).map { _ in makeConstantBuffer(0.0, frames: 1600) }
+        let sysBuffers = (0..<50).map { _ in makeConstantBuffer(0.5, frames: 320) }
+
+        let mic = FakeMicPaced(script: micBuffers)
+        let sys = FakeSystem(.enabled(sysBuffers))
+        let session = RecordingSession(
+            mic: mic,
+            systemAudio: sys,
+            destination: RecordingDestination(baseDirectory: base),
+            transcriber: nil
+        )
+
+        try await session.start(at: Date())
+        try await Task.sleep(for: .milliseconds(800))
+        let result = try await session.stop()
+
+        let af = try AVAudioFile(forReading: result.wavURL)
+        let frames = AVAudioFrameCount(af.length)
+        #expect(frames > 12000, "expected ~16000 frames, got \(frames)")
+        let buf = AVAudioPCMBuffer(pcmFormat: af.processingFormat, frameCapacity: frames)!
+        try af.read(into: buf)
+
+        // Measure continuity over the steady-state region, skipping the first
+        // quarter where the system FIFO is still filling. With the old
+        // single-slot pump ~75% of system buffers were dropped and the region
+        // would be mostly silent (~25% carrying); the FIFO keeps it near-full.
+        let data = buf.floatChannelData![0]
+        let total = Int(buf.frameLength)
+        let startIdx = total / 4
+        var carrying = 0
+        for i in startIdx..<total where abs(data[i]) > 0.4 { carrying += 1 }
+        let ratio = Double(carrying) / Double(total - startIdx)
+        #expect(
+            ratio > 0.75,
+            "expected system audio across >75% of the steady-state region; got \(Int(ratio * 100))% (buffers dropped instead of queued?)"
+        )
     }
 }

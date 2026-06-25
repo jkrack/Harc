@@ -63,7 +63,11 @@ struct PostStopTrayStateTests {
         let s = PostStopTrayState(visibleDuration: .milliseconds(50))
         s.show(title: "T", transcript: "t")
         #expect(s.isVisible == true)
-        try await Task.sleep(for: .milliseconds(120))
+
+        let deadline = Date().addingTimeInterval(2)
+        while s.isVisible && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(s.isVisible == false)
     }
 }

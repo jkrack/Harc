@@ -480,38 +480,35 @@ struct LocalStackHealthView: View {
     var onFix: (LocalStackHealthItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Local Stack", systemImage: "checklist.checked")
-                    .font(compact ? .caption.weight(.semibold) : .headline)
-                Spacer()
-                Text(summaryText)
-                    .font(.caption)
-                    .foregroundStyle(summaryColor)
-            }
-
-            if compact {
-                ForEach(items) { item in
-                    row(for: item)
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Local Stack", systemImage: "checklist.checked")
+                        .font(compact ? .caption.weight(.semibold) : .headline)
+                    Spacer()
+                    Text(summaryText)
+                        .font(.caption)
+                        .foregroundStyle(summaryColor)
                 }
-            } else {
-                ForEach(LocalStackHealthModel.groupedItems(items), id: \.0) { group, groupItems in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(group.title)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(groupItems) { item in
-                            row(for: item)
+
+                if compact {
+                    ForEach(items) { item in
+                        row(for: item)
+                    }
+                } else {
+                    ForEach(LocalStackHealthModel.groupedItems(items), id: \.0) { group, groupItems in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(group.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(groupItems) { item in
+                                row(for: item)
+                            }
                         }
                     }
                 }
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-        )
     }
 
     private func row(for item: LocalStackHealthItem) -> some View {
