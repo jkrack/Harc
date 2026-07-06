@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import HarcContext
 import HarcModels
 import HarcSummarize
 import HarcUI
@@ -15,7 +14,6 @@ final class HarcWindowController: NSWindowController {
         store: RecordingStore,
         reIDService: SpeakerReIDService,
         summarizerService: SummarizerService,
-        knowledgeIndexer: KnowledgeIndexer?,
         prefs: HarcPreferences,
         postProcessingState: RecordingPostProcessingState,
         queueStore: SummarizationQueueStore,
@@ -32,7 +30,6 @@ final class HarcWindowController: NSWindowController {
             store: store,
             reIDService: reIDService,
             summarizerService: summarizerService,
-            knowledgeIndexer: knowledgeIndexer,
             onEdit: onEdit,
             onDelete: onDelete
         )

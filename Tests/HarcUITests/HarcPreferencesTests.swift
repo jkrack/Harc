@@ -57,26 +57,6 @@ struct HarcPreferencesTests {
         #expect(prefs.autoPasteEnabled == true)
     }
 
-    @Test("notesPath resets leaked UI test temp directories")
-    func notesPathResetsLeakedUITestTempDirectories() {
-        let defaults = UserDefaults.standard
-        let original = defaults.string(forKey: "harc.notesPath")
-        let leakedPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.harc.HarcAppUITests.xctrunner/Data/tmp/harc-app-ui-\(UUID().uuidString)/Notes")
-            .path
-        defaults.set(leakedPath, forKey: "harc.notesPath")
-
-        let prefs = HarcPreferences()
-
-        #expect(prefs.notesPath == HarcPreferences.defaultNotesPath)
-        #expect(defaults.string(forKey: "harc.notesPath") == HarcPreferences.defaultNotesPath)
-        if let original {
-            defaults.set(original, forKey: "harc.notesPath")
-        } else {
-            defaults.removeObject(forKey: "harc.notesPath")
-        }
-    }
-
     @Test("autoPasteEnabled persists and round-trips through UserDefaults")
     func autoPasteEnabledPersists() {
         let defaults = UserDefaults.standard
@@ -185,35 +165,6 @@ struct HarcPreferencesTests {
         defaults.removeObject(forKey: "harc.speakerReIDAutoApply")
     }
 
-    @Test("sourceScanLimit defaults to forty documents")
-    func sourceScanLimitDefaultsToForty() {
-        let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: "harc.sourceScanLimit")
-        let prefs = HarcPreferences()
-        #expect(prefs.sourceScanLimit == 40)
-        defaults.removeObject(forKey: "harc.sourceScanLimit")
-    }
-
-    @Test("sourceScanLimit persists and clamps to the supported range")
-    func sourceScanLimitPersistsAndClamps() {
-        let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: "harc.sourceScanLimit")
-
-        let prefs = HarcPreferences()
-        prefs.sourceScanLimit = 80
-        #expect(HarcPreferences().sourceScanLimit == 80)
-
-        prefs.sourceScanLimit = 1
-        #expect(prefs.sourceScanLimit == HarcPreferences.sourceScanLimitRange.lowerBound)
-        #expect(HarcPreferences().sourceScanLimit == HarcPreferences.sourceScanLimitRange.lowerBound)
-
-        prefs.sourceScanLimit = 999
-        #expect(prefs.sourceScanLimit == HarcPreferences.sourceScanLimitRange.upperBound)
-        #expect(HarcPreferences().sourceScanLimit == HarcPreferences.sourceScanLimitRange.upperBound)
-
-        defaults.removeObject(forKey: "harc.sourceScanLimit")
-    }
-
     @Test("welcome flow defaults incomplete and persists completion")
     func welcomeFlowCompletionPersists() {
         let defaults = UserDefaults.standard
@@ -236,7 +187,6 @@ struct HarcPreferencesTests {
         let prefs = HarcPreferences()
         #expect(prefs.modelPerformanceMode == .balanced)
         #expect(prefs.modelPerformanceMode.summarizerIdleUnloadDelay == 10 * 60)
-        #expect(prefs.modelPerformanceMode.embedderIdleUnloadDelay == 30 * 60)
 
         prefs.modelPerformanceMode = .lowMemory
         #expect(HarcPreferences().modelPerformanceMode == .lowMemory)

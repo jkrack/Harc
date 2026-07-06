@@ -55,39 +55,6 @@ public struct ModelsSettingsView: View {
                     .foregroundStyle(Color.secondary)
             }
 
-            if !embedders.isEmpty {
-                Section {
-                    ForEach(embedders) { d in
-                        ModelRow(descriptor: d, ramGB: ramGB,
-                                 onDownload: { download(d) },
-                                 onCancel:  { cancel(d) },
-                                 onRemove:  { pendingRemoveID = d.id })
-                    }
-                } header: {
-                    Text("Semantic search")
-                } footer: {
-                    Text("Required to enable the Related tab in the library search.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.secondary)
-                }
-            }
-
-            if !visionCaptioners.isEmpty {
-                Section {
-                    ForEach(visionCaptioners) { d in
-                        ModelRow(descriptor: d, ramGB: ramGB,
-                                 onDownload: { download(d) },
-                                 onCancel:  { cancel(d) },
-                                 onRemove:  { pendingRemoveID = d.id })
-                    }
-                } header: {
-                    Text("Image captions")
-                } footer: {
-                    Text("Optional augmentation for slide and screenshot captions in notes. Not required for initial setup, recording, transcription, search, or summaries.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.secondary)
-                }
-            }
         }
         .alert(
             "Remove this model?",
@@ -177,14 +144,6 @@ public struct ModelsSettingsView: View {
 
     private var summarizers: [ModelDescriptor] {
         ModelCatalog.descriptors(for: .summarizer)
-    }
-
-    private var embedders: [ModelDescriptor] {
-        ModelCatalog.downloadableDescriptors(for: .textEmbedder)
-    }
-
-    private var visionCaptioners: [ModelDescriptor] {
-        ModelCatalog.descriptors(for: .visionCaptioner)
     }
 
     private static func physicalRAMGB() -> Int {

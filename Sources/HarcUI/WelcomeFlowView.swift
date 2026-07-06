@@ -65,39 +65,19 @@ public final class WelcomeFlowModel: ObservableObject {
             id: "canvas",
             eyebrow: "The canvas",
             title: "A workspace for captured thinking",
-            body: "Harc opens to a focused Library canvas where recordings, notes, people, and projects stay connected. Search across everything, jump into the transcript, then copy the context you need for an LLM.",
+            body: "Harc opens to a focused Library canvas where recordings and people stay connected. Search across everything, jump into the transcript, then copy the context you need for an LLM.",
             primaryPoint: "Recordings are durable source material, not disposable clips.",
-            secondaryPoint: "The sidebar moves between Library, Wiki, and Review without changing windows.",
+            secondaryPoint: "Speaker labels and search make an hour of audio easy to navigate.",
             symbolName: "rectangle.3.group",
             tint: .blue
-        ),
-        WelcomeFlowStep(
-            id: "notes",
-            eyebrow: "Notes",
-            title: "Notes turn transcripts into working memory",
-            body: "Write Markdown notes beside the library, link them to recordings, and record directly into a note when a thought needs raw audio behind it. Harc keeps the transcript and the note connected.",
-            primaryPoint: "Use notes for decisions, follow-ups, prompts, and meeting artifacts.",
-            secondaryPoint: "Linked recordings remain available for playback, export, and speaker review.",
-            symbolName: "note.text",
-            tint: .indigo
-        ),
-        WelcomeFlowStep(
-            id: "wiki",
-            eyebrow: "Wiki",
-            title: "Your local knowledge base grows from real work",
-            body: "The Wiki collects durable pages from recordings, notes, and connected source folders. Review proposes updates before they become knowledge, so the system stays useful without becoming noisy.",
-            primaryPoint: "Wiki pages make repeated context easy to reuse.",
-            secondaryPoint: "Review keeps generated proposals under your control.",
-            symbolName: "books.vertical",
-            tint: .green
         ),
         WelcomeFlowStep(
             id: "local",
             eyebrow: "Local first",
             title: "Private by design, fast on Apple Silicon",
-            body: "Speech-to-text, diarization, summaries, search embeddings, notes, and audio all stay on this Mac. Harc records to disk while it captures, then processes locally in rolling chunks.",
+            body: "Speech-to-text, diarization, summaries, and audio all stay on this Mac. Harc records to disk while it captures, then processes locally in rolling chunks.",
             primaryPoint: "No cloud STT, no external telemetry, no account requirement.",
-            secondaryPoint: "Image captions use a third optional model for augmentation; it is not required for initial setup.",
+            secondaryPoint: "Summaries use an optional local model; recording and transcription never need it.",
             symbolName: "lock.shield",
             tint: .teal
         ),

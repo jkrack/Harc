@@ -25,17 +25,12 @@ public struct MenuBarPanelView: View {
     let autoStopLastDurationText: String?
     let stopRecovery: StopRecoveryInfo?
     let activeCaptureStatus: ActiveCaptureStatus?
-    let noteRecordingLinkFeedback: NoteRecordingLinkFeedback?
     let onKeepRecording: () -> Void
     let onStopNow: () -> Void
     let onOpenSettings: () -> Void
     let onRevealStopRecovery: () -> Void
     let onRetryStopRecovery: () -> Void
     let onDismissStopRecovery: () -> Void
-    let onAttachLatestRecordingToNote: (String) -> Void
-    let onOpenNoteLinkedRecording: (NoteRecordingLinkFeedback) -> Void
-    let onRevealNoteLinkedRecordingFile: (NoteRecordingLinkFeedback) -> Void
-    let onDismissNoteRecordingLinkFeedback: () -> Void
     let destinationReady: Bool
     let destinationPath: String
     let captureReadinessText: String
@@ -79,17 +74,12 @@ public struct MenuBarPanelView: View {
         autoStopLastDurationText: String? = nil,
         stopRecovery: StopRecoveryInfo? = nil,
         activeCaptureStatus: ActiveCaptureStatus? = nil,
-        noteRecordingLinkFeedback: NoteRecordingLinkFeedback? = nil,
         onKeepRecording: @escaping () -> Void = {},
         onStopNow: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
         onRevealStopRecovery: @escaping () -> Void = {},
         onRetryStopRecovery: @escaping () -> Void = {},
         onDismissStopRecovery: @escaping () -> Void = {},
-        onAttachLatestRecordingToNote: @escaping (String) -> Void = { _ in },
-        onOpenNoteLinkedRecording: @escaping (NoteRecordingLinkFeedback) -> Void = { _ in },
-        onRevealNoteLinkedRecordingFile: @escaping (NoteRecordingLinkFeedback) -> Void = { _ in },
-        onDismissNoteRecordingLinkFeedback: @escaping () -> Void = {},
         destinationReady: Bool = true,
         destinationPath: String = "",
         captureReadinessText: String = "Mic + system audio",
@@ -129,17 +119,12 @@ public struct MenuBarPanelView: View {
         self.autoStopLastDurationText = autoStopLastDurationText
         self.stopRecovery = stopRecovery
         self.activeCaptureStatus = activeCaptureStatus
-        self.noteRecordingLinkFeedback = noteRecordingLinkFeedback
         self.onKeepRecording = onKeepRecording
         self.onStopNow = onStopNow
         self.onOpenSettings = onOpenSettings
         self.onRevealStopRecovery = onRevealStopRecovery
         self.onRetryStopRecovery = onRetryStopRecovery
         self.onDismissStopRecovery = onDismissStopRecovery
-        self.onAttachLatestRecordingToNote = onAttachLatestRecordingToNote
-        self.onOpenNoteLinkedRecording = onOpenNoteLinkedRecording
-        self.onRevealNoteLinkedRecordingFile = onRevealNoteLinkedRecordingFile
-        self.onDismissNoteRecordingLinkFeedback = onDismissNoteRecordingLinkFeedback
         self.destinationReady = destinationReady
         self.destinationPath = destinationPath
         self.captureReadinessText = captureReadinessText
@@ -192,10 +177,6 @@ public struct MenuBarPanelView: View {
 
                 if let stopRecovery {
                     stopRecoveryBanner(stopRecovery)
-                }
-
-                if let noteRecordingLinkFeedback {
-                    noteRecordingLinkBanner(noteRecordingLinkFeedback)
                 }
 
                 if RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) > 0 {
@@ -582,45 +563,6 @@ public struct MenuBarPanelView: View {
                     Button("Open Settings") { onOpenSettings() }
                         .buttonStyle(.plain)
                         .font(.caption)
-                }
-            }
-        }
-    }
-
-    private func noteRecordingLinkBanner(_ feedback: NoteRecordingLinkFeedback) -> some View {
-        NativeStatusCallout(intent: feedback.isRecoveryNeeded ? .warning : .success) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: feedback.isRecoveryNeeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(feedback.isRecoveryNeeded ? Color.orange : Color.green)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(feedback.isRecoveryNeeded ? "Recording needs note link" : "Recording linked to note")
-                            .font(.subheadline.weight(.semibold))
-                        Text(feedback.message)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                HStack(spacing: 8) {
-                    if feedback.isRecoveryNeeded {
-                        Button("Attach") { onAttachLatestRecordingToNote(feedback.noteID) }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                    }
-                    if feedback.canOpenRecording {
-                        Button("Open") { onOpenNoteLinkedRecording(feedback) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                    }
-                    if feedback.canRevealFile {
-                        Button("Reveal") { onRevealNoteLinkedRecordingFile(feedback) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                    }
-                    Button("Dismiss") { onDismissNoteRecordingLinkFeedback() }
-                        .buttonStyle(.plain)
-                        .controlSize(.small)
                 }
             }
         }

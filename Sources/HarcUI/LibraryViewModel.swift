@@ -1,6 +1,5 @@
 import Foundation
 import Combine
-import HarcContext
 import HarcStore
 
 public enum LibraryFilter: Equatable, Sendable {
@@ -52,16 +51,14 @@ public final class LibraryViewModel: ObservableObject {
     @Published public private(set) var daysWithRecordings: Set<Date> = []
 
     public let store: RecordingStore
-    private let semanticSearch: SemanticSearchService?
     private var observationTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
     private var fullList: [Recording] = []
 
-    public init(store: RecordingStore, semanticSearch: SemanticSearchService? = nil) {
+    public init(store: RecordingStore) {
         self.store = store
-        self.semanticSearch = semanticSearch
     }
 
     public func start() {
@@ -116,7 +113,7 @@ public final class LibraryViewModel: ObservableObject {
     private func performSearch(_ query: String) {
         searchTask?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        searchTask = Task { [weak self, store, semanticSearch, filter] in
+        searchTask = Task { [weak self, store, filter] in
             guard let self else { return }
             do {
                 if trimmed.isEmpty {
@@ -130,11 +127,7 @@ public final class LibraryViewModel: ObservableObject {
                         self.searchError = nil
                     }
                 } else {
-                    let results = try await Self.searchResults(
-                        query: trimmed,
-                        store: store,
-                        semanticSearch: semanticSearch
-                    )
+                    let results = try await store.search(query: trimmed)
                     await MainActor.run {
                         self.hits = results
                         self.searchError = nil
@@ -169,41 +162,6 @@ public final class LibraryViewModel: ObservableObject {
         }
     }
 
-    private static func searchResults(
-        query: String,
-        store: RecordingStore,
-        semanticSearch: SemanticSearchService?
-    ) async throws -> [TranscriptHit] {
-        let textHits = try await store.search(query: query)
-        guard let semanticSearch else { return textHits }
-
-        do {
-            let semanticHits = try await semanticSearch.search(query: query, limit: 40)
-            guard !semanticHits.isEmpty else { return textHits }
-
-            var seen: Set<String> = []
-            var results: [TranscriptHit] = []
-            for hit in semanticHits {
-                let stableID = hit.recording.id.map(String.init) ?? hit.recording.wavPath
-                let key = "recording:\(stableID)"
-                guard seen.insert(key).inserted else { continue }
-                results.append(TranscriptHit(
-                    recording: hit.recording,
-                    snippet: hit.chunk.text,
-                    score: hit.score
-                ))
-            }
-            for hit in textHits {
-                let stableID = hit.recording.id.map(String.init) ?? hit.recording.wavPath
-                guard seen.insert("recording:\(stableID)").inserted else { continue }
-                results.append(hit)
-            }
-            return results
-        } catch {
-            return textHits
-        }
-    }
-
     private func applyCurrent() {
         recordings = apply(filter: filter, to: fullList)
     }
@@ -228,28 +186,5 @@ public final class LibraryViewModel: ObservableObject {
 
     public func delete(recording: Recording) async throws {
         try await RecordingDeletionService(store: store).delete(recording: recording)
-    }
-
-    public func contextPack(
-        for query: String? = nil,
-        limit: Int = 8,
-        noteStore: NoteStore? = nil
-    ) async throws -> ContextPack {
-        let requestedQuery = query ?? searchText
-        return try await ContextPackBuilder(
-            store: store,
-            noteStore: noteStore,
-            semanticSearch: semanticSearch
-        )
-            .build(query: requestedQuery, limit: limit)
-    }
-
-    public func contextMarkdown(
-        for query: String? = nil,
-        limit: Int = 8,
-        noteStore: NoteStore? = nil
-    ) async throws -> String {
-        let pack = try await contextPack(for: query, limit: limit, noteStore: noteStore)
-        return ContextPackMarkdownRenderer.render(pack)
     }
 }

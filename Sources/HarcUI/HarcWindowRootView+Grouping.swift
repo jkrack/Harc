@@ -10,8 +10,6 @@ extension LibrarySidebarSection {
     var sidebarTitle: String {
         switch self {
         case .recordings: return "Recent Recordings"
-        case .notes: return "Active Notes"
-        case .projects: return "Projects"
         case .people: return "People"
         }
     }
@@ -19,8 +17,6 @@ extension LibrarySidebarSection {
     var sidebarIconName: String {
         switch self {
         case .recordings: return "waveform"
-        case .notes: return "note.text"
-        case .projects: return "folder"
         case .people: return "person.2"
         }
     }
@@ -32,37 +28,6 @@ extension HarcWindowRootView {
     struct DateBucket {
         let label: String
         let recordings: [Recording]
-    }
-
-    struct NoteBucket {
-        let label: String
-        let notes: [Note]
-    }
-
-    static func noteBuckets(from notes: [Note]) -> [NoteBucket] {
-        var grouped: [String: [Note]] = [:]
-        var labels: [String] = []
-
-        for note in notes {
-            let label = note.folderPath?.isEmpty == false ? note.folderPath! : "Unfiled"
-            if grouped[label] == nil {
-                grouped[label] = []
-                labels.append(label)
-            }
-            grouped[label, default: []].append(note)
-        }
-
-        labels.sort(by: noteBucketSort)
-        return labels.compactMap { label in
-            guard let notes = grouped[label] else { return nil }
-            return NoteBucket(label: label, notes: notes)
-        }
-    }
-
-    static func noteBucketSort(_ lhs: String, _ rhs: String) -> Bool {
-        if lhs == "Unfiled" { return false }
-        if rhs == "Unfiled" { return true }
-        return lhs > rhs
     }
 
     /// Groups recordings (assumed already sorted newest-first by the VM) into

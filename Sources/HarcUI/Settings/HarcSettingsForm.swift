@@ -11,7 +11,6 @@ public struct HarcSettingsForm: View {
             ProcessingSettingsView()
             ModelsSettingsView()
             SummarizationSettingsView()
-            LibrarySettingsView()
             AboutSettingsView()
         }
         .formStyle(.grouped)

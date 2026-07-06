@@ -52,13 +52,9 @@ public final class HarcAppBridge: ObservableObject {
     /// (panel) react. Always set in lockstep with `iconState.pasteFlash`.
     @Published public private(set) var pasteFlash: PasteFlash? = nil
     @Published public private(set) var pasteStatusMessage: String? = nil
-    @Published public private(set) var noteRecordingLinkFeedback: NoteRecordingLinkFeedback? = nil
-    @Published public private(set) var activeNoteRecordingID: String? = nil
-    @Published public private(set) var noteRecordingConflict: NoteRecordingConflict? = nil
     @Published public private(set) var recordingStopInFlight: Bool = false
 
     public var onStartStop: () -> Void = {}
-    public var onStartRecordingForNote: (String) -> Void = { _ in }
     public var onOpenWindow: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteIntoFrontmost: () -> Void = {}
@@ -69,9 +65,6 @@ public final class HarcAppBridge: ObservableObject {
     public var onRevealStopRecovery: () -> Void = {}
     public var onRetryStopRecovery: () -> Void = {}
     public var onDismissStopRecovery: () -> Void = {}
-    public var onAttachLatestRecordingToNote: (String) -> Void = { _ in }
-    public var onOpenNoteLinkedRecording: (NoteRecordingLinkFeedback) -> Void = { _ in }
-    public var onRevealNoteLinkedRecordingFile: (NoteRecordingLinkFeedback) -> Void = { _ in }
     public var onRecoverRecoveryArtifact: (String) -> Void = { _ in }
     public var onRevealRecoveryArtifact: (String) -> Void = { _ in }
     public var onDiscardRecoveryArtifact: (String) -> Void = { _ in }
@@ -141,76 +134,6 @@ public final class HarcAppBridge: ObservableObject {
         activeCaptureStatus = activeCaptureStatus?.markingTranscriptUpdate(at: date)
     }
 
-    public func showNoteRecordingLinked(
-        noteID: String,
-        recordingTitle: String,
-        recordingID: Int64?,
-        wavPath: String?
-    ) {
-        noteRecordingLinkFeedback = NoteRecordingLinkFeedback(
-            noteID: noteID,
-            status: .linked,
-            recordingTitle: recordingTitle,
-            recordingID: recordingID,
-            wavPath: wavPath,
-            message: "Linked \(recordingTitle) to this note."
-        )
-    }
-
-    public func showNoteRecordingMissingSavedID(
-        noteID: String,
-        recordingTitle: String,
-        wavPath: String?
-    ) {
-        noteRecordingLinkFeedback = NoteRecordingLinkFeedback(
-            noteID: noteID,
-            status: .recoveryNeeded,
-            recordingTitle: recordingTitle,
-            recordingID: nil,
-            wavPath: wavPath,
-            message: "Recording finished, but Harc could not find its Library ID to attach it automatically."
-        )
-    }
-
-    public func showNoteRecordingLinkFailed(
-        noteID: String,
-        recordingTitle: String,
-        recordingID: Int64?,
-        wavPath: String?,
-        errorDescription: String
-    ) {
-        noteRecordingLinkFeedback = NoteRecordingLinkFeedback(
-            noteID: noteID,
-            status: .recoveryNeeded,
-            recordingTitle: recordingTitle,
-            recordingID: recordingID,
-            wavPath: wavPath,
-            message: "Recording finished, but Harc could not attach it to the note: \(errorDescription)"
-        )
-    }
-
-    public func clearNoteRecordingLinkFeedback() {
-        noteRecordingLinkFeedback = nil
-    }
-
-    public func setActiveNoteRecordingID(_ noteID: String?) {
-        activeNoteRecordingID = noteID
-        if noteID == nil {
-            noteRecordingConflict = nil
-        }
-    }
-
-    public func showNoteRecordingConflict(requestedNoteID: String) {
-        noteRecordingConflict = NoteRecordingConflict(
-            requestedNoteID: requestedNoteID,
-            activeNoteID: activeNoteRecordingID
-        )
-    }
-
-    public func clearNoteRecordingConflict() {
-        noteRecordingConflict = nil
-    }
-
     private var currentFlashToken: UUID = UUID()
 }
 
@@ -231,41 +154,6 @@ public enum PasteFlash: Sendable, Equatable {
     case success
     case skipped
     case failure
-}
-
-public struct NoteRecordingLinkFeedback: Identifiable, Sendable, Equatable {
-    public enum Status: Sendable, Equatable {
-        case linked
-        case recoveryNeeded
-    }
-
-    public var id: String { "\(noteID):\(recordingID.map(String.init) ?? wavPath ?? recordingTitle):\(status)" }
-    public var noteID: String
-    public var status: Status
-    public var recordingTitle: String
-    public var recordingID: Int64?
-    public var wavPath: String?
-    public var message: String
-
-    public var isRecoveryNeeded: Bool { status == .recoveryNeeded }
-    public var canOpenRecording: Bool { recordingID != nil || wavPath != nil }
-    public var canRevealFile: Bool { wavPath != nil }
-}
-
-public struct NoteRecordingConflict: Identifiable, Sendable, Equatable {
-    public var requestedNoteID: String
-    public var activeNoteID: String?
-
-    public var id: String {
-        "\(requestedNoteID):\(activeNoteID ?? "general")"
-    }
-
-    public var message: String {
-        if activeNoteID == nil {
-            return "A general recording is already running. Open the active recording controls before starting capture into this note."
-        }
-        return "Another note owns the active recording. Open the active recording controls before starting capture into this note."
-    }
 }
 
 public struct StopRecoveryInfo: Equatable, Sendable {

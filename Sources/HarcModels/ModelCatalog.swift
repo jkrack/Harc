@@ -25,8 +25,6 @@ public enum ModelCatalog {
         gemma4_E4B_IT_4bit,
         gemma4_12B_4bit,
         gemma4_26B_A4B_IT_4bit,
-        bgeSmallEnV15,
-        qwen25VL3BInstruct4bit,
     ]
 
     /// Lookup helper — nil if the id isn't in the catalog.
@@ -200,70 +198,6 @@ public enum ModelCatalog {
         minRAMGB: 24,
         recommendedRAMGB: 32,
         contextTokens: 32_000,
-        manifestVerified: true
-    )
-
-    // Verified 2026-05-10 against HuggingFace tree view. This is the MLX
-    // 8-bit conversion of BAAI/bge-small-en-v1.5, a 384-dimensional English
-    // retrieval embedder small enough to keep resident for note/search work.
-    private static let bgeSmallEnV15 = ModelDescriptor(
-        id: "bge-small-en-v1.5",
-        displayName: "English text embedder",
-        summary: "Powers related-meaning search for notes and recordings. 35 MB on disk; 8-bit MLX.",
-        task: .textEmbedder,
-        tier: .singleton,
-        repoID: "mlx-community/bge-small-en-v1.5-8bit",
-        revision: "17d007e0406e0e1bb23c046adbbeb01b681824d9",
-        files: verifiedRepoFiles(
-            repo: "mlx-community/bge-small-en-v1.5-8bit",
-            revision: "17d007e0406e0e1bb23c046adbbeb01b681824d9",
-            entries: [
-                ("config.json", 795, "3d0cb42eb25381e94931c42c8cae3e77b36dd634d6f015bf1c432d0ed7e29f00"),
-                ("config_sentence_transformers.json", 124, "940d5f50db195fa6e5e6a4f122c095f77880de259d74b14a65779ed48bdd7c56"),
-                ("model.safetensors", 35_540_803, "24921a949e40547f7da454651131636f78ccabc9af521dea28868c9ba6f35ad1"),
-                ("model.safetensors.index.json", 26_000, "f9e6dbcf1f81db9913d21718d30ae7aa680e2c266ec4a0420c818a5f38ab21c9"),
-                ("modules.json", 349, "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf"),
-                ("sentence_bert_config.json", 52, "84e39fda68ccbff05bfa723ae9c0e70e23e2ec373b76e0f8c6e71af72a693cbf"),
-                ("special_tokens_map.json", 695, "5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a"),
-                ("tokenizer.json", 711_396, "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"),
-                ("tokenizer_config.json", 1_272, "7b082b48a08a0b5c5939d99472e33addce3d96202155e33f7928cecd171186a0"),
-                ("vocab.txt", 231_508, "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"),
-            ]
-        ),
-        minRAMGB: 8,
-        recommendedRAMGB: 8,
-        contextTokens: 512,
-        manifestVerified: true
-    )
-
-    private static let qwen25VL3BInstruct4bit = ModelDescriptor(
-        id: "qwen2.5-vl-3b-instruct-4bit",
-        displayName: "Qwen2.5-VL · Captioner",
-        summary: "Local slide and screenshot captions for note images. 3.1 GB on disk; 16 GB RAM recommended.",
-        task: .visionCaptioner,
-        tier: .singleton,
-        repoID: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
-        revision: "46d4cf06a06ffc1a766c214174f9cbed2f45bcab",
-        files: verifiedRepoFiles(
-            repo: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
-            revision: "46d4cf06a06ffc1a766c214174f9cbed2f45bcab",
-            entries: [
-                ("added_tokens.json", 605, "58b54bbe36fc752f79a24a271ef66a0a0830054b4dfad94bde757d851968060b"),
-                ("chat_template.json", 1_050, "ad60d90252ed0b0705ba14e2d0ad0fec0beac1ea955642b54059b36052d8bc96"),
-                ("config.json", 1_659, "7ed631bd2786d251cb38bd2a6a8a78c31bc1316f728bffa84b2d8954d3cfcd63"),
-                ("merges.txt", 1_671_853, "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"),
-                ("model.safetensors", 3_073_720_461, "636982419c940321ac0f7793dc9dc3575a4ee4843a6b167b2e8c3d3cd25dacf4"),
-                ("model.safetensors.index.json", 108_307, "3dacd0399838beaa368c4a4278477096c861defca3cfdcdd6f947b62d349af32"),
-                ("preprocessor_config.json", 350, "f2058c716eef96ccaed1cc1e2d0c08306b62586d535b28d9d08e691b2fab7ca0"),
-                ("special_tokens_map.json", 613, "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd"),
-                ("tokenizer.json", 11_421_896, "9c5ae00e602b8860cbd784ba82a8aa14e8feecec692e7076590d014d7b7fdafa"),
-                ("tokenizer_config.json", 7_256, "2f58f4bbd7bbce15d683f525954ef3a92cd82f5e06415a9c513859bf8ab72436"),
-                ("vocab.json", 2_776_833, "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"),
-            ]
-        ),
-        minRAMGB: 8,
-        recommendedRAMGB: 16,
-        contextTokens: 8_192,
         manifestVerified: true
     )
 

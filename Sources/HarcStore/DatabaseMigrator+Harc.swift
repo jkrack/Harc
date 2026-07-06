@@ -218,58 +218,13 @@ extension DatabaseMigrator {
                 """)
         }
 
-        migrator.registerMigration("v12_knowledge_chunks_vec1") { db in
-            try SQLiteVec1Support.register(on: db)
-
-            let hasKnowledgeChunks = try Bool.fetchOne(db, sql: """
-                SELECT EXISTS(
-                    SELECT 1 FROM sqlite_master
-                    WHERE type = 'table' AND name = 'knowledge_chunks'
-                )
-                """) ?? false
-            if !hasKnowledgeChunks {
-                try db.create(table: "knowledge_chunks") { t in
-                    t.autoIncrementedPrimaryKey("id")
-                    t.column("source_kind", .text).notNull()
-                    t.column("source_id", .text).notNull()
-                    t.column("ordinal", .integer).notNull()
-                    t.column("title", .text).notNull()
-                    t.column("text", .text).notNull()
-                    t.column("embedding", .blob).notNull()
-                    t.column("embedding_model_id", .text).notNull()
-                    t.column("content_hash", .text).notNull()
-                    t.column("created_at", .integer).notNull()
-                    t.column("updated_at", .integer).notNull()
-                    t.uniqueKey(["source_kind", "source_id", "ordinal", "embedding_model_id"])
-                }
-            }
-
-            try db.execute(sql: """
-                CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_source
-                ON knowledge_chunks(source_kind, source_id)
-                """)
-            try db.execute(sql: """
-                CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_model
-                ON knowledge_chunks(embedding_model_id)
-                """)
-
-            let hasVec1 = try Bool.fetchOne(db, sql: """
-                SELECT EXISTS(
-                    SELECT 1 FROM sqlite_master
-                    WHERE type = 'table' AND name = 'knowledge_vec1'
-                )
-                """) ?? false
-            if !hasVec1 {
-                try db.execute(sql: """
-                    CREATE VIRTUAL TABLE knowledge_vec1
-                    USING vec1(vector, source_kind, embedding_model_id)
-                    """)
-                try db.execute(sql: """
-                    INSERT INTO knowledge_vec1(cmd, arg)
-                    VALUES('rebuild', '{"index":"flat","distance":"cos"}')
-                    """)
-            }
-        }
+        // v12 originally created the `knowledge_chunks` table and the
+        // `knowledge_vec1` virtual table for semantic search. That feature
+        // (HarcContext + SQLiteVec1) has been removed. The migration is kept
+        // registered as a no-op so migration ordering/identity stays stable
+        // for databases that already applied it; fresh databases simply skip
+        // the now-unused knowledge tables.
+        migrator.registerMigration("v12_knowledge_chunks_vec1") { _ in }
 
         return migrator
     }

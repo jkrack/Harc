@@ -5,7 +5,6 @@ import SwiftUI
 import UserNotifications
 import HarcAudio
 import HarcClient
-import HarcContext
 import HarcCore
 import HarcExport
 import HarcMeetingDetect
@@ -42,9 +41,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onStartStop = { [weak self] in
             Task { await self?.toggleRecording() }
         }
-        bridge.onStartRecordingForNote = { [weak self] noteID in
-            Task { await self?.recordFromNote(noteID: noteID) }
-        }
         bridge.onOpenWindow = { [weak self] in
             self?.openLibrary()
         }
@@ -74,16 +70,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         bridge.onDismissStopRecovery = { [weak self] in
             self?.bridge.clearStopRecovery()
-        }
-        bridge.onAttachLatestRecordingToNote = { [weak self] noteID in
-            Task { await self?.attachLatestRecording(toNoteID: noteID) }
-        }
-        bridge.onOpenNoteLinkedRecording = { [weak self] feedback in
-            Task { await self?.openRecording(from: feedback) }
-        }
-        bridge.onRevealNoteLinkedRecordingFile = { feedback in
-            guard let wavPath = feedback.wavPath else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: wavPath)])
         }
         bridge.onRecoverRecoveryArtifact = { [weak self] id in
             Task { await self?.recoverRecoveryArtifact(id: id) }
@@ -195,10 +181,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private let modelManager = ModelManager()
     lazy var modelStore = ModelManagerStore(manager: modelManager)
     private var summarizerService: SummarizerService?
-    private var semanticSearchService: SemanticSearchService?
-    private var knowledgeIndexer: KnowledgeIndexer?
-    private var semanticEmbedder: MLXTextEmbedder?
-    private var embedderMemoryObservation: MLXTextEmbedder.MemoryPressureObservation?
     private var summarizationQueue: SummarizationQueue?
     private var summarizationQueueStore: SummarizationQueueStore?
     private var recoveryQueue: RecoveryQueue?
@@ -217,7 +199,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var prefsObserver: AnyCancellable?
     private var modelPerformanceObserver: AnyCancellable?
     private var pendingSkipPaste = false
-    private var pendingRecordingNoteID: String?
     private var uiTestRecordingStartedAt: Date?
     private var frontmostPoller: Timer?
     private var hasShownMicOnlyNotice = false
@@ -342,10 +323,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMenuBarReadiness() }
             .store(in: &cancellables)
-        prefs.$activeEmbedderID
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
-            .store(in: &cancellables)
         prefs.$speakerReIDEnabled
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMenuBarReadiness() }
@@ -423,24 +400,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
-    private func recordFromNote(noteID: String) async {
-        guard !bridge.recordingStopInFlight else { return }
-        if state.isRecording {
-            guard pendingRecordingNoteID == noteID else {
-                bridge.showNoteRecordingConflict(requestedNoteID: noteID)
-                return
-            }
-            await stopRecording(autoStopReason: nil)
-            return
-        }
-        pendingRecordingNoteID = noteID
-        await startRecording()
-        if !state.isRecording {
-            pendingRecordingNoteID = nil
-            bridge.setActiveNoteRecordingID(nil)
-        }
-    }
-
     private func applyAutoStopConfigFromPrefs() {
         autoStop.config = .from(
             silenceEnabled: prefs.autoStopEnabled,
@@ -469,12 +428,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         } else {
             bridge.summarizerReadinessText = "\(summarizerName) not installed"
         }
-
-        let activeEmbedder = ModelCatalog.descriptor(for: prefs.activeEmbedderID)
-        let embedderName = activeEmbedder?.displayName ?? "Search embedder"
-        let embedderInstalled = modelStore.state(of: prefs.activeEmbedderID).isInstalled
-        bridge.embedderReady = embedderInstalled
-        bridge.embedderReadinessText = embedderInstalled ? "\(embedderName) installed" : "\(embedderName) not installed"
 
         bridge.speakerIDReady = prefs.speakerReIDEnabled
         bridge.speakerIDReadinessText = prefs.speakerReIDEnabled ? "Speaker ID enabled" : "Speaker ID disabled"
@@ -597,7 +550,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 destinationPath: prefs.destinationPath,
                 startedAt: startedAt
             ))
-            bridge.setActiveNoteRecordingID(pendingRecordingNoteID)
             autoStop.begin(
                 session: session,
                 startedAt: startedAt
@@ -675,7 +627,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             ))
             self.session = nil
             state.markIdle()
-            bridge.setActiveNoteRecordingID(nil)
             bridge.setActiveCaptureStatus(nil)
             presentStopTimeoutRecovery()
             resetUI()
@@ -705,12 +656,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             var savedID: Int64? = nil
             savedID = await persistStoppedRecording(rec)
-            let recordingWasStartedFromNote = pendingRecordingNoteID != nil
-            await linkStoppedRecordingToPendingNote(
-                recording: rec,
-                savedID: savedID,
-                transcriptText: transcriptText
-            )
             if let transcriptText, let store = self.store {
                 Task.detached { [store] in
                     let entities = TitleSuggester.extractEntities(from: transcriptText)
@@ -730,11 +675,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // for the post-stop UX window.
             if let id = savedID, let store = self.store {
                 postProcessingState.begin(recordingID: id)
-                if let knowledgeIndexer {
-                    Task.detached { [knowledgeIndexer] in
-                        try? await knowledgeIndexer.index(recordingID: id)
-                    }
-                }
                 let embeddings = result.speakerEmbeddings
                 let diarizeErr = result.diarizationError
                 Task.detached { [store, postProcessingState = self.postProcessingState] in
@@ -769,9 +709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     }
                 }
             }
-            if !recordingWasStartedFromNote {
-                runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
-            }
+            runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
             // Show the post-stop outcome for every durable save. Copy/Paste
             // actions remain available only when transcript text exists.
             do {
@@ -800,7 +738,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         previewTask?.cancel()
         previewTask = nil
-        bridge.setActiveNoteRecordingID(nil)
         resetUI()
     }
 
@@ -1174,132 +1111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         return (try? await store.fetchByWavPath(recording.wavPath))?.id
     }
 
-    private func linkStoppedRecordingToPendingNote(
-        recording: Recording,
-        savedID: Int64?,
-        transcriptText: String?
-    ) async {
-        guard let noteID = pendingRecordingNoteID else { return }
-        pendingRecordingNoteID = nil
-        guard let savedID else {
-            bridge.showNoteRecordingMissingSavedID(
-                noteID: noteID,
-                recordingTitle: recording.displayTitle,
-                wavPath: recording.wavPath
-            )
-            return
-        }
-
-        var linkedRecording = recording
-        linkedRecording.id = savedID
-        do {
-            let noteStore = NoteStore(rootURL: prefs.notesURL)
-            _ = try await noteStore.link(
-                recording: linkedRecording,
-                toNoteID: noteID,
-                transcriptText: transcriptText
-            )
-            if let knowledgeIndexer,
-               let linkedNote = try? await noteStore.fetchAll(includeArchived: true).first(where: { $0.id == noteID }) {
-                try? await knowledgeIndexer.index(note: linkedNote)
-            }
-            NotificationCenter.default.post(name: .harcNotesDidChange, object: nil)
-            bridge.showNoteRecordingLinked(
-                noteID: noteID,
-                recordingTitle: linkedRecording.displayTitle,
-                recordingID: savedID,
-                wavPath: linkedRecording.wavPath
-            )
-        } catch {
-            bridge.showNoteRecordingLinkFailed(
-                noteID: noteID,
-                recordingTitle: linkedRecording.displayTitle,
-                recordingID: savedID,
-                wavPath: linkedRecording.wavPath,
-                errorDescription: error.localizedDescription
-            )
-            FileHandle.standardError.write(Data(
-                "harc: failed to link recording \(savedID) to note \(noteID): \(error.localizedDescription)\n".utf8
-            ))
-        }
-    }
-
-    private func attachLatestRecording(toNoteID noteID: String) async {
-        guard let feedback = bridge.noteRecordingLinkFeedback else { return }
-        guard let store else {
-            bridge.showNoteRecordingLinkFailed(
-                noteID: noteID,
-                recordingTitle: feedback.recordingTitle,
-                recordingID: feedback.recordingID,
-                wavPath: feedback.wavPath,
-                errorDescription: "Recording database is not available."
-            )
-            return
-        }
-
-        do {
-            guard var recording = try await recording(from: feedback, store: store),
-                  let recordingID = recording.id
-            else {
-                bridge.showNoteRecordingMissingSavedID(
-                    noteID: noteID,
-                    recordingTitle: feedback.recordingTitle,
-                    wavPath: feedback.wavPath
-                )
-                return
-            }
-            let transcriptText = recording.txtPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
-            recording.id = recordingID
-            let noteStore = NoteStore(rootURL: prefs.notesURL)
-            _ = try await noteStore.link(
-                recording: recording,
-                toNoteID: noteID,
-                transcriptText: transcriptText
-            )
-            NotificationCenter.default.post(name: .harcNotesDidChange, object: nil)
-            bridge.showNoteRecordingLinked(
-                noteID: noteID,
-                recordingTitle: recording.displayTitle,
-                recordingID: recordingID,
-                wavPath: recording.wavPath
-            )
-        } catch {
-            bridge.showNoteRecordingLinkFailed(
-                noteID: noteID,
-                recordingTitle: feedback.recordingTitle,
-                recordingID: feedback.recordingID,
-                wavPath: feedback.wavPath,
-                errorDescription: error.localizedDescription
-            )
-        }
-    }
-
-    private func openRecording(from feedback: NoteRecordingLinkFeedback) async {
-        guard let store else {
-            openLibrary()
-            return
-        }
-        if let recording = try? await recording(from: feedback, store: store) {
-            openDetail(for: recording)
-            return
-        }
-        openLibrary()
-    }
-
-    private func recording(from feedback: NoteRecordingLinkFeedback, store: RecordingStore) async throws -> Recording? {
-        if let id = feedback.recordingID,
-           let recording = try? await store.fetch(id: id) {
-            return recording
-        }
-        guard let wavPath = feedback.wavPath else { return nil }
-        if let recording = try? await store.fetchByWavPath(wavPath) {
-            return recording
-        }
-        let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
-        _ = try? await ingestor.ingestAll()
-        return try? await store.fetchByWavPath(wavPath)
-    }
-
     private func presentRecordingPersistenceFailure(recording: Recording, errorDescription: String) {
         let alert = NSAlert()
         alert.messageText = "Recording saved, but not added to Library"
@@ -1553,11 +1364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             presentLibraryUnavailable("The local model service has not finished starting yet. Try again in a moment.")
             return
         }
-        if semanticSearchService == nil {
-            configureSemanticServicesIfAvailable(store: store)
-        }
-        let semanticSearch = semanticSearchService ?? makeSemanticSearchServiceIfAvailable(store: store)
-        let libraryVM = LibraryViewModel(store: store, semanticSearch: semanticSearch)
+        let libraryVM = LibraryViewModel(store: store)
         let controller = HarcWindowController(
             libraryVM: libraryVM,
             recordingState: state,
@@ -1565,7 +1372,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             store: store,
             reIDService: reIDService,
             summarizerService: summarizerService,
-            knowledgeIndexer: knowledgeIndexer,
             prefs: prefs,
             postProcessingState: postProcessingState,
             queueStore: queueStore,
@@ -1646,8 +1452,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // for an already-installed model and silently skip. Second
             // call is idempotent (re-reads disk markers).
             await modelManager.bootstrap()
-            configureSemanticServicesIfAvailable(store: store)
-            backfillSemanticIndexIfAvailable(store: store)
             if prefs.autoSummarizeEnabled,
                shouldSummarizeGivenPower(),
                await modelManager.state(of: prefs.activeSummarizerID).isInstalled {
@@ -1681,41 +1485,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         _ = try? await ingestor.ingestAll()
     }
 
-    private func makeSemanticSearchServiceIfAvailable(store: RecordingStore) -> SemanticSearchService? {
-        let embedderID = prefs.activeEmbedderID
-        guard modelStore.state(of: embedderID).isInstalled else { return nil }
-        let embedder = MLXTextEmbedder(
-            modelID: embedderID,
-            modelDirectory: ModelStorage.defaultBase()
-                .appendingPathComponent(embedderID, isDirectory: true)
-        )
-        let idleDelay = prefs.modelPerformanceMode.embedderIdleUnloadDelay
-        Task { await embedder.setIdleUnloadDelay(idleDelay) }
-        return SemanticSearchService(store: store, embedder: embedder)
-    }
-
-    private func configureSemanticServicesIfAvailable(store: RecordingStore) {
-        let embedderID = prefs.activeEmbedderID
-        guard modelStore.state(of: embedderID).isInstalled else {
-            semanticSearchService = nil
-            knowledgeIndexer = nil
-            semanticEmbedder = nil
-            embedderMemoryObservation = nil
-            return
-        }
-        let embedder = MLXTextEmbedder(
-            modelID: embedderID,
-            modelDirectory: ModelStorage.defaultBase()
-                .appendingPathComponent(embedderID, isDirectory: true)
-        )
-        let idleDelay = prefs.modelPerformanceMode.embedderIdleUnloadDelay
-        Task { await embedder.setIdleUnloadDelay(idleDelay) }
-        embedderMemoryObservation = embedder.startObservingMemoryPressure()
-        semanticEmbedder = embedder
-        semanticSearchService = SemanticSearchService(store: store, embedder: embedder)
-        knowledgeIndexer = KnowledgeIndexer(store: store, embedder: embedder)
-    }
-
     private func observeModelPerformanceMode() {
         modelPerformanceObserver = prefs.$modelPerformanceMode
             .removeDuplicates()
@@ -1723,30 +1492,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 guard let self else { return }
                 Task {
                     await self.summarizerService?.setIdleUnloadDelay(mode.summarizerIdleUnloadDelay)
-                    await self.semanticEmbedder?.setIdleUnloadDelay(mode.embedderIdleUnloadDelay)
                 }
             }
-    }
-
-    private func backfillSemanticIndexIfAvailable(store: RecordingStore) {
-        guard let knowledgeIndexer else { return }
-        let noteURL = prefs.notesURL
-        Task.detached { [store, knowledgeIndexer, noteURL] in
-            let recordings = (try? await store.fetchAll()) ?? []
-            for recording in recordings {
-                guard let id = recording.id,
-                      let transcript = recording.transcriptText,
-                      !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                else { continue }
-                try? await knowledgeIndexer.index(recordingID: id)
-            }
-
-            let noteStore = NoteStore(rootURL: noteURL)
-            let notes = (try? await noteStore.fetchAll(includeArchived: false)) ?? []
-            for note in notes {
-                try? await knowledgeIndexer.index(note: note)
-            }
-        }
     }
 
     // MARK: - Summarization
@@ -2008,12 +1755,9 @@ private extension AppDelegate {
     func applyUITestConfigurationIfNeeded() {
         guard isUITesting, let root = uiTestRootURL else { return }
         let recordingsURL = root.appendingPathComponent("Recordings", isDirectory: true)
-        let notesURL = root.appendingPathComponent("Notes", isDirectory: true)
         try? FileManager.default.createDirectory(at: recordingsURL, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(at: notesURL, withIntermediateDirectories: true)
 
         prefs.destinationPath = recordingsURL.path
-        prefs.notesPath = notesURL.path
         prefs.autoSummarizeEnabled = false
         prefs.meetingDetectionEnabled = false
         prefs.postStopNotificationEnabled = false
@@ -2028,7 +1772,6 @@ private extension AppDelegate {
             destinationPath: prefs.destinationPath,
             startedAt: startedAt
         ))
-        bridge.setActiveNoteRecordingID(pendingRecordingNoteID)
         state.appendPreview(uiTestRecordingTranscript)
         bridge.markActiveTranscriptUpdate(at: startedAt.addingTimeInterval(1))
     }
@@ -2094,10 +1837,7 @@ private extension AppDelegate {
             if let savedID, let store {
                 postProcessingState.begin(recordingID: savedID)
                 postProcessingState.succeed(recordingID: savedID, speakerCount: 0)
-                if let persisted = try? await store.fetch(id: savedID), let knowledgeIndexer {
-                    Task.detached { [knowledgeIndexer] in
-                        try? await knowledgeIndexer.index(recordingID: savedID)
-                    }
+                if let persisted = try? await store.fetch(id: savedID) {
                     bridge.trayState.show(
                         title: persisted.displayTitle,
                         transcript: persisted.transcriptText ?? "",
@@ -2123,7 +1863,6 @@ private extension AppDelegate {
         uiTestRecordingStartedAt = nil
         previewTask?.cancel()
         previewTask = nil
-        bridge.setActiveNoteRecordingID(nil)
         resetUI()
     }
 
@@ -2173,44 +1912,7 @@ private extension AppDelegate {
             summaryGeneratedAt: startedAt.addingTimeInterval(120),
             summarySourceWordCount: 18
         ))
-
-        let noteStore = NoteStore(rootURL: root.appendingPathComponent("Notes", isDirectory: true))
-        _ = try await noteStore.create(
-            title: "UI Test Renewal Note",
-            body: "Follow up with Michelle about the customer renewal.",
-            recordings: recording.id.map { ["recording:\($0)"] } ?? []
-        )
-
-        let wikiStore = HarcWikiStore(rootURL: root.appendingPathComponent("Wiki", isDirectory: true))
-        _ = try await wikiStore.writePage(
-            section: .overview,
-            title: "UI Test Renewal Wiki",
-            body: """
-            # UI Test Renewal Wiki
-
-            The renewal workspace tracks pricing risk, Friday follow-up, and Michelle's customer renewal note.
-            """
-        )
-        let reviewStore = WikiReviewStore(
-            fileURL: root.appendingPathComponent("Wiki/.review/proposals.json"),
-            wikiStore: wikiStore
-        )
-        _ = try await reviewStore.upsert(WikiReviewProposal(
-            id: "ui-test-renewal-proposal",
-            kind: .createPage,
-            title: "UI Test Renewal Proposal",
-            summary: "Create a durable renewal page from the customer call and note.",
-            targetSection: .projects,
-            targetTitle: "UI Test Renewal Project",
-            proposedMarkdown: """
-            # UI Test Renewal Project
-
-            Pricing risk remains open. Jason owns the Friday renewal plan. Michelle needs the customer follow-up.
-            """,
-            sourceCitations: ["UI Test Customer Renewal", "UI Test Renewal Note"],
-            createdAt: startedAt.addingTimeInterval(180),
-            updatedAt: startedAt.addingTimeInterval(180)
-        ))
+        _ = recording
     }
 
     func uiTestTranscriptJSON(audioPath: String, startedAt: Date, endedAt: Date, text: String) -> String {
@@ -2308,17 +2010,12 @@ private struct StatusPopoverRoot: View {
             autoStopLastDurationText: bridge.autoStopLastDurationText,
             stopRecovery: bridge.stopRecovery,
             activeCaptureStatus: bridge.activeCaptureStatus,
-            noteRecordingLinkFeedback: bridge.noteRecordingLinkFeedback,
             onKeepRecording: bridge.onKeepRecording,
             onStopNow: bridge.onStopNow,
             onOpenSettings: bridge.onOpenSettings,
             onRevealStopRecovery: bridge.onRevealStopRecovery,
             onRetryStopRecovery: bridge.onRetryStopRecovery,
             onDismissStopRecovery: bridge.onDismissStopRecovery,
-            onAttachLatestRecordingToNote: bridge.onAttachLatestRecordingToNote,
-            onOpenNoteLinkedRecording: bridge.onOpenNoteLinkedRecording,
-            onRevealNoteLinkedRecordingFile: bridge.onRevealNoteLinkedRecordingFile,
-            onDismissNoteRecordingLinkFeedback: bridge.clearNoteRecordingLinkFeedback,
             destinationReady: bridge.destinationReady,
             destinationPath: bridge.destinationPath,
             captureReadinessText: bridge.captureReadinessText,

@@ -63,27 +63,6 @@ final class ModelCatalogTests: XCTestCase {
         ])
     }
 
-    func test_descriptors_embedderIsSingleton() {
-        let embedders = ModelCatalog.descriptors(for: .textEmbedder)
-        XCTAssertEqual(embedders.count, 1)
-        XCTAssertEqual(embedders[0].tier, .singleton)
-    }
-
-    func test_downloadableDescriptors_includeVerifiedEmbedder() {
-        let embedders = ModelCatalog.downloadableDescriptors(for: .textEmbedder)
-        XCTAssertEqual(embedders.map(\.id), ["bge-small-en-v1.5"])
-        XCTAssertEqual(embedders.first?.repoID, "mlx-community/bge-small-en-v1.5-8bit")
-        XCTAssertTrue(embedders.allSatisfy(\.manifestVerified))
-    }
-
-    func test_descriptors_visionCaptionerIsVerifiedSingleton() {
-        let captioners = ModelCatalog.descriptors(for: .visionCaptioner)
-        XCTAssertEqual(captioners.map(\.id), ["qwen2.5-vl-3b-instruct-4bit"])
-        XCTAssertEqual(captioners.first?.tier, .singleton)
-        XCTAssertEqual(ModelCatalog.downloadableDescriptors(for: .visionCaptioner).map(\.id), ["qwen2.5-vl-3b-instruct-4bit"])
-        XCTAssertTrue(captioners.first?.manifestVerified == true)
-    }
-
     func test_atLeastOneSummarizerHasVerifiedManifest() {
         let summarizers = ModelCatalog.descriptors(for: .summarizer)
         XCTAssertTrue(summarizers.contains(where: { $0.manifestVerified }),

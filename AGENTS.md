@@ -23,10 +23,6 @@ Flag the user before violating these product decisions.
   compact panel, with the Library as the fuller workspace.
 - **Long-form reliability over live latency.** Durable audio and recoverable
   stop/failure states matter more than live partial transcript UI.
-- **Notes stay Markdown.** The note editor uses Milkdown for WYSIWYG `Edit`,
-  raw Markdown `Source`, rendered `Preview`, and plain `.md` storage.
-- **Note-owned media stays note-owned.** Image/caption attachments should remain
-  connected to the note instead of drifting into global media storage.
 
 ## Architecture Map
 
@@ -41,13 +37,11 @@ Flag the user before violating these product decisions.
   vocabulary replacement.
 - `Sources/HarcAudio/` captures microphone/system audio, mixes levels, writes
   WAV files, and manages recording destinations.
-- `Sources/HarcStore/` owns the GRDB-backed library, notes, people, transcript
-  chunks, recovery queue, cache recovery, and migrations.
+- `Sources/HarcStore/` owns the GRDB-backed library, people, recovery queue,
+  cache recovery, and migrations.
 - `Sources/HarcUI/` contains SwiftUI/AppKit-facing state and views, including
-  the menu bar panel, Library, note editor web view, settings, local-stack
-  readiness, recovery inbox, transcript editor, and speaker identity UI.
-- `Sources/HarcContext/` builds semantic search, wiki proposals, context packs,
-  and source-folder knowledge.
+  the menu bar panel, Library, settings, local-stack readiness, recovery inbox,
+  transcript editor, and speaker identity UI.
 - `Sources/HarcSummarize/`, `Sources/HarcModels/`, `Sources/HarcExport/`,
   `Sources/HarcMeetingDetect/`, and `Sources/HarcVoiceprint/` cover optional AI
   summaries, model management, export formats, meeting detection, and speaker
@@ -67,19 +61,6 @@ Flag the user before violating these product decisions.
   can block recording; missing summaries/search/paste helpers must not make core
   capture look broken.
 - System audio denial is degraded "mic only" capture, not a hard block.
-
-## Note Editor Workflow
-
-Use the note-editor validator before broad Swift tests when touching
-`Sources/HarcUI/Resources/NoteEditor/`.
-
-    ./scripts/validate-note-editor.sh
-    swift test --filter NoteImagePasteFlowTests
-    swift test --filter NoteEditorMarkdownCapabilityTests
-
-If SwiftPM reports duplicate resources such as `decode.js`, remove
-`Sources/HarcUI/Resources/NoteEditor/node_modules` before testing. The validator
-may install and clean temporary npm dependencies.
 
 ## Common Validation
 

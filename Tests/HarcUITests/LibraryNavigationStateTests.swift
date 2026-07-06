@@ -3,19 +3,17 @@ import Testing
 @testable import HarcUI
 
 struct LibraryNavigationStateTests {
-    @Test("default sidebar layout prioritizes capture and notes")
-    func defaultsPrioritizeCaptureAndNotes() {
+    @Test("default sidebar layout prioritizes capture")
+    func defaultsPrioritizeCapture() {
         let snapshot = LibraryNavigationSnapshot.defaults
 
         #expect(snapshot.recordingsExpanded)
-        #expect(snapshot.notesExpanded)
-        #expect(!snapshot.projectsExpanded)
         #expect(!snapshot.peopleExpanded)
-        #expect(snapshot.sidebarSectionOrder == [.recordings, .notes, .projects, .people])
+        #expect(snapshot.sidebarSectionOrder == [.recordings, .people])
     }
 
-    @Test("snapshot persists mode selection and expansion state")
-    func snapshotPersistsModeSelectionAndExpansionState() {
+    @Test("snapshot persists selection and expansion state")
+    func snapshotPersistsSelectionAndExpansionState() {
         let suiteName = "LibraryNavigationStateTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer {
@@ -24,15 +22,10 @@ struct LibraryNavigationStateTests {
         }
 
         let snapshot = LibraryNavigationSnapshot(
-            modeRawValue: "Review",
-            selection: PersistedLibrarySelection(.note(id: "note-1")),
-            notesExpanded: false,
-            projectsExpanded: true,
-            peopleExpanded: false,
+            selection: PersistedLibrarySelection(.recording(wavPath: "/tmp/a.wav")),
+            peopleExpanded: true,
             recordingsExpanded: true,
-            sidebarSectionOrder: [.notes, .projects, .recordings, .people],
-            expandedNoteBuckets: ["recent", "pinned"],
-            knownNoteBuckets: ["recent", "pinned", "2026-05"]
+            sidebarSectionOrder: [.people, .recordings]
         )
 
         LibraryNavigationStateStore.save(snapshot, defaults: defaults)
@@ -43,31 +36,21 @@ struct LibraryNavigationStateTests {
     @Test("snapshot normalizes missing sidebar sections")
     func snapshotNormalizesMissingSidebarSections() {
         let snapshot = LibraryNavigationSnapshot(
-            modeRawValue: "Library",
             selection: nil,
-            notesExpanded: true,
-            projectsExpanded: true,
             peopleExpanded: false,
             recordingsExpanded: true,
-            sidebarSectionOrder: [.projects, .notes],
-            expandedNoteBuckets: [],
-            knownNoteBuckets: []
+            sidebarSectionOrder: [.people]
         )
 
-        #expect(snapshot.sidebarSectionOrder == [.projects, .notes, .recordings, .people])
+        #expect(snapshot.sidebarSectionOrder == [.people, .recordings])
     }
 
     @Test("snapshot decodes old state without sidebar order")
     func snapshotDecodesOldStateWithoutSidebarOrder() throws {
         let data = Data("""
         {
-          "modeRawValue": "Library",
-          "notesExpanded": true,
-          "projectsExpanded": false,
-          "peopleExpanded": false,
           "recordingsExpanded": true,
-          "expandedNoteBuckets": [],
-          "knownNoteBuckets": []
+          "peopleExpanded": false
         }
         """.utf8)
 
@@ -80,41 +63,32 @@ struct LibraryNavigationStateTests {
     func resolverRestoresValidSelection() {
         let resolved = LibraryNavigationResolver.resolvedSelection(
             restored: .recording(wavPath: "/tmp/a.wav"),
-            noteIDs: ["note-1"],
             recordingPaths: ["/tmp/a.wav"],
             personIDs: [1],
-            projectNames: ["Harc"],
-            fallbackNoteID: "note-1",
             fallbackRecordingPath: nil
         )
 
         #expect(resolved == .recording(wavPath: "/tmp/a.wav"))
     }
 
-    @Test("resolver falls back when restored note is stale")
-    func resolverFallsBackWhenRestoredNoteIsStale() {
+    @Test("resolver falls back when restored recording is stale")
+    func resolverFallsBackWhenRestoredRecordingIsStale() {
         let resolved = LibraryNavigationResolver.resolvedSelection(
-            restored: .note(id: "deleted-note"),
-            noteIDs: ["recent-note"],
+            restored: .recording(wavPath: "/tmp/deleted.wav"),
             recordingPaths: ["/tmp/a.wav"],
             personIDs: [],
-            projectNames: [],
-            fallbackNoteID: "recent-note",
             fallbackRecordingPath: "/tmp/a.wav"
         )
 
-        #expect(resolved == .note(id: "recent-note"))
+        #expect(resolved == .recording(wavPath: "/tmp/a.wav"))
     }
 
     @Test("resolver does not restore stale recording when no fallback exists")
     func resolverDropsStaleRecordingWithoutFallback() {
         let resolved = LibraryNavigationResolver.resolvedSelection(
             restored: .recording(wavPath: "/tmp/deleted.wav"),
-            noteIDs: [],
             recordingPaths: [],
             personIDs: [],
-            projectNames: [],
-            fallbackNoteID: nil,
             fallbackRecordingPath: nil
         )
 

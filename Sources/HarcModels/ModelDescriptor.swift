@@ -3,8 +3,6 @@ import Foundation
 /// What role a model plays in the app.
 public enum ModelTask: String, Codable, Sendable {
     case summarizer
-    case textEmbedder
-    case visionCaptioner
 }
 
 /// Quality / resource tier. `standard`, `quality`, `pro`, `max` are ordered;

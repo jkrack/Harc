@@ -33,13 +33,8 @@ struct WelcomeFlowModelTests {
     func defaultStepsCoverProductConcepts() {
         let ids = WelcomeFlowModel.defaultSteps.map(\.id)
 
-        #expect(ids == ["canvas", "notes", "wiki", "local", "start"])
+        #expect(ids == ["canvas", "local", "start"])
         #expect(WelcomeFlowModel.defaultSteps.contains { $0.body.localizedCaseInsensitiveContains("local") })
         #expect(WelcomeFlowModel.defaultSteps.contains { $0.body.localizedCaseInsensitiveContains("LLM") })
-        let allCopy = WelcomeFlowModel.defaultSteps
-            .flatMap { [$0.body, $0.primaryPoint, $0.secondaryPoint] }
-            .joined(separator: " ")
-        #expect(allCopy.localizedCaseInsensitiveContains("third optional model"))
-        #expect(allCopy.localizedCaseInsensitiveContains("not required for initial setup"))
     }
 }

@@ -19,4 +19,3 @@ Focused validation is usually faster while developing:
 
     swift test --filter RecordingCacheRecoveryTests
     swift test --filter LocalStackHealthTests
-    ./scripts/validate-note-editor.sh

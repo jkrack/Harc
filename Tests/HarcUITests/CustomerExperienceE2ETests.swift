@@ -91,97 +91,6 @@ struct CustomerExperienceE2ETests {
         #expect(prompt.contains("Jason: send the renewal plan"))
     }
 
-    @Test("note taking covers standalone, linked, active-recording, conflict, and recovery states")
-    func noteTakingCoversAllRecordingVariations() async throws {
-        let fixture = try await CustomerExperienceFixture.make()
-        defer { fixture.cleanup() }
-
-        let recording = try await fixture.seedRecording(
-            stem: "10-15-30",
-            title: "Roadmap Working Session",
-            transcript: "Michelle: lock the beta date. Amy: create the launch note.",
-            pinned: false
-        )
-
-        var standalone = try await fixture.noteStore.create(
-            title: "Launch scratchpad",
-            body: "Raw launch notes",
-            recordings: []
-        )
-        standalone.tags = ["launch", "customer"]
-        standalone.people = ["Michelle"]
-        standalone = try await fixture.noteStore.update(standalone)
-
-        let linked = try await fixture.noteStore.create(title: "Roadmap", body: "## Agenda\n\nBeta date")
-        let linkedAfterStop = try await fixture.noteStore.link(
-            recording: recording,
-            toNoteID: linked.id,
-            transcriptText: recording.transcriptText
-        )
-
-        #expect(linkedAfterStop.recordings == ["recording:\(recording.id!)"])
-        #expect(linkedAfterStop.body.contains("## Recording: [[Roadmap Working Session]]"))
-        #expect(linkedAfterStop.body.contains("Michelle: lock the beta date"))
-        #expect((try await fixture.noteStore.search(query: "launch customer")).map(\.id) == [standalone.id])
-
-        let bridge = HarcAppBridge(recordingState: RecordingState(), trayState: PostStopTrayState())
-        #expect(NoteRecordingToolbarState.resolve(isRecording: false, activeNoteID: nil, currentNoteID: linked.id) == .idle)
-
-        bridge.recordingState.markStarted(at: recording.startedAt)
-        bridge.setActiveNoteRecordingID(linked.id)
-        #expect(NoteRecordingToolbarState.resolve(
-            isRecording: bridge.recordingState.isRecording,
-            activeNoteID: bridge.activeNoteRecordingID,
-            currentNoteID: linked.id
-        ) == .recordingIntoThisNote)
-
-        bridge.showNoteRecordingLinked(
-            noteID: linked.id,
-            recordingTitle: recording.displayTitle,
-            recordingID: recording.id,
-            wavPath: recording.wavPath
-        )
-        #expect(bridge.noteRecordingLinkFeedback?.status == .linked)
-        #expect(bridge.noteRecordingLinkFeedback?.canOpenRecording == true)
-
-        bridge.setActiveNoteRecordingID("other-note")
-        #expect(NoteRecordingToolbarState.resolve(
-            isRecording: bridge.recordingState.isRecording,
-            activeNoteID: bridge.activeNoteRecordingID,
-            currentNoteID: linked.id
-        ) == .recordingIntoAnotherNote)
-        bridge.showNoteRecordingConflict(requestedNoteID: linked.id)
-        #expect(bridge.noteRecordingConflict?.message.contains("Another note owns") == true)
-
-        bridge.setActiveNoteRecordingID(nil)
-        #expect(NoteRecordingToolbarState.resolve(
-            isRecording: bridge.recordingState.isRecording,
-            activeNoteID: bridge.activeNoteRecordingID,
-            currentNoteID: linked.id
-        ) == .generalRecording)
-
-        bridge.showNoteRecordingMissingSavedID(
-            noteID: linked.id,
-            recordingTitle: "Unsaved cache recording",
-            wavPath: fixture.cacheURL.appendingPathComponent("unsaved.wav").path
-        )
-        #expect(bridge.noteRecordingLinkFeedback?.isRecoveryNeeded == true)
-        #expect(bridge.noteRecordingLinkFeedback?.canRevealFile == true)
-
-        bridge.showNoteRecordingLinkFailed(
-            noteID: linked.id,
-            recordingTitle: recording.displayTitle,
-            recordingID: recording.id,
-            wavPath: recording.wavPath,
-            errorDescription: "Note file moved during save"
-        )
-        #expect(bridge.noteRecordingLinkFeedback?.message.contains("Note file moved during save") == true)
-
-        try await fixture.noteStore.archive(id: standalone.id)
-        #expect(try await fixture.noteStore.search(query: "launch customer") == [])
-        #expect(try await fixture.noteStore.fetchAll(includeArchived: true).contains { $0.id == standalone.id && $0.archived })
-    }
-
     @Test("Library customer actions cover filters, calendar, pin, rename, delete, and context")
     func libraryCustomerActionsCoverCoreVariations() async throws {
         let fixture = try await CustomerExperienceFixture.make()
@@ -212,11 +121,6 @@ struct CustomerExperienceE2ETests {
             pinned: false,
             startedAt: lastWeekDate
         )
-        var note = try await fixture.noteStore.create(title: "Onboarding note", body: "Sara owns onboarding follow-up.")
-        note.tags = ["onboarding"]
-        note = try await fixture.noteStore.update(note)
-        _ = note
-
         let library = LibraryViewModel(store: fixture.store)
         library.start()
         defer { library.stop() }
@@ -249,14 +153,6 @@ struct CustomerExperienceE2ETests {
         #expect(await waitForCustomerExperienceState {
             library.recordings.first(where: { $0.id == today.id })?.pinned == true
         })
-
-        let markdown = try await library.contextMarkdown(
-            for: "onboarding customer",
-            noteStore: fixture.noteStore
-        )
-        #expect(markdown.contains("# Context: onboarding customer"))
-        #expect(markdown.contains("Today Customer Call") || markdown.contains("Renamed Customer Call"))
-        #expect(markdown.contains("Onboarding note"))
 
         try await library.delete(id: yesterday.id!)
         #expect(await waitForCustomerExperienceState {
@@ -312,28 +208,22 @@ struct CustomerExperienceE2ETests {
 private struct CustomerExperienceFixture {
     let rootURL: URL
     let recordingsURL: URL
-    let notesURL: URL
     let cacheURL: URL
     let store: RecordingStore
-    let noteStore: NoteStore
 
     static func make() async throws -> CustomerExperienceFixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("harc-customer-e2e-\(UUID().uuidString)", isDirectory: true)
         let recordings = root.appendingPathComponent("Recordings", isDirectory: true)
-        let notes = root.appendingPathComponent("Notes", isDirectory: true)
         let cache = root.appendingPathComponent("Cache", isDirectory: true)
         try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
 
         return CustomerExperienceFixture(
             rootURL: root,
             recordingsURL: recordings,
-            notesURL: notes,
             cacheURL: cache,
-            store: try await RecordingStore.inMemory(),
-            noteStore: NoteStore(rootURL: notes)
+            store: try await RecordingStore.inMemory()
         )
     }
 
