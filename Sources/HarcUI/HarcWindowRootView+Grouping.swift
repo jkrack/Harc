@@ -1,7 +1,7 @@
 import Foundation
 import HarcStore
 
-// Date/note grouping and label helpers for `HarcWindowRootView`, plus sidebar
+// Date grouping and label helpers for `HarcWindowRootView`, plus sidebar
 // section presentation. Extracted from the view file. These were `private`
 // extensions in that file; they are `internal` here so the view (now in a
 // separate file) can call them.

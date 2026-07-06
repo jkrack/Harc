@@ -2,9 +2,7 @@ import Foundation
 
 enum LibraryMutationAction: Equatable {
     case deleteRecording(String)
-    case archiveNote(String)
     case pinRecording(String)
-    case pinNote(String)
     case clearSummary(String)
     case addPerson(String)
     case renameSpeaker
@@ -18,12 +16,8 @@ enum LibraryMutationAction: Equatable {
         switch self {
         case .deleteRecording:
             return "Could not delete recording"
-        case .archiveNote:
-            return "Could not delete note"
         case .pinRecording:
             return "Could not update pin"
-        case .pinNote:
-            return "Could not update note pin"
         case .clearSummary:
             return "Could not clear summary"
         case .addPerson:
@@ -46,9 +40,7 @@ enum LibraryMutationAction: Equatable {
     var subject: String? {
         switch self {
         case .deleteRecording(let value),
-             .archiveNote(let value),
              .pinRecording(let value),
-             .pinNote(let value),
              .clearSummary(let value),
              .addPerson(let value),
              .createAndLinkPerson(let value):

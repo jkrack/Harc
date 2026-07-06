@@ -15,7 +15,6 @@ public enum ReadinessAction: String, Codable, Sendable {
     case openScreenCapturePrivacy
     case installSTTModel
     case installSummarizer
-    case installEmbedder
     case openNotifications
     case openAccessibility
     case openRecoveryInbox
@@ -27,7 +26,6 @@ public enum ReadinessAction: String, Codable, Sendable {
         case .openScreenCapturePrivacy: return "Open permissions"
         case .installSTTModel: return "Check setup"
         case .installSummarizer: return "Install model"
-        case .installEmbedder: return "Install embedder"
         case .openNotifications: return "Open notifications"
         case .openAccessibility: return "Open accessibility"
         case .openRecoveryInbox: return "Open recovery"
@@ -42,7 +40,6 @@ public struct CaptureReadinessItem: Identifiable, Equatable, Sendable {
         case systemAudio
         case localSTT
         case summarizer
-        case semanticSearch
         case speakerID
         case notifications
         case pastePermission
@@ -87,8 +84,6 @@ public struct CaptureReadinessInput: Equatable, Sendable {
     public var localSTTText: String
     public var summarizerReady: Bool
     public var summarizerText: String
-    public var semanticSearchReady: Bool
-    public var semanticSearchText: String
     public var speakerIDReady: Bool
     public var speakerIDText: String
     public var notificationsReady: Bool
@@ -108,8 +103,6 @@ public struct CaptureReadinessInput: Equatable, Sendable {
         localSTTText: String,
         summarizerReady: Bool,
         summarizerText: String,
-        semanticSearchReady: Bool,
-        semanticSearchText: String,
         speakerIDReady: Bool,
         speakerIDText: String,
         notificationsReady: Bool,
@@ -128,8 +121,6 @@ public struct CaptureReadinessInput: Equatable, Sendable {
         self.localSTTText = localSTTText
         self.summarizerReady = summarizerReady
         self.summarizerText = summarizerText
-        self.semanticSearchReady = semanticSearchReady
-        self.semanticSearchText = semanticSearchText
         self.speakerIDReady = speakerIDReady
         self.speakerIDText = speakerIDText
         self.notificationsReady = notificationsReady
@@ -179,13 +170,6 @@ public enum CaptureReadinessResolver {
                 detail: input.summarizerText,
                 ready: input.summarizerReady,
                 action: .installSummarizer
-            ),
-            optionalItem(
-                id: .semanticSearch,
-                title: "Search",
-                detail: input.semanticSearchText,
-                ready: input.semanticSearchReady,
-                action: .installEmbedder
             ),
             optionalItem(
                 id: .speakerID,
@@ -326,8 +310,6 @@ struct LocalStackHealthInput: Equatable {
     var sttText: String
     var summarizerReady: Bool
     var summarizerText: String
-    var embedderReady: Bool
-    var embedderText: String
     var speakerIDReady: Bool
     var speakerIDText: String
     var notificationsReady: Bool
@@ -344,7 +326,6 @@ struct LocalStackHealthItem: Identifiable, Equatable {
         case systemAudio
         case stt
         case summarizer
-        case embedder
         case speakerID
         case notifications
         case accessibility
@@ -420,7 +401,7 @@ enum LocalStackHealthModel {
             return .required
         case .systemAudio, .speakerID:
             return .quality
-        case .summarizer, .embedder, .notifications, .accessibility:
+        case .summarizer, .notifications, .accessibility:
             return .afterRecording
         case .recovery:
             return .recovery
@@ -446,8 +427,6 @@ enum LocalStackHealthModel {
             localSTTText: input.sttText,
             summarizerReady: input.summarizerReady,
             summarizerText: input.summarizerText,
-            semanticSearchReady: input.embedderReady,
-            semanticSearchText: input.embedderText,
             speakerIDReady: input.speakerIDReady,
             speakerIDText: input.speakerIDText,
             notificationsReady: input.notificationsReady,
@@ -465,7 +444,6 @@ enum LocalStackHealthModel {
         case .systemAudio: return .systemAudio
         case .localSTT: return .stt
         case .summarizer: return .summarizer
-        case .semanticSearch: return .embedder
         case .speakerID: return .speakerID
         case .notifications: return .notifications
         case .pastePermission: return .accessibility

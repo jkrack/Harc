@@ -13,7 +13,6 @@ struct LocalStackHealthTests {
             .systemAudio,
             .stt,
             .summarizer,
-            .embedder,
             .speakerID,
             .notifications,
             .accessibility,
@@ -28,7 +27,6 @@ struct LocalStackHealthTests {
         input.captureReady = false
         input.systemAudioReady = false
         input.summarizerReady = false
-        input.embedderReady = false
         input.notificationsReady = false
 
         let states = Dictionary(uniqueKeysWithValues: LocalStackHealthModel.items(for: input).map { ($0.id, $0.state) })
@@ -37,7 +35,6 @@ struct LocalStackHealthTests {
         #expect(states[.capture] == .warning)
         #expect(states[.systemAudio] == .warning)
         #expect(states[.summarizer] == .muted)
-        #expect(states[.embedder] == .muted)
         #expect(states[.notifications] == .muted)
     }
 
@@ -71,14 +68,12 @@ struct LocalStackHealthTests {
     func optionalAIStaysCaptureReady() {
         var input = fullyReadyCaptureInput
         input.summarizerReady = false
-        input.semanticSearchReady = false
         input.speakerIDReady = false
 
         let items = CaptureReadinessResolver.resolve(input)
         let levels = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.level) })
 
         #expect(levels[.summarizer] == .optionalOff)
-        #expect(levels[.semanticSearch] == .optionalOff)
         #expect(levels[.speakerID] == .optionalOff)
         #expect(CaptureReadinessResolver.summary(for: items) == "Capture ready")
     }
@@ -137,7 +132,7 @@ struct LocalStackHealthTests {
         ])
         #expect(groupIDs[.required] == [.destination, .capture, .stt])
         #expect(groupIDs[.quality] == [.systemAudio, .speakerID])
-        #expect(groupIDs[.afterRecording] == [.summarizer, .embedder, .notifications, .accessibility])
+        #expect(groupIDs[.afterRecording] == [.summarizer, .notifications, .accessibility])
         #expect(groupIDs[.recovery] == [.recovery])
     }
 
@@ -155,8 +150,6 @@ struct LocalStackHealthTests {
             sttText: "STT ready",
             summarizerReady: true,
             summarizerText: "Summaries ready",
-            embedderReady: true,
-            embedderText: "Search ready",
             speakerIDReady: true,
             speakerIDText: "Speaker ID ready",
             notificationsReady: true,
@@ -178,8 +171,6 @@ struct LocalStackHealthTests {
             localSTTText: "STT ready",
             summarizerReady: true,
             summarizerText: "Summaries ready",
-            semanticSearchReady: true,
-            semanticSearchText: "Search ready",
             speakerIDReady: true,
             speakerIDText: "Speaker ID ready",
             notificationsReady: true,

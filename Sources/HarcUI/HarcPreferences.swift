@@ -31,7 +31,6 @@ public final class HarcPreferences: ObservableObject {
         static let appearance = "harc.appearance"
         static let welcomeFlowCompleted = "harc.welcomeFlowCompleted"
         static let modelPerformanceMode = "harc.modelPerformanceMode"
-        static let markdownFormattingRibbonEnabled = "harc.markdownFormattingRibbonEnabled"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -208,10 +207,6 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(modelPerformanceMode.rawValue, forKey: Key.modelPerformanceMode) }
     }
 
-    @Published public var markdownFormattingRibbonEnabled: Bool {
-        didSet { UserDefaults.standard.set(markdownFormattingRibbonEnabled, forKey: Key.markdownFormattingRibbonEnabled) }
-    }
-
     public static let shared = HarcPreferences()
 
     public init() {
@@ -263,7 +258,6 @@ public final class HarcPreferences: ObservableObject {
         self.welcomeFlowCompleted = defaults.object(forKey: Key.welcomeFlowCompleted) as? Bool ?? false
         let rawModelPerformanceMode = defaults.string(forKey: Key.modelPerformanceMode) ?? ModelPerformanceMode.balanced.rawValue
         self.modelPerformanceMode = ModelPerformanceMode(rawValue: rawModelPerformanceMode) ?? .balanced
-        self.markdownFormattingRibbonEnabled = defaults.object(forKey: Key.markdownFormattingRibbonEnabled) as? Bool ?? true
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {

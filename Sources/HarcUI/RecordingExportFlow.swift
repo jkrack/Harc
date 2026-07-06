@@ -30,7 +30,7 @@ enum RecordingExportOption: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .markdown:
-            return "Clean transcript Markdown for notes, wikis, and long-term storage."
+            return "Clean transcript Markdown for sharing and long-term storage."
         case .docx:
             return "Word document with transcript content and optional summary sections."
         case .prompt:

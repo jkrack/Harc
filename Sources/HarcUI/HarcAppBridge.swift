@@ -38,8 +38,6 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var sttReadinessText: String = "Local STT"
     @Published public var summarizerReadinessText: String = "Summary unavailable"
     @Published public var summarizerReady: Bool = false
-    @Published public var embedderReadinessText: String = "Search embedder unavailable"
-    @Published public var embedderReady: Bool = false
     @Published public var speakerIDReadinessText: String = "Speaker ID ready"
     @Published public var speakerIDReady: Bool = true
     @Published public var notificationsReadinessText: String = "Notifications off"

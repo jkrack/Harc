@@ -3,7 +3,7 @@ import HarcStore
 
 /// Single search-results row — recording header + highlighted transcript
 /// snippet. The row itself is selected by its parent `List`; editing is an
-/// explicit action so search activation stays consistent with note results.
+/// explicit action so search activation stays consistent.
 public struct TranscriptHitRow: View {
     public let hit: TranscriptHit
     public let onEdit: () -> Void

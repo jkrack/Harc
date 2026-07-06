@@ -82,7 +82,6 @@ public enum ModelCatalog {
     //   - Gemma 4 12B-4bit: pro tier, ~11 GB, 32 GB recommended
     //   - Gemma 4 26B-A4B-it-4bit: max tier, ~15 GB (MoE — 26 B params in
     //     memory, ~4 B activated so compute is E4B-equivalent)
-    //   - BGE-small-en-v1.5: singleton embedder for semantic search
 
     // Verified 2026-05-17 against the HuggingFace API with files_metadata=true.
     private static let gemma4_E2B_IT_4bit = ModelDescriptor(

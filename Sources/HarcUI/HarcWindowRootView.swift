@@ -14,9 +14,6 @@ public extension NSNotification.Name {
     /// Posted by AppDelegate when the user invokes "open library + focus search".
     /// `HarcWindowRootView` observes this to activate its search field.
     static let harcLibraryFocusSearch = NSNotification.Name("HarcLibraryFocusSearch")
-    /// Posted when notes are changed outside the library window, for example
-    /// when AppDelegate appends a stopped recording transcript to an active note.
-    static let harcNotesDidChange = NSNotification.Name("HarcNotesDidChange")
 }
 
 
@@ -378,7 +375,6 @@ public struct HarcWindowRootView: View {
                 month: libraryVM.calendarMonth,
                 selectedDay: selectedFilterDay,
                 daysWithRecordings: libraryVM.daysWithRecordings,
-                daysWithNotes: [],
                 onPrevMonth: { libraryVM.advanceMonth(by: -1) },
                 onNextMonth: { libraryVM.advanceMonth(by: 1) },
                 onSelectDay: { day in

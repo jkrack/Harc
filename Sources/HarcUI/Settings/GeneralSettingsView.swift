@@ -13,12 +13,10 @@ public struct GeneralSettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-
-            Toggle("Markdown formatting ribbon", isOn: $prefs.markdownFormattingRibbonEnabled)
         } header: {
             Text("General")
         } footer: {
-            Text("System follows your macOS appearance setting. The Markdown ribbon appears above note editors when enabled.")
+            Text("System follows your macOS appearance setting.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
         }

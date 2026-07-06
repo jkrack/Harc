@@ -1,14 +1,13 @@
 import SwiftUI
 
 /// Month-grid calendar for the library sidebar. Shows a 7-column week grid
-/// with compact dot indicators under each day that has recordings or notes.
+/// with a compact dot indicator under each day that has recordings.
 ///
-/// Stateless — caller owns `month`, `selectedDay`, and the day marker sets.
+/// Stateless — caller owns `month`, `selectedDay`, and the day marker set.
 public struct MonthCalendarView: View {
     public let month: Date
     public let selectedDay: Date?
     public let daysWithRecordings: Set<Date>
-    public let daysWithNotes: Set<Date>
     public let onPrevMonth: () -> Void
     public let onNextMonth: () -> Void
     public let onSelectDay: (Date) -> Void
@@ -19,7 +18,6 @@ public struct MonthCalendarView: View {
         month: Date,
         selectedDay: Date?,
         daysWithRecordings: Set<Date>,
-        daysWithNotes: Set<Date> = [],
         onPrevMonth: @escaping () -> Void,
         onNextMonth: @escaping () -> Void,
         onSelectDay: @escaping (Date) -> Void
@@ -27,7 +25,6 @@ public struct MonthCalendarView: View {
         self.month = month
         self.selectedDay = selectedDay
         self.daysWithRecordings = daysWithRecordings
-        self.daysWithNotes = daysWithNotes
         self.onPrevMonth = onPrevMonth
         self.onNextMonth = onNextMonth
         self.onSelectDay = onSelectDay
@@ -96,7 +93,6 @@ public struct MonthCalendarView: View {
             let isSelected = selectedDay.map { calendar.isDate($0, inSameDayAs: day) } ?? false
             let startOfDay = calendar.startOfDay(for: day)
             let hasRec = daysWithRecordings.contains(startOfDay)
-            let hasNote = daysWithNotes.contains(startOfDay)
             let inMonth = calendar.isDate(day, equalTo: month, toGranularity: .month)
             Button {
                 onSelectDay(day)
@@ -109,7 +105,7 @@ public struct MonthCalendarView: View {
                                 ? Color.white
                                 : (inMonth ? Color.primary : Color.secondary.opacity(0.4))
                         )
-                    markerRow(hasRecording: hasRec, hasNote: hasNote, isSelected: isSelected)
+                    markerRow(hasRecording: hasRec, isSelected: isSelected)
                 }
                 .frame(maxWidth: .infinity, minHeight: 24)
                 .background(
@@ -118,34 +114,25 @@ public struct MonthCalendarView: View {
                 )
             }
             .buttonStyle(.plain)
-            .help(dayTooltip(for: day, hasRecording: hasRec, hasNote: hasNote))
+            .help(dayTooltip(for: day, hasRecording: hasRec))
         } else {
             Color.clear.frame(minHeight: 24)
         }
     }
 
-    private func markerRow(hasRecording: Bool, hasNote: Bool, isSelected: Bool) -> some View {
+    private func markerRow(hasRecording: Bool, isSelected: Bool) -> some View {
         HStack(spacing: 2) {
             Circle()
                 .fill(hasRecording ? (isSelected ? Color.white : Color.accentColor) : Color.clear)
-                .frame(width: 4, height: 4)
-            Circle()
-                .fill(hasNote ? (isSelected ? Color.white.opacity(0.75) : Color.purple) : Color.clear)
                 .frame(width: 4, height: 4)
         }
         .frame(height: 4)
     }
 
-    private func dayTooltip(for day: Date, hasRecording: Bool, hasNote: Bool) -> String {
+    private func dayTooltip(for day: Date, hasRecording: Bool) -> String {
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
-        let suffix: String
-        switch (hasRecording, hasNote) {
-        case (true, true): suffix = " — has recordings and notes"
-        case (true, false): suffix = " — has recordings"
-        case (false, true): suffix = " — has notes"
-        case (false, false): suffix = ""
-        }
+        let suffix = hasRecording ? " — has recordings" : ""
         return "\(fmt.string(from: day))\(suffix)"
     }
 

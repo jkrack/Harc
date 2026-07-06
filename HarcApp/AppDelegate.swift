@@ -2023,8 +2023,6 @@ private struct StatusPopoverRoot: View {
             sttReadinessText: bridge.sttReadinessText,
             summarizerReadinessText: bridge.summarizerReadinessText,
             summarizerReady: bridge.summarizerReady,
-            embedderReadinessText: bridge.embedderReadinessText,
-            embedderReady: bridge.embedderReady,
             speakerIDReadinessText: bridge.speakerIDReadinessText,
             speakerIDReady: bridge.speakerIDReady,
             notificationsReadinessText: bridge.notificationsReadinessText,
