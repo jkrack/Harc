@@ -23,6 +23,64 @@ struct DictationModeStoreTests {
         #expect(store.modes.first?.id == DictationMode.rawID)
     }
 
+    @Test("modes persisted before the context toggles still decode (toggles default off)")
+    func backwardCompatibleDecode() throws {
+        // JSON as written by the pre-context-toggle release — no
+        // includeSelectedText / includeClipboard keys.
+        let legacy = """
+        [{
+            "id": "custom.legacy",
+            "name": "Legacy",
+            "symbolName": "star",
+            "postProcess": "llm",
+            "instruction": "Rewrite.",
+            "isBuiltIn": false
+        }]
+        """
+        let decoded = try JSONDecoder().decode([DictationMode].self, from: Data(legacy.utf8))
+        #expect(decoded.count == 1)
+        #expect(decoded[0].includeSelectedText == false)
+        #expect(decoded[0].includeClipboard == false)
+        #expect(decoded[0].wantsContext == false)
+    }
+
+    @Test("context toggles round-trip through Codable")
+    func contextTogglesRoundTrip() throws {
+        let mode = DictationMode(
+            id: "custom.ctx", name: "Ctx", symbolName: "sparkles",
+            postProcess: .llm, instruction: "Answer.",
+            includeSelectedText: true, includeClipboard: false
+        )
+        let data = try JSONEncoder().encode([mode])
+        let decoded = try JSONDecoder().decode([DictationMode].self, from: data)
+        #expect(decoded[0] == mode)
+        #expect(decoded[0].wantsContext)
+    }
+
+    @Test("wantsContext requires llm post-processing")
+    func wantsContextRequiresLLM() {
+        var mode = DictationMode(
+            id: "custom.raw-ctx", name: "X", symbolName: "star",
+            postProcess: .none, instruction: "",
+            includeSelectedText: true, includeClipboard: true
+        )
+        #expect(mode.wantsContext == false)
+        mode.postProcess = .llm
+        #expect(mode.wantsContext)
+    }
+
+    @Test("Answer built-in exists with both context toggles on")
+    func answerBuiltIn() {
+        let answer = DictationMode.builtIn(id: "builtin.answer")
+        #expect(answer != nil)
+        #expect(answer?.includeSelectedText == true)
+        #expect(answer?.includeClipboard == true)
+        #expect(answer?.wantsContext == true)
+        // And it appears in a freshly seeded store (merge covers new built-ins).
+        let (store, _, _) = makeStore()
+        #expect(store.modes.contains { $0.id == "builtin.answer" })
+    }
+
     @Test("add + update + delete round-trips through persistence")
     func crudRoundTrip() {
         let (store, url, prefs) = makeStore()

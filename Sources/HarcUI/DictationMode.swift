@@ -22,6 +22,11 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
     /// (recommended — avoids thrash-reloading a second multi-GB model).
     public var modelID: String?
     public var isBuiltIn: Bool
+    /// Capture the user's selected text (via Accessibility) at dictation
+    /// start and feed it to the transform as context. LLM modes only.
+    public var includeSelectedText: Bool
+    /// Capture the clipboard contents at dictation start as context.
+    public var includeClipboard: Bool
 
     public init(
         id: String,
@@ -31,7 +36,9 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         instruction: String,
         systemPrompt: String? = nil,
         modelID: String? = nil,
-        isBuiltIn: Bool = false
+        isBuiltIn: Bool = false,
+        includeSelectedText: Bool = false,
+        includeClipboard: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -41,6 +48,31 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         self.systemPrompt = systemPrompt
         self.modelID = modelID
         self.isBuiltIn = isBuiltIn
+        self.includeSelectedText = includeSelectedText
+        self.includeClipboard = includeClipboard
+    }
+
+    /// True when this mode should capture working context at dictation start.
+    public var wantsContext: Bool {
+        postProcess == .llm && (includeSelectedText || includeClipboard)
+    }
+
+    // MARK: Codable (backward-compatible)
+
+    // Custom decoding so modes persisted before the context toggles existed
+    // (JSON without the keys) still load — the toggles default to off.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        symbolName = try c.decode(String.self, forKey: .symbolName)
+        postProcess = try c.decode(PostProcess.self, forKey: .postProcess)
+        instruction = try c.decode(String.self, forKey: .instruction)
+        systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
+        modelID = try c.decodeIfPresent(String.self, forKey: .modelID)
+        isBuiltIn = try c.decode(Bool.self, forKey: .isBuiltIn)
+        includeSelectedText = try c.decodeIfPresent(Bool.self, forKey: .includeSelectedText) ?? false
+        includeClipboard = try c.decodeIfPresent(Bool.self, forKey: .includeClipboard) ?? false
     }
 }
 
@@ -108,6 +140,23 @@ extension DictationMode {
             preamble or explanation.
             """,
             isBuiltIn: true
+        ),
+        // SuperWhisper "Super Mode" analog: the dictated words are a request,
+        // and the selected text / clipboard are the material to act on.
+        DictationMode(
+            id: "builtin.answer",
+            name: "Answer",
+            symbolName: "sparkles",
+            postProcess: .llm,
+            instruction: """
+            The dictated text is a request or question. Answer it, or carry \
+            out the rewrite/edit it asks for, using the provided context \
+            (selected text, clipboard) as the material when relevant. Output \
+            only the result, no preamble or explanation.
+            """,
+            isBuiltIn: true,
+            includeSelectedText: true,
+            includeClipboard: true
         ),
     ]
 

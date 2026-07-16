@@ -21,6 +21,10 @@ public final class DictationState: ObservableObject {
     /// Transient non-fatal note (e.g. "mode fell back to raw text"). Cleared
     /// on the next phase change to `.idle` from a fresh start.
     @Published public private(set) var notice: String?
+    /// Working context captured at dictation start (Super Mode). Empty when
+    /// the active mode doesn't request context or capture was skipped.
+    /// Drives the HUD context indicator; cleared when the session ends.
+    @Published public private(set) var context: DictationContext = .empty
 
     public static let levelHistoryCount = 40
 
@@ -37,12 +41,19 @@ public final class DictationState: ObservableObject {
 
     public func setPhase(_ newPhase: Phase) {
         phase = newPhase
-        if case .idle = newPhase { levelHistory = [] }
+        if case .idle = newPhase {
+            levelHistory = []
+            context = .empty
+        }
         if case .listening = newPhase { notice = nil }
     }
 
     public func setNotice(_ message: String?) {
         notice = message
+    }
+
+    public func setContext(_ newContext: DictationContext) {
+        context = newContext
     }
 
     public func pushLevel(_ value: Float) {

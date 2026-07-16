@@ -31,6 +31,7 @@ public struct DictationHUDView: View {
             waveform
                 .frame(width: 120, height: 22)
             modeChip
+            contextIndicator
             controls
         }
         .padding(.horizontal, 14)
@@ -99,6 +100,28 @@ public struct DictationHUDView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Dictation mode")
+    }
+
+    /// Lights when working context (selected text / clipboard) was captured
+    /// for this session — SuperWhisper's context-capture indicator analog.
+    /// Display-only; no interaction, so the non-activating panel stays inert.
+    @ViewBuilder
+    private var contextIndicator: some View {
+        if state.context.hasWorkingMaterial {
+            Image(systemName: "doc.text.viewfinder")
+                .font(.caption2)
+                .foregroundStyle(Color.accentColor)
+                .help(contextHelp)
+                .accessibilityLabel(contextHelp)
+        }
+    }
+
+    private var contextHelp: String {
+        let sources = [
+            state.context.selectedText != nil ? "selected text" : nil,
+            state.context.clipboardText != nil ? "clipboard" : nil,
+        ].compactMap(\.self)
+        return "Using \(sources.joined(separator: " + "))"
     }
 
     @ViewBuilder

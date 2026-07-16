@@ -31,6 +31,18 @@ private final class SpyPaster: DictationPasting {
     func copyOnly(_ text: String) { copied.append(text) }
 }
 
+/// Records context-capture invocations and returns a canned snapshot.
+@MainActor
+private final class SpyContextCapture {
+    var result: DictationContext
+    private(set) var calls: [(selectedText: Bool, clipboard: Bool)] = []
+    init(result: DictationContext = .empty) { self.result = result }
+    func capture(_ selectedText: Bool, _ clipboard: Bool) -> DictationContext {
+        calls.append((selectedText, clipboard))
+        return result
+    }
+}
+
 @MainActor
 private func makeController(
     prefs: HarcPreferences,
@@ -38,9 +50,11 @@ private func makeController(
     paster: SpyPaster,
     transcript: String = "hello world",
     activeMode: DictationMode = DictationMode.builtIns[0],
-    transform: ((String, DictationMode) async throws -> String)? = nil
+    transform: ((String, DictationMode, String?) async throws -> String)? = nil,
+    contextCapture: SpyContextCapture? = nil
 ) -> (DictationController, DictationState) {
     let state = DictationState()
+    let spy = contextCapture ?? SpyContextCapture()
     let controller = DictationController(
         state: state,
         recordingState: recordingState,
@@ -49,7 +63,8 @@ private func makeController(
         transcribe: { _ in transcript },
         paster: paster,
         activeMode: { activeMode },
-        transform: transform
+        transform: transform,
+        captureContext: { spy.capture($0, $1) }
     )
     return (controller, state)
 }
@@ -186,7 +201,7 @@ struct DictationModeRoutingTests {
         let (controller, state) = makeController(
             prefs: prefs, paster: paster, transcript: "raw words",
             activeMode: llmMode,
-            transform: { text, mode in
+            transform: { text, mode, _ in
                 #expect(text == "raw words")
                 #expect(mode.id == "test.llm")
                 return "polished words"
@@ -209,7 +224,7 @@ struct DictationModeRoutingTests {
         let (controller, state) = makeController(
             prefs: prefs, paster: paster, transcript: "raw words",
             activeMode: llmMode,
-            transform: { _, _ in throw Boom() }
+            transform: { _, _, _ in throw Boom() }
         )
 
         await controller.start()
@@ -227,7 +242,7 @@ struct DictationModeRoutingTests {
         let (controller, _) = makeController(
             prefs: prefs, paster: paster, transcript: "raw words",
             activeMode: llmMode,
-            transform: { _, _ in "  \n " }
+            transform: { _, _, _ in "  \n " }
         )
 
         await controller.start()
@@ -243,7 +258,7 @@ struct DictationModeRoutingTests {
         let (controller, _) = makeController(
             prefs: prefs, paster: paster, transcript: "raw words",
             activeMode: DictationMode.builtIns[0],  // Raw
-            transform: { _, _ in
+            transform: { _, _, _ in
                 Issue.record("transform must not run for raw mode")
                 return "wrong"
             }
@@ -269,5 +284,117 @@ struct DictationModeRoutingTests {
         await controller.stopAndInsert()
 
         #expect(paster.inserted == ["raw words"])
+    }
+}
+
+// MARK: - Super Mode context capture
+
+@Suite("DictationController context capture")
+@MainActor
+struct DictationContextCaptureTests {
+    private let contextMode = DictationMode(
+        id: "test.context", name: "Context", symbolName: "sparkles",
+        postProcess: .llm, instruction: "Answer.",
+        includeSelectedText: true, includeClipboard: true
+    )
+
+    @Test("captures at start with the mode's toggles and passes the block to transform")
+    func capturesAtStart() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let spy = SpyContextCapture(result: DictationContext(
+            selectedText: "chosen words", frontmostAppName: "TextEditor"
+        ))
+        var receivedBlock: String??
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "raw words",
+            activeMode: contextMode,
+            transform: { _, _, block in
+                receivedBlock = block
+                return "answered"
+            },
+            contextCapture: spy
+        )
+
+        await controller.start()
+        // Captured at start, before any transcription happened.
+        #expect(spy.calls.count == 1)
+        #expect(spy.calls[0].selectedText)
+        #expect(spy.calls[0].clipboard)
+        #expect(state.context.selectedText == "chosen words")
+
+        await controller.stopAndInsert()
+        #expect(receivedBlock??.contains("chosen words") == true)
+        // Session ended — context cleared.
+        #expect(state.context.isEmpty)
+    }
+
+    @Test("selected-text-only mode requests only the selection")
+    func partialToggles() async {
+        var mode = contextMode
+        mode.includeClipboard = false
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let spy = SpyContextCapture()
+        let (controller, _) = makeController(
+            prefs: prefs, paster: paster, activeMode: mode,
+            transform: { text, _, _ in text }, contextCapture: spy
+        )
+
+        await controller.start()
+        #expect(spy.calls.count == 1)
+        #expect(spy.calls[0].selectedText)
+        #expect(spy.calls[0].clipboard == false)
+        await controller.cancel()
+    }
+
+    @Test("modes without context toggles never capture")
+    func noCaptureWhenModeOff() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let spy = SpyContextCapture()
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster,
+            activeMode: DictationMode.builtIns[0],  // Raw
+            contextCapture: spy
+        )
+
+        await controller.start()
+        #expect(spy.calls.isEmpty)
+        #expect(state.context.isEmpty)
+        await controller.cancel()
+    }
+
+    @Test("deny-listed frontmost app skips capture entirely")
+    func denyListedSkipsCapture() async {
+        let prefs = HarcPreferences()
+        prefs.addPasteDenyListBundleID("com.test.passwords")
+        let paster = SpyPaster(frontmost: "com.test.passwords")
+        let spy = SpyContextCapture(result: DictationContext(selectedText: "hunter2"))
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, activeMode: contextMode,
+            contextCapture: spy
+        )
+
+        await controller.start()
+        #expect(spy.calls.isEmpty)
+        #expect(state.context.isEmpty)
+        await controller.cancel()
+    }
+
+    @Test("cancel clears captured context")
+    func cancelClearsContext() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let spy = SpyContextCapture(result: DictationContext(clipboardText: "copied"))
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, activeMode: contextMode,
+            contextCapture: spy
+        )
+
+        await controller.start()
+        #expect(state.context.clipboardText == "copied")
+        await controller.cancel()
+        #expect(state.context.isEmpty)
     }
 }

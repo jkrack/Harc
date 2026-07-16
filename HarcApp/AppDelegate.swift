@@ -435,9 +435,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             activeMode: { [weak self] in
                 self?.dictationModeStore.activeMode ?? DictationMode.builtIns[0]
             },
-            transform: { [weak self] text, mode in
+            transform: { [weak self] text, mode, contextBlock in
                 guard let self else { throw DictationTransformError.unavailable }
-                return try await self.transformDictation(text: text, mode: mode)
+                return try await self.transformDictation(
+                    text: text, mode: mode, contextBlock: contextBlock
+                )
             }
         )
         controller.onBlockedByRecording = { [weak self] in
@@ -483,7 +485,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Run a dictation-mode LLM transform on the shared summarizer service.
     /// Throws when the service or model isn't available — the controller
     /// falls back to inserting the raw transcript.
-    private func transformDictation(text: String, mode: DictationMode) async throws -> String {
+    private func transformDictation(
+        text: String,
+        mode: DictationMode,
+        contextBlock: String? = nil
+    ) async throws -> String {
         guard let service = summarizerService else {
             throw DictationTransformError.unavailable
         }
@@ -497,6 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             text: text,
             instruction: mode.instruction,
             systemPrompt: mode.systemPrompt,
+            contextBlock: contextBlock,
             modelID: modelID,
             modelDirectory: directory
         )

@@ -15,9 +15,13 @@ public final class DictationController {
     /// The mode to apply to the next transcript. Injected as a closure so the
     /// controller stays decoupled from the mode store.
     private let activeMode: @MainActor () -> DictationMode
-    /// LLM transform seam: (raw text, mode) → transformed text. nil disables
-    /// post-processing (everything inserts raw). Errors trigger raw fallback.
-    private let transform: ((String, DictationMode) async throws -> String)?
+    /// LLM transform seam: (raw text, mode, context block) → transformed
+    /// text. nil disables post-processing (everything inserts raw). Errors
+    /// trigger raw fallback.
+    private let transform: ((String, DictationMode, String?) async throws -> String)?
+    /// Context-capture seam (Super Mode): (wantSelectedText, wantClipboard) →
+    /// snapshot. Defaults to the live `SelectionContextReader`.
+    private let captureContext: @MainActor (Bool, Bool) -> DictationContext
     /// Called when a start is refused because a meeting recording is active,
     /// so the caller can surface a hint.
     public var onBlockedByRecording: () -> Void = {}
@@ -33,7 +37,10 @@ public final class DictationController {
         transcribe: @escaping (String) async throws -> String,
         paster: any DictationPasting,
         activeMode: @escaping @MainActor () -> DictationMode = { DictationMode.builtIns[0] },
-        transform: ((String, DictationMode) async throws -> String)? = nil
+        transform: ((String, DictationMode, String?) async throws -> String)? = nil,
+        captureContext: @escaping @MainActor (Bool, Bool) -> DictationContext = { selection, clipboard in
+            SelectionContextReader.capture(selectedText: selection, clipboard: clipboard)
+        }
     ) {
         self.state = state
         self.recordingState = recordingState
@@ -43,6 +50,7 @@ public final class DictationController {
         self.paster = paster
         self.activeMode = activeMode
         self.transform = transform
+        self.captureContext = captureContext
     }
 
     public var isActive: Bool { state.isActive }
@@ -67,6 +75,20 @@ public final class DictationController {
         guard !recordingState.isRecording else {
             onBlockedByRecording()
             return
+        }
+        // Super Mode: snapshot the working context FIRST — before the HUD
+        // appears (setPhase(.listening) shows it) and before the user's
+        // focus/selection can change. Privacy guard: never read selection or
+        // clipboard out of a deny-listed app (password managers, …).
+        let mode = activeMode()
+        if mode.wantsContext {
+            let frontmost = paster.frontmostBundleID()
+            if !PasteDenyList.isDenied(frontmost, in: prefs.pasteDenyListBundleIDs) {
+                state.setContext(captureContext(
+                    mode.includeSelectedText,
+                    mode.includeClipboard
+                ))
+            }
         }
         state.setPhase(.listening)
 
@@ -157,7 +179,10 @@ public final class DictationController {
 
         state.setPhase(.transforming)
         do {
-            let transformed = try await transform(raw, mode)
+            // Context was snapshotted at start; render it for the prompt.
+            // (nil when the mode didn't want context or capture was skipped.)
+            let contextBlock = mode.wantsContext ? state.context.promptBlock : nil
+            let transformed = try await transform(raw, mode, contextBlock)
             let trimmed = transformed.trimmingCharacters(in: .whitespacesAndNewlines)
             // An empty transform result is a failure — keep the raw words.
             guard !trimmed.isEmpty else {

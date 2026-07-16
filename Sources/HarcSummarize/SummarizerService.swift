@@ -189,6 +189,7 @@ public actor SummarizerService {
         text: String,
         instruction: String,
         systemPrompt: String? = nil,
+        contextBlock: String? = nil,
         modelID: String,
         modelDirectory: URL,
         maxTokens: Int = ModeTransformPrompt.maxOutputTokens
@@ -196,15 +197,18 @@ public actor SummarizerService {
         cancelIdleUnload()
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
         defer { scheduleIdleUnload(reason: "idle") }
+        let hasContext = !(contextBlock?.isEmpty ?? true)
         let promptBody = ModeTransformPrompt.build(
             instruction: instruction,
-            transcript: text
+            transcript: text,
+            contextBlock: contextBlock
         )
 
         do {
             return try await cont.generate(
                 promptBody: promptBody,
-                systemPrompt: systemPrompt ?? ModeTransformPrompt.systemPrompt,
+                systemPrompt: systemPrompt
+                    ?? ModeTransformPrompt.systemPrompt(includesContext: hasContext),
                 maxTokens: maxTokens
             )
             .trimmingCharacters(in: .whitespacesAndNewlines)

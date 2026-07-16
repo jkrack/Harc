@@ -44,6 +44,13 @@ public struct DictationContext: Equatable, Sendable {
             && !hasContent(frontmostBundleID)
     }
 
+    /// True when actual working material (selected text or clipboard) was
+    /// captured — the frontmost-app name alone doesn't count. Drives the
+    /// HUD context indicator so it only lights when user content is in play.
+    public var hasWorkingMaterial: Bool {
+        hasContent(selectedText) || hasContent(clipboardText)
+    }
+
     /// Compact markdown context block for appending to an LLM prompt.
     /// Empty/missing fields are omitted; each text field is capped at
     /// `fieldCharacterCap` characters with an explicit truncation marker.

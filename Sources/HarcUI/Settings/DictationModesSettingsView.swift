@@ -159,6 +159,17 @@ private struct DictationModeEditor: View {
                             .font(.subheadline)
                             .foregroundStyle(Color.secondary)
                     }
+
+                    Section {
+                        Toggle("Include selected text", isOn: $mode.includeSelectedText)
+                        Toggle("Include clipboard", isOn: $mode.includeClipboard)
+                    } header: {
+                        Text("Context")
+                    } footer: {
+                        Text("Captured when dictation starts and given to the model as reference material. Context is processed locally and never leaves this Mac.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.secondary)
+                    }
                 }
             }
             .formStyle(.grouped)
