@@ -51,6 +51,9 @@ public struct MenuBarPanelView: View {
     let dictationActive: Bool
     let dictationStatusText: String?
     let onStartDictation: (() -> Void)?
+    let dictationModes: [DictationMode]
+    let activeDictationModeID: String?
+    let onSelectDictationMode: ((String) -> Void)?
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -100,7 +103,10 @@ public struct MenuBarPanelView: View {
         onDiscardRecoveryArtifact: @escaping (String) -> Void = { _ in },
         dictationActive: Bool = false,
         dictationStatusText: String? = nil,
-        onStartDictation: (() -> Void)? = nil
+        onStartDictation: (() -> Void)? = nil,
+        dictationModes: [DictationMode] = [],
+        activeDictationModeID: String? = nil,
+        onSelectDictationMode: ((String) -> Void)? = nil
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -147,6 +153,9 @@ public struct MenuBarPanelView: View {
         self.dictationActive = dictationActive
         self.dictationStatusText = dictationStatusText
         self.onStartDictation = onStartDictation
+        self.dictationModes = dictationModes
+        self.activeDictationModeID = activeDictationModeID
+        self.onSelectDictationMode = onSelectDictationMode
     }
 
     @ViewBuilder
@@ -158,12 +167,37 @@ public struct MenuBarPanelView: View {
                 .font(.callout)
             Spacer()
             if !dictationActive {
+                if let onSelectDictationMode, !dictationModes.isEmpty {
+                    dictationModePicker(onSelectDictationMode)
+                }
                 Button("Dictate") { onStart() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(recordingState.isRecording)
             }
         }
+    }
+
+    private func dictationModePicker(_ onSelect: @escaping (String) -> Void) -> some View {
+        Menu {
+            ForEach(dictationModes) { mode in
+                Button {
+                    onSelect(mode.id)
+                } label: {
+                    if mode.id == activeDictationModeID {
+                        Label(mode.name, systemImage: "checkmark")
+                    } else {
+                        Label(mode.name, systemImage: mode.symbolName)
+                    }
+                }
+            }
+        } label: {
+            Text(dictationModes.first { $0.id == activeDictationModeID }?.name ?? "Raw")
+                .font(.callout)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Dictation mode")
     }
 
     public var body: some View {

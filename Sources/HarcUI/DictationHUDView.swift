@@ -1,20 +1,26 @@
 import SwiftUI
 
 /// Compact floating dictation indicator — mirrors SuperWhisper's mini recording
-/// window. A glass capsule with a status dot, a live level waveform, and a stop
-/// control. Hosted by a non-activating `NSPanel` so it never steals focus from
-/// the app receiving the dictated text.
+/// window. A glass capsule with a status dot, a live level waveform, a mode
+/// chip, and a stop control. Hosted by a non-activating `NSPanel` so it never
+/// steals focus from the app receiving the dictated text.
 public struct DictationHUDView: View {
     @ObservedObject var state: DictationState
+    @ObservedObject var modeStore: DictationModeStore
+    @ObservedObject var prefs: HarcPreferences
     let onStop: () -> Void
     let onCancel: () -> Void
 
     public init(
         state: DictationState,
+        modeStore: DictationModeStore,
+        prefs: HarcPreferences,
         onStop: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.state = state
+        self.modeStore = modeStore
+        self.prefs = prefs
         self.onStop = onStop
         self.onCancel = onCancel
     }
@@ -24,6 +30,7 @@ public struct DictationHUDView: View {
             statusDot
             waveform
                 .frame(width: 120, height: 22)
+            modeChip
             controls
         }
         .padding(.horizontal, 14)
@@ -64,6 +71,36 @@ public struct DictationHUDView: View {
         }
     }
 
+    /// Active-mode chip. A menu — NSMenu tracking runs in its own window, so
+    /// it works from a non-activating panel without stealing key status.
+    private var modeChip: some View {
+        Menu {
+            ForEach(modeStore.modes) { mode in
+                Button {
+                    modeStore.setActiveMode(id: mode.id)
+                } label: {
+                    if mode.id == modeStore.activeMode.id {
+                        Label(mode.name, systemImage: "checkmark")
+                    } else {
+                        Text(mode.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: modeStore.activeMode.symbolName)
+                    .font(.caption2)
+                Text(modeStore.activeMode.name)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Dictation mode")
+    }
+
     @ViewBuilder
     private var controls: some View {
         switch state.phase {
@@ -80,7 +117,7 @@ public struct DictationHUDView: View {
                 }
                 .buttonStyle(.plain)
             }
-        case .transcribing, .inserting:
+        case .transcribing, .transforming, .inserting:
             ProgressView()
                 .controlSize(.small)
         case .error:
@@ -95,6 +132,7 @@ public struct DictationHUDView: View {
         switch state.phase {
         case .listening: return HarcBrand.live
         case .transcribing, .inserting: return .accentColor
+        case .transforming: return .indigo
         case .error: return .orange
         case .idle: return .secondary
         }
@@ -104,13 +142,14 @@ public struct DictationHUDView: View {
         switch state.phase {
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
+        case .transforming: return "\(modeStore.activeMode.name)…"
         case .inserting: return "Inserting…"
         case .error(let message): return message
-        case .idle: return "Idle"
+        case .idle: return state.notice ?? "Idle"
         }
     }
 
     private var accessibilityLabel: String {
-        "Dictation: \(statusText)"
+        "Dictation: \(statusText), mode \(modeStore.activeMode.name)"
     }
 }

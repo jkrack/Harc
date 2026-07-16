@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     // MARK: - Dictation
     let dictationState = DictationState()
+    lazy var dictationModeStore = DictationModeStore(prefs: prefs)
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
 
@@ -121,7 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 280, height: 260)
         popover.contentViewController = NSHostingController(
-            rootView: StatusPopoverRoot(bridge: bridge, dictationState: dictationState)
+            rootView: StatusPopoverRoot(
+                bridge: bridge,
+                dictationState: dictationState,
+                dictationModeStore: dictationModeStore
+            )
                 .environmentObject(prefs)
         )
         statusPopover = popover
@@ -426,7 +431,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 _ = try await launcher.ensureRunning()
                 return try await HarcSTTClient().dictate(audioPath: path)
             },
-            paster: SystemDictationPaster()
+            paster: SystemDictationPaster(),
+            activeMode: { [weak self] in
+                self?.dictationModeStore.activeMode ?? DictationMode.builtIns[0]
+            },
+            transform: { [weak self] text, mode in
+                guard let self else { throw DictationTransformError.unavailable }
+                return try await self.transformDictation(text: text, mode: mode)
+            }
         )
         controller.onBlockedByRecording = { [weak self] in
             self?.bridge.reportPaste(.skipped, message: "Stop the recording to dictate")
@@ -435,6 +447,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         self.dictationHUD = DictationHUDPanel(
             state: dictationState,
+            modeStore: dictationModeStore,
+            prefs: prefs,
             onStop: { [weak self] in Task { await self?.dictationController?.stopAndInsert() } },
             onCancel: { [weak self] in Task { await self?.dictationController?.cancel() } }
         )
@@ -466,11 +480,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
+    /// Run a dictation-mode LLM transform on the shared summarizer service.
+    /// Throws when the service or model isn't available — the controller
+    /// falls back to inserting the raw transcript.
+    private func transformDictation(text: String, mode: DictationMode) async throws -> String {
+        guard let service = summarizerService else {
+            throw DictationTransformError.unavailable
+        }
+        let modelID = mode.modelID ?? prefs.activeSummarizerID
+        guard await modelManager.descriptor(for: modelID) != nil else {
+            throw DictationTransformError.unknownModel(modelID)
+        }
+        // Throws if not installed — never block dictation on a download.
+        let directory = try await modelManager.requireInstalled(modelID)
+        return try await service.transform(
+            text: text,
+            instruction: mode.instruction,
+            systemPrompt: mode.systemPrompt,
+            modelID: modelID,
+            modelDirectory: directory
+        )
+    }
+
+    private enum DictationTransformError: Error {
+        case unavailable
+        case unknownModel(String)
+    }
+
     private func updateDictationHUD(for phase: DictationState.Phase) {
         switch phase {
         case .idle:
             dictationHUD?.hide()
-        case .listening, .transcribing, .inserting:
+        case .listening, .transcribing, .transforming, .inserting:
             dictationHUD?.show()
         case .error:
             dictationHUD?.show()
@@ -1343,6 +1384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .environmentObject(prefs)
             .environmentObject(modelStore)
             .environmentObject(bridge)
+            .environmentObject(dictationModeStore)
             .preferredColorScheme(prefs.appearance.colorScheme)
         let window = NSWindow(contentViewController: NSHostingController(rootView: root))
         window.title = "Harc Settings"
@@ -2080,6 +2122,7 @@ private extension String {
 private struct StatusPopoverRoot: View {
     @ObservedObject var bridge: HarcAppBridge
     @ObservedObject var dictationState: DictationState
+    @ObservedObject var dictationModeStore: DictationModeStore
     @EnvironmentObject private var prefs: HarcPreferences
 
     private var dictationStatusText: String? {
@@ -2087,6 +2130,7 @@ private struct StatusPopoverRoot: View {
         case .idle: return nil
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
+        case .transforming: return "\(dictationModeStore.activeMode.name)…"
         case .inserting: return "Inserting…"
         case .error: return "Dictation failed"
         }
@@ -2138,7 +2182,10 @@ private struct StatusPopoverRoot: View {
             onDiscardRecoveryArtifact: bridge.onDiscardRecoveryArtifact,
             dictationActive: dictationState.isActive,
             dictationStatusText: dictationStatusText,
-            onStartDictation: bridge.onStartDictation
+            onStartDictation: bridge.onStartDictation,
+            dictationModes: dictationModeStore.modes,
+            activeDictationModeID: dictationModeStore.activeMode.id,
+            onSelectDictationMode: { dictationModeStore.setActiveMode(id: $0) }
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }

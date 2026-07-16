@@ -36,7 +36,9 @@ private func makeController(
     prefs: HarcPreferences,
     recordingState: RecordingState = RecordingState(),
     paster: SpyPaster,
-    transcript: String = "hello world"
+    transcript: String = "hello world",
+    activeMode: DictationMode = DictationMode.builtIns[0],
+    transform: ((String, DictationMode) async throws -> String)? = nil
 ) -> (DictationController, DictationState) {
     let state = DictationState()
     let controller = DictationController(
@@ -45,7 +47,9 @@ private func makeController(
         prefs: prefs,
         recorderFactory: { StubRecorder(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")) },
         transcribe: { _ in transcript },
-        paster: paster
+        paster: paster,
+        activeMode: { activeMode },
+        transform: transform
     )
     return (controller, state)
 }
@@ -162,5 +166,108 @@ struct DictationControllerTests {
         #expect(paster.inserted.isEmpty)
         #expect(paster.copied.isEmpty)
         #expect(state.phase == .idle)
+    }
+}
+
+// MARK: - Mode routing
+
+@Suite("DictationController mode routing")
+@MainActor
+struct DictationModeRoutingTests {
+    private let llmMode = DictationMode(
+        id: "test.llm", name: "Test LLM", symbolName: "sparkles",
+        postProcess: .llm, instruction: "Rewrite."
+    )
+
+    @Test("llm mode inserts the transformed text")
+    func transformApplied() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "raw words",
+            activeMode: llmMode,
+            transform: { text, mode in
+                #expect(text == "raw words")
+                #expect(mode.id == "test.llm")
+                return "polished words"
+            }
+        )
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted == ["polished words"])
+        #expect(state.notice == nil)
+        #expect(state.phase == .idle)
+    }
+
+    @Test("transform failure falls back to raw text with a notice")
+    func transformFailureFallsBack() async {
+        struct Boom: Error {}
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "raw words",
+            activeMode: llmMode,
+            transform: { _, _ in throw Boom() }
+        )
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted == ["raw words"])
+        #expect(state.notice?.contains("Test LLM") == true)
+        #expect(state.phase == .idle)
+    }
+
+    @Test("empty transform result falls back to raw text")
+    func emptyTransformFallsBack() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, _) = makeController(
+            prefs: prefs, paster: paster, transcript: "raw words",
+            activeMode: llmMode,
+            transform: { _, _ in "  \n " }
+        )
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted == ["raw words"])
+    }
+
+    @Test("raw mode never invokes the transform")
+    func rawModeSkipsTransform() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, _) = makeController(
+            prefs: prefs, paster: paster, transcript: "raw words",
+            activeMode: DictationMode.builtIns[0],  // Raw
+            transform: { _, _ in
+                Issue.record("transform must not run for raw mode")
+                return "wrong"
+            }
+        )
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted == ["raw words"])
+    }
+
+    @Test("missing transform seam inserts raw for llm mode")
+    func noTransformWired() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, _) = makeController(
+            prefs: prefs, paster: paster, transcript: "raw words",
+            activeMode: llmMode,
+            transform: nil
+        )
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted == ["raw words"])
     }
 }

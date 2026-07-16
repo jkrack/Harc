@@ -11,6 +11,7 @@ struct HarcApp: App {
                 .environmentObject(appDelegate.prefs)
                 .environmentObject(appDelegate.modelStore)
                 .environmentObject(appDelegate.bridge)
+                .environmentObject(appDelegate.dictationModeStore)
         }
     }
 }

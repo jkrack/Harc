@@ -138,6 +138,8 @@ Outcome: a mode can read the user's selected text + clipboard + active app and f
 
 Tests: AX selected-text reader (mockable); context assembly; opt-in gating.
 
+**Phase 3 status:** foundation built — `DictationContext` (`Sources/HarcUI/DictationContext.swift`, value type + `promptBlock` markdown rendering with per-field 4000-char truncation) and `SelectionContextReader` (`Sources/HarcUI/SelectionContextReader.swift`, `@MainActor capture(selectedText:clipboard:)` reading AX selected text / clipboard / frontmost app behind an injectable `Environment` seam; never prompts for Accessibility — untrusted just yields nil selection). Covered by `Tests/HarcUITests/DictationContextTests.swift` + `SelectionContextReaderTests.swift`. Remaining: per-mode context toggles, `ModeTransformPrompt` context-block injection, and the HUD context-capture indicator — those live on the modes-engine surfaces (`DictationMode*`, `DictationController`, HUD, Settings).
+
 ## Phase 4 — File / audio-video import transcription
 
 Outcome: drop an audio/video file → transcribe → into the library (and optionally a mode transform).

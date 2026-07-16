@@ -15,11 +15,19 @@ final class DictationHUDPanel {
 
     init(
         state: DictationState,
+        modeStore: DictationModeStore,
+        prefs: HarcPreferences,
         onStop: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
         let hosting = NSHostingController(
-            rootView: DictationHUDView(state: state, onStop: onStop, onCancel: onCancel)
+            rootView: DictationHUDView(
+                state: state,
+                modeStore: modeStore,
+                prefs: prefs,
+                onStop: onStop,
+                onCancel: onCancel
+            )
         )
         let panel = NSPanel(contentViewController: hosting)
         panel.styleMask = [.borderless, .nonactivatingPanel]

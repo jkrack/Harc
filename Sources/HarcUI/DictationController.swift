@@ -12,6 +12,12 @@ public final class DictationController {
     private let recorderFactory: @MainActor () -> any DictationRecording
     private let transcribe: (String) async throws -> String
     private let paster: any DictationPasting
+    /// The mode to apply to the next transcript. Injected as a closure so the
+    /// controller stays decoupled from the mode store.
+    private let activeMode: @MainActor () -> DictationMode
+    /// LLM transform seam: (raw text, mode) → transformed text. nil disables
+    /// post-processing (everything inserts raw). Errors trigger raw fallback.
+    private let transform: ((String, DictationMode) async throws -> String)?
     /// Called when a start is refused because a meeting recording is active,
     /// so the caller can surface a hint.
     public var onBlockedByRecording: () -> Void = {}
@@ -25,7 +31,9 @@ public final class DictationController {
         prefs: HarcPreferences,
         recorderFactory: @escaping @MainActor () -> any DictationRecording,
         transcribe: @escaping (String) async throws -> String,
-        paster: any DictationPasting
+        paster: any DictationPasting,
+        activeMode: @escaping @MainActor () -> DictationMode = { DictationMode.builtIns[0] },
+        transform: ((String, DictationMode) async throws -> String)? = nil
     ) {
         self.state = state
         self.recordingState = recordingState
@@ -33,6 +41,8 @@ public final class DictationController {
         self.recorderFactory = recorderFactory
         self.transcribe = transcribe
         self.paster = paster
+        self.activeMode = activeMode
+        self.transform = transform
     }
 
     public var isActive: Bool { state.isActive }
@@ -112,6 +122,8 @@ public final class DictationController {
             return
         }
 
+        let output = await applyMode(to: trimmed)
+
         state.setPhase(.inserting)
         // Insertion is the whole point, so it's always "enabled"; the deny-list
         // still applies (never paste into password fields / Harc itself).
@@ -124,15 +136,39 @@ public final class DictationController {
         switch decision {
         case .paste:
             do {
-                try paster.insert(trimmed)
+                try paster.insert(output)
             } catch {
                 // Fall back to leaving it on the clipboard so the text isn't lost.
-                paster.copyOnly(trimmed)
+                paster.copyOnly(output)
             }
         case .skipDisabled, .skipModifierHeld, .skipUnsafeTarget:
-            paster.copyOnly(trimmed)
+            paster.copyOnly(output)
         }
         state.setPhase(.idle)
+    }
+
+    /// Route the raw transcript through the active mode. Any transform
+    /// failure (model missing, generation error, no transform wired) falls
+    /// back to the raw transcript — the user's words are never lost.
+    private func applyMode(to raw: String) async -> String {
+        let mode = activeMode()
+        guard mode.postProcess == .llm, !mode.instruction.isEmpty else { return raw }
+        guard let transform else { return raw }
+
+        state.setPhase(.transforming)
+        do {
+            let transformed = try await transform(raw, mode)
+            let trimmed = transformed.trimmingCharacters(in: .whitespacesAndNewlines)
+            // An empty transform result is a failure — keep the raw words.
+            guard !trimmed.isEmpty else {
+                state.setNotice("\(mode.name) returned nothing — inserted raw text")
+                return raw
+            }
+            return trimmed
+        } catch {
+            state.setNotice("\(mode.name) unavailable — inserted raw text")
+            return raw
+        }
     }
 
     public func cancel() async {

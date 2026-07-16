@@ -32,6 +32,7 @@ public final class HarcPreferences: ObservableObject {
         static let welcomeFlowCompleted = "harc.welcomeFlowCompleted"
         static let modelPerformanceMode = "harc.modelPerformanceMode"
         static let dictationTriggerStyle = "harc.dictationTriggerStyle"
+        static let activeDictationModeID = "harc.activeDictationModeID"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -229,6 +230,12 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(dictationTriggerStyle.rawValue, forKey: Key.dictationTriggerStyle) }
     }
 
+    /// The dictation mode transcripts run through before insertion.
+    /// A `DictationMode.id` — validated against the mode store by callers.
+    @Published public var activeDictationModeID: String {
+        didSet { UserDefaults.standard.set(activeDictationModeID, forKey: Key.activeDictationModeID) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -282,6 +289,7 @@ public final class HarcPreferences: ObservableObject {
         self.modelPerformanceMode = ModelPerformanceMode(rawValue: rawModelPerformanceMode) ?? .balanced
         let rawDictationTriggerStyle = defaults.string(forKey: Key.dictationTriggerStyle) ?? DictationTriggerStyle.pushToTalk.rawValue
         self.dictationTriggerStyle = DictationTriggerStyle(rawValue: rawDictationTriggerStyle) ?? .pushToTalk
+        self.activeDictationModeID = defaults.string(forKey: Key.activeDictationModeID) ?? DictationMode.rawID
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {

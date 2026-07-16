@@ -181,6 +181,42 @@ public actor SummarizerService {
         }
     }
 
+    /// Transform `text` per a dictation mode's `instruction` and return the
+    /// raw transformed string. Shares the resident container with
+    /// `summarize`/`answer` via `getOrLoad`, so a mode using the active
+    /// summarizer model pays no extra load cost.
+    public func transform(
+        text: String,
+        instruction: String,
+        systemPrompt: String? = nil,
+        modelID: String,
+        modelDirectory: URL,
+        maxTokens: Int = ModeTransformPrompt.maxOutputTokens
+    ) async throws -> String {
+        cancelIdleUnload()
+        let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
+        defer { scheduleIdleUnload(reason: "idle") }
+        let promptBody = ModeTransformPrompt.build(
+            instruction: instruction,
+            transcript: text
+        )
+
+        do {
+            return try await cont.generate(
+                promptBody: promptBody,
+                systemPrompt: systemPrompt ?? ModeTransformPrompt.systemPrompt,
+                maxTokens: maxTokens
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as SummarizerError {
+            throw error
+        } catch {
+            throw SummarizerError.generationFailed(error.localizedDescription)
+        }
+    }
+
     /// Load or reuse the container for `modelID`. Reloads when the id
     /// changes. Validates that the directory exists before calling the
     /// loader — the loader itself is free to assume the directory is

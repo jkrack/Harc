@@ -9,6 +9,8 @@ public final class DictationState: ObservableObject {
         case idle
         case listening
         case transcribing
+        /// LLM post-processing per the active dictation mode.
+        case transforming
         case inserting
         case error(String)
     }
@@ -16,6 +18,9 @@ public final class DictationState: ObservableObject {
     @Published public private(set) var phase: Phase = .idle
     /// Recent normalized levels (0…1) for the HUD waveform, oldest → newest.
     @Published public private(set) var levelHistory: [Float] = []
+    /// Transient non-fatal note (e.g. "mode fell back to raw text"). Cleared
+    /// on the next phase change to `.idle` from a fresh start.
+    @Published public private(set) var notice: String?
 
     public static let levelHistoryCount = 40
 
@@ -25,7 +30,7 @@ public final class DictationState: ObservableObject {
     /// meeting recording and for hotkey routing).
     public var isActive: Bool {
         switch phase {
-        case .listening, .transcribing, .inserting: return true
+        case .listening, .transcribing, .transforming, .inserting: return true
         case .idle, .error: return false
         }
     }
@@ -33,6 +38,11 @@ public final class DictationState: ObservableObject {
     public func setPhase(_ newPhase: Phase) {
         phase = newPhase
         if case .idle = newPhase { levelHistory = [] }
+        if case .listening = newPhase { notice = nil }
+    }
+
+    public func setNotice(_ message: String?) {
+        notice = message
     }
 
     public func pushLevel(_ value: Float) {
