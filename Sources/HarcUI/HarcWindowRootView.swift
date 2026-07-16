@@ -6,7 +6,9 @@ import HarcClient
 import HarcCore
 import HarcModels
 import HarcSummarize
+import HarcAudio
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Notifications
 
@@ -36,6 +38,10 @@ public struct HarcWindowRootView: View {
     let summarizerService: SummarizerService
     let onEdit: (Recording) -> Void
     let onDelete: (Recording) -> Void
+    /// Import audio/video files into the library. Nil hides the import
+    /// button and disables drag-and-drop (e.g. in previews/tests).
+    let onImportFiles: (([URL]) -> Void)?
+    @ObservedObject var importState: MediaImportState
 
     // MARK: View state
 
@@ -79,6 +85,8 @@ public struct HarcWindowRootView: View {
     @State var restoredSelection: LibrarySelection?
     @State var exportRecording: Recording?
     @State var exportDraft = RecordingExportDraft(includeSummary: true)
+    /// True while a drag with file URLs hovers over the window.
+    @State var importDropTargeted = false
 
     // MARK: Environment
 
@@ -97,7 +105,9 @@ public struct HarcWindowRootView: View {
         reIDService: SpeakerReIDService,
         summarizerService: SummarizerService,
         onEdit: @escaping (Recording) -> Void,
-        onDelete: @escaping (Recording) -> Void
+        onDelete: @escaping (Recording) -> Void,
+        onImportFiles: (([URL]) -> Void)? = nil,
+        importState: MediaImportState = MediaImportState()
     ) {
         self.libraryVM = libraryVM
         self.recordingState = recordingState
@@ -108,6 +118,8 @@ public struct HarcWindowRootView: View {
         self.summarizerService = summarizerService
         self.onEdit = onEdit
         self.onDelete = onDelete
+        self.onImportFiles = onImportFiles
+        self.importState = importState
     }
 
     // MARK: Body
@@ -139,11 +151,15 @@ public struct HarcWindowRootView: View {
     public var body: some View {
         return VStack(spacing: 0) {
             split
+            importBanner
             Divider()
             libraryFooter
         }
         .frame(minWidth: 900, minHeight: 600)
         .accessibilityIdentifier("harc.library.root")
+        .onDrop(of: [.fileURL], isTargeted: $importDropTargeted) { providers in
+            handleImportDrop(providers)
+        }
         .onAppear(perform: handleAppear)
         .onDisappear(perform: handleDisappear)
         .onChange(of: selection) { _, _ in
@@ -248,8 +264,17 @@ public struct HarcWindowRootView: View {
                 }
             }
 
-            // Trailing group: Copy / Edit / Export / Delete + Inspector toggle.
+            // Trailing group: Import / Copy / Edit / Export / Delete + Inspector toggle.
             ToolbarItemGroup {
+                if onImportFiles != nil {
+                    Button {
+                        presentImportPanel()
+                    } label: {
+                        Label("Import", systemImage: "square.and.arrow.down")
+                    }
+                    .help("Import an audio or video file and transcribe it")
+                }
+
                 Button {
                     if let rec = currentRecording { copyTranscript(rec) }
                 } label: {
@@ -314,6 +339,102 @@ public struct HarcWindowRootView: View {
         .frame(height: 28)
         .frame(maxWidth: .infinity)
         .background(.bar)
+    }
+
+    // MARK: - Media import
+
+    /// Compact status bar above the footer while an import runs (or just
+    /// finished / failed). Hidden entirely when there is nothing to show.
+    @ViewBuilder
+    var importBanner: some View {
+        if let job = importState.current {
+            HStack(spacing: 8) {
+                ProgressView(value: job.fraction)
+                    .frame(width: 120)
+                Text("\(job.phaseText) \u{201C}\(job.filename)\u{201D}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if importState.queuedCount > 0 {
+                    Text("+\(importState.queuedCount) queued")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 5)
+            .background(.bar)
+        } else if let error = importState.lastError {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer()
+                Button("Dismiss") { importState.dismissError() }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 5)
+            .background(.bar)
+        } else if let done = importState.lastCompletedFilename {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("Imported \u{201C}\(done)\u{201D}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Dismiss") { importState.dismissCompleted() }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 5)
+            .background(.bar)
+        }
+    }
+
+    /// NSOpenPanel for File-style import. Multi-select; filtered to the
+    /// audio/video types MediaImportService can convert.
+    func presentImportPanel() {
+        guard let onImportFiles else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Import Audio or Video"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = MediaImportService.supportedExtensions
+            .compactMap { UTType(filenameExtension: $0) }
+        panel.begin { response in
+            guard response == .OK else { return }
+            let urls = panel.urls.filter(MediaImportService.isSupported)
+            if !urls.isEmpty { onImportFiles(urls) }
+        }
+    }
+
+    /// Drag-and-drop entry: collect file URLs off the providers, filter to
+    /// supported media types, and hand them to the import pipeline.
+    func handleImportDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let onImportFiles else { return false }
+        let candidates = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }
+        guard !candidates.isEmpty else { return false }
+
+        let collector = DropURLCollector(expected: candidates.count) { urls in
+            let supported = urls.filter(MediaImportService.isSupported)
+            if !supported.isEmpty { onImportFiles(supported) }
+        }
+        for provider in candidates {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                collector.add(url)
+            }
+        }
+        return true
     }
 
     var footerStackHardware: some View {
@@ -1206,3 +1327,32 @@ public struct HarcWindowRootView: View {
     }
 }
 
+
+/// Accumulates URLs delivered by NSItemProvider completion handlers (which
+/// run on arbitrary queues) and fires `completion` on the main queue once
+/// every provider has reported. Lock-guarded; @unchecked Sendable is safe
+/// because all mutable state is touched only under the lock.
+private final class DropURLCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: [URL] = []
+    private var remaining: Int
+    private let completion: @MainActor ([URL]) -> Void
+
+    init(expected: Int, completion: @escaping @MainActor ([URL]) -> Void) {
+        self.remaining = expected
+        self.completion = completion
+    }
+
+    func add(_ url: URL?) {
+        let finished: [URL]?
+        lock.lock()
+        if let url { urls.append(url) }
+        remaining -= 1
+        finished = remaining == 0 ? urls : nil
+        lock.unlock()
+        if let finished {
+            let completion = completion
+            Task { @MainActor in completion(finished) }
+        }
+    }
+}

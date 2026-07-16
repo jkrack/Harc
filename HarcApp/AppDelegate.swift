@@ -38,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
 
+    // MARK: - Media import
+    let importState = MediaImportState()
+    /// Serializes imports — one file converts/transcribes at a time so the
+    /// daemon isn't juggling parallel chunk streams. Files picked/dropped
+    /// while a batch runs are appended here and drained by the same task.
+    private var importTask: Task<Void, Never>?
+    private var pendingImports: [URL] = []
+
     override init() {
         bridge = HarcAppBridge(
             recordingState: state,
@@ -1209,6 +1217,117 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         alert.runModal()
     }
 
+    // MARK: - Media import
+
+    /// Import audio/video files: convert → transcribe (diarized) → library.
+    /// Files process sequentially; a live recording or dictation blocks the
+    /// whole batch (they'd compete for the STT daemon and confuse readiness).
+    func importMediaFiles(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        guard !state.isRecording, !dictationState.isActive else {
+            // Don't clobber a running import's banner with the rejection.
+            if importState.current == nil {
+                importState.fail(message: "Finish recording or dictation before importing files.")
+            } else {
+                NSSound.beep()
+            }
+            return
+        }
+        guard prefs.destinationFolderExists() else {
+            presentDestinationMissingAlert()
+            return
+        }
+
+        // New files join the queue; a running batch picks them up.
+        pendingImports.append(contentsOf: urls)
+        guard importTask == nil else { return }
+
+        importTask = Task { [weak self] in
+            defer { self?.importTask = nil }
+            while let next = self?.dequeueImport() {
+                await self?.importOneMediaFile(next.url, queuedAfter: next.remaining)
+            }
+            self?.importState.allDone()
+        }
+    }
+
+    private func dequeueImport() -> (url: URL, remaining: Int)? {
+        guard !pendingImports.isEmpty else { return nil }
+        let url = pendingImports.removeFirst()
+        return (url, pendingImports.count)
+    }
+
+    private func importOneMediaFile(_ source: URL, queuedAfter: Int) async {
+        importState.begin(filename: source.lastPathComponent, queued: queuedAfter)
+        do {
+            _ = try await launcher.ensureRunning()
+            let client = HarcSTTClient()
+            let service = MediaImportService(
+                client: client,
+                diarizer: prefs.diarize ? client : nil,
+                destination: RecordingDestination(baseDirectory: prefs.destinationURL)
+            )
+            let importState = self.importState
+            let result = try await service.importFile(
+                source: source,
+                options: MediaImportService.Options(
+                    diarize: prefs.diarize,
+                    vadEnabled: prefs.vadEnabled,
+                    chunkDurationSeconds: prefs.chunkDurationSeconds,
+                    vocabulary: prefs.vocabulary
+                ),
+                progress: { progress in
+                    Task { @MainActor in
+                        importState.update(
+                            phaseText: progress.phase.rawValue,
+                            fraction: progress.fraction
+                        )
+                    }
+                }
+            )
+
+            // Same ingest shape as stopRecording: library row keyed by the
+            // final WAV path; title = the original filename.
+            let rec = result.recording
+            let transcriptText = rec.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            let startedAt = rec.wavURL.startedAtFromHarcPath() ?? Date()
+            var row = Recording(
+                wavPath: rec.wavURL.path,
+                txtPath: rec.txtURL?.path,
+                jsonPath: rec.jsonURL?.path,
+                startedAt: startedAt,
+                endedAt: startedAt.addingTimeInterval(result.durationSeconds),
+                transcriptText: transcriptText
+            )
+            row.title = result.originalTitle
+            let savedID = await persistStoppedRecording(row)
+
+            // Same post-ingest extras a live recording gets.
+            if let id = savedID, let store = self.store, !rec.speakerEmbeddings.isEmpty {
+                let embeddings = rec.speakerEmbeddings
+                Task.detached { [store] in
+                    let dbRows: [RecordingStore.SpeakerEmbeddingRow] = embeddings.map {
+                        RecordingStore.SpeakerEmbeddingRow(
+                            recordingID: id,
+                            speakerIndex: $0.speakerIndex,
+                            embedding: EmbeddingBlob.encode($0.vector),
+                            segmentCount: $0.segmentCount,
+                            totalMs: $0.totalMs,
+                            embedderKind: EmbedderKind.wespeakerV2
+                        )
+                    }
+                    try? await store.upsertSpeakerEmbeddings(recordingID: id, rows: dbRows)
+                }
+            }
+            await enqueueAutoSummaryAfterStop(recordingID: savedID)
+            importState.finish()
+        } catch {
+            importState.fail(
+                message: "\(source.lastPathComponent): \(error.localizedDescription)"
+            )
+        }
+    }
+
     private func persistStoppedRecording(_ recording: Recording) async -> Int64? {
         guard let store = self.store else {
             presentRecordingPersistenceFailure(
@@ -1517,8 +1636,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             postProcessingState: postProcessingState,
             queueStore: queueStore,
             modelStore: modelStore,
+            importState: importState,
             onEdit: { [weak self] rec in self?.openEditor(for: rec) },
-            onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) }
+            onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) },
+            onImportFiles: { [weak self] urls in self?.importMediaFiles(urls) }
         )
         harcWindow = controller
         controller.showWindow(nil)

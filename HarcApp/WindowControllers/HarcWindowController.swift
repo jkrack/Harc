@@ -18,8 +18,10 @@ final class HarcWindowController: NSWindowController {
         postProcessingState: RecordingPostProcessingState,
         queueStore: SummarizationQueueStore,
         modelStore: ModelManagerStore,
+        importState: MediaImportState,
         onEdit: @escaping (Recording) -> Void,
-        onDelete: @escaping (Recording) -> Void
+        onDelete: @escaping (Recording) -> Void,
+        onImportFiles: @escaping ([URL]) -> Void
     ) {
         let peopleVM = PeopleViewModel(store: store)
         let root = HarcWindowRootView(
@@ -31,7 +33,9 @@ final class HarcWindowController: NSWindowController {
             reIDService: reIDService,
             summarizerService: summarizerService,
             onEdit: onEdit,
-            onDelete: onDelete
+            onDelete: onDelete,
+            onImportFiles: onImportFiles,
+            importState: importState
         )
         .environmentObject(prefs)
         .environmentObject(postProcessingState)

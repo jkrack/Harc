@@ -146,6 +146,8 @@ Outcome: drop an audio/video file → transcribe → into the library (and optio
 
 - Import picker → copy/normalize to WAV → `HarcSTTClient.transcribe` (full, with diarization for long files) → library row. Largely reuses existing recording→library plumbing; mostly UI + an import path.
 
+**Phase 4 status: complete.** `MediaImportService` (HarcAudio) accepts wav/mp3/m4a/aac/aiff/caf/flac + mp4/mov/m4v, extracts/normalizes the audio track to 16 kHz mono WAV via `AVAssetReaderAudioMixOutput` → `AudioFileWriter`, chunk-transcribes the complete file with the same `WAVChunker` path a live recording uses (deterministic progress, per-chunk failures skipped, full-WAV diarize at the end), and finalizes into the standard `YYYY/YYYY-MM-DD/HH-mm-ss.wav` hierarchy with `.txt`/`.json` siblings, returning a standard `RecordingResult`. AppDelegate ingests through the same `persistStoppedRecording` + speaker-embedding + auto-summarize path a stopped recording uses; the library row's title is the original filename. UI: an Import toolbar button (`NSOpenPanel`) and drag-and-drop onto the library window, with a compact progress banner (queued count, error/done states) above the footer. Imports serialize (one at a time; extra files queue) and are refused while recording/dictating. DRM, no-audio-track, and unsupported types get clear errors.
+
 ## Phase 5 — Polish
 
 - Per-mode global hotkeys (each mode its own `KeyboardShortcuts.Name`).
