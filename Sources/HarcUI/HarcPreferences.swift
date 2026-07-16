@@ -31,6 +31,7 @@ public final class HarcPreferences: ObservableObject {
         static let appearance = "harc.appearance"
         static let welcomeFlowCompleted = "harc.welcomeFlowCompleted"
         static let modelPerformanceMode = "harc.modelPerformanceMode"
+        static let dictationTriggerStyle = "harc.dictationTriggerStyle"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -49,6 +50,23 @@ public final class HarcPreferences: ObservableObject {
             case .system: return nil
             case .light:  return .light
             case .dark:   return .dark
+            }
+        }
+    }
+
+    /// How the dictation hotkey behaves.
+    public enum DictationTriggerStyle: String, CaseIterable, Identifiable {
+        /// Hold the hotkey to dictate; release to transcribe + insert.
+        case pushToTalk
+        /// Tap the hotkey to start, tap again to stop.
+        case toggle
+
+        public var id: String { rawValue }
+
+        public var displayName: String {
+            switch self {
+            case .pushToTalk: return "Push to talk (hold)"
+            case .toggle: return "Toggle (tap on / off)"
             }
         }
     }
@@ -207,6 +225,10 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(modelPerformanceMode.rawValue, forKey: Key.modelPerformanceMode) }
     }
 
+    @Published public var dictationTriggerStyle: DictationTriggerStyle {
+        didSet { UserDefaults.standard.set(dictationTriggerStyle.rawValue, forKey: Key.dictationTriggerStyle) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -258,6 +280,8 @@ public final class HarcPreferences: ObservableObject {
         self.welcomeFlowCompleted = defaults.object(forKey: Key.welcomeFlowCompleted) as? Bool ?? false
         let rawModelPerformanceMode = defaults.string(forKey: Key.modelPerformanceMode) ?? ModelPerformanceMode.balanced.rawValue
         self.modelPerformanceMode = ModelPerformanceMode(rawValue: rawModelPerformanceMode) ?? .balanced
+        let rawDictationTriggerStyle = defaults.string(forKey: Key.dictationTriggerStyle) ?? DictationTriggerStyle.pushToTalk.rawValue
+        self.dictationTriggerStyle = DictationTriggerStyle(rawValue: rawDictationTriggerStyle) ?? .pushToTalk
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {

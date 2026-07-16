@@ -48,6 +48,9 @@ public struct MenuBarPanelView: View {
     let onRecoverRecoveryArtifact: (String) -> Void
     let onRevealRecoveryArtifact: (String) -> Void
     let onDiscardRecoveryArtifact: (String) -> Void
+    let dictationActive: Bool
+    let dictationStatusText: String?
+    let onStartDictation: (() -> Void)?
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -94,7 +97,10 @@ public struct MenuBarPanelView: View {
         recoveryArtifacts: [RecoveryArtifact] = [],
         onRecoverRecoveryArtifact: @escaping (String) -> Void = { _ in },
         onRevealRecoveryArtifact: @escaping (String) -> Void = { _ in },
-        onDiscardRecoveryArtifact: @escaping (String) -> Void = { _ in }
+        onDiscardRecoveryArtifact: @escaping (String) -> Void = { _ in },
+        dictationActive: Bool = false,
+        dictationStatusText: String? = nil,
+        onStartDictation: (() -> Void)? = nil
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -138,6 +144,26 @@ public struct MenuBarPanelView: View {
         self.onRecoverRecoveryArtifact = onRecoverRecoveryArtifact
         self.onRevealRecoveryArtifact = onRevealRecoveryArtifact
         self.onDiscardRecoveryArtifact = onDiscardRecoveryArtifact
+        self.dictationActive = dictationActive
+        self.dictationStatusText = dictationStatusText
+        self.onStartDictation = onStartDictation
+    }
+
+    @ViewBuilder
+    private func dictationRow(_ onStart: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "mic.fill")
+                .foregroundStyle(dictationActive ? HarcBrand.live : .secondary)
+            Text(dictationActive ? (dictationStatusText ?? "Dictating…") : "Dictation")
+                .font(.callout)
+            Spacer()
+            if !dictationActive {
+                Button("Dictate") { onStart() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(recordingState.isRecording)
+            }
+        }
     }
 
     public var body: some View {
@@ -157,6 +183,10 @@ public struct MenuBarPanelView: View {
                     }
                     .buttonStyle(.bordered)
                     .keyboardShortcut("l", modifiers: .command)
+                }
+
+                if let onStartDictation {
+                    dictationRow(onStartDictation)
                 }
 
                 readinessSection

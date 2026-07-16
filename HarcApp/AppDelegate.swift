@@ -32,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var statusItem: NSStatusItem?
     private var statusPopover: NSPopover?
 
+    // MARK: - Dictation
+    let dictationState = DictationState()
+    private var dictationController: DictationController?
+    private var dictationHUD: DictationHUDPanel?
+
     override init() {
         bridge = HarcAppBridge(
             recordingState: state,
@@ -116,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 280, height: 260)
         popover.contentViewController = NSHostingController(
-            rootView: StatusPopoverRoot(bridge: bridge)
+            rootView: StatusPopoverRoot(bridge: bridge, dictationState: dictationState)
                 .environmentObject(prefs)
         )
         statusPopover = popover
@@ -240,6 +245,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [weak self] in
             Task { await self?.toggleRecording() }
+        }
+
+        setupDictation()
+
+        // Dictation clips are disposable — sweep orphans left by a crash
+        // mid-dictation. Never routed into the recording recovery inbox.
+        Task.detached(priority: .utility) {
+            _ = DictationCacheCleaner.cleanOrphans()
         }
 
         notificationPresenter.registerCategory()
@@ -400,6 +413,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
+    // MARK: - Dictation setup
+
+    private func setupDictation() {
+        let controller = DictationController(
+            state: dictationState,
+            recordingState: state,
+            prefs: prefs,
+            recorderFactory: { MicDictationRecorder() },
+            transcribe: { [launcher] path in
+                // Keep-warm is a Phase 2 TODO; ensure the daemon is up per call.
+                _ = try await launcher.ensureRunning()
+                return try await HarcSTTClient().dictate(audioPath: path)
+            },
+            paster: SystemDictationPaster()
+        )
+        controller.onBlockedByRecording = { [weak self] in
+            self?.bridge.reportPaste(.skipped, message: "Stop the recording to dictate")
+        }
+        self.dictationController = controller
+
+        self.dictationHUD = DictationHUDPanel(
+            state: dictationState,
+            onStop: { [weak self] in Task { await self?.dictationController?.stopAndInsert() } },
+            onCancel: { [weak self] in Task { await self?.dictationController?.cancel() } }
+        )
+
+        dictationState.$phase
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] phase in
+                self?.updateDictationHUD(for: phase)
+            }
+            .store(in: &cancellables)
+
+        bridge.onStartDictation = { [weak self] in
+            Task { await self?.dictationController?.start() }
+        }
+
+        // KeyboardShortcuts fires handlers on the main thread; assumeIsolated
+        // keeps keyDown/keyUp strictly ordered (a Task hop could reorder them
+        // and break push-to-talk).
+        KeyboardShortcuts.onKeyDown(for: .pushToTalkDictation) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.dictationController?.handleHotkey(.keyDown)
+            }
+        }
+        KeyboardShortcuts.onKeyUp(for: .pushToTalkDictation) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.dictationController?.handleHotkey(.keyUp)
+            }
+        }
+    }
+
+    private func updateDictationHUD(for phase: DictationState.Phase) {
+        switch phase {
+        case .idle:
+            dictationHUD?.hide()
+        case .listening, .transcribing, .inserting:
+            dictationHUD?.show()
+        case .error:
+            dictationHUD?.show()
+            // Auto-clear a transient error back to idle after a moment.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2.5))
+                guard let self else { return }
+                if case .error = self.dictationState.phase {
+                    self.dictationState.setPhase(.idle)
+                }
+            }
+        }
+    }
+
     private func applyAutoStopConfigFromPrefs() {
         autoStop.config = .from(
             silenceEnabled: prefs.autoStopEnabled,
@@ -490,6 +575,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func startRecording() async {
         guard session == nil else { return }
+
+        // Mutual exclusion: dictation and meeting capture share the mic and the
+        // STT daemon; only one may hold the mic at a time.
+        guard !dictationState.isActive else {
+            bridge.reportPaste(.skipped, message: "Finish dictation before recording")
+            return
+        }
 
         // Guard: destination must resolve to an existing directory before
         // spinning up the session. Saves the user from a silent failure
@@ -1987,7 +2079,18 @@ private extension String {
 
 private struct StatusPopoverRoot: View {
     @ObservedObject var bridge: HarcAppBridge
+    @ObservedObject var dictationState: DictationState
     @EnvironmentObject private var prefs: HarcPreferences
+
+    private var dictationStatusText: String? {
+        switch dictationState.phase {
+        case .idle: return nil
+        case .listening: return "Listening…"
+        case .transcribing: return "Transcribing…"
+        case .inserting: return "Inserting…"
+        case .error: return "Dictation failed"
+        }
+    }
 
     var body: some View {
         MenuBarPanelView(
@@ -2032,7 +2135,10 @@ private struct StatusPopoverRoot: View {
             recoveryArtifacts: bridge.recoveryArtifacts,
             onRecoverRecoveryArtifact: bridge.onRecoverRecoveryArtifact,
             onRevealRecoveryArtifact: bridge.onRevealRecoveryArtifact,
-            onDiscardRecoveryArtifact: bridge.onDiscardRecoveryArtifact
+            onDiscardRecoveryArtifact: bridge.onDiscardRecoveryArtifact,
+            dictationActive: dictationState.isActive,
+            dictationStatusText: dictationStatusText,
+            onStartDictation: bridge.onStartDictation
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }

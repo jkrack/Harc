@@ -42,6 +42,11 @@ Flag the user before violating these product decisions.
 - `Sources/HarcUI/` contains SwiftUI/AppKit-facing state and views, including
   the menu bar panel, Library, settings, local-stack readiness, recovery inbox,
   transcript editor, and speaker identity UI.
+- Dictation (`docs/dictation-plan.md`): `DictationController` in
+  `Sources/HarcUI/` drives mic-only capture (`MicDictationRecorder` in
+  `Sources/HarcAudio/`, temp WAV in `~/Library/Caches/Harc/dictation/`), a
+  one-shot `dictate()` to the daemon, and insert-at-cursor via
+  `FrontmostAppPaster`.
 - `Sources/HarcSummarize/`, `Sources/HarcModels/`, `Sources/HarcExport/`,
   `Sources/HarcMeetingDetect/`, and `Sources/HarcVoiceprint/` cover optional AI
   summaries, model management, export formats, meeting detection, and speaker
@@ -61,6 +66,9 @@ Flag the user before violating these product decisions.
   can block recording; missing summaries/search/paste helpers must not make core
   capture look broken.
 - System audio denial is degraded "mic only" capture, not a hard block.
+- Dictation clips in `~/Library/Caches/Harc/dictation/` are disposable — never
+  route them into the recording recovery inbox. `DictationCacheCleaner` deletes
+  orphans.
 
 ## Common Validation
 

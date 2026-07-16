@@ -53,6 +53,7 @@ public final class HarcAppBridge: ObservableObject {
     @Published public private(set) var recordingStopInFlight: Bool = false
 
     public var onStartStop: () -> Void = {}
+    public var onStartDictation: () -> Void = {}
     public var onOpenWindow: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteIntoFrontmost: () -> Void = {}

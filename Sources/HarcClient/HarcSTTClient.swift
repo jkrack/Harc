@@ -35,6 +35,10 @@ public struct HarcSTTClient: Sendable {
     public static let transcribeTimeout: Int = 60
     public static let diarizeTimeout: Int = 300   // 5 min for full-WAV diarize on long meetings
     public static let shutdownTimeout: Int = 5
+    /// Dictation clips are a few seconds; a warm daemon transcribes them in
+    /// well under a second. Cap tighter than `transcribeTimeout` so a hung
+    /// daemon can't leave the dictation flow spinning.
+    public static let dictateTimeout: Int = 20
 
     public func status() async throws -> DaemonStatus {
         let response = try await roundTripWithTimeout(.status, seconds: Self.statusTimeout)
@@ -56,6 +60,25 @@ public struct HarcSTTClient: Sendable {
         let response = try await roundTripWithTimeout(request, seconds: Self.transcribeTimeout)
         switch response {
         case .result(let r): return r
+        case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
+        default: throw ClientError.ipcDecodeFailed("unexpected response: \(response)")
+        }
+    }
+
+    /// Low-latency single-shot transcription for dictation. Skips diarization
+    /// and VAD (the daemon also auto-bypasses VAD for short clips) and drops
+    /// word timestamps — we only want the text — with a tighter timeout.
+    public func dictate(audioPath: String) async throws -> String {
+        let request = IPCRequest.transcribe(TranscribeRequest(
+            audioPath: audioPath,
+            language: "en",
+            wantTimestamps: false,
+            diarize: false,
+            vad: false
+        ))
+        let response = try await roundTripWithTimeout(request, seconds: Self.dictateTimeout)
+        switch response {
+        case .result(let r): return r.text
         case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
         default: throw ClientError.ipcDecodeFailed("unexpected response: \(response)")
         }

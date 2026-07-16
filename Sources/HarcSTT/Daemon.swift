@@ -98,6 +98,10 @@ public actor Daemon {
         lastActivity = Date()
     }
 
+    /// Test hook: the last time the daemon saw client activity (connection
+    /// accept or any request, including `status`). Drives the idle timeout.
+    var lastActivityForTesting: Date { lastActivity }
+
     private func requestShutdown() {
         shutdownRequested = true
     }
