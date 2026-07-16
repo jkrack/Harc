@@ -33,7 +33,7 @@ struct WelcomeFlowModelTests {
     func defaultStepsCoverProductConcepts() {
         let ids = WelcomeFlowModel.defaultSteps.map(\.id)
 
-        #expect(ids == ["canvas", "local", "start"])
+        #expect(ids == ["canvas", "local", "dictation", "start"])
         #expect(WelcomeFlowModel.defaultSteps.contains { $0.body.localizedCaseInsensitiveContains("local") })
         #expect(WelcomeFlowModel.defaultSteps.contains { $0.body.localizedCaseInsensitiveContains("LLM") })
     }

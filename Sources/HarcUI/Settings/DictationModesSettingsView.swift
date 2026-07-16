@@ -1,15 +1,19 @@
 import SwiftUI
 import HarcModels
+import KeyboardShortcuts
+import UniformTypeIdentifiers
 
 /// Settings → Dictation Modes section. Lists built-in + custom modes, with an
-/// editor sheet for name/symbol/instruction/model, create/delete for custom
-/// modes, and reset-to-default for built-ins.
+/// editor sheet for name/symbol/instruction/model/shortcut, create/delete for
+/// custom modes, reset-to-default for built-ins, and share via .harcmode files.
 public struct DictationModesSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var modeStore: DictationModeStore
     @EnvironmentObject private var models: ModelManagerStore
+    @EnvironmentObject private var bridge: HarcAppBridge
 
     @State private var editingMode: DictationMode?
+    @State private var importError: String?
 
     public init() {}
 
@@ -26,16 +30,28 @@ public struct DictationModesSettingsView: View {
                 modeRow(mode)
             }
 
-            Button {
-                editingMode = DictationMode(
-                    id: UUID().uuidString,
-                    name: "New Mode",
-                    symbolName: "sparkles",
-                    postProcess: .llm,
-                    instruction: "Output only the result, no preamble or explanation."
-                )
-            } label: {
-                Label("Add Mode", systemImage: "plus")
+            HStack {
+                Button {
+                    editingMode = DictationMode(
+                        id: UUID().uuidString,
+                        name: "New Mode",
+                        symbolName: "sparkles",
+                        postProcess: .llm,
+                        instruction: "Output only the result, no preamble or explanation."
+                    )
+                } label: {
+                    Label("Add Mode", systemImage: "plus")
+                }
+                Button {
+                    runImportPanel()
+                } label: {
+                    Label("Import Mode…", systemImage: "square.and.arrow.down")
+                }
+            }
+            if let importError {
+                Text(importError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
         } header: {
             Text("Dictation Modes")
@@ -48,6 +64,7 @@ public struct DictationModesSettingsView: View {
             DictationModeEditor(
                 mode: mode,
                 isNew: !modeStore.modes.contains { $0.id == mode.id },
+                testTransform: bridge.testDictationTransform,
                 onSave: { saved in
                     if modeStore.modes.contains(where: { $0.id == saved.id }) {
                         modeStore.update(saved)
@@ -62,6 +79,41 @@ public struct DictationModesSettingsView: View {
             .environmentObject(models)
         }
     }
+
+    // MARK: - Share (.harcmode)
+
+    private func runImportPanel() {
+        importError = nil
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [Self.harcmodeType, .json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let mode = try DictationModeIO.importMode(
+                from: data,
+                existingIDs: Set(modeStore.modes.map(\.id))
+            )
+            modeStore.add(mode)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    private func runExportPanel(for mode: DictationMode) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [Self.harcmodeType]
+        panel.nameFieldStringValue = "\(mode.name).\(DictationModeIO.fileExtension)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let data = try? DictationModeIO.exportData(mode) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// `.harcmode` files are JSON with a distinct extension so they read as
+    /// shareable mode files, not generic data.
+    private static let harcmodeType =
+        UTType(filenameExtension: DictationModeIO.fileExtension, conformingTo: .json) ?? .json
 
     private var activeModeBinding: Binding<String> {
         Binding(
@@ -94,6 +146,13 @@ public struct DictationModesSettingsView: View {
                         .buttonStyle(.borderless)
                 }
             }
+            Button {
+                runExportPanel(for: mode)
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .buttonStyle(.borderless)
+            .help("Export mode as a .harcmode file")
             if !mode.isBuiltIn {
                 Button(role: .destructive) {
                     modeStore.delete(id: mode.id)
@@ -114,11 +173,17 @@ private struct DictationModeEditor: View {
 
     @State var mode: DictationMode
     let isNew: Bool
+    let testTransform: ((DictationMode, String) async throws -> String)?
     let onSave: (DictationMode) -> Void
     let onCancel: () -> Void
 
+    @State private var testResult: String?
+    @State private var testRunning = false
+
     /// Sentinel for "follow the active summarizer" in the model picker.
     private static let followDefaultTag = ""
+    private static let testSample =
+        "um so basically we should uh probably move the sync to thursday morning"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -170,6 +235,38 @@ private struct DictationModeEditor: View {
                             .font(.subheadline)
                             .foregroundStyle(Color.secondary)
                     }
+
+                    if testTransform != nil {
+                        Section {
+                            HStack {
+                                Button("Test on a sample sentence") { runTest() }
+                                    .disabled(testRunning)
+                                if testRunning {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
+                            if let testResult {
+                                Text(testResult)
+                                    .font(.callout)
+                                    .textSelection(.enabled)
+                            }
+                        } footer: {
+                            Text("Runs the instruction on: \u{201C}\(Self.testSample)\u{201D}")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.secondary)
+                        }
+                    }
+                }
+
+                Section {
+                    KeyboardShortcuts.Recorder(
+                        "Mode shortcut",
+                        name: .dictationMode(mode.id)
+                    )
+                } footer: {
+                    Text("Starts dictation straight into this mode, without changing the active mode.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -202,5 +299,20 @@ private struct DictationModeEditor: View {
 
     private var summarizers: [ModelDescriptor] {
         ModelCatalog.descriptors(for: .summarizer)
+    }
+
+    private func runTest() {
+        guard let testTransform else { return }
+        testRunning = true
+        testResult = nil
+        let candidate = mode
+        Task { @MainActor in
+            defer { testRunning = false }
+            do {
+                testResult = try await testTransform(candidate, Self.testSample)
+            } catch {
+                testResult = "Unavailable: \(error.localizedDescription)"
+            }
+        }
     }
 }

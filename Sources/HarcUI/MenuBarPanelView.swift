@@ -54,6 +54,9 @@ public struct MenuBarPanelView: View {
     let dictationModes: [DictationMode]
     let activeDictationModeID: String?
     let onSelectDictationMode: ((String) -> Void)?
+    let dictationHistory: [DictationHistoryEntry]
+    let onCopyDictationHistoryEntry: ((DictationHistoryEntry) -> Void)?
+    let onClearDictationHistory: (() -> Void)?
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -106,7 +109,10 @@ public struct MenuBarPanelView: View {
         onStartDictation: (() -> Void)? = nil,
         dictationModes: [DictationMode] = [],
         activeDictationModeID: String? = nil,
-        onSelectDictationMode: ((String) -> Void)? = nil
+        onSelectDictationMode: ((String) -> Void)? = nil,
+        dictationHistory: [DictationHistoryEntry] = [],
+        onCopyDictationHistoryEntry: ((DictationHistoryEntry) -> Void)? = nil,
+        onClearDictationHistory: (() -> Void)? = nil
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -156,6 +162,9 @@ public struct MenuBarPanelView: View {
         self.dictationModes = dictationModes
         self.activeDictationModeID = activeDictationModeID
         self.onSelectDictationMode = onSelectDictationMode
+        self.dictationHistory = dictationHistory
+        self.onCopyDictationHistoryEntry = onCopyDictationHistoryEntry
+        self.onClearDictationHistory = onClearDictationHistory
     }
 
     @ViewBuilder
@@ -167,6 +176,9 @@ public struct MenuBarPanelView: View {
                 .font(.callout)
             Spacer()
             if !dictationActive {
+                if let onCopyDictationHistoryEntry, !dictationHistory.isEmpty {
+                    dictationHistoryMenu(onCopyDictationHistoryEntry)
+                }
                 if let onSelectDictationMode, !dictationModes.isEmpty {
                     dictationModePicker(onSelectDictationMode)
                 }
@@ -198,6 +210,39 @@ public struct MenuBarPanelView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Dictation mode")
+    }
+
+    /// Recent dictations — click an entry to copy it back to the clipboard.
+    private func dictationHistoryMenu(_ onCopy: @escaping (DictationHistoryEntry) -> Void) -> some View {
+        Menu {
+            ForEach(dictationHistory) { entry in
+                Button {
+                    onCopy(entry)
+                } label: {
+                    Text(Self.historyLabel(for: entry))
+                }
+            }
+            if let onClearDictationHistory {
+                Divider()
+                Button("Clear History", role: .destructive) {
+                    onClearDictationHistory()
+                }
+            }
+        } label: {
+            Image(systemName: "clock.arrow.circlepath")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Recent dictations — click to copy")
+    }
+
+    static func historyLabel(for entry: DictationHistoryEntry) -> String {
+        let preview = entry.text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let clipped = preview.count > 44 ? String(preview.prefix(44)) + "…" : preview
+        let time = entry.date.formatted(.relative(presentation: .named))
+        return "\(clipped) — \(entry.modeName), \(time)"
     }
 
     public var body: some View {

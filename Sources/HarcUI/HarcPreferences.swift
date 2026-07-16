@@ -33,6 +33,8 @@ public final class HarcPreferences: ObservableObject {
         static let modelPerformanceMode = "harc.modelPerformanceMode"
         static let dictationTriggerStyle = "harc.dictationTriggerStyle"
         static let activeDictationModeID = "harc.activeDictationModeID"
+        static let keepDictationWarm = "harc.keepDictationWarm"
+        static let dictationHistoryEnabled = "harc.dictationHistoryEnabled"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -236,6 +238,18 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(activeDictationModeID, forKey: Key.activeDictationModeID) }
     }
 
+    /// Periodically ping the STT daemon so the speech model stays resident
+    /// and the first dictation after a break isn't slowed by a cold load.
+    @Published public var keepDictationWarm: Bool {
+        didSet { UserDefaults.standard.set(keepDictationWarm, forKey: Key.keepDictationWarm) }
+    }
+
+    /// Keep a short local history of recent dictations. When off, nothing
+    /// is recorded or persisted.
+    @Published public var dictationHistoryEnabled: Bool {
+        didSet { UserDefaults.standard.set(dictationHistoryEnabled, forKey: Key.dictationHistoryEnabled) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -290,6 +304,8 @@ public final class HarcPreferences: ObservableObject {
         let rawDictationTriggerStyle = defaults.string(forKey: Key.dictationTriggerStyle) ?? DictationTriggerStyle.pushToTalk.rawValue
         self.dictationTriggerStyle = DictationTriggerStyle(rawValue: rawDictationTriggerStyle) ?? .pushToTalk
         self.activeDictationModeID = defaults.string(forKey: Key.activeDictationModeID) ?? DictationMode.rawID
+        self.keepDictationWarm = defaults.object(forKey: Key.keepDictationWarm) as? Bool ?? true
+        self.dictationHistoryEnabled = defaults.object(forKey: Key.dictationHistoryEnabled) as? Bool ?? true
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {

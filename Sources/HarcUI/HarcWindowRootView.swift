@@ -160,6 +160,15 @@ public struct HarcWindowRootView: View {
         .onDrop(of: [.fileURL], isTargeted: $importDropTargeted) { providers in
             handleImportDrop(providers)
         }
+        .overlay {
+            // Drop-highlight while a file drag hovers — import affordance.
+            if importDropTargeted, onImportFiles != nil {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 3)
+                    .padding(3)
+                    .allowsHitTesting(false)
+            }
+        }
         .onAppear(perform: handleAppear)
         .onDisappear(perform: handleDisappear)
         .onChange(of: selection) { _, _ in

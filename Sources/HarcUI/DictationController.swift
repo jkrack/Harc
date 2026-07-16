@@ -25,9 +25,15 @@ public final class DictationController {
     /// Called when a start is refused because a meeting recording is active,
     /// so the caller can surface a hint.
     public var onBlockedByRecording: () -> Void = {}
+    /// Called after text is delivered (pasted or copied) so the caller can
+    /// record dictation history. Cancelled sessions never reach this.
+    public var onDelivered: (DictationHistoryEntry) -> Void = { _ in }
 
     private var activeRecorder: (any DictationRecording)?
     private var levelsTask: Task<Void, Never>?
+    /// Mode override for the current session (per-mode hotkey). One-shot:
+    /// consumed by this session only, never persisted as the active mode.
+    private var oneShotMode: DictationMode?
 
     public init(
         state: DictationState,
@@ -69,6 +75,29 @@ public final class DictationController {
         }
     }
 
+    /// Route a per-mode hotkey: same trigger semantics, but the session runs
+    /// with `mode` as a one-shot override — the persisted active mode is
+    /// untouched.
+    public func handleModeHotkey(_ event: DictationHotkeyEvent, mode: DictationMode) {
+        let action = DictationTriggerRouter.action(
+            style: prefs.dictationTriggerStyle,
+            event: event,
+            isActive: state.isActive
+        )
+        switch action {
+        case .start:
+            oneShotMode = mode
+            Task { await start() }
+        case .stop: Task { await stopAndInsert() }
+        case .none: break
+        }
+    }
+
+    /// The mode governing the current session.
+    private func currentMode() -> DictationMode {
+        oneShotMode ?? activeMode()
+    }
+
     public func start() async {
         guard !state.isActive else { return }
         // Mutual exclusion: the mic + daemon are single-user resources.
@@ -80,7 +109,7 @@ public final class DictationController {
         // appears (setPhase(.listening) shows it) and before the user's
         // focus/selection can change. Privacy guard: never read selection or
         // clipboard out of a deny-listed app (password managers, …).
-        let mode = activeMode()
+        let mode = currentMode()
         if mode.wantsContext {
             let frontmost = paster.frontmostBundleID()
             if !PasteDenyList.isDenied(frontmost, in: prefs.pasteDenyListBundleIDs) {
@@ -106,6 +135,7 @@ public final class DictationController {
             levelsTask?.cancel()
             levelsTask = nil
             activeRecorder = nil
+            oneShotMode = nil
             // Only surface if we haven't already been superseded by a stop.
             if case .listening = state.phase {
                 state.setPhase(.error(error.localizedDescription))
@@ -117,6 +147,7 @@ public final class DictationController {
         guard case .listening = state.phase, let recorder = activeRecorder else { return }
         // Read frontmost target BEFORE anything can hide/refocus.
         let frontmost = paster.frontmostBundleID()
+        let frontmostName = paster.frontmostAppName()
         state.setPhase(.transcribing)
 
         let wav: URL
@@ -124,6 +155,7 @@ public final class DictationController {
             wav = try await recorder.stop()
         } catch {
             cleanup()
+            oneShotMode = nil
             state.setPhase(.error(error.localizedDescription))
             return
         }
@@ -134,17 +166,21 @@ public final class DictationController {
         do {
             text = try await transcribe(wav.path)
         } catch {
+            oneShotMode = nil
             state.setPhase(.error(error.localizedDescription))
             return
         }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            oneShotMode = nil
             state.setPhase(.idle)
             return
         }
 
-        let output = await applyMode(to: trimmed)
+        let mode = currentMode()
+        oneShotMode = nil
+        let output = await applyMode(to: trimmed, mode: mode)
 
         state.setPhase(.inserting)
         // Insertion is the whole point, so it's always "enabled"; the deny-list
@@ -155,25 +191,35 @@ public final class DictationController {
             frontmostBundleID: frontmost,
             deniedBundleIDs: prefs.pasteDenyListBundleIDs
         )
+        let delivery: DictationHistoryEntry.Delivery
         switch decision {
         case .paste:
             do {
                 try paster.insert(output)
+                delivery = .pasted
             } catch {
                 // Fall back to leaving it on the clipboard so the text isn't lost.
                 paster.copyOnly(output)
+                delivery = .copied
             }
         case .skipDisabled, .skipModifierHeld, .skipUnsafeTarget:
             paster.copyOnly(output)
+            delivery = .copied
         }
+        onDelivered(DictationHistoryEntry(
+            text: output,
+            rawText: output == trimmed ? nil : trimmed,
+            modeName: mode.name,
+            targetAppName: frontmostName,
+            delivery: delivery
+        ))
         state.setPhase(.idle)
     }
 
-    /// Route the raw transcript through the active mode. Any transform
+    /// Route the raw transcript through the session's mode. Any transform
     /// failure (model missing, generation error, no transform wired) falls
     /// back to the raw transcript — the user's words are never lost.
-    private func applyMode(to raw: String) async -> String {
-        let mode = activeMode()
+    private func applyMode(to raw: String, mode: DictationMode) async -> String {
         guard mode.postProcess == .llm, !mode.instruction.isEmpty else { return raw }
         guard let transform else { return raw }
 
@@ -200,6 +246,7 @@ public final class DictationController {
         guard state.isActive else { return }
         let recorder = activeRecorder
         cleanup()
+        oneShotMode = nil
         await recorder?.cancel()
         state.setPhase(.idle)
     }

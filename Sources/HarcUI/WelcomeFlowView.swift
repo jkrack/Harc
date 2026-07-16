@@ -82,6 +82,16 @@ public final class WelcomeFlowModel: ObservableObject {
             tint: .teal
         ),
         WelcomeFlowStep(
+            id: "dictation",
+            eyebrow: "Dictation",
+            title: "Speak anywhere, type nowhere",
+            body: "Hold the dictation hotkey, speak, release — the text lands at your cursor in whatever app you're in. Modes can clean it up, turn it into an email, or answer a question about your selected text, all with the local model.",
+            primaryPoint: "Inserting at the cursor needs the Accessibility permission — enable it below or later from Settings.",
+            secondaryPoint: "Set the hotkey and modes in Settings once you're in.",
+            symbolName: "mic.badge.plus",
+            tint: .purple
+        ),
+        WelcomeFlowStep(
             id: "start",
             eyebrow: "Start",
             title: "Make the first capture boring",
@@ -92,6 +102,9 @@ public final class WelcomeFlowModel: ObservableObject {
             tint: HarcBrand.live
         ),
     ]
+
+    /// Step id that carries the "Enable Accessibility" call-to-action.
+    public static let dictationStepID = "dictation"
 }
 
 public struct WelcomeFlowView: View {
@@ -99,15 +112,20 @@ public struct WelcomeFlowView: View {
     public let onFinish: () -> Void
     public let onSkip: () -> Void
     public let onOpenSettings: () -> Void
+    /// Optional CTA on the dictation step — opens the Accessibility privacy
+    /// pane. Never required; the step is fully skippable.
+    public let onEnableAccessibility: (() -> Void)?
 
     public init(
         onFinish: @escaping () -> Void,
         onSkip: @escaping () -> Void,
-        onOpenSettings: @escaping () -> Void
+        onOpenSettings: @escaping () -> Void,
+        onEnableAccessibility: (() -> Void)? = nil
     ) {
         self.onFinish = onFinish
         self.onSkip = onSkip
         self.onOpenSettings = onOpenSettings
+        self.onEnableAccessibility = onEnableAccessibility
     }
 
     public var body: some View {
@@ -275,6 +293,16 @@ public struct WelcomeFlowView: View {
                     pointRow(model.selectedStep.secondaryPoint, icon: "arrow.triangle.branch")
                 }
                 .padding(.top, 4)
+
+                if model.selectedStep.id == WelcomeFlowModel.dictationStepID,
+                   let onEnableAccessibility {
+                    Button {
+                        onEnableAccessibility()
+                    } label: {
+                        Label("Enable Accessibility", systemImage: "accessibility")
+                    }
+                    .accessibilityIdentifier("harc.welcome.accessibility")
+                }
             }
             .padding(28)
 

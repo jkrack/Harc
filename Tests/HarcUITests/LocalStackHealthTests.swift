@@ -16,6 +16,7 @@ struct LocalStackHealthTests {
             .speakerID,
             .notifications,
             .accessibility,
+            .dictation,
         ])
         #expect(items.allSatisfy { $0.state == .ready })
     }
@@ -128,12 +129,38 @@ struct LocalStackHealthTests {
             LocalStackHealthModel.Group.required,
             .quality,
             .afterRecording,
+            .dictation,
             .recovery,
         ])
         #expect(groupIDs[.required] == [.destination, .capture, .stt])
         #expect(groupIDs[.quality] == [.systemAudio, .speakerID])
         #expect(groupIDs[.afterRecording] == [.summarizer, .notifications, .accessibility])
+        #expect(groupIDs[.dictation] == [.dictation])
         #expect(groupIDs[.recovery] == [.recovery])
+    }
+
+    @Test("dictation row is ready only with STT plus Accessibility, and never blocks capture")
+    func dictationRowLevels() {
+        // Fully ready → dictation ready.
+        var input = fullyReadyCaptureInput
+        var items = CaptureReadinessResolver.resolve(input)
+        #expect(items.first { $0.id == .dictation }?.level == .ready)
+
+        // Missing Accessibility → optional-off with an open-accessibility fix.
+        input.pastePermissionReady = false
+        items = CaptureReadinessResolver.resolve(input)
+        let noAX = items.first { $0.id == .dictation }
+        #expect(noAX?.level == .optionalOff)
+        #expect(noAX?.action == .openAccessibility)
+        #expect(CaptureReadinessResolver.summary(for: items) != "Recording blocked")
+
+        // Missing STT → optional-off, but the fix belongs to the STT row.
+        input.pastePermissionReady = true
+        input.localSTTReady = false
+        items = CaptureReadinessResolver.resolve(input)
+        let noSTT = items.first { $0.id == .dictation }
+        #expect(noSTT?.level == .optionalOff)
+        #expect(noSTT?.action == nil)
     }
 
     private func localItems(for input: CaptureReadinessInput) -> [LocalStackHealthItem] {

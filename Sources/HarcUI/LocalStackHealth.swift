@@ -43,6 +43,7 @@ public struct CaptureReadinessItem: Identifiable, Equatable, Sendable {
         case speakerID
         case notifications
         case pastePermission
+        case dictation
         case recovery
     }
 
@@ -192,6 +193,7 @@ public enum CaptureReadinessResolver {
                 ready: input.pastePermissionReady,
                 action: .openAccessibility
             ),
+            dictationItem(input),
         ]
 
         if input.pendingRecoveryCount > 0 {
@@ -264,6 +266,28 @@ public enum CaptureReadinessResolver {
             action: ready ? nil : action
         )
     }
+
+    /// Dictation readiness is derived: it needs local STT plus the
+    /// Accessibility (paste) permission to insert at the cursor. Optional —
+    /// a missing piece never makes core capture look blocked.
+    private static func dictationItem(_ input: CaptureReadinessInput) -> CaptureReadinessItem {
+        let ready = input.localSTTReady && input.pastePermissionReady
+        let detail: String
+        if ready {
+            detail = "Hold the dictation hotkey and speak"
+        } else if !input.localSTTReady {
+            detail = "Needs local STT"
+        } else {
+            detail = "Needs Accessibility to insert text"
+        }
+        return CaptureReadinessItem(
+            id: .dictation,
+            title: "Dictation",
+            detail: detail,
+            level: ready ? .ready : .optionalOff,
+            action: (!ready && input.localSTTReady) ? .openAccessibility : nil
+        )
+    }
 }
 
 enum LocalStackHealthState: Equatable {
@@ -329,6 +353,7 @@ struct LocalStackHealthItem: Identifiable, Equatable {
         case speakerID
         case notifications
         case accessibility
+        case dictation
         case recovery
     }
 
@@ -344,6 +369,7 @@ enum LocalStackHealthModel {
         case required
         case quality
         case afterRecording
+        case dictation
         case recovery
 
         var title: String {
@@ -351,6 +377,7 @@ enum LocalStackHealthModel {
             case .required: return "Required for capture"
             case .quality: return "Quality"
             case .afterRecording: return "After recording"
+            case .dictation: return "Dictation"
             case .recovery: return "Recovery"
             }
         }
@@ -403,6 +430,8 @@ enum LocalStackHealthModel {
             return .quality
         case .summarizer, .notifications, .accessibility:
             return .afterRecording
+        case .dictation:
+            return .dictation
         case .recovery:
             return .recovery
         }
@@ -447,6 +476,7 @@ enum LocalStackHealthModel {
         case .speakerID: return .speakerID
         case .notifications: return .notifications
         case .pastePermission: return .accessibility
+        case .dictation: return .dictation
         case .recovery: return .recovery
         }
     }

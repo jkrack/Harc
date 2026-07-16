@@ -67,6 +67,9 @@ public final class HarcAppBridge: ObservableObject {
     public var onRecoverRecoveryArtifact: (String) -> Void = { _ in }
     public var onRevealRecoveryArtifact: (String) -> Void = { _ in }
     public var onDiscardRecoveryArtifact: (String) -> Void = { _ in }
+    /// Run a dictation mode's transform on sample text (settings "Test"
+    /// button). nil when the LLM stack isn't wired (previews/tests).
+    public var testDictationTransform: ((DictationMode, String) async throws -> String)?
 
     public init(recordingState: RecordingState, trayState: PostStopTrayState) {
         self.recordingState = recordingState

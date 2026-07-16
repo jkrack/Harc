@@ -398,3 +398,181 @@ struct DictationContextCaptureTests {
         #expect(state.context.isEmpty)
     }
 }
+
+// MARK: - Per-mode hotkeys (one-shot override)
+
+@Suite("DictationController one-shot mode override")
+@MainActor
+struct DictationOneShotModeTests {
+    private let overrideMode = DictationMode(
+        id: "test.override", name: "Override", symbolName: "bolt",
+        postProcess: .llm, instruction: "Shout."
+    )
+
+    @Test("mode hotkey runs the session with that mode without changing the active mode")
+    func overrideAppliesForOneSession() async throws {
+        let prefs = HarcPreferences()
+        prefs.dictationTriggerStyle = .pushToTalk
+        prefs.activeDictationModeID = DictationMode.rawID
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var transformedWith: [String] = []
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: DictationMode.builtIns[0],  // Raw — would skip transform
+            transform: { text, mode, _ in
+                transformedWith.append(mode.id)
+                return text.uppercased()
+            }
+        )
+
+        controller.handleModeHotkey(.keyDown, mode: overrideMode)
+        // Hotkey routing hops through a Task — wait for listening.
+        try await waitUntil { state.phase == .listening }
+        await controller.stopAndInsert()
+
+        #expect(transformedWith == ["test.override"])
+        #expect(paster.inserted == ["HELLO"])
+        // The persisted active mode is untouched.
+        #expect(prefs.activeDictationModeID == DictationMode.rawID)
+    }
+
+    @Test("override is one-shot — the next plain session uses the active mode")
+    func overrideDoesNotStick() async throws {
+        let prefs = HarcPreferences()
+        prefs.dictationTriggerStyle = .pushToTalk
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var transformCalls = 0
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: DictationMode.builtIns[0],  // Raw
+            transform: { text, _, _ in transformCalls += 1; return text }
+        )
+
+        controller.handleModeHotkey(.keyDown, mode: overrideMode)
+        try await waitUntil { state.phase == .listening }
+        await controller.stopAndInsert()
+        #expect(transformCalls == 1)
+
+        // Plain start: raw mode again, no transform.
+        await controller.start()
+        await controller.stopAndInsert()
+        #expect(transformCalls == 1)
+        #expect(paster.inserted.count == 2)
+    }
+
+    @Test("cancel discards the override")
+    func cancelDiscardsOverride() async throws {
+        let prefs = HarcPreferences()
+        prefs.dictationTriggerStyle = .pushToTalk
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var transformCalls = 0
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: DictationMode.builtIns[0],
+            transform: { text, _, _ in transformCalls += 1; return text }
+        )
+
+        controller.handleModeHotkey(.keyDown, mode: overrideMode)
+        try await waitUntil { state.phase == .listening }
+        await controller.cancel()
+
+        await controller.start()
+        await controller.stopAndInsert()
+        #expect(transformCalls == 0)
+    }
+}
+
+// MARK: - History recording
+
+@Suite("DictationController history")
+@MainActor
+struct DictationHistoryRecordingTests {
+    @Test("delivered dictation reports a pasted entry with mode and target")
+    func recordsPasted() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, _) = makeController(prefs: prefs, paster: paster, transcript: "note this")
+        var entries: [DictationHistoryEntry] = []
+        controller.onDelivered = { entries.append($0) }
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(entries.count == 1)
+        #expect(entries[0].text == "note this")
+        #expect(entries[0].rawText == nil)   // raw mode: text IS the raw transcript
+        #expect(entries[0].modeName == "Raw")
+        #expect(entries[0].delivery == .pasted)
+    }
+
+    @Test("transformed dictation keeps the raw transcript alongside")
+    func recordsRawAlongsideTransform() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let mode = DictationMode(
+            id: "test.shout", name: "Shout", symbolName: "bolt",
+            postProcess: .llm, instruction: "Shout."
+        )
+        let (controller, _) = makeController(
+            prefs: prefs, paster: paster, transcript: "quiet words",
+            activeMode: mode,
+            transform: { text, _, _ in text.uppercased() }
+        )
+        var entries: [DictationHistoryEntry] = []
+        controller.onDelivered = { entries.append($0) }
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(entries.count == 1)
+        #expect(entries[0].text == "QUIET WORDS")
+        #expect(entries[0].rawText == "quiet words")
+        #expect(entries[0].modeName == "Shout")
+    }
+
+    @Test("deny-listed target records a copied entry")
+    func recordsCopiedFallback() async {
+        let prefs = HarcPreferences()
+        prefs.addPasteDenyListBundleID("com.test.secret")
+        let paster = SpyPaster(frontmost: "com.test.secret")
+        let (controller, _) = makeController(prefs: prefs, paster: paster, transcript: "psst")
+        var entries: [DictationHistoryEntry] = []
+        controller.onDelivered = { entries.append($0) }
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(entries.count == 1)
+        #expect(entries[0].delivery == .copied)
+    }
+
+    @Test("cancelled sessions record nothing")
+    func cancelRecordsNothing() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, _) = makeController(prefs: prefs, paster: paster, transcript: "never delivered")
+        var entries: [DictationHistoryEntry] = []
+        controller.onDelivered = { entries.append($0) }
+
+        await controller.start()
+        await controller.cancel()
+
+        #expect(entries.isEmpty)
+    }
+}
+
+/// Poll until `condition` holds (hotkey handlers hop through Tasks).
+@MainActor
+private func waitUntil(
+    timeout: Duration = .seconds(2),
+    _ condition: () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() {
+        if ContinuousClock.now > deadline {
+            Issue.record("waitUntil timed out")
+            return
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}

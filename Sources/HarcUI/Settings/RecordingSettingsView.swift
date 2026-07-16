@@ -106,10 +106,12 @@ public struct RecordingSettingsView: View {
                         Text(style.displayName).tag(style)
                     }
                 }
+                Toggle("Keep dictation ready", isOn: $prefs.keepDictationWarm)
+                Toggle("Keep dictation history", isOn: $prefs.dictationHistoryEnabled)
             } header: {
                 Text("Dictation")
             } footer: {
-                Text("Push-to-talk: hold the key to dictate, release to insert. Toggle: tap to start and stop. Dictated text is inserted at the cursor in the frontmost app.")
+                Text("Push-to-talk: hold the key to dictate, release to insert. Toggle: tap to start and stop. Dictated text is inserted at the cursor in the frontmost app. Keep-ready holds the speech model in memory so the first dictation is instant; history keeps your last \(DictationHistoryStore.maxEntries) dictations on this Mac.")
             }
 
             Section {

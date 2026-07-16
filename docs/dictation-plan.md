@@ -155,6 +155,8 @@ Outcome: drop an audio/video file → transcribe → into the library (and optio
 - Onboarding: request Accessibility up-front in `WelcomeFlowView` (today it's lazy on first paste); add a dictation readiness row to `LocalStackHealth`.
 - Mode import/export (share a mode as JSON).
 
+**Phase 5 status: complete.** Keep-warm: `DictationKeepWarmController` pings `status()` every 10 min (pref `keepDictationWarm`, default on) — only when the daemon is already up, never launching it. History: `DictationHistoryStore` keeps the last 50 dictations (text, raw text when a mode transformed, mode, target app, pasted-vs-copied) as JSON in Application Support, recorded by the controller at delivery time, gated on `dictationHistoryEnabled` (default on; cancelled sessions never recorded); surfaced as a clock menu in the menu-bar dictation row (click = copy, Clear History). Per-mode hotkeys: `KeyboardShortcuts.Name.dictationMode(<id>)` recorded in the mode editor — pressing one dictates straight into that mode as a one-shot override without changing the active mode; deleted modes get their shortcut reset. Onboarding: a dictation step in `WelcomeFlowView` with a skippable "Enable Accessibility" CTA, plus a derived Dictation readiness row (STT + Accessibility) in `LocalStackHealth` that never blocks capture. Mode sharing: export/import `.harcmode` JSON via `DictationModeIO` (imports are never built-in; colliding ids regenerate). Extras: drag-hover highlight on the library window, inline "Test on a sample sentence" in the mode editor via the shared summarizer. Deferred: cancel-in-flight import (MediaImportService has no cooperative cancellation points; cancelling the task would abandon, not stop, the AVAssetReader/transcribe loop).
+
 ---
 
 ## Module placement (design note)

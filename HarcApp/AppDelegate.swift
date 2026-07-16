@@ -35,8 +35,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     // MARK: - Dictation
     let dictationState = DictationState()
     lazy var dictationModeStore = DictationModeStore(prefs: prefs)
+    lazy var dictationHistoryStore = DictationHistoryStore(prefs: prefs)
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
+    private var dictationKeepWarm: DictationKeepWarmController?
+    /// Mode ids that already have per-mode hotkey handlers registered.
+    /// KeyboardShortcuts has no per-name handler removal, so handlers are
+    /// registered once per id and no-op when the mode no longer exists.
+    private var registeredModeHotkeyIDs: Set<String> = []
 
     // MARK: - Media import
     let importState = MediaImportState()
@@ -133,7 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             rootView: StatusPopoverRoot(
                 bridge: bridge,
                 dictationState: dictationState,
-                dictationModeStore: dictationModeStore
+                dictationModeStore: dictationModeStore,
+                dictationHistoryStore: dictationHistoryStore
             )
                 .environmentObject(prefs)
         )
@@ -453,7 +460,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         controller.onBlockedByRecording = { [weak self] in
             self?.bridge.reportPaste(.skipped, message: "Stop the recording to dictate")
         }
+        controller.onDelivered = { [weak self] entry in
+            self?.dictationHistoryStore.record(entry)
+        }
         self.dictationController = controller
+
+        // Settings "Test" button for mode instructions.
+        bridge.testDictationTransform = { [weak self] mode, sample in
+            guard let self else { throw DictationTransformError.unavailable }
+            return try await self.transformDictation(text: sample, mode: mode)
+        }
+
+        // Keep the speech model resident so the first dictation after a
+        // break isn't slowed by the daemon's 30-min idle shutdown. Pings
+        // only an already-running daemon — never launches one.
+        let keepWarm = DictationKeepWarmController(
+            isDaemonRunning: {
+                guard FileManager.default.fileExists(atPath: HarcSTTClient.defaultSocketPath) else {
+                    return false
+                }
+                return (try? await HarcSTTClient().status()) != nil
+            },
+            ping: { _ = try? await HarcSTTClient().status() }
+        )
+        keepWarm.setEnabled(prefs.keepDictationWarm)
+        prefs.$keepDictationWarm
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak keepWarm] enabled in keepWarm?.setEnabled(enabled) }
+            .store(in: &cancellables)
+        self.dictationKeepWarm = keepWarm
+
+        // Per-mode hotkeys: dictate straight into a mode as a one-shot
+        // override. Re-synced whenever the mode list changes.
+        syncModeHotkeys(for: dictationModeStore.modes)
+        dictationModeStore.$modes
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] modes in self?.syncModeHotkeys(for: modes) }
+            .store(in: &cancellables)
 
         self.dictationHUD = DictationHUDPanel(
             state: dictationState,
@@ -487,6 +531,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             MainActor.assumeIsolated {
                 self?.dictationController?.handleHotkey(.keyUp)
             }
+        }
+    }
+
+    /// Register hotkey handlers for new modes and clear recorded shortcuts
+    /// for deleted ones. Handlers resolve the mode at fire time, so edits
+    /// apply immediately and stale handlers no-op.
+    private func syncModeHotkeys(for modes: [DictationMode]) {
+        let currentIDs = Set(modes.map(\.id))
+        for id in currentIDs.subtracting(registeredModeHotkeyIDs) {
+            registeredModeHotkeyIDs.insert(id)
+            let name = KeyboardShortcuts.Name.dictationMode(id)
+            KeyboardShortcuts.onKeyDown(for: name) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let mode = self.dictationModeStore.modes.first(where: { $0.id == id })
+                    else { return }
+                    self.dictationController?.handleModeHotkey(.keyDown, mode: mode)
+                }
+            }
+            KeyboardShortcuts.onKeyUp(for: name) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let mode = self.dictationModeStore.modes.first(where: { $0.id == id })
+                    else { return }
+                    self.dictationController?.handleModeHotkey(.keyUp, mode: mode)
+                }
+            }
+        }
+        // A deleted mode's recorded shortcut shouldn't linger in UserDefaults
+        // (its handler no-ops, but the key stays globally reserved).
+        for id in registeredModeHotkeyIDs.subtracting(currentIDs) {
+            KeyboardShortcuts.reset(.dictationMode(id))
         }
     }
 
@@ -1563,6 +1639,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             },
             onOpenSettings: { [weak self] in
                 self?.openSettings()
+            },
+            onEnableAccessibility: { [weak self] in
+                self?.presentAccessibilityPrompt()
             }
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
@@ -2251,6 +2330,7 @@ private struct StatusPopoverRoot: View {
     @ObservedObject var bridge: HarcAppBridge
     @ObservedObject var dictationState: DictationState
     @ObservedObject var dictationModeStore: DictationModeStore
+    @ObservedObject var dictationHistoryStore: DictationHistoryStore
     @EnvironmentObject private var prefs: HarcPreferences
 
     private var dictationStatusText: String? {
@@ -2313,7 +2393,10 @@ private struct StatusPopoverRoot: View {
             onStartDictation: bridge.onStartDictation,
             dictationModes: dictationModeStore.modes,
             activeDictationModeID: dictationModeStore.activeMode.id,
-            onSelectDictationMode: { dictationModeStore.setActiveMode(id: $0) }
+            onSelectDictationMode: { dictationModeStore.setActiveMode(id: $0) },
+            dictationHistory: dictationHistoryStore.entries,
+            onCopyDictationHistoryEntry: { FrontmostAppPaster.copyOnly($0.text) },
+            onClearDictationHistory: { dictationHistoryStore.clear() }
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }

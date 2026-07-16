@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 /// Observable state for the dictation flow, mirroring `RecordingState`'s role
 /// for meeting capture. Drives the dictation HUD and the menu-bar pill.
@@ -107,16 +108,26 @@ public enum DictationTriggerRouter {
 @MainActor
 public protocol DictationPasting {
     func frontmostBundleID() -> String?
+    /// Localized name of the frontmost app, for dictation history. Read at
+    /// the same moment as `frontmostBundleID()`.
+    func frontmostAppName() -> String?
     /// Insert text into the frontmost app (clipboard + synthetic paste).
     func insert(_ text: String) throws
     /// Copy without pasting (used when the target is deny-listed).
     func copyOnly(_ text: String)
 }
 
+public extension DictationPasting {
+    func frontmostAppName() -> String? { nil }
+}
+
 @MainActor
 public struct SystemDictationPaster: DictationPasting {
     public init() {}
     public func frontmostBundleID() -> String? { FrontmostAppPaster.frontmostBundleID() }
+    public func frontmostAppName() -> String? {
+        NSWorkspace.shared.frontmostApplication?.localizedName
+    }
     public func insert(_ text: String) throws { try FrontmostAppPaster.copyAndPaste(text) }
     public func copyOnly(_ text: String) { FrontmostAppPaster.copyOnly(text) }
 }
