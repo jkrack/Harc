@@ -1,4 +1,5 @@
 import SwiftUI
+import KeyboardShortcuts
 
 public struct WelcomeFlowStep: Identifiable {
     public let id: String
@@ -85,9 +86,9 @@ public final class WelcomeFlowModel: ObservableObject {
             id: "dictation",
             eyebrow: "Dictation",
             title: "Speak anywhere, type nowhere",
-            body: "Hold the dictation hotkey, speak, release — the text lands at your cursor in whatever app you're in. Modes can clean it up, turn it into an email, or answer a question about your selected text, all with the local model.",
+            body: "Hold the dictation hotkey (⌃⌥D out of the box), speak, release — the text lands at your cursor in whatever app you're in. Modes can clean it up, turn it into an email, or answer a question about your selected text, all with the local model.",
             primaryPoint: "Inserting at the cursor needs the Accessibility permission — enable it below or later from Settings.",
-            secondaryPoint: "Set the hotkey and modes in Settings once you're in.",
+            secondaryPoint: "Change the hotkey below; modes live in Settings.",
             symbolName: "mic.badge.plus",
             tint: .purple
         ),
@@ -294,14 +295,21 @@ public struct WelcomeFlowView: View {
                 }
                 .padding(.top, 4)
 
-                if model.selectedStep.id == WelcomeFlowModel.dictationStepID,
-                   let onEnableAccessibility {
-                    Button {
-                        onEnableAccessibility()
-                    } label: {
-                        Label("Enable Accessibility", systemImage: "accessibility")
+                if model.selectedStep.id == WelcomeFlowModel.dictationStepID {
+                    VStack(alignment: .leading, spacing: 10) {
+                        // Ready-to-use hotkey (ships with a ⌃⌥D default) —
+                        // re-recordable right here so "hold the hotkey" is
+                        // never a dead instruction.
+                        KeyboardShortcuts.Recorder("Dictation hotkey", name: .pushToTalkDictation)
+                        if let onEnableAccessibility {
+                            Button {
+                                onEnableAccessibility()
+                            } label: {
+                                Label("Enable Accessibility", systemImage: "accessibility")
+                            }
+                            .accessibilityIdentifier("harc.welcome.accessibility")
+                        }
                     }
-                    .accessibilityIdentifier("harc.welcome.accessibility")
                 }
             }
             .padding(28)

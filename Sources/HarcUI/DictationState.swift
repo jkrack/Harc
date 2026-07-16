@@ -2,51 +2,93 @@ import Foundation
 import Combine
 import AppKit
 
+/// How a finished dictation reached the user — drives the HUD end-state.
+public struct DictationDeliveryOutcome: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        /// Text was pasted at the cursor in the target app.
+        case inserted
+        /// Text was left on the clipboard only.
+        case copied
+    }
+
+    public var kind: Kind
+    /// User-facing end-state line, e.g. "Inserted into Mail".
+    public var message: String
+    /// True when the copy fallback happened because Accessibility is missing —
+    /// the HUD offers a fix action.
+    public var needsAccessibility: Bool
+
+    public init(kind: Kind, message: String, needsAccessibility: Bool = false) {
+        self.kind = kind
+        self.message = message
+        self.needsAccessibility = needsAccessibility
+    }
+}
+
 /// Observable state for the dictation flow, mirroring `RecordingState`'s role
 /// for meeting capture. Drives the dictation HUD and the menu-bar pill.
 @MainActor
 public final class DictationState: ObservableObject {
     public enum Phase: Equatable, Sendable {
         case idle
+        /// Waiting on the one-time microphone permission prompt.
+        case requestingMic
         case listening
+        /// The STT daemon was cold — the speech model is loading.
+        case loadingModel
         case transcribing
         /// LLM post-processing per the active dictation mode.
         case transforming
         case inserting
+        /// Brief end-state after delivery ("Inserted into Mail"). Display-only;
+        /// a new dictation may start during it.
+        case done(DictationDeliveryOutcome)
         case error(String)
     }
 
     @Published public private(set) var phase: Phase = .idle
     /// Recent normalized levels (0…1) for the HUD waveform, oldest → newest.
     @Published public private(set) var levelHistory: [Float] = []
-    /// Transient non-fatal note (e.g. "mode fell back to raw text"). Cleared
-    /// on the next phase change to `.idle` from a fresh start.
+    /// Transient non-fatal note (e.g. "mode fell back to raw text"). Rendered
+    /// in the delivery end-state; cleared on the next fresh start.
     @Published public private(set) var notice: String?
     /// Working context captured at dictation start (Super Mode). Empty when
     /// the active mode doesn't request context or capture was skipped.
     /// Drives the HUD context indicator; cleared when the session ends.
     @Published public private(set) var context: DictationContext = .empty
+    /// True when cancel needs a second click (long session guard). The HUD
+    /// turns its cancel button into an explicit "Discard".
+    @Published public private(set) var confirmingCancel: Bool = false
 
     public static let levelHistoryCount = 40
 
     public init() {}
 
     /// True while a dictation is in progress (used for mutual-exclusion with
-    /// meeting recording and for hotkey routing).
+    /// meeting recording and for hotkey routing). The `.done` afterglow and
+    /// `.error` are not active — a new dictation may start over them.
     public var isActive: Bool {
         switch phase {
-        case .listening, .transcribing, .transforming, .inserting: return true
-        case .idle, .error: return false
+        case .requestingMic, .listening, .loadingModel, .transcribing, .transforming, .inserting:
+            return true
+        case .idle, .done, .error:
+            return false
         }
     }
 
     public func setPhase(_ newPhase: Phase) {
         phase = newPhase
-        if case .idle = newPhase {
+        switch newPhase {
+        case .idle, .done, .error:
             levelHistory = []
             context = .empty
+            confirmingCancel = false
+        case .requestingMic:
+            notice = nil
+            confirmingCancel = false
+        case .listening, .loadingModel, .transcribing, .transforming, .inserting:
+            break
         }
-        if case .listening = newPhase { notice = nil }
     }
 
     public func setNotice(_ message: String?) {
@@ -55,6 +97,10 @@ public final class DictationState: ObservableObject {
 
     public func setContext(_ newContext: DictationContext) {
         context = newContext
+    }
+
+    public func setConfirmingCancel(_ value: Bool) {
+        confirmingCancel = value
     }
 
     public func pushLevel(_ value: Float) {
@@ -112,7 +158,8 @@ public protocol DictationPasting {
     /// the same moment as `frontmostBundleID()`.
     func frontmostAppName() -> String?
     /// Insert text into the frontmost app (clipboard + synthetic paste).
-    func insert(_ text: String) throws
+    /// Completes when the paste keystroke has actually been posted.
+    func insert(_ text: String) async throws
     /// Copy without pasting (used when the target is deny-listed).
     func copyOnly(_ text: String)
 }
@@ -123,11 +170,19 @@ public extension DictationPasting {
 
 @MainActor
 public struct SystemDictationPaster: DictationPasting {
-    public init() {}
+    /// Whether to restore the user's previous clipboard after the paste lands.
+    private let restoreClipboard: () -> Bool
+
+    public init(restoreClipboard: @escaping () -> Bool = { true }) {
+        self.restoreClipboard = restoreClipboard
+    }
+
     public func frontmostBundleID() -> String? { FrontmostAppPaster.frontmostBundleID() }
     public func frontmostAppName() -> String? {
         NSWorkspace.shared.frontmostApplication?.localizedName
     }
-    public func insert(_ text: String) throws { try FrontmostAppPaster.copyAndPaste(text) }
+    public func insert(_ text: String) async throws {
+        try await FrontmostAppPaster.copyAndPaste(text, restoreClipboard: restoreClipboard())
+    }
     public func copyOnly(_ text: String) { FrontmostAppPaster.copyOnly(text) }
 }

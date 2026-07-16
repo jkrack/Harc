@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Combine
 import HarcAudio
 @testable import HarcUI
 
@@ -23,11 +24,21 @@ private actor StubRecorder: DictationRecording {
 @MainActor
 private final class SpyPaster: DictationPasting {
     var frontmost: String?
+    var appName: String?
+    /// When set, `insert` throws instead of recording.
+    var insertError: Error?
     private(set) var inserted: [String] = []
     private(set) var copied: [String] = []
-    init(frontmost: String?) { self.frontmost = frontmost }
+    init(frontmost: String?, appName: String? = nil) {
+        self.frontmost = frontmost
+        self.appName = appName
+    }
     func frontmostBundleID() -> String? { frontmost }
-    func insert(_ text: String) throws { inserted.append(text) }
+    func frontmostAppName() -> String? { appName }
+    func insert(_ text: String) async throws {
+        if let insertError { throw insertError }
+        inserted.append(text)
+    }
     func copyOnly(_ text: String) { copied.append(text) }
 }
 
@@ -51,10 +62,16 @@ private func makeController(
     transcript: String = "hello world",
     activeMode: DictationMode = DictationMode.builtIns[0],
     transform: ((String, DictationMode, String?) async throws -> String)? = nil,
-    contextCapture: SpyContextCapture? = nil
+    contextCapture: SpyContextCapture? = nil,
+    micPermission: (() async -> DictationController.MicPermission)? = nil,
+    ensureDaemonReady: ((@escaping @MainActor () -> Void) async throws -> Void)? = nil,
+    cancelConfirmThreshold: TimeInterval = 30
 ) -> (DictationController, DictationState) {
     let state = DictationState()
     let spy = contextCapture ?? SpyContextCapture()
+    // Prefs are backed by shared UserDefaults — normalize the insertion
+    // behaviour so a prior test run's write can't leak into this one.
+    prefs.dictationInsertsAtCursor = true
     let controller = DictationController(
         state: state,
         recordingState: recordingState,
@@ -64,9 +81,19 @@ private func makeController(
         paster: paster,
         activeMode: { activeMode },
         transform: transform,
-        captureContext: { spy.capture($0, $1) }
+        captureContext: { spy.capture($0, $1) },
+        micPermission: micPermission ?? { .granted },
+        ensureDaemonReady: ensureDaemonReady,
+        cancelConfirmThreshold: cancelConfirmThreshold
     )
     return (controller, state)
+}
+
+/// The `.done` outcome, when the state is in the delivery end-state.
+@MainActor
+private func doneOutcome(_ state: DictationState) -> DictationDeliveryOutcome? {
+    if case .done(let outcome) = state.phase { return outcome }
+    return nil
 }
 
 // MARK: - Trigger routing
@@ -124,10 +151,10 @@ struct DictationStateTests {
 @Suite("DictationController")
 @MainActor
 struct DictationControllerTests {
-    @Test("happy path inserts transcript and returns to idle")
+    @Test("happy path inserts transcript and lands in the inserted end-state")
     func happyPath() async {
         let prefs = HarcPreferences()
-        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let paster = SpyPaster(frontmost: "com.example.texteditor", appName: "TextEditor")
         let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "the quick brown fox")
 
         await controller.start()
@@ -136,7 +163,9 @@ struct DictationControllerTests {
 
         #expect(paster.inserted == ["the quick brown fox"])
         #expect(paster.copied.isEmpty)
-        #expect(state.phase == .idle)
+        let outcome = doneOutcome(state)
+        #expect(outcome?.kind == .inserted)
+        #expect(outcome?.message == "Inserted into TextEditor")
     }
 
     @Test("refuses to start while a meeting recording is active")
@@ -160,16 +189,17 @@ struct DictationControllerTests {
         let prefs = HarcPreferences()
         prefs.addPasteDenyListBundleID("com.test.secret")
         let paster = SpyPaster(frontmost: "com.test.secret")
-        let (controller, _) = makeController(prefs: prefs, paster: paster, transcript: "sensitive text")
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "sensitive text")
 
         await controller.start()
         await controller.stopAndInsert()
 
         #expect(paster.inserted.isEmpty)
         #expect(paster.copied == ["sensitive text"])
+        #expect(doneOutcome(state)?.kind == .copied)
     }
 
-    @Test("empty transcript inserts nothing")
+    @Test("empty transcript inserts nothing and says so")
     func emptyTranscript() async {
         let prefs = HarcPreferences()
         let paster = SpyPaster(frontmost: "com.example.texteditor")
@@ -180,7 +210,222 @@ struct DictationControllerTests {
 
         #expect(paster.inserted.isEmpty)
         #expect(paster.copied.isEmpty)
+        guard case .error(let message) = state.phase else {
+            Issue.record("expected an error end-state, got \(state.phase)")
+            return
+        }
+        #expect(message.contains("No speech detected"))
+    }
+}
+
+// MARK: - Delivery outcomes
+
+@Suite("DictationController delivery outcomes")
+@MainActor
+struct DictationDeliveryOutcomeTests {
+    @Test("copy-only preference lands on the clipboard with a copied end-state")
+    func copyOnlyPreference() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "to clipboard")
+        prefs.dictationInsertsAtCursor = false
+        // Shared UserDefaults — leave the default behind for other tests.
+        defer { prefs.dictationInsertsAtCursor = true }
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted.isEmpty)
+        #expect(paster.copied == ["to clipboard"])
+        let outcome = doneOutcome(state)
+        #expect(outcome?.kind == .copied)
+        #expect(outcome?.message == "Copied to clipboard")
+        #expect(outcome?.needsAccessibility == false)
+    }
+
+    @Test("accessibility-denied insert falls back to copy and asks for the permission")
+    func accessibilityDeniedFallback() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        paster.insertError = FrontmostAppPaster.PasteError.accessibilityDenied
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "trapped words")
+        var askedForAccessibility = false
+        controller.onNeedsAccessibility = { askedForAccessibility = true }
+        var entries: [DictationHistoryEntry] = []
+        controller.onDelivered = { entries.append($0) }
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        // The words are never lost.
+        #expect(paster.copied == ["trapped words"])
+        let outcome = doneOutcome(state)
+        #expect(outcome?.kind == .copied)
+        #expect(outcome?.needsAccessibility == true)
+        #expect(outcome?.message.contains("Accessibility") == true)
+        #expect(askedForAccessibility)
+        #expect(entries.first?.delivery == .copied)
+    }
+
+    @Test("generic paste failure copies with an honest message")
+    func genericPasteFailure() async {
+        struct Boom: Error {}
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor", appName: "TextEditor")
+        paster.insertError = Boom()
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "words")
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(paster.copied == ["words"])
+        let outcome = doneOutcome(state)
+        #expect(outcome?.kind == .copied)
+        #expect(outcome?.needsAccessibility == false)
+        #expect(outcome?.message.contains("paste failed") == true)
+    }
+}
+
+// MARK: - Preflight & daemon readiness
+
+@Suite("DictationController preflight")
+@MainActor
+struct DictationPreflightTests {
+    @Test("denied mic permission surfaces an actionable error, capture never starts")
+    func micDenied() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster,
+            micPermission: { .denied }
+        )
+
+        await controller.start()
+
+        guard case .error(let message) = state.phase else {
+            Issue.record("expected error, got \(state.phase)")
+            return
+        }
+        #expect(message.contains("Microphone"))
+    }
+
+    @Test("hotkey release during the mic prompt aborts cleanly instead of racing")
+    func releaseDuringMicPrompt() async throws {
+        let prefs = HarcPreferences()
+        prefs.dictationTriggerStyle = .pushToTalk
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let gate = AsyncGate()
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster,
+            micPermission: { await gate.wait(); return .granted }
+        )
+
+        let startTask = Task { await controller.start() }
+        try await waitUntil { state.phase == .requestingMic }
+        // User releases the key while the permission prompt is up.
+        controller.handleHotkey(.keyUp)
+        await gate.open()
+        await startTask.value
+
         #expect(state.phase == .idle)
+        #expect(paster.inserted.isEmpty)
+    }
+
+    @Test("cold daemon surfaces the loading-model phase before transcribing")
+    func coldDaemonShowsLoading() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var phases: [DictationState.Phase] = []
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "warm words",
+            ensureDaemonReady: { onColdStart in onColdStart() }
+        )
+        let observation = state.$phase.sink { phases.append($0) }
+        defer { observation.cancel() }
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(phases.contains(.loadingModel))
+        #expect(paster.inserted == ["warm words"])
+    }
+}
+
+// MARK: - Cancel confirmation
+
+@Suite("DictationController cancel confirmation")
+@MainActor
+struct DictationCancelConfirmTests {
+    @Test("short sessions cancel immediately")
+    func shortSessionCancels() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, cancelConfirmThreshold: 30
+        )
+
+        await controller.start()
+        await controller.cancel()
+
+        #expect(state.phase == .idle)
+        #expect(!state.confirmingCancel)
+    }
+
+    @Test("long sessions arm a confirmation; the second cancel discards")
+    func longSessionNeedsConfirm() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        // Threshold 0 = every session counts as long.
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, cancelConfirmThreshold: 0
+        )
+
+        await controller.start()
+        try? await Task.sleep(for: .milliseconds(10))
+        await controller.cancel()
+        // First cancel arms the confirmation and keeps listening.
+        #expect(state.phase == .listening)
+        #expect(state.confirmingCancel)
+
+        await controller.cancel()
+        #expect(state.phase == .idle)
+        #expect(!state.confirmingCancel)
+    }
+
+    @Test("stopping clears an armed cancel confirmation")
+    func stopClearsConfirm() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "kept words",
+            cancelConfirmThreshold: 0
+        )
+
+        await controller.start()
+        try? await Task.sleep(for: .milliseconds(10))
+        await controller.cancel()
+        #expect(state.confirmingCancel)
+
+        await controller.stopAndInsert()
+        #expect(paster.inserted == ["kept words"])
+        #expect(!state.confirmingCancel)
+    }
+}
+
+/// Simple async gate for suspending a seam until the test releases it.
+private actor AsyncGate {
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuations.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        for continuation in continuations { continuation.resume() }
+        continuations.removeAll()
     }
 }
 
@@ -213,7 +458,7 @@ struct DictationModeRoutingTests {
 
         #expect(paster.inserted == ["polished words"])
         #expect(state.notice == nil)
-        #expect(state.phase == .idle)
+        #expect(doneOutcome(state)?.kind == .inserted)
     }
 
     @Test("transform failure falls back to raw text with a notice")
@@ -231,8 +476,10 @@ struct DictationModeRoutingTests {
         await controller.stopAndInsert()
 
         #expect(paster.inserted == ["raw words"])
-        #expect(state.notice?.contains("Test LLM") == true)
-        #expect(state.phase == .idle)
+        // The raw-fallback notice is user-visible in the delivery end-state.
+        let outcome = doneOutcome(state)
+        #expect(outcome?.message.contains("Test LLM") == true)
+        #expect(outcome?.message.contains("raw text") == true)
     }
 
     @Test("empty transform result falls back to raw text")

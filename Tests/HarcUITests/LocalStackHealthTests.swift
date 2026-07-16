@@ -163,6 +163,18 @@ struct LocalStackHealthTests {
         #expect(noSTT?.action == nil)
     }
 
+    @Test("dictation row reports a cleared hotkey instead of claiming readiness")
+    func dictationRowHotkeyCleared() {
+        var input = fullyReadyCaptureInput
+        input.dictationHotkeySet = false
+        let items = CaptureReadinessResolver.resolve(input)
+        let row = items.first { $0.id == .dictation }
+        #expect(row?.level == .optionalOff)
+        #expect(row?.detail == "Set a dictation hotkey in Settings")
+        // Never blocks core capture.
+        #expect(CaptureReadinessResolver.summary(for: items) != "Recording blocked")
+    }
+
     private func localItems(for input: CaptureReadinessInput) -> [LocalStackHealthItem] {
         LocalStackHealthModel.items(for: CaptureReadinessResolver.resolve(input))
     }

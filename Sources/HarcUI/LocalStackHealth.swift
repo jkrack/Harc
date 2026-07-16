@@ -91,6 +91,9 @@ public struct CaptureReadinessInput: Equatable, Sendable {
     public var notificationsText: String
     public var pastePermissionReady: Bool
     public var pastePermissionText: String
+    /// A dictation shortcut is actually recorded (there's a shipped default,
+    /// so this is only false when the user explicitly cleared it).
+    public var dictationHotkeySet: Bool
     public var pendingRecoveryCount: Int
 
     public init(
@@ -110,6 +113,7 @@ public struct CaptureReadinessInput: Equatable, Sendable {
         notificationsText: String,
         pastePermissionReady: Bool,
         pastePermissionText: String,
+        dictationHotkeySet: Bool = true,
         pendingRecoveryCount: Int = 0
     ) {
         self.destinationReady = destinationReady
@@ -128,6 +132,7 @@ public struct CaptureReadinessInput: Equatable, Sendable {
         self.notificationsText = notificationsText
         self.pastePermissionReady = pastePermissionReady
         self.pastePermissionText = pastePermissionText
+        self.dictationHotkeySet = dictationHotkeySet
         self.pendingRecoveryCount = pendingRecoveryCount
     }
 }
@@ -267,25 +272,28 @@ public enum CaptureReadinessResolver {
         )
     }
 
-    /// Dictation readiness is derived: it needs local STT plus the
-    /// Accessibility (paste) permission to insert at the cursor. Optional —
-    /// a missing piece never makes core capture look blocked.
+    /// Dictation readiness is derived: it needs local STT, the Accessibility
+    /// (paste) permission to insert at the cursor, and an actual recorded
+    /// hotkey (there's a shipped default, but the user can clear it).
+    /// Optional — a missing piece never makes core capture look blocked.
     private static func dictationItem(_ input: CaptureReadinessInput) -> CaptureReadinessItem {
-        let ready = input.localSTTReady && input.pastePermissionReady
+        let ready = input.localSTTReady && input.pastePermissionReady && input.dictationHotkeySet
         let detail: String
         if ready {
             detail = "Hold the dictation hotkey and speak"
         } else if !input.localSTTReady {
             detail = "Needs local STT"
-        } else {
+        } else if !input.pastePermissionReady {
             detail = "Needs Accessibility to insert text"
+        } else {
+            detail = "Set a dictation hotkey in Settings"
         }
         return CaptureReadinessItem(
             id: .dictation,
             title: "Dictation",
             detail: detail,
             level: ready ? .ready : .optionalOff,
-            action: (!ready && input.localSTTReady) ? .openAccessibility : nil
+            action: (!ready && input.localSTTReady && !input.pastePermissionReady) ? .openAccessibility : nil
         )
     }
 }
@@ -340,6 +348,7 @@ struct LocalStackHealthInput: Equatable {
     var notificationsText: String
     var accessibilityReady: Bool
     var accessibilityText: String
+    var dictationHotkeySet: Bool = true
     var pendingRecoveryCount: Int = 0
 }
 
@@ -462,6 +471,7 @@ enum LocalStackHealthModel {
             notificationsText: input.notificationsText,
             pastePermissionReady: input.accessibilityReady,
             pastePermissionText: input.accessibilityText,
+            dictationHotkeySet: input.dictationHotkeySet,
             pendingRecoveryCount: input.pendingRecoveryCount
         )
     }

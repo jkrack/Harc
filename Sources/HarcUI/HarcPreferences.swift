@@ -34,7 +34,11 @@ public final class HarcPreferences: ObservableObject {
         static let dictationTriggerStyle = "harc.dictationTriggerStyle"
         static let activeDictationModeID = "harc.activeDictationModeID"
         static let keepDictationWarm = "harc.keepDictationWarm"
+        static let keepDictationWarmWindow = "harc.keepDictationWarmWindow"
         static let dictationHistoryEnabled = "harc.dictationHistoryEnabled"
+        static let dictationInsertsAtCursor = "harc.dictationInsertsAtCursor"
+        static let restoreClipboardAfterInsert = "harc.restoreClipboardAfterInsert"
+        static let dictationSoundsEnabled = "harc.dictationSoundsEnabled"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -70,6 +74,34 @@ public final class HarcPreferences: ObservableObject {
             switch self {
             case .pushToTalk: return "Push to talk (hold)"
             case .toggle: return "Toggle (tap on / off)"
+            }
+        }
+    }
+
+    /// How long after the last dictation the keep-warm pinger holds the
+    /// speech model resident. Maps to `DictationKeepWarmController`'s active
+    /// window; `always` never lets the daemon idle out.
+    public enum DictationKeepWarmWindow: String, CaseIterable, Identifiable {
+        case oneHour
+        case fourHours
+        case always
+
+        public var id: String { rawValue }
+
+        public var displayName: String {
+            switch self {
+            case .oneHour: return "For 1 hour after use"
+            case .fourHours: return "For 4 hours after use"
+            case .always: return "Always"
+            }
+        }
+
+        /// Seconds since the last dictation to keep pinging; nil = no limit.
+        public var activeWindow: TimeInterval? {
+            switch self {
+            case .oneHour: return 60 * 60
+            case .fourHours: return 4 * 60 * 60
+            case .always: return nil
             }
         }
     }
@@ -250,6 +282,29 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(dictationHistoryEnabled, forKey: Key.dictationHistoryEnabled) }
     }
 
+    /// How long the keep-warm pinger holds the speech model after the last
+    /// dictation. Only meaningful while `keepDictationWarm` is on.
+    @Published public var keepDictationWarmWindow: DictationKeepWarmWindow {
+        didSet { UserDefaults.standard.set(keepDictationWarmWindow.rawValue, forKey: Key.keepDictationWarmWindow) }
+    }
+
+    /// Insert dictated text at the cursor (paste). When off, dictations land
+    /// on the clipboard only.
+    @Published public var dictationInsertsAtCursor: Bool {
+        didSet { UserDefaults.standard.set(dictationInsertsAtCursor, forKey: Key.dictationInsertsAtCursor) }
+    }
+
+    /// Put the user's previous clipboard contents back after a dictation
+    /// paste lands.
+    @Published public var restoreClipboardAfterInsert: Bool {
+        didSet { UserDefaults.standard.set(restoreClipboardAfterInsert, forKey: Key.restoreClipboardAfterInsert) }
+    }
+
+    /// Subtle start/stop/success sounds around dictation.
+    @Published public var dictationSoundsEnabled: Bool {
+        didSet { UserDefaults.standard.set(dictationSoundsEnabled, forKey: Key.dictationSoundsEnabled) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -305,7 +360,12 @@ public final class HarcPreferences: ObservableObject {
         self.dictationTriggerStyle = DictationTriggerStyle(rawValue: rawDictationTriggerStyle) ?? .pushToTalk
         self.activeDictationModeID = defaults.string(forKey: Key.activeDictationModeID) ?? DictationMode.rawID
         self.keepDictationWarm = defaults.object(forKey: Key.keepDictationWarm) as? Bool ?? true
+        let rawKeepWarmWindow = defaults.string(forKey: Key.keepDictationWarmWindow) ?? DictationKeepWarmWindow.always.rawValue
+        self.keepDictationWarmWindow = DictationKeepWarmWindow(rawValue: rawKeepWarmWindow) ?? .always
         self.dictationHistoryEnabled = defaults.object(forKey: Key.dictationHistoryEnabled) as? Bool ?? true
+        self.dictationInsertsAtCursor = defaults.object(forKey: Key.dictationInsertsAtCursor) as? Bool ?? true
+        self.restoreClipboardAfterInsert = defaults.object(forKey: Key.restoreClipboardAfterInsert) as? Bool ?? true
+        self.dictationSoundsEnabled = defaults.object(forKey: Key.dictationSoundsEnabled) as? Bool ?? true
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {

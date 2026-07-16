@@ -8,6 +8,7 @@ public struct HarcSettingsForm: View {
         Form {
             GeneralSettingsView()
             RecordingSettingsView()
+            DictationSettingsView()
             DictationModesSettingsView()
             ProcessingSettingsView()
             ModelsSettingsView()

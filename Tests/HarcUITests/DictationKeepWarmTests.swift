@@ -89,4 +89,48 @@ struct DictationKeepWarmTests {
         controller.stop()
         #expect(!controller.isRunning)
     }
+
+    @Test("stops pinging once the active window since last dictation elapses")
+    func activeWindowElapses() async throws {
+        let pings = Counter()
+        // Deterministic clock: pretend the last activity was 10 minutes ago
+        // against a 1-minute window — the loop must idle, never ping.
+        nonisolated(unsafe) var fakeNow = Date()
+        let controller = DictationKeepWarmController(
+            interval: 0.02,
+            activeWindow: 60,
+            isDaemonRunning: { true },
+            ping: { await pings.bump() },
+            now: { fakeNow }
+        )
+        controller.setEnabled(true)
+        fakeNow = fakeNow.addingTimeInterval(10 * 60)
+        #expect(!controller.withinActiveWindow)
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(pings.count == 0)
+
+        // A new dictation re-opens the window and pinging resumes.
+        controller.noteActivity()
+        #expect(controller.withinActiveWindow)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while pings.count < 1, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        controller.stop()
+        #expect(pings.count >= 1)
+    }
+
+    @Test("nil active window never expires")
+    func unboundedWindow() {
+        nonisolated(unsafe) var fakeNow = Date()
+        let controller = DictationKeepWarmController(
+            interval: 60,
+            activeWindow: nil,
+            isDaemonRunning: { true },
+            ping: {},
+            now: { fakeNow }
+        )
+        fakeNow = fakeNow.addingTimeInterval(365 * 24 * 3600)
+        #expect(controller.withinActiveWindow)
+    }
 }

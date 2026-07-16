@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
     private var dictationKeepWarm: DictationKeepWarmController?
+    private var hudDismissTask: Task<Void, Never>?
+    private var lastDictationPhase: DictationState.Phase = .idle
     /// Mode ids that already have per-mode hotkey handlers registered.
     /// KeyboardShortcuts has no per-name handler removal, so handlers are
     /// registered once per id and no-op when the mode no longer exists.
@@ -140,7 +142,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 bridge: bridge,
                 dictationState: dictationState,
                 dictationModeStore: dictationModeStore,
-                dictationHistoryStore: dictationHistoryStore
+                dictationHistoryStore: dictationHistoryStore,
+                onStopDictation: { [weak self] in
+                    Task { await self?.dictationController?.stopAndInsert() }
+                },
+                onCancelDictation: { [weak self] in
+                    Task { await self?.dictationController?.cancel() }
+                }
             )
                 .environmentObject(prefs)
         )
@@ -150,11 +158,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     @objc private func handleStatusItemClick(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp {
-            toggleStatusPopover(sender)
+            showQuickModeMenu()
             return
         }
 
         toggleStatusPopover(sender)
+    }
+
+    /// Right-click on the status item: quick mode switch + start dictation,
+    /// without opening the full panel (mirrors SuperWhisper's mini-window
+    /// context menu).
+    private func showQuickModeMenu() {
+        guard let item = statusItem else { return }
+        let menu = NSMenu()
+        for mode in dictationModeStore.modes {
+            let entry = NSMenuItem(
+                title: mode.name,
+                action: #selector(quickMenuSelectMode(_:)),
+                keyEquivalent: ""
+            )
+            entry.target = self
+            entry.representedObject = mode.id
+            entry.state = mode.id == dictationModeStore.activeMode.id ? .on : .off
+            menu.addItem(entry)
+        }
+        menu.addItem(.separator())
+        let dictate = NSMenuItem(
+            title: "Start Dictation",
+            action: #selector(quickMenuStartDictation(_:)),
+            keyEquivalent: ""
+        )
+        dictate.target = self
+        menu.addItem(dictate)
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(quickMenuOpenSettings(_:)),
+            keyEquivalent: ""
+        )
+        settings.target = self
+        menu.addItem(settings)
+
+        // Assign-click-clear is the standard trick for a right-click-only
+        // NSStatusItem menu alongside a left-click action.
+        item.menu = menu
+        item.button?.performClick(nil)
+        DispatchQueue.main.async { [weak item] in item?.menu = nil }
+    }
+
+    @objc private func quickMenuSelectMode(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        dictationModeStore.setActiveMode(id: id)
+    }
+
+    @objc private func quickMenuStartDictation(_ sender: NSMenuItem) {
+        Task { await dictationController?.start() }
+    }
+
+    @objc private func quickMenuOpenSettings(_ sender: NSMenuItem) {
+        bridge.onOpenSettings()
     }
 
     private func toggleStatusPopover(_ sender: Any?) {
@@ -174,7 +235,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         button.image = menuBarHummingbirdImage()
         button.imagePosition = .imageOnly
         button.contentTintColor = statusIconTint(isRecording: isRecording, pasteFlash: pasteFlash)
-        button.toolTip = isRecording ? "Harc is recording. Click for controls." : "Harc. Click to record."
+        button.toolTip = statusIconToolTip(isRecording: isRecording)
+    }
+
+    private func statusIconToolTip(isRecording: Bool) -> String {
+        switch dictationState.phase {
+        case .listening: return "Harc is listening — dictation in progress."
+        case .requestingMic, .loadingModel, .transcribing, .transforming, .inserting:
+            return "Harc is processing your dictation."
+        case .idle, .done, .error:
+            return isRecording ? "Harc is recording. Click for controls." : "Harc. Click to record, right-click for modes."
+        }
     }
 
     private func menuBarHummingbirdImage() -> NSImage {
@@ -195,6 +266,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             case .skipped: return .systemYellow
             case .failure: return .systemRed
             }
+        }
+        // Dictation mirrors SuperWhisper's menu-bar state colors: red while
+        // listening, blue while processing, a green beat on success.
+        switch dictationState.phase {
+        case .listening: return .systemRed
+        case .requestingMic, .loadingModel: return .systemYellow
+        case .transcribing, .transforming, .inserting: return .systemBlue
+        case .done(let outcome): return outcome.kind == .inserted ? .systemGreen : .systemYellow
+        case .error: return .systemOrange
+        case .idle: break
         }
         return isRecording ? .systemRed : nil
     }
@@ -441,12 +522,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             recordingState: state,
             prefs: prefs,
             recorderFactory: { MicDictationRecorder() },
-            transcribe: { [launcher] path in
-                // Keep-warm is a Phase 2 TODO; ensure the daemon is up per call.
-                _ = try await launcher.ensureRunning()
-                return try await HarcSTTClient().dictate(audioPath: path)
+            transcribe: { path in
+                try await HarcSTTClient().dictate(audioPath: path)
             },
-            paster: SystemDictationPaster(),
+            paster: SystemDictationPaster(restoreClipboard: { [weak self] in
+                self?.prefs.restoreClipboardAfterInsert ?? true
+            }),
             activeMode: { [weak self] in
                 self?.dictationModeStore.activeMode ?? DictationMode.builtIns[0]
             },
@@ -455,6 +536,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 return try await self.transformDictation(
                     text: text, mode: mode, contextBlock: contextBlock
                 )
+            },
+            ensureDaemonReady: { [launcher] onColdStart in
+                // Cold daemon → let the UI show "Loading speech model…".
+                var warm = false
+                if FileManager.default.fileExists(atPath: HarcSTTClient.defaultSocketPath) {
+                    warm = (try? await HarcSTTClient().status()) != nil
+                }
+                if !warm { onColdStart() }
+                _ = try await launcher.ensureRunning()
             }
         )
         controller.onBlockedByRecording = { [weak self] in
@@ -462,6 +552,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         controller.onDelivered = { [weak self] entry in
             self?.dictationHistoryStore.record(entry)
+            self?.dictationKeepWarm?.noteActivity()
+        }
+        controller.onNeedsAccessibility = { [weak self] in
+            self?.presentAccessibilityPrompt()
         }
         self.dictationController = controller
 
@@ -475,6 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // break isn't slowed by the daemon's 30-min idle shutdown. Pings
         // only an already-running daemon — never launches one.
         let keepWarm = DictationKeepWarmController(
+            activeWindow: prefs.keepDictationWarmWindow.activeWindow,
             isDaemonRunning: {
                 guard FileManager.default.fileExists(atPath: HarcSTTClient.defaultSocketPath) else {
                     return false
@@ -489,6 +584,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .receive(on: DispatchQueue.main)
             .sink { [weak keepWarm] enabled in keepWarm?.setEnabled(enabled) }
             .store(in: &cancellables)
+        prefs.$keepDictationWarmWindow
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak keepWarm] window in keepWarm?.setActiveWindow(window.activeWindow) }
+            .store(in: &cancellables)
         self.dictationKeepWarm = keepWarm
 
         // Per-mode hotkeys: dictate straight into a mode as a one-shot
@@ -502,16 +602,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         self.dictationHUD = DictationHUDPanel(
             state: dictationState,
             modeStore: dictationModeStore,
-            prefs: prefs,
             onStop: { [weak self] in Task { await self?.dictationController?.stopAndInsert() } },
-            onCancel: { [weak self] in Task { await self?.dictationController?.cancel() } }
+            onCancel: { [weak self] in Task { await self?.dictationController?.cancel() } },
+            onDismiss: { [weak self] in self?.dictationController?.dismissAfterglow() },
+            onFixAccessibility: { [weak self] in
+                self?.dictationController?.dismissAfterglow()
+                self?.presentAccessibilityPrompt()
+            }
         )
 
         dictationState.$phase
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] phase in
-                self?.updateDictationHUD(for: phase)
+                guard let self else { return }
+                self.playDictationSound(from: self.lastDictationPhase, to: phase)
+                self.lastDictationPhase = phase
+                self.updateDictationHUD(for: phase)
+                self.updateStatusIcon()
             }
             .store(in: &cancellables)
 
@@ -599,21 +707,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func updateDictationHUD(for phase: DictationState.Phase) {
+        hudDismissTask?.cancel()
+        hudDismissTask = nil
         switch phase {
         case .idle:
             dictationHUD?.hide()
-        case .listening, .transcribing, .transforming, .inserting:
+        case .requestingMic, .loadingModel, .listening, .transcribing, .transforming, .inserting:
             dictationHUD?.show()
+        case .done:
+            // Success beat: linger long enough to read the outcome, then fade.
+            dictationHUD?.show()
+            hudDismissTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1.6))
+                guard let self, !Task.isCancelled else { return }
+                if case .done = self.dictationState.phase {
+                    self.dictationState.setPhase(.idle)
+                }
+            }
         case .error:
+            // Errors stay readable — 6s, or dismissed from the HUD's ✕.
             dictationHUD?.show()
-            // Auto-clear a transient error back to idle after a moment.
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(2.5))
-                guard let self else { return }
+            hudDismissTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(6))
+                guard let self, !Task.isCancelled else { return }
                 if case .error = self.dictationState.phase {
                     self.dictationState.setPhase(.idle)
                 }
             }
+        }
+    }
+
+    /// Subtle audio cues around dictation (pref-gated): start, stop, and a
+    /// success tone when text lands.
+    private func playDictationSound(from oldPhase: DictationState.Phase, to newPhase: DictationState.Phase) {
+        guard prefs.dictationSoundsEnabled else { return }
+        func play(_ name: String, volume: Float = 0.35) {
+            guard let sound = NSSound(named: name) else { return }
+            sound.volume = volume
+            sound.play()
+        }
+        switch (oldPhase, newPhase) {
+        case (_, .listening):
+            play("Pop")
+        case (.listening, .transcribing), (.listening, .loadingModel):
+            play("Tink")
+        case (_, .done(let outcome)) where outcome.kind == .inserted:
+            play("Glass", volume: 0.25)
+        default:
+            break
         }
     }
 
@@ -1499,21 +1640,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             bridge.reportPaste(.skipped, message: "Copied. Paste blocked for \(target).")
             return
         case .paste:
-            do {
-                try FrontmostAppPaster.copyAndPaste(blob)
-                bridge.reportPaste(.success, message: "Pasted into \(bridge.frontmostAppName ?? "frontmost app").")
-            } catch FrontmostAppPaster.PasteError.accessibilityDenied {
-                bridge.reportPaste(.failure, message: "Copied. Enable Accessibility to paste.")
-                // Re-prompt every paste failure: the prompt itself notes that
-                // the transcript is already on the clipboard, so re-showing it
-                // is informative rather than annoying. A user who chose
-                // "Later" once may want to act the next time auto-paste
-                // silently failed.
-                presentAccessibilityPrompt()
-            } catch {
-                bridge.reportPaste(.failure, message: "Copied. Paste failed.")
-                // Paste error is silently swallowed; transcript is already on clipboard.
-                break
+            // Meeting transcripts deliberately never restore the clipboard —
+            // "prompt blob on the clipboard" is the product behaviour.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await FrontmostAppPaster.copyAndPaste(blob)
+                    self.bridge.reportPaste(.success, message: "Pasted into \(self.bridge.frontmostAppName ?? "frontmost app").")
+                } catch FrontmostAppPaster.PasteError.accessibilityDenied {
+                    self.bridge.reportPaste(.failure, message: "Copied. Enable Accessibility to paste.")
+                    // Re-prompt every paste failure: the prompt itself notes that
+                    // the transcript is already on the clipboard, so re-showing it
+                    // is informative rather than annoying. A user who chose
+                    // "Later" once may want to act the next time auto-paste
+                    // silently failed.
+                    self.presentAccessibilityPrompt()
+                } catch {
+                    self.bridge.reportPaste(.failure, message: "Copied. Paste failed.")
+                }
             }
         }
     }
@@ -2331,16 +2475,21 @@ private struct StatusPopoverRoot: View {
     @ObservedObject var dictationState: DictationState
     @ObservedObject var dictationModeStore: DictationModeStore
     @ObservedObject var dictationHistoryStore: DictationHistoryStore
+    let onStopDictation: () -> Void
+    let onCancelDictation: () -> Void
     @EnvironmentObject private var prefs: HarcPreferences
 
     private var dictationStatusText: String? {
         switch dictationState.phase {
         case .idle: return nil
+        case .requestingMic: return "Waiting for microphone access…"
+        case .loadingModel: return "Loading speech model…"
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
         case .transforming: return "\(dictationModeStore.activeMode.name)…"
         case .inserting: return "Inserting…"
-        case .error: return "Dictation failed"
+        case .done(let outcome): return outcome.message
+        case .error(let message): return message
         }
     }
 
@@ -2391,6 +2540,8 @@ private struct StatusPopoverRoot: View {
             dictationActive: dictationState.isActive,
             dictationStatusText: dictationStatusText,
             onStartDictation: bridge.onStartDictation,
+            onStopDictation: onStopDictation,
+            onCancelDictation: onCancelDictation,
             dictationModes: dictationModeStore.modes,
             activeDictationModeID: dictationModeStore.activeMode.id,
             onSelectDictationMode: { dictationModeStore.setActiveMode(id: $0) },

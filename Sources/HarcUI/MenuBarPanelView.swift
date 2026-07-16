@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import KeyboardShortcuts
 import HarcCore
 import HarcStore
 
@@ -51,6 +52,8 @@ public struct MenuBarPanelView: View {
     let dictationActive: Bool
     let dictationStatusText: String?
     let onStartDictation: (() -> Void)?
+    let onStopDictation: (() -> Void)?
+    let onCancelDictation: (() -> Void)?
     let dictationModes: [DictationMode]
     let activeDictationModeID: String?
     let onSelectDictationMode: ((String) -> Void)?
@@ -107,6 +110,8 @@ public struct MenuBarPanelView: View {
         dictationActive: Bool = false,
         dictationStatusText: String? = nil,
         onStartDictation: (() -> Void)? = nil,
+        onStopDictation: (() -> Void)? = nil,
+        onCancelDictation: (() -> Void)? = nil,
         dictationModes: [DictationMode] = [],
         activeDictationModeID: String? = nil,
         onSelectDictationMode: ((String) -> Void)? = nil,
@@ -159,6 +164,8 @@ public struct MenuBarPanelView: View {
         self.dictationActive = dictationActive
         self.dictationStatusText = dictationStatusText
         self.onStartDictation = onStartDictation
+        self.onStopDictation = onStopDictation
+        self.onCancelDictation = onCancelDictation
         self.dictationModes = dictationModes
         self.activeDictationModeID = activeDictationModeID
         self.onSelectDictationMode = onSelectDictationMode
@@ -172,10 +179,26 @@ public struct MenuBarPanelView: View {
         HStack(spacing: 8) {
             Image(systemName: "mic.fill")
                 .foregroundStyle(dictationActive ? HarcBrand.live : .secondary)
-            Text(dictationActive ? (dictationStatusText ?? "Dictating…") : "Dictation")
+            // Status text renders for any non-idle phase — including the
+            // done/error afterglow, which isn't "active".
+            Text(dictationStatusText ?? "Dictation")
                 .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer()
-            if !dictationActive {
+            if dictationActive {
+                if let onCancelDictation {
+                    Button("Cancel") { onCancelDictation() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                if let onStopDictation {
+                    Button("Stop") { onStopDictation() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(HarcBrand.live)
+                        .controlSize(.small)
+                }
+            } else {
                 if let onCopyDictationHistoryEntry, !dictationHistory.isEmpty {
                     dictationHistoryMenu(onCopyDictationHistoryEntry)
                 }
@@ -197,9 +220,9 @@ public struct MenuBarPanelView: View {
                     onSelect(mode.id)
                 } label: {
                     if mode.id == activeDictationModeID {
-                        Label(mode.name, systemImage: "checkmark")
+                        Label(DictationHUDView.menuTitle(for: mode), systemImage: "checkmark")
                     } else {
-                        Label(mode.name, systemImage: mode.symbolName)
+                        Label(DictationHUDView.menuTitle(for: mode), systemImage: mode.symbolName)
                     }
                 }
             }
@@ -220,6 +243,9 @@ public struct MenuBarPanelView: View {
                     onCopy(entry)
                 } label: {
                     Text(Self.historyLabel(for: entry))
+                        // Voice-vs-AI peek: raw transcript when a mode
+                        // transformed the delivered text.
+                        .help(entry.rawText.map { "Raw transcript: \($0)" } ?? "")
                 }
             }
             if let onClearDictationHistory {
@@ -455,6 +481,7 @@ public struct MenuBarPanelView: View {
             notificationsText: notificationsReadinessText,
             accessibilityReady: accessibilityReady,
             accessibilityText: accessibilityReadinessText,
+            dictationHotkeySet: KeyboardShortcuts.getShortcut(for: .pushToTalkDictation) != nil,
             pendingRecoveryCount: RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
         )
     }

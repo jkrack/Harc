@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import HarcUI
 
@@ -12,23 +13,29 @@ import HarcUI
 @MainActor
 final class DictationHUDPanel {
     private let panel: NSPanel
+    private let hosting: NSHostingController<DictationHUDView>
+    private var phaseObserver: AnyCancellable?
+    private var isVisible = false
 
     init(
         state: DictationState,
         modeStore: DictationModeStore,
-        prefs: HarcPreferences,
         onStop: @escaping () -> Void,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        onDismiss: @escaping () -> Void = {},
+        onFixAccessibility: @escaping () -> Void = {}
     ) {
         let hosting = NSHostingController(
             rootView: DictationHUDView(
                 state: state,
                 modeStore: modeStore,
-                prefs: prefs,
                 onStop: onStop,
-                onCancel: onCancel
+                onCancel: onCancel,
+                onDismiss: onDismiss,
+                onFixAccessibility: onFixAccessibility
             )
         )
+        self.hosting = hosting
         let panel = NSPanel(contentViewController: hosting)
         panel.styleMask = [.borderless, .nonactivatingPanel]
         panel.isFloatingPanel = true
@@ -42,21 +49,64 @@ final class DictationHUDPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.setContentSize(hosting.view.fittingSize)
         self.panel = panel
+
+        // The capsule's width changes with phase (waveform vs status text vs
+        // end-state message) — re-fit and re-center so nothing clips.
+        phaseObserver = state.$phase
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refitIfVisible()
+            }
     }
 
     func show() {
-        positionBottomCenter()
-        // orderFrontRegardless shows the panel without activating Harc.
-        panel.orderFrontRegardless()
+        refit()
+        position()
+        if !isVisible {
+            isVisible = true
+            panel.alphaValue = 0
+            // orderFrontRegardless shows the panel without activating Harc.
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.16
+                panel.animator().alphaValue = 1
+            }
+        }
     }
 
     func hide() {
-        panel.orderOut(nil)
+        guard isVisible else { return }
+        isVisible = false
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            guard let self, !self.isVisible else { return }
+            self.panel.orderOut(nil)
+            self.panel.alphaValue = 1
+        })
     }
 
-    private func positionBottomCenter() {
+    private func refitIfVisible() {
+        guard isVisible else { return }
+        refit()
+        position()
+    }
+
+    private func refit() {
+        hosting.view.layoutSubtreeIfNeeded()
+        panel.setContentSize(hosting.view.fittingSize)
+    }
+
+    /// Bottom-center of the screen the user is working on — the one holding
+    /// the pointer (a good proxy for the focused app's screen) — falling back
+    /// to the main screen.
+    private func position() {
         panel.layoutIfNeeded()
-        guard let screen = NSScreen.main else { return }
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
         let visible = screen.visibleFrame
         let size = panel.frame.size
         let x = visible.midX - size.width / 2
