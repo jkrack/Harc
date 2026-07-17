@@ -61,6 +61,7 @@ public struct MenuBarPanelView: View {
     let onCopyDictationHistoryEntry: ((DictationHistoryEntry) -> Void)?
     let onClearDictationHistory: (() -> Void)?
     let onOpenDictationHistory: (() -> Void)?
+    let availableUpdate: AvailableUpdate?
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -119,7 +120,8 @@ public struct MenuBarPanelView: View {
         dictationHistory: [DictationHistoryEntry] = [],
         onCopyDictationHistoryEntry: ((DictationHistoryEntry) -> Void)? = nil,
         onClearDictationHistory: (() -> Void)? = nil,
-        onOpenDictationHistory: (() -> Void)? = nil
+        onOpenDictationHistory: (() -> Void)? = nil,
+        availableUpdate: AvailableUpdate? = nil
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -175,6 +177,7 @@ public struct MenuBarPanelView: View {
         self.onCopyDictationHistoryEntry = onCopyDictationHistoryEntry
         self.onClearDictationHistory = onClearDictationHistory
         self.onOpenDictationHistory = onOpenDictationHistory
+        self.availableUpdate = availableUpdate
     }
 
     @ViewBuilder
@@ -410,6 +413,9 @@ public struct MenuBarPanelView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let availableUpdate {
+                updateAvailableRow(availableUpdate)
+            }
             HStack(spacing: 0) {
                 Button {
                     NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
@@ -450,6 +456,25 @@ public struct MenuBarPanelView: View {
                 .foregroundStyle(.secondary)
         }
         .font(.subheadline)
+    }
+
+    /// Subtle footer row shown while a newer release is known. Click opens
+    /// the release page in the browser.
+    private func updateAvailableRow(_ update: AvailableUpdate) -> some View {
+        Button {
+            NSWorkspace.shared.open(update.url)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundStyle(Color.accentColor)
+                Text("Update available — Harc \(update.version)")
+                    .foregroundStyle(Color.accentColor)
+                Spacer(minLength: 0)
+            }
+            .font(.caption)
+        }
+        .buttonStyle(.plain)
+        .help("Open the release page on GitHub")
     }
 
     private var appVersionText: String {

@@ -51,6 +51,9 @@ public final class HarcAppBridge: ObservableObject {
     @Published public private(set) var pasteFlash: PasteFlash? = nil
     @Published public private(set) var pasteStatusMessage: String? = nil
     @Published public private(set) var recordingStopInFlight: Bool = false
+    /// Newer release known from `UpdateChecker`, mirrored here so the
+    /// menu-bar panel can show a subtle update row.
+    @Published public var availableUpdate: AvailableUpdate? = nil
 
     public var onStartStop: () -> Void = {}
     public var onStartDictation: () -> Void = {}

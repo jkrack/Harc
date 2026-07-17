@@ -39,6 +39,7 @@ public final class HarcPreferences: ObservableObject {
         static let dictationInsertsAtCursor = "harc.dictationInsertsAtCursor"
         static let restoreClipboardAfterInsert = "harc.restoreClipboardAfterInsert"
         static let dictationSoundsEnabled = "harc.dictationSoundsEnabled"
+        static let updateChecksEnabled = "harc.updateChecksEnabled"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -305,6 +306,12 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(dictationSoundsEnabled, forKey: Key.dictationSoundsEnabled) }
     }
 
+    /// Daily check of GitHub releases for a newer Harc. The only network
+    /// request Harc makes on its own; carries nothing about the user.
+    @Published public var updateChecksEnabled: Bool {
+        didSet { UserDefaults.standard.set(updateChecksEnabled, forKey: Key.updateChecksEnabled) }
+    }
+
     public static let shared = HarcPreferences()
 
     public init() {
@@ -366,6 +373,7 @@ public final class HarcPreferences: ObservableObject {
         self.dictationInsertsAtCursor = defaults.object(forKey: Key.dictationInsertsAtCursor) as? Bool ?? true
         self.restoreClipboardAfterInsert = defaults.object(forKey: Key.restoreClipboardAfterInsert) as? Bool ?? true
         self.dictationSoundsEnabled = defaults.object(forKey: Key.dictationSoundsEnabled) as? Bool ?? true
+        self.updateChecksEnabled = defaults.object(forKey: Key.updateChecksEnabled) as? Bool ?? true
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
         if shouldPersistPasteDenyList {
