@@ -36,6 +36,10 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var captureReadinessText: String = "Mic + system audio"
     @Published public var captureReadinessWarning: Bool = false
     @Published public var sttReadinessText: String = "Local STT"
+    /// Honest speech-model readiness from the AppDelegate poller
+    /// (`STTReadiness`). Optimistic default so the panel doesn't flash
+    /// "blocked" in the second before the first poll answers.
+    @Published public var sttReady: Bool = true
     @Published public var summarizerReadinessText: String = "Summary unavailable"
     @Published public var summarizerReady: Bool = false
     @Published public var speakerIDReadinessText: String = "Speaker ID ready"

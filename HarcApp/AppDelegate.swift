@@ -39,6 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
     private var dictationKeepWarm: DictationKeepWarmController?
+    /// Polls the daemon for honest speech-model readiness (fast until ready,
+    /// slow heartbeat after). Owns `bridge.sttReady`/`sttReadinessText`.
+    private var sttReadinessTask: Task<Void, Never>?
+    /// Set once the model has been observed loaded on this Mac — later
+    /// daemon idle-exits then read as "starts on demand", not "missing".
+    private static let sttModelVerifiedKey = "harc.sttModelVerified"
     private var hudDismissTask: Task<Void, Never>?
     private var lastDictationPhase: DictationState.Phase = .idle
     /// Mode ids that already have per-mode hotkey handlers registered.
@@ -326,6 +332,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         applyUITestConfigurationIfNeeded()
         installStatusItem()
 
+        // A fresh install must be able to record immediately — create the
+        // default destination folder if it's missing (never a custom one).
+        prefs.ensureDefaultDestinationExists()
+
         Task { [weak self] in
             await self?.bootstrapStore()
         }
@@ -342,6 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     ))
                 }
             }
+            startSTTReadinessPolling()
         }
 
         KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [weak self] in
@@ -686,11 +697,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             throw DictationTransformError.unavailable
         }
         let modelID = mode.modelID ?? prefs.activeSummarizerID
-        guard await modelManager.descriptor(for: modelID) != nil else {
+        guard let descriptor = await modelManager.descriptor(for: modelID) else {
             throw DictationTransformError.unknownModel(modelID)
         }
-        // Throws if not installed — never block dictation on a download.
-        let directory = try await modelManager.requireInstalled(modelID)
+        // Never block dictation on a download — but tell the controller
+        // WHY the transform can't run so its fallback notice points the
+        // user at Settings → Models instead of a generic "unavailable".
+        let directory: URL
+        do {
+            directory = try await modelManager.requireInstalled(modelID)
+        } catch {
+            throw DictationTransformFailure.modelNotInstalled(descriptor.tierDisplayName)
+        }
         return try await service.transform(
             text: text,
             instruction: mode.instruction,
@@ -770,10 +788,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         updateMenuBarReadiness()
     }
 
+    /// Poll the daemon for real speech-model state — fast (2s) until the
+    /// model is confirmed loaded, then a slow heartbeat (60s) to catch idle
+    /// exits and failures. Replaces the old hardcoded "Local STT ready".
+    private func startSTTReadinessPolling() {
+        sttReadinessTask?.cancel()
+        sttReadinessTask = Task { [weak self] in
+            var verified = UserDefaults.standard.bool(forKey: Self.sttModelVerifiedKey)
+                || STTModelDiskProbe.modelPresent()
+            while !Task.isCancelled {
+                let socket = FileManager.default.fileExists(atPath: HarcSTTClient.defaultSocketPath)
+                var loaded: Bool?
+                if socket {
+                    loaded = (try? await HarcSTTClient().status())?.modelLoaded
+                }
+                let readiness = STTReadiness.from(.init(
+                    socketExists: socket,
+                    statusModelLoaded: loaded,
+                    modelVerifiedBefore: verified
+                ))
+                if readiness == .ready, !verified {
+                    verified = true
+                    UserDefaults.standard.set(true, forKey: Self.sttModelVerifiedKey)
+                }
+                guard let self, !Task.isCancelled else { return }
+                self.bridge.sttReady = readiness.isReady
+                self.bridge.sttReadinessText = readiness.displayText
+                try? await Task.sleep(for: .seconds(readiness.isReady ? 60 : 2))
+            }
+        }
+    }
+
     private func updateMenuBarReadiness() {
         bridge.destinationReady = prefs.destinationFolderExists()
         bridge.destinationPath = prefs.destinationPath
-        bridge.sttReadinessText = "Local STT ready"
 
         let activeSummarizer = ModelCatalog.descriptor(for: prefs.activeSummarizerID)
         let summarizerName = activeSummarizer?.tierDisplayName ?? activeSummarizer?.displayName ?? "Summarizer"
@@ -1774,6 +1822,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
 
+        // Live models/permissions state for the "Set up" step. The bridge's
+        // honest STT readiness (poller-owned) is mirrored in so the step
+        // shows the real download/ready state.
+        let setup = WelcomeSetupModel(prefs: prefs, modelStore: modelStore)
+        setup.sttReady = bridge.sttReady
+        setup.sttText = bridge.sttReadinessText
+        bridge.$sttReady
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.sttReady, on: setup)
+            .store(in: &cancellables)
+        bridge.$sttReadinessText
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.sttText, on: setup)
+            .store(in: &cancellables)
+
         let root = WelcomeFlowView(
             onFinish: { [weak self] in
                 self?.completeWelcomeFlow(openLibraryAfterClose: true)
@@ -1786,7 +1849,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             },
             onEnableAccessibility: { [weak self] in
                 self?.presentAccessibilityPrompt()
-            }
+            },
+            setup: setup
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
 
@@ -2525,6 +2589,7 @@ private struct StatusPopoverRoot: View {
             captureReadinessText: bridge.captureReadinessText,
             captureReadinessWarning: bridge.captureReadinessWarning,
             sttReadinessText: bridge.sttReadinessText,
+            sttReady: bridge.sttReady,
             summarizerReadinessText: bridge.summarizerReadinessText,
             summarizerReady: bridge.summarizerReady,
             speakerIDReadinessText: bridge.speakerIDReadinessText,

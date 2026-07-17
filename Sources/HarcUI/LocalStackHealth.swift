@@ -24,7 +24,10 @@ public enum ReadinessAction: String, Codable, Sendable {
         case .chooseDestination: return "Choose folder"
         case .openMicrophonePrivacy: return "Open microphone"
         case .openScreenCapturePrivacy: return "Open permissions"
-        case .installSTTModel: return "Check setup"
+        // The speech model downloads automatically; the button just shows
+        // where its status lives. "Check setup" implied a user action that
+        // doesn't exist.
+        case .installSTTModel: return "Details"
         case .installSummarizer: return "Install model"
         case .openNotifications: return "Open notifications"
         case .openAccessibility: return "Open accessibility"
@@ -282,7 +285,7 @@ public enum CaptureReadinessResolver {
         if ready {
             detail = "Hold the dictation hotkey and speak"
         } else if !input.localSTTReady {
-            detail = "Needs local STT"
+            detail = "Waiting for the speech model"
         } else if !input.pastePermissionReady {
             detail = "Needs Accessibility to insert text"
         } else {

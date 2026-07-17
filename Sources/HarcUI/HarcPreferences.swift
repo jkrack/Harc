@@ -428,6 +428,30 @@ public final class HarcPreferences: ObservableObject {
             .appendingPathComponent("Documents/Harc").path
     }
 
+    /// Create the destination folder when it's the DEFAULT path and missing —
+    /// a fresh install must be able to record immediately. User-chosen
+    /// folders are never created implicitly: a missing custom path usually
+    /// means an unmounted volume, and silently recreating it would strand
+    /// recordings on the boot disk.
+    @discardableResult
+    public func ensureDefaultDestinationExists() -> Bool {
+        if destinationPath == Self.defaultDestinationPath {
+            Self.createDirectoryIfMissing(atPath: destinationPath)
+        }
+        return destinationFolderExists()
+    }
+
+    nonisolated static func createDirectoryIfMissing(atPath path: String) {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+            return
+        }
+        try? FileManager.default.createDirectory(
+            atPath: path,
+            withIntermediateDirectories: true
+        )
+    }
+
     public func addEntry(from: String, to: String) {
         var v = vocabulary
         v.entries.append(VocabularyEntry(from: from, to: to))

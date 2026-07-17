@@ -122,11 +122,74 @@ final class ModelManagerTests: XCTestCase {
         }
         XCTAssertTrue(reason.lowercased().contains("checksum"),
                       "Failure reason should mention the checksum mismatch, was: \(reason)")
-        // Failure cleans up the model directory so a retry starts fresh.
+        // The corrupt file itself must not survive — verified files from
+        // earlier in the run stay on disk for SHA-skip resume, but a file
+        // that failed verification is deleted so nothing unverified lingers.
         XCTAssertFalse(
-            FileManager.default.fileExists(atPath: storage.modelDirectory(for: descriptor.id).path),
-            "SHA mismatch must remove the partial model directory."
+            FileManager.default.fileExists(
+                atPath: storage.modelDirectory(for: descriptor.id)
+                    .appendingPathComponent("weights.bin").path
+            ),
+            "SHA mismatch must remove the corrupt file."
         )
+        XCTAssertNil(storage.readInstallRecord(for: descriptor.id),
+                     "Failed download must not leave an install marker.")
+    }
+
+    // MARK: - Resume across failures
+
+    func test_retryAfterFailure_skipsVerifiedFiles_andDownloadsOnlyMissing() async throws {
+        // File 1 downloads + verifies; file 2 fails the whole run. On retry,
+        // file 1 must be SHA-skipped (no engine call) and only file 2 fetched
+        // — a network blip at 15 GB must not restart from zero.
+        let descriptor = Self.makeDescriptor(
+            id: "resume",
+            files: [
+                Self.namedFile(
+                    path: "config.json",
+                    bytes: 5,
+                    sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                ),
+                Self.namedFile(
+                    path: "weights.bin",
+                    bytes: 11,
+                    sha256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                ),
+            ]
+        )
+
+        let firstRun = CountingBox()
+        let flakyEngine = FakeDownloadEngine { url in
+            firstRun.record(url.lastPathComponent)
+            if url.lastPathComponent == "config.json" {
+                return .writeBytes(Data("hello".utf8))
+            }
+            return .fail(.other("connection lost"))
+        }
+        let manager = ModelManager(storage: storage, engine: flakyEngine, catalog: [descriptor])
+        try await manager.startDownload(descriptor.id)
+        let failed = await awaitState(manager, id: descriptor.id, where: { $0.isFailed })
+        guard case .failed = failed else {
+            return XCTFail("Expected .failed after network error, got \(String(describing: failed))")
+        }
+        // The verified first file survived the failure.
+        let cfg = storage.modelDirectory(for: descriptor.id).appendingPathComponent("config.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cfg.path),
+                      "Verified files must survive a failed run for resume.")
+
+        // Retry with a healthy engine against the SAME storage.
+        let secondRun = CountingBox()
+        let healthyEngine = FakeDownloadEngine { url in
+            secondRun.record(url.lastPathComponent)
+            return .writeBytes(Data("hello world".utf8))
+        }
+        let retryManager = ModelManager(storage: storage, engine: healthyEngine, catalog: [descriptor])
+        try await retryManager.startDownload(descriptor.id)
+        let final = await awaitState(retryManager, id: descriptor.id, where: { $0.isInstalled || $0.isFailed })
+
+        XCTAssertEqual(final, .installed)
+        XCTAssertEqual(secondRun.names, ["weights.bin"],
+                       "Retry must SHA-skip the verified file and fetch only the missing one.")
     }
 
     // MARK: - Disk space
@@ -293,6 +356,25 @@ final class ModelManagerTests: XCTestCase {
             sha256: sha256,
             url: URL(string: "https://example.invalid/\(path)")!
         )
+    }
+}
+
+// MARK: - Call recorder
+
+/// Thread-safe list of downloaded file names — asserts which files the
+/// engine was actually asked for (SHA-skip resume tests).
+private final class CountingBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String] = []
+
+    func record(_ name: String) {
+        lock.lock(); defer { lock.unlock() }
+        stored.append(name)
+    }
+
+    var names: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return stored
     }
 }
 

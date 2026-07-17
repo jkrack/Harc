@@ -1,5 +1,6 @@
 import SwiftUI
 import KeyboardShortcuts
+import ServiceManagement
 
 public struct WelcomeFlowStep: Identifiable {
     public let id: String
@@ -78,7 +79,7 @@ public final class WelcomeFlowModel: ObservableObject {
             title: "Private by design, fast on Apple Silicon",
             body: "Speech-to-text, diarization, summaries, and audio all stay on this Mac. Harc records to disk while it captures, then processes locally in rolling chunks.",
             primaryPoint: "No cloud STT, no external telemetry, no account requirement.",
-            secondaryPoint: "Summaries use an optional local model; recording and transcription never need it.",
+            secondaryPoint: "Models are downloaded once from Hugging Face; your audio and text never leave this Mac.",
             symbolName: "lock.shield",
             tint: .teal
         ),
@@ -93,10 +94,20 @@ public final class WelcomeFlowModel: ObservableObject {
             tint: .purple
         ),
         WelcomeFlowStep(
+            id: "setup",
+            eyebrow: "Set up",
+            title: "Get the models and permissions in place",
+            body: "Harc's speech model (~460 MB) downloads automatically in the background — recording works once it's ready. Summaries and dictation modes use a second, optional model you can grab now or later.",
+            primaryPoint: "Everything below is one-time. Downloads come from Hugging Face; nothing you record ever leaves this Mac.",
+            secondaryPoint: "You can skip any of this — each item is also reachable from Settings.",
+            symbolName: "arrow.down.circle",
+            tint: .indigo
+        ),
+        WelcomeFlowStep(
             id: "start",
             eyebrow: "Start",
             title: "Make the first capture boring",
-            body: "Pick your recording folder, confirm microphone and screen audio permissions, then use the menu bar button or hotkey to start and stop. Harc saves the audio, transcript, JSON, and searchable library row.",
+            body: "Use the menu bar button or hotkey to start and stop. Harc saves the audio, transcript, JSON, and searchable library row.",
             primaryPoint: "Reliability beats live text. Stop when the meeting ends.",
             secondaryPoint: "Copy or paste the full transcript into your LLM when it is ready.",
             symbolName: "record.circle",
@@ -106,6 +117,10 @@ public final class WelcomeFlowModel: ObservableObject {
 
     /// Step id that carries the "Enable Accessibility" call-to-action.
     public static let dictationStepID = "dictation"
+    /// Step id that renders the interactive models/permissions section.
+    public static let setupStepID = "setup"
+    /// Final step id — carries the launch-at-login offer.
+    public static let startStepID = "start"
 }
 
 public struct WelcomeFlowView: View {
@@ -116,17 +131,23 @@ public struct WelcomeFlowView: View {
     /// Optional CTA on the dictation step — opens the Accessibility privacy
     /// pane. Never required; the step is fully skippable.
     public let onEnableAccessibility: (() -> Void)?
+    /// Live state behind the "Set up" step (models, folder, permissions).
+    /// Nil (previews/tests) renders the step as informational only.
+    public let setup: WelcomeSetupModel?
+    @State private var launchAtLogin = false
 
     public init(
         onFinish: @escaping () -> Void,
         onSkip: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
-        onEnableAccessibility: (() -> Void)? = nil
+        onEnableAccessibility: (() -> Void)? = nil,
+        setup: WelcomeSetupModel? = nil
     ) {
         self.onFinish = onFinish
         self.onSkip = onSkip
         self.onOpenSettings = onOpenSettings
         self.onEnableAccessibility = onEnableAccessibility
+        self.setup = setup
     }
 
     public var body: some View {
@@ -311,6 +332,23 @@ public struct WelcomeFlowView: View {
                         }
                     }
                 }
+
+                if model.selectedStep.id == WelcomeFlowModel.setupStepID, let setup {
+                    WelcomeSetupSection(model: setup)
+                }
+
+                if model.selectedStep.id == WelcomeFlowModel.startStepID {
+                    Toggle("Launch Harc at login", isOn: $launchAtLogin)
+                        .onChange(of: launchAtLogin) { _, enabled in
+                            setLaunchAtLogin(enabled)
+                        }
+                        .onAppear {
+                            launchAtLogin = SMAppService.mainApp.status == .enabled
+                        }
+                    Text("A meeting recorder that isn't running misses the meeting.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(28)
 
@@ -349,7 +387,27 @@ public struct WelcomeFlowView: View {
                 .keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("harc.welcome.next")
             }
-            .padding(28)
+            .padding([.horizontal, .top], 28)
+
+            // Honest acknowledgment when leaving setup behind an unfinished
+            // download — recording works the moment the model lands.
+            if model.isLastStep, let setup {
+                WelcomeSTTFootnote(setup: setup)
+                    .padding(.horizontal, 28)
+            }
+            Spacer(minLength: 20).frame(maxHeight: 28)
+        }
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
         }
     }
 
@@ -361,6 +419,20 @@ public struct WelcomeFlowView: View {
             Text(text)
                 .font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// Observing wrapper so the last-step footnote live-updates (and disappears)
+/// as the background speech-model download completes.
+private struct WelcomeSTTFootnote: View {
+    @ObservedObject var setup: WelcomeSetupModel
+
+    var body: some View {
+        if !setup.sttReady {
+            Text("The speech model finishes downloading in the background — recording unlocks when it's ready.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

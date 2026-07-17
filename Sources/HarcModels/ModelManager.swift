@@ -214,6 +214,20 @@ public actor ModelManager {
                 if Task.isCancelled { throw DownloadError.cancelled }
 
                 let destination = storage.fileURL(forDescriptor: descriptor, file: file)
+
+                // A prior attempt may have fully downloaded + verified this
+                // file — skip it so a network blip at file N of a multi-GB
+                // model doesn't restart from file 1. SHA is the gate; any
+                // partial or corrupt leftover fails the check and is
+                // re-downloaded below.
+                if FileManager.default.fileExists(atPath: destination.path),
+                   let existing = try? await Self.sha256Hex(of: destination),
+                   existing.lowercased() == file.sha256.lowercased() {
+                    bytesDone += file.bytes
+                    tickProgress(descriptor.id, progress: Double(bytesDone) / Double(totalBytes))
+                    continue
+                }
+
                 let perFileBase = bytesDone
                 let totalForClosure = totalBytes
 
@@ -228,7 +242,15 @@ public actor ModelManager {
                     }
                 )
 
-                try await verifyFile(at: destination, against: file)
+                do {
+                    try await verifyFile(at: destination, against: file)
+                } catch {
+                    // Remove the corrupt file so the model directory only
+                    // ever holds verified files; earlier verified files stay
+                    // for the SHA-skip resume on retry.
+                    try? FileManager.default.removeItem(at: destination)
+                    throw error
+                }
                 bytesDone += max(result.bytesWritten, file.bytes)
                 tickProgress(descriptor.id, progress: Double(bytesDone) / Double(totalBytes))
             }
@@ -250,10 +272,13 @@ public actor ModelManager {
             try? storage.clearInstallRecord(for: descriptor.id)
             transition(descriptor.id, to: .absent)
         } catch let e as DownloadError {
-            try? storage.removeModelDirectory(for: descriptor.id)
+            // Keep completed files on disk — the per-file SHA check above
+            // skips them on retry, so a failure at 15 GB doesn't restart
+            // from zero. Only the install marker is dropped.
+            try? storage.clearInstallRecord(for: descriptor.id)
             transition(descriptor.id, to: .failed(reason: e.errorDescription ?? "Download failed"))
         } catch {
-            try? storage.removeModelDirectory(for: descriptor.id)
+            try? storage.clearInstallRecord(for: descriptor.id)
             transition(descriptor.id, to: .failed(reason: error.localizedDescription))
         }
     }

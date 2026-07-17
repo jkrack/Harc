@@ -19,3 +19,14 @@ Focused validation is usually faster while developing:
 
     swift test --filter RecordingCacheRecoveryTests
     swift test --filter LocalStackHealthTests
+
+## Uninstall
+
+Quit Harc, delete `Harc.app`, then remove what you don't want to keep
+(Settings → About → Storage lists the same locations with sizes):
+
+    ~/Documents/Harc                                # recordings + transcripts (yours — keep!)
+    ~/Library/Application Support/Harc              # library DB, modes, history, summarizer models
+    ~/Library/Application Support/FluidAudio/Models # speech models
+    ~/Library/Caches/Harc                           # caches + daemon log
+    ~/.harc                                         # daemon socket

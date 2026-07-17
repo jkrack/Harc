@@ -37,6 +37,7 @@ public struct MenuBarPanelView: View {
     let captureReadinessText: String
     let captureReadinessWarning: Bool
     let sttReadinessText: String
+    let sttReady: Bool
     let summarizerReadinessText: String
     let summarizerReady: Bool
     let speakerIDReadinessText: String
@@ -95,6 +96,7 @@ public struct MenuBarPanelView: View {
         captureReadinessText: String = "Mic + system audio",
         captureReadinessWarning: Bool = false,
         sttReadinessText: String = "Local STT ready",
+        sttReady: Bool = true,
         summarizerReadinessText: String = "Summary unavailable",
         summarizerReady: Bool = false,
         speakerIDReadinessText: String = "Speaker ID ready",
@@ -149,6 +151,7 @@ public struct MenuBarPanelView: View {
         self.captureReadinessText = captureReadinessText
         self.captureReadinessWarning = captureReadinessWarning
         self.sttReadinessText = sttReadinessText
+        self.sttReady = sttReady
         self.summarizerReadinessText = summarizerReadinessText
         self.summarizerReady = summarizerReady
         self.speakerIDReadinessText = speakerIDReadinessText
@@ -461,8 +464,30 @@ public struct MenuBarPanelView: View {
         LocalStackHealthView(
             items: LocalStackHealthModel.items(for: localStackInput),
             compact: true,
-            onFix: { _ in onOpenSettings() }
+            onFix: { item in fixReadinessItem(item) }
         )
+    }
+
+    /// Route each readiness fix to its actual remedy — the system privacy
+    /// pane that's wrong, or Settings — instead of a generic Settings open.
+    private func fixReadinessItem(_ item: LocalStackHealthItem) {
+        switch item.id {
+        case .capture:
+            openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+        case .systemAudio:
+            openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        case .accessibility, .dictation:
+            openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        case .notifications:
+            openSystemSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+        case .destination, .stt, .summarizer, .speakerID, .recovery:
+            onOpenSettings()
+        }
+    }
+
+    private func openSystemSettings(_ urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private var localStackInput: LocalStackHealthInput {
@@ -471,7 +496,7 @@ public struct MenuBarPanelView: View {
             destinationText: destinationReady ? destinationDisplayText : "Destination missing",
             captureReady: !captureReadinessWarning,
             captureText: captureReadinessText,
-            sttReady: true,
+            sttReady: sttReady,
             sttText: sttReadinessText,
             summarizerReady: summarizerReady,
             summarizerText: summarizerReadinessText,
