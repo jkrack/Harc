@@ -1,24 +1,50 @@
 # Harc
 
-Local speech-to-text menu bar app for macOS. Records meetings, transcribes on
-Apple Silicon, keeps recordings in a searchable library, and prepares transcript
-context for pasting into an LLM.
+Local speech-to-text menu bar app for macOS with two surfaces: meeting
+recording and push-to-talk dictation, both transcribed on Apple Silicon with
+AI post-processing modes. Stores transcripts in a searchable library for LLM
+paste workflows.
+
+## Quick Start
+
+1. Download the DMG from [GitHub Releases](https://github.com/jkrack/Harc/releases),
+   drag Harc.app to /Applications, then clear quarantine:
+
+       xattr -dr com.apple.quarantine /Applications/Harc.app
+
+2. Launch and follow the welcome flow: grant Microphone + Screen Recording,
+   enable Accessibility for dictation, and optionally download a summarizer
+   model.
+
+3. The speech model (~460 MB) downloads automatically on first run; the
+   menu-bar panel shows progress. Summarizer models install on demand in
+   Settings → Models.
+
+4. **Recording:** start/stop from the menu-bar panel, or record a global
+   hotkey in Settings → Recording. Transcription runs in the background
+   while you record.
+
+5. **Dictation:** hold ⌃⌥D (customizable), speak, release — text inserts at
+   the cursor. Switch modes from the HUD chip or menu-bar panel for AI
+   post-processing (Clean-up, Email, Message, Bullet List, Answer, or your
+   own custom modes).
 
 See `AGENTS.md` for architecture, product constraints, and repository workflow.
 
 ## Build
 
-Requires current Xcode/Swift 6.2 tooling and Homebrew.
+Requires Xcode/Swift 6.2 and Homebrew.
 
     brew install xcodegen
     swift test            # run the SwiftPM test suite
     xcodegen generate     # produce Harc.xcodeproj
     open Harc.xcodeproj   # build + run the Harc app target
 
-Focused validation is usually faster while developing:
+Focused testing while developing:
 
     swift test --filter RecordingCacheRecoveryTests
     swift test --filter LocalStackHealthTests
+    swift test --filter CustomerExperienceE2ETests
 
 ## Uninstall
 

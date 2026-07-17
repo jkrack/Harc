@@ -42,11 +42,16 @@ Flag the user before violating these product decisions.
 - `Sources/HarcUI/` contains SwiftUI/AppKit-facing state and views, including
   the menu bar panel, Library, settings, local-stack readiness, recovery inbox,
   transcript editor, and speaker identity UI.
-- Dictation (`docs/dictation-plan.md`): `DictationController` in
-  `Sources/HarcUI/` drives mic-only capture (`MicDictationRecorder` in
-  `Sources/HarcAudio/`, temp WAV in `~/Library/Caches/Harc/dictation/`), a
-  one-shot `dictate()` to the daemon, and insert-at-cursor via
-  `FrontmostAppPaster`.
+- Dictation (`docs/dictation-plan.md`): Push-to-talk via `KeyboardShortcuts`. 
+  `DictationController` in `Sources/HarcUI/` owns the state machine. Mic-only 
+  capture via `MicDictationRecorder` + `AudioFileWriter` (temp WAV in 
+  `~/Library/Caches/Harc/dictation/`), warm daemon transcription (`dictate()` 
+  wrapper, no VAD/diarization), and insert-at-cursor via `FrontmostAppPaster`. 
+  `DictationModeStore` holds built-in + user modes (name, icon, prompt, model, 
+  per-mode hotkey, context toggles). `SummarizerService.transform()` post-processes 
+  via LLM modes. `DictationHistoryStore` logs recent dictations. `DictationHUDView` 
+  (NSPanel, non-activating) shows live waveform + status. `DictationKeepWarmController` 
+  pings daemon to prevent idle shutdown. Mutual-exclusion guard vs recording.
 - `Sources/HarcSummarize/`, `Sources/HarcModels/`, `Sources/HarcExport/`,
   `Sources/HarcMeetingDetect/`, and `Sources/HarcVoiceprint/` cover optional AI
   summaries, model management, export formats, meeting detection, and speaker
@@ -79,6 +84,13 @@ requires.
     swift test --filter LocalStackHealthTests
     swift test --filter CustomerExperienceE2ETests
     swift test
+
+**Known flaky tests:** `SummarizationQueueStoreTests.isQueued` and 
+`RecordingSessionTests` (duty-cycle) pass in isolation but occasionally fail 
+when run in the full suite. Run individually if suspect:
+
+    swift test --filter SummarizationQueueStoreTests.isQueued
+    swift test --filter RecordingSessionTests
 
 After changing package/project/version metadata, run:
 
