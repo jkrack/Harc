@@ -917,14 +917,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 || STTModelDiskProbe.modelPresent()
             while !Task.isCancelled {
                 let socket = FileManager.default.fileExists(atPath: HarcSTTClient.defaultSocketPath)
-                var loaded: Bool?
+                var status: DaemonStatus?
                 if socket {
-                    loaded = (try? await HarcSTTClient().status())?.modelLoaded
+                    status = try? await HarcSTTClient().status()
                 }
                 let readiness = STTReadiness.from(.init(
                     socketExists: socket,
-                    statusModelLoaded: loaded,
-                    modelVerifiedBefore: verified
+                    statusModelLoaded: status?.modelLoaded,
+                    modelVerifiedBefore: verified,
+                    modelState: status?.modelState,
+                    downloadProgress: status?.downloadProgress,
+                    errorMessage: status?.errorMessage
                 ))
                 if readiness == .ready, !verified {
                     verified = true
@@ -933,6 +936,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 guard let self, !Task.isCancelled else { return }
                 self.bridge.sttReady = readiness.isReady
                 self.bridge.sttReadinessText = readiness.displayText
+                self.bridge.sttDownloadProgress = readiness.progress
                 try? await Task.sleep(for: .seconds(readiness.isReady ? 60 : 2))
             }
         }
@@ -1964,6 +1968,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.$sttReadinessText
             .receive(on: DispatchQueue.main)
             .assign(to: \.sttText, on: setup)
+            .store(in: &cancellables)
+        setup.sttProgress = bridge.sttDownloadProgress
+        bridge.$sttDownloadProgress
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.sttProgress, on: setup)
             .store(in: &cancellables)
 
         let root = WelcomeFlowView(

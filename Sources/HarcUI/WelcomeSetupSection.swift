@@ -11,6 +11,9 @@ public final class WelcomeSetupModel: ObservableObject {
     /// Mirrors `bridge.sttReady` / `bridge.sttReadinessText`.
     @Published public var sttReady: Bool = false
     @Published public var sttText: String = "Starting the speech engine…"
+    /// Mirrors `bridge.sttDownloadProgress` — non-nil while the speech
+    /// model is downloading and the daemon reports fractional progress.
+    @Published public var sttProgress: Double? = nil
     @Published public private(set) var micGranted: Bool
     @Published public private(set) var screenAudioGranted: Bool
     @Published public private(set) var destinationDisplayPath: String
@@ -107,10 +110,14 @@ struct WelcomeSetupSection: View {
             detail: model.sttText
         ) {
             if !model.sttReady {
-                // TODO(daemon-status): render a real ProgressView here once
-                // DaemonStatus carries downloadProgress.
-                ProgressView()
-                    .controlSize(.small)
+                if let progress = model.sttProgress {
+                    ProgressView(value: progress)
+                        .controlSize(.small)
+                        .frame(width: 96)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
             }
         }
     }

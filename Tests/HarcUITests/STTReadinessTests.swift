@@ -49,6 +49,58 @@ struct STTReadinessTests {
         #expect(!r.isReady)
     }
 
+    @Test("rich downloading state wins over the coarse bool and carries progress")
+    func downloadingWinsWithProgress() {
+        let r = STTReadiness.from(.init(
+            socketExists: true, statusModelLoaded: false, modelVerifiedBefore: false,
+            modelState: .downloading, downloadProgress: 0.42
+        ))
+        #expect(r == .downloading(progress: 0.42))
+        #expect(!r.isReady)
+        #expect(r.progress == 0.42)
+        #expect(r.displayText.contains("42%"))
+
+        // No fraction from the daemon → indeterminate copy, no percent.
+        let vague = STTReadiness.from(.init(
+            socketExists: true, statusModelLoaded: false, modelVerifiedBefore: false,
+            modelState: .downloading
+        ))
+        #expect(vague == .downloading(progress: nil))
+        #expect(vague.progress == nil)
+        #expect(!vague.displayText.contains("%"))
+    }
+
+    @Test("rich failed state surfaces the daemon's message and blocks capture")
+    func failedSurfacesMessage() {
+        let r = STTReadiness.from(.init(
+            socketExists: true, statusModelLoaded: false, modelVerifiedBefore: true,
+            modelState: .failed, errorMessage: "no network route to Hugging Face"
+        ))
+        #expect(r == .failed(message: "no network route to Hugging Face"))
+        #expect(!r.isReady)
+        #expect(r.displayText.contains("no network route"))
+
+        // Missing message still produces something human.
+        let bare = STTReadiness.from(.init(
+            socketExists: true, statusModelLoaded: false, modelVerifiedBefore: true,
+            modelState: .failed
+        ))
+        if case .failed(let message) = bare {
+            #expect(!message.isEmpty)
+        } else {
+            Issue.record("expected .failed, got \(bare)")
+        }
+    }
+
+    @Test("legacy daemon (nil modelState) falls back to the coarse mapping")
+    func legacyDaemonFallback() {
+        let r = STTReadiness.from(.init(
+            socketExists: true, statusModelLoaded: true, modelVerifiedBefore: true,
+            modelState: nil
+        ))
+        #expect(r == .ready)
+    }
+
     @Test("disk probe finds a parakeet directory and ignores others")
     func diskProbe() throws {
         let base = FileManager.default.temporaryDirectory

@@ -40,6 +40,9 @@ public final class HarcAppBridge: ObservableObject {
     /// (`STTReadiness`). Optimistic default so the panel doesn't flash
     /// "blocked" in the second before the first poll answers.
     @Published public var sttReady: Bool = true
+    /// Speech-model download progress in [0, 1] while the daemon reports an
+    /// active download; nil otherwise. Drives determinate progress bars.
+    @Published public var sttDownloadProgress: Double? = nil
     @Published public var summarizerReadinessText: String = "Summary unavailable"
     @Published public var summarizerReady: Bool = false
     @Published public var speakerIDReadinessText: String = "Speaker ID ready"
