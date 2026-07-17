@@ -33,8 +33,18 @@ struct WelcomeFlowModelTests {
     func defaultStepsCoverProductConcepts() {
         let ids = WelcomeFlowModel.defaultSteps.map(\.id)
 
-        #expect(ids == ["canvas", "local", "dictation", "start"])
+        #expect(ids == ["canvas", "local", "dictation", "setup", "start"])
         #expect(WelcomeFlowModel.defaultSteps.contains { $0.body.localizedCaseInsensitiveContains("local") })
         #expect(WelcomeFlowModel.defaultSteps.contains { $0.body.localizedCaseInsensitiveContains("LLM") })
+    }
+
+    @Test("setup step levels with the user about model downloads")
+    func setupStepMentionsDownloads() {
+        let setup = WelcomeFlowModel.defaultSteps.first { $0.id == WelcomeFlowModel.setupStepID }
+        #expect(setup != nil)
+        // The audit's headline gap: onboarding must actually say a model
+        // downloads, its rough size, and where the bytes come from.
+        #expect(setup?.body.contains("460 MB") == true)
+        #expect(setup?.primaryPoint.localizedCaseInsensitiveContains("Hugging Face") == true)
     }
 }

@@ -1,6 +1,16 @@
 import Foundation
 import AVFoundation
 import HarcAudio
+import HarcClient
+
+/// Typed transform failures the controller can phrase for the user — thrown
+/// by the app's transform closure (AppDelegate) so the fallback notice can
+/// say *why* a mode didn't run instead of a generic "unavailable".
+public enum DictationTransformFailure: Error, Equatable {
+    /// The mode's LLM isn't downloaded. Associated value is the model's
+    /// display name (tier), for the notice.
+    case modelNotInstalled(String)
+}
 
 /// Orchestrates the dictation flow: capture a short mic clip, transcribe it via
 /// the warm STT daemon, and insert the text at the cursor in the frontmost app.
@@ -298,7 +308,7 @@ public final class DictationController {
         } catch {
             oneShotMode = nil
             sessionMode = nil
-            state.setPhase(.error(error.localizedDescription))
+            state.setPhase(.error(Self.humanMessage(for: error)))
             return
         }
 
@@ -402,10 +412,36 @@ public final class DictationController {
                 return raw
             }
             return trimmed
+        } catch let failure as DictationTransformFailure {
+            switch failure {
+            case .modelNotInstalled(let modelName):
+                state.setNotice(
+                    "\(mode.name) needs \(modelName) — download it in Settings → Models. Inserted raw text"
+                )
+            }
+            return raw
         } catch {
             state.setNotice("\(mode.name) unavailable — inserted raw text")
             return raw
         }
+    }
+
+    /// Phrase daemon/client errors for a human. Raw error codes like
+    /// `model_not_loaded` describe the first-run download, not a fault.
+    nonisolated static func humanMessage(for error: Error) -> String {
+        if let client = error as? ClientError {
+            switch client {
+            case .transcribeFailed(let code, _) where code == "model_not_loaded":
+                return "Speech model is still downloading — try again shortly"
+            case .timeout:
+                return "Speech engine took too long — try again shortly"
+            case .daemonNotReachable, .daemonLaunchFailed:
+                return "Speech engine isn't running — it restarts on the next try"
+            default:
+                break
+            }
+        }
+        return error.localizedDescription
     }
 
     /// Cancel the current session. Long sessions (past

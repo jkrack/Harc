@@ -12,6 +12,10 @@ public struct ModelsSettingsView: View {
 
     @State private var ramGB: Int = Self.physicalRAMGB()
     @State private var pendingRemoveID: String?
+    /// Surfaced when `startDownload` throws before any state transition
+    /// (low disk, another download running) — otherwise the click would
+    /// visibly do nothing.
+    @State private var downloadStartError: String?
 
     public init() {}
 
@@ -34,6 +38,18 @@ public struct ModelsSettingsView: View {
             }
 
             Section {
+                if let downloadStartError {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.yellow)
+                        Text(downloadStartError)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.secondary)
+                        Spacer()
+                        Button("Dismiss") { self.downloadStartError = nil }
+                            .controlSize(.small)
+                    }
+                }
                 ForEach(summarizers) { d in
                     ModelRow(descriptor: d, ramGB: ramGB,
                              onDownload: { download(d) },
@@ -125,13 +141,16 @@ public struct ModelsSettingsView: View {
     // MARK: - Actions
 
     private func download(_ d: ModelDescriptor) {
+        downloadStartError = nil
         Task {
             do {
                 try await models.download(d.id)
             } catch {
-                // State stream will also reflect failure; here we'd surface
-                // a toast if we had one. For v1, the row's `.failed` state
-                // renders the reason inline.
+                // `startDownload` throws BEFORE any state transition (low
+                // disk, another download running) — without this the click
+                // does visibly nothing. Post-start failures render inline
+                // via the row's `.failed` state.
+                downloadStartError = error.localizedDescription
             }
         }
     }

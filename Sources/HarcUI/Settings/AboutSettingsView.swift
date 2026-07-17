@@ -16,6 +16,8 @@ public struct AboutSettingsView: View {
         } header: {
             Text("About")
         }
+
+        StorageSettingsSection()
     }
 
     // MARK: - Sub-views
@@ -114,7 +116,7 @@ public struct AboutSettingsView: View {
                 Text("Local-first")
                     .font(.headline)
             }
-            Text("No cloud STT. No external telemetry. No accounts. Every byte of audio, every transcript, and every summary stays on this Mac. Harc cannot phone home because it has no home to call.")
+            Text("No cloud STT. No external telemetry. No accounts. Every byte of audio, every transcript, and every summary stays on this Mac. Harc's only network use is downloading models once from Hugging Face — your audio and text never leave this Mac.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)

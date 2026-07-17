@@ -430,6 +430,7 @@ public struct RecordingSettingsView: View {
                             .controlSize(.small)
                         Button("Use Default") {
                             prefs.destinationPath = HarcPreferences.defaultDestinationPath
+                            prefs.ensureDefaultDestinationExists()
                         }
                         .controlSize(.small)
                     }
