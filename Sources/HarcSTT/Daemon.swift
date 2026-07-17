@@ -23,11 +23,12 @@ public actor Daemon {
 
     public init(
         socketPath: String = Daemon.defaultSocketPath,
-        idleTimeout: TimeInterval = Daemon.defaultIdleTimeout
+        idleTimeout: TimeInterval = Daemon.defaultIdleTimeout,
+        asrEngine: Transcriber.ASREngine = .v2
     ) {
         self.socketPath = socketPath
         self.idleTimeout = idleTimeout
-        self.transcriber = Transcriber()
+        self.transcriber = Transcriber(engine: asrEngine)
         self.diarizer = Diarizer()
         self.startedAt = Date()
         self.lastActivity = Date()
