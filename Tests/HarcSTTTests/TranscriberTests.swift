@@ -76,12 +76,31 @@ struct TranscriberTests {
         }
     }
 
-    @Test("transcribe before loadModels throws .modelNotLoaded (vad: false)")
-    func transcribeBeforeLoadThrows() async throws {
+    @Test("transcribe inside the failed-load cooldown throws .modelNotLoaded without re-attempting")
+    func transcribeDuringCooldownThrows() async throws {
         let transcriber = Transcriber()
+        // Simulate a load that just failed — the on-demand retry must be
+        // gated by the cooldown, not hammer the network per request.
+        await transcriber.setLastFailedLoadForTesting(Date())
         await #expect(throws: DaemonError.modelNotLoaded) {
             _ = try await transcriber.transcribe(audioPath: "/tmp/does-not-matter.wav", vad: false)
         }
+        #expect(await transcriber.isLoaded == false)
+    }
+
+    @Test("load-retry cooldown decision")
+    func loadRetryCooldownDecision() {
+        let now = Date()
+        // Never failed → always allowed.
+        #expect(Transcriber.shouldAttemptLoad(lastFailedAt: nil, now: now))
+        // Failed 5s ago with 30s cooldown → blocked.
+        #expect(!Transcriber.shouldAttemptLoad(
+            lastFailedAt: now.addingTimeInterval(-5), now: now, cooldown: 30
+        ))
+        // Failed 31s ago with 30s cooldown → allowed again.
+        #expect(Transcriber.shouldAttemptLoad(
+            lastFailedAt: now.addingTimeInterval(-31), now: now, cooldown: 30
+        ))
     }
 }
 

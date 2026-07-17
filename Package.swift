@@ -20,7 +20,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/FluidInference/FluidAudio.git",
-            .upToNextMinor(from: "0.13.5")
+            .upToNextMinor(from: "0.15.5")
         ),
         .package(
             url: "https://github.com/sindresorhus/KeyboardShortcuts.git",
