@@ -453,6 +453,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if !isUITesting {
             startFrontmostPolling()
         }
+
+        // Daily GitHub-releases update check. All logic lives in
+        // UpdateChecker; the bridge mirror feeds the menu-bar row.
+        if !isUITesting {
+            UpdateChecker.shared.start()
+            UpdateChecker.shared.$availableUpdate
+                .receive(on: DispatchQueue.main)
+                .assign(to: \.availableUpdate, on: bridge)
+                .store(in: &cancellables)
+        }
+
         showWelcomeIfNeeded()
     }
 
@@ -2547,7 +2558,8 @@ private struct StatusPopoverRoot: View {
             onSelectDictationMode: { dictationModeStore.setActiveMode(id: $0) },
             dictationHistory: dictationHistoryStore.entries,
             onCopyDictationHistoryEntry: { FrontmostAppPaster.copyOnly($0.text) },
-            onClearDictationHistory: { dictationHistoryStore.clear() }
+            onClearDictationHistory: { dictationHistoryStore.clear() },
+            availableUpdate: bridge.availableUpdate
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }
