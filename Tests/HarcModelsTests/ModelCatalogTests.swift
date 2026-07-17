@@ -48,19 +48,57 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertNil(ModelCatalog.descriptor(for: "does-not-exist"))
     }
 
-    func test_descriptors_byTask_summarizersOrderedStdQualityProMax() {
+    func test_descriptors_byTask_summarizersOrderedStdQualityProMaxUltra() {
         let summarizers = ModelCatalog.descriptors(for: .summarizer)
-        XCTAssertGreaterThanOrEqual(summarizers.count, 4)
+        XCTAssertGreaterThanOrEqual(summarizers.count, 5)
         XCTAssertEqual(summarizers[0].tier, .standard)
         XCTAssertEqual(summarizers[1].tier, .quality)
         XCTAssertEqual(summarizers[2].tier, .pro)
         XCTAssertEqual(summarizers[3].tier, .max)
+        XCTAssertEqual(summarizers[4].tier, .ultra)
         XCTAssertEqual(summarizers.map(\.id), [
             "gemma-4-e2b-it-4bit",
             "gemma-4-e4b-it-4bit",
             "gemma-4-12b-4bit",
             "gemma-4-26b-a4b-it-4bit",
+            "gemma-4-31b-it-4bit",
         ])
+    }
+
+    func test_ultraTier_ordersAboveMax_andBelowNoSingleton() {
+        XCTAssertTrue(ModelTier.max < ModelTier.ultra)
+        XCTAssertTrue(ModelTier.pro < ModelTier.ultra)
+        XCTAssertTrue(ModelTier.singleton < ModelTier.ultra)
+        XCTAssertEqual(ModelTier.ultra.rawValue, "ultra")
+    }
+
+    func test_gemma31B_entryIsSaneAndHonest() {
+        guard let d = ModelCatalog.descriptor(for: "gemma-4-31b-it-4bit") else {
+            return XCTFail("gemma-4-31b-it-4bit missing from catalog")
+        }
+        XCTAssertEqual(d.tier, .ultra)
+        XCTAssertEqual(d.task, .summarizer)
+        XCTAssertEqual(d.repoID, "mlx-community/gemma-4-31b-it-4bit")
+        XCTAssertEqual(d.revision, "696d436c404745a59f30e4939a658162b0a9e57f")
+        XCTAssertFalse(d.files.isEmpty)
+        XCTAssertTrue(d.manifestVerified)
+        // 4 shards + config/tokenizer sidecars, all URLs pinned to the revision.
+        XCTAssertEqual(d.files.filter { $0.path.hasSuffix(".safetensors") }.count, 4)
+        for f in d.files {
+            XCTAssertTrue(f.url.absoluteString.contains(d.revision),
+                "\(f.path) URL not pinned to revision")
+        }
+        // ~18.4 GB total — catch a fat-fingered manifest in either direction.
+        XCTAssertGreaterThan(d.totalBytes, 18_000_000_000)
+        XCTAssertLessThan(d.totalBytes, 19_000_000_000)
+        // Heaviest model in the catalog: RAM floor must exceed Max's, and the
+        // ask must stay sane.
+        guard let maxTier = ModelCatalog.descriptor(for: "gemma-4-26b-a4b-it-4bit") else {
+            return XCTFail("max-tier descriptor missing")
+        }
+        XCTAssertGreaterThanOrEqual(d.minRAMGB, maxTier.minRAMGB)
+        XCTAssertGreaterThanOrEqual(d.recommendedRAMGB, d.minRAMGB)
+        XCTAssertLessThanOrEqual(d.recommendedRAMGB, 64)
     }
 
     func test_atLeastOneSummarizerHasVerifiedManifest() {

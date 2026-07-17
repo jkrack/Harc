@@ -40,6 +40,19 @@ final class ModelCatalogFallbackTests: XCTestCase {
         XCTAssertEqual(id, "gemma-4-12b-4bit")
     }
 
+    func test_fallback_picksUltraOverMax_whenBothInstalled() {
+        // User removes Quality; Ultra + Max remain. Should prefer Ultra.
+        let installed: Set<String> = [
+            "gemma-4-26b-a4b-it-4bit",
+            "gemma-4-31b-it-4bit",
+        ]
+        let id = ModelCatalog.fallbackSummarizerID(
+            installed: installed,
+            excluding: "gemma-4-e4b-it-4bit"
+        )
+        XCTAssertEqual(id, "gemma-4-31b-it-4bit")
+    }
+
     func test_fallback_returnsDefault_whenNothingElseInstalled() {
         // User removes their only installed model. Fallback to the default —
         // even though it isn't installed, the UI will then prompt to download.

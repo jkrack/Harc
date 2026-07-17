@@ -198,3 +198,20 @@ Everything deferred by the audit's B-list and prior waves is now built:
   a work gate (intermediate states are deterministic, assertions unchanged);
   the `RecordingSession` duty-cycle test waits on the session's levels stream
   for completion instead of a fixed sleep.
+
+## Summarizer tiers — Gemma 4 31B verification (2026-07-17)
+
+Prior research flagged Gemma 4 31B dense as a quality-first tier with an
+unverified repo id. Verified against the HuggingFace API: **GO**.
+
+- Repo: `mlx-community/gemma-4-31b-it-4bit`, pinned revision
+  `696d436c404745a59f30e4939a658162b0a9e57f` (main HEAD at verification).
+- 11 files, 18.44 GB total; 4 safetensors shards with LFS SHA256s from the
+  tree API; small git-tracked sidecars downloaded at the pinned revision and
+  SHA256'd locally. `config.json` is MLX format (`model_type: gemma4`,
+  `Gemma4ForConditionalGeneration`, affine 4-bit quantization block) — same
+  loader family as the shipping `gemma-4-26b-a4b-it-4bit` entry.
+- Shipped as a new `ultra` tier above `max` (26b-a4b keeps its Max identity).
+  Never auto-suggested: onboarding's `suggestedSummarizer` filter stops at
+  Quality. RAM gate: min 32 GB (download disabled below), 48 GB recommended
+  (warning row below). Labeled honestly: "Highest quality, slowest."

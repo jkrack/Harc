@@ -25,6 +25,7 @@ public enum ModelCatalog {
         gemma4_E4B_IT_4bit,
         gemma4_12B_4bit,
         gemma4_26B_A4B_IT_4bit,
+        gemma4_31B_IT_4bit,
     ]
 
     /// Lookup helper — nil if the id isn't in the catalog.
@@ -82,6 +83,10 @@ public enum ModelCatalog {
     //   - Gemma 4 12B-4bit: pro tier, ~11 GB, 32 GB recommended
     //   - Gemma 4 26B-A4B-it-4bit: max tier, ~15 GB (MoE — 26 B params in
     //     memory, ~4 B activated so compute is E4B-equivalent)
+    //   - Gemma 4 31B-it-4bit: ultra tier, ~18.4 GB dense — best summaries
+    //     in the catalog but every token pays the full 31 B (~26 tok/s).
+    //     Never auto-suggested in onboarding (that filter stops at Quality);
+    //     strictly an opt-in from Settings → Models on big-RAM machines.
 
     // Verified 2026-05-17 against the HuggingFace API with files_metadata=true.
     private static let gemma4_E2B_IT_4bit = ModelDescriptor(
@@ -173,7 +178,7 @@ public enum ModelCatalog {
     private static let gemma4_26B_A4B_IT_4bit = ModelDescriptor(
         id: "gemma-4-26b-a4b-it-4bit",
         displayName: "Gemma 4 · Max",
-        summary: "Highest quality. Runs E4B-speed via MoE. 32 GB+ Apple Silicon recommended.",
+        summary: "Near-Ultra quality at E4B speed via MoE. 32 GB+ Apple Silicon recommended.",
         task: .summarizer,
         tier: .max,
         repoID: "mlx-community/gemma-4-26b-a4b-it-4bit",
@@ -196,6 +201,40 @@ public enum ModelCatalog {
         ),
         minRAMGB: 24,
         recommendedRAMGB: 32,
+        contextTokens: 32_000,
+        manifestVerified: true
+    )
+
+    // Verified 2026-07-17 against the HuggingFace API (tree?recursive=true&
+    // blobs=true for LFS sha256 + sizes; small git-tracked files downloaded
+    // at the pinned revision and sha256'd locally).
+    private static let gemma4_31B_IT_4bit = ModelDescriptor(
+        id: "gemma-4-31b-it-4bit",
+        displayName: "Gemma 4 · Ultra",
+        summary: "Highest quality, slowest. Dense 31B — every token pays full price. 18.4 GB on disk; 48 GB RAM recommended.",
+        task: .summarizer,
+        tier: .ultra,
+        repoID: "mlx-community/gemma-4-31b-it-4bit",
+        revision: "696d436c404745a59f30e4939a658162b0a9e57f",
+        files: verifiedRepoFiles(
+            repo: "mlx-community/gemma-4-31b-it-4bit",
+            revision: "696d436c404745a59f30e4939a658162b0a9e57f",
+            entries: [
+                ("chat_template.jinja", 17_466, "36e3a42e5cf14cd0020e72d92e1fdd9970f59b82170e421f0cbe1bb42bead3f0"),
+                ("config.json", 6_046, "a01be3d45e0eb70ae89cef6d3e823dd44de6ec4dfc41b91dc357f97e457915c0"),
+                ("generation_config.json", 208, "d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de"),
+                ("model-00001-of-00004.safetensors", 5_366_617_512, "988e2b1fd41d93b62b8c432f52f632c43b8cb7f86df4b957db36a3cc0dab40ca"),
+                ("model-00002-of-00004.safetensors", 5_361_642_573, "a496a96fbd39cd11a9871f91d026013d91069dcac15f89ca861b93976f3857cf"),
+                ("model-00003-of-00004.safetensors", 5_367_276_094, "afa555ff0e1bc458c5b08aeef1f4499dce63e2bfb5d3a2aac716e47c0a5672c1"),
+                ("model-00004-of-00004.safetensors", 2_316_480_497, "b55567ae065357d047daca926e45619ec0edef994f165356111c95d4d1021587"),
+                ("model.safetensors.index.json", 205_370, "a9ca8373aacc37ab9d7f16ff4bbb392c055e1b51b0fec6258cbfc578056c5fef"),
+                ("processor_config.json", 1_316, "de3e580aebdc98272d4c4547daffe6525fcbae18a83a0e0bcf0d7444d4ee6f37"),
+                ("tokenizer.json", 32_169_626, "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"),
+                ("tokenizer_config.json", 2_740, "080d9e1aff284e2f6043889cd05367966f7c7b80e025fbc0b06745e218158656"),
+            ]
+        ),
+        minRAMGB: 32,
+        recommendedRAMGB: 48,
         contextTokens: 32_000,
         manifestVerified: true
     )

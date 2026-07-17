@@ -5,15 +5,16 @@ public enum ModelTask: String, Codable, Sendable {
     case summarizer
 }
 
-/// Quality / resource tier. `standard`, `quality`, `pro`, `max` are ordered;
-/// models in the same task share a tier ordering so the Settings UI can render
-/// an ascending quality/resource picker. `singleton` is the escape hatch for
-/// tasks that ship exactly one model (e.g. the embedder).
+/// Quality / resource tier. `standard`, `quality`, `pro`, `max`, `ultra` are
+/// ordered; models in the same task share a tier ordering so the Settings UI
+/// can render an ascending quality/resource picker. `singleton` is the escape
+/// hatch for tasks that ship exactly one model (e.g. the embedder).
 public enum ModelTier: String, Codable, Sendable, Comparable {
     case standard
     case quality
     case pro
     case max
+    case ultra
     case singleton
 
     private var ordinal: Int {
@@ -22,6 +23,7 @@ public enum ModelTier: String, Codable, Sendable, Comparable {
         case .quality:  return 1
         case .pro:      return 2
         case .max:      return 3
+        case .ultra:    return 4
         case .singleton: return -1
         }
     }
@@ -123,6 +125,7 @@ public extension ModelDescriptor {
         case .quality:  return "Quality"
         case .pro:      return "Pro"
         case .max:      return "Max"
+        case .ultra:    return "Ultra"
         case .singleton: return displayName
         }
     }

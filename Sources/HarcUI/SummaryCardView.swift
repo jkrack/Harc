@@ -395,6 +395,7 @@ public struct SummaryCardView: View {
         case .quality:  return "Quality"
         case .pro:      return "Pro"
         case .max:      return "Max"
+        case .ultra:    return "Ultra"
         case .singleton: return fallback
         }
     }
