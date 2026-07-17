@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Harc** — a macOS speech-to-text menu bar app. Records meetings quietly on a hotkey, transcribes locally on Apple Silicon, and drops the text into an always-on clipboard history for pasting into an LLM.
+**Harc** — a macOS speech-to-text menu bar app with two surfaces. (1) Meeting capture: start recording on toggle-hotkey, transcribe diarized audio in background, save to searchable library, paste into LLM. (2) Dictation: hold hotkey, speak, release to insert text at cursor with optional AI mode (Clean-up, Email, Message, Answer, etc.) — all local.
 
-Status: built and runnable. Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT, GRDB-backed library, MLX summarization, speaker re-identification all in place.
+Status: v0.4.1, shipped and stable. Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT (Parakeet), GRDB-backed library, MLX summarization, speaker re-identification, push-to-talk dictation with modes all in place.
 
 ## Hard Constraints
 
@@ -17,11 +17,13 @@ Non-negotiable product decisions. Flag to the user before violating.
 - **Menu bar resident.** Primary UI is a SwiftUI `MenuBarExtra` panel; the main library window opens on demand. Not a dock/window-first app.
 - **English-first.** Multilingual is a non-goal — it unlocks the best model choice (Parakeet).
 
-## Primary Use Case
+## Primary Use Cases
 
-**Long-form meeting capture → LLM paste.** The user runs Harc quietly in the menu bar during meetings (15 min to 1+ hour), stops recording at the end, and pastes the transcript into an LLM for summarization/Q&A.
+### 1. Long-form meeting capture → LLM paste
 
-Design implications — these shape every architectural decision:
+The user runs Harc quietly in the menu bar during meetings (15 min to 1+ hour), stops recording at the end, and pastes the transcript into an LLM for summarization/Q&A.
+
+Design implications:
 
 - **Reliability > latency.** No one cares about live partial text. They care that an hour of meeting audio produces a complete, accurate transcript. Never lose context is the north star.
 - **Toggle, not push-to-talk.** Start/stop via hotkey or menu. Visible recording indicator in the menu bar (e.g. red dot).
@@ -29,7 +31,19 @@ Design implications — these shape every architectural decision:
 - **Incremental background transcription during recording.** Not streaming to the UI — process the durable WAV in rolling ~60s chunks in the background while recording continues. Bounded memory, transcript is ~90% done the moment the user hits stop, and chunk boundaries are natural crash-recovery points.
 - **Capture system audio + mic, not just mic.** Single biggest quality win for meetings. Use `ScreenCaptureKit` for system audio and `AVAudioEngine` for the mic, mix to a single WAV. Trade-off: requires Screen Recording permission.
 - **Diarization on by default.** Speaker labels (`Speaker 1:`, `Speaker 2:`) massively improve what a downstream LLM can do with the transcript.
-- **VAD gating.** Meeting audio from the user's mic is typically 40–70% silence. Voice-activity detection cuts transcription work sharply with no quality loss. Silero or FluidAudio's built-in.
+- **VAD gating.** Meeting audio from the user's mic is typically 40–70% silence. Voice-activity detection cuts transcription work sharply with no quality loss. FluidAudio's built-in VAD is used.
+
+### 2. Push-to-talk dictation with AI modes
+
+The user holds a hotkey, speaks, releases to insert the transcribed text at the cursor in any app. Modes allow AI post-processing (Clean-up, Email, Message, Bullet List, Answer with context awareness, or custom).
+
+Design implications:
+
+- **Sub-second latency on warm path.** Daemon stays warm; no model cold-load. User expects instant insertion.
+- **Mic-only capture.** No system audio needed for short clips. `MicCapture` + brief `AudioFileWriter` temp WAV to `~/Library/Caches/Harc/dictation/`.
+- **Non-activating HUD.** The floating panel (NSPanel, `.nonactivatingPanel`) shows live waveform and status but never steals focus. Synthetic Cmd-V via `FrontmostAppPaster` inserts into the frontmost app.
+- **Modes reuse warm summarizer.** LLM post-processing (modes) shares the single resident `SummarizerService` to avoid model thrash. Mode default model = active summarizer model.
+- **Mutual exclusion with recording.** Dictation and meeting recording share mic and daemon. Guard via `RecordingState.isRecording`; refuse to start if either is active.
 
 ## Engine Approach
 
@@ -83,24 +97,26 @@ The doubled year in the date folder keeps each day's directory self-identifying 
 The UI is native SwiftUI on macOS 26. There is no custom design system — `HarcBrand` (in `Sources/HarcUI/HarcBrand.swift`) is the entire palette: a recording-red `live` color and a brand `gradient` for the app icon and About panel. Everything else uses `Color.accentColor`, `Color.primary` / `.secondary`, system materials, system fonts, and Liquid Glass via `.glassEffect()`.
 
 Surfaces:
-- `HarcWindowRootView` — the primary window. `NavigationSplitView` with a sidebar of recordings (grouped by Pinned / Today / Yesterday / This Week / month buckets), a detail pane (transcript + summary), and an `Inspector` (speaker editor + file metadata).
-- `MenuBarPanelView` — the slim `MenuBarExtra.window`-style panel: recording state line, level bars, Start/Stop, Open Library, and a 30-second post-stop tray with Copy and Paste-into-frontmost-app buttons.
-- `HarcSettingsForm` — a single `Form` with grouped Sections, hosted in the SwiftUI `Settings {}` scene.
-- `TranscriptEditorView` — a separate window for editing transcript text, with a native `.toolbar` and the same Inspector sections as the main window.
-- `HarcAppBridge` — the small observable that wires `RecordingState`, `PostStopTrayState`, frontmost-app name, scope-history FFT, and the panel actions through to the SwiftUI scene.
+- **Meeting Library Window:** `HarcWindowRootView` — the primary window. `NavigationSplitView` with a sidebar of recordings (grouped by Pinned / Today / Yesterday / This Week / month buckets), a detail pane (transcript + summary), and an `Inspector` (speaker editor + file metadata).
+- **Menu-bar Panel:** `MenuBarPanelView` — the slim `MenuBarExtra.window`-style panel: recording state line, level bars, Start/Stop, Open Library. Includes a dictation mode pill and recent dictation history. 30-second post-stop tray (for recordings) with Copy and Paste buttons.
+- **Dictation HUD:** `DictationHUDView` — a non-activating `NSPanel` (Liquid Glass pill) positioned above the Dock. Shows live waveform, status dot, active mode, context indicator, and stop/cancel buttons. Toggles between mini and expanded views.
+- **Dictation History Window:** `DictationHistoryWindowView` — a side panel (or integrated) showing recent dictations with timestamps and modes. Copy/re-insert/re-process actions.
+- **Settings:** `HarcSettingsForm` — a `Form` with grouped Sections:
+  - Recording settings (destination, hotkey, auto-paste guard)
+  - Dictation settings (hotkey, HUD position, keep-warm toggle, insertion behavior)
+  - Modes settings (list, create/edit modes, per-mode hotkeys, model picker)
+  - Models (download/manage STT and summarizer tiers)
+- **Transcript Editor:** `TranscriptEditorView` — a separate window for editing transcript text, with a native `.toolbar` and Inspector sections.
+- **App Bridge:** `HarcAppBridge` — the observable that wires `RecordingState`, `PostStopTrayState`, `DictationState`, frontmost-app name, scope-history FFT, and panel actions through to the SwiftUI scene.
 
-## Open Decisions
+## Decided
 
-Capture the *why* here when these get resolved:
+These architectural choices are locked in. Update this section only when rethinking a constraint.
 
-- **Chunking strategy.** Fixed 60s windows vs VAD-aligned windows vs FluidAudio's native long-form handling — depends on what FluidAudio/Parakeet tolerates.
-- **Recording format.** WAV 16kHz mono is the model's native rate; writing that directly avoids resampling. Confirm ScreenCaptureKit → 16kHz mono mix is clean.
-- **Clipboard-history storage.** GRDB/SQLite is the default assumption. Pending confirmation.
-- **File naming.** `HH-mm-ss.wav` is the default; optional meeting-name slug (e.g. `HH-mm-ss-standup.wav`) TBD — editable after the fact, or prompted on stop?
-- **Hotkey library.** MASShortcut, KeyboardShortcuts (sindresorhus), or raw Carbon `RegisterEventHotKey`.
-- **Diarization quality.** FluidAudio's diarizer vs a separate pyannote-style model — confirm it's good enough on meeting audio before building UI around it.
-- **Distribution.** Notarized `.app` direct download, Homebrew cask, or both.
-
-## Build & Run
-
-To be documented once the project is scaffolded. Expected shape: top-level SwiftPM workspace or Xcode project with two targets — `Harc` (menu bar app) and `harc-stt` (STT daemon executable, embedded in the app bundle).
+- **Chunking strategy:** Fixed 60s rolling windows with overlap-stitching. Matches FluidAudio's tolerance and provides natural crash-recovery points.
+- **Recording format:** WAV, 16 kHz, mono. Model's native rate; no resampling.
+- **Storage:** GRDB/SQLite for library, metadata, and dictation history.
+- **File naming:** Time-based (`YYYY/MM-DD/HH-mm-ss.wav`). Avoids collision and merge conflicts in shared folders.
+- **Hotkey library:** KeyboardShortcuts (sindresorhus). Published, accessible API for per-mode binding.
+- **Diarization:** FluidAudio's built-in model. Good enough for meeting and dictation on Apple Silicon.
+- **Distribution:** Notarized `.app` direct download via GitHub Releases. DMG for easy install. Homebrew cask considered for later.
