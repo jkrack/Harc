@@ -82,6 +82,17 @@ public final class DictationHistoryStore: ObservableObject {
         persist()
     }
 
+    /// Remove a single entry.
+    public func delete(id: String) {
+        guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries.remove(at: idx)
+        if entries.isEmpty {
+            try? FileManager.default.removeItem(at: fileURL)
+        } else {
+            persist()
+        }
+    }
+
     /// Drop all entries and delete the file on disk.
     public func clear() {
         entries = []

@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     lazy var dictationHistoryStore = DictationHistoryStore(prefs: prefs)
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
+    private var dictationEscMonitor: DictationEscMonitor?
+    private var dictationHistoryWindow: DictationHistoryWindowController?
     private var dictationKeepWarm: DictationKeepWarmController?
     private var hudDismissTask: Task<Void, Never>?
     private var lastDictationPhase: DictationState.Phase = .idle
@@ -148,6 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 },
                 onCancelDictation: { [weak self] in
                     Task { await self?.dictationController?.cancel() }
+                },
+                onOpenDictationHistory: { [weak self] in
+                    self?.statusPopover?.performClose(nil)
+                    self?.openDictationHistoryWindow()
                 }
             )
                 .environmentObject(prefs)
@@ -190,6 +196,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         )
         dictate.target = self
         menu.addItem(dictate)
+        let history = NSMenuItem(
+            title: "Dictation History…",
+            action: #selector(quickMenuOpenHistory(_:)),
+            keyEquivalent: ""
+        )
+        history.target = self
+        menu.addItem(history)
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(quickMenuOpenSettings(_:)),
@@ -212,6 +225,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     @objc private func quickMenuStartDictation(_ sender: NSMenuItem) {
         Task { await dictationController?.start() }
+    }
+
+    @objc private func quickMenuOpenHistory(_ sender: NSMenuItem) {
+        openDictationHistoryWindow()
     }
 
     @objc private func quickMenuOpenSettings(_ sender: NSMenuItem) {
@@ -241,7 +258,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func statusIconToolTip(isRecording: Bool) -> String {
         switch dictationState.phase {
         case .listening: return "Harc is listening — dictation in progress."
-        case .requestingMic, .loadingModel, .transcribing, .transforming, .inserting:
+        case .requestingMic, .loadingModel, .loadingTransformModel, .transcribing,
+             .transforming, .inserting:
             return "Harc is processing your dictation."
         case .idle, .done, .error:
             return isRecording ? "Harc is recording. Click for controls." : "Harc. Click to record, right-click for modes."
@@ -271,7 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // listening, blue while processing, a green beat on success.
         switch dictationState.phase {
         case .listening: return .systemRed
-        case .requestingMic, .loadingModel: return .systemYellow
+        case .requestingMic, .loadingModel, .loadingTransformModel: return .systemYellow
         case .transcribing, .transforming, .inserting: return .systemBlue
         case .done(let outcome): return outcome.kind == .inserted ? .systemGreen : .systemYellow
         case .error: return .systemOrange
@@ -537,6 +555,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     text: text, mode: mode, contextBlock: contextBlock
                 )
             },
+            ruleMode: { [weak self] bundleID in
+                self?.dictationModeStore.mode(activatedBy: bundleID)
+            },
+            transformColdModelName: { [weak self] mode in
+                await self?.dictationColdModelName(for: mode)
+            },
+            preloadTransformModel: { [weak self] mode in
+                await self?.preloadDictationModel(for: mode)
+            },
             ensureDaemonReady: { [launcher] onColdStart in
                 // Cold daemon → let the UI show "Loading speech model…".
                 var warm = false
@@ -611,6 +638,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
         )
 
+        // Esc cancels a listening dictation — a consuming tap, so the key
+        // never leaks into the frontmost app (which would dismiss dialogs).
+        let escMonitor = DictationEscMonitor(onCancel: { [weak self] in
+            Task { await self?.dictationController?.cancel() }
+        })
+        self.dictationEscMonitor = escMonitor
+
         dictationState.$phase
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
@@ -620,6 +654,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 self.lastDictationPhase = phase
                 self.updateDictationHUD(for: phase)
                 self.updateStatusIcon()
+                if case .listening = phase {
+                    self.dictationEscMonitor?.setListening(true)
+                } else {
+                    self.dictationEscMonitor?.setListening(false)
+                }
             }
             .store(in: &cancellables)
 
@@ -706,13 +745,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         case unknownModel(String)
     }
 
+    /// The display name of the mode's transform model when it still needs a
+    /// load — nil when warm or unresolvable (failures surface at transform).
+    private func dictationColdModelName(for mode: DictationMode) async -> String? {
+        guard let service = summarizerService else { return nil }
+        let modelID = mode.modelID ?? prefs.activeSummarizerID
+        guard let descriptor = await modelManager.descriptor(for: modelID),
+              (try? await modelManager.requireInstalled(modelID)) != nil
+        else { return nil }
+        guard await service.loadedModelID != modelID else { return nil }
+        return descriptor.displayName
+    }
+
+    /// Preload the mode's transform model so the HUD's loading phase covers
+    /// the load, not the generation. Errors are deliberately swallowed — the
+    /// transform call reports them via the raw-text fallback.
+    private func preloadDictationModel(for mode: DictationMode) async {
+        guard let service = summarizerService else { return }
+        let modelID = mode.modelID ?? prefs.activeSummarizerID
+        guard let directory = try? await modelManager.requireInstalled(modelID) else { return }
+        try? await service.preload(modelID: modelID, modelDirectory: directory)
+    }
+
+    /// Show (or re-show) the dictation history window.
+    func openDictationHistoryWindow() {
+        if dictationHistoryWindow == nil {
+            dictationHistoryWindow = DictationHistoryWindowController(
+                historyStore: dictationHistoryStore,
+                modeStore: dictationModeStore,
+                reprocess: { [weak self] text, mode in
+                    guard let self else { throw DictationTransformError.unavailable }
+                    return try await self.transformDictation(text: text, mode: mode)
+                },
+                onClose: { [weak self] in self?.dictationHistoryWindow = nil }
+            )
+        }
+        dictationHistoryWindow?.showWindow(nil)
+        dictationHistoryWindow?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Deep links (harc://)
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let link = DictationDeepLink.parse(url) else {
+                FileHandle.standardError.write(Data(
+                    "harc: ignoring unrecognized deep link \(url.absoluteString)\n".utf8
+                ))
+                continue
+            }
+            switch link {
+            case .dictate(let modeRef):
+                // Toggle semantics — a deep link has no key-up to pair with,
+                // so invoking it again stops-and-inserts.
+                let mode = modeRef.flatMap {
+                    DictationDeepLink.resolveMode($0, in: dictationModeStore.modes)
+                }
+                dictationController?.toggleDictation(oneShot: mode)
+            case .switchMode(let modeRef):
+                if let mode = DictationDeepLink.resolveMode(modeRef, in: dictationModeStore.modes) {
+                    dictationModeStore.setActiveMode(id: mode.id)
+                }
+            case .openHistory:
+                openDictationHistoryWindow()
+            }
+        }
+    }
+
     private func updateDictationHUD(for phase: DictationState.Phase) {
         hudDismissTask?.cancel()
         hudDismissTask = nil
         switch phase {
         case .idle:
             dictationHUD?.hide()
-        case .requestingMic, .loadingModel, .listening, .transcribing, .transforming, .inserting:
+        case .requestingMic, .loadingModel, .loadingTransformModel, .listening,
+             .transcribing, .transforming, .inserting:
             dictationHUD?.show()
         case .done:
             // Success beat: linger long enough to read the outcome, then fade.
@@ -1474,6 +1582,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         return (url, pendingImports.count)
     }
 
+    /// Cancel the in-flight import batch: the current file stops at its next
+    /// cancellation point (partial artifacts cleaned up), queued files drop.
+    func cancelImport() {
+        pendingImports.removeAll()
+        importTask?.cancel()
+        importState.cancelAll()
+    }
+
     private func importOneMediaFile(_ source: URL, queuedAfter: Int) async {
         importState.begin(filename: source.lastPathComponent, queued: queuedAfter)
         do {
@@ -1538,6 +1654,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
             importState.finish()
+        } catch is CancellationError {
+            // User-cancelled — cancelImport() already reset the banner.
         } catch {
             importState.fail(
                 message: "\(source.lastPathComponent): \(error.localizedDescription)"
@@ -1862,7 +1980,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             importState: importState,
             onEdit: { [weak self] rec in self?.openEditor(for: rec) },
             onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) },
-            onImportFiles: { [weak self] urls in self?.importMediaFiles(urls) }
+            onImportFiles: { [weak self] urls in self?.importMediaFiles(urls) },
+            onCancelImport: { [weak self] in self?.cancelImport() }
         )
         harcWindow = controller
         controller.showWindow(nil)
@@ -2477,6 +2596,7 @@ private struct StatusPopoverRoot: View {
     @ObservedObject var dictationHistoryStore: DictationHistoryStore
     let onStopDictation: () -> Void
     let onCancelDictation: () -> Void
+    let onOpenDictationHistory: () -> Void
     @EnvironmentObject private var prefs: HarcPreferences
 
     private var dictationStatusText: String? {
@@ -2484,9 +2604,11 @@ private struct StatusPopoverRoot: View {
         case .idle: return nil
         case .requestingMic: return "Waiting for microphone access…"
         case .loadingModel: return "Loading speech model…"
+        case .loadingTransformModel(let name): return "Loading \(name)…"
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
-        case .transforming: return "\(dictationModeStore.activeMode.name)…"
+        case .transforming:
+            return "\((dictationState.sessionModeOverride ?? dictationModeStore.activeMode).name)…"
         case .inserting: return "Inserting…"
         case .done(let outcome): return outcome.message
         case .error(let message): return message
@@ -2547,7 +2669,8 @@ private struct StatusPopoverRoot: View {
             onSelectDictationMode: { dictationModeStore.setActiveMode(id: $0) },
             dictationHistory: dictationHistoryStore.entries,
             onCopyDictationHistoryEntry: { FrontmostAppPaster.copyOnly($0.text) },
-            onClearDictationHistory: { dictationHistoryStore.clear() }
+            onClearDictationHistory: { dictationHistoryStore.clear() },
+            onOpenDictationHistory: onOpenDictationHistory
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }

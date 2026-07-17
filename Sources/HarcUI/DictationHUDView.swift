@@ -109,6 +109,8 @@ public struct DictationHUDView: View {
 
     /// Active-mode chip. A menu — NSMenu tracking runs in its own window, so
     /// it works from a non-activating panel without stealing key status.
+    /// When the session runs a different mode (per-app rule or one-shot
+    /// hotkey), the chip shows that mode with an auto glyph instead.
     private var modeChip: some View {
         Menu {
             ForEach(modeStore.modes) { mode in
@@ -124,8 +126,14 @@ public struct DictationHUDView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: modeStore.activeMode.symbolName)
+                Image(systemName: chipMode.symbolName)
                     .font(.caption2)
+                if state.sessionModeViaRule {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Color.accentColor)
+                        .help("Activated by an app rule")
+                }
                 Text(chipTitle)
                     .font(.caption)
                     .lineLimit(1)
@@ -134,13 +142,21 @@ public struct DictationHUDView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Dictation mode")
+        .help(state.sessionModeOverride == nil
+              ? "Dictation mode"
+              : "This dictation uses \(chipMode.name); the menu changes the default mode")
+    }
+
+    /// The mode the chip displays — the session override when one is in
+    /// effect, the persisted active mode otherwise.
+    private var chipMode: DictationMode {
+        state.sessionModeOverride ?? modeStore.activeMode
     }
 
     /// Mode name plus its shortcut when one is recorded — SuperWhisper shows
     /// name + key in its mode display.
     private var chipTitle: String {
-        let mode = modeStore.activeMode
+        let mode = chipMode
         if let shortcut = Self.shortcutLabel(for: mode) {
             return "\(mode.name)  \(shortcut)"
         }
@@ -205,7 +221,8 @@ public struct DictationHUDView: View {
                 .buttonStyle(.plain)
                 .help("Stop and insert")
             }
-        case .requestingMic, .loadingModel, .transcribing, .transforming, .inserting:
+        case .requestingMic, .loadingModel, .loadingTransformModel, .transcribing,
+             .transforming, .inserting:
             ProgressView()
                 .controlSize(.small)
         case .done(let outcome):
@@ -234,7 +251,7 @@ public struct DictationHUDView: View {
 
     private var dotColor: Color {
         switch state.phase {
-        case .requestingMic, .loadingModel: return .yellow
+        case .requestingMic, .loadingModel, .loadingTransformModel: return .yellow
         case .listening: return HarcBrand.live
         case .transcribing, .inserting: return .accentColor
         case .transforming: return .indigo
@@ -256,9 +273,10 @@ public struct DictationHUDView: View {
         switch state.phase {
         case .requestingMic: return "Waiting for microphone access…"
         case .loadingModel: return "Loading speech model…"
+        case .loadingTransformModel(let name): return "Loading \(name)…"
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
-        case .transforming: return "\(modeStore.activeMode.name)…"
+        case .transforming: return "\(chipMode.name)…"
         case .inserting: return "Inserting…"
         case .done(let outcome): return outcome.message
         case .error(let message): return message

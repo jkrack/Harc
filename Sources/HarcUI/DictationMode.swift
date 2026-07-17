@@ -27,6 +27,10 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
     public var includeSelectedText: Bool
     /// Capture the clipboard contents at dictation start as context.
     public var includeClipboard: Bool
+    /// Bundle IDs this mode auto-activates in: dictating while one of these
+    /// apps is frontmost uses this mode for the session (the persisted
+    /// active mode is untouched). One-shot mode hotkeys still win.
+    public var activationBundleIDs: [String]
 
     public init(
         id: String,
@@ -38,7 +42,8 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         modelID: String? = nil,
         isBuiltIn: Bool = false,
         includeSelectedText: Bool = false,
-        includeClipboard: Bool = false
+        includeClipboard: Bool = false,
+        activationBundleIDs: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -50,6 +55,7 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         self.isBuiltIn = isBuiltIn
         self.includeSelectedText = includeSelectedText
         self.includeClipboard = includeClipboard
+        self.activationBundleIDs = activationBundleIDs
     }
 
     /// True when this mode should capture working context at dictation start.
@@ -73,6 +79,7 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         isBuiltIn = try c.decode(Bool.self, forKey: .isBuiltIn)
         includeSelectedText = try c.decodeIfPresent(Bool.self, forKey: .includeSelectedText) ?? false
         includeClipboard = try c.decodeIfPresent(Bool.self, forKey: .includeClipboard) ?? false
+        activationBundleIDs = try c.decodeIfPresent([String].self, forKey: .activationBundleIDs) ?? []
     }
 }
 

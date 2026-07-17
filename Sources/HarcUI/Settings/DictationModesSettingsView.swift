@@ -179,6 +179,7 @@ private struct DictationModeEditor: View {
 
     @State private var testResult: String?
     @State private var testRunning = false
+    @State private var manualBundleID = ""
 
     /// Sentinel for "follow the active summarizer" in the model picker.
     private static let followDefaultTag = ""
@@ -268,6 +269,40 @@ private struct DictationModeEditor: View {
                         .font(.subheadline)
                         .foregroundStyle(Color.secondary)
                 }
+
+                Section {
+                    ForEach(mode.activationBundleIDs, id: \.self) { bundleID in
+                        HStack {
+                            Text(Self.displayName(forBundleID: bundleID))
+                            Text(bundleID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button {
+                                mode.activationBundleIDs.removeAll { $0 == bundleID }
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    HStack {
+                        addRunningAppMenu
+                        TextField("Or a bundle ID, e.g. com.apple.mail", text: $manualBundleID)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addManualBundleID() }
+                        Button("Add") { addManualBundleID() }
+                            .disabled(manualBundleID.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } header: {
+                    Text("Activate in these apps")
+                } footer: {
+                    Text("Dictating while one of these apps is frontmost uses this mode automatically. Mode shortcuts still win.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                }
             }
             .formStyle(.grouped)
 
@@ -299,6 +334,50 @@ private struct DictationModeEditor: View {
 
     private var summarizers: [ModelDescriptor] {
         ModelCatalog.descriptors(for: .summarizer)
+    }
+
+    // MARK: - Activation rules
+
+    /// Menu of currently running regular apps — the practical way to pick a
+    /// target, since Settings itself is frontmost while this sheet is open.
+    private var addRunningAppMenu: some View {
+        Menu("Add App") {
+            ForEach(Self.runningRegularApps(), id: \.bundleID) { app in
+                Button(app.name) {
+                    addBundleID(app.bundleID)
+                }
+            }
+        }
+        .fixedSize()
+    }
+
+    private func addManualBundleID() {
+        addBundleID(manualBundleID)
+        manualBundleID = ""
+    }
+
+    private func addBundleID(_ raw: String) {
+        let bundleID = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bundleID.isEmpty, !mode.activationBundleIDs.contains(bundleID) else { return }
+        mode.activationBundleIDs.append(bundleID)
+    }
+
+    private static func runningRegularApps() -> [(name: String, bundleID: String)] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap { app in
+                guard let bundleID = app.bundleIdentifier,
+                      bundleID != Bundle.main.bundleIdentifier else { return nil }
+                return (app.localizedName ?? bundleID, bundleID)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    static func displayName(forBundleID bundleID: String) -> String {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            return FileManager.default.displayName(atPath: url.path)
+        }
+        return bundleID
     }
 
     private func runTest() {

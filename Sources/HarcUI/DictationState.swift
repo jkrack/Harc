@@ -37,6 +37,9 @@ public final class DictationState: ObservableObject {
         /// The STT daemon was cold — the speech model is loading.
         case loadingModel
         case transcribing
+        /// The mode's LLM was cold — multi-GB weights are loading. The
+        /// associated value is the model's display name ("Standard", …).
+        case loadingTransformModel(String)
         /// LLM post-processing per the active dictation mode.
         case transforming
         case inserting
@@ -59,6 +62,13 @@ public final class DictationState: ObservableObject {
     /// True when cancel needs a second click (long session guard). The HUD
     /// turns its cancel button into an explicit "Discard".
     @Published public private(set) var confirmingCancel: Bool = false
+    /// The mode governing the current session when it differs from the
+    /// persisted active mode (one-shot hotkey or per-app rule). Drives the
+    /// HUD chip; nil when the session simply uses the active mode.
+    @Published public private(set) var sessionModeOverride: DictationMode?
+    /// True when `sessionModeOverride` came from a per-app activation rule
+    /// (vs a one-shot mode hotkey) — the chip shows an auto glyph.
+    @Published public private(set) var sessionModeViaRule: Bool = false
 
     public static let levelHistoryCount = 40
 
@@ -69,7 +79,8 @@ public final class DictationState: ObservableObject {
     /// `.error` are not active — a new dictation may start over them.
     public var isActive: Bool {
         switch phase {
-        case .requestingMic, .listening, .loadingModel, .transcribing, .transforming, .inserting:
+        case .requestingMic, .listening, .loadingModel, .loadingTransformModel,
+             .transcribing, .transforming, .inserting:
             return true
         case .idle, .done, .error:
             return false
@@ -83,12 +94,20 @@ public final class DictationState: ObservableObject {
             levelHistory = []
             context = .empty
             confirmingCancel = false
+            sessionModeOverride = nil
+            sessionModeViaRule = false
         case .requestingMic:
             notice = nil
             confirmingCancel = false
-        case .listening, .loadingModel, .transcribing, .transforming, .inserting:
+        case .listening, .loadingModel, .loadingTransformModel, .transcribing,
+             .transforming, .inserting:
             break
         }
+    }
+
+    public func setSessionModeOverride(_ mode: DictationMode?, viaRule: Bool) {
+        sessionModeOverride = mode
+        sessionModeViaRule = mode != nil && viaRule
     }
 
     public func setNotice(_ message: String?) {

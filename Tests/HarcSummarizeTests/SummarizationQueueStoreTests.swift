@@ -2,11 +2,30 @@ import Testing
 import Foundation
 @testable import HarcSummarize
 
+/// Holds work items until the test releases them, so intermediate queue
+/// states (current set, pending populated) are observable deterministically
+/// instead of racing a wall-clock sleep under parallel suite load.
+private actor WorkGate {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+        opened = true
+        for waiter in waiters { waiter.resume() }
+        waiters = []
+    }
+
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
 @Suite("SummarizationQueueStore")
 struct SummarizationQueueStoreTests {
 
     private func expectEventually(
-        timeoutMs: Int = 2000,
+        timeoutMs: Int = 30_000,
         _ check: @Sendable () async -> Bool,
         _ sourceLocation: SourceLocation = #_sourceLocation
     ) async {
@@ -21,25 +40,27 @@ struct SummarizationQueueStoreTests {
     @Test("store mirrors queue state: pending grows, current is set, drained leaves both empty")
     @MainActor
     func mirrorsQueueState() async throws {
+        // Gated work: nothing completes until the test says so, so the
+        // intermediate state (one current, one pending) can't be missed.
+        let gate = WorkGate()
         let queue = SummarizationQueue(coordinator: BackgroundWorkCoordinator()) { _ in
-            try await Task.sleep(nanoseconds: 40_000_000)
+            await gate.wait()
         }
         let store = await SummarizationQueueStore(queue: queue)
 
         await queue.enqueue(1)
         await queue.enqueue(2)
 
-        // Eventually: one is current, one is pending. totalInFlight
-        // counts both simultaneously.
+        // One is current, one is pending. totalInFlight counts both.
         await expectEventually {
             await MainActor.run {
-                ((store.current == 1 && store.pending == [2])
-                 || (store.current == 2 && store.pending == []))
-                && store.totalInFlight >= 1
+                store.current == 1 && store.pending == [2]
+                && store.totalInFlight == 2
             }
         }
 
-        // After drain both are clear and totalInFlight == 0.
+        // Release the work; after drain both are clear and totalInFlight == 0.
+        await gate.open()
         await expectEventually {
             await MainActor.run {
                 store.current == nil
@@ -52,8 +73,11 @@ struct SummarizationQueueStoreTests {
     @Test("isQueued and position reflect both current and pending")
     @MainActor
     func isQueuedAndPosition() async throws {
+        // Gated work: all three stay in flight until released, so isQueued /
+        // position can't observe a drained item and time out.
+        let gate = WorkGate()
         let queue = SummarizationQueue(coordinator: BackgroundWorkCoordinator()) { _ in
-            try await Task.sleep(nanoseconds: 100_000_000)
+            await gate.wait()
         }
         let store = await SummarizationQueueStore(queue: queue)
 
@@ -68,7 +92,8 @@ struct SummarizationQueueStoreTests {
             }
         }
 
-        // Clean up so the test doesn't hang on outstanding sleeps.
+        // Release held work, then drain so nothing outlives the test.
+        await gate.open()
         await queue.cancelAll()
     }
 

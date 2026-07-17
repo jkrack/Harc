@@ -62,6 +62,9 @@ private func makeController(
     transcript: String = "hello world",
     activeMode: DictationMode = DictationMode.builtIns[0],
     transform: ((String, DictationMode, String?) async throws -> String)? = nil,
+    ruleMode: (@MainActor (String?) -> DictationMode?)? = nil,
+    transformColdModelName: ((DictationMode) async -> String?)? = nil,
+    preloadTransformModel: ((DictationMode) async -> Void)? = nil,
     contextCapture: SpyContextCapture? = nil,
     micPermission: (() async -> DictationController.MicPermission)? = nil,
     ensureDaemonReady: ((@escaping @MainActor () -> Void) async throws -> Void)? = nil,
@@ -81,6 +84,9 @@ private func makeController(
         paster: paster,
         activeMode: { activeMode },
         transform: transform,
+        ruleMode: ruleMode ?? { _ in nil },
+        transformColdModelName: transformColdModelName,
+        preloadTransformModel: preloadTransformModel,
         captureContext: { spy.capture($0, $1) },
         micPermission: micPermission ?? { .granted },
         ensureDaemonReady: ensureDaemonReady,
@@ -821,5 +827,226 @@ private func waitUntil(
             return
         }
         try await Task.sleep(for: .milliseconds(10))
+    }
+}
+
+// MARK: - Per-app activation rules
+
+@Suite("DictationController per-app rules")
+@MainActor
+struct DictationRuleModeTests {
+    private let ruleMode = DictationMode(
+        id: "test.rule", name: "Rule", symbolName: "bolt",
+        postProcess: .llm, instruction: "Rewrite.",
+        activationBundleIDs: ["com.example.texteditor"]
+    )
+    private let hotkeyMode = DictationMode(
+        id: "test.hotkey", name: "Hotkey", symbolName: "keyboard",
+        postProcess: .llm, instruction: "Shout."
+    )
+
+    @Test("a matching rule beats the persisted active mode")
+    func ruleBeatsActive() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var transformedWith: [String] = []
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: DictationMode.builtIns[0],  // Raw — would skip transform
+            transform: { text, mode, _ in
+                transformedWith.append(mode.id)
+                return text
+            },
+            ruleMode: { [ruleMode] bundleID in
+                bundleID == "com.example.texteditor" ? ruleMode : nil
+            }
+        )
+
+        await controller.start()
+        // The chip shows the override, flagged as rule-activated.
+        #expect(state.sessionModeOverride?.id == "test.rule")
+        #expect(state.sessionModeViaRule)
+        await controller.stopAndInsert()
+
+        #expect(transformedWith == ["test.rule"])
+        // Rules never touch the persisted active mode.
+        #expect(prefs.activeDictationModeID != "test.rule")
+    }
+
+    @Test("a one-shot mode hotkey beats a matching rule")
+    func hotkeyBeatsRule() async throws {
+        let prefs = HarcPreferences()
+        prefs.dictationTriggerStyle = .pushToTalk
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var transformedWith: [String] = []
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: DictationMode.builtIns[0],
+            transform: { text, mode, _ in
+                transformedWith.append(mode.id)
+                return text
+            },
+            ruleMode: { [ruleMode] bundleID in
+                bundleID == "com.example.texteditor" ? ruleMode : nil
+            }
+        )
+
+        controller.handleModeHotkey(.keyDown, mode: hotkeyMode)
+        try await waitUntil { state.phase == .listening }
+        #expect(state.sessionModeOverride?.id == "test.hotkey")
+        #expect(!state.sessionModeViaRule)
+        await controller.stopAndInsert()
+
+        #expect(transformedWith == ["test.hotkey"])
+    }
+
+    @Test("no rule match falls through to the active mode with no override shown")
+    func noMatchUsesActive() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.unrelated")
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            ruleMode: { [ruleMode] bundleID in
+                bundleID == "com.example.texteditor" ? ruleMode : nil
+            }
+        )
+
+        await controller.start()
+        #expect(state.sessionModeOverride == nil)
+        #expect(!state.sessionModeViaRule)
+        await controller.stopAndInsert()
+        #expect(paster.inserted == ["hello"])
+    }
+
+    @Test("the rule mode is frozen at start — a frontmost change mid-session doesn't switch it")
+    func ruleFrozenAtStart() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var transformedWith: [String] = []
+        let (controller, _) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: DictationMode.builtIns[0],
+            transform: { text, mode, _ in
+                transformedWith.append(mode.id)
+                return text
+            },
+            ruleMode: { [ruleMode] bundleID in
+                bundleID == "com.example.texteditor" ? ruleMode : nil
+            }
+        )
+
+        await controller.start()
+        // The user switches apps while speaking.
+        paster.frontmost = "com.example.unrelated"
+        await controller.stopAndInsert()
+
+        #expect(transformedWith == ["test.rule"])
+    }
+}
+
+// MARK: - Store rule matching
+
+@Suite("DictationModeStore activation rules")
+@MainActor
+struct DictationModeStoreRuleTests {
+    @Test("mode(activatedBy:) matches by bundle id; nil and unknown ids don't")
+    func matching() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-modes-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = DictationModeStore(fileURL: url, prefs: HarcPreferences())
+
+        var email = store.modes.first { $0.id == "builtin.email" }!
+        email.activationBundleIDs = ["com.apple.mail"]
+        store.update(email)
+
+        #expect(store.mode(activatedBy: "com.apple.mail")?.id == "builtin.email")
+        #expect(store.mode(activatedBy: "com.example.other") == nil)
+        #expect(store.mode(activatedBy: nil) == nil)
+        #expect(store.mode(activatedBy: "") == nil)
+    }
+
+    @Test("activation rules round-trip through persistence; legacy JSON decodes to no rules")
+    func persistence() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-modes-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let prefs = HarcPreferences()
+        let store = DictationModeStore(fileURL: url, prefs: prefs)
+        var bullets = store.modes.first { $0.id == "builtin.bullets" }!
+        bullets.activationBundleIDs = ["com.apple.Notes"]
+        store.update(bullets)
+
+        let reloaded = DictationModeStore(fileURL: url, prefs: prefs)
+        #expect(reloaded.mode(activatedBy: "com.apple.Notes")?.id == "builtin.bullets")
+
+        // Pre-rules JSON (no activationBundleIDs key) still decodes.
+        let legacy = """
+        [{"id":"legacy.mode","name":"Legacy","symbolName":"star","postProcess":"llm",
+          "instruction":"Do things.","isBuiltIn":false}]
+        """
+        let decoded = try JSONDecoder().decode([DictationMode].self, from: Data(legacy.utf8))
+        #expect(decoded[0].activationBundleIDs.isEmpty)
+    }
+}
+
+// MARK: - Cold LLM load phase
+
+@Suite("DictationController transform cold-load")
+@MainActor
+struct DictationColdLoadTests {
+    private let llmMode = DictationMode(
+        id: "test.llm", name: "Rewrite", symbolName: "wand.and.stars",
+        postProcess: .llm, instruction: "Rewrite."
+    )
+
+    @Test("a cold model shows the loading phase and preloads before transforming")
+    func coldLoadSequence() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var phasesAtPreload: [DictationState.Phase] = []
+        var preloadedBeforeTransform = false
+        var preloadCount = 0
+        var stateRef: DictationState?
+        let (controller, state) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: llmMode,
+            transform: { text, _, _ in
+                preloadedBeforeTransform = preloadCount == 1
+                return text.uppercased()
+            },
+            transformColdModelName: { _ in "Standard" },
+            preloadTransformModel: { _ in
+                preloadCount += 1
+                if let stateRef { phasesAtPreload.append(stateRef.phase) }
+            }
+        )
+        stateRef = state
+
+        await controller.start()
+        await controller.stopAndInsert()
+
+        #expect(preloadCount == 1)
+        #expect(phasesAtPreload == [.loadingTransformModel("Standard")])
+        #expect(preloadedBeforeTransform)
+        #expect(paster.inserted == ["HELLO"])
+    }
+
+    @Test("a warm model skips the loading phase entirely")
+    func warmSkipsLoadingPhase() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor")
+        var preloadCount = 0
+        let (controller, _) = makeController(
+            prefs: prefs, paster: paster, transcript: "hello",
+            activeMode: llmMode,
+            transform: { text, _, _ in text },
+            transformColdModelName: { _ in nil },
+            preloadTransformModel: { _ in preloadCount += 1 }
+        )
+
+        await controller.start()
+        await controller.stopAndInsert()
+        #expect(preloadCount == 0)
     }
 }

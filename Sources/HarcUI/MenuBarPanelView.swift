@@ -60,6 +60,7 @@ public struct MenuBarPanelView: View {
     let dictationHistory: [DictationHistoryEntry]
     let onCopyDictationHistoryEntry: ((DictationHistoryEntry) -> Void)?
     let onClearDictationHistory: (() -> Void)?
+    let onOpenDictationHistory: (() -> Void)?
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -117,7 +118,8 @@ public struct MenuBarPanelView: View {
         onSelectDictationMode: ((String) -> Void)? = nil,
         dictationHistory: [DictationHistoryEntry] = [],
         onCopyDictationHistoryEntry: ((DictationHistoryEntry) -> Void)? = nil,
-        onClearDictationHistory: (() -> Void)? = nil
+        onClearDictationHistory: (() -> Void)? = nil,
+        onOpenDictationHistory: (() -> Void)? = nil
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -172,6 +174,7 @@ public struct MenuBarPanelView: View {
         self.dictationHistory = dictationHistory
         self.onCopyDictationHistoryEntry = onCopyDictationHistoryEntry
         self.onClearDictationHistory = onClearDictationHistory
+        self.onOpenDictationHistory = onOpenDictationHistory
     }
 
     @ViewBuilder
@@ -235,10 +238,11 @@ public struct MenuBarPanelView: View {
         .help("Dictation mode")
     }
 
-    /// Recent dictations — click an entry to copy it back to the clipboard.
+    /// Recent dictations quick list (last 5) — click an entry to copy it back
+    /// to the clipboard; the full window has search / re-process / delete.
     private func dictationHistoryMenu(_ onCopy: @escaping (DictationHistoryEntry) -> Void) -> some View {
         Menu {
-            ForEach(dictationHistory) { entry in
+            ForEach(dictationHistory.prefix(5)) { entry in
                 Button {
                     onCopy(entry)
                 } label: {
@@ -248,8 +252,11 @@ public struct MenuBarPanelView: View {
                         .help(entry.rawText.map { "Raw transcript: \($0)" } ?? "")
                 }
             }
+            Divider()
+            if let onOpenDictationHistory {
+                Button("Open History…") { onOpenDictationHistory() }
+            }
             if let onClearDictationHistory {
-                Divider()
                 Button("Clear History", role: .destructive) {
                     onClearDictationHistory()
                 }

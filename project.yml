@@ -51,6 +51,10 @@ targets:
         LSUIElement: true
         NSMicrophoneUsageDescription: "Harc uses the microphone to record meetings for transcription."
         NSScreenCaptureUsageDescription: "Harc captures system audio so remote participants appear in transcriptions."
+        CFBundleURLTypes:
+          - CFBundleURLName: com.harc.Harc.deeplink
+            CFBundleURLSchemes:
+              - harc
     entitlements:
       path: HarcApp/Harc.entitlements
       properties:

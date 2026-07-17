@@ -57,6 +57,15 @@ public final class MediaImportState: ObservableObject {
         queuedCount = 0
     }
 
+    /// The user cancelled the batch — clear everything without an error or
+    /// a completion banner.
+    public func cancelAll() {
+        current = nil
+        queuedCount = 0
+        lastError = nil
+        lastCompletedFilename = nil
+    }
+
     public func dismissError() {
         lastError = nil
     }

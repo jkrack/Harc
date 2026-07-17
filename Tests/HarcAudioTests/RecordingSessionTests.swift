@@ -76,11 +76,12 @@ struct RecordingSessionTests {
         func stop() async { continuation?.finish() }
     }
 
-    /// Mic fake that cooperatively yields between buffers (`Task.yield`, not a
-    /// wall-clock sleep) so a concurrently draining, faster system stream gets
-    /// scheduling turns to enqueue buffers between mic ticks. Models the real
-    /// cadence — sparse mic buffers, denser system-audio buffers — without being
-    /// sensitive to thread-pool saturation under parallel test load.
+    /// Mic fake with real (small) wall-clock pacing: an initial head start so
+    /// the pump's system-drain task can empty the already-buffered system
+    /// stream first, then a short gap between buffers. Models the real
+    /// cadence — sparse mic buffers, denser system-audio buffers — while
+    /// giving the sys-drain task guaranteed scheduling room even under
+    /// parallel test load (the old `Task.yield()` pacing could starve it).
     actor FakeMicPaced: MicCaptureSource {
         nonisolated let script: [AVAudioPCMBuffer]
         private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
@@ -91,9 +92,10 @@ struct RecordingSessionTests {
             self.continuation = cont
             let box = SendableBuffers(script)
             Task.detached {
+                try? await Task.sleep(for: .milliseconds(100))
                 for buf in box.buffers {
                     cont.yield(buf)
-                    await Task.yield()
+                    try? await Task.sleep(for: .milliseconds(20))
                 }
                 cont.finish()
             }
@@ -236,7 +238,26 @@ struct RecordingSessionTests {
         )
 
         try await session.start(at: Date())
-        try await Task.sleep(for: .milliseconds(800))
+        // Deterministic completion wait: the session emits one AudioLevels
+        // per processed mic buffer, so 10 emissions means every mic buffer is
+        // mixed and written — no fixed sleep to race under parallel load.
+        // stop() cancels the pump, so stopping early would truncate the mix.
+        let levelsStream = session.levels
+        let waiter = Task {
+            var seen = 0
+            for await _ in levelsStream {
+                seen += 1
+                if seen >= 10 { break }
+            }
+        }
+        // Upper bound only — completes in <1s on an idle machine; generous
+        // so parallel-suite CPU saturation can't truncate the mix.
+        let deadline = Task {
+            try? await Task.sleep(for: .seconds(60))
+            waiter.cancel()
+        }
+        await waiter.value
+        deadline.cancel()
         let result = try await session.stop()
 
         let af = try AVAudioFile(forReading: result.wavURL)

@@ -85,3 +85,53 @@ struct DictationHistoryStoreTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 }
+
+// MARK: - Window additions
+
+extension DictationHistoryStoreTests {
+    @Test("delete removes one entry and persists the remainder")
+    func deleteOne() {
+        let url = tempFile()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let prefs = HarcPreferences()
+        prefs.dictationHistoryEnabled = true
+
+        let store = DictationHistoryStore(fileURL: url, prefs: prefs)
+        store.record(entry("keep"))
+        store.record(entry("drop"))
+        let dropID = store.entries.first { $0.text == "drop" }!.id
+
+        store.delete(id: dropID)
+        #expect(store.entries.map(\.text) == ["keep"])
+
+        let reloaded = DictationHistoryStore(fileURL: url, prefs: prefs)
+        #expect(reloaded.entries.map(\.text) == ["keep"])
+
+        // Deleting the last entry removes the file entirely.
+        store.delete(id: store.entries[0].id)
+        #expect(store.entries.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+}
+
+@Suite("DictationHistoryWindowView search")
+@MainActor
+struct DictationHistorySearchTests {
+    private func entry(_ text: String, raw: String? = nil) -> DictationHistoryEntry {
+        DictationHistoryEntry(text: text, rawText: raw, modeName: "Raw", delivery: .pasted)
+    }
+
+    @Test("filter matches delivered text and raw transcript, case-insensitively")
+    func filterMatchesBothViews() {
+        let entries = [
+            entry("Polished thursday plan", raw: "um thursday plan I guess"),
+            entry("Grocery list"),
+            entry("Formatted email", raw: "dear bob about the invoice"),
+        ]
+        #expect(DictationHistoryWindowView.filter(entries, query: "THURSDAY").count == 1)
+        // "invoice" only appears in the raw transcript — still findable.
+        #expect(DictationHistoryWindowView.filter(entries, query: "invoice").map(\.text) == ["Formatted email"])
+        #expect(DictationHistoryWindowView.filter(entries, query: "  ") == entries)
+        #expect(DictationHistoryWindowView.filter(entries, query: "zzz").isEmpty)
+    }
+}

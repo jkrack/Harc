@@ -24,3 +24,4 @@ build/
 
 # xcodegen-generated
 HarcApp/Info.plist
+.claude/

@@ -166,3 +166,35 @@ To start, `DictationController` + `DictationState` live in **HarcUI** (alongside
 ## Suggested sequencing
 
 Phase 1 is a self-contained, shippable increment (raw push-to-talk dictation) and de-risks the whole thing. Ship it, then layer modes (Phase 2 — the SuperWhisper differentiator), then Super Mode (Phase 3). Phases 4–5 are independent and can slot in anytime.
+
+## Backlog wave (post-v0.4.1) — complete
+
+Everything deferred by the audit's B-list and prior waves is now built:
+
+- **Dictation History window** (`DictationHistoryWindowView` + window controller):
+  search across delivered AND raw text, voice-vs-AI segmented views, per-view
+  copy, re-process with any LLM mode via the shared summarizer, per-entry
+  delete + confirmed Clear All. The menu-bar clock menu keeps a 5-entry quick
+  list with "Open History…"; the status-item right-click menu links it too.
+- **Per-app auto-activation rules**: `DictationMode.activationBundleIDs`
+  (backward-compatible decode) + "Activate in these apps" in the mode editor
+  (running-app picker + manual bundle id). Resolved once at dictation start
+  against the frontmost app; precedence: one-shot mode hotkey > rule > active
+  mode. The HUD chip shows the session mode with a bolt glyph when a rule won.
+- **`harc://` deep links** (`DictationDeepLink` + `CFBundleURLTypes`):
+  `harc://dictate`, `harc://dictate?mode=<id-or-name>`, `harc://mode/<ref>`,
+  `harc://history`. Dictate links use toggle semantics (no key-up to pair).
+- **Esc-to-cancel** (`DictationEscMonitor`): a consuming `CGEventTap` alive
+  only while listening — Esc cancels dictation without leaking into the
+  frontmost app; skipped silently without Accessibility; re-enables after
+  tap-timeout.
+- **LLM cold-load state**: `.loadingTransformModel(name)` (amber) shows the
+  multi-GB Gemma load distinctly from the indigo transform phase, via
+  `SummarizerService.preload` so the visible phase covers exactly the load.
+- **Cancel-in-flight import**: cooperative cancellation points in
+  `MediaImportService` (between decode buffers, between chunks, before
+  finalize) + a Cancel button on the import banner; partial artifacts cleaned.
+- **De-flaked tests**: the two `SummarizationQueueStore` timing tests now use
+  a work gate (intermediate states are deterministic, assertions unchanged);
+  the `RecordingSession` duty-cycle test waits on the session's levels stream
+  for completion instead of a fixed sleep.

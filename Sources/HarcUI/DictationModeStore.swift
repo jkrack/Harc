@@ -39,6 +39,14 @@ public final class DictationModeStore: ObservableObject {
         prefs.activeDictationModeID = id
     }
 
+    /// The mode whose auto-activation rules claim `bundleID`, if any. First
+    /// match in mode-list order wins (built-ins first, then user modes) so
+    /// conflicting rules resolve deterministically.
+    public func mode(activatedBy bundleID: String?) -> DictationMode? {
+        guard let bundleID, !bundleID.isEmpty else { return nil }
+        return modes.first { $0.activationBundleIDs.contains(bundleID) }
+    }
+
     // MARK: - CRUD
 
     public func add(_ mode: DictationMode) {

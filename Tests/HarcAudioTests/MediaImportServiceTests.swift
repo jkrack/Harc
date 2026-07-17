@@ -262,4 +262,55 @@ struct MediaImportServiceTests {
         #expect(!MediaImportService.isSupported(URL(fileURLWithPath: "/a/b.txt")))
         #expect(!MediaImportService.isSupported(URL(fileURLWithPath: "/a/b")))
     }
+
+    @Test("cancelling mid-transcription throws CancellationError and leaves no artifacts")
+    func cancellationCleansUp() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Long enough for several 1s chunks so a cancellation point is
+        // guaranteed to run between chunks.
+        let source = try makeWAVFixture(seconds: 5.0, in: dir)
+        let base = dir.appendingPathComponent("library")
+
+        // Client that signals when the first chunk arrives, then stalls
+        // (cancellation-cooperatively) so the import is provably in flight
+        // when the test cancels it.
+        final class StallingClient: TranscribingClient, @unchecked Sendable {
+            let firstCall = AsyncStream<Void>.makeStream()
+            func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
+                firstCall.continuation.yield()
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: 5_000_000)
+                }
+                throw CancellationError()
+            }
+        }
+        let client = StallingClient()
+        let importer = Task {
+            try await MediaImportService(
+                client: client,
+                diarizer: nil,
+                destination: RecordingDestination(baseDirectory: base)
+            ).importFile(
+                source: source,
+                options: MediaImportService.Options(chunkDurationSeconds: 1.0)
+            )
+        }
+
+        // Wait until the first chunk is being transcribed, then cancel.
+        var iterator = client.firstCall.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        importer.cancel()
+
+        let result = await importer.result
+        switch result {
+        case .success:
+            Issue.record("import completed despite cancellation")
+        case .failure(let error):
+            #expect(error is CancellationError)
+        }
+        // Nothing lands in the destination on cancel.
+        #expect(!FileManager.default.fileExists(atPath: base.path)
+                || (try? FileManager.default.contentsOfDirectory(atPath: base.path))?.isEmpty == true)
+    }
 }

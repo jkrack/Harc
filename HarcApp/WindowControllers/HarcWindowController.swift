@@ -21,7 +21,8 @@ final class HarcWindowController: NSWindowController {
         importState: MediaImportState,
         onEdit: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void,
-        onImportFiles: @escaping ([URL]) -> Void
+        onImportFiles: @escaping ([URL]) -> Void,
+        onCancelImport: @escaping () -> Void
     ) {
         let peopleVM = PeopleViewModel(store: store)
         let root = HarcWindowRootView(
@@ -35,6 +36,7 @@ final class HarcWindowController: NSWindowController {
             onEdit: onEdit,
             onDelete: onDelete,
             onImportFiles: onImportFiles,
+            onCancelImport: onCancelImport,
             importState: importState
         )
         .environmentObject(prefs)

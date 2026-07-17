@@ -165,6 +165,11 @@ public actor MediaImportService {
 
         // 3. Finalize into the destination hierarchy — same shape as
         // RecordingSession.stop(): atomic move, then siblings next to the WAV.
+        // Last cancellation point — past here the import completes.
+        if Task.isCancelled {
+            try? FileManager.default.removeItem(at: cacheURL)
+            throw CancellationError()
+        }
         progress(MediaImportProgress(phase: .finalizing, fraction: 0.96))
         let wavURL = try destination.publicPath(for: importedAt)
         try RecordingDestination.atomicMove(from: cacheURL, to: wavURL)
@@ -255,6 +260,13 @@ public actor MediaImportService {
         let writer = try AudioFileWriter(url: cacheURL)
         var writtenFrames: Int = 0
         while let sample = output.copyNextSampleBuffer() {
+            // Cooperative cancel: stop decoding promptly and release the
+            // reader; the caller removes the partial cache WAV.
+            if Task.isCancelled {
+                reader.cancelReading()
+                try? writer.close()
+                throw CancellationError()
+            }
             guard let buffer = Self.pcmBuffer(from: sample) else { continue }
             try writer.write(buffer)
             writtenFrames += Int(buffer.frameLength)
@@ -334,6 +346,9 @@ public actor MediaImportService {
         // file never accumulates a directory of chunk WAVs.
         var reachedTail = false
         while !reachedTail {
+            // Cooperative cancel between chunks — the caller cleans up the
+            // cache WAV; per-chunk temps are removed by transcribeChunk.
+            try Task.checkCancellation()
             let chunk: WAVChunker.Chunk?
             if let next = try await chunker.nextChunk() {
                 chunk = next

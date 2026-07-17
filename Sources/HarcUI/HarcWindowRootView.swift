@@ -41,6 +41,8 @@ public struct HarcWindowRootView: View {
     /// Import audio/video files into the library. Nil hides the import
     /// button and disables drag-and-drop (e.g. in previews/tests).
     let onImportFiles: (([URL]) -> Void)?
+    /// Cancel the in-flight import batch. Nil hides the banner's Cancel.
+    let onCancelImport: (() -> Void)?
     @ObservedObject var importState: MediaImportState
 
     // MARK: View state
@@ -107,6 +109,7 @@ public struct HarcWindowRootView: View {
         onEdit: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void,
         onImportFiles: (([URL]) -> Void)? = nil,
+        onCancelImport: (() -> Void)? = nil,
         importState: MediaImportState = MediaImportState()
     ) {
         self.libraryVM = libraryVM
@@ -119,6 +122,7 @@ public struct HarcWindowRootView: View {
         self.onEdit = onEdit
         self.onDelete = onDelete
         self.onImportFiles = onImportFiles
+        self.onCancelImport = onCancelImport
         self.importState = importState
     }
 
@@ -370,6 +374,12 @@ public struct HarcWindowRootView: View {
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
+                if let onCancelImport {
+                    Button("Cancel") { onCancelImport() }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .help("Stop this import — nothing is added to the library")
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 5)

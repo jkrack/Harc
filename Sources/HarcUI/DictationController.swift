@@ -27,6 +27,17 @@ public final class DictationController {
     /// text. nil disables post-processing (everything inserts raw). Errors
     /// trigger raw fallback.
     private let transform: ((String, DictationMode, String?) async throws -> String)?
+    /// Per-app rule seam: frontmost bundle ID → the mode whose activation
+    /// rules claim it, if any. Consulted once per session, at start.
+    private let ruleMode: @MainActor (String?) -> DictationMode?
+    /// Cold-LLM check seam: returns the model's display name when the mode's
+    /// transform model still needs a multi-GB load, nil when it's warm (or
+    /// unresolvable — failures surface at transform time).
+    private let transformColdModelName: ((DictationMode) async -> String?)?
+    /// Preloads the mode's transform model so the visible loading phase
+    /// covers exactly the load, not the generation. Errors are ignored here —
+    /// the transform call reports them via the raw fallback.
+    private let preloadTransformModel: ((DictationMode) async -> Void)?
     /// Context-capture seam (Super Mode): (wantSelectedText, wantClipboard) →
     /// snapshot. Defaults to the live `SelectionContextReader`.
     private let captureContext: @MainActor (Bool, Bool) -> DictationContext
@@ -56,6 +67,10 @@ public final class DictationController {
     /// Mode override for the current session (per-mode hotkey). One-shot:
     /// consumed by this session only, never persisted as the active mode.
     private var oneShotMode: DictationMode?
+    /// The mode resolved for the current session at start (one-shot hotkey >
+    /// per-app rule > active mode). Frozen so a frontmost-app change mid-
+    /// session can't switch modes between capture and transform.
+    private var sessionMode: DictationMode?
     /// Set when the user releases the hotkey while start() is still in its
     /// pre-capture phase (e.g. the mic-permission prompt is up). start()
     /// checks it after each await and aborts cleanly.
@@ -74,6 +89,9 @@ public final class DictationController {
         paster: any DictationPasting,
         activeMode: @escaping @MainActor () -> DictationMode = { DictationMode.builtIns[0] },
         transform: ((String, DictationMode, String?) async throws -> String)? = nil,
+        ruleMode: @escaping @MainActor (String?) -> DictationMode? = { _ in nil },
+        transformColdModelName: ((DictationMode) async -> String?)? = nil,
+        preloadTransformModel: ((DictationMode) async -> Void)? = nil,
         captureContext: @escaping @MainActor (Bool, Bool) -> DictationContext = { selection, clipboard in
             SelectionContextReader.capture(selectedText: selection, clipboard: clipboard)
         },
@@ -89,6 +107,9 @@ public final class DictationController {
         self.paster = paster
         self.activeMode = activeMode
         self.transform = transform
+        self.ruleMode = ruleMode
+        self.transformColdModelName = transformColdModelName
+        self.preloadTransformModel = preloadTransformModel
         self.captureContext = captureContext
         self.micPermission = micPermission ?? Self.systemMicPermission
         self.ensureDaemonReady = ensureDaemonReady
@@ -129,9 +150,21 @@ public final class DictationController {
         }
     }
 
-    /// The mode governing the current session.
+    /// Toggle semantics regardless of the trigger-style pref — deep links
+    /// and other one-shot invokers have no key-up to pair with.
+    public func toggleDictation(oneShot mode: DictationMode? = nil) {
+        if state.isActive {
+            Task { await stopAndInsert() }
+        } else {
+            if let mode { oneShotMode = mode }
+            Task { await start() }
+        }
+    }
+
+    /// The mode governing the current session. `sessionMode` is frozen at
+    /// start; before that (or if start never resolved one) fall back live.
     private func currentMode() -> DictationMode {
-        oneShotMode ?? activeMode()
+        sessionMode ?? oneShotMode ?? activeMode()
     }
 
     public func start() async {
@@ -142,14 +175,24 @@ public final class DictationController {
             return
         }
         abortRequested = false
+        // Resolve the session's mode ONCE, against the app the user is
+        // actually dictating into: one-shot hotkey > per-app rule > active.
+        // Read frontmost first — before any of our UI can shift focus.
+        let frontmost = paster.frontmostBundleID()
+        let active = activeMode()
+        let ruleMatch = oneShotMode == nil ? ruleMode(frontmost) : nil
+        let mode = oneShotMode ?? ruleMatch ?? active
+        sessionMode = mode
+        state.setSessionModeOverride(
+            mode.id == active.id ? nil : mode,
+            viaRule: ruleMatch != nil
+        )
         // Super Mode: snapshot the working context FIRST — before the HUD
         // appears (the first setPhase shows it) and before the user's
         // focus/selection can change. Privacy guard: never read selection or
         // clipboard out of a deny-listed app (password managers, …).
-        let mode = currentMode()
         var capturedContext = DictationContext.empty
         if mode.wantsContext {
-            let frontmost = paster.frontmostBundleID()
             if !PasteDenyList.isDenied(frontmost, in: prefs.pasteDenyListBundleIDs) {
                 capturedContext = captureContext(
                     mode.includeSelectedText,
@@ -165,6 +208,7 @@ public final class DictationController {
         switch await micPermission() {
         case .denied:
             oneShotMode = nil
+            sessionMode = nil
             state.setPhase(.error("Microphone access is off — enable it in System Settings → Privacy & Security → Microphone"))
             return
         case .granted, .undetermined:
@@ -175,6 +219,7 @@ public final class DictationController {
         if abortRequested {
             abortRequested = false
             oneShotMode = nil
+            sessionMode = nil
             state.setPhase(.idle)
             return
         }
@@ -203,6 +248,7 @@ public final class DictationController {
             levelsTask = nil
             activeRecorder = nil
             oneShotMode = nil
+            sessionMode = nil
             // Only surface if we haven't already been superseded by a stop.
             if case .listening = state.phase {
                 state.setPhase(.error(error.localizedDescription))
@@ -231,6 +277,7 @@ public final class DictationController {
         } catch {
             cleanup()
             oneShotMode = nil
+            sessionMode = nil
             state.setPhase(.error(error.localizedDescription))
             return
         }
@@ -250,6 +297,7 @@ public final class DictationController {
             text = try await transcribe(wav.path)
         } catch {
             oneShotMode = nil
+            sessionMode = nil
             state.setPhase(.error(error.localizedDescription))
             return
         }
@@ -257,12 +305,14 @@ public final class DictationController {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             oneShotMode = nil
+            sessionMode = nil
             state.setPhase(.error("No speech detected — check that the waveform moves when you talk"))
             return
         }
 
         let mode = currentMode()
         oneShotMode = nil
+        sessionMode = nil
         let output = await applyMode(to: trimmed, mode: mode)
 
         state.setPhase(.inserting)
@@ -332,6 +382,13 @@ public final class DictationController {
         guard mode.postProcess == .llm, !mode.instruction.isEmpty else { return raw }
         guard let transform else { return raw }
 
+        // A cold LLM is a multi-GB load — show it honestly instead of hiding
+        // it under the mode name. Preload so the loading phase covers exactly
+        // the load; preload failures resurface from the transform call below.
+        if let coldName = await transformColdModelName?(mode) {
+            state.setPhase(.loadingTransformModel(coldName))
+            await preloadTransformModel?(mode)
+        }
         state.setPhase(.transforming)
         do {
             // Context was snapshotted at start; render it for the prompt.
@@ -380,6 +437,7 @@ public final class DictationController {
         let recorder = activeRecorder
         cleanup()
         oneShotMode = nil
+        sessionMode = nil
         await recorder?.cancel()
         state.setPhase(.idle)
     }

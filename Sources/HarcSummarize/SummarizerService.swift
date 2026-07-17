@@ -221,6 +221,16 @@ public actor SummarizerService {
         }
     }
 
+    /// Load the container for `modelID` without generating — lets callers
+    /// (dictation's cold-load phase) attribute the multi-GB load to its own
+    /// UI state instead of hiding it under generation time. No-op when the
+    /// model is already resident.
+    public func preload(modelID: String, modelDirectory: URL) async throws {
+        cancelIdleUnload()
+        _ = try await getOrLoad(modelID: modelID, directory: modelDirectory)
+        scheduleIdleUnload(reason: "idle")
+    }
+
     /// Load or reuse the container for `modelID`. Reloads when the id
     /// changes. Validates that the directory exists before calling the
     /// loader — the loader itself is free to assume the directory is
