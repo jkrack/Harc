@@ -38,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     lazy var dictationHistoryStore = DictationHistoryStore(prefs: prefs)
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
+    private let dictationHUDPresentation = DictationHUDPresentationModel()
+    /// Set by the idle pill's ✕ — keeps the pill hidden until the next
+    /// dictation runs (not persisted; a fresh launch shows the pill again).
+    private var pillHiddenUntilNextDictation = false
     private var dictationEscMonitor: DictationEscMonitor?
     private var dictationHistoryWindow: DictationHistoryWindowController?
     private var dictationKeepWarm: DictationKeepWarmController?
@@ -651,14 +655,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         self.dictationHUD = DictationHUDPanel(
             state: dictationState,
             modeStore: dictationModeStore,
+            presentationModel: dictationHUDPresentation,
             onStop: { [weak self] in Task { await self?.dictationController?.stopAndInsert() } },
             onCancel: { [weak self] in Task { await self?.dictationController?.cancel() } },
             onDismiss: { [weak self] in self?.dictationController?.dismissAfterglow() },
             onFixAccessibility: { [weak self] in
                 self?.dictationController?.dismissAfterglow()
                 self?.presentAccessibilityPrompt()
+            },
+            onStartDictation: { [weak self] in Task { await self?.dictationController?.start() } },
+            onHidePill: { [weak self] in
+                self?.pillHiddenUntilNextDictation = true
+                self?.applyDictationHUDPresentation()
             }
         )
+
+        // The idle pill follows the pref live, and tints/disables while a
+        // meeting recording owns the mic.
+        prefs.$persistentDictationHUD
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyDictationHUDPresentation() }
+            .store(in: &cancellables)
+        state.$isRecording
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyDictationHUDPresentation() }
+            .store(in: &cancellables)
 
         // Esc cancels a listening dictation — a consuming tap, so the key
         // never leaks into the frontmost app (which would dismiss dialogs).
@@ -847,13 +870,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         hudDismissTask = nil
         switch phase {
         case .idle:
-            dictationHUD?.hide()
+            break
         case .requestingMic, .loadingModel, .loadingTransformModel, .listening,
              .transcribing, .transforming, .inserting:
-            dictationHUD?.show()
+            // Real dictation activity un-hides a temporarily hidden pill.
+            pillHiddenUntilNextDictation = false
         case .done:
+            pillHiddenUntilNextDictation = false
             // Success beat: linger long enough to read the outcome, then fade.
-            dictationHUD?.show()
             hudDismissTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1.6))
                 guard let self, !Task.isCancelled else { return }
@@ -862,8 +886,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 }
             }
         case .error:
+            pillHiddenUntilNextDictation = false
             // Errors stay readable — 6s, or dismissed from the HUD's ✕.
-            dictationHUD?.show()
             hudDismissTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(6))
                 guard let self, !Task.isCancelled else { return }
@@ -872,6 +896,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 }
             }
         }
+        applyDictationHUDPresentation(for: phase)
+    }
+
+    /// Recompute what the dictation panel should render (hidden / idle pill
+    /// / live HUD) from the pure policy and hand it to the panel. Called on
+    /// phase changes, pref flips, recording start/stop, and pill hide.
+    private func applyDictationHUDPresentation(for phase: DictationState.Phase? = nil) {
+        let presentation = DictationHUDPresentation.from(
+            phase: phase ?? dictationState.phase,
+            persistent: prefs.persistentDictationHUD,
+            temporarilyHidden: pillHiddenUntilNextDictation,
+            isRecording: state.isRecording
+        )
+        dictationHUD?.apply(presentation)
     }
 
     /// Subtle audio cues around dictation (pref-gated): start, stop, and a

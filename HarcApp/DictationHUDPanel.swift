@@ -3,36 +3,47 @@ import Combine
 import SwiftUI
 import HarcUI
 
-/// Borderless, non-activating floating panel that hosts the dictation HUD.
+/// Borderless, non-activating floating panel that hosts the dictation HUD
+/// (live view during a dictation, dimmed idle pill when the persistent-pill
+/// preference keeps it on screen).
 ///
 /// **Critical:** it must never become the active app or steal keyboard focus.
 /// Dictation inserts text into whatever app is frontmost via a synthetic Cmd-V,
 /// so if this panel activated Harc the paste would land in the wrong place (or
 /// nowhere). `.nonactivatingPanel` + `becomesKeyOnlyIfNeeded` keeps focus on the
-/// target app even when the user clicks the HUD's stop button.
+/// target app even when the user clicks the HUD's stop button — and the idle
+/// pill's hover-revealed controls run under the same constraints.
 @MainActor
 final class DictationHUDPanel {
     private let panel: NSPanel
-    private let hosting: NSHostingController<DictationHUDView>
-    private var phaseObserver: AnyCancellable?
+    private let hosting: NSHostingController<DictationHUDRootView>
+    private let presentationModel: DictationHUDPresentationModel
+    private var observers: Set<AnyCancellable> = []
     private var isVisible = false
 
     init(
         state: DictationState,
         modeStore: DictationModeStore,
+        presentationModel: DictationHUDPresentationModel,
         onStop: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onDismiss: @escaping () -> Void = {},
-        onFixAccessibility: @escaping () -> Void = {}
+        onFixAccessibility: @escaping () -> Void = {},
+        onStartDictation: @escaping () -> Void = {},
+        onHidePill: @escaping () -> Void = {}
     ) {
+        self.presentationModel = presentationModel
         let hosting = NSHostingController(
-            rootView: DictationHUDView(
+            rootView: DictationHUDRootView(
                 state: state,
                 modeStore: modeStore,
+                presentationModel: presentationModel,
                 onStop: onStop,
                 onCancel: onCancel,
                 onDismiss: onDismiss,
-                onFixAccessibility: onFixAccessibility
+                onFixAccessibility: onFixAccessibility,
+                onStartDictation: onStartDictation,
+                onHidePill: onHidePill
             )
         )
         self.hosting = hosting
@@ -50,14 +61,36 @@ final class DictationHUDPanel {
         panel.setContentSize(hosting.view.fittingSize)
         self.panel = panel
 
-        // The capsule's width changes with phase (waveform vs status text vs
-        // end-state message) — re-fit and re-center so nothing clips.
-        phaseObserver = state.$phase
+        // The capsule's size changes with phase (waveform vs status text vs
+        // end-state message), with presentation (live HUD vs pill), and with
+        // the pill's hover reveal — re-fit and re-center so nothing clips.
+        state.$phase
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.refitIfVisible()
-            }
+            .sink { [weak self] _ in self?.refitIfVisible() }
+            .store(in: &observers)
+        presentationModel.$presentation
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refitIfVisible() }
+            .store(in: &observers)
+        presentationModel.$pillHovered
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refitIfVisible() }
+            .store(in: &observers)
+    }
+
+    /// Route a computed presentation to panel state. The model is set first
+    /// so SwiftUI renders the right content before the panel fades in.
+    func apply(_ presentation: DictationHUDPresentation) {
+        presentationModel.presentation = presentation
+        switch presentation {
+        case .hidden:
+            hide()
+        case .idlePill, .live:
+            show()
+        }
     }
 
     func show() {
@@ -78,6 +111,7 @@ final class DictationHUDPanel {
     func hide() {
         guard isVisible else { return }
         isVisible = false
+        presentationModel.pillHovered = false
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22
             panel.animator().alphaValue = 0
