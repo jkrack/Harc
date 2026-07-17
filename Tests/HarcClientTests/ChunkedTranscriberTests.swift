@@ -163,6 +163,138 @@ struct ChunkedTranscriberTests {
     }
 }
 
+/// Fake client that throws `model_not_loaded` for the first N calls, then
+/// succeeds — simulates a daemon still downloading the model on first run.
+actor ModelWarmupClient: TranscribingClient {
+    private var failuresRemaining: Int
+    private(set) var calls: [String] = []
+    private let successText: String
+
+    init(failuresBeforeSuccess: Int, successText: String = "recovered") {
+        self.failuresRemaining = failuresBeforeSuccess
+        self.successText = successText
+    }
+
+    func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
+        calls.append(audioPath)
+        if failuresRemaining > 0 {
+            failuresRemaining -= 1
+            throw ClientError.transcribeFailed(
+                code: "model_not_loaded",
+                message: "Model not loaded — call loadModels() first"
+            )
+        }
+        return TranscribeResult(text: successText, words: [], speakers: [], processingMs: 1)
+    }
+}
+
+@Suite("ChunkedTranscriber — model-not-loaded retry")
+struct ChunkedTranscriberRetryTests {
+    private func tempWAVPath() -> URL {
+        URL(fileURLWithPath: "/tmp/harc-ct-\(UUID().uuidString.prefix(8)).wav")
+    }
+
+    private func writeSineWAV(to url: URL, seconds: Double) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+        let frames = AVAudioFrameCount(seconds * 16000)
+        let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames)!
+        buf.frameLength = frames
+        let ch = buf.floatChannelData![0]
+        for i in 0..<Int(frames) {
+            ch[i] = sinf(Float(2.0 * .pi * 440.0 * Double(i) / 16000.0))
+        }
+        try file.write(from: buf)
+    }
+
+    @Test("chunk that fails with model_not_loaded is retried and recovered — no transcript hole")
+    func modelNotLoadedChunkRecovers() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 1.2)
+
+        // First two attempts fail (model downloading), third succeeds.
+        let fake = ModelWarmupClient(failuresBeforeSuccess: 2)
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.02,
+            chunkRetryDelaySeconds: 0.02
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let result = try await transcriber.finalize(
+            startedAt: Date().addingTimeInterval(-2), endedAt: Date()
+        )
+        #expect(result.transcript.joinedText.contains("recovered"),
+                "retried chunk should land in the transcript, got: \(result.transcript.joinedText)")
+        #expect(await fake.calls.count >= 3)
+    }
+
+    @Test("non-model errors keep the drop-and-log behavior — no retry")
+    func genericErrorsAreNotRetried() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 1.2)
+
+        actor AlwaysFailingClient: TranscribingClient {
+            private(set) var calls = 0
+            func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
+                calls += 1
+                throw ClientError.transcribeFailed(code: "audio_load_failed", message: "corrupt")
+            }
+        }
+        let fake = AlwaysFailingClient()
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.02,
+            chunkRetryDelaySeconds: 0.02
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let result = try await transcriber.finalize(
+            startedAt: Date().addingTimeInterval(-2), endedAt: Date()
+        )
+        #expect(result.transcript.joinedText.isEmpty)
+        // Chunk + tail each attempted once via the pump — the exact count
+        // depends on pump timing, but a retry storm would show far more
+        // calls than chunks. 1.2s of audio = at most 2 chunks.
+        #expect(await fake.calls <= 4)
+    }
+
+    @Test("late-retried chunks assemble in spoken order, not completion order")
+    func retriedChunksStaySorted() {
+        let assembler = TranscriptAssembler()
+        // Chunk at 1000ms completes first (its transcribe succeeded
+        // immediately); chunk at 0ms lands later after a model-wait retry.
+        assembler.add(ChunkResult(
+            startMs: 1000, endMs: 2000, text: "world",
+            words: [Word(text: "world", startMs: 0, endMs: 300)],
+            speakers: [], processingMs: 1
+        ))
+        assembler.add(ChunkResult(
+            startMs: 0, endMs: 1000, text: "hello",
+            words: [Word(text: "hello", startMs: 0, endMs: 300)],
+            speakers: [], processingMs: 1
+        ))
+        #expect(assembler.currentJoinedText == "hello world")
+        let final = assembler.finalize(startedAt: Date(), endedAt: Date(), audioPath: "/tmp/x.wav")
+        #expect(final.joinedText == "hello world")
+        #expect(final.words.map(\.text) == ["hello", "world"])
+    }
+}
+
 actor FakeDiarizingClient: DiarizingClient {
     var calls: [String] = []
     var result: DiarizeResult = DiarizeResult(segments: [], speakers: [], processingMs: 0)

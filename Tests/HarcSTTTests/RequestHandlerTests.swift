@@ -22,6 +22,9 @@ struct RequestHandlerTests {
         }
 
         var isLoaded: Bool { true }
+        var stateOverride: Transcriber.ModelState = .ready
+        func setModelState(_ s: Transcriber.ModelState) { stateOverride = s }
+        var modelState: Transcriber.ModelState { stateOverride }
     }
 
     @Test("status request returns current DaemonStatus")
@@ -38,9 +41,54 @@ struct RequestHandlerTests {
             #expect(s.version == "9.9.9")
             #expect(s.modelLoaded == true)
             #expect(s.uptimeSeconds >= 9)
+            #expect(s.modelState == .ready)
+            #expect(s.downloadProgress == nil)
+            #expect(s.errorMessage == nil)
         } else {
             Issue.record("expected .status response, got: \(resp)")
         }
+    }
+
+    @Test("status reports downloading model state with progress over IPC")
+    func statusReportsDownloadState() async throws {
+        let fake = FakeTranscriber()
+        await fake.setModelState(.downloading(progress: 0.42))
+        let handler = RequestHandler(
+            transcriber: fake, diarizer: nil, version: "0.1.0", startedAt: Date()
+        )
+        let resp = await handler.handle(.status)
+        if case .status(let s) = resp {
+            #expect(s.modelState == .downloading)
+            #expect(s.downloadProgress == 0.42)
+        } else {
+            Issue.record("expected .status, got: \(resp)")
+        }
+    }
+
+    @Test("status reports failed model state with message")
+    func statusReportsFailureState() async throws {
+        let fake = FakeTranscriber()
+        await fake.setModelState(.failed(message: "offline"))
+        let handler = RequestHandler(
+            transcriber: fake, diarizer: nil, version: "0.1.0", startedAt: Date()
+        )
+        let resp = await handler.handle(.status)
+        if case .status(let s) = resp {
+            #expect(s.modelState == .failed)
+            #expect(s.errorMessage == "offline")
+        } else {
+            Issue.record("expected .status, got: \(resp)")
+        }
+    }
+
+    @Test("DaemonStatus decodes legacy payloads without model-state fields")
+    func daemonStatusBackwardCompatibleDecoding() throws {
+        let legacyJSON = #"{"version":"0.4.1","modelLoaded":true,"uptimeSeconds":12}"#
+        let decoded = try JSONDecoder().decode(DaemonStatus.self, from: Data(legacyJSON.utf8))
+        #expect(decoded.modelLoaded == true)
+        #expect(decoded.modelState == nil)
+        #expect(decoded.downloadProgress == nil)
+        #expect(decoded.errorMessage == nil)
     }
 
     @Test("shutdown request returns status response")

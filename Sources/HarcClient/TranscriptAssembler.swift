@@ -13,8 +13,15 @@ public final class TranscriptAssembler {
         chunks.append(chunk)
     }
 
+    /// Chunks in session-time order. Retried chunks (e.g. a chunk that
+    /// waited out a first-run model download) can be added late; sorting
+    /// by startMs keeps the transcript in spoken order regardless.
+    private var orderedChunks: [ChunkResult] {
+        chunks.sorted { $0.startMs < $1.startMs }
+    }
+
     public var currentJoinedText: String {
-        chunks.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
+        orderedChunks.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     public func finalize(
@@ -27,6 +34,7 @@ public final class TranscriptAssembler {
         // Rebase per-chunk word/speaker timings into session-global time.
         var allWords: [Word] = []
         var allSpeakers: [SpeakerSegment] = []
+        let chunks = orderedChunks
         for chunk in chunks {
             let offset = chunk.startMs
             for w in chunk.words {

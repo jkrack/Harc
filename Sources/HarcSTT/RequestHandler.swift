@@ -5,9 +5,26 @@ import HarcCore
 public protocol TranscribeService: Sendable {
     func transcribe(audioPath: String, vad: Bool) async throws -> TranscribeResult
     var isLoaded: Bool { get async }
+    var modelState: Transcriber.ModelState { get async }
 }
 
 extension Transcriber: TranscribeService {}
+
+extension Transcriber.ModelState {
+    /// Wire mapping for `DaemonStatus`.
+    var statusFields: (state: DaemonStatus.ModelState, progress: Double?, error: String?) {
+        switch self {
+        case .idle, .loading:
+            return (.loading, nil, nil)
+        case .downloading(let progress):
+            return (.downloading, progress, nil)
+        case .ready:
+            return (.ready, nil, nil)
+        case .failed(let message):
+            return (.failed, nil, message)
+        }
+    }
+}
 
 public protocol DiarizeService: Sendable {
     func diarize(audioPath: String) async throws -> [SpeakerSegment]
@@ -35,18 +52,15 @@ public struct RequestHandler: Sendable {
 
     public func handle(_ request: IPCRequest) async -> IPCResponse {
         switch request {
-        case .status:
+        case .status, .shutdown:
+            let fields = await transcriber.modelState.statusFields
             return .status(DaemonStatus(
                 version: version,
                 modelLoaded: await transcriber.isLoaded,
-                uptimeSeconds: Int(Date().timeIntervalSince(startedAt))
-            ))
-
-        case .shutdown:
-            return .status(DaemonStatus(
-                version: version,
-                modelLoaded: await transcriber.isLoaded,
-                uptimeSeconds: Int(Date().timeIntervalSince(startedAt))
+                uptimeSeconds: Int(Date().timeIntervalSince(startedAt)),
+                modelState: fields.state,
+                downloadProgress: fields.progress,
+                errorMessage: fields.error
             ))
 
         case .transcribe(let req):
