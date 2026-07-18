@@ -89,6 +89,17 @@ public final class DictationController {
     /// cancel confirmation.
     private var listeningSince: Date?
     private var cancelConfirmResetTask: Task<Void, Never>?
+    /// The app that delivered the deep link that initiated the current
+    /// session, captured at link receipt. Insertion NEVER targets it — a
+    /// webpage that triggered dictation must not receive the transcript.
+    private var deepLinkOrigin: (bundleID: String?, name: String?)?
+    /// Staged by the deep-link entry points; consumed (and cleared) by the
+    /// next start() so origin is strictly per-session.
+    private var nextSessionDeepLinkOrigin: (bundleID: String?, name: String?)?
+    private var deepLinkConfirmExpiryTask: Task<Void, Never>?
+    /// Harc's own bundle id — deep links fired while Harc is frontmost skip
+    /// the confirmation (the gesture was in our own UI). Injectable for tests.
+    private let harcBundleID: String
 
     public init(
         state: DictationState,
@@ -107,7 +118,8 @@ public final class DictationController {
         },
         micPermission: (() async -> MicPermission)? = nil,
         ensureDaemonReady: ((@escaping @MainActor () -> Void) async throws -> Void)? = nil,
-        cancelConfirmThreshold: TimeInterval = 30
+        cancelConfirmThreshold: TimeInterval = 30,
+        harcBundleID: String = Bundle.main.bundleIdentifier ?? "com.harc.app"
     ) {
         self.state = state
         self.recordingState = recordingState
@@ -124,6 +136,7 @@ public final class DictationController {
         self.micPermission = micPermission ?? Self.systemMicPermission
         self.ensureDaemonReady = ensureDaemonReady
         self.cancelConfirmThreshold = cancelConfirmThreshold
+        self.harcBundleID = harcBundleID
     }
 
     public var isActive: Bool { state.isActive }
@@ -160,8 +173,10 @@ public final class DictationController {
         }
     }
 
-    /// Toggle semantics regardless of the trigger-style pref — deep links
-    /// and other one-shot invokers have no key-up to pair with.
+    /// Toggle semantics regardless of the trigger-style pref — for one-shot
+    /// invokers with no key-up to pair with (menu items, bridge actions).
+    /// Deep links must NOT call this directly — they go through
+    /// `requestDeepLinkDictation` so the mic never opens on a bare URL.
     public func toggleDictation(oneShot mode: DictationMode? = nil) {
         if state.isActive {
             Task { await stopAndInsert() }
@@ -169,6 +184,70 @@ public final class DictationController {
             if let mode { oneShotMode = mode }
             Task { await start() }
         }
+    }
+
+    // MARK: Deep links (harc://dictate)
+
+    /// Entry point for `harc://dictate`. Security posture (a URL can be
+    /// fired by any app, including a webpage after the browser's open-URL
+    /// prompt):
+    /// - The mic never opens on a bare link: unless Harc itself is frontmost
+    ///   at link receipt, a confirmation is surfaced on the HUD and capture
+    ///   starts only on the user's Start click.
+    /// - A second link while a *link-initiated* session is listening cancels
+    ///   it (no insert) — never stop-and-insert into the requester's page.
+    /// - A link during a user-initiated (hotkey) session is ignored: a
+    ///   webpage must not be able to end the user's own dictation.
+    public func requestDeepLinkDictation(oneShot mode: DictationMode?) {
+        if state.isActive {
+            if deepLinkOrigin != nil {
+                Task { await cancel(bypassConfirm: true) }
+            } else {
+                FileHandle.standardError.write(Data(
+                    "harc: ignoring harc://dictate during a user-initiated dictation\n".utf8
+                ))
+            }
+            return
+        }
+        // Requester = frontmost at link receipt (read before any UI moves).
+        let requesterID = paster.frontmostBundleID()
+        let requesterName = paster.frontmostAppName()
+        if requesterID == harcBundleID {
+            // The gesture happened in our own UI — no confirmation needed.
+            nextSessionDeepLinkOrigin = (requesterID, requesterName)
+            if let mode { oneShotMode = mode }
+            Task { await start() }
+            return
+        }
+        state.setPendingDeepLink(DictationDeepLinkRequest(
+            mode: mode,
+            requesterBundleID: requesterID,
+            requesterName: requesterName
+        ))
+        deepLinkConfirmExpiryTask?.cancel()
+        deepLinkConfirmExpiryTask = Task { [weak state] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled else { return }
+            state?.setPendingDeepLink(nil)
+        }
+    }
+
+    /// User clicked Start on the deep-link confirmation.
+    public func confirmPendingDeepLink() {
+        guard let request = state.pendingDeepLink else { return }
+        deepLinkConfirmExpiryTask?.cancel()
+        deepLinkConfirmExpiryTask = nil
+        state.setPendingDeepLink(nil)
+        nextSessionDeepLinkOrigin = (request.requesterBundleID, request.requesterName)
+        if let mode = request.mode { oneShotMode = mode }
+        Task { await start() }
+    }
+
+    /// User dismissed the deep-link confirmation (or it expired).
+    public func dismissPendingDeepLink() {
+        deepLinkConfirmExpiryTask?.cancel()
+        deepLinkConfirmExpiryTask = nil
+        state.setPendingDeepLink(nil)
     }
 
     /// The mode governing the current session. `sessionMode` is frozen at
@@ -179,6 +258,8 @@ public final class DictationController {
 
     public func start() async {
         guard !state.isActive else { return }
+        deepLinkOrigin = nextSessionDeepLinkOrigin
+        nextSessionDeepLinkOrigin = nil
         // Mutual exclusion: the mic + daemon are single-user resources.
         guard !recordingState.isRecording else {
             onBlockedByRecording()
@@ -326,6 +407,27 @@ public final class DictationController {
         let output = await applyMode(to: trimmed, mode: mode)
 
         state.setPhase(.inserting)
+        // Link-initiated sessions never insert into the app that delivered
+        // the link — a webpage that triggered dictation must not receive the
+        // transcript. Copy-only with an explicit notice instead.
+        if let origin = deepLinkOrigin,
+           let originID = origin.bundleID,
+           frontmost == originID {
+            paster.copyOnly(output)
+            onDelivered(DictationHistoryEntry(
+                text: output,
+                rawText: output == trimmed ? nil : trimmed,
+                modeName: mode.name,
+                targetAppName: frontmostName,
+                delivery: .copied
+            ))
+            state.setNotice(nil)
+            state.setPhase(.done(DictationDeliveryOutcome(
+                kind: .copied,
+                message: "Copied — not inserted into \(origin.name ?? "the app that requested dictation")"
+            )))
+            return
+        }
         // The deny-list always applies (never paste into password fields /
         // Harc itself); "insert at cursor" itself is a preference.
         let decision = AutoPasteGuard.decide(
@@ -448,13 +550,14 @@ public final class DictationController {
     /// `cancelConfirmThreshold`) arm a confirmation first — the second call
     /// within a few seconds actually discards. Mirrors SuperWhisper's
     /// accidental-loss guard.
-    public func cancel() async {
+    public func cancel(bypassConfirm: Bool = false) async {
         guard state.isActive else {
             // Dismiss a lingering error/done afterglow.
             if case .idle = state.phase {} else { state.setPhase(.idle) }
             return
         }
-        if case .listening = state.phase,
+        if !bypassConfirm,
+           case .listening = state.phase,
            let since = listeningSince,
            Date().timeIntervalSince(since) > cancelConfirmThreshold,
            !state.confirmingCancel {

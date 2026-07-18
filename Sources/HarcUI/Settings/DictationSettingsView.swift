@@ -46,7 +46,7 @@ public struct DictationSettingsView: View {
         } header: {
             Text("Dictation performance & privacy")
         } footer: {
-            Text("Keep-ready holds the speech model in memory so dictation starts instantly. History keeps your last \(DictationHistoryStore.maxEntries) dictations on this Mac; turn it off and nothing is written.")
+            Text("Keep-ready holds the speech model in memory so dictation starts instantly. History keeps your last \(DictationHistoryStore.maxEntries) dictations as plain JSON in Application Support on this Mac — Clear History deletes the file; turn it off and nothing is written.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
         }

@@ -49,7 +49,7 @@ Design implications:
 
 The STT engine is a **separate Swift executable** that runs as a long-lived daemon, not an in-process library. The app launches it on demand and talks to it over IPC. This keeps model load cost amortized across recordings, isolates model/audio crashes from the UI, and lets the engine shut itself down when idle.
 
-Reference pattern (from prior work in `/Users/jlane/GitHub/OpenBrain/swift/openbrain-stt/`):
+The daemon follows this shape:
 
 - SwiftPM executable target, `.macOS(.v26)`.
 - **Model:** [FluidAudio](https://github.com/FluidInference/FluidAudio) running Parakeet TDT 0.6B v3 on ANE/Metal via Core ML. Pre-loaded in the background on daemon startup so the first request isn't blocked by cold load.

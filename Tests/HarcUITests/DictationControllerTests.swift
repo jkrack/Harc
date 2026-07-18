@@ -68,7 +68,8 @@ private func makeController(
     contextCapture: SpyContextCapture? = nil,
     micPermission: (() async -> DictationController.MicPermission)? = nil,
     ensureDaemonReady: ((@escaping @MainActor () -> Void) async throws -> Void)? = nil,
-    cancelConfirmThreshold: TimeInterval = 30
+    cancelConfirmThreshold: TimeInterval = 30,
+    harcBundleID: String = "com.harc.test-suite"
 ) -> (DictationController, DictationState) {
     let state = DictationState()
     let spy = contextCapture ?? SpyContextCapture()
@@ -90,7 +91,8 @@ private func makeController(
         captureContext: { spy.capture($0, $1) },
         micPermission: micPermission ?? { .granted },
         ensureDaemonReady: ensureDaemonReady,
-        cancelConfirmThreshold: cancelConfirmThreshold
+        cancelConfirmThreshold: cancelConfirmThreshold,
+        harcBundleID: harcBundleID
     )
     return (controller, state)
 }
@@ -1048,5 +1050,151 @@ struct DictationColdLoadTests {
         await controller.start()
         await controller.stopAndInsert()
         #expect(preloadCount == 0)
+    }
+}
+
+// MARK: - Deep-link security (harc://dictate)
+
+@Suite("DictationDeepLinkSecurity")
+@MainActor
+struct DictationDeepLinkSecurityTests {
+    @Test("a deep link from another app never opens the mic — it arms a confirmation")
+    func linkArmsConfirmationInsteadOfStarting() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.apple.Safari", appName: "Safari")
+        let (controller, state) = makeController(prefs: prefs, paster: paster)
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        await Task.yield()
+
+        #expect(state.pendingDeepLink != nil)
+        #expect(state.pendingDeepLink?.requesterBundleID == "com.apple.Safari")
+        #expect(state.pendingDeepLink?.requesterName == "Safari")
+        #expect(!state.isActive, "the mic must not open on a bare URL")
+    }
+
+    @Test("confirmed link starts, but insertion refuses the requesting app — copy-only")
+    func neverInsertsIntoDeliverer() async throws {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.apple.Safari", appName: "Safari")
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "attack payload")
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        controller.confirmPendingDeepLink()
+        try await waitUntil { state.isActive }
+        #expect(state.pendingDeepLink == nil)
+
+        // Safari (the requester) is still frontmost at stop time.
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted.isEmpty, "transcript must never reach the app that fired the link")
+        #expect(paster.copied == ["attack payload"])
+        let outcome = doneOutcome(state)
+        #expect(outcome?.kind == .copied)
+        #expect(outcome?.message.contains("not inserted into Safari") == true)
+    }
+
+    @Test("confirmed link inserts normally once the user has moved to another app")
+    func insertsWhenRequesterNoLongerFrontmost() async throws {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.apple.Safari", appName: "Safari")
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "meeting notes")
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        controller.confirmPendingDeepLink()
+        try await waitUntil { state.isActive }
+
+        paster.frontmost = "com.example.texteditor"
+        paster.appName = "TextEditor"
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted == ["meeting notes"])
+        #expect(doneOutcome(state)?.kind == .inserted)
+    }
+
+    @Test("a second link during a link-initiated session cancels — no insert, ever")
+    func secondLinkCancels() async throws {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.apple.Safari", appName: "Safari")
+        var delivered = 0
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "secret audio")
+        controller.onDelivered = { _ in delivered += 1 }
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        controller.confirmPendingDeepLink()
+        try await waitUntil { state.isActive }
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        try await waitUntil { !state.isActive }
+
+        #expect(state.phase == .idle)
+        #expect(paster.inserted.isEmpty)
+        #expect(paster.copied.isEmpty)
+        #expect(delivered == 0, "a cancelled link session records no history")
+    }
+
+    @Test("a link during a user-initiated session is ignored")
+    func linkCannotEndUserSession() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.example.texteditor", appName: "TextEditor")
+        let (controller, state) = makeController(prefs: prefs, paster: paster)
+
+        await controller.start()
+        #expect(state.phase == .listening)
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        await Task.yield()
+
+        #expect(state.phase == .listening, "a webpage must not be able to end the user's dictation")
+        #expect(state.pendingDeepLink == nil)
+    }
+
+    @Test("link fired while Harc is frontmost starts without confirmation")
+    func harcFrontmostSkipsConfirmation() async throws {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.harc.test-suite", appName: "Harc")
+        let (controller, state) = makeController(prefs: prefs, paster: paster)
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        try await waitUntil { state.isActive }
+
+        #expect(state.phase == .listening)
+        #expect(state.pendingDeepLink == nil)
+    }
+
+    @Test("dismissing the confirmation clears it without starting")
+    func dismissClearsPending() async {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.apple.Safari", appName: "Safari")
+        let (controller, state) = makeController(prefs: prefs, paster: paster)
+
+        controller.requestDeepLinkDictation(oneShot: nil)
+        #expect(state.pendingDeepLink != nil)
+        controller.dismissPendingDeepLink()
+
+        #expect(state.pendingDeepLink == nil)
+        #expect(!state.isActive)
+    }
+
+    @Test("a hotkey session after an abandoned link session never inherits its origin")
+    func staleOriginNeverLeaksIntoHotkeySession() async throws {
+        let prefs = HarcPreferences()
+        let paster = SpyPaster(frontmost: "com.apple.Safari", appName: "Safari")
+        let (controller, state) = makeController(prefs: prefs, paster: paster, transcript: "normal text")
+
+        // Link session starts and is cancelled.
+        controller.requestDeepLinkDictation(oneShot: nil)
+        controller.confirmPendingDeepLink()
+        try await waitUntil { state.isActive }
+        await controller.cancel(bypassConfirm: true)
+        #expect(!state.isActive)
+
+        // A plain hotkey session into Safari must insert normally.
+        await controller.start()
+        #expect(state.phase == .listening)
+        await controller.stopAndInsert()
+
+        #expect(paster.inserted == ["normal text"])
+        #expect(doneOutcome(state)?.kind == .inserted)
     }
 }

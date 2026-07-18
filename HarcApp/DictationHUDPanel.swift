@@ -30,7 +30,9 @@ final class DictationHUDPanel {
         onDismiss: @escaping () -> Void = {},
         onFixAccessibility: @escaping () -> Void = {},
         onStartDictation: @escaping () -> Void = {},
-        onHidePill: @escaping () -> Void = {}
+        onHidePill: @escaping () -> Void = {},
+        onConfirmDeepLink: @escaping () -> Void = {},
+        onDismissDeepLink: @escaping () -> Void = {}
     ) {
         self.presentationModel = presentationModel
         let hosting = NSHostingController(
@@ -43,7 +45,9 @@ final class DictationHUDPanel {
                 onDismiss: onDismiss,
                 onFixAccessibility: onFixAccessibility,
                 onStartDictation: onStartDictation,
-                onHidePill: onHidePill
+                onHidePill: onHidePill,
+                onConfirmDeepLink: onConfirmDeepLink,
+                onDismissDeepLink: onDismissDeepLink
             )
         )
         self.hosting = hosting
@@ -88,7 +92,7 @@ final class DictationHUDPanel {
         switch presentation {
         case .hidden:
             hide()
-        case .idlePill, .live:
+        case .idlePill, .live, .confirmDeepLink:
             show()
         }
     }

@@ -13,15 +13,20 @@ public enum DictationHUDPresentation: Equatable, Sendable {
     case idlePill(recording: Bool)
     /// The full live HUD (any active dictation phase, end states, errors).
     case live
+    /// A harc://dictate link is awaiting user confirmation — the panel shows
+    /// Start/Cancel and the mic stays closed until Start.
+    case confirmDeepLink
 
     public static func from(
         phase: DictationState.Phase,
         persistent: Bool,
         temporarilyHidden: Bool,
-        isRecording: Bool
+        isRecording: Bool,
+        pendingDeepLink: Bool = false
     ) -> DictationHUDPresentation {
         switch phase {
         case .idle:
+            if pendingDeepLink { return .confirmDeepLink }
             guard persistent, !temporarilyHidden else { return .hidden }
             return .idlePill(recording: isRecording)
         default:

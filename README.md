@@ -56,3 +56,7 @@ Quit Harc, delete `Harc.app`, then remove what you don't want to keep
     ~/Library/Application Support/FluidAudio/Models # speech models
     ~/Library/Caches/Harc                           # caches + daemon log
     ~/.harc                                         # daemon socket
+
+## License
+
+MIT — see `LICENSE`.

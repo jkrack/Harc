@@ -183,8 +183,10 @@ public actor Transcriber {
         do {
             segments = try await vadGate.segments(in: samples)
         } catch {
+            // Deliberately no file path — daemon.log persists on disk and
+            // recording paths encode dates/meeting names.
             FileHandle.standardError.write(Data(
-                "harc-stt: VAD failed (\(error.localizedDescription)) — falling back to full chunk transcription for \(audioPath)\n".utf8
+                "harc-stt: VAD failed (\(error.localizedDescription)) — falling back to full chunk transcription (\(samples.count) samples)\n".utf8
             ))
             return try await runEngine(on: samples, regions: nil)
         }

@@ -48,3 +48,22 @@ public enum DictationDeepLink: Equatable, Sendable {
         return modes.first { $0.name.lowercased() == lowered }
     }
 }
+
+/// A `harc://dictate` request awaiting user confirmation. Deep links can be
+/// fired by any app (a webpage after the browser's open-URL prompt), so the
+/// mic never opens on one without an explicit gesture — the HUD shows this
+/// request and the user clicks Start. The requester is snapshotted at link
+/// receipt; insertion later refuses to target it (see DictationController).
+public struct DictationDeepLinkRequest: Equatable, Sendable {
+    /// One-shot mode the link asked for; nil = active mode.
+    public var mode: DictationMode?
+    /// Frontmost app at link receipt — the presumed requester.
+    public var requesterBundleID: String?
+    public var requesterName: String?
+
+    public init(mode: DictationMode?, requesterBundleID: String?, requesterName: String?) {
+        self.mode = mode
+        self.requesterBundleID = requesterBundleID
+        self.requesterName = requesterName
+    }
+}

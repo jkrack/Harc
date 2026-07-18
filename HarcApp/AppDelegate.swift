@@ -712,6 +712,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             onHidePill: { [weak self] in
                 self?.pillHiddenUntilNextDictation = true
                 self?.applyDictationHUDPresentation()
+            },
+            onConfirmDeepLink: { [weak self] in
+                self?.dictationController?.confirmPendingDeepLink()
+            },
+            onDismissDeepLink: { [weak self] in
+                self?.dictationController?.dismissPendingDeepLink()
             }
         )
 
@@ -723,6 +729,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .sink { [weak self] _ in self?.applyDictationHUDPresentation() }
             .store(in: &cancellables)
         state.$isRecording
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyDictationHUDPresentation() }
+            .store(in: &cancellables)
+        dictationState.$pendingDeepLink
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.applyDictationHUDPresentation() }
@@ -894,15 +905,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             switch link {
             case .dictate(let modeRef):
-                // Toggle semantics — a deep link has no key-up to pair with,
-                // so invoking it again stops-and-inserts.
+                // Confirm-first: the mic never opens on a bare URL. The
+                // controller surfaces a Start/Cancel prompt on the HUD
+                // (unless Harc itself is frontmost), refuses to insert into
+                // the requesting app, and treats a second link as cancel.
                 let mode = modeRef.flatMap {
                     DictationDeepLink.resolveMode($0, in: dictationModeStore.modes)
                 }
-                dictationController?.toggleDictation(oneShot: mode)
+                dictationController?.requestDeepLinkDictation(oneShot: mode)
             case .switchMode(let modeRef):
                 if let mode = DictationDeepLink.resolveMode(modeRef, in: dictationModeStore.modes) {
                     dictationModeStore.setActiveMode(id: mode.id)
+                    // A silent mode swap could reroute future dictations —
+                    // make it visible with a brief HUD flash.
+                    if !dictationState.isActive {
+                        dictationState.setPhase(.done(DictationDeliveryOutcome(
+                            kind: .notice,
+                            message: "Active mode switched to \(mode.name) via link"
+                        )))
+                    }
                 }
             case .openHistory:
                 openDictationHistoryWindow()
@@ -952,7 +973,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             phase: phase ?? dictationState.phase,
             persistent: prefs.persistentDictationHUD,
             temporarilyHidden: pillHiddenUntilNextDictation,
-            isRecording: state.isRecording
+            isRecording: state.isRecording,
+            pendingDeepLink: dictationState.pendingDeepLink != nil
         )
         dictationHUD?.apply(presentation)
     }

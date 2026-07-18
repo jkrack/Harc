@@ -13,6 +13,8 @@ public struct DictationHUDRootView: View {
     let onFixAccessibility: () -> Void
     let onStartDictation: () -> Void
     let onHidePill: () -> Void
+    let onConfirmDeepLink: () -> Void
+    let onDismissDeepLink: () -> Void
 
     public init(
         state: DictationState,
@@ -23,7 +25,9 @@ public struct DictationHUDRootView: View {
         onDismiss: @escaping () -> Void = {},
         onFixAccessibility: @escaping () -> Void = {},
         onStartDictation: @escaping () -> Void = {},
-        onHidePill: @escaping () -> Void = {}
+        onHidePill: @escaping () -> Void = {},
+        onConfirmDeepLink: @escaping () -> Void = {},
+        onDismissDeepLink: @escaping () -> Void = {}
     ) {
         self.state = state
         self.modeStore = modeStore
@@ -34,10 +38,19 @@ public struct DictationHUDRootView: View {
         self.onFixAccessibility = onFixAccessibility
         self.onStartDictation = onStartDictation
         self.onHidePill = onHidePill
+        self.onConfirmDeepLink = onConfirmDeepLink
+        self.onDismissDeepLink = onDismissDeepLink
     }
 
     public var body: some View {
         switch presentationModel.presentation {
+        case .confirmDeepLink:
+            DictationDeepLinkConfirmView(
+                request: state.pendingDeepLink
+                    ?? DictationDeepLinkRequest(mode: nil, requesterBundleID: nil, requesterName: nil),
+                onStart: onConfirmDeepLink,
+                onDismiss: onDismissDeepLink
+            )
         case .idlePill(let recording):
             DictationIdlePillView(
                 modeStore: modeStore,

@@ -233,6 +233,9 @@ public struct DictationHUDView: View {
             } else if outcome.kind == .inserted {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
+            } else if outcome.kind == .notice {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
             } else {
                 Image(systemName: "doc.on.clipboard")
                     .foregroundStyle(.secondary)
@@ -255,7 +258,12 @@ public struct DictationHUDView: View {
         case .listening: return HarcBrand.live
         case .transcribing, .inserting: return .accentColor
         case .transforming: return .indigo
-        case .done(let outcome): return outcome.kind == .inserted ? .green : .orange
+        case .done(let outcome):
+            switch outcome.kind {
+            case .inserted: return .green
+            case .copied: return .orange
+            case .notice: return .accentColor
+            }
         case .error: return .orange
         case .idle: return .secondary
         }

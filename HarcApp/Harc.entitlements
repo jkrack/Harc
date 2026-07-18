@@ -2,9 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+      com.apple.security.cs.disable-library-validation was removed in the
+      go-public hardening pass (2026-07-17). It had been present since the
+      first app-shell commit with no recorded rationale. The harc-stt daemon
+      is a spawned child process (library validation does not apply), and
+      build-local.sh deep-re-signs the whole bundle under one identity, so
+      all loaded frameworks (Sparkle, SwiftPM products) share the signer.
+      Runtime launch verification still required on a real install: if the
+      app fails to launch or Sparkle fails to load, restore the key and
+      document exactly which library needs it.
+    -->
     <key>com.apple.security.device.audio-input</key>
-    <true/>
-    <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
 </dict>
 </plist>

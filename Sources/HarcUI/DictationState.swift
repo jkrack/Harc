@@ -9,6 +9,9 @@ public struct DictationDeliveryOutcome: Equatable, Sendable {
         case inserted
         /// Text was left on the clipboard only.
         case copied
+        /// No delivery — an informational flash (e.g. "Mode switched to
+        /// Email via link"). Renders neutrally and auto-dismisses.
+        case notice
     }
 
     public var kind: Kind
@@ -69,6 +72,9 @@ public final class DictationState: ObservableObject {
     /// True when `sessionModeOverride` came from a per-app activation rule
     /// (vs a one-shot mode hotkey) — the chip shows an auto glyph.
     @Published public private(set) var sessionModeViaRule: Bool = false
+    /// A `harc://dictate` link awaiting user confirmation. The HUD renders
+    /// a Start/Cancel prompt; the mic never opens on a bare deep link.
+    @Published public private(set) var pendingDeepLink: DictationDeepLinkRequest?
 
     public static let levelHistoryCount = 40
 
@@ -116,6 +122,10 @@ public final class DictationState: ObservableObject {
 
     public func setContext(_ newContext: DictationContext) {
         context = newContext
+    }
+
+    public func setPendingDeepLink(_ request: DictationDeepLinkRequest?) {
+        pendingDeepLink = request
     }
 
     public func setConfirmingCancel(_ value: Bool) {
