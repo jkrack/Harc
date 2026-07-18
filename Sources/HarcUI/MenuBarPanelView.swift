@@ -63,6 +63,9 @@ public struct MenuBarPanelView: View {
     let onClearDictationHistory: (() -> Void)?
     let onOpenDictationHistory: (() -> Void)?
     let availableUpdate: AvailableUpdate?
+    /// Hand the click off to Sparkle's install flow; nil falls back to
+    /// opening the release page in the browser.
+    let onInstallUpdate: (() -> Void)?
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
@@ -123,7 +126,8 @@ public struct MenuBarPanelView: View {
         onCopyDictationHistoryEntry: ((DictationHistoryEntry) -> Void)? = nil,
         onClearDictationHistory: (() -> Void)? = nil,
         onOpenDictationHistory: (() -> Void)? = nil,
-        availableUpdate: AvailableUpdate? = nil
+        availableUpdate: AvailableUpdate? = nil,
+        onInstallUpdate: (() -> Void)? = nil
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
@@ -181,6 +185,7 @@ public struct MenuBarPanelView: View {
         self.onClearDictationHistory = onClearDictationHistory
         self.onOpenDictationHistory = onOpenDictationHistory
         self.availableUpdate = availableUpdate
+        self.onInstallUpdate = onInstallUpdate
     }
 
     @ViewBuilder
@@ -461,23 +466,27 @@ public struct MenuBarPanelView: View {
         .font(.subheadline)
     }
 
-    /// Subtle footer row shown while a newer release is known. Click opens
-    /// the release page in the browser.
+    /// Subtle footer row shown while a newer release is known. Click hands
+    /// off to Sparkle's install flow (or the release page as fallback).
     private func updateAvailableRow(_ update: AvailableUpdate) -> some View {
         Button {
-            NSWorkspace.shared.open(update.url)
+            if let onInstallUpdate {
+                onInstallUpdate()
+            } else {
+                NSWorkspace.shared.open(update.url)
+            }
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.down.circle")
                     .foregroundStyle(Color.accentColor)
-                Text("Update available — Harc \(update.version)")
+                Text("Update available — install Harc \(update.version)")
                     .foregroundStyle(Color.accentColor)
                 Spacer(minLength: 0)
             }
             .font(.caption)
         }
         .buttonStyle(.plain)
-        .help("Open the release page on GitHub")
+        .help(onInstallUpdate != nil ? "Download and install the update" : "Open the release page on GitHub")
     }
 
     private var appVersionText: String {

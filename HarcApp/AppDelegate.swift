@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Combine
+import Sparkle
 import SwiftUI
 import UserNotifications
 import HarcAudio
@@ -18,6 +19,29 @@ import KeyboardShortcuts
 
 /// Thrown by stopRecording's timeout race when session.stop() exceeds the cap.
 private struct StopTimeoutError: Error {}
+
+/// Publishes Sparkle's discovered updates onto the bridge so HarcUI stays
+/// Sparkle-free. Delegate callbacks arrive off the main actor — primitives
+/// are extracted before hopping.
+final class HarcUpdaterDelegate: NSObject, SPUUpdaterDelegate {
+    weak var bridge: HarcAppBridge?
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        let version = item.displayVersionString
+        let url = item.infoURL ?? URL(string: "https://github.com/jkrack/Harc/releases/latest")!
+        let bridge = bridge
+        Task { @MainActor in
+            bridge?.availableUpdate = AvailableUpdate(version: version, url: url)
+        }
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        let bridge = bridge
+        Task { @MainActor in
+            bridge?.availableUpdate = nil
+        }
+    }
+}
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delegate, UNUserNotificationCenterDelegate {
@@ -342,6 +366,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var detector: MeetingDetector?
     private var terminateToken: NSObjectProtocol?
     private var cancellables: Set<AnyCancellable> = []
+    /// Sparkle. Held for the app's lifetime; nil under UI testing.
+    private var updaterController: SPUStandardUpdaterController?
+    private let updaterDelegate = HarcUpdaterDelegate()
     private var managedWindowCount = 0
 
     /// Minimum transcript word count to actually call the summarizer.
@@ -487,14 +514,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             startFrontmostPolling()
         }
 
-        // Daily GitHub-releases update check. All logic lives in
-        // UpdateChecker; the bridge mirror feeds the menu-bar row.
+        // Sparkle auto-updates. The updater delegate publishes discovered
+        // updates onto the bridge for the panel/About rows; the pref is the
+        // single user-facing switch for scheduled checks. System profiling
+        // is off — checks send nothing about the user.
         if !isUITesting {
-            UpdateChecker.shared.start()
-            UpdateChecker.shared.$availableUpdate
+            updaterDelegate.bridge = bridge
+            let controller = SPUStandardUpdaterController(
+                startingUpdater: false,
+                updaterDelegate: updaterDelegate,
+                userDriverDelegate: nil
+            )
+            controller.updater.automaticallyChecksForUpdates = prefs.updateChecksEnabled
+            prefs.$updateChecksEnabled
                 .receive(on: DispatchQueue.main)
-                .assign(to: \.availableUpdate, on: bridge)
+                .sink { [weak controller] enabled in
+                    controller?.updater.automaticallyChecksForUpdates = enabled
+                }
                 .store(in: &cancellables)
+            controller.startUpdater()
+            updaterController = controller
+            let check: () -> Void = { [weak controller] in
+                NSApp.activate(ignoringOtherApps: true)
+                controller?.checkForUpdates(nil)
+            }
+            bridge.onCheckForUpdates = check
+            bridge.onInstallUpdate = check
         }
 
         showWelcomeIfNeeded()
@@ -2794,7 +2839,8 @@ private struct StatusPopoverRoot: View {
             onCopyDictationHistoryEntry: { FrontmostAppPaster.copyOnly($0.text) },
             onClearDictationHistory: { dictationHistoryStore.clear() },
             onOpenDictationHistory: onOpenDictationHistory,
-            availableUpdate: bridge.availableUpdate
+            availableUpdate: bridge.availableUpdate,
+            onInstallUpdate: bridge.onInstallUpdate
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
     }
