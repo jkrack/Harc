@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import AVFoundation
 import Combine
 import Sparkle
 import SwiftUI
@@ -2048,8 +2049,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func showWelcomeIfNeeded() {
-        guard !isUITesting, !prefs.welcomeFlowCompleted else { return }
-        showWelcome(markAsFirstRun: true)
+        guard !isUITesting else { return }
+        guard prefs.welcomeFlowCompleted else {
+            showWelcome(markAsFirstRun: true)
+            return
+        }
+        // Completed before, but core grants look broken — the classic
+        // delete-and-reinstall case: prefs survive, yet an ad-hoc signature
+        // change silently drops TCC grants (mic/Accessibility). Re-offer the
+        // skippable welcome once per build so setup can be repaired, without
+        // nagging healthy installs or users who deliberately declined.
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+        let reofferKey = "harc.welcomeReofferedForBuild"
+        guard UserDefaults.standard.string(forKey: reofferKey) != build else { return }
+        let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let axGranted = AXIsProcessTrusted()
+        if !micGranted || !axGranted {
+            UserDefaults.standard.set(build, forKey: reofferKey)
+            showWelcome(markAsFirstRun: false)
+        }
     }
 
     private func showWelcome(markAsFirstRun: Bool) {
