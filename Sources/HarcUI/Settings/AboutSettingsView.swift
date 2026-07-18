@@ -2,7 +2,7 @@ import SwiftUI
 
 public struct AboutSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
-    @ObservedObject private var updateChecker = UpdateChecker.shared
+    @EnvironmentObject private var bridge: HarcAppBridge
 
     public init() {}
 
@@ -53,45 +53,31 @@ public struct AboutSettingsView: View {
             Text("Updates")
                 .font(.headline)
             Toggle("Check for updates automatically", isOn: $prefs.updateChecksEnabled)
-            Text("Checks GitHub for new releases; sends nothing about you.")
+            Text("Updates install in place via Sparkle; checks send nothing about you.")
                 .font(.caption)
                 .foregroundStyle(Color.secondary)
             HStack(spacing: 10) {
                 Button("Check for Updates") {
-                    Task { await updateChecker.checkNow() }
+                    bridge.onCheckForUpdates?()
                 }
-                .disabled(updateChecker.manualCheckStatus == .checking)
-                manualCheckResult
+                .disabled(bridge.onCheckForUpdates == nil)
+                if let update = bridge.availableUpdate {
+                    HStack(spacing: 4) {
+                        Text("Harc \(update.version) available —")
+                            .font(.subheadline)
+                        if bridge.onInstallUpdate != nil {
+                            Button("Install") { bridge.onInstallUpdate?() }
+                                .buttonStyle(.link)
+                                .font(.subheadline)
+                        } else {
+                            Link("View release", destination: update.url)
+                                .font(.subheadline)
+                        }
+                    }
+                }
             }
         }
         .padding(.vertical, 4)
-    }
-
-    @ViewBuilder
-    private var manualCheckResult: some View {
-        switch updateChecker.manualCheckStatus {
-        case .checking:
-            Text("Checking…")
-                .font(.subheadline)
-                .foregroundStyle(Color.secondary)
-        case .upToDate:
-            Text("You're up to date.")
-                .font(.subheadline)
-                .foregroundStyle(Color.secondary)
-        case .updateAvailable(let update):
-            HStack(spacing: 4) {
-                Text("Harc \(update.version) available —")
-                    .font(.subheadline)
-                Link("View release", destination: update.url)
-                    .font(.subheadline)
-            }
-        case .failed:
-            Text("Couldn't reach GitHub.")
-                .font(.subheadline)
-                .foregroundStyle(Color.secondary)
-        case nil:
-            EmptyView()
-        }
     }
 
     private var architectureBlock: some View {

@@ -58,11 +58,16 @@ public final class HarcAppBridge: ObservableObject {
     @Published public private(set) var pasteFlash: PasteFlash? = nil
     @Published public private(set) var pasteStatusMessage: String? = nil
     @Published public private(set) var recordingStopInFlight: Bool = false
-    /// Newer release known from `UpdateChecker`, mirrored here so the
-    /// menu-bar panel can show a subtle update row.
+    /// Newer release Sparkle has found (published by the app target's
+    /// updater delegate) so the panel and About can show an update row.
     @Published public var availableUpdate: AvailableUpdate? = nil
 
     public var onStartStop: () -> Void = {}
+    /// Trigger Sparkle's check-for-updates UI. nil in previews/tests and
+    /// under UI testing, where the updater isn't started.
+    public var onCheckForUpdates: (() -> Void)?
+    /// Install a known update (re-presents Sparkle's update sheet).
+    public var onInstallUpdate: (() -> Void)?
     public var onStartDictation: () -> Void = {}
     public var onOpenWindow: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}

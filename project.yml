@@ -18,6 +18,9 @@ settings:
 packages:
   HarcCore:
     path: .
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.4
 targets:
   Harc:
     type: application
@@ -41,6 +44,8 @@ targets:
         product: HarcSummarize
       - package: HarcCore
         product: HarcUI
+      - package: Sparkle
+        product: Sparkle
     info:
       path: HarcApp/Info.plist
       properties:
@@ -55,6 +60,15 @@ targets:
           - CFBundleURLName: com.harc.Harc.deeplink
             CFBundleURLSchemes:
               - harc
+        # Sparkle 2 auto-updates. The private half of this key lives only
+        # in the login Keychain (service "https://sparkle-project.org").
+        SUFeedURL: "https://raw.githubusercontent.com/jkrack/Harc/main/appcast.xml"
+        SUPublicEDKey: "5iiEp4xyYgKt4plNFXcPhfZmXoFYVz55cfZ6G7PmhDg="
+        # Our updateChecksEnabled pref is the user-facing switch; this
+        # suppresses Sparkle's separate first-launch permission prompt.
+        SUEnableAutomaticChecks: true
+        # Never profile users. Harc sends nothing about the machine.
+        SUEnableSystemProfiling: false
     entitlements:
       path: HarcApp/Harc.entitlements
       properties:

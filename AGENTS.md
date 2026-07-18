@@ -100,6 +100,26 @@ For local release artifacts, use:
 
     ./scripts/build-local.sh
 
+## Release Ritual
+
+Releases auto-install via Sparkle, so the appcast must be updated with a
+signed entry for every release — in this order:
+
+1. Bump `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in `project.yml`,
+   run `xcodegen generate`, build with `./scripts/build-local.sh`.
+2. Sign the DMG and get the appcast entry:
+   `./scripts/make-appcast.sh <version> <build> build/local-dist/Harc-local.dmg`
+   (EdDSA private key lives in the login Keychain, service
+   "https://sparkle-project.org"; sign_update may prompt — Always Allow).
+3. Insert the printed `<item>` at the top of `appcast.xml`'s `<channel>`.
+4. Commit (including `appcast.xml` + refreshed `dist/` zip), merge to
+   main, tag `vX.Y.Z`, push main + tag. The appcast is served from main
+   via raw.githubusercontent — pushing main publishes it.
+5. `gh release create vX.Y.Z --latest` attaching BOTH
+   `build/local-dist/Harc-local-dmg.zip` and `Harc-local.dmg` — the
+   appcast enclosure points at the release's `Harc-local.dmg` asset, so
+   the uploaded DMG must be the exact bytes signed in step 2.
+
 ## Documentation
 
 Keep this file current when repository structure, build tooling, validation

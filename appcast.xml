@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sparkle update feed for Harc. Served raw from the main branch:
+  https://raw.githubusercontent.com/jkrack/Harc/main/appcast.xml
+
+  Entries are appended by scripts/make-appcast.sh during the release
+  ritual (it signs the DMG with the EdDSA key in the login Keychain and
+  prints the item to paste here). Newest entry first.
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Harc</title>
+    <link>https://github.com/jkrack/Harc</link>
+    <description>Local speech-to-text for macOS — meeting capture and dictation.</description>
+    <language>en</language>
+    <item>
+      <title>Harc v0.5.0</title>
+      <link>https://github.com/jkrack/Harc/releases/tag/v0.5.0</link>
+      <sparkle:version>23</sparkle:version>
+      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <pubDate>Thu, 17 Jul 2026 02:58:00 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jkrack/Harc/releases/download/v0.5.0/Harc-local.dmg"
+        sparkle:edSignature="Kq8GqeIF8tp/Fen58byyKx5Kfl+6H0W/owpbwPFZ+IliIZ0MttEu1VYiIlB4Q3fAapefb8nOKm9fwdnBjVYNBg=="
+        length="29357497"
+        type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
