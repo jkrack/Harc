@@ -245,3 +245,11 @@ Open before making it default: long-form (1h) behavior, seam quality vs the
 TDT chunk merge, and RTF on meeting-length audio. The Unified model cache
 (~500 MB, `~/Library/Application Support/FluidAudio/Models/
 parakeet-unified-en-0.6b-coreml`) is kept for the opt-in path.
+
+## Auto-update feed status (2026-07-17)
+
+Sparkle is fully wired and the appcast is signed, but the feed is **dormant**:
+the repo is private, so `raw.githubusercontent.com` 404s the appcast and
+release assets require auth. In-app updates activate the moment the repo goes
+public (or the feed moves to a public releases-only repo). Manual DMG installs
+unaffected. Precondition per owner: harden the app/repo before going public.
