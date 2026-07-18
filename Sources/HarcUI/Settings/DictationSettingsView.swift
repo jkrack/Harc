@@ -24,10 +24,11 @@ public struct DictationSettingsView: View {
                 Toggle("Restore clipboard after inserting", isOn: $prefs.restoreClipboardAfterInsert)
             }
             Toggle("Sounds", isOn: $prefs.dictationSoundsEnabled)
+            Toggle("Keep the dictation pill on screen", isOn: $prefs.persistentDictationHUD)
         } header: {
             Text("Dictation")
         } footer: {
-            Text("Push-to-talk: hold the key to dictate, release to insert. Toggle: tap to start and stop. Restoring the clipboard puts whatever you had copied back after the dictation lands.")
+            Text("Push-to-talk: hold the key to dictate, release to insert. Toggle: tap to start and stop. Restoring the clipboard puts whatever you had copied back after the dictation lands. The pill stays visible when idle — hover it to start dictation or switch modes.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
         }
