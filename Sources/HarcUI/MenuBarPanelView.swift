@@ -69,6 +69,9 @@ public struct MenuBarPanelView: View {
 
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
+    @State private var modePickerHovering = false
+    @State private var readinessExpanded = false
+    @State private var readinessSummaryHovering = false
 
     public init(
         recordingState: RecordingState,
@@ -188,41 +191,80 @@ public struct MenuBarPanelView: View {
         self.onInstallUpdate = onInstallUpdate
     }
 
-    @ViewBuilder
-    private func dictationRow(_ onStart: @escaping () -> Void) -> some View {
+    /// The panel's two jobs, given the panel's two biggest targets:
+    /// equal-width Record/Stop and Dictate buttons.
+    private var primaryControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                onStartStop()
+            } label: {
+                Label(recordingState.isRecording ? "Stop" : "Record",
+                      systemImage: recordingState.isRecording ? "stop.fill" : "record.circle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(recordingState.isRecording ? HarcBrand.live : .accentColor)
+            .controlSize(.large)
+
+            if let onStartDictation {
+                Button {
+                    onStartDictation()
+                } label: {
+                    Label("Dictate", systemImage: "mic.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(recordingState.isRecording || dictationActive)
+            }
+        }
+    }
+
+    /// Live dictation status: shown for any non-idle phase — including the
+    /// done/error afterglow, which isn't "active".
+    private var dictationStatusRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "mic.fill")
                 .foregroundStyle(dictationActive ? HarcBrand.live : .secondary)
-            // Status text renders for any non-idle phase — including the
-            // done/error afterglow, which isn't "active".
             Text(dictationStatusText ?? "Dictation")
                 .font(.callout)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Spacer()
+            Spacer(minLength: 8)
             if dictationActive {
                 if let onCancelDictation {
                     Button("Cancel") { onCancelDictation() }
                         .buttonStyle(.bordered)
-                        .controlSize(.small)
                 }
                 if let onStopDictation {
                     Button("Stop") { onStopDictation() }
                         .buttonStyle(.borderedProminent)
                         .tint(HarcBrand.live)
-                        .controlSize(.small)
                 }
-            } else {
-                if let onCopyDictationHistoryEntry, !dictationHistory.isEmpty {
-                    dictationHistoryMenu(onCopyDictationHistoryEntry)
-                }
-                if let onSelectDictationMode, !dictationModes.isEmpty {
-                    dictationModePicker(onSelectDictationMode)
-                }
-                Button("Dictate") { onStart() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(recordingState.isRecording)
+            }
+        }
+        .frame(minHeight: 28)
+    }
+
+    /// Idle secondary row: library, dictation mode, and recent history —
+    /// each with a full-size hover-highlighted target.
+    private var secondaryControlsRow: some View {
+        HStack(spacing: 6) {
+            MenuPanelRowButton(
+                icon: "books.vertical",
+                title: "Library",
+                detail: "⌘L"
+            ) {
+                onOpenWindow()
+            }
+            .keyboardShortcut("l", modifiers: .command)
+            .frame(maxWidth: .infinity)
+
+            if let onSelectDictationMode, !dictationModes.isEmpty {
+                dictationModePicker(onSelectDictationMode)
+            }
+            if let onCopyDictationHistoryEntry, !dictationHistory.isEmpty {
+                dictationHistoryMenu(onCopyDictationHistoryEntry)
             }
         }
     }
@@ -241,18 +283,33 @@ public struct MenuBarPanelView: View {
                 }
             }
         } label: {
-            Text(dictationModes.first { $0.id == activeDictationModeID }?.name ?? "Raw")
-                .font(.callout)
+            HStack(spacing: 4) {
+                Image(systemName: "wand.and.stars")
+                    .font(.caption)
+                Text(dictationModes.first { $0.id == activeDictationModeID }?.name ?? "Raw")
+                    .font(.callout)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 28)
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(modePickerHovering ? Color.primary.opacity(0.08) : Color.clear)
+            )
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
+        .onHover { modePickerHovering = $0 }
         .help("Dictation mode")
     }
 
     /// Recent dictations quick list (last 5) — click an entry to copy it back
     /// to the clipboard; the full window has search / re-process / delete.
     private func dictationHistoryMenu(_ onCopy: @escaping (DictationHistoryEntry) -> Void) -> some View {
-        Menu {
+        HoverIconButton(icon: "clock.arrow.circlepath", help: "Recent dictations — click to copy") {
             ForEach(dictationHistory.prefix(5)) { entry in
                 Button {
                     onCopy(entry)
@@ -272,12 +329,7 @@ public struct MenuBarPanelView: View {
                     onClearDictationHistory()
                 }
             }
-        } label: {
-            Image(systemName: "clock.arrow.circlepath")
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Recent dictations — click to copy")
     }
 
     static func historyLabel(for entry: DictationHistoryEntry) -> String {
@@ -291,25 +343,19 @@ public struct MenuBarPanelView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                stateLine
-                LiveWaveformView(history: amplitudeHistory, size: .panel, isActive: recordingState.isRecording)
-                    .frame(height: 28)
-                HStack(spacing: 8) {
-                    Button(recordingState.isRecording ? "Stop" : "Record") { onStartStop() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(recordingState.isRecording ? HarcBrand.live : .accentColor)
-                    Button {
-                        onOpenWindow()
-                    } label: {
-                        Label("Open Library", systemImage: "books.vertical")
+            VStack(alignment: .leading, spacing: 14) {
+                // Hero: state + waveform + the two primary actions.
+                VStack(alignment: .leading, spacing: 10) {
+                    stateLine
+                    LiveWaveformView(history: amplitudeHistory, size: .panel, isActive: recordingState.isRecording)
+                        .frame(height: 28)
+                    primaryControls
+                    if onStartDictation != nil, dictationActive || dictationStatusText != nil {
+                        dictationStatusRow
                     }
-                    .buttonStyle(.bordered)
-                    .keyboardShortcut("l", modifiers: .command)
-                }
-
-                if let onStartDictation {
-                    dictationRow(onStartDictation)
+                    if !dictationActive {
+                        secondaryControlsRow
+                    }
                 }
 
                 readinessSection
@@ -344,10 +390,12 @@ public struct MenuBarPanelView: View {
                 Divider()
                 footer
             }
-            .padding(14)
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
         }
-        .frame(width: 280)
-        .frame(maxHeight: 460)
+        .frame(width: 320)
+        .frame(maxHeight: 480)
         .animation(.easeInOut(duration: 0.2), value: trayState.isVisible)
         .onAppear { startTicker() }
         .onDisappear { stopTicker() }
@@ -419,74 +467,44 @@ public struct MenuBarPanelView: View {
         }
     }
 
+    /// Footer as proper menu rows: every action a full-width,
+    /// hover-highlighted target — no more bare text links.
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 2) {
             if let availableUpdate {
-                updateAvailableRow(availableUpdate)
-            }
-            HStack(spacing: 0) {
-                Button {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Settings…")
-                        Spacer()
-                        Text("⌘,").foregroundStyle(.secondary)
+                MenuPanelRowButton(
+                    icon: "arrow.down.circle.fill",
+                    title: "Update available — Harc \(availableUpdate.version)",
+                    tint: .accentColor
+                ) {
+                    if let onInstallUpdate {
+                        onInstallUpdate()
+                    } else {
+                        NSWorkspace.shared.open(availableUpdate.url)
                     }
                 }
-                .buttonStyle(.plain)
-                .keyboardShortcut(",", modifiers: .command)
-                Spacer(minLength: 12)
-                Button {
-                    NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                } label: {
-                    Text("Welcome…")
-                }
-                .buttonStyle(.plain)
-                Spacer(minLength: 12)
-                Button {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Quit Harc")
-                        Spacer()
-                        Text("⌘Q").foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut("q", modifiers: .command)
+                .help(onInstallUpdate != nil ? "Download and install the update" : "Open the release page on GitHub")
             }
+            MenuPanelRowButton(icon: "gearshape", title: "Settings…", detail: "⌘,") {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .keyboardShortcut(",", modifiers: .command)
+            MenuPanelRowButton(icon: "hand.wave", title: "Welcome Guide") {
+                NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            MenuPanelRowButton(icon: "power", title: "Quit Harc", detail: "⌘Q") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("q", modifiers: .command)
 
             Text(appVersionText)
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 6)
         }
-        .font(.subheadline)
-    }
-
-    /// Subtle footer row shown while a newer release is known. Click hands
-    /// off to Sparkle's install flow (or the release page as fallback).
-    private func updateAvailableRow(_ update: AvailableUpdate) -> some View {
-        Button {
-            if let onInstallUpdate {
-                onInstallUpdate()
-            } else {
-                NSWorkspace.shared.open(update.url)
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(Color.accentColor)
-                Text("Update available — install Harc \(update.version)")
-                    .foregroundStyle(Color.accentColor)
-                Spacer(minLength: 0)
-            }
-            .font(.caption)
-        }
-        .buttonStyle(.plain)
-        .help(onInstallUpdate != nil ? "Download and install the update" : "Open the release page on GitHub")
     }
 
     private var appVersionText: String {
@@ -501,12 +519,54 @@ public struct MenuBarPanelView: View {
         return "Harc v\(HarcVersion.current)"
     }
 
+    /// Readiness collapses to a one-line summary while everything is
+    /// healthy — seven green rows are noise; problems auto-expand.
+    @ViewBuilder
     private var readinessSection: some View {
-        LocalStackHealthView(
-            items: LocalStackHealthModel.items(for: localStackInput),
-            compact: true,
-            onFix: { item in fixReadinessItem(item) }
-        )
+        let items = LocalStackHealthModel.items(for: localStackInput)
+        let hasIssues = items.contains { $0.state == .warning }
+        if hasIssues || readinessExpanded {
+            VStack(alignment: .leading, spacing: 4) {
+                LocalStackHealthView(
+                    items: items,
+                    compact: true,
+                    onFix: { item in fixReadinessItem(item) }
+                )
+                if !hasIssues {
+                    HoverPillButton(title: "Hide details", tint: .secondary) {
+                        withAnimation(.easeInOut(duration: 0.15)) { readinessExpanded = false }
+                    }
+                }
+            }
+        } else {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { readinessExpanded = true }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                    Text(LocalStackHealthModel.summary(for: items))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 8)
+                .frame(minHeight: 24)
+                .frame(maxWidth: .infinity)
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(readinessSummaryHovering ? Color.primary.opacity(0.06) : Color.clear)
+                )
+            }
+            .buttonStyle(.plain)
+            .onHover { readinessSummaryHovering = $0 }
+            .help("Show local stack details")
+        }
     }
 
     /// Route each readiness fix to its actual remedy — the system privacy

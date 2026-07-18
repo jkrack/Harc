@@ -549,9 +549,7 @@ struct LocalStackHealthView: View {
             }
             Spacer(minLength: 6)
             if let fixTitle = item.fixTitle {
-                Button(fixTitle) { onFix(item) }
-                    .font(.caption)
-                    .buttonStyle(.plain)
+                HoverPillButton(title: fixTitle) { onFix(item) }
             }
         }
     }

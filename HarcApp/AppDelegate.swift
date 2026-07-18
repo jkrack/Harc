@@ -173,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 280, height: 260)
+        popover.contentSize = NSSize(width: 320, height: 260)
         popover.contentViewController = NSHostingController(
             rootView: StatusPopoverRoot(
                 bridge: bridge,
