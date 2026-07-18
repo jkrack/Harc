@@ -7,14 +7,20 @@ public actor DaemonLauncher {
     private let binaryURL: URL?
     private let socketPath: String
     private let logPath: String
+    /// Raw ASR engine name forwarded to the daemon as `--asr-engine`
+    /// (nil = daemon default, v2). Validated daemon-side — an unknown
+    /// value falls back to v2 there rather than failing the launch.
+    private let asrEngine: String?
     private var process: Process?
 
     public init(
         binaryURL: URL? = nil,
-        socketPath: String = HarcSTTClient.defaultSocketPath
+        socketPath: String = HarcSTTClient.defaultSocketPath,
+        asrEngine: String? = nil
     ) {
         self.binaryURL = binaryURL
         self.socketPath = socketPath
+        self.asrEngine = asrEngine
 
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         self.logPath = caches.appendingPathComponent("Harc/daemon.log").path
@@ -45,7 +51,11 @@ public actor DaemonLauncher {
         let p = Process()
         p.executableURL = bin
         // Pass the socket path so the daemon binds to the correct location.
-        p.arguments = ["--socket", socketPath]
+        var arguments = ["--socket", socketPath]
+        if let asrEngine {
+            arguments += ["--asr-engine", asrEngine]
+        }
+        p.arguments = arguments
         p.standardError = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
         p.standardOutput = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
         do {

@@ -215,3 +215,33 @@ unverified repo id. Verified against the HuggingFace API: **GO**.
   Never auto-suggested: onboarding's `suggestedSummarizer` filter stops at
   Quality. RAM gate: min 32 GB (download disabled below), 48 GB recommended
   (warning row below). Labeled honestly: "Highest quality, slowest."
+
+## Parakeet Unified EN spike (2026-07-17) — GO, shipped opt-in
+
+Verdict: **GO.** The concern that Unified lacks word timestamps applies only
+to FluidAudio's batch `UnifiedAsrManager` (returns a bare `String`). The
+`StreamingUnifiedAsrManager` exposes `consumeWordTimings()` — word-level
+start/end seconds on the global timeline, sub-word tokens merged on `▁`
+boundaries, built for word→speaker attribution — which is exactly the shape
+Harc's diarization alignment and per-word JSON export need.
+
+Fixture evidence (short-speech.wav, 3.0 s):
+
+| | v2 (default) | Unified (opt-in) |
+|---|---|---|
+| Text | "Hello. This is a test recording for HARC." | "Hello, this is a test recording for HARC." |
+| Punctuation/caps | yes | yes |
+| Word timings | 18 token-level entries | 8 true word-level entries, monotonic, in range |
+| Warm latency | ~209 ms wall | ~358 ms first / ~246 ms warm |
+
+Wiring: `Transcriber(engine:)` (`.v2` default / `.unified`), engine dispatch
+shares the VAD/stitch/remap pipeline; state resets per request so RNNT
+decoder state never leaks across chunks. Selection: `harc-stt
+--asr-engine unified` or `HARC_STT_ASR_ENGINE`; `DaemonLauncher(asrEngine:)`
+forwards it. No UI surface yet (deliberate — needs long-form mileage first);
+the one-line hookup later is passing the pref into `DaemonLauncher`.
+
+Open before making it default: long-form (1h) behavior, seam quality vs the
+TDT chunk merge, and RTF on meeting-length audio. The Unified model cache
+(~500 MB, `~/Library/Application Support/FluidAudio/Models/
+parakeet-unified-en-0.6b-coreml`) is kept for the opt-in path.

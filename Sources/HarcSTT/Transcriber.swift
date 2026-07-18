@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import FluidAudio
 import HarcCore
@@ -6,7 +7,23 @@ import HarcCore
 /// product constraint) for CoreML inference on ANE/Metal, with an optional
 /// VAD pre-filter that strips silent regions and remaps Parakeet's
 /// timestamps back to the original chunk timeline.
+///
+/// An experimental **Parakeet Unified EN** engine (`.unified`) is available
+/// opt-in via `harc-stt --asr-engine unified`. The spike verdict (see
+/// docs/dictation-plan.md): FluidAudio's `StreamingUnifiedAsrManager`
+/// exposes `consumeWordTimings()` — word-level start/end on the global
+/// timeline — so diarization alignment and per-word export keep working.
+/// v2 stays the default until Unified has long-form mileage.
 public actor Transcriber {
+    /// Which ASR engine this daemon runs. Selected at spawn; not
+    /// switchable per-request (each engine holds multi-hundred-MB models).
+    public enum ASREngine: String, Sendable, Equatable {
+        /// Parakeet TDT 0.6B v2 — the shipped default.
+        case v2
+        /// Parakeet Unified EN 0.6B via the streaming manager (experimental).
+        case unified
+    }
+
     /// Observable model lifecycle, reported over IPC via `DaemonStatus` so
     /// the app can tell the user the truth about first-run downloads.
     public enum ModelState: Sendable, Equatable {
@@ -22,7 +39,9 @@ public actor Transcriber {
     /// long-form recall than the multilingual `.v3`).
     static let asrVersion: AsrModelVersion = .v2
 
+    public let engine: ASREngine
     private var asrManager: AsrManager?
+    private var unifiedManager: StreamingUnifiedAsrManager?
     private let audioConverter = AudioConverter()
     private let vadGate: VADGate
     private var state: ModelState = .idle
@@ -37,11 +56,17 @@ public actor Transcriber {
     private static let sampleRate: Int = 16000
     static let shortClipVADBypassSeconds: Double = 30.0
 
-    public init(vadGate: VADGate = VADGate()) {
+    public init(vadGate: VADGate = VADGate(), engine: ASREngine = .v2) {
         self.vadGate = vadGate
+        self.engine = engine
     }
 
-    public var isLoaded: Bool { asrManager != nil }
+    public var isLoaded: Bool {
+        switch engine {
+        case .v2: return asrManager != nil
+        case .unified: return unifiedManager != nil
+        }
+    }
 
     public var modelState: ModelState { state }
 
@@ -53,25 +78,35 @@ public actor Transcriber {
     }
 
     public func loadModels() async throws {
-        guard asrManager == nil else { return }
+        guard !isLoaded else { return }
         state = .loading
-        let manager = AsrManager(config: .default)
         do {
-            let models = try await AsrModels.downloadAndLoad(
-                version: Self.asrVersion,
-                progressHandler: { [weak self] progress in
+            switch engine {
+            case .v2:
+                let manager = AsrManager(config: .default)
+                let models = try await AsrModels.downloadAndLoad(
+                    version: Self.asrVersion,
+                    progressHandler: { [weak self] progress in
+                        guard let self else { return }
+                        // Progress arrives on an arbitrary queue; hop to the actor.
+                        Task { await self.noteDownloadProgress(progress) }
+                    }
+                )
+                try await manager.loadModels(models)
+                self.asrManager = manager
+            case .unified:
+                let manager = StreamingUnifiedAsrManager()
+                try await manager.loadModels(progressHandler: { [weak self] progress in
                     guard let self else { return }
-                    // Progress arrives on an arbitrary queue; hop to the actor.
                     Task { await self.noteDownloadProgress(progress) }
-                }
-            )
-            try await manager.loadModels(models)
+                })
+                self.unifiedManager = manager
+            }
         } catch {
             state = .failed(message: error.localizedDescription)
             lastFailedLoadAt = Date()
             throw error
         }
-        self.asrManager = manager
         state = .ready
         lastFailedLoadAt = nil
         // VAD is an optimisation — its failure must never block ASR load.
@@ -112,8 +147,8 @@ public actor Transcriber {
     /// On-demand load retry: a daemon that failed its startup load (e.g.
     /// offline first launch) recovers on a later transcribe request once
     /// the cooldown has passed, instead of staying dead until restart.
-    private func ensureLoaded() async throws -> AsrManager {
-        if let manager = asrManager { return manager }
+    private func ensureEngineLoaded() async throws {
+        if isLoaded { return }
         guard Self.shouldAttemptLoad(lastFailedAt: lastFailedLoadAt) else {
             throw DaemonError.modelNotLoaded
         }
@@ -122,12 +157,11 @@ public actor Transcriber {
         } catch {
             throw DaemonError.modelNotLoaded
         }
-        guard let manager = asrManager else { throw DaemonError.modelNotLoaded }
-        return manager
+        guard isLoaded else { throw DaemonError.modelNotLoaded }
     }
 
     public func transcribe(audioPath: String, vad: Bool) async throws -> TranscribeResult {
-        let manager = try await ensureLoaded()
+        try await ensureEngineLoaded()
 
         let samples: [Float]
         do {
@@ -141,7 +175,7 @@ public actor Transcriber {
             sampleCount: samples.count,
             sampleRate: Self.sampleRate
         ) {
-            return try await runParakeet(on: samples, with: manager, regions: nil)
+            return try await runEngine(on: samples, regions: nil)
         }
 
         let vadStart = DispatchTime.now()
@@ -152,7 +186,7 @@ public actor Transcriber {
             FileHandle.standardError.write(Data(
                 "harc-stt: VAD failed (\(error.localizedDescription)) — falling back to full chunk transcription for \(audioPath)\n".utf8
             ))
-            return try await runParakeet(on: samples, with: manager, regions: nil)
+            return try await runEngine(on: samples, regions: nil)
         }
         let vadMs = Int((DispatchTime.now().uptimeNanoseconds - vadStart.uptimeNanoseconds) / 1_000_000)
 
@@ -165,7 +199,93 @@ public actor Transcriber {
             segments: segments,
             sampleRate: Self.sampleRate
         )
-        return try await runParakeet(on: stitch.compactSamples, with: manager, regions: stitch.regions)
+        return try await runEngine(on: stitch.compactSamples, regions: stitch.regions)
+    }
+
+    /// Engine dispatch — both engines share the VAD/stitch/remap pipeline.
+    private func runEngine(
+        on samples: [Float],
+        regions: [VoicedRegion]?
+    ) async throws -> TranscribeResult {
+        switch engine {
+        case .v2:
+            guard let manager = asrManager else { throw DaemonError.modelNotLoaded }
+            return try await runParakeet(on: samples, with: manager, regions: regions)
+        case .unified:
+            guard let manager = unifiedManager else { throw DaemonError.modelNotLoaded }
+            return try await runUnified(on: samples, with: manager, regions: regions)
+        }
+    }
+
+    /// Parakeet Unified EN via the streaming manager: feed the request's
+    /// samples, flush, and drain word-level timings. State is reset per
+    /// request — every chunk/clip is an independent utterance at Harc's
+    /// IPC boundary, and the RNNT decoder state must not leak across.
+    private func runUnified(
+        on samples: [Float],
+        with manager: StreamingUnifiedAsrManager,
+        regions: [VoicedRegion]?
+    ) async throws -> TranscribeResult {
+        let start = DispatchTime.now()
+        let text: String
+        let timings: [WordTiming]
+        do {
+            try await manager.reset()
+            guard let buffer = Self.pcmBuffer(from: samples, sampleRate: Self.sampleRate) else {
+                throw DaemonError.audioLoadFailed("could not allocate PCM buffer")
+            }
+            try await manager.appendAudio(buffer)
+            text = try await manager.finish()
+            timings = await manager.consumeWordTimings()
+        } catch let error as DaemonError {
+            throw error
+        } catch {
+            throw DaemonError.transcriptionFailed(error.localizedDescription)
+        }
+        let elapsedNs = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+
+        let compactWords: [Word] = timings.map { t in
+            Word(
+                text: t.word,
+                startMs: Int(t.startTime * 1000),
+                endMs: Int(t.endTime * 1000)
+            )
+        }
+        let words = regions.map {
+            VADTimestampRemapper.remap(
+                words: compactWords,
+                regions: $0,
+                sampleRate: Self.sampleRate
+            )
+        } ?? compactWords
+
+        return TranscribeResult(
+            text: text,
+            words: words,
+            speakers: [],
+            processingMs: Int(elapsedNs / 1_000_000)
+        )
+    }
+
+    /// 16 kHz mono Float32 samples → AVAudioPCMBuffer for the streaming
+    /// manager's `appendAudio`. Static + pure for testability.
+    static func pcmBuffer(from samples: [Float], sampleRate: Int) -> AVAudioPCMBuffer? {
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(sampleRate),
+            channels: 1,
+            interleaved: false
+        ), let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(samples.count)
+        ) else { return nil }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        if let dst = buffer.floatChannelData?[0] {
+            samples.withUnsafeBufferPointer { src in
+                dst.update(from: src.baseAddress!, count: samples.count)
+            }
+        }
+        return buffer
     }
 
     private func runParakeet(
