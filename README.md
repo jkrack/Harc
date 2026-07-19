@@ -59,4 +59,7 @@ Quit Harc, delete `Harc.app`, then remove what you don't want to keep
 
 ## License
 
-MIT — see `LICENSE`.
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
+— see `LICENSE`. The source is open for personal and other noncommercial use;
+commercial use requires a separate license. Official signed builds are
+available from [Releases](https://github.com/jkrack/Harc/releases).
