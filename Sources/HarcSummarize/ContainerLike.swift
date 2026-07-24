@@ -45,7 +45,17 @@ public struct MLXModelContainer: ContainerLike {
         }
         messages.append(["role": "user", "content": promptBody])
 
-        let userInput = UserInput(messages: messages)
+        // Current-gen small models (Gemma 4, Qwen 3.5) are reasoning-tuned:
+        // their chat templates default to emitting a chain-of-thought channel
+        // before the answer. That burns most of the output-token budget on
+        // scratch work the parser then chokes on (observed: truncation
+        // mid-thought, E2B repetition loops). `enable_thinking` is the
+        // conventional template variable to suppress it; templates that
+        // don't know the variable ignore it.
+        let userInput = UserInput(
+            messages: messages,
+            additionalContext: ["enable_thinking": false]
+        )
         let lmInput = try await container.prepare(input: userInput)
 
         var params = GenerateParameters()
