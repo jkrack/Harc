@@ -129,4 +129,10 @@ public extension ModelDescriptor {
         case .singleton: return displayName
         }
     }
+
+    /// Human-inspectable source page for exactly what will be downloaded:
+    /// the HuggingFace repo tree at the pinned revision.
+    var sourceURL: URL {
+        URL(string: "https://huggingface.co/\(repoID)/tree/\(revision)")!
+    }
 }

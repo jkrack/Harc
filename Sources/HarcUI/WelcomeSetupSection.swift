@@ -134,7 +134,7 @@ struct WelcomeSetupSection: View {
                 title: "Summaries + dictation modes (optional)",
                 detail: state.isInstalled
                     ? "\(d.tierDisplayName) installed"
-                    : "\(d.tierDisplayName) · \(ByteCountFormatter.string(fromByteCount: d.totalBytes, countStyle: .file)) — powers meeting summaries and dictation modes. More tiers in Settings → Models."
+                    : "\(d.tierDisplayName) · \(ByteCountFormatter.string(fromByteCount: d.totalBytes, countStyle: .file)) — powers meeting summaries and dictation modes. Downloaded from Hugging Face, version-pinned and checksum-verified. More tiers in Settings → Models."
             ) {
                 switch state {
                 case .installed:

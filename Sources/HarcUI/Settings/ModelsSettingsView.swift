@@ -69,9 +69,12 @@ public struct ModelsSettingsView: View {
                         .textCase(nil)
                 }
             } footer: {
-                Text("Pick one tier. Higher tiers produce better summaries at higher RAM and time cost.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Pick one tier. Higher tiers produce better summaries at higher RAM and time cost.")
+                    Text("Models download over HTTPS from Hugging Face, pinned to an exact version and checksum-verified before install. Downloads are the only time Harc's AI touches the network — inference is fully on-device.")
+                }
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
             }
 
         }
@@ -239,6 +242,17 @@ private struct ModelRow: View {
                 Text(descriptor.summary)
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
+                // Provenance: link to the exact pinned revision so anyone can
+                // inspect precisely what will be downloaded.
+                Link(destination: descriptor.sourceURL) {
+                    HStack(spacing: 3) {
+                        Text(descriptor.repoID)
+                        Image(systemName: "arrow.up.forward.square")
+                    }
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(Color.secondary)
+                }
+                .help("View this model at its pinned version on Hugging Face")
                 if ramGB < descriptor.recommendedRAMGB {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
