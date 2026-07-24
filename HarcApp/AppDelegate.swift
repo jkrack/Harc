@@ -371,6 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var updaterController: SPUStandardUpdaterController?
     private let updaterDelegate = HarcUpdaterDelegate()
     private var managedWindowCount = 0
+    private var mainMenuInstalled = false
 
     /// Minimum transcript word count to actually call the summarizer.
     /// Below this, the prompt is too thin to constrain the model and
@@ -586,9 +587,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func refreshActivationPolicy() {
         let desired: NSApplication.ActivationPolicy = managedWindowCount > 0 ? .regular : .accessory
-        if NSApp.activationPolicy() != desired {
-            NSApp.setActivationPolicy(desired)
+        guard NSApp.activationPolicy() != desired else { return }
+        if desired == .regular {
+            installMainMenuIfNeeded()
+            NSApp.setActivationPolicy(.regular)
+            // accessory→regular while already the active app: the system keeps
+            // the previous app's menu bar until our activation state visibly
+            // changes. Bounce activation — deactivate now, re-activate on a
+            // later runloop turn — so the menu bar picks us up.
+            NSApp.deactivate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
+                    .makeKeyAndOrderFront(nil)
+            }
+        } else {
+            NSApp.setActivationPolicy(.accessory)
         }
+    }
+
+    /// The app runs as an accessory (LSUIElement) with only a MenuBarExtra-style
+    /// UI, so SwiftUI never builds a main menu. When a real window promotes us
+    /// to `.regular`, the menu bar would be empty without one — including the
+    /// Edit menu, whose absence breaks ⌘C/⌘V in the transcript editor.
+    private func installMainMenuIfNeeded() {
+        guard !mainMenuInstalled else { return }
+        mainMenuInstalled = true
+
+        let main = NSMenu()
+
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "About Harc",
+                        action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                        keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let settingsItem = appMenu.addItem(withTitle: "Settings…",
+                                           action: #selector(harcShowSettingsWindow(_:)),
+                                           keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Harc",
+                        action: #selector(NSApplication.hide(_:)),
+                        keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(withTitle: "Hide Others",
+                                         action: #selector(NSApplication.hideOtherApplications(_:)),
+                                         keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(withTitle: "Show All",
+                        action: #selector(NSApplication.unhideAllApplications(_:)),
+                        keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Harc",
+                        action: #selector(NSApplication.terminate(_:)),
+                        keyEquivalent: "q")
+        let appItem = main.addItem(withTitle: "Harc", action: nil, keyEquivalent: "")
+        main.setSubmenu(appMenu, for: appItem)
+
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Close Window",
+                         action: #selector(NSWindow.performClose(_:)),
+                         keyEquivalent: "w")
+        let fileItem = main.addItem(withTitle: "File", action: nil, keyEquivalent: "")
+        main.setSubmenu(fileMenu, for: fileItem)
+
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Delete", action: #selector(NSText.delete(_:)), keyEquivalent: "")
+        editMenu.addItem(withTitle: "Select All",
+                         action: #selector(NSText.selectAll(_:)),
+                         keyEquivalent: "a")
+        let editItem = main.addItem(withTitle: "Edit", action: nil, keyEquivalent: "")
+        main.setSubmenu(editMenu, for: editItem)
+
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize",
+                           action: #selector(NSWindow.performMiniaturize(_:)),
+                           keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom",
+                           action: #selector(NSWindow.performZoom(_:)),
+                           keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front",
+                           action: #selector(NSApplication.arrangeInFront(_:)),
+                           keyEquivalent: "")
+        let windowItem = main.addItem(withTitle: "Window", action: nil, keyEquivalent: "")
+        main.setSubmenu(windowMenu, for: windowItem)
+        NSApp.windowsMenu = windowMenu
+
+        NSApp.mainMenu = main
     }
 
     @objc private func stopRecordingFromMenu() {
@@ -2046,6 +2138,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     @objc private func showWelcomeWindow(_ sender: Any?) {
         showWelcome(markAsFirstRun: false)
+    }
+
+    /// Nil-targeted actions from HarcUI (summary card, panel Settings row) and
+    /// the main-menu item land here via the responder chain. Deliberately NOT
+    /// named `showSettingsWindow:` — the SwiftUI Settings scene claims that
+    /// selector on NSApp and swallows programmatic sends without opening
+    /// anything (macOS 14+ insists on SettingsLink).
+    @objc func harcShowSettingsWindow(_ sender: Any?) {
+        openSettings()
     }
 
     private func showWelcomeIfNeeded() {

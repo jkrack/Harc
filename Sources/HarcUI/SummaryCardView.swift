@@ -101,7 +101,7 @@ public struct SummaryCardView: View {
                     description: "Generate summaries and action items from your meeting transcripts.",
                     actionTitle: "Open Models Settings",
                     action: {
-                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                        NSApp.sendAction(Selector(("harcShowSettingsWindow:")), to: nil, from: nil)
                         NSApp.activate(ignoringOtherApps: true)
                     }
                 )

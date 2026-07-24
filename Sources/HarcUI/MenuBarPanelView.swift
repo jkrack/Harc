@@ -486,7 +486,7 @@ public struct MenuBarPanelView: View {
                 .help(onInstallUpdate != nil ? "Download and install the update" : "Open the release page on GitHub")
             }
             MenuPanelRowButton(icon: "gearshape", title: "Settings…", detail: "⌘,") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.sendAction(Selector(("harcShowSettingsWindow:")), to: nil, from: nil)
                 NSApp.activate(ignoringOtherApps: true)
             }
             .keyboardShortcut(",", modifiers: .command)
