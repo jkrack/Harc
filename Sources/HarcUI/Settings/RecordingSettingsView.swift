@@ -9,7 +9,6 @@ public struct RecordingSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @State private var notificationsDenied: Bool = false
     @State private var destinationMissing: Bool = false
-    @State private var permissionRepairError: String?
 
     public init() {}
 
@@ -34,33 +33,7 @@ public struct RecordingSettingsView: View {
             } header: {
                 Text("Destination folder")
             } footer: {
-                Text("Recordings are written here as YYYY/YYYY-MM-DD/HH-mm-ss.{wav,txt,json}.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-            }
-
-            Section {
-                HStack {
-                    Text("Chunk duration")
-                    Spacer()
-                    Text("\(Int(prefs.chunkDurationSeconds)) s")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color.secondary)
-                }
-                Slider(value: $prefs.chunkDurationSeconds, in: 15...120, step: 15)
-            } footer: {
-                Text("How often the transcriber processes a slice during recording.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-            }
-
-            Section {
-                Toggle("Voice-activity detection", isOn: $prefs.vadEnabled)
-                    .tint(Color.accentColor)
-            } header: {
-                Text("Processing")
-            } footer: {
-                Text("Skips silent regions before transcription. Faster and quieter on battery; disable if you suspect a word is being clipped.")
+                Text("Recordings are written here as YYYY/YYYY-MM-DD/HH-mm-ss.{wav,md,json}.")
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
             }
@@ -97,44 +70,6 @@ public struct RecordingSettingsView: View {
                 KeyboardShortcuts.Recorder("Toggle recording:", name: .toggleRecording)
             } header: {
                 Text("Global hotkey")
-            }
-
-            Section {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "lock.shield")
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 22)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Recording access")
-                            .font(.body)
-                        Text("Use this when macOS shows Harc enabled but recording still asks for Screen & System Audio permission.")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 8) {
-                            Button("Open Privacy Settings") {
-                                RecordingPermissionRepair.openScreenCaptureSettings()
-                            }
-                            Button("Reset Harc Permissions…") {
-                                resetRecordingPermissions()
-                            }
-                        }
-                        .controlSize(.small)
-                    }
-                }
-                .padding(.vertical, 4)
-
-                if let permissionRepairError {
-                    Label(permissionRepairError, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(Color.orange)
-                }
-            } header: {
-                Text("Permissions")
-            } footer: {
-                Text("Reset removes Harc's current Microphone and Screen & System Audio grants, opens System Settings, and then quits Harc. Reopen Harc and grant the prompts again.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
             }
 
             Section {
@@ -387,30 +322,6 @@ public struct RecordingSettingsView: View {
 
     private func refreshDestinationStatus() {
         destinationMissing = !prefs.destinationFolderExists()
-    }
-
-    private func resetRecordingPermissions() {
-        permissionRepairError = nil
-        guard let plan = RecordingPermissionRepairPlan.current() else {
-            permissionRepairError = RecordingPermissionRepair.Error.missingBundleID.localizedDescription
-            return
-        }
-
-        let alert = NSAlert()
-        alert.messageText = "Reset Harc recording permissions?"
-        alert.informativeText = "This removes Harc's current Microphone and Screen & System Audio privacy grants for \(plan.bundleID). Harc will open System Settings and quit; reopen it and grant the prompts again."
-        alert.addButton(withTitle: "Reset and Quit")
-        alert.addButton(withTitle: "Cancel")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        do {
-            try RecordingPermissionRepair.reset(plan: plan)
-            RecordingPermissionRepair.openScreenCaptureSettings()
-            NSApp.terminate(nil)
-        } catch {
-            permissionRepairError = error.localizedDescription
-        }
     }
 
     private var destinationMissingWarning: some View {

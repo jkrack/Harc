@@ -1,7 +1,11 @@
 import SwiftUI
 import HarcCore
 
-public struct ProcessingSettingsView: View {
+/// Everything that shapes what the transcript says. These knobs used to be
+/// split across three non-adjacent places — chunk duration and voice-activity
+/// detection under Recording, diarization and vocabulary under Processing —
+/// so tuning transcript quality meant hunting through unrelated sections.
+public struct TranscriptionSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @State private var selection: Set<VocabularyEntry.ID> = []
     @State private var newFrom: String = ""
@@ -13,10 +17,33 @@ public struct ProcessingSettingsView: View {
         Group {
             Section {
                 Toggle("Transcribe speakers (diarization)", isOn: $prefs.diarize)
+                    .tint(Color.accentColor)
+                Toggle("Voice-activity detection", isOn: $prefs.vadEnabled)
+                    .tint(Color.accentColor)
             } header: {
-                Text("Transcription")
+                Text("Speech")
             } footer: {
-                Text("When on, transcripts include per-speaker segments.")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Speakers adds per-speaker segments to transcripts — worth keeping on for meetings, since it's what lets a downstream LLM tell participants apart.")
+                    Text("Voice-activity detection skips silent regions before transcription. Faster and quieter on battery; disable if you suspect a word is being clipped.")
+                }
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+            }
+
+            Section {
+                HStack {
+                    Text("Chunk duration")
+                    Spacer()
+                    Text("\(Int(prefs.chunkDurationSeconds)) s")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.secondary)
+                }
+                Slider(value: $prefs.chunkDurationSeconds, in: 15...120, step: 15)
+            } header: {
+                Text("Background processing")
+            } footer: {
+                Text("How often the transcriber processes a slice while recording continues. Shorter slices finish sooner after you stop; longer slices give the model more context per pass.")
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
             }

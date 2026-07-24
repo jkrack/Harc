@@ -2,12 +2,18 @@ import SwiftUI
 import HarcModels
 import HarcSummarize
 
-/// Settings → Models tab. Lists the shipped models grouped by task, renders
-/// install state per row, and lets the user pick the active summarizer.
+/// Models and what Harc does with them, in one pane.
+///
+/// These were two views in the old single-scroll Settings — a Models section
+/// and a Summarization section — each rendering its own picker bound to the
+/// same `activeSummarizerID`. Two controls for one value, a screen apart,
+/// under two headers both reading "Summarization". They are one pane now, and
+/// the active model is chosen in exactly one place: beside the row you
+/// installed it from.
 ///
 /// Models are downloaded on demand — nothing is installed by default, and
 /// features that need one prompt the user via `ModelRequirementView`.
-public struct ModelsSettingsView: View {
+public struct AIModelsSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var models: ModelManagerStore
 
@@ -35,7 +41,7 @@ public struct ModelsSettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
             } header: {
-                Text("Models")
+                Text("On-device AI")
             }
 
             Section {
@@ -63,7 +69,7 @@ public struct ModelsSettingsView: View {
                 }
             } header: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Summarization")
+                    Text("Summarizer")
                     Text("Your Mac has \(ramGB) GB RAM")
                         .font(.subheadline)
                         .foregroundStyle(Color.secondary)
@@ -78,6 +84,27 @@ public struct ModelsSettingsView: View {
                 .foregroundStyle(Color.secondary)
             }
 
+            Section {
+                Toggle("Automatically summarize after recording", isOn: $prefs.autoSummarizeEnabled)
+                    .disabled(isActiveSummarizerMissing)
+                Toggle("Also when on battery", isOn: $prefs.autoSummarizeOnBatteryEnabled)
+                    .disabled(!prefs.autoSummarizeEnabled || isActiveSummarizerMissing)
+                    .padding(.leading, 16)
+                Toggle("Include summary in exports and Copy for Prompt", isOn: $prefs.includeSummaryInPrompt)
+            } header: {
+                Text("Behavior")
+            } footer: {
+                VStack(alignment: .leading, spacing: 2) {
+                    if isActiveSummarizerMissing {
+                        Text("The active summarizer isn't installed, so auto-summarize and the Generate button have no effect. Download a tier above to enable them.")
+                            .foregroundStyle(Color.red)
+                    }
+                    Text("Summarizers are multi-GB resident and use power. The battery toggle is off by default.")
+                    Text("When enabled, Markdown, DOCX, and prompt exports prepend Summary and Action Items above the transcript.")
+                }
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+            }
         }
         .alert(
             "Remove this model?",
@@ -126,7 +153,7 @@ public struct ModelsSettingsView: View {
         }
     }
 
-    // MARK: - Active summarizer radio
+    // MARK: - Active summarizer
 
     private var activeSummarizerPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -185,6 +212,13 @@ public struct ModelsSettingsView: View {
         summarizers
             .filter { models.state(of: $0.id).isInstalled && $0.id != prefs.activeSummarizerID }
             .sorted { $0.totalBytes > $1.totalBytes }
+    }
+
+    private var isActiveSummarizerMissing: Bool {
+        if case .absent = models.state(of: prefs.activeSummarizerID) {
+            return true
+        }
+        return false
     }
 
     // MARK: - Actions

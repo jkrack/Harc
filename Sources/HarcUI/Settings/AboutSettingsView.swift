@@ -1,8 +1,14 @@
 import SwiftUI
+import AppKit
 
 public struct AboutSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
     @EnvironmentObject private var bridge: HarcAppBridge
+
+    /// Permission repair lives here rather than in Recording: it's a recovery
+    /// tool for a broken install, not something to walk past every time you
+    /// adjust a hotkey.
+    @State private var permissionRepairError: String?
 
     public init() {}
 
@@ -18,6 +24,74 @@ public struct AboutSettingsView: View {
         }
 
         StorageSettingsSection()
+
+        troubleshootingSection
+    }
+
+    // MARK: - Troubleshooting
+
+    private var troubleshootingSection: some View {
+        Section {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lock.shield")
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recording access")
+                        .font(.body)
+                    Text("Use this when macOS shows Harc enabled but recording still asks for Screen & System Audio permission.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Button("Open Privacy Settings") {
+                            RecordingPermissionRepair.openScreenCaptureSettings()
+                        }
+                        Button("Reset Harc Permissions…") {
+                            resetRecordingPermissions()
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(.vertical, 4)
+
+            if let permissionRepairError {
+                Label(permissionRepairError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(Color.orange)
+            }
+        } header: {
+            Text("Troubleshooting")
+        } footer: {
+            Text("Reset removes Harc's current Microphone and Screen & System Audio grants, opens System Settings, and then quits Harc. Reopen Harc and grant the prompts again.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+        }
+    }
+
+    private func resetRecordingPermissions() {
+        permissionRepairError = nil
+        guard let plan = RecordingPermissionRepairPlan.current() else {
+            permissionRepairError = RecordingPermissionRepair.Error.missingBundleID.localizedDescription
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Reset Harc recording permissions?"
+        alert.informativeText = "This removes Harc's current Microphone and Screen & System Audio privacy grants for \(plan.bundleID). Harc will open System Settings and quit; reopen it and grant the prompts again."
+        alert.addButton(withTitle: "Reset and Quit")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try RecordingPermissionRepair.reset(plan: plan)
+            RecordingPermissionRepair.openScreenCaptureSettings()
+            NSApp.terminate(nil)
+        } catch {
+            permissionRepairError = error.localizedDescription
+        }
     }
 
     // MARK: - Sub-views

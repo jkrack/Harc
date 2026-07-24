@@ -110,11 +110,27 @@ Surfaces:
 - **Menu-bar Panel:** `MenuBarPanelView` — the slim `MenuBarExtra.window`-style panel: recording state line, level bars, Start/Stop, Open Library. Includes a dictation mode pill and recent dictation history. 30-second post-stop tray (for recordings) with Copy and Paste buttons.
 - **Dictation HUD:** `DictationHUDView` — a non-activating `NSPanel` (Liquid Glass pill) positioned above the Dock on the pointer's screen. Shows live waveform (listening) or status text (other phases), status dot, active-mode chip with shortcut, context indicator, and stop/cancel buttons.
 - **Dictation History Window:** `DictationHistoryWindowView` — searchable window over recent dictations (voice-vs-AI toggle when a mode transformed the text). Copy and re-process actions (re-process is copy-only by design — the window is key, so a synthetic paste would land in Harc itself).
-- **Settings:** `HarcSettingsForm` — a `Form` with grouped Sections:
-  - Recording settings (destination, hotkey, auto-paste guard)
-  - Dictation settings (hotkey, HUD position, keep-warm toggle, insertion behavior)
-  - Modes settings (list, create/edit modes, per-mode hotkeys, model picker)
-  - Models (download/manage STT and summarizer tiers)
+- **Settings:** `HarcSettingsForm` — a `NavigationSplitView` (sidebar +
+  detail), the shape System Settings itself uses. Panes are declared by the
+  `SettingsPane` enum; each renders one section-returning view inside a
+  grouped `Form`:
+  - **General** — appearance, launch at login
+  - **Recording** — destination, hotkey, auto-stop, auto-paste guard, meeting detection
+  - **Transcription** — diarization, VAD, chunk duration, vocabulary
+  - **Dictation** — hotkey, trigger style, insertion, keep-warm, history
+  - **Modes** — list, create/edit modes, per-mode hotkeys, per-app rules
+  - **AI Models** — download/manage summarizer tiers, active model, auto-summarize
+  - **About** — version, updates, storage, permission repair
+
+  The sidebar is searchable via `SettingsSearchIndex`, which maps the words
+  users actually type ("diarization", "vad", "tcc") to the pane that holds
+  the setting. **Adding a setting means adding an index entry** — a pane with
+  no entries is unreachable by search, and `SettingsSearchIndexTests` fails
+  the build if one exists.
+
+  This replaced a single 21-section scroll. Keep panes topic-complete: the
+  flat form let transcription knobs drift into three non-adjacent places and
+  produced two pickers bound to the same `activeSummarizerID`.
 - **Transcript Editor:** `TranscriptEditorView` — a separate window for editing transcript text, with a native `.toolbar` and Inspector sections.
 - **App Bridge:** `HarcAppBridge` — the observable that wires `RecordingState`, `PostStopTrayState`, `DictationState`, frontmost-app name, scope-history FFT, and panel actions through to the SwiftUI scene.
 
