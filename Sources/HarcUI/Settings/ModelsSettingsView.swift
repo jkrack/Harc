@@ -57,6 +57,9 @@ public struct ModelsSettingsView: View {
                              onRemove:  { pendingRemoveID = d.id })
                 }
                 activeSummarizerPicker
+                if installedSummarizerCount >= 2, !extraInstalled.isEmpty {
+                    reclaimSpaceCallout
+                }
             } header: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Summarization")
@@ -136,6 +139,48 @@ public struct ModelsSettingsView: View {
             .labelsHidden()
         }
         .padding(.top, 4)
+    }
+
+    // MARK: - Reclaim space
+
+    /// Shown when more than one summarizer is installed: each installed
+    /// model except the active one, with a one-click (confirmed) Remove.
+    /// Wording is careful not to call the extras unused — a dictation mode
+    /// may pin a non-active model via its optional `modelID`.
+    private var reclaimSpaceCallout: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "internaldrive")
+                    .foregroundStyle(Color.secondary)
+                Text("You have \(installedSummarizerCount) models installed. Unless a dictation mode uses them, only the active one is needed.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
+            }
+            ForEach(extraInstalled) { d in
+                HStack {
+                    Text(d.tierDisplayName)
+                        .font(.subheadline)
+                    Spacer()
+                    Button("Remove · \(ByteCountFormatter.string(fromByteCount: d.totalBytes, countStyle: .file))",
+                           role: .destructive) {
+                        pendingRemoveID = d.id
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var installedSummarizerCount: Int {
+        summarizers.filter { models.state(of: $0.id).isInstalled }.count
+    }
+
+    /// Installed summarizers other than the active one, largest first.
+    private var extraInstalled: [ModelDescriptor] {
+        summarizers
+            .filter { models.state(of: $0.id).isInstalled && $0.id != prefs.activeSummarizerID }
+            .sorted { $0.totalBytes > $1.totalBytes }
     }
 
     // MARK: - Actions
