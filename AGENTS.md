@@ -106,19 +106,30 @@ Releases auto-install via Sparkle, so the appcast must be updated with a
 signed entry for every release — in this order:
 
 1. Bump `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in `project.yml`,
-   run `xcodegen generate`, build with `./scripts/build-local.sh`.
-2. Sign the DMG and get the appcast entry:
-   `./scripts/make-appcast.sh <version> <build> build/local-dist/Harc-local.dmg`
+   run `xcodegen generate`, build with `./scripts/build-release.sh`
+   (Developer ID + hardened runtime + secure timestamps). Do NOT ship
+   `build-local.sh` output — it is ad-hoc signed and not notarizable.
+2. Notarize and staple, in that order:
+   `xcrun notarytool submit build/release-dist/Harc-<version>.dmg --keychain-profile harc-notary --wait`
+   then `xcrun stapler staple build/release-dist/Harc-<version>.dmg`.
+   Confirm with `spctl -a -vvv -t install build/release-dist/Harc.app`
+   → expect `source=Notarized Developer ID`.
+3. Copy the **stapled** DMG to `Harc-local.dmg` (the asset name every
+   appcast enclosure points at) and zip it to `Harc-local-dmg.zip`.
+   Stapling rewrites the DMG, so it must happen before signing — the
+   signature must cover the exact bytes that get uploaded.
+4. Sign that DMG and get the appcast entry:
+   `./scripts/make-appcast.sh <version> <build> build/release-dist/Harc-local.dmg`
    (EdDSA private key lives in the login Keychain, service
    "https://sparkle-project.org"; sign_update may prompt — Always Allow).
-3. Insert the printed `<item>` at the top of `appcast.xml`'s `<channel>`.
-4. Commit (including `appcast.xml` + refreshed `dist/` zip), merge to
-   main, tag `vX.Y.Z`, push main + tag. The appcast is served from main
-   via raw.githubusercontent — pushing main publishes it.
-5. `gh release create vX.Y.Z --latest` attaching BOTH
-   `build/local-dist/Harc-local-dmg.zip` and `Harc-local.dmg` — the
+5. Insert the printed `<item>` at the top of `appcast.xml`'s `<channel>`.
+6. Commit (including `appcast.xml`), tag `vX.Y.Z`, push main + tag. The
+   appcast is served from main via raw.githubusercontent — pushing main
+   publishes it.
+7. `gh release create vX.Y.Z --latest` attaching BOTH
+   `build/release-dist/Harc-local-dmg.zip` and `Harc-local.dmg` — the
    appcast enclosure points at the release's `Harc-local.dmg` asset, so
-   the uploaded DMG must be the exact bytes signed in step 2.
+   the uploaded DMG must be the exact bytes signed in step 4.
 
 ## Documentation
 
