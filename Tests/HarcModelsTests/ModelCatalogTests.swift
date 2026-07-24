@@ -56,12 +56,14 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(summarizers[2].tier, .pro)
         XCTAssertEqual(summarizers[3].tier, .max)
         XCTAssertEqual(summarizers[4].tier, .ultra)
+        XCTAssertEqual(summarizers[5].tier, .singleton)
         XCTAssertEqual(summarizers.map(\.id), [
             "gemma-4-e2b-it-4bit",
             "gemma-4-e4b-it-4bit",
             "gemma-4-12b-4bit",
             "gemma-4-26b-a4b-it-4bit",
             "gemma-4-31b-it-4bit",
+            "qwen-3.5-4b-4bit",
         ])
     }
 

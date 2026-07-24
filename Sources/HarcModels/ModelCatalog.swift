@@ -26,6 +26,7 @@ public enum ModelCatalog {
         gemma4_12B_4bit,
         gemma4_26B_A4B_IT_4bit,
         gemma4_31B_IT_4bit,
+        qwen35_4B_4bit,
     ]
 
     /// Lookup helper — nil if the id isn't in the catalog.
@@ -235,6 +236,43 @@ public enum ModelCatalog {
         ),
         minRAMGB: 32,
         recommendedRAMGB: 48,
+        contextTokens: 32_000,
+        manifestVerified: true
+    )
+
+    // Verified 2026-07-24 against the HuggingFace API (blobs=true for LFS
+    // sha256 + sizes; small git-tracked files downloaded at the pinned
+    // revision and sha256'd locally). Singleton tier: shown by displayName in
+    // pickers, never auto-suggested in onboarding, never preferred by
+    // fallback. Added after a head-to-head on the production summary prompt
+    // (2026-07-23): best action-item accuracy of the ≤4B models tested,
+    // E4B-class speed, smaller download.
+    private static let qwen35_4B_4bit = ModelDescriptor(
+        id: "qwen-3.5-4b-4bit",
+        displayName: "Qwen 3.5 4B",
+        summary: "Alternative summarizer. Sharpest action items at this size in our tests; Quality-tier speed. 3 GB on disk; 16 GB RAM recommended.",
+        task: .summarizer,
+        tier: .singleton,
+        repoID: "mlx-community/Qwen3.5-4B-4bit",
+        revision: "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+        files: verifiedRepoFiles(
+            repo: "mlx-community/Qwen3.5-4B-4bit",
+            revision: "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+            entries: [
+                ("chat_template.jinja", 7_756, "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"),
+                ("config.json", 3_366, "f3efc81b2ea8d96a45301037d3ccccbcccdef44a961845c87f286aaddbc6eaaa"),
+                ("model.safetensors", 3_034_300_695, "5fb9acd0246866381cf8c5c354c6db1019f6498eec4ccb4f5edcc71ffeacb2db"),
+                ("model.safetensors.index.json", 101_944, "52e534c41f7b97708329c85f762e5882bf48bd5955a422c6ae74eba321e6048a"),
+                ("preprocessor_config.json", 390, "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"),
+                ("processor_config.json", 1_300, "14932921ca485d458a04dafd8069fbb0a4505622a48208d19ed247115801385b"),
+                ("tokenizer.json", 19_989_343, "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4"),
+                ("tokenizer_config.json", 1_139, "e98f1901ac6f0adff67b1d540bfa0c36ac1a0cf59eb72ed78146ef89aafa1182"),
+                ("video_preprocessor_config.json", 385, "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"),
+                ("vocab.json", 6_722_759, "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"),
+            ]
+        ),
+        minRAMGB: 8,
+        recommendedRAMGB: 16,
         contextTokens: 32_000,
         manifestVerified: true
     )
