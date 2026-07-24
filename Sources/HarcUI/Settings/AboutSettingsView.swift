@@ -37,21 +37,34 @@ public struct AboutSettingsView: View {
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Recording access")
+                    Text("Permissions")
                         .font(.body)
-                    Text("Use this when macOS shows Harc enabled but recording still asks for Screen & System Audio permission.")
+                    Text("Use this when macOS shows Harc enabled but recording, dictation, or pasting still says permission is missing — most often after reinstalling or updating, when the grants get attached to the old copy of the app.")
                         .font(.subheadline)
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        Button("Open Privacy Settings") {
-                            RecordingPermissionRepair.openScreenCaptureSettings()
-                        }
-                        Button("Reset Harc Permissions…") {
-                            resetRecordingPermissions()
+
+                    ForEach(RecordingPermissionService.allCases, id: \.rawValue) { service in
+                        HStack(spacing: 6) {
+                            Image(systemName: service.isGranted ? "checkmark.circle.fill" : "xmark.circle")
+                                .foregroundStyle(service.isGranted ? Color.green : Color.secondary)
+                            Text(service.displayName)
+                                .font(.caption)
+                            Spacer()
+                            if !service.isGranted {
+                                Button("Open Settings") {
+                                    RecordingPermissionRepair.openSettings(for: service)
+                                }
+                                .controlSize(.small)
+                            }
                         }
                     }
+
+                    Button("Reset All Permissions…") {
+                        resetRecordingPermissions()
+                    }
                     .controlSize(.small)
+                    .padding(.top, 2)
                 }
             }
             .padding(.vertical, 4)
@@ -64,12 +77,18 @@ public struct AboutSettingsView: View {
         } header: {
             Text("Troubleshooting")
         } footer: {
-            Text("Reset removes Harc's current Microphone and Screen & System Audio grants, opens System Settings, and then quits Harc. Reopen Harc and grant the prompts again.")
+            Text("Reset clears Harc's Microphone, Screen & System Audio, and Accessibility grants, then restarts Harc automatically and walks you through granting them again. Restarting is required — macOS keeps the old answer until the app relaunches.")
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)
         }
     }
 
+    /// Reset every grant, then put the app back on screen.
+    ///
+    /// The old flow reset, opened System Settings, and quit — which stranded
+    /// the user, because Harc is `LSUIElement` and leaves nothing behind to
+    /// click when it exits. The relaunch is scheduled *before* terminating so
+    /// the app returns on its own with the repair flow showing.
     private func resetRecordingPermissions() {
         permissionRepairError = nil
         guard let plan = RecordingPermissionRepairPlan.current() else {
@@ -78,20 +97,32 @@ public struct AboutSettingsView: View {
         }
 
         let alert = NSAlert()
-        alert.messageText = "Reset Harc recording permissions?"
-        alert.informativeText = "This removes Harc's current Microphone and Screen & System Audio privacy grants for \(plan.bundleID). Harc will open System Settings and quit; reopen it and grant the prompts again."
-        alert.addButton(withTitle: "Reset and Quit")
+        alert.messageText = "Reset all Harc permissions?"
+        alert.informativeText = """
+            This clears Harc's Microphone, Screen & System Audio, and Accessibility grants for \(plan.bundleID).
+
+            Harc will restart itself and reopen the setup guide so you can grant them again. Recordings and transcripts are not affected.
+            """
+        alert.addButton(withTitle: "Reset and Restart")
         alert.addButton(withTitle: "Cancel")
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         do {
             try RecordingPermissionRepair.reset(plan: plan)
-            RecordingPermissionRepair.openScreenCaptureSettings()
-            NSApp.terminate(nil)
         } catch {
             permissionRepairError = error.localizedDescription
+            return
         }
+
+        // Only quit if we can guarantee a way back. If spawning the relaunch
+        // helper fails, stay open and hand the user the manual path rather
+        // than disappearing on them — the exact failure this flow had.
+        guard RecordingPermissionRepair.scheduleRelaunch() else {
+            permissionRepairError = "Permissions were reset, but Harc couldn't schedule its restart. Quit Harc and reopen it to finish."
+            return
+        }
+        NSApp.terminate(nil)
     }
 
     // MARK: - Sub-views

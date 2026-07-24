@@ -16,7 +16,12 @@ public final class WelcomeSetupModel: ObservableObject {
     @Published public var sttProgress: Double? = nil
     @Published public private(set) var micGranted: Bool
     @Published public private(set) var screenAudioGranted: Bool
+    @Published public private(set) var accessibilityGranted: Bool
     @Published public private(set) var destinationDisplayPath: String
+    /// Set once the user grants Screen Recording in this process. macOS keeps
+    /// the pre-grant answer until the app restarts, so the UI has to say so
+    /// rather than let the user believe a working grant is broken.
+    @Published public private(set) var screenAudioNeedsRelaunch: Bool = false
 
     public let prefs: HarcPreferences
     public let modelStore: ModelManagerStore
@@ -26,8 +31,10 @@ public final class WelcomeSetupModel: ObservableObject {
         self.prefs = prefs
         self.modelStore = modelStore
         self.suggestedSummarizer = Self.suggestedSummarizer(ramGB: Self.physicalRAMGB())
-        self.micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        self.screenAudioGranted = CGPreflightScreenCaptureAccess()
+        let snapshot = PermissionSnapshot.current()
+        self.micGranted = snapshot.microphone
+        self.screenAudioGranted = snapshot.screenCapture
+        self.accessibilityGranted = snapshot.accessibility
         self.destinationDisplayPath = (prefs.destinationPath as NSString).abbreviatingWithTildeInPath
     }
 
@@ -42,19 +49,48 @@ public final class WelcomeSetupModel: ObservableObject {
             ?? ModelCatalog.descriptor(for: ModelCatalog.defaultSummarizerID)
     }
 
-    public func requestMicAccess() {
-        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-            Task { @MainActor [weak self] in self?.micGranted = granted }
+    /// Ask for a grant the only way that can still produce a prompt.
+    ///
+    /// Each of these system prompts fires at most once per install. Calling
+    /// the request API after that returns silently with nothing on screen —
+    /// which is exactly how a "Grant" button turns into a button that appears
+    /// broken. So when in-process prompting is spent, open the System
+    /// Settings pane instead. Every path here puts *something* in front of
+    /// the user.
+    public func request(_ service: RecordingPermissionService) {
+        guard !service.isGranted else {
+            refreshPermissions()
+            return
+        }
+
+        switch service {
+        case .microphone where service.canPromptInProcess:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    self?.micGranted = granted
+                    if !granted {
+                        // Denied at the prompt — the only way back is System
+                        // Settings, and there will never be another prompt.
+                        RecordingPermissionRepair.openSettings(for: .microphone)
+                    }
+                }
+            }
+        case .screenCapture:
+            // Fires the prompt on a first ask and is a no-op afterwards, so
+            // pair it with the Settings pane rather than trusting it alone.
+            CGRequestScreenCaptureAccess()
+            if !CGPreflightScreenCaptureAccess() {
+                RecordingPermissionRepair.openSettings(for: .screenCapture)
+            }
+            refreshPermissions()
+        default:
+            RecordingPermissionRepair.openSettings(for: service)
         }
     }
 
-    public func requestScreenAudioAccess() {
-        // Triggers the Screen Recording prompt (system audio rides on it).
-        // The grant lands after the user acts in System Settings; re-check
-        // optimistically — the readiness panel stays the source of truth.
-        CGRequestScreenCaptureAccess()
-        screenAudioGranted = CGPreflightScreenCaptureAccess()
-    }
+    public func requestMicAccess() { request(.microphone) }
+    public func requestScreenAudioAccess() { request(.screenCapture) }
+    public func requestAccessibilityAccess() { request(.accessibility) }
 
     public func chooseDestination() {
         let panel = NSOpenPanel()
@@ -70,9 +106,19 @@ public final class WelcomeSetupModel: ObservableObject {
         }
     }
 
+    /// Re-read every grant. Called on appear *and* whenever Harc becomes
+    /// active — the user grants permissions in System Settings, so the moment
+    /// they switch back is the moment this view is most likely to be wrong.
     public func refreshPermissions() {
-        micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        screenAudioGranted = CGPreflightScreenCaptureAccess()
+        let snapshot = PermissionSnapshot.current()
+        if snapshot.screenCapture, !screenAudioGranted {
+            // Granted while we were running: the process keeps the old answer
+            // until relaunch, so capture will still fall back to mic-only.
+            screenAudioNeedsRelaunch = true
+        }
+        micGranted = snapshot.microphone
+        screenAudioGranted = snapshot.screenCapture
+        accessibilityGranted = snapshot.accessibility
     }
 
     private static func physicalRAMGB() -> Int {
@@ -171,30 +217,63 @@ struct WelcomeSetupSection: View {
 
     // MARK: Permissions
 
+    @ViewBuilder
     private var permissionsRow: some View {
-        setupRow(
-            icon: "lock.shield",
-            iconColor: .secondary,
-            title: "Permissions",
-            detail: "Microphone records you; Screen Recording captures the other side of a call."
-        ) {
-            HStack(spacing: 6) {
-                if model.micGranted {
-                    Label("Mic", systemImage: "checkmark")
+        VStack(alignment: .leading, spacing: 8) {
+            permissionGrantRow(.microphone, granted: model.micGranted)
+            permissionGrantRow(.screenCapture, granted: model.screenAudioGranted)
+            permissionGrantRow(.accessibility, granted: model.accessibilityGranted)
+
+            if model.screenAudioNeedsRelaunch {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Screen Recording is granted, but macOS keeps the old answer until Harc restarts. Quit and reopen to capture system audio.")
                         .font(.caption)
-                        .foregroundStyle(.green)
-                } else {
-                    Button("Grant mic") { model.requestMicAccess() }
-                        .controlSize(.small)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button("Quit & Reopen") {
+                        RecordingPermissionRepair.scheduleRelaunch()
+                        NSApp.terminate(nil)
+                    }
+                    .controlSize(.small)
                 }
-                if model.screenAudioGranted {
-                    Label("Audio", systemImage: "checkmark")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                } else {
-                    Button("Grant screen audio") { model.requestScreenAudioAccess() }
-                        .controlSize(.small)
+                .padding(.top, 2)
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func permissionGrantRow(
+        _ service: RecordingPermissionService,
+        granted: Bool
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "lock.shield")
+                .foregroundStyle(granted ? Color.green : Color.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(service.displayName)
+                    .font(.subheadline.weight(.medium))
+                Text(service.purpose)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if granted {
+                Text("Granted")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                // Label the action honestly: when the system prompt is spent,
+                // this opens System Settings and the button should say so.
+                Button(service.canPromptInProcess ? "Grant" : "Open Settings") {
+                    model.request(service)
                 }
+                .controlSize(.small)
             }
         }
     }
