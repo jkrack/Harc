@@ -162,9 +162,11 @@ public struct SummaryCardView: View {
                     Text("Summarizing with \(currentModelDisplay)…")
                         .font(.body)
                         .foregroundStyle(Color.primary)
-                    Text(currentModelResourceHint)
+                    Text(liveThroughputText ?? currentModelResourceHint)
                         .font(.subheadline)
                         .foregroundStyle(Color.secondary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
                 }
                 Spacer()
                 Button("Cancel") { cancelSelf() }
@@ -379,6 +381,15 @@ public struct SummaryCardView: View {
             return activeSummarizerID
         }
         return "\(d.displayName) (\(d.id))"
+    }
+
+    /// Live on-device throughput while THIS recording's job is generating.
+    /// Nil before the first snapshot (model load, prompt processing) — the
+    /// static resource hint shows instead.
+    private var liveThroughputText: String? {
+        guard let id = recording.id, queueStore.current == id,
+              let stats = queueStore.liveStats else { return nil }
+        return "\(stats.generatedTokens) tokens · \(Int(stats.tokensPerSecond.rounded())) tok/s on-device"
     }
 
     private var currentModelResourceHint: String {

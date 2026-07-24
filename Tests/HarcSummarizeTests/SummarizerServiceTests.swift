@@ -304,12 +304,14 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
     func generate(
         promptBody: String,
         systemPrompt: String?,
-        maxTokens: Int
+        maxTokens: Int,
+        onStats: (@Sendable (GenerationStats) -> Void)?
     ) async throws -> String {
         generateCalls += 1
         lastPromptBody = promptBody
         lastSystemPrompt = systemPrompt
         lastMaxTokens = maxTokens
+        onStats?(GenerationStats(generatedTokens: 42, tokensPerSecond: 21, isFinal: true))
         return response
     }
 }

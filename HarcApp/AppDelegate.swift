@@ -2529,11 +2529,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         let directory = try await modelManager.requireInstalled(modelID)
         let budgetWords = SummaryPrompt.budgetWords(contextTokens: descriptor.contextTokens)
 
+        let queueStore = summarizationQueueStore
         let result = try await service.summarize(
             transcript: promptTranscript,
             modelID: modelID,
             modelDirectory: directory,
-            budgetWords: budgetWords
+            budgetWords: budgetWords,
+            onStats: { stats in
+                queueStore?.updateLiveStats(stats)
+                if stats.isFinal {
+                    MeasuredModelSpeed.record(
+                        modelID: modelID,
+                        tokensPerSecond: stats.tokensPerSecond
+                    )
+                }
+            }
         )
 
         // sourceWordCount must match the field isStale() will read against

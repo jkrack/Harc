@@ -14,11 +14,30 @@ public protocol ContainerLike: Sendable {
     /// up to `maxTokens` tokens, and return the aggregated string.
     /// `systemPrompt` is optional — when non-nil it's rendered as a
     /// `{role: "system"}` message ahead of the user turn.
+    /// `onStats` (optional) receives interim throughput snapshots during
+    /// generation and one final snapshot with authoritative numbers.
+    func generate(
+        promptBody: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        onStats: (@Sendable (GenerationStats) -> Void)?
+    ) async throws -> String
+}
+
+public extension ContainerLike {
+    /// Convenience for call sites that don't observe throughput.
     func generate(
         promptBody: String,
         systemPrompt: String?,
         maxTokens: Int
-    ) async throws -> String
+    ) async throws -> String {
+        try await generate(
+            promptBody: promptBody,
+            systemPrompt: systemPrompt,
+            maxTokens: maxTokens,
+            onStats: nil
+        )
+    }
 }
 
 /// Production `ContainerLike` backed by `MLXLMCommon.ModelContainer`.
@@ -35,7 +54,8 @@ public struct MLXModelContainer: ContainerLike {
     public func generate(
         promptBody: String,
         systemPrompt: String?,
-        maxTokens: Int
+        maxTokens: Int,
+        onStats: (@Sendable (GenerationStats) -> Void)?
     ) async throws -> String {
         // mlx-swift-lm 3.x takes raw message dicts here, not a
         // Chat.Message array. Each dict has "role" + "content".
@@ -63,13 +83,35 @@ public struct MLXModelContainer: ContainerLike {
 
         let stream = try await container.generate(input: lmInput, parameters: params)
 
+        // Interim rate from streamed chunks (one chunk ≈ one token),
+        // throttled to every `interimEvery` chunks; the `.info` event at
+        // stream end carries the authoritative numbers.
+        let started = Date()
+        let interimEvery = 10
+        var chunkCount = 0
+
         var result = ""
         for await generation in stream {
             switch generation {
             case .chunk(let fragment):
                 result += fragment
-            case .info:
-                break   // final stats; not used by the parser
+                chunkCount += 1
+                if let onStats, chunkCount % interimEvery == 0 {
+                    let elapsed = Date().timeIntervalSince(started)
+                    if elapsed > 0.5 {
+                        onStats(GenerationStats(
+                            generatedTokens: chunkCount,
+                            tokensPerSecond: Double(chunkCount) / elapsed,
+                            isFinal: false
+                        ))
+                    }
+                }
+            case .info(let info):
+                onStats?(GenerationStats(
+                    generatedTokens: info.generationTokenCount,
+                    tokensPerSecond: info.tokensPerSecond,
+                    isFinal: true
+                ))
             case .toolCall:
                 break   // not a tool-use model
             }

@@ -11,6 +11,15 @@ public final class SummarizationQueueStore: ObservableObject {
     @Published public private(set) var pending: [Int64] = []
     @Published public private(set) var current: Int64? = nil
     @Published public private(set) var lastFailures: [Int64: String] = [:]
+    /// Throughput of the in-flight job, fed by the perform closure via
+    /// `updateLiveStats`. Cleared when the job finishes.
+    @Published public private(set) var liveStats: GenerationStats? = nil
+
+    /// Called (on any thread) by the summarization perform closure with
+    /// interim throughput snapshots for the current job.
+    public nonisolated func updateLiveStats(_ stats: GenerationStats) {
+        Task { @MainActor in self.liveStats = stats }
+    }
 
     public let queue: SummarizationQueue
     private var observer: Task<Void, Never>? = nil
@@ -77,8 +86,10 @@ public final class SummarizationQueueStore: ObservableObject {
         case .started(let id):
             if let idx = pending.firstIndex(of: id) { pending.remove(at: idx) }
             current = id
+            liveStats = nil
         case .finished(let id, let result):
             if current == id { current = nil }
+            liveStats = nil
             if case .failure(let error) = result {
                 // CancellationError is user-initiated — don't surface as a
                 // failure in the UI; the card returns to .empty / .summary

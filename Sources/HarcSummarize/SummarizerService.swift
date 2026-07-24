@@ -121,7 +121,8 @@ public actor SummarizerService {
         transcript: PromptTranscript,
         modelID: String,
         modelDirectory: URL,
-        budgetWords: Int
+        budgetWords: Int,
+        onStats: (@Sendable (GenerationStats) -> Void)? = nil
     ) async throws -> SummaryParseResult {
         cancelIdleUnload()
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
@@ -138,7 +139,8 @@ public actor SummarizerService {
             raw = try await cont.generate(
                 promptBody: promptBody,
                 systemPrompt: nil,
-                maxTokens: SummaryPrompt.maxOutputTokens
+                maxTokens: SummaryPrompt.maxOutputTokens,
+                onStats: onStats
             )
         } catch is CancellationError {
             throw CancellationError()

@@ -1,5 +1,6 @@
 import SwiftUI
 import HarcModels
+import HarcSummarize
 
 /// Settings → Models tab. Lists the shipped models grouped by task, renders
 /// install state per row, and lets the user pick the active summarizer.
@@ -289,7 +290,7 @@ private struct ModelRow: View {
         } else {
             switch state {
             case .installed:
-                chip("Installed · \(sizeText)", color: Color.green)
+                chip("Installed · \(sizeText)\(measuredSpeedSuffix)", color: Color.green)
             case .downloading:
                 chip("Downloading · \(sizeText)", color: Color.accentColor)
             case .verifying:
@@ -330,6 +331,13 @@ private struct ModelRow: View {
 
     private var sizeText: String {
         ByteCountFormatter.string(fromByteCount: descriptor.totalBytes, countStyle: .file)
+    }
+
+    /// " · ~27 tok/s on this Mac" once a summarization has measured this
+    /// model here; empty until then (static row copy carries the estimate).
+    private var measuredSpeedSuffix: String {
+        guard let tps = MeasuredModelSpeed.tokensPerSecond(for: descriptor.id) else { return "" }
+        return " · ~\(Int(tps.rounded())) tok/s"
     }
 
     private func chip(_ label: String, color: Color) -> some View {
