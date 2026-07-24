@@ -46,11 +46,16 @@ public struct TranscriptDocument: Sendable {
         let wavURL = URL(fileURLWithPath: recording.wavPath)
         let audioAvailable = fm.fileExists(atPath: wavURL.path)
 
+        // Canonical text artifact is the OKF `.md` next to the WAV; a `.txt`
+        // txtPath is a pre-OKF legacy row and is still honored for reads.
+        let mdURL = wavURL.deletingPathExtension().appendingPathExtension("md")
         let txtURL: URL
-        if let path = recording.txtPath {
+        if fm.fileExists(atPath: mdURL.path) {
+            txtURL = mdURL
+        } else if let path = recording.txtPath {
             txtURL = URL(fileURLWithPath: path)
         } else {
-            txtURL = wavURL.deletingPathExtension().appendingPathExtension("txt")
+            txtURL = mdURL
         }
 
         let jsonURL = recording.jsonPath.map { URL(fileURLWithPath: $0) }
@@ -74,7 +79,9 @@ public struct TranscriptDocument: Sendable {
         let text: String
         if let data = try? Data(contentsOf: txtURL),
            let s = String(data: data, encoding: .utf8) {
-            text = s
+            // OKF documents carry frontmatter + summary; the editor operates
+            // on the transcript section only.
+            text = OKFMarkdown.extractTranscript(from: s) ?? s
         } else if let joined = jsonJoinedText {
             text = joined
         } else if let stored = recording.transcriptText {
@@ -99,8 +106,28 @@ public struct TranscriptDocument: Sendable {
     /// Atomic write of the edited text to `txtURL`, plus a best-effort stamp
     /// of `manualEditAt` onto the JSON. JSON-stamp failures are logged to
     /// stderr but don't fail the save.
+    ///
+    /// When the target is an OKF `.md`, only the transcript section is
+    /// replaced — frontmatter and summary on disk are preserved. (The store
+    /// also reprojects the whole file from the DB after
+    /// `updateTranscriptText`, so this is belt-and-braces for the window
+    /// between file write and DB commit.)
     public func save(editedText: String) throws -> URL {
-        let data = Data(editedText.utf8)
+        let payload: String
+        if txtURL.pathExtension.lowercased() == "md" {
+            if let existing = try? String(contentsOf: txtURL, encoding: .utf8),
+               let replaced = OKFMarkdown.replacingTranscript(in: existing, with: editedText) {
+                payload = replaced
+            } else {
+                payload = OKFMarkdown.render(OKFMarkdown.Fields(
+                    title: txtURL.deletingPathExtension().lastPathComponent,
+                    transcript: editedText
+                ))
+            }
+        } else {
+            payload = editedText
+        }
+        let data = Data(payload.utf8)
         let tmp = txtURL.appendingPathExtension("tmp")
         try data.write(to: tmp, options: .atomic)
         do {

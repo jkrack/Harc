@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 
 public protocol RecordingFileTrashing: Sendable {
     func trashFile(at url: URL) throws
@@ -94,6 +95,9 @@ public struct RecordingDeletionService<Trasher: RecordingFileTrashing>: Sendable
                 )
             }
         }
+        OKFMarkdown.regenerateDayIndex(
+            in: URL(fileURLWithPath: recording.wavPath).deletingLastPathComponent()
+        )
     }
 
     private func restoreIfPossible(id: Int64) async -> Bool {
@@ -114,8 +118,12 @@ public extension RecordingDeletionService where Trasher == SystemRecordingFileTr
 
 private extension Recording {
     var deletionFilePaths: [String] {
+        // Legacy rows may point txtPath at a `.txt` while a generated OKF
+        // `.md` also exists next to the WAV — include the derived path so
+        // neither is orphaned.
+        let mdPath = OKFProjection.markdownURL(for: self).path
         var seen = Set<String>()
-        return [wavPath, txtPath, jsonPath]
+        return [wavPath, txtPath, mdPath, jsonPath]
             .compactMap { $0 }
             .filter { seen.insert($0).inserted }
     }

@@ -2740,7 +2740,7 @@ private extension AppDelegate {
                 ]
             )
             try TranscriptWriter.writeSiblings(transcript: sessionTranscript, nextTo: wavURL)
-            let txtURL = wavURL.deletingPathExtension().appendingPathExtension("txt")
+            let txtURL = wavURL.deletingPathExtension().appendingPathExtension("md")
             let jsonURL = wavURL.deletingPathExtension().appendingPathExtension("json")
 
             state.markStopped(wavURL: wavURL, txtURL: txtURL, jsonURL: jsonURL)
@@ -2805,11 +2805,16 @@ private extension AppDelegate {
         try FileManager.default.createDirectory(at: dayURL, withIntermediateDirectories: true)
 
         let wavURL = dayURL.appendingPathComponent("09-00-00.wav")
-        let txtURL = dayURL.appendingPathComponent("09-00-00.txt")
+        let txtURL = dayURL.appendingPathComponent("09-00-00.md")
         let jsonURL = dayURL.appendingPathComponent("09-00-00.json")
         let transcript = "Amy: The customer renewal is healthy, but pricing risk is still open. Jason: Send the renewal plan by Friday."
         try Data(repeating: 12, count: 512).write(to: wavURL, options: .atomic)
-        try transcript.write(to: txtURL, atomically: true, encoding: .utf8)
+        try OKFMarkdown.render(OKFMarkdown.Fields(
+            title: "UI Test Customer Renewal",
+            startedAt: startedAt,
+            wavFileName: wavURL.lastPathComponent,
+            transcript: transcript
+        )).write(to: txtURL, atomically: true, encoding: .utf8)
         try uiTestTranscriptJSON(
             audioPath: wavURL.path,
             startedAt: startedAt,

@@ -139,6 +139,15 @@ public actor RecordingStore {
             )
             guard count > 0 else { throw StoreError.notFound }
         }
+        await reprojectOKF(id: id)
+    }
+
+    /// Regenerate the recording's canonical `.md` artifact after a mutation
+    /// that changes projected content. Best-effort: the DB write already
+    /// succeeded; a projection failure logs and moves on.
+    private func reprojectOKF(id: Int64) async {
+        guard let rec = try? await fetch(id: id) else { return }
+        OKFProjection.write(recording: rec)
     }
 
     /// Post-process path: set the NLTagger-derived title hint. No `notFound`
@@ -151,6 +160,7 @@ public actor RecordingStore {
                 arguments: [title, Date(), id]
             )
         }
+        await reprojectOKF(id: id)
     }
 
     /// Post-process path: set the NLTagger-derived tags array. Like
@@ -171,6 +181,7 @@ public actor RecordingStore {
                 arguments: [json, Date(), id]
             )
         }
+        await reprojectOKF(id: id)
     }
 
     /// Post-process path: set the per-recording speaker-name overrides.
@@ -201,6 +212,7 @@ public actor RecordingStore {
                 arguments: [json, Date(), id]
             )
         }
+        await reprojectOKF(id: id)
     }
 
     // MARK: - Summary
@@ -235,6 +247,7 @@ public actor RecordingStore {
             )
             guard count > 0 else { throw StoreError.notFound }
         }
+        await reprojectOKF(id: id)
     }
 
     /// Null all five summary columns for a recording.
@@ -256,6 +269,7 @@ public actor RecordingStore {
             )
             guard count > 0 else { throw StoreError.notFound }
         }
+        await reprojectOKF(id: id)
     }
 
     /// Store the last non-successful summarization state for a recording.
@@ -454,6 +468,7 @@ public actor RecordingStore {
             )
             guard count > 0 else { throw StoreError.notFound }
         }
+        await reprojectOKF(id: id)
     }
 
     public func setPinned(id: Int64, pinned: Bool) async throws {

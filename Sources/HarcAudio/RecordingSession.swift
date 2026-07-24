@@ -195,7 +195,7 @@ public actor RecordingSession {
                 try TranscriptWriter.writeSiblings(transcript: transcript, nextTo: wavURL)
                 let stem = wavURL.deletingPathExtension().lastPathComponent
                 let parent = wavURL.deletingLastPathComponent()
-                txtURL = parent.appendingPathComponent("\(stem).txt")
+                txtURL = parent.appendingPathComponent("\(stem).md")
                 jsonURL = parent.appendingPathComponent("\(stem).json")
             } catch {
                 FileHandle.standardError.write(Data(

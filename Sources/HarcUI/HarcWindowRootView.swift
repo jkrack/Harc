@@ -1178,7 +1178,10 @@ public struct HarcWindowRootView: View {
             transcriptText = cached
         } else if let txtPath = recording.txtPath {
             do {
-                transcriptText = try String(contentsOf: URL(fileURLWithPath: txtPath), encoding: .utf8)
+                let raw = try String(contentsOf: URL(fileURLWithPath: txtPath), encoding: .utf8)
+                // OKF .md sidecars carry frontmatter + summary; show only
+                // the transcript section. Legacy .txt reads pass through.
+                transcriptText = OKFMarkdown.extractTranscript(from: raw) ?? raw
             } catch {
                 transcriptLoadError = "Could not load transcript: \(error.localizedDescription)"
             }

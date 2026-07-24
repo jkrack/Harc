@@ -79,10 +79,19 @@ User-configurable destination folder with date-based organization. The user pick
 <destination-folder>/
   YYYY/
     YYYY-MM-DD/
+      index.md              # OKF day index — links to each meeting document
       HH-mm-ss.wav          # raw mixed audio
-      HH-mm-ss.txt          # plain transcript (pasteboard-ready)
+      HH-mm-ss.md           # OKF markdown: frontmatter + summary + action items + transcript
       HH-mm-ss.json         # transcript + word timestamps + diarization + metadata
 ```
+
+The `.md` is an Open Knowledge Format (OKF v0.1) document — YAML frontmatter
+(`type`, `title`, `resource`, `tags`, `timestamp`) followed by `## Summary`,
+`## Action Items`, and `## Transcript` sections. It is a *projection* of the
+GRDB row (DB stays authoritative): `RecordingStore` regenerates it after
+every content mutation via `OKFProjection`, so the bundle is always current
+and directly consumable by agents/Obsidian. Pre-OKF `.txt` sidecars are
+still read as a legacy fallback but never written.
 
 The doubled year in the date folder keeps each day's directory self-identifying if it's copied, emailed, or moved out of context.
 

@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 
 /// Scans a destination folder and upserts any WAVs not already in the store.
 /// Designed to run once on app startup; cheap for modest library sizes.
@@ -39,15 +40,25 @@ public struct RecordingIngestor: Sendable {
 
                     let stem = wav.deletingPathExtension().lastPathComponent
                     let parent = wav.deletingLastPathComponent()
+                    let md = parent.appendingPathComponent("\(stem).md")
                     let txt = parent.appendingPathComponent("\(stem).txt")
                     let json = parent.appendingPathComponent("\(stem).json")
 
+                    let mdExists = fm.fileExists(atPath: md.path)
                     let txtExists = fm.fileExists(atPath: txt.path)
                     let jsonExists = fm.fileExists(atPath: json.path)
 
-                    let transcriptText: String? = txtExists
-                        ? (try? String(contentsOf: txt, encoding: .utf8))
-                        : nil
+                    // Canonical artifact is the OKF .md (transcript section
+                    // only — summary text would pollute FTS search); .txt is
+                    // the pre-OKF legacy fallback.
+                    let transcriptText: String?
+                    if mdExists, let content = try? String(contentsOf: md, encoding: .utf8) {
+                        transcriptText = OKFMarkdown.extractTranscript(from: content) ?? content
+                    } else if txtExists {
+                        transcriptText = try? String(contentsOf: txt, encoding: .utf8)
+                    } else {
+                        transcriptText = nil
+                    }
 
                     let startedAt = parseStartedAt(
                         day: dayDir.lastPathComponent,
@@ -56,7 +67,7 @@ public struct RecordingIngestor: Sendable {
 
                     let recording = Recording(
                         wavPath: wav.path,
-                        txtPath: txtExists ? txt.path : nil,
+                        txtPath: mdExists ? md.path : (txtExists ? txt.path : nil),
                         jsonPath: jsonExists ? json.path : nil,
                         startedAt: startedAt,
                         transcriptText: transcriptText
