@@ -106,8 +106,13 @@ extension DictationMode {
             postProcess: .llm,
             instruction: """
             Fix punctuation and capitalization. Remove filler words (um, uh, \
-            like, you know). Keep the meaning, wording, and tone otherwise \
-            unchanged. Output only the result, no preamble or explanation.
+            like, you know). Apply the speaker's self-corrections — when they \
+            revise something ("no, wait, …", "scratch that"), keep only the \
+            corrected version. Convert spoken forms to written forms: email \
+            addresses, URLs, numbers ("john at example dot com" → \
+            john@example.com, "twenty five percent" → 25%). Keep the meaning, \
+            wording, and tone otherwise unchanged. Output only the result, no \
+            preamble or explanation.
             """,
             isBuiltIn: true
         ),
