@@ -62,6 +62,12 @@ public final class WelcomeFlowModel: ObservableObject {
         selectedIndex = index
     }
 
+    /// Position of a step, for the page-dot accessibility labels — a dot
+    /// announced only as its title gives no sense of where you are.
+    public func index(of step: WelcomeFlowStep) -> Int {
+        steps.firstIndex(where: { $0.id == step.id }) ?? 0
+    }
+
     public static let defaultSteps: [WelcomeFlowStep] = [
         WelcomeFlowStep(
             id: "canvas",
@@ -275,7 +281,7 @@ public struct WelcomeFlowView: View {
                 }
                 .buttonStyle(.plain)
                 .help(step.title)
-                .accessibilityLabel(step.title)
+                .accessibilityLabel("\(step.title), step \(model.index(of: step) + 1) of \(model.steps.count)")
             }
         }
     }
@@ -353,6 +359,10 @@ public struct WelcomeFlowView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                // accessibilityIdentifier is a UI-test hook, not a label —
+                // it leaves AXDescription empty, so VoiceOver announced every
+                // control in this flow as an unnamed "button".
+                .accessibilityLabel("Skip setup")
                 .accessibilityIdentifier("harc.welcome.skip")
             }
             .padding([.horizontal, .top], 28)
@@ -375,6 +385,7 @@ public struct WelcomeFlowView: View {
                     Label("Back", systemImage: "chevron.left")
                 }
                 .disabled(model.isFirstStep)
+                .accessibilityLabel("Back")
                 .accessibilityIdentifier("harc.welcome.back")
 
                 Spacer()
@@ -385,6 +396,7 @@ public struct WelcomeFlowView: View {
                     } label: {
                         Label("Open Settings", systemImage: "gearshape")
                     }
+                    .accessibilityLabel("Open Settings")
                     .accessibilityIdentifier("harc.welcome.settings")
                 }
 
@@ -399,6 +411,7 @@ public struct WelcomeFlowView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .accessibilityLabel(model.isLastStep ? "Start Using Harc" : "Next")
                 .accessibilityIdentifier("harc.welcome.next")
             }
             .padding([.horizontal, .top], 28)
