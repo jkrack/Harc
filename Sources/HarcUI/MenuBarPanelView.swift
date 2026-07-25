@@ -937,6 +937,8 @@ public struct MenuBarPanelView: View {
             return "\(duration)Stopped \(recency) after \(autoStopThresholdMinutes) min of silence."
         case .hardCap:
             return "\(duration)Stopped \(recency) at the hard duration cap."
+        case .captureStalled:
+            return "\(duration)Stopped \(recency) — audio capture ended. What was captured is saved."
         }
     }
 

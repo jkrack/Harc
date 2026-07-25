@@ -146,6 +146,10 @@ public struct CountdownWarningPanel: View {
             return secondsLeft >= totalSeconds
                 ? "Max recording length reached"
                 : "Auto-stopping in \(secondsLeft)s"
+        case .captureStalled:
+            return secondsLeft >= totalSeconds
+                ? "Audio capture stopped"
+                : "Stopping in \(secondsLeft)s"
         }
     }
 
@@ -155,6 +159,12 @@ public struct CountdownWarningPanel: View {
             return "No audio from either stream for \(thresholdMinutes) min. Looks like the meeting ended."
         case .hardCap:
             return "You hit the hard duration cap. Recording will save and stop."
+        case .captureStalled:
+            // Names the likely causes, because unlike silence this one is
+            // usually fixable in the moment — and "Keep Recording" is a real
+            // option if the device came back.
+            return "No audio is reaching Harc. A headset change, sleep, or a full disk can do this. "
+                + "Everything captured so far is safe."
         }
     }
 

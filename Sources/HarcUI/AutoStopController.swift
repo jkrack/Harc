@@ -21,6 +21,12 @@ public final class AutoStopController: ObservableObject {
     public enum StopReason: Sendable, Equatable {
         case silence
         case hardCap
+        /// The level stream stopped delivering ticks entirely — the capture
+        /// pipeline died rather than the room going quiet. Distinct from
+        /// `.silence` because the honest message and the user's remedy are
+        /// completely different: silence means "nobody is talking", a stall
+        /// means "we are no longer recording you".
+        case captureStalled
     }
 
     public enum Phase: Equatable {
@@ -39,6 +45,11 @@ public final class AutoStopController: ObservableObject {
         public var hardCapEnabled: Bool
         public var hardCapSeconds: TimeInterval
         public var warningSeconds: Int
+        /// Seconds without a single level tick before we call the capture dead.
+        /// Ticks arrive per mic buffer (~24 Hz), so any gap this long means the
+        /// pipeline stopped, not that it slowed down. Generous enough to ride
+        /// out a device switch that recovers on its own.
+        public var stallSeconds: TimeInterval
 
         public static let defaults = Config(
             silenceEnabled: true,
@@ -46,7 +57,8 @@ public final class AutoStopController: ObservableObject {
             silenceDbCeiling: -50,
             hardCapEnabled: true,
             hardCapSeconds: 180 * 60,
-            warningSeconds: 60
+            warningSeconds: 60,
+            stallSeconds: 30
         )
 
         public init(
@@ -55,7 +67,8 @@ public final class AutoStopController: ObservableObject {
             silenceDbCeiling: Float,
             hardCapEnabled: Bool,
             hardCapSeconds: TimeInterval,
-            warningSeconds: Int
+            warningSeconds: Int,
+            stallSeconds: TimeInterval = 30
         ) {
             self.silenceEnabled = silenceEnabled
             self.silenceThresholdSeconds = silenceThresholdSeconds
@@ -63,6 +76,7 @@ public final class AutoStopController: ObservableObject {
             self.hardCapEnabled = hardCapEnabled
             self.hardCapSeconds = hardCapSeconds
             self.warningSeconds = warningSeconds
+            self.stallSeconds = stallSeconds
         }
     }
 
@@ -98,6 +112,10 @@ public final class AutoStopController: ObservableObject {
 
     private var startedAt: Date?
     private var lastNonSilentAt: Date?
+    /// When the level stream last delivered *anything*, regardless of loudness.
+    /// `lastNonSilentAt` answers "was there sound?"; this answers "is the
+    /// capture pipeline alive?" — a question nothing used to ask.
+    private var lastLevelTickAt: Date?
     private var levelsTask: Task<Void, Never>?
     private var tickTimer: Timer?
 
@@ -132,6 +150,9 @@ public final class AutoStopController: ObservableObject {
     private func resetForBegin(startedAt: Date) {
         self.startedAt = startedAt
         self.lastNonSilentAt = startedAt   // assume audio until proven silent
+        // Same grace: the first buffers take a moment to arrive, so treat the
+        // start as a tick or every recording would flag a stall on launch.
+        self.lastLevelTickAt = startedAt
         phase = .watching
         amplitudeHistory = Array(repeating: 0, count: Self.amplitudeCapacity)
         amplitudeWindowMax = 0
@@ -189,6 +210,7 @@ public final class AutoStopController: ObservableObject {
     public static let dbFloor: Float = -60
 
     private func consume(_ level: AudioLevels, now: Date = Date()) {
+        lastLevelTickAt = now
         lastMicDb = level.micDb
         lastSystemDb = level.systemDb
         smoothedDb = level.smoothedDb
@@ -229,6 +251,18 @@ public final class AutoStopController: ObservableObject {
             return
         }
 
+        // Checked before silence, and deliberately NOT gated on silenceEnabled.
+        // A dead pipeline delivers no ticks, so `lastNonSilentAt` freezes and the
+        // silence rule would fire on it and blame a quiet room — telling the user
+        // the meeting was silent when in fact Harc stopped hearing it. And with
+        // silence auto-stop switched off, nothing noticed at all: the recording
+        // ran to the hard cap writing nothing while the UI said "Recording".
+        if let lastTick = lastLevelTickAt,
+           now.timeIntervalSince(lastTick) >= config.stallSeconds {
+            advanceWarning(reason: .captureStalled, now: now)
+            return
+        }
+
         if config.silenceEnabled,
            let lastAudible = lastNonSilentAt,
            now.timeIntervalSince(lastAudible) >= config.silenceThresholdSeconds {
@@ -249,6 +283,8 @@ public final class AutoStopController: ObservableObject {
                 .addingTimeInterval(config.silenceThresholdSeconds)
         case .hardCap:
             triggeredAt = (startedAt ?? now).addingTimeInterval(config.hardCapSeconds)
+        case .captureStalled:
+            triggeredAt = (lastLevelTickAt ?? now).addingTimeInterval(config.stallSeconds)
         }
         let elapsedIntoWarning = now.timeIntervalSince(triggeredAt)
         let remaining = max(0, totalBudget - Int(elapsedIntoWarning.rounded()))

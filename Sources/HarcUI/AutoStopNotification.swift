@@ -87,6 +87,8 @@ public enum AutoStopNotification {
             return "\(durationPart)no audio for \(thresholdMinutes) min."
         case .hardCap:
             return "\(durationPart)hit max recording length."
+        case .captureStalled:
+            return "\(durationPart)audio capture stopped. Audio up to that point was saved."
         }
     }
 
