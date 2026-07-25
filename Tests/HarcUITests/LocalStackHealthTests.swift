@@ -179,6 +179,34 @@ struct LocalStackHealthTests {
         LocalStackHealthModel.items(for: CaptureReadinessResolver.resolve(input))
     }
 
+    /// Auto-summary being off is a preference, not a missing download. The
+    /// panel used to derive the row's action from `summarizerReady` alone,
+    /// which folds in `autoSummarizeEnabled` — so a user with a complete,
+    /// active 3 GB summarizer and auto-summary switched off was offered an
+    /// "Install model" button for the model they were already using.
+    @Test("auto-summary off does not offer to install an installed model")
+    func autoSummaryOffKeepsInstalledModelQuiet() {
+        var input = fullyReadyCaptureInput
+        input.summarizerReady = false
+        input.summarizerInstalled = true
+
+        let item = CaptureReadinessResolver.resolve(input).first { $0.id == .summarizer }
+
+        #expect(item?.level == .optionalOff)
+        #expect(item?.action == nil)
+    }
+
+    @Test("a genuinely absent summarizer still offers the install action")
+    func absentSummarizerStillOffersInstall() {
+        var input = fullyReadyCaptureInput
+        input.summarizerReady = false
+        input.summarizerInstalled = false
+
+        let item = CaptureReadinessResolver.resolve(input).first { $0.id == .summarizer }
+
+        #expect(item?.action == .installSummarizer)
+    }
+
     private var fullyReadyInput: LocalStackHealthInput {
         LocalStackHealthInput(
             destinationReady: true,

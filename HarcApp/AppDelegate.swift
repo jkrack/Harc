@@ -1206,6 +1206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         let summarizerName = activeSummarizer?.tierDisplayName ?? activeSummarizer?.displayName ?? "Summarizer"
         let summarizerInstalled = modelStore.state(of: prefs.activeSummarizerID).isInstalled
         bridge.summarizerReady = summarizerInstalled && prefs.autoSummarizeEnabled
+        bridge.summarizerInstalled = summarizerInstalled
         if !prefs.autoSummarizeEnabled {
             bridge.summarizerReadinessText = "\(summarizerName) · auto-summary off"
         } else if summarizerInstalled {
@@ -3251,6 +3252,7 @@ private struct StatusPopoverRoot: View {
             sttReady: bridge.sttReady,
             summarizerReadinessText: bridge.summarizerReadinessText,
             summarizerReady: bridge.summarizerReady,
+            summarizerInstalled: bridge.summarizerInstalled,
             speakerIDReadinessText: bridge.speakerIDReadinessText,
             speakerIDReady: bridge.speakerIDReady,
             notificationsReadinessText: bridge.notificationsReadinessText,

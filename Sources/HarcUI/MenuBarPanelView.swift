@@ -45,6 +45,7 @@ public struct MenuBarPanelView: View {
     let sttReady: Bool
     let summarizerReadinessText: String
     let summarizerReady: Bool
+    let summarizerInstalled: Bool
     let speakerIDReadinessText: String
     let speakerIDReady: Bool
     let notificationsReadinessText: String
@@ -114,6 +115,7 @@ public struct MenuBarPanelView: View {
         sttReady: Bool = true,
         summarizerReadinessText: String = "Summary unavailable",
         summarizerReady: Bool = false,
+        summarizerInstalled: Bool = true,
         speakerIDReadinessText: String = "Speaker ID ready",
         speakerIDReady: Bool = true,
         notificationsReadinessText: String = "Notifications off",
@@ -174,6 +176,7 @@ public struct MenuBarPanelView: View {
         self.sttReady = sttReady
         self.summarizerReadinessText = summarizerReadinessText
         self.summarizerReady = summarizerReady
+        self.summarizerInstalled = summarizerInstalled
         self.speakerIDReadinessText = speakerIDReadinessText
         self.speakerIDReady = speakerIDReady
         self.notificationsReadinessText = notificationsReadinessText
@@ -662,6 +665,7 @@ public struct MenuBarPanelView: View {
             sttReady: sttReady,
             sttText: sttReadinessText,
             summarizerReady: summarizerReady,
+            summarizerInstalled: summarizerInstalled,
             summarizerText: summarizerReadinessText,
             speakerIDReady: speakerIDReady,
             speakerIDText: speakerIDReadinessText,

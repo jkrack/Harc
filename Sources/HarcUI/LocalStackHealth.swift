@@ -87,6 +87,11 @@ public struct CaptureReadinessInput: Equatable, Sendable {
     public var localSTTReady: Bool
     public var localSTTText: String
     public var summarizerReady: Bool
+    /// Whether the *active* summarizer is on disk. Distinct from
+    /// `summarizerReady`, which also requires auto-summary to be switched on.
+    /// Collapsing the two made "you turned auto-summary off" offer an
+    /// "Install model" button for a model already installed and in use.
+    public var summarizerInstalled: Bool
     public var summarizerText: String
     public var speakerIDReady: Bool
     public var speakerIDText: String
@@ -109,6 +114,7 @@ public struct CaptureReadinessInput: Equatable, Sendable {
         localSTTReady: Bool,
         localSTTText: String,
         summarizerReady: Bool,
+        summarizerInstalled: Bool = true,
         summarizerText: String,
         speakerIDReady: Bool,
         speakerIDText: String,
@@ -128,6 +134,7 @@ public struct CaptureReadinessInput: Equatable, Sendable {
         self.localSTTReady = localSTTReady
         self.localSTTText = localSTTText
         self.summarizerReady = summarizerReady
+        self.summarizerInstalled = summarizerInstalled
         self.summarizerText = summarizerText
         self.speakerIDReady = speakerIDReady
         self.speakerIDText = speakerIDText
@@ -178,7 +185,11 @@ public enum CaptureReadinessResolver {
                 title: "Summaries",
                 detail: input.summarizerText,
                 ready: input.summarizerReady,
-                action: .installSummarizer
+                // Only an absent model is something the user can install.
+                // With the model present and auto-summary simply off, the row
+                // is reporting a preference, and offering a download for a
+                // 3 GB model already on disk reads as the app losing track.
+                action: input.summarizerInstalled ? nil : .installSummarizer
             ),
             optionalItem(
                 id: .speakerID,
@@ -344,6 +355,7 @@ struct LocalStackHealthInput: Equatable {
     var sttReady: Bool
     var sttText: String
     var summarizerReady: Bool
+    var summarizerInstalled: Bool = true
     var summarizerText: String
     var speakerIDReady: Bool
     var speakerIDText: String
@@ -467,6 +479,7 @@ enum LocalStackHealthModel {
             localSTTReady: input.sttReady,
             localSTTText: input.sttText,
             summarizerReady: input.summarizerReady,
+            summarizerInstalled: input.summarizerInstalled,
             summarizerText: input.summarizerText,
             speakerIDReady: input.speakerIDReady,
             speakerIDText: input.speakerIDText,

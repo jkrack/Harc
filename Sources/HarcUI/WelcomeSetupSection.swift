@@ -38,6 +38,21 @@ public final class WelcomeSetupModel: ObservableObject {
         self.destinationDisplayPath = (prefs.destinationPath as NSString).abbreviatingWithTildeInPath
     }
 
+    /// A summarizer the user already has, if any — preferring the one they've
+    /// actually selected.
+    ///
+    /// `suggestedSummarizer` deliberately only proposes Standard/Quality
+    /// tiers, so a user running a `.singleton` model (Qwen 3.5 4B) had no tier
+    /// match and onboarding told them to download 3.61 GB of Gemma while a
+    /// complete, active summarizer sat on disk. What the row should answer is
+    /// "can you summarize?", not "do you have this specific tier?".
+    public var installedSummarizer: ModelDescriptor? {
+        let active = ModelCatalog.descriptor(for: prefs.activeSummarizerID)
+        if let active, modelStore.state(of: active.id).isInstalled { return active }
+        return ModelCatalog.descriptors(for: .summarizer)
+            .first { modelStore.state(of: $0.id).isInstalled }
+    }
+
     /// The tier to offer during onboarding: the best of Standard/Quality
     /// that fits this Mac's RAM. Higher tiers stay a deliberate choice in
     /// Settings → Models — onboarding shouldn't suggest a 16 GB download.
@@ -172,7 +187,18 @@ struct WelcomeSetupSection: View {
 
     @ViewBuilder
     private var summarizerRow: some View {
-        if let d = model.suggestedSummarizer {
+        // An already-installed summarizer answers this row, whatever tier it
+        // is; only fall back to the suggestion when there's nothing to use.
+        if let installed = model.installedSummarizer {
+            setupRow(
+                icon: "checkmark.circle.fill",
+                iconColor: .green,
+                title: "Summaries + dictation modes (optional)",
+                detail: "\(installed.displayName) installed"
+            ) {
+                EmptyView()
+            }
+        } else if let d = model.suggestedSummarizer {
             let state = store.state(of: d.id)
             setupRow(
                 icon: state.isInstalled ? "checkmark.circle.fill" : "sparkles",

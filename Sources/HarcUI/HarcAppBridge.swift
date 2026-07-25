@@ -52,6 +52,9 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var sttDownloadProgress: Double? = nil
     @Published public var summarizerReadinessText: String = "Summary unavailable"
     @Published public var summarizerReady: Bool = false
+    /// The active summarizer is on disk. Separate from `summarizerReady`,
+    /// which also requires auto-summary to be on.
+    @Published public var summarizerInstalled: Bool = false
     @Published public var speakerIDReadinessText: String = "Speaker ID ready"
     @Published public var speakerIDReady: Bool = true
     @Published public var notificationsReadinessText: String = "Notifications off"
