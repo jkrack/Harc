@@ -46,8 +46,10 @@ public struct RecordingSettingsView: View {
                 Toggle("Auto-paste on stop", isOn: $prefs.autoPasteEnabled)
                     .tint(Color.accentColor)
 
-                Divider()
-
+                // No Divider here: inside a grouped Form, a bare divider is
+                // laid out as its own full-height row, so it showed up as an
+                // empty gap between the toggle and the first app. The Form
+                // already draws separators between rows.
                 ForEach(pasteDenyListRows, id: \.self) { bundleID in
                     pasteDenyListRow(bundleID)
                 }
@@ -260,9 +262,19 @@ public struct RecordingSettingsView: View {
     private func pasteDenyListRow(_ bundleID: String) -> some View {
         let locked = PasteDenyList.lockedBundleIDs.contains(bundleID)
         return HStack(spacing: 12) {
-            Image(systemName: locked ? "lock.fill" : "app.dashed")
-                .foregroundStyle(locked ? Color.secondary : Color.accentColor)
-                .frame(width: 22)
+            // The row already resolves each app's bundle to get its display
+            // name, so it can show the real icon too. A column of identical
+            // dashed placeholders next to "Finder", "Slack" and "Zoom" read as
+            // icons that had failed to load.
+            if let icon = pasteDenyListIcon(for: bundleID) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 20, height: 20)
+            } else {
+                Image(systemName: locked ? "lock.fill" : "app.dashed")
+                    .foregroundStyle(locked ? Color.secondary : Color.accentColor)
+                    .frame(width: 22)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(pasteDenyListDisplayName(for: bundleID))
                     .font(.body)
@@ -288,6 +300,15 @@ public struct RecordingSettingsView: View {
             }
         }
         .padding(.vertical, 3)
+    }
+
+    /// The installed app's icon, or nil when the bundle isn't on this Mac —
+    /// the deny list ships entries (LastPass, KeePassXC) the user may not have.
+    private func pasteDenyListIcon(for bundleID: String) -> NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     private func pasteDenyListDisplayName(for bundleID: String) -> String {
