@@ -531,6 +531,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.syncPreRollCapture() }
             .store(in: &cancellables)
+        // Release the mic the moment dictation wants it, and take it back when
+        // dictation returns to idle.
+        dictationState.$phase
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncPreRollCapture() }
+            .store(in: &cancellables)
         modelStore.$states
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMenuBarReadiness() }
@@ -2052,7 +2058,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// has already handed its contents over. Called on launch, when the
     /// preference changes, and after a recording ends.
     func syncPreRollCapture() {
-        let shouldRun = prefs.preRollEnabled && !state.isRecording
+        // Dictation is the third consumer of a single-user resource. The mic
+        // can't be held by an idle pre-roll tap while dictation wants it, and
+        // banking dictation audio into the retroactive ring would be a quiet
+        // privacy surprise on top of the conflict.
+        let shouldRun = prefs.preRollEnabled
+            && !state.isRecording
+            && !dictationState.isActive
 
         guard shouldRun else {
             preRollTicker?.invalidate()
