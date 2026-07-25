@@ -1,7 +1,15 @@
 import KeyboardShortcuts
 
 public extension KeyboardShortcuts.Name {
-    static let toggleRecording = Self("harc.toggleRecording")
+    /// Meeting capture start/stop. Ships with a default (⌃⌥R) for the same
+    /// reason dictation does: the Welcome flow tells the user to "use the menu
+    /// bar button or hotkey", and shipping no hotkey made that half false. The
+    /// primary use case had no keyboard path out of the box while the
+    /// secondary one did. Pairs with ⌃⌥D; recording a new shortcut replaces it.
+    static let toggleRecording = Self(
+        "harc.toggleRecording",
+        default: .init(.r, modifiers: [.control, .option])
+    )
     /// Dictation hotkey. Behaviour (push-to-talk vs toggle) is decided by
     /// `HarcPreferences.dictationTriggerStyle`, not by the shortcut itself.
     /// Ships with a default (⌃⌥D) so first-run dictation works before the
