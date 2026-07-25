@@ -223,7 +223,10 @@ extension HarcWindowRootView {
                     )
                 }
             }
-        } else if transcriptText.isEmpty {
+        } else if transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Trimmed, not just `.isEmpty`: a transcript of a single newline
+            // is not empty by that test, so the pane rendered a blank void
+            // instead of the empty state that exists for exactly this case.
             EmptyStateView(
                 icon: "doc.text.magnifyingglass",
                 title: "No transcript available",

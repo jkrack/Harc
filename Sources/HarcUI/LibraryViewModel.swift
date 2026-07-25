@@ -49,6 +49,9 @@ public final class LibraryViewModel: ObservableObject {
         return cal.date(from: comps) ?? Date()
     }()
     @Published public private(set) var daysWithRecordings: Set<Date> = []
+    /// Set once the user navigates months themselves, so the automatic jump
+    /// to the newest recording's month never fights their choice.
+    private var hasUserChosenMonth = false
 
     public let store: RecordingStore
     private var observationTask: Task<Void, Never>?
@@ -85,6 +88,7 @@ public final class LibraryViewModel: ObservableObject {
                     if self.searchText.isEmpty {
                         self.recordings = self.apply(filter: self.filter, to: list)
                     }
+                    self.alignCalendarToNewestRecordingIfNeeded(list)
                 }
             }
         }
@@ -99,7 +103,30 @@ public final class LibraryViewModel: ObservableObject {
         cancellables.removeAll()
     }
 
+    /// Open the calendar on the newest recording's month when the current
+    /// month has none.
+    ///
+    /// The calendar starts on today, but a library whose most recent
+    /// recording is weeks old then opens on a blank grid with no dots — the
+    /// one view whose whole job is showing where the recordings are shows
+    /// none of them. Only runs before the user navigates: once they pick a
+    /// month, it's theirs.
+    private func alignCalendarToNewestRecordingIfNeeded(_ list: [Recording]) {
+        guard !hasUserChosenMonth, !list.isEmpty else { return }
+        let cal = Calendar.current
+        let newest = list
+            .map { $0.startedAt }
+            .max()
+        guard let newest else { return }
+        guard !cal.isDate(newest, equalTo: calendarMonth, toGranularity: .month) else { return }
+        let comps = cal.dateComponents([.year, .month], from: newest)
+        guard let month = cal.date(from: comps) else { return }
+        calendarMonth = month
+        Task { [weak self] in await self?.refreshDaysWithRecordings() }
+    }
+
     public func advanceMonth(by delta: Int) {
+        hasUserChosenMonth = true
         let cal = Calendar.current
         guard let next = cal.date(byAdding: .month, value: delta, to: calendarMonth) else { return }
         calendarMonth = next

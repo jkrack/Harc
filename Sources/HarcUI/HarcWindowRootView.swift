@@ -482,7 +482,10 @@ public struct HarcWindowRootView: View {
 
     var footerStorageString: String {
         let fmt = ByteCountFormatter()
-        fmt.allowedUnits = [.useMB, .useGB]
+        // KB included deliberately. Restricting to MB/GB rendered any library
+        // under half a megabyte as "0 MB", which reads as a library that
+        // failed to load rather than one that is simply small.
+        fmt.allowedUnits = [.useKB, .useMB, .useGB]
         fmt.countStyle = .file
         return fmt.string(fromByteCount: libraryVM.totalBytes)
     }
@@ -599,9 +602,19 @@ public struct HarcWindowRootView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // The sidebar is narrow, and this row lives inside a
+            // `.listStyle(.sidebar)` List, which hands rows a single-line
+            // treatment — so the sentence truncated mid-phrase to
+            // "…configure the global hotkey in…", hiding the half that says
+            // where to go. `lineLimit(nil)` is what overrides the List's
+            // default; `fixedSize` alone did not.
             Text("Use the menu bar icon or configure the global hotkey in Settings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Button("Open Settings", action: openSettings)
                 .font(.caption)
                 .buttonStyle(.plain)
@@ -1106,7 +1119,8 @@ public struct HarcWindowRootView: View {
 
     /// True when there is any transcript source available for this recording.
     func hasTranscriptSource(_ rec: Recording) -> Bool {
-        if let text = rec.transcriptText, !text.isEmpty { return true }
+        if let text = rec.transcriptText,
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         guard let path = rec.txtPath else { return false }
         return FileManager.default.fileExists(atPath: path)
     }
