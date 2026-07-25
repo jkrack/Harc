@@ -393,6 +393,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private static let minWordsToSummarize = 10
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A UI-test run that was killed rather than terminated never got to
+        // put the user's preferences back. Replay the stash on the next
+        // ordinary launch so a crashed test doesn't leave auto-summarize and
+        // meeting detection switched off for good.
+        if !isUITesting, UITestPreferenceRestore.hasPendingRestore() {
+            UITestPreferenceRestore.restore(prefs)
+        }
         applyUITestConfigurationIfNeeded()
         installStatusItem()
 
@@ -613,6 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         detector?.stop()
         frontmostPoller?.invalidate()
         frontmostPoller = nil
+        restoreUITestPreferencesIfNeeded()
     }
 
     /// Disabled. Harc is menu-bar-resident — the Library, TranscriptEditor,
@@ -2933,12 +2941,25 @@ private extension AppDelegate {
         ProcessInfo.processInfo.environment["HARC_UI_TEST_FAKE_RECORDING"] == "1"
     }
 
+    /// Where a UI-test run keeps its library, recordings and recovery queue.
+    ///
+    /// Never nil while UI testing. It used to return nil when the harness
+    /// didn't pass `HARC_UI_TEST_ROOT`, and every caller fell back to the real
+    /// path — so a run without that variable opened the user's actual library
+    /// and left recordings in it (empty titles, one-character transcripts)
+    /// plus permanently-unrecoverable entries in their recovery inbox
+    /// pointing at a deleted xctrunner container. A test harness must not be
+    /// one missing environment variable away from writing to real user data.
     var uiTestRootURL: URL? {
-        guard let raw = ProcessInfo.processInfo.environment["HARC_UI_TEST_ROOT"],
-              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
+        guard isUITesting else { return nil }
+        if let raw = ProcessInfo.processInfo.environment["HARC_UI_TEST_ROOT"],
+           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: raw, isDirectory: true)
         }
-        return URL(fileURLWithPath: raw, isDirectory: true)
+        let fallback = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("harc-ui-test-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback
     }
 
     var uiTestDatabaseURL: URL? {
@@ -2951,6 +2972,10 @@ private extension AppDelegate {
 
     func applyUITestConfigurationIfNeeded() {
         guard isUITesting, let root = uiTestRootURL else { return }
+        // These assignments land in the user's real UserDefaults domain — the
+        // app shares one suite. Record what was there so a test run doesn't
+        // silently leave auto-summarize and meeting detection switched off.
+        UITestPreferenceRestore.capture(prefs)
         let recordingsURL = root.appendingPathComponent("Recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: recordingsURL, withIntermediateDirectories: true)
 
@@ -2958,6 +2983,11 @@ private extension AppDelegate {
         prefs.autoSummarizeEnabled = false
         prefs.meetingDetectionEnabled = false
         prefs.postStopNotificationEnabled = false
+    }
+
+    func restoreUITestPreferencesIfNeeded() {
+        guard isUITesting else { return }
+        UITestPreferenceRestore.restore(prefs)
     }
 
     func startUITestRecording(at startedAt: Date) async {
@@ -3179,6 +3209,7 @@ private extension AppDelegate {
     var uiTestDatabaseURL: URL? { nil }
     var uiTestRecoveryQueueURL: URL? { nil }
     func applyUITestConfigurationIfNeeded() {}
+    func restoreUITestPreferencesIfNeeded() {}
     func startUITestRecording(at startedAt: Date) async {}
     func stopUITestRecording(startedAt: Date?, autoStopReason: AutoStopController.StopReason?) async {}
     func seedUITestLibraryIfNeeded(store: RecordingStore) async throws {}
