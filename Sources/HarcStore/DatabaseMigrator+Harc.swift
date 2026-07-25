@@ -226,6 +226,29 @@ extension DatabaseMigrator {
         // the now-unused knowledge tables.
         migrator.registerMigration("v12_knowledge_chunks_vec1") { _ in }
 
+        // Which STT model produced a transcript, and when. Without this there
+        // is no way to tell a transcript made by the current engine from one
+        // made two engines ago, so "re-transcribe what's stale" has nothing to
+        // filter on and the only options are re-doing everything or nothing.
+        //
+        // NULL means "transcribed before provenance was tracked", which is
+        // treated as stale — those are the oldest transcripts and the ones a
+        // model upgrade helps most.
+        migrator.registerMigration("v13_stt_provenance") { db in
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(recordings)")
+                .compactMap { $0["name"] as String? }
+            if !columns.contains("stt_model_id") {
+                try db.alter(table: "recordings") { t in
+                    t.add(column: "stt_model_id", .text)
+                }
+            }
+            if !columns.contains("transcribed_at") {
+                try db.alter(table: "recordings") { t in
+                    t.add(column: "transcribed_at", .integer)  // Unix ms
+                }
+            }
+        }
+
         return migrator
     }
 }

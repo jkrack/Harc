@@ -23,6 +23,10 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var summaryStatusMessage: String?
     public var summaryStatusUpdatedAt: Date?
     public var chunksIndexedAt: Date?
+    /// Which STT model produced `transcriptText`, and when. Nil means the
+    /// transcript predates provenance tracking — treated as stale by reprocess.
+    public var sttModelID: String?
+    public var transcribedAt: Date?
     public var pinned: Bool
     public var deletedAt: Date?
     public var createdAt: Date
@@ -216,6 +220,12 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         } else {
             self.chunksIndexedAt = nil
         }
+        self.sttModelID = try c.decodeIfPresent(String.self, forKey: .sttModelID)
+        if let ms = try c.decodeIfPresent(Int64.self, forKey: .transcribedAt) {
+            self.transcribedAt = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        } else {
+            self.transcribedAt = nil
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -277,6 +287,13 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         } else {
             try c.encodeNil(forKey: .chunksIndexedAt)
         }
+        try c.encodeIfPresent(sttModelID, forKey: .sttModelID)
+        if let d = transcribedAt {
+            let ms = Int64(d.timeIntervalSince1970 * 1000)
+            try c.encode(ms, forKey: .transcribedAt)
+        } else {
+            try c.encodeNil(forKey: .transcribedAt)
+        }
     }
 }
 
@@ -309,6 +326,8 @@ extension Recording: FetchableRecord, PersistableRecord {
         case summaryStatusMessage = "summary_status_message"
         case summaryStatusUpdatedAt = "summary_status_updated_at"
         case chunksIndexedAt = "chunks_indexed_at"
+        case sttModelID = "stt_model_id"
+        case transcribedAt = "transcribed_at"
     }
 
     public enum Columns {
@@ -336,5 +355,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let summaryStatusMessage = Column("summary_status_message")
         static let summaryStatusUpdatedAt = Column("summary_status_updated_at")
         static let chunksIndexedAt = Column("chunks_indexed_at")
+        static let sttModelID = Column("stt_model_id")
+        static let transcribedAt = Column("transcribed_at")
     }
 }
