@@ -85,12 +85,30 @@ requires.
     swift test --filter CustomerExperienceE2ETests
     swift test
 
-**Known flaky tests:** `SummarizationQueueStoreTests.isQueued` and 
-`RecordingSessionTests` (duty-cycle) pass in isolation but occasionally fail 
-when run in the full suite. Run individually if suspect:
+**Known flaky suites — all timing-based, all load-induced.** Under the full
+parallel suite these intermittently fail, and take 15–30 s for work that runs
+in ~0.1 s alone; that time ratio is the tell. Observed together on 2026-07-25:
 
-    swift test --filter SummarizationQueueStoreTests.isQueued
-    swift test --filter RecordingSessionTests
+- `SummarizationQueue` / `SummarizationQueueStore`
+- `PostStopTrayState` (TTL auto-fade)
+- `DictationKeepWarmController` (ping counts)
+- `LibraryMaintenanceStore` ("indexing clears the index backlog")
+
+Re-run the named suite alone before treating one as a regression:
+
+    swift test --filter "SummarizationQueue|PostStopTrayState|DictationKeepWarm"
+
+**`swift test` does not cover `HarcApp/`.** AppDelegate, the window
+controllers and the NSPanel HUD compile only in the Xcode app target, so a
+green package suite says nothing about them. Always finish with an
+`xcodebuild` before calling the tree green.
+
+**Neither tests nor the compiler catch a missing `@EnvironmentObject`.** It is
+a runtime `assertionFailure` — a SIGTRAP in Release. A crash of exactly this
+kind shipped into `main` and survived a 686-test green run because nothing
+constructs the SwiftUI `Settings` scene. When a view gains an environment
+dependency, add it to `harcSettingsEnvironment(...)` rather than to one call
+site, and open the pane in a real build.
 
 After changing package/project/version metadata, run:
 
@@ -151,6 +169,55 @@ signed entry for every release — in this order:
    `build/release-dist/Harc-local-dmg.zip` and `Harc-local.dmg` — the
    appcast enclosure points at the release's `Harc-local.dmg` asset, so
    the uploaded DMG must be the exact bytes signed in step 4.
+
+`build-release.sh` produces only the DMG; the `.zip` in step 3 is a manual
+`ditto -c -k --sequesterRsrc` of the **stapled** DMG. Every published release
+so far carries both assets.
+
+Ordering hazard in steps 6–7: the appcast is served from `main`, so pushing
+publishes an update feed pointing at a release asset that does not exist yet.
+Existing users' Sparkle clients will see the new version and fail to download
+it until step 7 lands. Do them back to back, or create the release first.
+
+### Releases can only be cut from the Mac that holds the keys
+
+Three credentials are machine-bound and none of them are in this repo:
+
+- the **Developer ID Application** certificate + private key (login keychain)
+- the **`harc-notary`** notarytool profile (login keychain)
+- the **Sparkle EdDSA private key** (login keychain, service
+  `https://sparkle-project.org`, account `ed25519`)
+
+A second Mac can clone, build, test and run `build-local.sh` (ad-hoc) with no
+setup, but cannot notarize or produce a valid appcast signature until those
+are exported to it. The Sparkle key in particular has no recovery path — lose
+it and existing installs can never be updated again, because Sparkle pins the
+public key. Back it up before it is ever needed.
+
+## Verifying UI changes on screen
+
+The computer-use MCP **cannot see Harc**. `request_access` reports
+`not_installed` for the app, the bundle ID and the full path, because Harc is
+`LSUIElement=1` and the enumeration skips menu-bar agents — and with native
+screenshot filtering, Harc is composited out of every MCP screenshot.
+
+What works instead, from an ordinary shell:
+
+- **Observe:** `screencapture -x -R x,y,w,h out.png`, then read the PNG.
+  Unfiltered, and it captures the menu-bar panel.
+- **Drive:** `osascript` + System Events. Settings panes switch via
+  `set selected of row N of outline 1 of scroll area 1 of group 1 of
+  splitter group 1 of group 1 of window "<pane>"`; the panel toggles via
+  `click menu bar item 1 of menu bar 2`.
+- **Scroll and click:** System Events has no scroll verb and `click at` is
+  unreliable. Compile a small `CGEvent` helper — the panel and Settings panes
+  only respond to real wheel events.
+- The Settings window's title is the **selected pane name**, not "Harc
+  Settings", so address windows by current pane.
+
+Do not read accessibility labels through AppleScript's `description`: it
+returns the *role* ("button") for SwiftUI controls, which reads as a missing
+label when one is present. Query `AXDescription` via the AX API directly.
 
 ## Documentation
 

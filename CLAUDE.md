@@ -6,7 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Harc** — a macOS speech-to-text menu bar app with two surfaces. (1) Meeting capture: start recording on toggle-hotkey, transcribe diarized audio in background, save to searchable library, paste into LLM. (2) Dictation: hold hotkey, speak, release to insert text at cursor with optional AI mode (Clean-up, Email, Message, Answer, etc.) — all local.
 
-Status: v0.7.3, shipped and stable. Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT (Parakeet), GRDB-backed library, MLX summarization, speaker re-identification, push-to-talk dictation with modes all in place. Settings is a searchable sidebar; recordings project to Open Knowledge Format artifacts.
+Status: v0.8.0. Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT (Parakeet), GRDB-backed library, MLX summarization, speaker re-identification, push-to-talk dictation with modes all in place. Settings is a searchable sidebar; recordings project to Open Knowledge Format artifacts. v0.8.0 adds retroactive record, hybrid search and archive reprocessing.
+
+**The audio path has never been exercised end-to-end.** The primary
+development Mac is a Mac mini with no microphone, so meeting capture and
+dictation have only ever been verified at the build-and-unit-test level —
+never recorded, never transcribed, never inserted at a cursor. Every library
+row that has existed on that machine came from UI-test seeding. On any Mac
+with an input device, running one real recording (record → chunked transcribe
+→ summary → OKF artifacts → library row) and one real dictation is the
+highest-value validation available, and it is the largest untested surface in
+the product.
+
+That gap is also why the app now reports capture readiness from the presence
+of an input device rather than from permission alone: for months it displayed
+"Capture ready" on hardware that could not capture a sample.
 
 ## Hard Constraints
 
