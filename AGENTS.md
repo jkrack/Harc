@@ -100,6 +100,27 @@ For local release artifacts, use:
 
     ./scripts/build-local.sh
 
+### Package.resolved churns during releases — that is expected
+
+`Harc.xcodeproj` sits in the same directory as `Package.swift`, so Xcode
+never creates its own `xcshareddata/swiftpm/Package.resolved` — both tools
+share the root one and disagree about a single pin:
+
+- `swift build` / `swift test` resolve from `Package.swift` → **no Sparkle**
+- `xcodebuild` (i.e. `build-release.sh`) also sees `project.yml` → **adds Sparkle**
+
+Whichever ran last wins, so the file cannot be clean for both. The committed
+state is deliberately the **SwiftPM version, without the Sparkle pin**,
+because everyday `swift build`/`swift test` then leaves it untouched and only
+a release build dirties it.
+
+So: a `Package.resolved` diff that only adds Sparkle is a release-build
+artifact — **leave it out of the commit** (`git checkout Package.resolved`).
+Do not "fix" it by committing the Sparkle pin; that inverts the noise onto
+every test run. Sparkle's version is pinned by `from:` in `project.yml`,
+and the framework is embedded and signed from there, so nothing about the
+shipped build depends on that pin being present here.
+
 ## Release Ritual
 
 Releases auto-install via Sparkle, so the appcast must be updated with a
