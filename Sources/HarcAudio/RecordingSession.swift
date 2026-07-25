@@ -86,6 +86,11 @@ public actor RecordingSession {
     /// transcript and other meeting participants are silently missing.
     public private(set) var systemAudioFellBack: Bool = false
 
+    /// Seconds of retroactive audio prepended at `start`. Zero for an ordinary
+    /// recording. Readable after `start` so the UI can say how far back the
+    /// recording actually reaches.
+    public private(set) var preRolledSeconds: Double = 0
+
     public init(
         mic: any MicCaptureSource,
         systemAudio: any SystemAudioCaptureSource,
@@ -101,7 +106,18 @@ public actor RecordingSession {
         self.levelsContinuation = continuation
     }
 
-    public func start(at date: Date) async throws {
+    /// Begin recording.
+    ///
+    /// `preRoll` is banked audio from a `RollingAudioBuffer` — the retroactive
+    /// record path. It is written into the WAV before any live audio, so the
+    /// recording literally begins in the past, and `startedAt` is rolled back by
+    /// its duration to keep every downstream timestamp honest: the transcript,
+    /// the file name, and the library row all describe when the audio actually
+    /// happened, not when the user got around to pressing the button.
+    ///
+    /// Writing it here — before `transcriber.start` — means the pre-roll flows
+    /// through the ordinary chunking path rather than needing a second one.
+    public func start(at date: Date, preRoll: [Int16] = []) async throws {
         try await mic.requestPermission()
         do {
             try await systemAudio.requestPermission()
@@ -112,8 +128,29 @@ public actor RecordingSession {
 
         let cache = RecordingDestination.cachePath()
         self.cacheURL = cache
-        self.startedAt = date
-        self.writer = try AudioFileWriter(url: cache)
+        let preRollSeconds = Double(preRoll.count) / RollingAudioBuffer.sampleRate
+        self.startedAt = date.addingTimeInterval(-preRollSeconds)
+        self.preRolledSeconds = preRollSeconds
+        let newWriter = try AudioFileWriter(url: cache)
+        self.writer = newWriter
+
+        if !preRoll.isEmpty {
+            for buffer in RollingAudioBuffer.buffers(from: preRoll) {
+                // A failure here costs the retroactive window but must not stop
+                // the live recording from starting — the meeting in front of the
+                // user outranks the minutes behind them.
+                do {
+                    try newWriter.write(buffer)
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "harc-audio: pre-roll write failed: \(error.localizedDescription)\n".utf8
+                    ))
+                    self.startedAt = date
+                    self.preRolledSeconds = 0
+                    break
+                }
+            }
+        }
 
         if let transcriber {
             await transcriber.start(audioURL: cache)

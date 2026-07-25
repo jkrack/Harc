@@ -163,6 +163,72 @@ struct RecordingSessionTests {
         #expect(file.length >= 16000, "expected ≥1s recorded, got \(file.length) frames")
     }
 
+    @Test("pre-roll audio is prepended to the WAV and rolls startedAt back")
+    func preRollIsPrependedAndDatesRolledBack() async throws {
+        let base = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let mic = FakeMic(script: [makeConstantBuffer(0.5, frames: 16000)])
+        let destination = RecordingDestination(baseDirectory: base)
+        let session = RecordingSession(
+            mic: mic,
+            systemAudio: FakeSystem(.denied),
+            destination: destination
+        )
+
+        // 2 s of banked audio at a distinct amplitude so it's identifiable in
+        // the output — the live mic writes 0.5, the pre-roll a quiet 0.1.
+        let ring = RollingAudioBuffer(seconds: 5)
+        ring.append(makeConstantBuffer(0.1, frames: 32000))
+        let banked = ring.snapshot()
+        #expect(banked.count == 32000)
+
+        let pressedStopwatch = Date()
+        try await session.start(at: pressedStopwatch, preRoll: banked)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let result = try await session.stop()
+
+        let file = try AVAudioFile(forReading: result.wavURL)
+        // 2 s of pre-roll + 1 s of live mic.
+        #expect(file.length >= 48000, "expected ≥3s total, got \(file.length) frames")
+
+        // The first sample must be pre-roll, not live audio: read the head of
+        // the file and confirm it carries the quiet banked amplitude.
+        let head = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1000)!
+        try file.read(into: head, frameCount: 1000)
+        let firstSample = abs(head.floatChannelData![0][0])
+        #expect(firstSample > 0.05 && firstSample < 0.2,
+                "expected pre-roll amplitude ~0.1 at the head, got \(firstSample)")
+
+        // startedAt is rolled back by the pre-roll duration, so the recording
+        // claims the time the audio happened rather than the button press.
+        let preRolled = await session.preRolledSeconds
+        #expect(abs(preRolled - 2.0) < 0.01)
+    }
+
+    @Test("a recording with no pre-roll is unchanged")
+    func noPreRollIsUnchanged() async throws {
+        let base = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let mic = FakeMic(script: [makeConstantBuffer(0.5, frames: 16000)])
+        let session = RecordingSession(
+            mic: mic,
+            systemAudio: FakeSystem(.denied),
+            destination: RecordingDestination(baseDirectory: base)
+        )
+
+        try await session.start(at: Date())
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let result = try await session.stop()
+
+        let preRolled = await session.preRolledSeconds
+        #expect(preRolled == 0)
+        let file = try AVAudioFile(forReading: result.wavURL)
+        #expect(file.length >= 16000)
+        #expect(file.length < 32000, "no pre-roll should have been prepended")
+    }
+
     @Test("session gracefully degrades to mic-only when system audio permission is denied")
     func degradesMicOnly() async throws {
         let base = try makeTempBase()
