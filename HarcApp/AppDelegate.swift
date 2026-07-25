@@ -112,6 +112,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onOpenLastRecording = { [weak self] in
             Task { await self?.openLastRecordingFromTray() }
         }
+        bridge.onClearPreRoll = { [weak self] in
+            self?.clearPreRollBuffer()
+        }
         bridge.onKeepRecording = { [weak self] in
             self?.autoStop.keepRecording()
         }
@@ -349,6 +352,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var sttClient: HarcSTTClient?
     private var speakerReIDService: SpeakerReIDService?
     private var store: RecordingStore?
+    /// Whole-library operations (re-transcribe, build search index). Created
+    /// once the store exists; Settings observes it.
+    private var maintenanceStore: LibraryMaintenanceStore?
+    /// Always-on pre-roll ring, present only while the feature is enabled.
+    private var preRollCapture: PreRollCapture?
+    private var preRollTicker: Timer?
     private var recordingsVM: RecordingsViewModel?
     private var editorWindows: [String: TranscriptEditorWindowController] = [:]
     private var harcWindow: HarcWindowController?
@@ -511,12 +520,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMenuBarReadiness() }
             .store(in: &cancellables)
+        // Pre-roll holds the mic open, so it must follow the preference
+        // immediately — a user switching it off expects the orange indicator
+        // to go out, not to wait for the next launch.
+        prefs.$preRollEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncPreRollCapture() }
+            .store(in: &cancellables)
+        prefs.$preRollMinutes
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncPreRollCapture() }
+            .store(in: &cancellables)
         modelStore.$states
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMenuBarReadiness() }
             .store(in: &cancellables)
 
         if !isUITesting {
+            syncPreRollCapture()
             startFrontmostPolling()
         }
 
@@ -1307,7 +1328,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 }
             }
 
-            try await session.start(at: startedAt)
+            // Hand the pre-roll ring over, if it has been listening. This both
+            // stops the idle mic tap (the session is about to take the mic) and
+            // clears the ring, so the same seconds can never be prepended twice.
+            let preRoll = await preRollCapture?.promote() ?? []
+            preRollCapture = nil
+            try await session.start(at: startedAt, preRoll: preRoll)
             state.markStarted(at: startedAt)
             bridge.setActiveCaptureStatus(ActiveCaptureStatus(
                 sourceState: .micAndSystemAudio,
@@ -1493,6 +1519,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
             bridge.autoStopLastDurationText = rec.endedAt.map { formatAutoStopDuration($0.timeIntervalSince(rec.startedAt)) }
             autoStop.end(autoStopReason: autoStopReason)
+            // The session has released the mic; resume banking if enabled.
+            syncPreRollCapture()
             if let autoStopReason, prefs.postStopNotificationEnabled {
                 AutoStopNotification.post(
                     reason: autoStopReason,
@@ -1955,6 +1983,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
+    /// Post-save bookkeeping for a freshly captured recording: stamp which
+    /// engine transcribed it, and index it for search.
+    ///
+    /// The provenance stamp matters as much as the index — without it every new
+    /// recording would immediately look stale to the archive reprocessor and a
+    /// re-transcribe run would redo work that was already current.
+    private func finishNewRecording(id: Int64, recording: Recording) async {
+        guard let store else { return }
+        let modelID = DaemonArchiveTranscriber(
+            engineVersion: HarcVersion.sttEngineVersion,
+            diarize: prefs.diarize,
+            vad: prefs.vadEnabled
+        ).modelID
+        try? await store.setTranscriptionProvenance(recordingID: id, modelID: modelID)
+
+        if let text = recording.transcriptText, !text.isEmpty {
+            let durationMs = recording.endedAt.map {
+                Int($0.timeIntervalSince(recording.startedAt) * 1000)
+            }
+            ensureMaintenanceStore().indexNewRecording(
+                id: id,
+                text: text,
+                durationMs: durationMs
+            )
+        }
+    }
+
+    private func startPreRollTicker() {
+        preRollTicker?.invalidate()
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.refreshPreRollBanked() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        preRollTicker = timer
+    }
+
+    /// Wipe the banked window without stopping capture — the privacy escape
+    /// hatch for "I just said something I don't want kept".
+    private func clearPreRollBuffer() {
+        guard let capture = preRollCapture else { return }
+        Task { [weak self] in
+            await capture.clear()
+            await self?.refreshPreRollBanked()
+        }
+    }
+
+    /// Publish how much is banked so the menu bar can show it. Polled rather
+    /// than streamed: the ring updates ~24×/sec and the panel only needs a
+    /// number that looks alive.
+    private func refreshPreRollBanked() async {
+        guard let capture = preRollCapture else {
+            bridge.preRollBankedSeconds = nil
+            return
+        }
+        let banked = await capture.bankedSeconds
+        bridge.preRollBankedSeconds = banked
+    }
+
+    /// Start or stop the idle pre-roll ring to match preferences.
+    ///
+    /// Never runs while recording: the session owns the mic then, and the ring
+    /// has already handed its contents over. Called on launch, when the
+    /// preference changes, and after a recording ends.
+    func syncPreRollCapture() {
+        let shouldRun = prefs.preRollEnabled && !state.isRecording
+
+        guard shouldRun else {
+            preRollTicker?.invalidate()
+            preRollTicker = nil
+            bridge.preRollBankedSeconds = nil
+            if let capture = preRollCapture {
+                preRollCapture = nil
+                Task { await capture.stop() }
+            }
+            return
+        }
+
+        // Window changes need a fresh ring — capacity is fixed at construction.
+        let desiredSeconds = TimeInterval(prefs.preRollMinutes * 60)
+        if let existing = preRollCapture {
+            Task { [weak self] in
+                let current = await existing.windowSeconds
+                guard current != desiredSeconds else { return }
+                await existing.stop()
+                await MainActor.run { self?.preRollCapture = nil; self?.syncPreRollCapture() }
+            }
+            return
+        }
+
+        let capture = PreRollCapture(mic: MicCapture(), windowSeconds: desiredSeconds)
+        preRollCapture = capture
+        Task { [weak self] in
+            await capture.start()
+            await self?.refreshPreRollBanked()
+        }
+        startPreRollTicker()
+    }
+
     private func persistStoppedRecording(_ recording: Recording) async -> Int64? {
         guard let store = self.store else {
             presentRecordingPersistenceFailure(
@@ -1965,7 +2091,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
 
         do {
-            return try await store.upsert(recording).id
+            let id = try await store.upsert(recording).id
+            if let id { await finishNewRecording(id: id, recording: recording) }
+            return id
         } catch {
             FileHandle.standardError.write(Data(
                 "harc: failed to persist recording \(recording.wavPath): \(error.localizedDescription)\n".utf8
@@ -1975,6 +2103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 FileHandle.standardError.write(Data(
                     "harc: recovered recording row after persistence failure: \(recording.wavPath)\n".utf8
                 ))
+                await finishNewRecording(id: recoveredID, recording: recording)
                 return recoveredID
             }
 
@@ -2128,6 +2257,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         return String(format: "%d:%02d", minutes, remainingSeconds)
     }
 
+    /// Lazily build the library-maintenance store once the DB is open.
+    ///
+    /// The transcriber is supplied as a closure rather than captured, because
+    /// the engine's identity depends on live preferences (diarization, VAD):
+    /// changing either genuinely changes the transcript, so it has to change
+    /// what counts as "already current" too.
+    private func ensureMaintenanceStore() -> LibraryMaintenanceStore {
+        if let maintenanceStore { return maintenanceStore }
+        let created = LibraryMaintenanceStore(
+            store: store,
+            transcriberProvider: { [weak self] in
+                guard let self else { return nil }
+                return DaemonArchiveTranscriber(
+                    engineVersion: HarcVersion.sttEngineVersion,
+                    diarize: self.prefs.diarize,
+                    vad: self.prefs.vadEnabled
+                )
+            }
+        )
+        maintenanceStore = created
+        return created
+    }
+
     @objc private func openSettings() {
         if let controller = settingsWindow, let window = controller.window {
             controller.showWindow(nil)
@@ -2141,6 +2293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .environmentObject(modelStore)
             .environmentObject(bridge)
             .environmentObject(dictationModeStore)
+            .environmentObject(ensureMaintenanceStore())
             .preferredColorScheme(prefs.appearance.colorScheme)
         let window = NSWindow(contentViewController: NSHostingController(rootView: root))
         window.title = "Harc Settings"
@@ -2333,6 +2486,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         let libraryVM = LibraryViewModel(store: store)
+        // Hybrid retrieval when the user wants it; nil keeps search lexical.
+        libraryVM.searchEmbedder = prefs.semanticSearchEnabled
+            ? ensureMaintenanceStore().searchEmbedder
+            : nil
         let controller = HarcWindowController(
             libraryVM: libraryVM,
             recordingState: state,
@@ -2837,6 +2994,8 @@ private extension AppDelegate {
                 }
             }
             autoStop.end(autoStopReason: autoStopReason)
+            // The session has released the mic; resume banking if enabled.
+            syncPreRollCapture()
         } catch {
             presentError(error)
         }
@@ -3018,6 +3177,8 @@ private struct StatusPopoverRoot: View {
             autoStopLastDurationText: bridge.autoStopLastDurationText,
             stopRecovery: bridge.stopRecovery,
             activeCaptureStatus: bridge.activeCaptureStatus,
+            preRollBankedSeconds: bridge.preRollBankedSeconds,
+            onClearPreRoll: bridge.onClearPreRoll,
             onKeepRecording: bridge.onKeepRecording,
             onStopNow: bridge.onStopNow,
             onOpenSettings: bridge.onOpenSettings,

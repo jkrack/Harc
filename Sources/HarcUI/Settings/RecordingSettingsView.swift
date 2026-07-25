@@ -38,6 +38,8 @@ public struct RecordingSettingsView: View {
                     .foregroundStyle(Color.secondary)
             }
 
+            preRollSection
+
             autoStopSection
 
             Section {
@@ -112,6 +114,56 @@ public struct RecordingSettingsView: View {
     // MARK: - Auto-stop
 
     @ViewBuilder
+    /// Retroactive record. The footer is deliberately blunt about the mic being
+    /// held open: this is the one setting in Harc that changes what the machine
+    /// is doing while the user isn't using it, and burying that would be the
+    /// wrong trade even though the audio never leaves the device.
+    private var preRollSection: some View {
+        Section {
+            Toggle("Capture before you press record", isOn: $prefs.preRollEnabled)
+                .tint(Color.accentColor)
+
+            if prefs.preRollEnabled {
+                HStack {
+                    Text("Keep the last")
+                    Spacer()
+                    Picker("", selection: $prefs.preRollMinutes) {
+                        Text("1 min").tag(1)
+                        Text("2 min").tag(2)
+                        Text("5 min").tag(5)
+                        Text("10 min").tag(10)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 260)
+                }
+
+                LabeledContent {
+                    Text(preRollMemoryEstimate)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } label: {
+                    Text("Memory used")
+                }
+            }
+        } header: {
+            Text("Retroactive record")
+        } footer: {
+            Text(prefs.preRollEnabled
+                 ? "Harc holds the microphone open while idle and keeps the last \(prefs.preRollMinutes) minute\(prefs.preRollMinutes == 1 ? "" : "s") in memory — macOS shows the orange mic indicator the whole time. Nothing is written to disk or sent anywhere until you start a recording, and starting one includes what was already said."
+                 : "Start a recording and keep what was said just before it. Audio is held in memory only, never written to disk until you record. Requires holding the microphone open while Harc is idle.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+        }
+    }
+
+    /// 16 kHz mono Int16 → 32 KB/s. Shown because "keep the last 10 minutes"
+    /// otherwise gives no sense of what it costs.
+    private var preRollMemoryEstimate: String {
+        let megabytes = Double(prefs.preRollMinutes) * 60.0 * 32_000.0 / 1_048_576.0
+        return String(format: "%.0f MB", megabytes.rounded())
+    }
+
     private var autoStopSection: some View {
         Section {
             Toggle("Auto-stop when silent", isOn: $prefs.autoStopEnabled)

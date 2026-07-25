@@ -41,6 +41,9 @@ public final class HarcPreferences: ObservableObject {
         static let dictationSoundsEnabled = "harc.dictationSoundsEnabled"
         static let persistentDictationHUD = "harc.persistentDictationHUD"
         static let updateChecksEnabled = "harc.updateChecksEnabled"
+        static let preRollEnabled = "harc.preRollEnabled"
+        static let preRollMinutes = "harc.preRollMinutes"
+        static let semanticSearchEnabled = "harc.semanticSearchEnabled"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -185,6 +188,28 @@ public final class HarcPreferences: ObservableObject {
 
     @Published public var vadEnabled: Bool {
         didSet { UserDefaults.standard.set(vadEnabled, forKey: Key.vadEnabled) }
+    }
+
+    /// Keep the last `preRollMinutes` of mic audio in memory while idle, so
+    /// starting a recording also captures what was already said.
+    ///
+    /// Off by default and never silently enabled: this holds the microphone
+    /// open whenever Harc is idle, which macOS advertises with the orange mic
+    /// indicator. That is a decision the user has to make deliberately.
+    @Published public var preRollEnabled: Bool {
+        didSet { UserDefaults.standard.set(preRollEnabled, forKey: Key.preRollEnabled) }
+    }
+
+    /// Allowed values: 1, 2, 5, 10. Bounded because the ring is resident RAM —
+    /// roughly 1.9 MB per minute at 16 kHz mono Int16.
+    @Published public var preRollMinutes: Int {
+        didSet { UserDefaults.standard.set(preRollMinutes, forKey: Key.preRollMinutes) }
+    }
+
+    /// Blend chunk-level vector retrieval into library search alongside the
+    /// keyword index. Falls back to keyword-only when nothing is indexed.
+    @Published public var semanticSearchEnabled: Bool {
+        didSet { UserDefaults.standard.set(semanticSearchEnabled, forKey: Key.semanticSearchEnabled) }
     }
 
     /// Auto-stop when both mic + system-audio have been silent for
@@ -354,6 +379,10 @@ public final class HarcPreferences: ObservableObject {
         }
         self.pasteDenyListBundleIDs = normalizedPasteDenyList
         let shouldPersistPasteDenyList = Set(storedPasteDenyList ?? []) != normalizedPasteDenyList
+        self.preRollEnabled = defaults.object(forKey: Key.preRollEnabled) as? Bool ?? false
+        let rawPreRoll = defaults.object(forKey: Key.preRollMinutes) as? Int ?? 2
+        self.preRollMinutes = [1, 2, 5, 10].contains(rawPreRoll) ? rawPreRoll : 2
+        self.semanticSearchEnabled = defaults.object(forKey: Key.semanticSearchEnabled) as? Bool ?? true
         self.vadEnabled = defaults.object(forKey: Key.vadEnabled) as? Bool ?? true
         self.autoStopEnabled = defaults.object(forKey: Key.autoStopEnabled) as? Bool ?? true
         let rawThreshold = defaults.object(forKey: Key.silenceThresholdMinutes) as? Int ?? 5

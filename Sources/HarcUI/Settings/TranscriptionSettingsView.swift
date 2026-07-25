@@ -1,5 +1,6 @@
 import SwiftUI
 import HarcCore
+import HarcStore
 
 /// Everything that shapes what the transcript says. These knobs used to be
 /// split across three non-adjacent places — chunk duration and voice-activity
@@ -7,6 +8,7 @@ import HarcCore
 /// so tuning transcript quality meant hunting through unrelated sections.
 public struct TranscriptionSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
+    @EnvironmentObject private var maintenance: LibraryMaintenanceStore
     @State private var selection: Set<VocabularyEntry.ID> = []
     @State private var newFrom: String = ""
     @State private var newTo: String = ""
@@ -75,6 +77,93 @@ public struct TranscriptionSettingsView: View {
                 Text("Drag rows to reorder — rules apply top to bottom. Applies to new recordings only.")
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
+            }
+
+            librarySection
+        }
+        .task { await maintenance.refreshBacklogs() }
+    }
+
+    /// Whole-library operations. Grouped here rather than under About because
+    /// both are about transcript quality: one redoes transcripts with a better
+    /// engine, the other makes existing ones findable.
+    @ViewBuilder
+    private var librarySection: some View {
+        Section {
+            Toggle("Blend meaning into search", isOn: $prefs.semanticSearchEnabled)
+                .tint(Color.accentColor)
+
+            LabeledContent {
+                HStack(spacing: 8) {
+                    Text(maintenance.indexBacklog == 0
+                         ? "Up to date"
+                         : "\(maintenance.indexBacklog) waiting")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Build index") { maintenance.startIndexing() }
+                        .disabled(maintenance.job.isRunning || maintenance.indexBacklog == 0)
+                }
+            } label: {
+                Text("Search index")
+            }
+
+            LabeledContent {
+                HStack(spacing: 8) {
+                    Text(maintenance.reprocessBacklog == 0
+                         ? "All current"
+                         : "\(maintenance.reprocessBacklog) older")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Re-transcribe") { maintenance.startReprocess() }
+                        .disabled(maintenance.job.isRunning || maintenance.reprocessBacklog == 0)
+                }
+            } label: {
+                Text("Re-transcribe archive")
+            }
+
+            if maintenance.job.isRunning {
+                maintenanceProgressRow
+            } else if let outcome = maintenance.lastOutcome {
+                Text(outcome)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Library")
+        } footer: {
+            Text("Your audio never left this Mac, so a better speech model can be applied to everything you have already recorded — not only to what you record next. Re-transcribing replaces transcript text and rebuilds that recording's search index.")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var maintenanceProgressRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch maintenance.job {
+            case .reprocessing(let progress):
+                ProgressView(value: progress.fraction) {
+                    Text(progress.currentTitle.map { "Re-transcribing \($0)" } ?? "Re-transcribing…")
+                        .font(.caption)
+                }
+                Text("\(progress.completed) of \(progress.total)"
+                     + (progress.failed > 0 ? " · \(progress.failed) failed" : ""))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            case .indexing(let completed, let total):
+                ProgressView(value: total > 0 ? Double(completed) / Double(total) : 0) {
+                    Text("Indexing transcripts…").font(.caption)
+                }
+                Text("\(completed) of \(total)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            case .idle:
+                EmptyView()
+            }
+            HStack {
+                Spacer()
+                Button("Stop") { maintenance.cancel() }
+                    .font(.caption)
             }
         }
     }

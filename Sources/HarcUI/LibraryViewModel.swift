@@ -57,6 +57,11 @@ public final class LibraryViewModel: ObservableObject {
 
     private var fullList: [Recording] = []
 
+    /// Embedder used to blend chunk-level vector hits into search. Nil keeps
+    /// search purely lexical — which is also the behaviour when the library has
+    /// never been indexed, since hybridSearch falls back on its own.
+    public var searchEmbedder: (any TextEmbedder)?
+
     public init(store: RecordingStore) {
         self.store = store
     }
@@ -127,7 +132,17 @@ public final class LibraryViewModel: ObservableObject {
                         self.searchError = nil
                     }
                 } else {
-                    let results = try await store.search(query: trimmed)
+                    // Hybrid when an embedder is configured: keyword and vector
+                    // hits fused by rank. Falls back to keyword-only inside
+                    // hybridSearch when nothing is indexed, so an un-indexed
+                    // library behaves exactly as it always has.
+                    let embedder = await MainActor.run { self.searchEmbedder }
+                    let results: [TranscriptHit]
+                    if let embedder {
+                        results = try await store.hybridSearch(query: trimmed, embedder: embedder)
+                    } else {
+                        results = try await store.search(query: trimmed)
+                    }
                     await MainActor.run {
                         self.hits = results
                         self.searchError = nil

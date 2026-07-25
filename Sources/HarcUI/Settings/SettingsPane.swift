@@ -79,6 +79,9 @@ enum SettingsSearchIndex {
               keywords: ["shortcut", "key", "toggle", "global"]),
         .init(pane: .recording, label: "Auto-stop when silent",
               keywords: ["silence", "timeout", "idle", "stop"]),
+        .init(pane: .recording, label: "Capture before you press record",
+              keywords: ["retroactive", "pre-roll", "preroll", "rewind", "buffer",
+                         "before", "missed", "back in time", "always on"]),
         .init(pane: .recording, label: "Hard duration cap",
               keywords: ["maximum", "length", "limit", "cap"]),
         .init(pane: .recording, label: "Auto-paste on stop",
@@ -97,6 +100,12 @@ enum SettingsSearchIndex {
               keywords: ["slice", "interval", "window", "60", "background"]),
         .init(pane: .transcription, label: "Vocabulary",
               keywords: ["replace", "spelling", "acronym", "jargon", "names", "corrections"]),
+        .init(pane: .transcription, label: "Blend meaning into search",
+              keywords: ["semantic", "vector", "embedding", "similarity", "hybrid", "search"]),
+        .init(pane: .transcription, label: "Search index",
+              keywords: ["index", "reindex", "rebuild", "embeddings", "chunks", "search"]),
+        .init(pane: .transcription, label: "Re-transcribe archive",
+              keywords: ["reprocess", "redo", "again", "upgrade", "backfill", "old recordings", "model"]),
 
         // Dictation
         .init(pane: .dictation, label: "Dictation hotkey",

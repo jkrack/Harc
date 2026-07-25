@@ -31,6 +31,8 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var autoStopLastDurationText: String? = nil
     @Published public private(set) var stopRecovery: StopRecoveryInfo? = nil
     @Published public private(set) var activeCaptureStatus: ActiveCaptureStatus? = nil
+    /// Seconds banked by the idle pre-roll ring; nil when the feature is off.
+    @Published public var preRollBankedSeconds: TimeInterval? = nil
     @Published public var destinationReady: Bool = true
     @Published public var destinationPath: String = ""
     @Published public var captureReadinessText: String = "Mic + system audio"
@@ -74,6 +76,8 @@ public final class HarcAppBridge: ObservableObject {
     public var onPasteIntoFrontmost: () -> Void = {}
     public var onOpenLastRecording: () -> Void = {}
     public var onKeepRecording: () -> Void = {}
+    /// Wipe the idle pre-roll window without stopping capture.
+    public var onClearPreRoll: () -> Void = {}
     public var onStopNow: () -> Void = {}
     public var onOpenSettings: () -> Void = {}
     public var onRevealStopRecovery: () -> Void = {}

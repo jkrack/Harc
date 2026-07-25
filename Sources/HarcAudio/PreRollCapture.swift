@@ -37,8 +37,14 @@ public actor PreRollCapture {
     private var pumpTask: Task<Void, Never>?
     private(set) public var state: State = .stopped
 
+    /// The configured window. Exposed so the owner can tell whether a
+    /// preference change requires a fresh ring — capacity is fixed at
+    /// construction, so a new window means a new buffer.
+    public let windowSeconds: TimeInterval
+
     public init(mic: any MicCaptureSource, windowSeconds: TimeInterval) {
         self.mic = mic
+        self.windowSeconds = windowSeconds
         self.buffer = RollingAudioBuffer(seconds: windowSeconds)
     }
 

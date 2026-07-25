@@ -26,6 +26,10 @@ public struct MenuBarPanelView: View {
     let autoStopLastDurationText: String?
     let stopRecovery: StopRecoveryInfo?
     let activeCaptureStatus: ActiveCaptureStatus?
+    /// Seconds currently banked by the idle pre-roll ring, or nil when the
+    /// feature is off. Non-nil means the mic is open while Harc sits idle.
+    let preRollBankedSeconds: TimeInterval?
+    let onClearPreRoll: (() -> Void)?
     let onKeepRecording: () -> Void
     let onStopNow: () -> Void
     let onOpenSettings: () -> Void
@@ -93,6 +97,8 @@ public struct MenuBarPanelView: View {
         autoStopLastDurationText: String? = nil,
         stopRecovery: StopRecoveryInfo? = nil,
         activeCaptureStatus: ActiveCaptureStatus? = nil,
+        preRollBankedSeconds: TimeInterval? = nil,
+        onClearPreRoll: (() -> Void)? = nil,
         onKeepRecording: @escaping () -> Void = {},
         onStopNow: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
@@ -151,6 +157,8 @@ public struct MenuBarPanelView: View {
         self.autoStopLastDurationText = autoStopLastDurationText
         self.stopRecovery = stopRecovery
         self.activeCaptureStatus = activeCaptureStatus
+        self.preRollBankedSeconds = preRollBankedSeconds
+        self.onClearPreRoll = onClearPreRoll
         self.onKeepRecording = onKeepRecording
         self.onStopNow = onStopNow
         self.onOpenSettings = onOpenSettings
@@ -341,6 +349,42 @@ public struct MenuBarPanelView: View {
         return "\(clipped) — \(entry.modeName), \(time)"
     }
 
+    /// Idle pre-roll status. Present whenever the ring is running, because the
+    /// mic being open is a fact the user should be able to see without opening
+    /// Settings — and "Clear" is the escape hatch for the moment they say
+    /// something they don't want kept.
+    @ViewBuilder
+    private func preRollRow(_ banked: TimeInterval) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "backward.circle")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Ready to capture the last \(Self.formatBanked(banked))")
+                    .font(.caption.weight(.medium))
+                Text("Held in memory only")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            if let onClearPreRoll {
+                Button("Clear", action: onClearPreRoll)
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    static func formatBanked(_ seconds: TimeInterval) -> String {
+        let whole = Int(seconds.rounded())
+        if whole < 60 { return "\(whole)s" }
+        let minutes = whole / 60
+        let remainder = whole % 60
+        return remainder == 0 ? "\(minutes)m" : "\(minutes)m \(remainder)s"
+    }
+
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -362,6 +406,10 @@ public struct MenuBarPanelView: View {
 
                 if recordingState.isRecording, let activeCaptureStatus {
                     activeCaptureStatusView(activeCaptureStatus)
+                }
+
+                if !recordingState.isRecording, let banked = preRollBankedSeconds {
+                    preRollRow(banked)
                 }
 
                 if showsAutoStopSurface {
