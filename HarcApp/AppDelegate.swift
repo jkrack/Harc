@@ -1373,7 +1373,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func stopRecording(autoStopReason: AutoStopController.StopReason?) async {
         guard !bridge.recordingStopInFlight else { return }
         bridge.beginRecordingStop()
-        defer { bridge.endRecordingStop() }
+        defer {
+            bridge.endRecordingStop()
+            // Every exit path, not just the happy one. stopRecording returns
+            // early on a stop timeout, a thrown error, and a nil result; if
+            // pre-roll only resumed on success, one failed stop would silently
+            // switch off a feature the user had enabled until the next launch.
+            syncPreRollCapture()
+        }
 
         // Sample modifier state NOW, before any await — by the time session.stop()
         // resolves (seconds later), the user may have released Shift. Also consume
@@ -1519,8 +1526,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
             bridge.autoStopLastDurationText = rec.endedAt.map { formatAutoStopDuration($0.timeIntervalSince(rec.startedAt)) }
             autoStop.end(autoStopReason: autoStopReason)
-            // The session has released the mic; resume banking if enabled.
-            syncPreRollCapture()
             if let autoStopReason, prefs.postStopNotificationEnabled {
                 AutoStopNotification.post(
                     reason: autoStopReason,
