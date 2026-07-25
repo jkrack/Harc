@@ -47,6 +47,26 @@ struct RecordingSessionTranscriptionTests {
         }
     }
 
+    /// Resume once the transcriber has assembled its first chunk, or after
+    /// `timeout` — whichever comes first. Returning on timeout rather than
+    /// failing here keeps the diagnosis in the assertions below, which say what
+    /// was actually missing from the transcript.
+    private func awaitFirstChunk(
+        _ updates: AsyncStream<TranscriptUpdate>,
+        timeout: Duration
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await _ in updates { return }
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+            }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
     private func makeConstantBuffer(frames: AVAudioFrameCount) -> AVAudioPCMBuffer {
         let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
         let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames)!
@@ -89,7 +109,17 @@ struct RecordingSessionTranscriptionTests {
             transcriber: transcriber
         )
         try await session.start(at: Date())
-        try await Task.sleep(nanoseconds: 500_000_000)
+
+        // Wait for the first chunk to actually land rather than sleeping a fixed
+        // 500 ms and hoping the pump got there. The pump polls every 50 ms, but
+        // under parallel test load that window isn't guaranteed: if no chunk has
+        // been consumed by the time stop() runs, finalize sees the whole 1.5 s as
+        // one pending chunk, emits only "one", and the flush tail "two" never
+        // exists. That raced at ~3/40 runs. `updates` yields once per assembled
+        // chunk, so awaiting the first element is exactly the precondition this
+        // test needs. Bounded so a real hang still fails instead of hanging.
+        await awaitFirstChunk(transcriber.updates, timeout: .seconds(10))
+
         let result = try await session.stop()
 
         #expect(FileManager.default.fileExists(atPath: result.wavURL.path))
