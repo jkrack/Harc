@@ -92,6 +92,19 @@ public actor MicCapture: MicCaptureSource {
         } catch {
             input.removeTap(onBus: 0)
             cont.finish()
+            // An input node reporting 0 ch / 0 Hz while the output side looks
+            // fine is what a process without effective microphone access sees
+            // — the engine then fails deep in AUGraphParser with
+            // kAudioUnitErr_FormatNotSupported (-10868). Passing that string
+            // through told the user "com.apple.coreaudio.avfaudio error
+            // -10868", which names neither the cause nor the fix. The guard
+            // above deliberately accepts either format, so this is the point
+            // where the distinction can still be drawn.
+            guard Self.isValidInputFormat(inputFormat) else {
+                throw AudioError.audioEngineFailed(
+                    "No microphone input is available. Check Harc's Microphone permission in System Settings → Privacy & Security, and that an input device is selected."
+                )
+            }
             throw AudioError.audioEngineFailed(error.localizedDescription)
         }
         isRunning = true

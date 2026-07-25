@@ -1222,6 +1222,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         bridge.accessibilityReady = AXIsProcessTrusted()
         bridge.accessibilityReadinessText = bridge.accessibilityReady ? "Paste permission granted" : "Paste needs Accessibility permission"
+
+        updateCaptureReadiness()
+    }
+
+    /// Report whether capture can actually happen, not just whether it is
+    /// permitted.
+    ///
+    /// The mic row was a constant — "Mic + system audio", never a warning —
+    /// unless a live recording fell back mid-session. On a Mac with no input
+    /// device (a Mac mini has no built-in microphone) that read "Capture
+    /// ready" right up until recording failed. Permission granted and no
+    /// hardware present are different answers and the panel has to tell them
+    /// apart. Skipped while recording so this can't stomp the mic-only
+    /// fallback notice that path sets.
+    private func updateCaptureReadiness() {
+        guard !state.isRecording else { return }
+
+        guard RecordingPermissionService.microphone.isGranted else {
+            bridge.captureReadinessText = "Microphone permission needed"
+            bridge.captureReadinessWarning = true
+            return
+        }
+        guard AudioInputAvailability.hasInputDevice else {
+            bridge.captureReadinessText = "No microphone connected"
+            bridge.captureReadinessWarning = true
+            return
+        }
+        bridge.captureReadinessText = "Mic + system audio"
+        bridge.captureReadinessWarning = false
     }
 
     private func observeAutoStopPrefs() {
