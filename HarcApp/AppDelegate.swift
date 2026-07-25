@@ -2280,7 +2280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// the engine's identity depends on live preferences (diarization, VAD):
     /// changing either genuinely changes the transcript, so it has to change
     /// what counts as "already current" too.
-    private func ensureMaintenanceStore() -> LibraryMaintenanceStore {
+    func ensureMaintenanceStore() -> LibraryMaintenanceStore {
         if let maintenanceStore { return maintenanceStore }
         let created = LibraryMaintenanceStore(
             store: store,
@@ -2306,11 +2306,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
 
         let root = HarcSettingsForm()
-            .environmentObject(prefs)
-            .environmentObject(modelStore)
-            .environmentObject(bridge)
-            .environmentObject(dictationModeStore)
-            .environmentObject(ensureMaintenanceStore())
+            .harcSettingsEnvironment(
+                prefs: prefs,
+                modelStore: modelStore,
+                bridge: bridge,
+                dictationModes: dictationModeStore,
+                maintenance: ensureMaintenanceStore()
+            )
             .preferredColorScheme(prefs.appearance.colorScheme)
         let window = NSWindow(contentViewController: NSHostingController(rootView: root))
         window.title = "Harc Settings"

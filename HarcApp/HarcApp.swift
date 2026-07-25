@@ -8,10 +8,13 @@ struct HarcApp: App {
     var body: some Scene {
         Settings {
             SettingsRoot()
-                .environmentObject(appDelegate.prefs)
-                .environmentObject(appDelegate.modelStore)
-                .environmentObject(appDelegate.bridge)
-                .environmentObject(appDelegate.dictationModeStore)
+                .harcSettingsEnvironment(
+                    prefs: appDelegate.prefs,
+                    modelStore: appDelegate.modelStore,
+                    bridge: appDelegate.bridge,
+                    dictationModes: appDelegate.dictationModeStore,
+                    maintenance: appDelegate.ensureMaintenanceStore()
+                )
         }
     }
 }
