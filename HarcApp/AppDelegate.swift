@@ -2045,11 +2045,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// number that looks alive.
     private func refreshPreRollBanked() async {
         guard let capture = preRollCapture else {
-            bridge.preRollBankedSeconds = nil
+            bridge.preRollStatus = nil
             return
         }
-        let banked = await capture.bankedSeconds
-        bridge.preRollBankedSeconds = banked
+        // Report the ring's actual state, not just its fill level. A capture
+        // that failed to open the mic banks 0s forever, which is
+        // indistinguishable from a healthy ring that just started unless the
+        // failure travels with the number.
+        switch await capture.state {
+        case .listening:
+            bridge.preRollStatus = .listening(banked: await capture.bankedSeconds)
+        case .failed(let reason):
+            bridge.preRollStatus = .failed(reason: reason)
+        case .stopped:
+            bridge.preRollStatus = nil
+        }
     }
 
     /// Start or stop the idle pre-roll ring to match preferences.
@@ -2069,7 +2079,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         guard shouldRun else {
             preRollTicker?.invalidate()
             preRollTicker = nil
-            bridge.preRollBankedSeconds = nil
+            bridge.preRollStatus = nil
             if let capture = preRollCapture {
                 preRollCapture = nil
                 Task { await capture.stop() }
@@ -3196,7 +3206,7 @@ private struct StatusPopoverRoot: View {
             autoStopLastDurationText: bridge.autoStopLastDurationText,
             stopRecovery: bridge.stopRecovery,
             activeCaptureStatus: bridge.activeCaptureStatus,
-            preRollBankedSeconds: bridge.preRollBankedSeconds,
+            preRollStatus: bridge.preRollStatus,
             onClearPreRoll: bridge.onClearPreRoll,
             onKeepRecording: bridge.onKeepRecording,
             onStopNow: bridge.onStopNow,

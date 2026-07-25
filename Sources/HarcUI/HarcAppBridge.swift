@@ -31,8 +31,13 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var autoStopLastDurationText: String? = nil
     @Published public private(set) var stopRecovery: StopRecoveryInfo? = nil
     @Published public private(set) var activeCaptureStatus: ActiveCaptureStatus? = nil
-    /// Seconds banked by the idle pre-roll ring; nil when the feature is off.
-    @Published public var preRollBankedSeconds: TimeInterval? = nil
+    /// State of the idle pre-roll ring; nil when the feature is off.
+    ///
+    /// Carries the failure reason, not just the banked count. Publishing only
+    /// a number meant a ring whose mic tap never started — or died — rendered
+    /// as "Ready to capture the last 0s", which is the app claiming to be
+    /// armed while it is doing nothing at all.
+    @Published public var preRollStatus: PreRollStatus? = nil
     @Published public var destinationReady: Bool = true
     @Published public var destinationPath: String = ""
     @Published public var captureReadinessText: String = "Mic + system audio"

@@ -26,9 +26,10 @@ public struct MenuBarPanelView: View {
     let autoStopLastDurationText: String?
     let stopRecovery: StopRecoveryInfo?
     let activeCaptureStatus: ActiveCaptureStatus?
-    /// Seconds currently banked by the idle pre-roll ring, or nil when the
-    /// feature is off. Non-nil means the mic is open while Harc sits idle.
-    let preRollBankedSeconds: TimeInterval?
+    /// State of the idle pre-roll ring, or nil when the feature is off.
+    /// Non-nil means Harc is holding the mic open while it sits idle — or
+    /// meant to and couldn't, which the row has to say out loud.
+    let preRollStatus: PreRollStatus?
     let onClearPreRoll: (() -> Void)?
     let onKeepRecording: () -> Void
     let onStopNow: () -> Void
@@ -97,7 +98,7 @@ public struct MenuBarPanelView: View {
         autoStopLastDurationText: String? = nil,
         stopRecovery: StopRecoveryInfo? = nil,
         activeCaptureStatus: ActiveCaptureStatus? = nil,
-        preRollBankedSeconds: TimeInterval? = nil,
+        preRollStatus: PreRollStatus? = nil,
         onClearPreRoll: (() -> Void)? = nil,
         onKeepRecording: @escaping () -> Void = {},
         onStopNow: @escaping () -> Void = {},
@@ -157,7 +158,7 @@ public struct MenuBarPanelView: View {
         self.autoStopLastDurationText = autoStopLastDurationText
         self.stopRecovery = stopRecovery
         self.activeCaptureStatus = activeCaptureStatus
-        self.preRollBankedSeconds = preRollBankedSeconds
+        self.preRollStatus = preRollStatus
         self.onClearPreRoll = onClearPreRoll
         self.onKeepRecording = onKeepRecording
         self.onStopNow = onStopNow
@@ -354,19 +355,32 @@ public struct MenuBarPanelView: View {
     /// Settings — and "Clear" is the escape hatch for the moment they say
     /// something they don't want kept.
     @ViewBuilder
-    private func preRollRow(_ banked: TimeInterval) -> some View {
+    private func preRollRow(_ status: PreRollStatus) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "backward.circle")
-                .foregroundStyle(.secondary)
+            Image(systemName: status.isFailed ? "exclamationmark.triangle.fill" : "backward.circle")
+                .foregroundStyle(status.isFailed ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
             VStack(alignment: .leading, spacing: 1) {
-                Text("Ready to capture the last \(Self.formatBanked(banked))")
-                    .font(.caption.weight(.medium))
-                Text("Held in memory only")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                switch status {
+                case .listening(let banked):
+                    Text("Ready to capture the last \(Self.formatBanked(banked))")
+                        .font(.caption.weight(.medium))
+                    Text("Held in memory only")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                case .failed(let reason):
+                    Text("Retroactive record isn't running")
+                        .font(.caption.weight(.medium))
+                    Text(reason)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 4)
-            if let onClearPreRoll {
+            // Nothing is banked when the ring is dead, so Clear would be a
+            // button that does nothing to reassure the user about audio that
+            // was never captured.
+            if case .listening = status, let onClearPreRoll {
                 Button("Clear", action: onClearPreRoll)
                     .font(.caption2)
                     .buttonStyle(.plain)
@@ -408,8 +422,8 @@ public struct MenuBarPanelView: View {
                     activeCaptureStatusView(activeCaptureStatus)
                 }
 
-                if !recordingState.isRecording, let banked = preRollBankedSeconds {
-                    preRollRow(banked)
+                if !recordingState.isRecording, let preRollStatus {
+                    preRollRow(preRollStatus)
                 }
 
                 if showsAutoStopSurface {

@@ -43,6 +43,42 @@ struct PreRollCaptureTests {
         }
     }
 
+    /// Mic fake whose stream ends on its own, the way a real tap does when the
+    /// device changes or another consumer takes the mic.
+    actor EndingMic: MicCaptureSource {
+        func requestPermission() async throws {}
+
+        func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
+            let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+            cont.finish()
+            return stream
+        }
+
+        func stop() async {}
+    }
+
+    /// A ring whose mic dies has to say so. It used to stay in `.listening`
+    /// forever, banking nothing — and since the UI published only the banked
+    /// count, a dead ring was indistinguishable from a healthy idle one and
+    /// the panel kept claiming "Ready to capture the last 0s".
+    @Test("a mic stream that ends marks the ring failed")
+    func endedStreamMarksFailure() async throws {
+        let capture = PreRollCapture(mic: EndingMic(), windowSeconds: 60)
+        await capture.start()
+
+        var state = await capture.state
+        for _ in 0..<200 where state == .listening {
+            try await Task.sleep(for: .milliseconds(10))
+            state = await capture.state
+        }
+
+        guard case .failed = state else {
+            Issue.record("expected .failed after the stream ended, got \(state)")
+            return
+        }
+        #expect(await capture.bankedSeconds == 0)
+    }
+
     private func buffer(_ value: Float, frames: AVAudioFrameCount) -> AVAudioPCMBuffer {
         let fmt = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,

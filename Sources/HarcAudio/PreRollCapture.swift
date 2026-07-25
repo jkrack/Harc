@@ -64,12 +64,25 @@ public actor PreRollCapture {
                 for await raw in stream {
                     await self?.ingest(raw)
                 }
+                // The stream finishing while we still believe we're listening
+                // means the tap died under us — a device change, or the mic
+                // being taken. Silence here is what makes a dead ring look
+                // exactly like an idle one.
+                guard !Task.isCancelled else { return }
+                await self?.noteStreamEnded()
             }
         } catch {
             // Never fatal: failing to bank pre-roll must not prevent the user
             // from starting an ordinary recording.
             state = .failed(error.localizedDescription)
         }
+    }
+
+    /// The mic stream ended without anyone asking it to.
+    private func noteStreamEnded() {
+        guard state == .listening else { return }
+        state = .failed("Microphone capture stopped unexpectedly.")
+        buffer.reset()
     }
 
     private func ingest(_ raw: AVAudioPCMBuffer) {
