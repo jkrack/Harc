@@ -437,7 +437,7 @@ public struct MenuBarPanelView: View {
                     stopRecoveryBanner(stopRecovery)
                 }
 
-                if RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) > 0 {
+                if showsRecoveryInbox {
                     recoveryInboxBanner
                 }
 
@@ -674,8 +674,20 @@ public struct MenuBarPanelView: View {
             accessibilityReady: accessibilityReady,
             accessibilityText: accessibilityReadinessText,
             dictationHotkeySet: KeyboardShortcuts.getShortcut(for: .pushToTalkDictation) != nil,
-            pendingRecoveryCount: RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
+            // Zero here suppresses the Local Stack's "Recovery — N pending /
+            // Open recovery" row whenever the recovery card is already on
+            // screen a few pixels below it, with the artifacts listed and
+            // Recover/Reveal/Discard on each. Stating the same problem twice
+            // in one panel — once as a pointer to a surface that is already
+            // open — made a handled situation look like two.
+            pendingRecoveryCount: showsRecoveryInbox
+                ? 0
+                : RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
         )
+    }
+
+    private var showsRecoveryInbox: Bool {
+        RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) > 0
     }
 
     private func readinessRow(
@@ -861,6 +873,18 @@ public struct MenuBarPanelView: View {
                             .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                             .lineLimit(1)
                             .truncationMode(.middle)
+                        // `RecoveryInboxRow.detail` already resolves to the
+                        // artifact's last error, and the panel never showed
+                        // it. An item that can never succeed — a truncated
+                        // WAV that isn't decodable PCM — then sits in the
+                        // inbox as an unexplained orange warning forever, with
+                        // a Recover button that fails the same way each time.
+                        if !row.detail.isEmpty, row.detail != row.title {
+                            Text(row.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         HStack(spacing: 8) {
                             Button("Recover") { onRecoverRecoveryArtifact(row.id) }
                                 .buttonStyle(.borderedProminent)

@@ -176,8 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 260)
-        popover.contentViewController = NSHostingController(
+        let hosting = PanelHostingController(
             rootView: StatusPopoverRoot(
                 bridge: bridge,
                 dictationState: dictationState,
@@ -196,6 +195,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
                 .environmentObject(prefs)
         )
+        // Let the SwiftUI content drive the popover's height. The size used to
+        // be pinned at 320×260, which silently overrode the panel's own
+        // `.frame(maxHeight: 480)`: rows were sliced in half at the bottom
+        // edge with no scroll indicator, so a scrollable panel looked like a
+        // broken one, and everything past the readiness list — including the
+        // retroactive-record row — sat below the fold.
+        hosting.sizingOptions = [.preferredContentSize]
+        hosting.onCancel = { [weak self] in self?.statusPopover?.performClose(nil) }
+        popover.contentViewController = hosting
         statusPopover = popover
         updateStatusIcon()
     }
@@ -3310,5 +3318,20 @@ private struct StatusPopoverRoot: View {
             onInstallUpdate: bridge.onInstallUpdate
         )
         .preferredColorScheme(prefs.appearance.colorScheme)
+    }
+}
+
+/// Hosting controller for the menu-bar panel.
+///
+/// SwiftUI content inside an `NSPopover` never sees Escape: `.transient` only
+/// covers clicks outside, so the panel could be dismissed by clicking its
+/// menu-bar icon again and by essentially nothing else. `cancelOperation` is
+/// the AppKit hook for the Escape key, and it reaches here through the
+/// responder chain.
+final class PanelHostingController<Content: View>: NSHostingController<Content> {
+    var onCancel: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
     }
 }

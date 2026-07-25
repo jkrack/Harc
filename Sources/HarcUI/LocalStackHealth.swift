@@ -557,14 +557,21 @@ struct LocalStackHealthView: View {
                 Text(item.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(compact ? 1 : 2)
-                    .truncationMode(.middle)
+                    // These are sentences, not paths. Middle truncation on a
+                    // single line inside the 320pt panel — with a fix button
+                    // taking the trailing space — produced "Paste needs…lity
+                    // permission" and "Needs Acces…to insert text", which read
+                    // as corruption rather than as guidance. Wrap instead.
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
             if let fixTitle = item.fixTitle {
                 HoverPillButton(title: fixTitle) { onFix(item) }
             }
         }
+        .help(item.detail)
     }
 
     private var summaryText: String {
