@@ -597,6 +597,22 @@ public struct HarcWindowRootView: View {
             .tint(recordingState.isRecording ? HarcBrand.live : Color.accentColor)
             .disabled(isRecordingActionBusy)
             .accessibilityIdentifier("harc.library.capture.recordButton")
+
+            // The live transcript replaces the empty detail pane, so it is
+            // unreachable while an older recording is selected. This is the
+            // way back to it without deselecting by hand.
+            if recordingState.isRecording, selectedRecording != nil {
+                Button {
+                    selection = nil
+                } label: {
+                    Label("View live transcript", systemImage: "waveform")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityIdentifier("harc.library.capture.viewLiveTranscript")
+            }
+
             if let recordingActionStatusText {
                 Text(recordingActionStatusText)
                     .font(.caption)

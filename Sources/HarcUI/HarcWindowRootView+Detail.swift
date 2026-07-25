@@ -86,6 +86,14 @@ extension HarcWindowRootView {
                     .inspector(isPresented: $inspectorOpen) {
                         inspectorContent(recording: recording)
                     }
+            } else if recordingState.isRecording {
+                // A recording in progress is the most interesting thing the
+                // window could be showing, and it used to show "No Item
+                // Selected" for the entire meeting.
+                LiveTranscriptPane(
+                    recordingState: recordingState,
+                    lastUpdateAge: bridge.activeCaptureStatus?.transcriptAgeText()
+                )
             } else {
                 ContentUnavailableView(
                     "No Item Selected",

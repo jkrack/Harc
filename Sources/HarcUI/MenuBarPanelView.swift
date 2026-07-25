@@ -1053,13 +1053,7 @@ public struct MenuBarPanelView: View {
             elapsedText = "0:00"
             return
         }
-        let total = Int(Date().timeIntervalSince(start))
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        elapsedText = h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
+        elapsedText = ElapsedFormatter.string(since: start)
     }
 }
 
