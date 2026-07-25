@@ -2260,9 +2260,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         let window = NSWindow(contentViewController: NSHostingController(rootView: root))
         window.title = markAsFirstRun ? "Welcome to Harc" : "Harc Welcome"
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        // Resizable on purpose: step content varies in height, and a fixed
+        // window with no way to scroll or resize is how the setup step became
+        // impossible to advance past. The ScrollView in WelcomeFlowView is the
+        // real guard; this is the second one.
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 860, height: 620))
-        window.minSize = NSSize(width: 780, height: 560)
+        window.minSize = NSSize(width: 780, height: 480)
         window.isReleasedWhenClosed = false
 
         let controller = NSWindowController(window: window)

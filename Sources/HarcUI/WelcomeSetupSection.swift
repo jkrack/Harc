@@ -246,28 +246,29 @@ struct WelcomeSetupSection: View {
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    /// One line per permission. Granted rows collapse to a checkmark and the
+    /// name — the explanation only earns its space when the user still has a
+    /// decision to make about that permission.
     private func permissionGrantRow(
         _ service: RecordingPermissionService,
         granted: Bool
     ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: granted ? "checkmark.circle.fill" : "lock.shield")
                 .foregroundStyle(granted ? Color.green : Color.secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(service.displayName)
-                    .font(.subheadline.weight(.medium))
-                Text(service.purpose)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.caption.weight(.medium))
+                if !granted {
+                    Text(service.purpose)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
-            if granted {
-                Text("Granted")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            } else {
+            if !granted {
                 // Label the action honestly: when the system prompt is spent,
                 // this opens System Settings and the button should say so.
                 Button(service.canPromptInProcess ? "Grant" : "Open Settings") {

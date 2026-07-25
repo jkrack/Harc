@@ -280,6 +280,67 @@ public struct WelcomeFlowView: View {
         }
     }
 
+    /// The body of the current step. Lifted out of `contentPane` so it can be
+    /// wrapped in a ScrollView without the navigation row scrolling with it.
+    private var stepContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(model.selectedStep.eyebrow.uppercased())
+                .font(.caption.weight(.bold))
+                .foregroundStyle(model.selectedStep.tint)
+            Text(model.selectedStep.title)
+                .font(.largeTitle.weight(.semibold))
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(model.selectedStep.body)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 10) {
+                pointRow(model.selectedStep.primaryPoint, icon: "checkmark.circle.fill")
+                pointRow(model.selectedStep.secondaryPoint, icon: "arrow.triangle.branch")
+            }
+            .padding(.top, 4)
+
+            if model.selectedStep.id == WelcomeFlowModel.dictationStepID {
+                VStack(alignment: .leading, spacing: 10) {
+                    // Ready-to-use hotkey (ships with a ⌃⌥D default) —
+                    // re-recordable right here so "hold the hotkey" is
+                    // never a dead instruction.
+                    KeyboardShortcuts.Recorder("Dictation hotkey", name: .pushToTalkDictation)
+                    if let onEnableAccessibility {
+                        Button {
+                            onEnableAccessibility()
+                        } label: {
+                            Label("Enable Accessibility", systemImage: "accessibility")
+                        }
+                        .accessibilityIdentifier("harc.welcome.accessibility")
+                    }
+                }
+            }
+
+            if model.selectedStep.id == WelcomeFlowModel.setupStepID, let setup {
+                WelcomeSetupSection(model: setup)
+            }
+
+            if model.selectedStep.id == WelcomeFlowModel.startStepID {
+                Toggle("Launch Harc at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, enabled in
+                        setLaunchAtLogin(enabled)
+                    }
+                    .onAppear {
+                        launchAtLogin = SMAppService.mainApp.status == .enabled
+                    }
+                Text("A meeting recorder that isn't running misses the meeting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var contentPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -296,63 +357,16 @@ public struct WelcomeFlowView: View {
             }
             .padding([.horizontal, .top], 28)
 
-            VStack(alignment: .leading, spacing: 18) {
-                Text(model.selectedStep.eyebrow.uppercased())
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(model.selectedStep.tint)
-                Text(model.selectedStep.title)
-                    .font(.largeTitle.weight(.semibold))
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(model.selectedStep.body)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    pointRow(model.selectedStep.primaryPoint, icon: "checkmark.circle.fill")
-                    pointRow(model.selectedStep.secondaryPoint, icon: "arrow.triangle.branch")
-                }
-                .padding(.top, 4)
-
-                if model.selectedStep.id == WelcomeFlowModel.dictationStepID {
-                    VStack(alignment: .leading, spacing: 10) {
-                        // Ready-to-use hotkey (ships with a ⌃⌥D default) —
-                        // re-recordable right here so "hold the hotkey" is
-                        // never a dead instruction.
-                        KeyboardShortcuts.Recorder("Dictation hotkey", name: .pushToTalkDictation)
-                        if let onEnableAccessibility {
-                            Button {
-                                onEnableAccessibility()
-                            } label: {
-                                Label("Enable Accessibility", systemImage: "accessibility")
-                            }
-                            .accessibilityIdentifier("harc.welcome.accessibility")
-                        }
-                    }
-                }
-
-                if model.selectedStep.id == WelcomeFlowModel.setupStepID, let setup {
-                    WelcomeSetupSection(model: setup)
-                }
-
-                if model.selectedStep.id == WelcomeFlowModel.startStepID {
-                    Toggle("Launch Harc at login", isOn: $launchAtLogin)
-                        .onChange(of: launchAtLogin) { _, enabled in
-                            setLaunchAtLogin(enabled)
-                        }
-                        .onAppear {
-                            launchAtLogin = SMAppService.mainApp.status == .enabled
-                        }
-                    Text("A meeting recorder that isn't running misses the meeting.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            // Scrolls independently of the Back/Next row below. Step content
+            // is variable height — the Set up step in particular grows with
+            // however many permissions and downloads it has to show. Without
+            // a scroll container, a taller step silently pushes the navigation
+            // off the bottom edge and the flow becomes impossible to advance.
+            // The window is also resizable now, but that's the second guard;
+            // this one holds even at the minimum size.
+            ScrollView {
+                stepContent
             }
-            .padding(28)
-
-            Spacer(minLength: 20)
 
             HStack(spacing: 10) {
                 Button {

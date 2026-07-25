@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Harc** — a macOS speech-to-text menu bar app with two surfaces. (1) Meeting capture: start recording on toggle-hotkey, transcribe diarized audio in background, save to searchable library, paste into LLM. (2) Dictation: hold hotkey, speak, release to insert text at cursor with optional AI mode (Clean-up, Email, Message, Answer, etc.) — all local.
 
-Status: v0.4.1, shipped and stable. Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT (Parakeet), GRDB-backed library, MLX summarization, speaker re-identification, push-to-talk dictation with modes all in place.
+Status: v0.7.3, shipped and stable. Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT (Parakeet), GRDB-backed library, MLX summarization, speaker re-identification, push-to-talk dictation with modes all in place. Settings is a searchable sidebar; recordings project to Open Knowledge Format artifacts.
 
 ## Hard Constraints
 
