@@ -19,9 +19,7 @@ macOS 26 (Tahoe) or later · Apple Silicon · ~460 MB speech model
 
 ---
 
-<!-- HERO SCREENSHOT: Library window with a real transcript, speaker labels and a
-     generated summary. Needs a Mac with a microphone and one real recording —
-     see docs/screenshots.md for the capture checklist. -->
+<img src="docs/images/library-hero.png" alt="The Harc library: waveform, an on-device summary, and the transcript" width="100%">
 
 ## What it does
 

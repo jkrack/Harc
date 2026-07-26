@@ -19,25 +19,35 @@ current machine would produce.
 | `settings-models.png` | Settings → AI Models |
 | `settings-modes.png` | Settings → Modes |
 | `settings-dictation.png` | Settings → Dictation |
+| `library-hero.png` | Library — waveform, on-device summary, transcript |
 
 ## Need
 
 Each is marked with an HTML comment at its intended position in `README.md`.
 
-1. **`library-hero.png` — the hero shot.** Library window with a real
-   recording selected: speaker-labelled transcript, a generated summary with
-   action items, speaker count and duration populated. This is the single most
-   important image on the page and the one nothing else substitutes for.
-   Requires: one real meeting recording, and a summarizer model installed.
+**`library-hero.png` is captured but worth retaking.** It is real output —
+Parakeet transcription, a Qwen 3.5 4B summary, a real waveform — but the audio
+was two macOS `say` voices imported through Settings → Import, because the
+machine had no microphone. Two things suffer:
 
-2. **`panel-recording.png`** — menu-bar panel mid-recording, showing elapsed
+- **Diarization reports one speaker.** Two synthetic voices, even a British
+  male and a US female, were not separable by the speaker embeddings. Speaker
+  labels are a headline feature and the hero image cannot currently show them.
+- **No action items.** The same transcript produced three with due dates on one
+  run and none on two later runs, so extraction is inconsistent on this
+  content.
+
+Retake it from a real two-person recording when one exists. That is the only
+thing that fixes both.
+
+1. **`panel-recording.png`** — menu-bar panel mid-recording, showing elapsed
    time and live level bars. Requires: an active recording.
 
-3. **`dictation-hud.png`** — the floating dictation pill mid-dictation, with
+2. **`dictation-hud.png`** — the floating dictation pill mid-dictation, with
    the live waveform and the active mode chip. Requires: holding the dictation
    hotkey while capturing.
 
-4. **`post-stop-tray.png`** *(optional)* — the 30-second tray after a
+3. **`post-stop-tray.png`** *(optional)* — the 30-second tray after a
    recording stops, with Copy and Paste.
 
 Prefer a recording whose content is presentable: a short, real, non-sensitive
@@ -49,6 +59,12 @@ visible and are the point of the image.
 The computer-use MCP cannot see Harc — it is an `LSUIElement` agent, so the
 enumeration skips it and screenshot filtering composites it out. Use the shell
 instead (see the "Verifying UI changes on screen" section of `AGENTS.md`):
+
+    # Guard first: screencapture takes a screen REGION, so anything covering
+    # the window lands in the file. A capture taken while another app was in
+    # front once wrote a personal inbox into a repo-bound image. Confirm Harc
+    # is frontmost, and look at the result before committing it.
+    osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'
 
     # exact window bounds, then downscale for the repo
     P=$(osascript -e 'tell application "System Events" to tell process "Harc" to get position of window 1')
