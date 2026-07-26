@@ -168,12 +168,14 @@ extension HarcWindowRootView {
         let fileCount = [recording.wavPath, recording.txtPath, recording.jsonPath].compactMap(\.self).count
         return HStack(spacing: 8) {
             inspectorChip(
-                title: inspectorPendingSuggestions.isEmpty ? "\(speakerCount) speakers" : "\(inspectorPendingSuggestions.count) speaker review",
+                title: inspectorPendingSuggestions.isEmpty
+                    ? Pluralize.count(speakerCount, "speaker")
+                    : Pluralize.count(inspectorPendingSuggestions.count, "speaker") + " review",
                 icon: inspectorPendingSuggestions.isEmpty ? "person.wave.2" : "person.crop.circle.badge.questionmark",
                 tint: inspectorPendingSuggestions.isEmpty ? .secondary : .yellow
             )
             inspectorChip(
-                title: "\(fileCount) files",
+                title: Pluralize.count(fileCount, "file"),
                 icon: "folder",
                 tint: .secondary
             )

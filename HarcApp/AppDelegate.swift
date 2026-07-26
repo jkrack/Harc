@@ -1494,7 +1494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
-            let transcriptText = result.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            let transcriptText = result.txtURL.flatMap { Self.transcriptBody(ofSidecarAt: $0) }
             let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
             let rec = Recording(
                 wavPath: result.wavURL.path,
@@ -1924,6 +1924,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Import audio/video files: convert → transcribe (diarized) → library.
     /// Files process sequentially; a live recording or dictation blocks the
     /// whole batch (they'd compete for the STT daemon and confuse readiness).
+    /// The transcript body from a sidecar, without the OKF wrapper.
+    ///
+    /// The sidecar used to be a plain `.txt` of the transcript, so both ingest
+    /// paths read it whole and stored it. Since `.md` became the canonical
+    /// artifact that same read stores an entire OKF document — YAML
+    /// frontmatter, `## Summary`, `## Action Items` and all — into
+    /// `transcript_text`. The detail pane then rendered `type: Meeting
+    /// Transcript` and `resource: ./…wav` as if they were speech, search
+    /// indexed the frontmatter, and the row stopped being the source the
+    /// document is projected from and became a copy of it.
+    ///
+    /// Falls back to the raw contents so a pre-OKF `.txt` still ingests.
+    static func transcriptBody(ofSidecarAt url: URL) -> String? {
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return OKFMarkdown.extractTranscript(from: raw) ?? raw
+    }
+
     func importMediaFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         guard !state.isRecording, !dictationState.isActive else {
@@ -1999,7 +2016,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // Same ingest shape as stopRecording: library row keyed by the
             // final WAV path; title = the original filename.
             let rec = result.recording
-            let transcriptText = rec.txtURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            let transcriptText = rec.txtURL.flatMap { Self.transcriptBody(ofSidecarAt: $0) }
             let startedAt = rec.wavURL.startedAtFromHarcPath() ?? Date()
             var row = Recording(
                 wavPath: rec.wavURL.path,
