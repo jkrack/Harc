@@ -256,6 +256,26 @@ public final class DictationController {
         sessionMode ?? oneShotMode ?? activeMode()
     }
 
+    /// A short line for the HUD pill.
+    ///
+    /// The pill renders two lines of caption text, so a full
+    /// `localizedDescription` arrives truncated — "Audio engine failure: No
+    /// microphone input is available. Check Harc's Microphone permission in
+    /// S…" is worse than useless, because the half that got cut is the half
+    /// that says what to do. Prefer a short sentence the user can read whole.
+    static func hudMessage(for error: any Error) -> String {
+        switch error {
+        case AudioError.micPermissionDenied:
+            return "Microphone permission needed"
+        case AudioError.audioEngineFailed:
+            return AudioInputAvailability.hasInputDevice
+                ? "The microphone could not be opened"
+                : "No microphone connected"
+        default:
+            return error.localizedDescription
+        }
+    }
+
     public func start() async {
         guard !state.isActive else { return }
         deepLinkOrigin = nextSessionDeepLinkOrigin
@@ -263,6 +283,16 @@ public final class DictationController {
         // Mutual exclusion: the mic + daemon are single-user resources.
         guard !recordingState.isRecording else {
             onBlockedByRecording()
+            return
+        }
+        // Refuse before touching the audio engine when there is nothing to
+        // record from. Letting it fail deeper produced "Audio engine failure:
+        // No microphone input is available. Check Harc's Microphone
+        // permission in S…" — a sentence about permissions, truncated by the
+        // HUD pill, on a Mac whose actual problem is that no input device is
+        // attached at all.
+        guard AudioInputAvailability.hasInputDevice else {
+            state.setPhase(.error("No microphone connected"))
             return
         }
         abortRequested = false
@@ -342,7 +372,7 @@ public final class DictationController {
             sessionMode = nil
             // Only surface if we haven't already been superseded by a stop.
             if case .listening = state.phase {
-                state.setPhase(.error(error.localizedDescription))
+                state.setPhase(.error(Self.hudMessage(for: error)))
             }
         }
     }
@@ -369,7 +399,7 @@ public final class DictationController {
             cleanup()
             oneShotMode = nil
             sessionMode = nil
-            state.setPhase(.error(error.localizedDescription))
+            state.setPhase(.error(Self.hudMessage(for: error)))
             return
         }
         cleanup()
