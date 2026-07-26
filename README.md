@@ -58,7 +58,7 @@ you have selected. All of it runs through a local model.
 **Capture**
 - Microphone **and** system audio, mixed to one recording (via ScreenCaptureKit)
 - Toggle recording from the menu bar, a global hotkey (⌃⌥R by default), or the Library window
-- **Retroactive record** — optionally keep the last 1–10 minutes in memory, so a recording can start *before* you pressed the button
+- **Retroactive record** — for the moment someone says something worth keeping and you weren't recording. Harc can hold the last 1–10 minutes in memory, so pressing record captures the conversation you already had, not just the one starting now. Off by default; see [Privacy](#privacy) for what it costs
 - Auto-stop on silence, with a warning before it fires, plus a hard duration cap
 - Meeting detection: notices when a video-call app launches and offers to record
 - Durable WAV on disk during capture; a recovery inbox for anything interrupted
@@ -75,7 +75,7 @@ you have selected. All of it runs through a local model.
 - Searchable across every transcript, with optional **hybrid search** that blends meaning into keyword results
 - Calendar, pinning, and date grouping in the sidebar
 - Transcript editor, speaker renaming, and an inspector with file metadata
-- Every recording is written as `WAV` + `JSON` + an **Open Knowledge Format** Markdown document — plain files in a folder you choose, readable by Obsidian or any agent, with the database as an index rather than a silo
+- Every recording is written as plain files you own — see [Your data stays yours](#your-data-stays-yours)
 
 **Dictation**
 - Push-to-talk or toggle, on a hotkey you choose
@@ -96,6 +96,51 @@ you have selected. All of it runs through a local model.
 
 <img src="docs/images/settings-modes.png" alt="Dictation modes: built-in and custom text transformations" width="820">
 
+## Your data stays yours
+
+Local by default is only half of it. The other half is that nothing here is
+locked in.
+
+Every recording lands as **three plain files** in a folder you choose
+(`~/Documents/Harc` unless you change it), organised by date:
+
+```
+Harc/2026/2026-07-26/
+  index.md          # day index, one link per meeting
+  09-15-02.wav      # the audio
+  09-15-02.md       # Open Knowledge Format document
+  09-15-02.json     # transcript, word timestamps, speaker segments
+```
+
+The `.md` is an **Open Knowledge Format** (OKF v0.1) document: YAML
+frontmatter (`type`, `title`, `resource`, `tags`, `timestamp`)
+followed by `## Summary`, `## Action Items`, and `## Transcript`.
+
+That has a specific consequence. **The SQLite library is an index, not the
+record.** The Markdown is regenerated from it after every edit, so the folder
+is always current — and the files stand on their own if Harc is not running,
+not installed, or gone entirely.
+
+Which means you can, without asking Harc for permission:
+
+- Point **Obsidian** at the folder and get a working vault, wiki-links and all
+- `grep` a year of meetings, or put the folder in **git** and diff them
+- Let a **coding agent or LLM with filesystem access** read the transcripts
+  directly — they are Markdown with structured frontmatter, which is the
+  format those tools already read best
+- Sync it with iCloud, Dropbox or Syncthing, or back it up like any folder
+- Copy a transcript into **ChatGPT, Claude or a local model** yourself, when
+  and if you want to
+
+That last one is the point of the distinction. Harc never sends your audio or
+transcripts anywhere — no cloud STT, no account, no telemetry. But local-only
+should not mean trapped: if you decide a meeting is worth handing to a cloud
+model, that is a copy-paste, not an export ritual, and it is *your* decision
+each time rather than a setting you forgot you enabled.
+
+There is no plugin API and no MCP server today. There does not need to be one
+for an agent to read a folder of Markdown.
+
 ## Privacy
 
 <img src="docs/images/welcome-local-first.png" alt="Local first: speech, diarization, summaries and audio all stay on the Mac" width="820">
@@ -106,9 +151,14 @@ you have selected. All of it runs through a local model.
   checksum-verified. After that, Harc works offline.
 - Auto-paste refuses to type into password managers and the login window, and
   that list is not editable away.
-- Retroactive record is **off by default**, and when you turn it on the app
-  says plainly that it holds the microphone open while idle — macOS shows its
-  orange indicator the whole time.
+- **Retroactive record, if you enable it, keeps the microphone open while Harc
+  sits idle.** That is the honest cost of being able to record something that
+  already happened, and it is why the feature ships switched off. What it does
+  *not* do is write anything down: the last few minutes live in memory, are
+  continuously overwritten, and reach the disk only when you press record.
+  macOS shows its orange microphone indicator the entire time it is on, the
+  menu-bar panel shows how much is banked, and **Clear** wipes it instantly —
+  for the moment you say something you would rather not keep.
 
 Harc is source-available under [PolyForm Noncommercial](https://polyformproject.org/licenses/noncommercial/1.0.0),
 so you can read exactly what it does with your audio.
@@ -181,7 +231,9 @@ Quit Harc, delete `Harc.app`, then remove what you don't want to keep
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
+Copyright © 2026 **CloudArchitech LLC**.
+
+Licensed under [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
 — see `LICENSE`. Open for personal and other noncommercial use; commercial use
-requires a separate license. Official signed builds are available from
-[Releases](https://github.com/jkrack/Harc/releases).
+requires a separate license from CloudArchitech LLC. Official signed builds are
+available from [Releases](https://github.com/jkrack/Harc/releases).

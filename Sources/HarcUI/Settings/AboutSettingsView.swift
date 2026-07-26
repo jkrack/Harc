@@ -147,6 +147,11 @@ public struct AboutSettingsView: View {
                 Text(versionLine)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(Color.secondary)
+                // Read from the bundle rather than hard-coded, for the same
+                // reason the version is: a second copy of a fact drifts.
+                Text(copyrightLine)
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
             }
             Spacer(minLength: 0)
         }
@@ -239,6 +244,11 @@ public struct AboutSettingsView: View {
                 .foregroundStyle(Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var copyrightLine: String {
+        Bundle.main.object(forInfoDictionaryKey: "NSHumanReadableCopyright") as? String
+            ?? "Copyright © 2026 CloudArchitech LLC"
     }
 
     private var versionLine: String {
