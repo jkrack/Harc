@@ -55,6 +55,7 @@ public final class DictationController {
     /// requesting it (system prompt) when undetermined. Runs BEFORE capture so
     /// the prompt never races the push-to-talk key-hold.
     private let micPermission: () async -> MicPermission
+    private let hasInputDevice: @Sendable () -> Bool
     /// Daemon readiness seam. Awaited before transcription; calls the given
     /// closure first when the daemon is cold so the UI can show a loading
     /// state. Also fired (result ignored) at dictation start to pre-warm.
@@ -117,6 +118,11 @@ public final class DictationController {
             SelectionContextReader.capture(selectedText: selection, clipboard: clipboard)
         },
         micPermission: (() async -> MicPermission)? = nil,
+        /// Whether this Mac has an audio input device at all. Injectable
+        /// because it is a global hardware fact: called directly it made every
+        /// dictation test short-circuit on any machine without a microphone,
+        /// which includes the one this is developed on.
+        hasInputDevice: @escaping @Sendable () -> Bool = { AudioInputAvailability.hasInputDevice },
         ensureDaemonReady: ((@escaping @MainActor () -> Void) async throws -> Void)? = nil,
         cancelConfirmThreshold: TimeInterval = 30,
         harcBundleID: String = Bundle.main.bundleIdentifier ?? "com.harc.app"
@@ -134,6 +140,7 @@ public final class DictationController {
         self.preloadTransformModel = preloadTransformModel
         self.captureContext = captureContext
         self.micPermission = micPermission ?? Self.systemMicPermission
+        self.hasInputDevice = hasInputDevice
         self.ensureDaemonReady = ensureDaemonReady
         self.cancelConfirmThreshold = cancelConfirmThreshold
         self.harcBundleID = harcBundleID
@@ -291,7 +298,7 @@ public final class DictationController {
         // permission in S…" — a sentence about permissions, truncated by the
         // HUD pill, on a Mac whose actual problem is that no input device is
         // attached at all.
-        guard AudioInputAvailability.hasInputDevice else {
+        guard hasInputDevice() else {
             state.setPhase(.error("No microphone connected"))
             return
         }

@@ -54,6 +54,30 @@ private final class SpyContextCapture {
     }
 }
 
+@Suite("Dictation without a microphone")
+@MainActor
+struct DictationNoInputDeviceTests {
+    /// A Mac with no input device — a Mac mini with nothing plugged in — used
+    /// to reach the audio engine and fail there, surfacing "Audio engine
+    /// failure: No microphone input is available. Check Harc's Microphone
+    /// permission in S…" truncated into the HUD pill. Refuse up front instead.
+    @Test("dictation refuses with a readable reason and never opens the recorder")
+    func refusesWithoutInputDevice() async {
+        let prefs = HarcPreferences.shared
+        let paster = SpyPaster(frontmost: "com.apple.TextEdit")
+        let (controller, state) = makeController(
+            prefs: prefs,
+            paster: paster,
+            hasInputDevice: { false }
+        )
+
+        await controller.start()
+
+        #expect(state.phase == DictationState.Phase.error("No microphone connected"))
+        #expect(paster.inserted.isEmpty)
+    }
+}
+
 @MainActor
 private func makeController(
     prefs: HarcPreferences,
@@ -67,6 +91,10 @@ private func makeController(
     preloadTransformModel: ((DictationMode) async -> Void)? = nil,
     contextCapture: SpyContextCapture? = nil,
     micPermission: (() async -> DictationController.MicPermission)? = nil,
+    // These tests drive dictation through a fake recorder, so the machine's
+    // own audio hardware is irrelevant to them — and must not decide whether
+    // they run. One test overrides this to cover the no-device path.
+    hasInputDevice: @escaping @Sendable () -> Bool = { true },
     ensureDaemonReady: ((@escaping @MainActor () -> Void) async throws -> Void)? = nil,
     cancelConfirmThreshold: TimeInterval = 30,
     harcBundleID: String = "com.harc.test-suite"
@@ -90,6 +118,7 @@ private func makeController(
         preloadTransformModel: preloadTransformModel,
         captureContext: { spy.capture($0, $1) },
         micPermission: micPermission ?? { .granted },
+        hasInputDevice: hasInputDevice,
         ensureDaemonReady: ensureDaemonReady,
         cancelConfirmThreshold: cancelConfirmThreshold,
         harcBundleID: harcBundleID
