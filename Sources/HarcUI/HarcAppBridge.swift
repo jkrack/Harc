@@ -88,6 +88,9 @@ public final class HarcAppBridge: ObservableObject {
     public var onClearPreRoll: () -> Void = {}
     public var onStopNow: () -> Void = {}
     public var onOpenSettings: () -> Void = {}
+    /// Open the Library's Activity surface (readiness / recovery / jobs) —
+    /// the destination behind the panel's single status row.
+    public var onOpenActivity: () -> Void = {}
     public var onRevealStopRecovery: () -> Void = {}
     public var onRetryStopRecovery: () -> Void = {}
     public var onDismissStopRecovery: () -> Void = {}

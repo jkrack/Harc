@@ -124,6 +124,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onOpenSettings = { [weak self] in
             self?.openSettings()
         }
+        bridge.onOpenActivity = { [weak self] in
+            self?.statusPopover?.performClose(nil)
+            self?.openLibrary()
+            NotificationCenter.default.post(name: .harcLibraryShowActivity, object: nil)
+        }
         bridge.onRevealStopRecovery = {
             NSWorkspace.shared.activateFileViewerSelecting([RecordingDestination.cacheDirectory()])
         }
@@ -3304,6 +3309,7 @@ private struct StatusPopoverRoot: View {
             onKeepRecording: bridge.onKeepRecording,
             onStopNow: bridge.onStopNow,
             onOpenSettings: bridge.onOpenSettings,
+            onOpenActivity: bridge.onOpenActivity,
             onRevealStopRecovery: bridge.onRevealStopRecovery,
             onRetryStopRecovery: bridge.onRetryStopRecovery,
             onDismissStopRecovery: bridge.onDismissStopRecovery,

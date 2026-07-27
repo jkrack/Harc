@@ -86,6 +86,8 @@ public struct HarcWindowRootView: View {
     /// ⌘-click-to-seek and word highlight drive the same clock the waveform
     /// shows, instead of the second player the editor window used to own.
     @StateObject var playerModel = WaveformPlayerModel()
+    /// The Activity sheet — readiness, recovery and running jobs, told once.
+    @State var showActivity = false
     /// Resolved speaker labels for the current selection, keyed by speaker
     /// index. Populated asynchronously on selection change via
     /// `loadResolvedLabels()` so Person-linked names show up in transcript
@@ -171,7 +173,6 @@ public struct HarcWindowRootView: View {
     public var body: some View {
         return VStack(spacing: 0) {
             split
-            importBanner
             Divider()
             libraryFooter
         }
@@ -188,6 +189,16 @@ public struct HarcWindowRootView: View {
                     .padding(3)
                     .allowsHitTesting(false)
             }
+        }
+        .sheet(isPresented: $showActivity) {
+            ActivityView(
+                bridge: bridge,
+                importState: importState,
+                onDismiss: { showActivity = false }
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .harcLibraryShowActivity)) { _ in
+            showActivity = true
         }
         .onAppear(perform: handleAppear)
         .onDisappear(perform: handleDisappear)
@@ -336,7 +347,7 @@ public struct HarcWindowRootView: View {
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(Color.secondary)
             Spacer(minLength: 16)
-            footerStackHardware
+            footerStatus
         }
         .padding(.horizontal, 16)
         .frame(height: 28)
@@ -348,65 +359,6 @@ public struct HarcWindowRootView: View {
 
     /// Compact status bar above the footer while an import runs (or just
     /// finished / failed). Hidden entirely when there is nothing to show.
-    @ViewBuilder
-    var importBanner: some View {
-        if let job = importState.current {
-            HStack(spacing: 8) {
-                ProgressView(value: job.fraction)
-                    .frame(width: 120)
-                Text("\(job.phaseText) \u{201C}\(job.filename)\u{201D}")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if importState.queuedCount > 0 {
-                    Text("+\(importState.queuedCount) queued")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer()
-                if let onCancelImport {
-                    Button("Cancel") { onCancelImport() }
-                        .buttonStyle(.borderless)
-                        .font(.caption)
-                        .help("Stop this import — nothing is added to the library")
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 5)
-            .background(.bar)
-        } else if let error = importState.lastError {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.yellow)
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                Spacer()
-                Button("Dismiss") { importState.dismissError() }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 5)
-            .background(.bar)
-        } else if let done = importState.lastCompletedFilename {
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("Imported \u{201C}\(done)\u{201D}")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Dismiss") { importState.dismissCompleted() }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 5)
-            .background(.bar)
-        }
-    }
 
     /// NSOpenPanel for File-style import. Multi-select; filtered to the
     /// audio/video types MediaImportService can convert.
@@ -446,21 +398,47 @@ public struct HarcWindowRootView: View {
         return true
     }
 
-    var footerStackHardware: some View {
+    /// The right side of the footer is the live status line — what is
+    /// running right now — plus the LOCAL badge, which is the product's
+    /// whole claim and earns permanence. The hardware and model string that
+    /// used to sit here never changed for the lifetime of an install; it
+    /// lives in Settings › About now. Tapping the status opens Activity.
+    var footerStatus: some View {
         HStack(spacing: 8) {
-            Text("\(HardwareInfo.appleSiliconDisplayName) · Neural Engine")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Color.secondary)
-            Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
-            Text("parakeet-tdt-0.6b-v3")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Color.secondary)
-            Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
+            if let live = footerLiveStatusText {
+                Button {
+                    showActivity = true
+                } label: {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text(live)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Open Activity")
+                Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
+            }
             Text("LOCAL")
                 .font(.system(.caption2, design: .monospaced).weight(.semibold))
                 .tracking(1.0)
                 .foregroundStyle(Color.green)
+                .help("All transcription and summarization runs on this Mac")
         }
+    }
+
+    var footerLiveStatusText: String? {
+        if let job = importState.current {
+            let queued = importState.queuedCount > 0 ? " (+\(importState.queuedCount))" : ""
+            return "\(job.phaseText.isEmpty ? "Importing" : job.phaseText) \(job.filename)\(queued)"
+        }
+        if case .identifying = postProcessing.current?.phase {
+            return "Identifying speakers…"
+        }
+        return nil
     }
 
     var footerCountAndStorage: String {

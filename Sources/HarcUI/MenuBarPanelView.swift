@@ -34,6 +34,9 @@ public struct MenuBarPanelView: View {
     let onKeepRecording: () -> Void
     let onStopNow: () -> Void
     let onOpenSettings: () -> Void
+    /// Opens the Library's Activity surface — the destination for every
+    /// conditional detail this panel no longer renders inline.
+    let onOpenActivity: () -> Void
     let onRevealStopRecovery: () -> Void
     let onRetryStopRecovery: () -> Void
     let onDismissStopRecovery: () -> Void
@@ -76,8 +79,6 @@ public struct MenuBarPanelView: View {
     @State private var elapsedText: String = "0:00"
     @State private var ticker: Timer?
     @State private var modePickerHovering = false
-    @State private var readinessExpanded = false
-    @State private var readinessSummaryHovering = false
 
     public init(
         recordingState: RecordingState,
@@ -104,6 +105,7 @@ public struct MenuBarPanelView: View {
         onKeepRecording: @escaping () -> Void = {},
         onStopNow: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
+        onOpenActivity: @escaping () -> Void = {},
         onRevealStopRecovery: @escaping () -> Void = {},
         onRetryStopRecovery: @escaping () -> Void = {},
         onDismissStopRecovery: @escaping () -> Void = {},
@@ -165,6 +167,7 @@ public struct MenuBarPanelView: View {
         self.onKeepRecording = onKeepRecording
         self.onStopNow = onStopNow
         self.onOpenSettings = onOpenSettings
+        self.onOpenActivity = onOpenActivity
         self.onRevealStopRecovery = onRevealStopRecovery
         self.onRetryStopRecovery = onRetryStopRecovery
         self.onDismissStopRecovery = onDismissStopRecovery
@@ -358,41 +361,6 @@ public struct MenuBarPanelView: View {
     /// Settings — and "Clear" is the escape hatch for the moment they say
     /// something they don't want kept.
     @ViewBuilder
-    private func preRollRow(_ status: PreRollStatus) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: status.isFailed ? "exclamationmark.triangle.fill" : "backward.circle")
-                .foregroundStyle(status.isFailed ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
-            VStack(alignment: .leading, spacing: 1) {
-                switch status {
-                case .listening(let banked):
-                    Text("Ready to capture the last \(Self.formatBanked(banked))")
-                        .font(.caption.weight(.medium))
-                    Text("Held in memory only")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                case .failed(let reason):
-                    Text("Retroactive record isn't running")
-                        .font(.caption.weight(.medium))
-                    Text(reason)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 4)
-            // Nothing is banked when the ring is dead, so Clear would be a
-            // button that does nothing to reassure the user about audio that
-            // was never captured.
-            if case .listening = status, let onClearPreRoll {
-                Button("Clear", action: onClearPreRoll)
-                    .font(.caption2)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(8)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
 
     static func formatBanked(_ seconds: TimeInterval) -> String {
         let whole = Int(seconds.rounded())
@@ -403,8 +371,7 @@ public struct MenuBarPanelView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
                 // Hero: state + waveform + the two primary actions.
                 VStack(alignment: .leading, spacing: 10) {
                     stateLine
@@ -419,26 +386,15 @@ public struct MenuBarPanelView: View {
                     }
                 }
 
-                readinessSection
+                // The budget: everything below is always visible, nothing
+                // scrolls. Conditional detail — readiness rows, recovery,
+                // capture paths, countdowns — lives behind the status row,
+                // which opens the Library's Activity surface. A menu-bar
+                // panel that scrolls is a window in denial.
+                statusRow
 
-                if recordingState.isRecording, let activeCaptureStatus {
-                    activeCaptureStatusView(activeCaptureStatus)
-                }
-
-                if !recordingState.isRecording, let preRollStatus {
-                    preRollRow(preRollStatus)
-                }
-
-                if showsAutoStopSurface {
-                    autoStopSurface
-                }
-
-                if let stopRecovery {
-                    stopRecoveryBanner(stopRecovery)
-                }
-
-                if showsRecoveryInbox {
-                    recoveryInboxBanner
+                if recordingState.isRecording {
+                    durabilityLine
                 }
 
                 if hasLastCapture {
@@ -455,12 +411,10 @@ public struct MenuBarPanelView: View {
                 Divider()
                 footer
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
         .frame(width: 320)
-        .frame(maxHeight: 480)
         .animation(.easeInOut(duration: 0.2), value: trayState.isVisible)
         .onAppear { startTicker() }
         .onDisappear { stopTicker() }
@@ -492,45 +446,7 @@ public struct MenuBarPanelView: View {
         }
     }
 
-    private func activeCaptureStatusView(_ status: ActiveCaptureStatus) -> some View {
-        NativeStatusCallout(intent: status.sourceState == .micOnly ? .warning : .success) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Image(systemName: status.sourceState == .micOnly ? "mic.fill.badge.exclamationmark" : "waveform")
-                        .foregroundStyle(status.sourceState == .micOnly ? Color.orange : Color.green)
-                        .frame(width: 14)
-                    Text(status.sourceState.displayText)
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                }
-                if let warningText = status.sourceState.warningText {
-                    Text(warningText)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                activeCapturePathRow(label: "Writing", path: status.cachePath)
-                activeCapturePathRow(label: "Saves to", path: status.destinationPath)
-                Text(status.transcriptAgeText())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
 
-    private func activeCapturePathRow(label: String, path: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .leading)
-            Text(path)
-                .font(.caption2.monospaced())
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
 
     /// Footer as proper menu rows: every action a full-width,
     /// hover-highlighted target — no more bare text links.
@@ -586,74 +502,96 @@ public struct MenuBarPanelView: View {
 
     /// Readiness collapses to a one-line summary while everything is
     /// healthy — seven green rows are noise; problems auto-expand.
-    @ViewBuilder
-    private var readinessSection: some View {
-        let items = LocalStackHealthModel.items(for: localStackInput)
-        let hasIssues = items.contains { $0.state == .warning }
-        if hasIssues || readinessExpanded {
-            VStack(alignment: .leading, spacing: 4) {
-                LocalStackHealthView(
-                    items: items,
-                    compact: true,
-                    onFix: { item in fixReadinessItem(item) }
-                )
-                if !hasIssues {
-                    HoverPillButton(title: "Hide details", tint: .secondary) {
-                        withAnimation(.easeInOut(duration: 0.15)) { readinessExpanded = false }
+    // MARK: - Status row (the panel's one line of system state)
+
+    private var healthItems: [LocalStackHealthItem] {
+        LocalStackHealthModel.items(for: localStackInput)
+    }
+
+    private var statusSummary: String {
+        LocalStackHealthModel.summary(for: healthItems)
+    }
+
+    private enum StatusTone { case ready, attention, broken }
+
+    private var statusTone: StatusTone {
+        switch statusSummary {
+        case "Recording blocked": return .broken
+        case "Ready to record", "Capture ready": return .ready
+        default: return .attention
+        }
+    }
+
+    /// The single most urgent transient, one line, under the summary. The
+    /// full story lives in Activity; this is the trailer.
+    private var statusSubtitle: String? {
+        if let stopRecovery { return stopRecovery.title }
+        let pending = RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
+        if pending > 0 { return "\(Pluralize.count(pending, "recording")) awaiting recovery" }
+        if case .failed(let reason) = preRollStatus { return "Retroactive record isn't running — \(reason)" }
+        if showsAutoStopSurface { return "Auto-stop countdown running" }
+        if case .listening(let banked) = preRollStatus {
+            return "Holding the last \(Self.formatBanked(banked)) in memory"
+        }
+        return nil
+    }
+
+    private var statusRow: some View {
+        Button {
+            onOpenActivity()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: statusTone == .ready
+                      ? "checkmark.circle.fill"
+                      : statusTone == .attention ? "exclamationmark.circle.fill" : "xmark.octagon.fill")
+                    .font(.caption)
+                    .foregroundStyle(statusTone == .ready ? Color.green
+                                     : statusTone == .attention ? Color.orange : Color.red)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(statusSummary)
+                        .font(.caption)
+                        .foregroundStyle(statusTone == .ready ? .secondary : .primary)
+                    if let statusSubtitle {
+                        Text(statusSubtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-            }
-        } else {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { readinessExpanded = true }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                    Text(LocalStackHealthModel.summary(for: items))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.down")
+                Spacer(minLength: 8)
+                // The privacy escape hatch stays one tap deep: wiping the
+                // retroactive buffer must not require opening a window.
+                if case .listening = preRollStatus, let onClearPreRoll {
+                    Button("Clear", action: onClearPreRoll)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 8)
-                .frame(minHeight: 24)
-                .frame(maxWidth: .infinity)
-                .contentShape(RoundedRectangle(cornerRadius: 6))
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(readinessSummaryHovering ? Color.primary.opacity(0.06) : Color.clear)
-                )
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.plain)
-            .onHover { readinessSummaryHovering = $0 }
-            .help("Show local stack details")
+            .padding(8)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
+        .buttonStyle(.plain)
+        .help("Open Activity — readiness, recovery, and running jobs")
     }
 
-    /// Route each readiness fix to its actual remedy — the system privacy
-    /// pane that's wrong, or Settings — instead of a generic Settings open.
-    private func fixReadinessItem(_ item: LocalStackHealthItem) {
-        switch item.id {
-        case .capture:
-            openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
-        case .systemAudio:
-            openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-        case .accessibility, .dictation:
-            openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-        case .notifications:
-            openSystemSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
-        case .destination, .stt, .summarizer, .speakerID, .recovery:
-            onOpenSettings()
+    /// P1-8: durability reassurance in words, not debug output. The full
+    /// paths live in Settings › About › Storage, where they always did.
+    private var durabilityLine: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "internaldrive")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text("Saving to \(destinationDisplayText) — safe through a crash.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-    }
-
-    private func openSystemSettings(_ urlString: String) {
-        guard let url = URL(string: urlString) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     private var localStackInput: LocalStackHealthInput {
@@ -674,20 +612,11 @@ public struct MenuBarPanelView: View {
             accessibilityReady: accessibilityReady,
             accessibilityText: accessibilityReadinessText,
             dictationHotkeySet: KeyboardShortcuts.getShortcut(for: .pushToTalkDictation) != nil,
-            // Zero here suppresses the Local Stack's "Recovery — N pending /
-            // Open recovery" row whenever the recovery card is already on
-            // screen a few pixels below it, with the artifacts listed and
-            // Recover/Reveal/Discard on each. Stating the same problem twice
-            // in one panel — once as a pointer to a surface that is already
-            // open — made a handled situation look like two.
-            pendingRecoveryCount: showsRecoveryInbox
-                ? 0
-                : RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
+            // Honest count. The zeroing hack that lived here — nine lines of
+            // comment explaining why the panel had to lie to itself to avoid
+            // stating recovery twice — died with the second renderer.
+            pendingRecoveryCount: RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
         )
-    }
-
-    private var showsRecoveryInbox: Bool {
-        RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) > 0
     }
 
     private func readinessRow(
@@ -758,26 +687,6 @@ public struct MenuBarPanelView: View {
     }
 
     @ViewBuilder
-    private var autoStopSurface: some View {
-        switch autoStopPhase {
-        case .warning(let secondsLeft, let reason):
-            CountdownWarningPanel(
-                secondsLeft: secondsLeft,
-                totalSeconds: autoStopWarningSeconds,
-                reason: reason,
-                thresholdMinutes: autoStopThresholdMinutes,
-                micDb: autoStopMicDb,
-                systemDb: autoStopSystemDb,
-                onKeepRecording: onKeepRecording,
-                onStopNow: onStopNow,
-                onOpenSettings: onOpenSettings
-            )
-        case .stoppedBanner(let reason, let at):
-            autoStoppedBanner(reason: reason, at: at)
-        case .idle, .watching:
-            EmptyView()
-        }
-    }
 
     private func autoStoppedBanner(reason: AutoStopController.StopReason, at: Date) -> some View {
         NativeStatusCallout(intent: .warning) {
@@ -802,115 +711,7 @@ public struct MenuBarPanelView: View {
         }
     }
 
-    private func stopRecoveryBanner(_ recovery: StopRecoveryInfo) -> some View {
-        NativeStatusCallout(intent: recovery.isRecovering ? .info : .warning) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: recovery.isRecovering ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(recovery.isRecovering ? Color.accentColor : Color.orange)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(recovery.title)
-                            .font(.subheadline.weight(.semibold))
-                        Text(recovery.message)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(recovery.cacheDirectoryPath)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                HStack(spacing: 8) {
-                    Button("Reveal") { onRevealStopRecovery() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    Button(recovery.isRecovering ? "Retrying..." : "Retry") { onRetryStopRecovery() }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(recovery.isRecovering)
-                    Button("Settings") { onOpenSettings() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    Button("Dismiss") { onDismissStopRecovery() }
-                        .buttonStyle(.plain)
-                        .controlSize(.small)
-                }
-            }
-        }
-    }
 
-    private var recoveryInboxBanner: some View {
-        let rows = Array(RecoveryInboxModel.rows(for: recoveryArtifacts).prefix(2))
-        return NativeStatusCallout(intent: .warning) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "externaldrive.badge.exclamationmark")
-                        .foregroundStyle(Color.orange)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Recovery needed")
-                            .font(.subheadline.weight(.semibold))
-                        Text("\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)) recording artifact\(RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts) == 1 ? "" : "s") need attention.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                ForEach(rows) { row in
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 6) {
-                            Text(row.title)
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                            Spacer()
-                            Text(row.statusText)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(row.sourcePath)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        // `RecoveryInboxRow.detail` already resolves to the
-                        // artifact's last error, and the panel never showed
-                        // it. An item that can never succeed — a truncated
-                        // WAV that isn't decodable PCM — then sits in the
-                        // inbox as an unexplained orange warning forever, with
-                        // a Recover button that fails the same way each time.
-                        if !row.detail.isEmpty, row.detail != row.title {
-                            Text(row.detail)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        HStack(spacing: 8) {
-                            Button("Recover") { onRecoverRecoveryArtifact(row.id) }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                                .disabled(!row.canRecover)
-                            Button("Reveal") { onRevealRecoveryArtifact(row.id) }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(!row.canReveal)
-                            Button("Discard") { onDiscardRecoveryArtifact(row.id) }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(!row.canDiscard)
-                        }
-                    }
-                    .padding(.top, 2)
-                }
-
-                if RecoveryInboxModel.rows(for: recoveryArtifacts).count > rows.count {
-                    Button("Open Settings") { onOpenSettings() }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                }
-            }
-        }
-    }
 
     private var compactLastCapture: some View {
         VStack(alignment: .leading, spacing: 6) {

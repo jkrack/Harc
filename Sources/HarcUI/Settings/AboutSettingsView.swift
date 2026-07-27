@@ -200,6 +200,9 @@ public struct AboutSettingsView: View {
             bullet("Recordings are transcribed in rolling 60-second chunks during capture, so the transcript is ~90% done the moment you hit stop.")
             bullet("Diarization and speaker re-identification group the transcript by voice and remember speakers across meetings.")
             bullet("On-device summarization by Gemma 4 via MLX. The library is stored in GRDB/SQLite at ~/Library/Application Support/Harc.")
+            // Moved here from the Library footer: static for the lifetime of
+            // an install, so it reads as reference, not status.
+            bullet("Runs on \(HardwareInfo.appleSiliconDisplayName) via the Neural Engine · speech model parakeet-tdt-0.6b-v3 · fully local.")
         }
         .padding(.vertical, 4)
     }
