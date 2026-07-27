@@ -481,8 +481,7 @@ public struct HarcWindowRootView: View {
     @ViewBuilder
     var sidebar: some View {
         VStack(spacing: 0) {
-            calendarHeader
-            Divider()
+            dateScopeBar
             Group {
                 if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     groupedList
@@ -496,43 +495,73 @@ public struct HarcWindowRootView: View {
         .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
     }
 
-    // MARK: - Calendar header
+    // MARK: - Date scope
 
-    var calendarHeader: some View {
-        VStack(spacing: 6) {
-            MonthCalendarView(
-                month: libraryVM.calendarMonth,
-                selectedDay: selectedFilterDay,
-                daysWithRecordings: libraryVM.daysWithRecordings,
-                onPrevMonth: { libraryVM.advanceMonth(by: -1) },
-                onNextMonth: { libraryVM.advanceMonth(by: 1) },
-                onSelectDay: { day in
-                    // Toggle: clicking the already-selected day clears the filter.
-                    if let current = selectedFilterDay,
-                       Calendar.current.isDate(current, inSameDayAs: day) {
-                        libraryVM.filter = .all
-                    } else {
-                        libraryVM.filter = .day(day)
-                    }
-                }
-            )
-            if let activeDay = selectedFilterDay {
-                HStack(spacing: 6) {
-                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                        .foregroundStyle(.secondary)
-                    Text("Filtered: \(formatFilterDay(activeDay))")
+    /// The month grid used to sit permanently expanded at the top of the
+    /// sidebar — 200pt of its best space spent on a rare filter, with a
+    /// filled accent "selected day" competing against the filled accent
+    /// selected row a few pixels below it. It is now a scope control: one
+    /// compact line under the search field, and the grid (day-dots and all)
+    /// lives in a popover that exists only while it is being used.
+    @State private var dateScopePopoverOpen = false
+
+    var dateScopeBar: some View {
+        HStack(spacing: 6) {
+            Button {
+                // Surface the month that actually has recordings the moment
+                // the grid appears, not whatever month it last showed.
+                libraryVM.alignCalendarForPresentation()
+                dateScopePopoverOpen = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "calendar")
+                    Text(selectedFilterDay.map(formatFilterDay) ?? "All dates")
                         .font(.caption)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Show all") { libraryVM.filter = .all }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(Color.accentColor)
                 }
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(selectedFilterDay == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
+            .popover(isPresented: $dateScopePopoverOpen, arrowEdge: .bottom) {
+                MonthCalendarView(
+                    month: libraryVM.calendarMonth,
+                    selectedDay: selectedFilterDay,
+                    daysWithRecordings: libraryVM.daysWithRecordings,
+                    onPrevMonth: { libraryVM.advanceMonth(by: -1) },
+                    onNextMonth: { libraryVM.advanceMonth(by: 1) },
+                    onSelectDay: { day in
+                        // Toggle: picking the already-selected day clears.
+                        if let current = selectedFilterDay,
+                           Calendar.current.isDate(current, inSameDayAs: day) {
+                            libraryVM.filter = .all
+                        } else {
+                            libraryVM.filter = .day(day)
+                        }
+                        dateScopePopoverOpen = false
+                    }
+                )
+                .padding(10)
+                .frame(width: 260)
+            }
+
+            if selectedFilterDay != nil {
+                Button {
+                    libraryVM.filter = .all
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Show all dates")
+            }
+
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     var selectedFilterDay: Date? {

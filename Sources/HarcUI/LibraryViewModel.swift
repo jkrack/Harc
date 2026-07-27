@@ -125,6 +125,14 @@ public final class LibraryViewModel: ObservableObject {
         Task { [weak self] in await self?.refreshDaysWithRecordings() }
     }
 
+    /// Called when the date-scope popover is about to present. The grid now
+    /// exists only while it is open, so "open on the month that has the
+    /// recordings" has to happen at presentation time rather than at load.
+    public func alignCalendarForPresentation() {
+        alignCalendarToNewestRecordingIfNeeded(recordings.isEmpty ? fullList : recordings)
+        Task { [weak self] in await self?.refreshDaysWithRecordings() }
+    }
+
     public func advanceMonth(by delta: Int) {
         hasUserChosenMonth = true
         let cal = Calendar.current
