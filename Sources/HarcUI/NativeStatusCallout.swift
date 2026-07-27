@@ -30,7 +30,7 @@ public struct NativeStatusCallout<Content: View>: View {
 
     public var body: some View {
         content
-            .padding(10)
+            .padding(HarcSpacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(alignment: .leading) {

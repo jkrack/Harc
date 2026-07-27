@@ -124,7 +124,7 @@ public struct DictationModesSettingsView: View {
 
     @ViewBuilder
     private func modeRow(_ mode: DictationMode) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Image(systemName: mode.symbolName)
                 .frame(width: 18)
                 .foregroundStyle(.secondary)

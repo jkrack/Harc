@@ -37,7 +37,7 @@ public struct WaveformPlayerView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: HarcSpacing.md) {
             playButton
             waveform
             timeLabel

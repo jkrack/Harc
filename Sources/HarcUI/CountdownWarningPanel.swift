@@ -41,12 +41,12 @@ public struct CountdownWarningPanel: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
+            HStack(alignment: .top, spacing: HarcSpacing.md) {
                 CountdownRing(secondsLeft: secondsLeft, totalSeconds: totalSeconds)
                     .frame(width: 52, height: 52)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                     Text(headline)
                         .font(.harcLabel.weight(.semibold))
                         .foregroundStyle(Color.primary)
@@ -56,14 +56,14 @@ public struct CountdownWarningPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     levelReadout
-                        .padding(.top, 6)
+                        .padding(.top, HarcSpacing.sm)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 Button(action: onKeepRecording) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: HarcSpacing.sm) {
                         Text("Keep Recording")
                             .font(.harcCaption.weight(.medium))
                         Text("Space")
@@ -78,7 +78,7 @@ public struct CountdownWarningPanel: View {
                     }
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, HarcSpacing.sm)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
                             .fill(Color.accentColor)
@@ -92,8 +92,8 @@ public struct CountdownWarningPanel: View {
                     Text("Stop Now")
                         .font(.harcCaption)
                         .foregroundStyle(Color.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, HarcSpacing.md)
+                        .padding(.vertical, HarcSpacing.sm)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
                                 .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
@@ -122,8 +122,8 @@ public struct CountdownWarningPanel: View {
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, HarcSpacing.lg)
+        .padding(.vertical, HarcSpacing.lg)
         .glassEffect(in: RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
@@ -170,7 +170,7 @@ public struct CountdownWarningPanel: View {
 
     @ViewBuilder
     private var levelReadout: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: HarcSpacing.md) {
             HStack(spacing: 5) {
                 Image(systemName: "mic")
                     .font(.harcCaption.weight(.medium))

@@ -107,7 +107,7 @@ struct RecordingExportSheet: View {
     }
 
     private var formatPicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             Text("Format")
                 .font(.harcTitle)
             ForEach(RecordingExportOption.allCases) { option in
@@ -115,7 +115,7 @@ struct RecordingExportSheet: View {
                     draft.option = option
                     exportError = nil
                 } label: {
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .top, spacing: HarcSpacing.md) {
                         Image(systemName: option.iconName)
                             .frame(width: 20)
                             .foregroundStyle(draft.option == option ? HarcBrand.live : .secondary)
@@ -134,7 +134,7 @@ struct RecordingExportSheet: View {
                                 .multilineTextAlignment(.leading)
                         }
                     }
-                    .padding(10)
+                    .padding(HarcSpacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(formatBackground(for: option))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -145,7 +145,7 @@ struct RecordingExportSheet: View {
     }
 
     private var options: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             Toggle("Include summary and action items when available", isOn: $draft.includeSummary)
             Text(summaryOptionDescription)
                 .font(.harcCaption)
@@ -154,10 +154,10 @@ struct RecordingExportSheet: View {
     }
 
     private var destinationPreview: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             Text("Filename")
                 .font(.harcTitle)
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "doc")
                     .foregroundStyle(.secondary)
                 Text(draft.defaultFilename(for: recording))
@@ -166,7 +166,7 @@ struct RecordingExportSheet: View {
                     .truncationMode(.middle)
                 Spacer()
             }
-            .padding(10)
+            .padding(HarcSpacing.md)
             .background(Color.secondary.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
@@ -243,7 +243,7 @@ private struct InlineExportError: View {
     let message: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: HarcSpacing.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(Color.harc(.failure))
             Text(message)
@@ -252,7 +252,7 @@ private struct InlineExportError: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .padding(HarcSpacing.md)
         .background(Color.harc(.failure).opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }

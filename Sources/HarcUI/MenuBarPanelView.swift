@@ -209,7 +209,7 @@ public struct MenuBarPanelView: View {
     /// The panel's two jobs, given the panel's two biggest targets:
     /// equal-width Record/Stop and Dictate buttons.
     private var primaryControls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Button {
                 onStartStop()
             } label: {
@@ -238,7 +238,7 @@ public struct MenuBarPanelView: View {
     /// Live dictation status: shown for any non-idle phase — including the
     /// done/error afterglow, which isn't "active".
     private var dictationStatusRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Image(systemName: "mic.fill")
                 .foregroundStyle(dictationActive ? HarcBrand.live : .secondary)
             Text(dictationStatusText ?? "Dictation")
@@ -264,7 +264,7 @@ public struct MenuBarPanelView: View {
     /// Idle secondary row: library, dictation mode, and recent history —
     /// each with a full-size hover-highlighted target.
     private var secondaryControlsRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             MenuPanelRowButton(
                 icon: "books.vertical",
                 title: "Library",
@@ -298,7 +298,7 @@ public struct MenuBarPanelView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: HarcSpacing.xs) {
                 Image(systemName: "wand.and.stars")
                     .font(.harcCaption)
                 Text(dictationModes.first { $0.id == activeDictationModeID }?.name ?? "Raw")
@@ -306,7 +306,7 @@ public struct MenuBarPanelView: View {
                     .lineLimit(1)
             }
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, HarcSpacing.sm)
             .frame(minHeight: 28)
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .background(
@@ -371,9 +371,9 @@ public struct MenuBarPanelView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: HarcSpacing.lg) {
                 // Hero: state + waveform + the two primary actions.
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: HarcSpacing.md) {
                     stateLine
                     LiveWaveformView(history: amplitudeHistory, size: .panel, isActive: recordingState.isRecording)
                         .frame(height: 28)
@@ -411,9 +411,9 @@ public struct MenuBarPanelView: View {
                 Divider()
                 footer
             }
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, HarcSpacing.md)
+        .padding(.top, HarcSpacing.md)
+        .padding(.bottom, HarcSpacing.sm)
         .frame(width: 320)
         .animation(.easeInOut(duration: 0.2), value: trayState.isVisible)
         .onAppear { startTicker() }
@@ -431,7 +431,7 @@ public struct MenuBarPanelView: View {
     // MARK: - Sub-views
 
     private var stateLine: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Circle()
                 .fill(recordingState.isRecording ? HarcBrand.live : Color.secondary.opacity(0.4))
                 .frame(width: 8, height: 8)
@@ -484,7 +484,7 @@ public struct MenuBarPanelView: View {
                 .font(.harcCaption.monospacedDigit())
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity)
-                .padding(.top, 6)
+                .padding(.top, HarcSpacing.sm)
         }
     }
 
@@ -540,7 +540,7 @@ public struct MenuBarPanelView: View {
         Button {
             onOpenActivity()
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: statusTone == .ready
                       ? "checkmark.circle.fill"
                       : statusTone == .attention ? "exclamationmark.circle.fill" : "xmark.octagon.fill")
@@ -572,7 +572,7 @@ public struct MenuBarPanelView: View {
                     .font(.harcCaption)
                     .foregroundStyle(.tertiary)
             }
-            .padding(8)
+            .padding(HarcSpacing.sm)
             .contentShape(RoundedRectangle(cornerRadius: 8))
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -583,7 +583,7 @@ public struct MenuBarPanelView: View {
     /// P1-8: durability reassurance in words, not debug output. The full
     /// paths live in Settings › About › Storage, where they always did.
     private var durabilityLine: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             Image(systemName: "internaldrive")
                 .font(.harcCaption)
                 .foregroundStyle(.secondary)
@@ -625,7 +625,7 @@ public struct MenuBarPanelView: View {
         status: ReadinessStatus,
         help: String? = nil
     ) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: HarcSpacing.sm) {
             Image(systemName: icon)
                 .font(.harcCaption.weight(.semibold))
                 .foregroundStyle(status.color)
@@ -641,7 +641,7 @@ public struct MenuBarPanelView: View {
 
     private var tray: some View {
         NativeStatusCallout(intent: trayIntent) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 if let outcome = trayState.lastOutcome {
                     stopOutcomeView(outcome)
                 }
@@ -649,7 +649,7 @@ public struct MenuBarPanelView: View {
                     .font(.harcTitle)
                     .lineLimit(2)
                     .truncationMode(.tail)
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     if canOpenLastRecording {
                         Button("Open") { onOpenLastRecording() }
                             .buttonStyle(.bordered)
@@ -690,7 +690,7 @@ public struct MenuBarPanelView: View {
 
     private func autoStoppedBanner(reason: AutoStopController.StopReason, at: Date) -> some View {
         NativeStatusCallout(intent: .warning) {
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "clock.badge.checkmark")
                     .foregroundStyle(Color.harc(.attention))
                 VStack(alignment: .leading, spacing: 2) {
@@ -702,7 +702,7 @@ public struct MenuBarPanelView: View {
                         .lineLimit(2)
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 Button("Open") { onOpenLastRecording() }
                     .buttonStyle(.bordered)
                 Button("Resume") { onStartStop() }
@@ -714,8 +714,8 @@ public struct MenuBarPanelView: View {
 
 
     private var compactLastCapture: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+            HStack(spacing: HarcSpacing.sm) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Last capture")
                         .font(.harcCaption)
@@ -761,7 +761,7 @@ public struct MenuBarPanelView: View {
     }
 
     private func stopOutcomeView(_ outcome: StopOutcome) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: HarcSpacing.sm) {
             Image(systemName: stopOutcomeIcon(outcome.kind))
                 .foregroundStyle(stopOutcomeColor(outcome.kind))
             VStack(alignment: .leading, spacing: 2) {

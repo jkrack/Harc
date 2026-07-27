@@ -31,7 +31,7 @@ public struct MonthCalendarView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: HarcSpacing.sm) {
             header
             weekdayRow
             daysGrid
@@ -41,7 +41,7 @@ public struct MonthCalendarView: View {
     // MARK: - Header (month label + nav)
 
     private var header: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: HarcSpacing.xs) {
             Button(action: onPrevMonth) {
                 Image(systemName: "chevron.left")
                     .font(.harcCaption.weight(.semibold))

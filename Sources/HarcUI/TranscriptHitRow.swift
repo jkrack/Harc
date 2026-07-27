@@ -14,7 +14,7 @@ public struct TranscriptHitRow: View {
     }
 
     public var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: HarcSpacing.md) {
             let accent: Color = hit.recording.pinned ? .purple : .accentColor
             let icon: String = hit.recording.pinned ? "pin.fill" : "waveform"
             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -25,8 +25,8 @@ public struct TranscriptHitRow: View {
                         .font(.harcLabel.weight(.semibold))
                         .foregroundStyle(accent)
                 )
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                HStack(spacing: HarcSpacing.sm) {
                     Text(hit.recording.displayTitle)
                         .font(.harcTitle)
                         .foregroundStyle(Color.primary)
@@ -50,7 +50,7 @@ public struct TranscriptHitRow: View {
             .buttonStyle(.borderless)
             .help("Open transcript editor")
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, HarcSpacing.sm)
         .contentShape(Rectangle())
     }
 

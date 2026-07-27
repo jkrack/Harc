@@ -64,7 +64,7 @@ public struct DictationHistoryWindowView: View {
 
     private var listPane: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                 TextField("Search dictations", text: $searchText)
@@ -79,11 +79,11 @@ public struct DictationHistoryWindowView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(8)
+            .padding(HarcSpacing.sm)
             Divider()
 
             if filteredEntries.isEmpty {
-                VStack(spacing: 6) {
+                VStack(spacing: HarcSpacing.sm) {
                     Spacer()
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.title2)
@@ -133,7 +133,7 @@ public struct DictationHistoryWindowView: View {
                     }
                 }
             }
-            .padding(8)
+            .padding(HarcSpacing.sm)
         }
     }
 
@@ -173,7 +173,7 @@ public struct DictationHistoryWindowView: View {
     @ViewBuilder
     private var detailPane: some View {
         if let entry = selectedEntry {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 detailHeader(entry)
                 if entry.rawText != nil {
                     Picker("", selection: $showingVoice) {
@@ -196,7 +196,7 @@ public struct DictationHistoryWindowView: View {
                 Spacer(minLength: 0)
                 detailActions(entry)
             }
-            .padding(14)
+            .padding(HarcSpacing.lg)
         } else {
             VStack {
                 Spacer()
@@ -209,7 +209,7 @@ public struct DictationHistoryWindowView: View {
     }
 
     private func detailHeader(_ entry: DictationHistoryEntry) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             Text(entry.modeName)
                 .font(.harcTitle)
             if let app = entry.targetAppName {
@@ -229,7 +229,7 @@ public struct DictationHistoryWindowView: View {
     }
 
     private func reprocessResultView(_ result: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             HStack {
                 Text(reprocessModeName.map { "As \($0)" } ?? "Result")
                     .font(.harcCaption.weight(.semibold))
@@ -246,12 +246,12 @@ public struct DictationHistoryWindowView: View {
             }
             .frame(maxHeight: 140)
         }
-        .padding(10)
+        .padding(HarcSpacing.md)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 
     private func detailActions(_ entry: DictationHistoryEntry) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Button("Copy") { copy(displayText(for: entry)) }
             if reprocess != nil {
                 reprocessMenu(entry)

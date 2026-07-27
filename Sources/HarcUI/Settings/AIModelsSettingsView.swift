@@ -46,7 +46,7 @@ public struct AIModelsSettingsView: View {
 
             Section {
                 if let downloadStartError {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(Color.harc(.attention))
                         Text(downloadStartError)
@@ -68,7 +68,7 @@ public struct AIModelsSettingsView: View {
                     reclaimSpaceCallout
                 }
             } header: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                     Text("Summarizer")
                     Text("Your Mac has \(ramGB) GB RAM")
                         .font(.harcLabel)
@@ -76,7 +76,7 @@ public struct AIModelsSettingsView: View {
                         .textCase(nil)
                 }
             } footer: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                     Text("Pick one tier. Higher tiers produce better summaries at higher RAM and time cost.")
                     Text("Models download over HTTPS from Hugging Face, pinned to an exact version and checksum-verified before install. Downloads are the only time Harc's AI touches the network — inference is fully on-device.")
                 }
@@ -89,7 +89,7 @@ public struct AIModelsSettingsView: View {
                     .disabled(isActiveSummarizerMissing)
                 Toggle("Also when on battery", isOn: $prefs.autoSummarizeOnBatteryEnabled)
                     .disabled(!prefs.autoSummarizeEnabled || isActiveSummarizerMissing)
-                    .padding(.leading, 16)
+                    .padding(.leading, HarcSpacing.lg)
                 Toggle("Include summary in exports and Copy for Prompt", isOn: $prefs.includeSummaryInPrompt)
             } header: {
                 Text("Behavior")
@@ -156,7 +156,7 @@ public struct AIModelsSettingsView: View {
     // MARK: - Active summarizer
 
     private var activeSummarizerPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             Text("Active model")
                 .font(.harcCaption)
                 .foregroundStyle(Color.secondary)
@@ -169,7 +169,7 @@ public struct AIModelsSettingsView: View {
             .pickerStyle(.menu)
             .labelsHidden()
         }
-        .padding(.top, 4)
+        .padding(.top, HarcSpacing.xs)
     }
 
     // MARK: - Reclaim space
@@ -179,8 +179,8 @@ public struct AIModelsSettingsView: View {
     /// Wording is careful not to call the extras unused — a dictation mode
     /// may pin a non-active model via its optional `modelID`.
     private var reclaimSpaceCallout: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "internaldrive")
                     .foregroundStyle(Color.secondary)
                 Text("You have \(installedSummarizerCount) models installed. Unless a dictation mode uses them, only the active one is needed.")
@@ -200,7 +200,7 @@ public struct AIModelsSettingsView: View {
                 }
             }
         }
-        .padding(.top, 4)
+        .padding(.top, HarcSpacing.xs)
     }
 
     private var installedSummarizerCount: Int {
@@ -266,9 +266,9 @@ private struct ModelRow: View {
     @EnvironmentObject private var models: ModelManagerStore
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: HarcSpacing.md) {
+            VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                HStack(spacing: HarcSpacing.sm) {
                     Text(descriptor.displayName)
                         .font(.harcBody)
                         .fontWeight(.medium)
@@ -289,7 +289,7 @@ private struct ModelRow: View {
                 }
                 .help("View this model at its pinned version on Hugging Face")
                 if ramGB < descriptor.recommendedRAMGB {
-                    HStack(spacing: 4) {
+                    HStack(spacing: HarcSpacing.xs) {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text("Your Mac has \(ramGB) GB — \(descriptor.recommendedRAMGB) GB recommended.")
                     }
@@ -310,7 +310,7 @@ private struct ModelRow: View {
             Spacer(minLength: 8)
             actionButton
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private var state: ModelInstallState {
@@ -378,7 +378,7 @@ private struct ModelRow: View {
         Text(label)
             .font(.harcMono.weight(.medium))
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, HarcSpacing.sm)
             .padding(.vertical, 2)
             .background(
                 Capsule().fill(color.opacity(0.12))

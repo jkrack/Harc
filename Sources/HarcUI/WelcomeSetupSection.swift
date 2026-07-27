@@ -152,7 +152,7 @@ struct WelcomeSetupSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             speechModelRow
             summarizerRow
             destinationRow
@@ -245,13 +245,13 @@ struct WelcomeSetupSection: View {
 
     @ViewBuilder
     private var permissionsRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             permissionGrantRow(.microphone, granted: model.micGranted)
             permissionGrantRow(.screenCapture, granted: model.screenAudioGranted)
             permissionGrantRow(.accessibility, granted: model.accessibilityGranted)
 
             if model.screenAudioNeedsRelaunch {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
                     Image(systemName: "arrow.clockwise.circle.fill")
                         .foregroundStyle(Color.harc(.attention))
                     Text("Screen Recording is granted, but macOS keeps the old answer until Harc restarts. Quit and reopen to capture system audio.")
@@ -268,7 +268,7 @@ struct WelcomeSetupSection: View {
                 .padding(.top, 2)
             }
         }
-        .padding(10)
+        .padding(HarcSpacing.md)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
@@ -279,7 +279,7 @@ struct WelcomeSetupSection: View {
         _ service: RecordingPermissionService,
         granted: Bool
     ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
             Image(systemName: granted ? "checkmark.circle.fill" : "lock.shield")
                 .foregroundStyle(granted ? Color.harc(.ready) : Color.secondary)
                 .frame(width: 16)
@@ -314,7 +314,7 @@ struct WelcomeSetupSection: View {
         detail: String,
         @ViewBuilder trailing: () -> some View
     ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.md) {
             Image(systemName: icon)
                 .foregroundStyle(iconColor)
                 .frame(width: 18)
@@ -329,7 +329,7 @@ struct WelcomeSetupSection: View {
             Spacer(minLength: 8)
             trailing()
         }
-        .padding(10)
+        .padding(HarcSpacing.md)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

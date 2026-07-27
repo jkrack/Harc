@@ -17,7 +17,7 @@ struct MenuPanelRowButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: icon)
                     .font(.harcBody)
                     .foregroundStyle(tint ?? Color.secondary)
@@ -32,7 +32,7 @@ struct MenuPanelRowButton: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, HarcSpacing.sm)
             .frame(minHeight: 28)
             .frame(maxWidth: .infinity)
             .contentShape(RoundedRectangle(cornerRadius: 6))
@@ -61,7 +61,7 @@ struct HoverPillButton: View {
             Text(title)
                 .font(.harcCaption.weight(.medium))
                 .foregroundStyle(tint)
-                .padding(.horizontal, 7)
+                .padding(.horizontal, HarcSpacing.sm)
                 .padding(.vertical, 3)
                 .contentShape(Capsule())
                 .background(

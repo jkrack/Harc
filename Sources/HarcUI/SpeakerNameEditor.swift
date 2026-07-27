@@ -80,7 +80,7 @@ public struct SpeakerNameEditor: View {
         if speakerIndices.isEmpty {
             EmptyView()
         } else {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 if showsHeader {
                     Text("SPEAKERS")
                         .font(.harcCaption)
@@ -88,7 +88,7 @@ public struct SpeakerNameEditor: View {
                         .tracking(1.2)
                 }
                 ForEach(speakerIndices, id: \.self) { index in
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                         row(for: index)
                         pendingSuggestionChip(for: index)
                         if let provider = suggestionsProvider {
@@ -115,7 +115,7 @@ public struct SpeakerNameEditor: View {
 
     private func row(for index: Int) -> some View {
         let currentLabel = draftNames[index] ?? "Speaker \(index + 1)"
-        return HStack(spacing: 12) {
+        return HStack(spacing: HarcSpacing.md) {
             Text("Speaker \(index + 1)")
                 .font(.harcBody)
                 .foregroundStyle(Color.primary)
@@ -146,8 +146,8 @@ public struct SpeakerNameEditor: View {
                         .foregroundStyle(.secondary)
                         .font(.harcCaption)
                 }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
+                .padding(.vertical, HarcSpacing.xs)
+                .padding(.horizontal, HarcSpacing.sm)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.1)))
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -175,7 +175,7 @@ public struct SpeakerNameEditor: View {
         let dismissed = dismissedSuggestionIDs[index] ?? []
         let visible = raw.filter { !dismissed.contains($0.id) }
         if !visible.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                 ForEach(visible) { s in
                     SpeakerSuggestionChip(
                         suggestion: s,
@@ -253,8 +253,8 @@ private struct PendingSpeakerSuggestionRow: View {
             horizontalLayout
             compactLayout
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, HarcSpacing.sm)
+        .padding(.vertical, HarcSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
@@ -263,7 +263,7 @@ private struct PendingSpeakerSuggestionRow: View {
     }
 
     private var horizontalLayout: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             icon
             suggestionText
             Spacer(minLength: 8)
@@ -273,8 +273,8 @@ private struct PendingSpeakerSuggestionRow: View {
     }
 
     private var compactLayout: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
                 icon
                 suggestionText
             }
@@ -297,7 +297,7 @@ private struct PendingSpeakerSuggestionRow: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             Button("Confirm", action: onConfirm)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.mini)
@@ -314,7 +314,7 @@ private struct AddPersonNameSheet: View {
     @State private var name = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             Text("New person").font(.harcTitle)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
@@ -326,7 +326,7 @@ private struct AddPersonNameSheet: View {
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(20)
+        .padding(HarcSpacing.xl)
         .frame(width: 320)
     }
 }

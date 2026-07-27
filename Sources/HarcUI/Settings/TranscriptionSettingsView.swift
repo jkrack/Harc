@@ -66,7 +66,7 @@ public struct TranscriptionSettingsView: View {
                     }
                 }
             } header: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                     Text("Vocabulary")
                     Text("Replace mis-heard words and acronyms in every new transcript — names, product terms, jargon.")
                         .font(.harcLabel)
@@ -94,7 +94,7 @@ public struct TranscriptionSettingsView: View {
                 .tint(Color.accentColor)
 
             LabeledContent {
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     Text(maintenance.indexBacklog == 0
                          ? "Up to date"
                          : "\(maintenance.indexBacklog) waiting")
@@ -108,7 +108,7 @@ public struct TranscriptionSettingsView: View {
             }
 
             LabeledContent {
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     Text(maintenance.reprocessBacklog == 0
                          ? "All current"
                          : "\(maintenance.reprocessBacklog) older")
@@ -139,7 +139,7 @@ public struct TranscriptionSettingsView: View {
 
     @ViewBuilder
     private var maintenanceProgressRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             switch maintenance.job {
             case .reprocessing(let progress):
                 ProgressView(value: progress.fraction) {
@@ -194,7 +194,7 @@ public struct TranscriptionSettingsView: View {
     }
 
     private var addEntryRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             TextField("Heard", text: $newFrom)
                 .textFieldStyle(.roundedBorder)
             Image(systemName: "arrow.right")
@@ -222,7 +222,7 @@ private struct VocabularyRow: View {
     @ObservedObject var prefs: HarcPreferences
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Toggle(
                 "",
                 isOn: Binding(
@@ -248,7 +248,7 @@ private struct VocabularyRow: View {
                 .strikethrough(!entry.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
         .opacity(entry.enabled ? 1 : 0.55)
     }
 }

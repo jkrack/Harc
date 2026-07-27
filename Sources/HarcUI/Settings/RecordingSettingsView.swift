@@ -225,7 +225,7 @@ public struct RecordingSettingsView: View {
     }
 
     private func monitoredAppRow(_ app: MeetingApp) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: HarcSpacing.md) {
             Image(systemName: app.symbolName)
                 .font(.harcBody)
                 .foregroundStyle(Color.accentColor) // app glyphs are decoration, not status
@@ -245,7 +245,7 @@ public struct RecordingSettingsView: View {
                 .labelsHidden()
                 .tint(Color.accentColor)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private var pasteDenyListRows: [String] {
@@ -261,7 +261,7 @@ public struct RecordingSettingsView: View {
 
     private func pasteDenyListRow(_ bundleID: String) -> some View {
         let locked = PasteDenyList.lockedBundleIDs.contains(bundleID)
-        return HStack(spacing: 12) {
+        return HStack(spacing: HarcSpacing.md) {
             // The row already resolves each app's bundle to get its display
             // name, so it can show the real icon too. A column of identical
             // dashed placeholders next to "Finder", "Slack" and "Zoom" read as
@@ -340,7 +340,7 @@ public struct RecordingSettingsView: View {
     }
 
     private var googleMeetComingSoonRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: HarcSpacing.md) {
             Image(systemName: "globe")
                 .font(.harcBody)
                 .foregroundStyle(Color.secondary)
@@ -357,19 +357,19 @@ public struct RecordingSettingsView: View {
             Text("Coming soon")
                 .font(.harcCaption.weight(.semibold))
                 .foregroundStyle(Color.secondary)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, HarcSpacing.sm)
                 .padding(.vertical, 3)
                 .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: Capsule())
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private var notificationsDeniedWarning: some View {
         NativeStatusCallout(intent: .warning) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: HarcSpacing.md) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Color.harc(.attention))
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                     Text("Notifications disabled")
                         .font(.harcCaption.weight(.semibold))
                     Text("Harc will still pulse the menu bar icon, but can't show a banner until you re-enable notifications.")
@@ -385,7 +385,7 @@ public struct RecordingSettingsView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private func refreshNotificationStatus() async {
@@ -399,17 +399,17 @@ public struct RecordingSettingsView: View {
 
     private var destinationMissingWarning: some View {
         NativeStatusCallout(intent: .danger) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: HarcSpacing.md) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Color.harc(.failure))
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                     Text("Destination folder not found")
                         .font(.harcCaption.weight(.semibold))
                     Text("Harc can't write recordings here until you choose a different folder or restore the missing one. New recordings will fail to save until this is resolved.")
                         .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 12) {
+                    HStack(spacing: HarcSpacing.md) {
                         Button("Choose…", action: pickFolder)
                             .controlSize(.small)
                         Button("Use Default") {
@@ -421,7 +421,7 @@ public struct RecordingSettingsView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private func pickFolder() {

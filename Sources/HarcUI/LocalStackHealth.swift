@@ -515,7 +515,7 @@ struct LocalStackHealthView: View {
 
     var body: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 HStack {
                     Label("Local Stack", systemImage: "checklist.checked")
                         .font(compact ? .caption.weight(.semibold) : .headline)
@@ -531,7 +531,7 @@ struct LocalStackHealthView: View {
                     }
                 } else {
                     ForEach(LocalStackHealthModel.groupedItems(items), id: \.0) { group, groupItems in
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                             Text(group.title)
                                 .font(.harcCaption.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -546,7 +546,7 @@ struct LocalStackHealthView: View {
     }
 
     private func row(for item: LocalStackHealthItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
             Image(systemName: item.state.iconName)
                 .font(.harcCaption.weight(.semibold))
                 .foregroundStyle(item.state.color)

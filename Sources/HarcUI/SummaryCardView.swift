@@ -33,7 +33,7 @@ public struct SummaryCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             if case .summary = state, SummaryCardState.isStale(recording: recording) {
                 stalenessBanner
             }
@@ -79,7 +79,7 @@ public struct SummaryCardView: View {
 
     private var emptyCard: some View {
         tintedContainer {
-            HStack(spacing: 12) {
+            HStack(spacing: HarcSpacing.md) {
                 Image(systemName: "sparkles")
                     .foregroundStyle(Color.accentColor)
                 Text("No summary yet.")
@@ -117,7 +117,7 @@ public struct SummaryCardView: View {
 
     private var transcriptRequiredCard: some View {
         tintedContainer {
-            HStack(spacing: 12) {
+            HStack(spacing: HarcSpacing.md) {
                 Image(systemName: "text.badge.xmark")
                     .foregroundStyle(Color.harc(.attention))
                 VStack(alignment: .leading, spacing: 2) {
@@ -135,7 +135,7 @@ public struct SummaryCardView: View {
 
     private func queuedCard(position: Int, totalInFlight: Int) -> some View {
         tintedContainer {
-            HStack(spacing: 12) {
+            HStack(spacing: HarcSpacing.md) {
                 Image(systemName: "clock")
                     .foregroundStyle(Color.secondary)
                 VStack(alignment: .leading, spacing: 2) {
@@ -156,7 +156,7 @@ public struct SummaryCardView: View {
 
     private var inFlightCard: some View {
         tintedContainer {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: HarcSpacing.md) {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Summarizing with \(currentModelDisplay)…")
@@ -178,8 +178,8 @@ public struct SummaryCardView: View {
 
     private func failedCard(message: String) -> some View {
         tintedContainer {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                HStack(spacing: HarcSpacing.sm) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(Color.harc(.attention))
                     Text("Summarization failed")
@@ -191,7 +191,7 @@ public struct SummaryCardView: View {
                     .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     Button("Retry") { enqueueSelf() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -205,8 +205,8 @@ public struct SummaryCardView: View {
 
     private func skippedCard(message: String) -> some View {
         tintedContainer {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                HStack(spacing: HarcSpacing.sm) {
                     Image(systemName: "pause.circle.fill")
                         .foregroundStyle(Color.harc(.attention))
                     Text("Summarization skipped")
@@ -218,7 +218,7 @@ public struct SummaryCardView: View {
                     .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     Button("Generate") { enqueueSelf() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -232,7 +232,7 @@ public struct SummaryCardView: View {
 
     private var summaryCard: some View {
         tintedContainer {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 summaryHeader
                 Text(markdown: recording.summaryMarkdown ?? "")
                     .font(.harcBody)
@@ -266,7 +266,7 @@ public struct SummaryCardView: View {
     }
 
     private var summaryHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Image(systemName: "sparkles")
                 .foregroundStyle(Color.accentColor)
             Text("Summary")
@@ -313,7 +313,7 @@ public struct SummaryCardView: View {
     }
 
     private func actionItemsList(_ items: [ActionItem]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 actionItemRow(item)
             }
@@ -321,7 +321,7 @@ public struct SummaryCardView: View {
     }
 
     private func actionItemRow(_ item: ActionItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
             Text("•").foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             HStack(spacing: 0) {
                 if let actor = item.actor {
@@ -339,7 +339,7 @@ public struct SummaryCardView: View {
 
     private var stalenessBanner: some View {
         NativeStatusCallout(intent: .warning) {
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Color.harc(.attention))
                 Text("Summary is based on an older transcript.")

@@ -349,7 +349,7 @@ public struct HarcWindowRootView: View {
             Spacer(minLength: 16)
             footerStatus
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, HarcSpacing.lg)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
         .background(.bar)
@@ -404,12 +404,12 @@ public struct HarcWindowRootView: View {
     /// used to sit here never changed for the lifetime of an install; it
     /// lives in Settings › About now. Tapping the status opens Activity.
     var footerStatus: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             if let live = footerLiveStatusText {
                 Button {
                     showActivity = true
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: HarcSpacing.sm) {
                         ProgressView()
                             .controlSize(.mini)
                         Text(live)
@@ -494,14 +494,14 @@ public struct HarcWindowRootView: View {
     @State private var dateScopePopoverOpen = false
 
     var dateScopeBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             Button {
                 // Surface the month that actually has recordings the moment
                 // the grid appears, not whatever month it last showed.
                 libraryVM.alignCalendarForPresentation()
                 dateScopePopoverOpen = true
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: HarcSpacing.xs) {
                     Image(systemName: "calendar")
                     Text(selectedFilterDay.map(formatFilterDay) ?? "All dates")
                         .font(.harcCaption)
@@ -530,7 +530,7 @@ public struct HarcWindowRootView: View {
                         dateScopePopoverOpen = false
                     }
                 )
-                .padding(10)
+                .padding(HarcSpacing.md)
                 .frame(width: 260)
             }
 
@@ -548,8 +548,8 @@ public struct HarcWindowRootView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, HarcSpacing.md)
+        .padding(.vertical, HarcSpacing.sm)
     }
 
     var selectedFilterDay: Date? {
@@ -601,7 +601,7 @@ public struct HarcWindowRootView: View {
     /// The saturated row is reserved for this — the one place urgency is
     /// real. Everything else uses the system's quiet selection.
     var liveRecordingRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Circle()
                 .fill(.white)
                 .frame(width: 8, height: 8)
@@ -626,8 +626,8 @@ public struct HarcWindowRootView: View {
             )
             .frame(width: 44, height: 14)
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
+        .padding(.vertical, HarcSpacing.sm)
+        .padding(.horizontal, HarcSpacing.sm)
         .background(HarcBrand.live, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .tag(LibrarySelection.live)
         .accessibilityIdentifier("harc.library.liveRow")
@@ -647,7 +647,7 @@ public struct HarcWindowRootView: View {
             bridge.onStartStop()
         } label: {
             if recordingState.isRecording {
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     Circle()
                         .fill(.white)
                         .frame(width: 8, height: 8)
@@ -670,8 +670,8 @@ public struct HarcWindowRootView: View {
                             .foregroundStyle(.primary)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+                .padding(.horizontal, HarcSpacing.md)
+                .padding(.vertical, HarcSpacing.xs)
                 .glassEffect(.regular.tint(HarcBrand.live), in: Capsule())
                 .overlay(Capsule().stroke(HarcBrand.live.opacity(0.4), lineWidth: 1))
             } else if isRecordingActionBusy {
@@ -768,7 +768,7 @@ public struct HarcWindowRootView: View {
     }
 
     func sidebarSectionHeader(_ section: LibrarySidebarSection) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             Label(section.sidebarTitle, systemImage: section.sidebarIconName)
             Spacer(minLength: 4)
         }
@@ -815,13 +815,13 @@ public struct HarcWindowRootView: View {
     }
 
     var recordingsEmptyState: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             EmptyStateView(
                 icon: "waveform.slash",
                 title: "No recordings yet",
                 subtitle: emptyStateSubtitle
             )
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 Button("Record") { bridge.onStartStop() }
                     .buttonStyle(.borderedProminent)
                 if onImportFiles != nil {
@@ -839,7 +839,7 @@ public struct HarcWindowRootView: View {
     @ViewBuilder
     var peopleSidebarList: some View {
         ForEach(peopleVM.people) { item in
-            HStack(spacing: 8) {
+            HStack(spacing: HarcSpacing.sm) {
                 PersonAvatar(displayName: item.person.displayName, size: 22)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.person.displayName)
@@ -855,7 +855,7 @@ public struct HarcWindowRootView: View {
                 if item.suggestionCount > 0 {
                     Text("\(item.suggestionCount)")
                         .font(.harcCaption.weight(.semibold))
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, HarcSpacing.sm)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.harc(.attention).opacity(0.25)))
                         .foregroundStyle(.primary)
@@ -984,7 +984,7 @@ public struct HarcWindowRootView: View {
     /// to match `selection`.
     func recordingLabel(_ rec: Recording) -> some View {
         let isSelected = selection == .recording(wavPath: rec.wavPath)
-        return HStack(alignment: .top, spacing: 8) {
+        return HStack(alignment: .top, spacing: HarcSpacing.sm) {
             Image(systemName: rec.pinned ? "pin.fill" : "waveform")
                 .foregroundStyle(Color.accentColor) // pinned is decoration, not status — the glyph shape carries it
                 .frame(width: 18, alignment: .center)
@@ -1015,7 +1015,7 @@ public struct HarcWindowRootView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
         .frame(minHeight: 44, alignment: .topLeading)
         // Quiet selection. The system's emphasized accent fill made the
         // selected row the loudest element in a window whose real content is
@@ -1026,7 +1026,7 @@ public struct HarcWindowRootView: View {
         .listRowBackground(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
-                .padding(.horizontal, 4)
+                .padding(.horizontal, HarcSpacing.xs)
         )
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
         .accessibilityIdentifier("harc.library.recording.\(rec.id.map(String.init) ?? rec.wavPath)")

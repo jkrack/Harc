@@ -9,7 +9,7 @@ struct DictationDeepLinkConfirmView: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: HarcSpacing.md) {
             Image(systemName: "mic.badge.plus")
                 .font(.harcBody)
                 .foregroundStyle(Color.accentColor)
@@ -32,7 +32,7 @@ struct DictationDeepLinkConfirmView: View {
             .buttonStyle(.plain)
             .help("Dismiss")
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, HarcSpacing.lg)
         .padding(.vertical, 9)
         .glassEffect()
     }

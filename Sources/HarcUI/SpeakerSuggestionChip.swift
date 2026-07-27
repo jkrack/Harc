@@ -19,9 +19,9 @@ public struct SpeakerSuggestionChip: View {
     }
 
     public var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: HarcSpacing.sm) {
             Button(action: onAccept) {
-                HStack(spacing: 6) {
+                HStack(spacing: HarcSpacing.sm) {
                     Image(systemName: "person.wave.2")
                         .font(.harcCaption.weight(.medium))
                         .foregroundStyle(Color.accentColor)
@@ -32,8 +32,8 @@ public struct SpeakerSuggestionChip: View {
                         .font(.harcCaption.monospaced())
                         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 }
-                .padding(.leading, 8)
-                .padding(.trailing, 4)
+                .padding(.leading, HarcSpacing.sm)
+                .padding(.trailing, HarcSpacing.xs)
                 .padding(.vertical, 3)
                 .contentShape(Rectangle())
             }
@@ -45,12 +45,12 @@ public struct SpeakerSuggestionChip: View {
                     Image(systemName: "xmark")
                         .font(.harcCaption.weight(.medium))
                         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                        .padding(4)
+                        .padding(HarcSpacing.xs)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Dismiss suggestion")
-                .padding(.trailing, 4)
+                .padding(.trailing, HarcSpacing.xs)
             }
         }
         .background(

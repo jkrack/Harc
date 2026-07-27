@@ -32,11 +32,11 @@ public struct AboutSettingsView: View {
 
     private var troubleshootingSection: some View {
         Section {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: HarcSpacing.md) {
                 Image(systemName: "lock.shield")
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 22)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: HarcSpacing.xs) {
                     Text("Permissions")
                         .font(.harcBody)
                     Text("Use this when macOS shows Harc enabled but recording, dictation, or pasting still says permission is missing — most often after reinstalling or updating, when the grants get attached to the old copy of the app.")
@@ -45,7 +45,7 @@ public struct AboutSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     ForEach(RecordingPermissionService.allCases, id: \.rawValue) { service in
-                        HStack(spacing: 6) {
+                        HStack(spacing: HarcSpacing.sm) {
                             Image(systemName: service.isGranted ? "checkmark.circle.fill" : "xmark.circle")
                                 .foregroundStyle(service.isGranted ? Color.harc(.ready) : Color.secondary)
                             Text(service.displayName)
@@ -67,7 +67,7 @@ public struct AboutSettingsView: View {
                     .padding(.top, 2)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, HarcSpacing.xs)
 
             if let permissionRepairError {
                 Label(permissionRepairError, systemImage: "exclamationmark.triangle")
@@ -128,7 +128,7 @@ public struct AboutSettingsView: View {
     // MARK: - Sub-views
 
     private var heroRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: HarcSpacing.md) {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(HarcBrand.gradient)
                 .frame(width: 44, height: 44)
@@ -155,24 +155,24 @@ public struct AboutSettingsView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private var updatesBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             Text("Updates")
                 .font(.harcTitle)
             Toggle("Check for updates automatically", isOn: $prefs.updateChecksEnabled)
             Text("Updates install in place via Sparkle; checks send nothing about you.")
                 .font(.harcCaption)
                 .foregroundStyle(Color.secondary)
-            HStack(spacing: 10) {
+            HStack(spacing: HarcSpacing.md) {
                 Button("Check for Updates") {
                     bridge.onCheckForUpdates?()
                 }
                 .disabled(bridge.onCheckForUpdates == nil)
                 if let update = bridge.availableUpdate {
-                    HStack(spacing: 4) {
+                    HStack(spacing: HarcSpacing.xs) {
                         Text("Harc \(update.version) available —")
                             .font(.harcLabel)
                         if bridge.onInstallUpdate != nil {
@@ -187,11 +187,11 @@ public struct AboutSettingsView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private var architectureBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             Text("Architecture")
                 .font(.harcTitle)
             bullet("Apple Silicon native — runs on the Neural Engine via Core ML.")
@@ -204,12 +204,12 @@ public struct AboutSettingsView: View {
             // an install, so it reads as reference, not status.
             bullet("Runs on \(HardwareInfo.appleSiliconDisplayName) via the Neural Engine · speech model parakeet-tdt-0.6b-v3 · fully local.")
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private var privacyBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+            HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "lock.shield.fill")
                     .foregroundStyle(Color.harc(.ready))
                 Text("Local-first")
@@ -220,7 +220,7 @@ public struct AboutSettingsView: View {
                 .foregroundStyle(Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, HarcSpacing.xs)
     }
 
     private var footerRow: some View {
@@ -232,13 +232,13 @@ public struct AboutSettingsView: View {
             Link("github.com/jkrack/Harc", destination: URL(string: "https://github.com/jkrack/Harc")!)
                 .font(.harcCaption)
         }
-        .padding(.top, 4)
+        .padding(.top, HarcSpacing.xs)
     }
 
     // MARK: - Helpers
 
     private func bullet(_ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
             Text("•")
                 .font(.harcLabel)
                 .foregroundStyle(Color.secondary)

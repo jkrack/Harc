@@ -36,7 +36,7 @@ struct LiveTranscriptPane: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Circle()
                 .fill(HarcBrand.live)
                 .frame(width: 8, height: 8)
@@ -58,15 +58,15 @@ struct LiveTranscriptPane: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, HarcSpacing.xl)
+        .padding(.vertical, HarcSpacing.md)
     }
 
     /// Before the first chunk there is genuinely nothing to show, and silence
     /// there reads as "transcription isn't running". Say what is happening and
     /// roughly when the first text will appear.
     private var waitingState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: HarcSpacing.md) {
             Spacer()
             Image(systemName: "waveform")
                 .font(.system(size: 34))
@@ -92,7 +92,7 @@ struct LiveTranscriptPane: View {
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(20)
+                    .padding(HarcSpacing.xl)
                     .id(Self.bottomAnchor)
             }
             // Follow the text as it grows; the interesting end of a live

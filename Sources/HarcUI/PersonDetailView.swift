@@ -35,7 +35,7 @@ public struct PersonDetailView: View {
                 voicePrintsSection
                 thresholdSection
             }
-            .padding(20)
+            .padding(HarcSpacing.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: personID) {
@@ -44,7 +44,7 @@ public struct PersonDetailView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: HarcSpacing.md) {
             PersonAvatar(displayName: viewModel.person?.displayName ?? "?", size: 44)
             TextField("Name", text: Binding(
                 get: { viewModel.person?.displayName ?? "" },
@@ -73,7 +73,7 @@ public struct PersonDetailView: View {
 
     @ViewBuilder
     private func statsLine(_ stats: PersonStats) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Text("\(stats.recordingCount) \(stats.recordingCount == 1 ? "recording" : "recordings")")
             Text("\u{00B7}").foregroundStyle(.secondary)
             Text(formatMs(stats.totalSpeakingMs)).foregroundStyle(.secondary)
@@ -90,7 +90,7 @@ public struct PersonDetailView: View {
     @ViewBuilder
     private var suggestionsSection: some View {
         if !viewModel.pendingSuggestions.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 HStack {
                     Text("Suggested matches (\(viewModel.pendingSuggestions.count))").font(.harcTitle)
                     Spacer()
@@ -101,7 +101,7 @@ public struct PersonDetailView: View {
                     .controlSize(.small)
                 }
                 ForEach(viewModel.pendingSuggestions) { s in
-                    HStack(spacing: 8) {
+                    HStack(spacing: HarcSpacing.sm) {
                         Text("Recording #\(s.recordingID) Speaker \(s.speakerIndex + 1)")
                             .font(.harcLabel)
                         Spacer()
@@ -131,14 +131,14 @@ public struct PersonDetailView: View {
     @ViewBuilder
     private var utterancesSection: some View {
         if !viewModel.utterances.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 Text("Recent utterances").font(.harcTitle)
                 ForEach(viewModel.utterances) { u in
                     Button {
                         onSelectRecording(u.recordingID, u.speakerIndex)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: HarcSpacing.sm) {
                                 Text(u.recordingTitle)
                                     .font(.harcLabel.weight(.semibold))
                                 Text("\u{00B7}").foregroundStyle(.secondary)
@@ -151,7 +151,7 @@ public struct PersonDetailView: View {
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .padding(.vertical, 4)
+                        .padding(.vertical, HarcSpacing.xs)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(.plain)
@@ -170,7 +170,7 @@ public struct PersonDetailView: View {
     @ViewBuilder
     private var voicePrintsSection: some View {
         if !viewModel.embeddings.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 HStack {
                     Text("Voice prints (\(viewModel.embeddings.count))").font(.harcTitle)
                     Spacer()
@@ -181,7 +181,7 @@ public struct PersonDetailView: View {
                         .disabled(selectedSlots.isEmpty)
                 }
                 ForEach(viewModel.embeddings, id: \.slotKey) { e in
-                    HStack(spacing: 8) {
+                    HStack(spacing: HarcSpacing.sm) {
                         Toggle("", isOn: Binding(
                             get: { selectedSlots.contains(e.slotKey) },
                             set: { isOn in
@@ -226,7 +226,7 @@ public struct PersonDetailView: View {
     @ViewBuilder
     private var thresholdSection: some View {
         if let person = viewModel.person {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 Text("Match threshold").font(.harcTitle)
                 HStack {
                     Slider(value: Binding(
@@ -281,7 +281,7 @@ struct MergePersonPicker: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             Text("Merge into\u{2026}").font(.harcTitle)
             if allPeople.isEmpty {
                 Text("No other people exist yet.").foregroundStyle(.secondary)
@@ -304,7 +304,7 @@ struct MergePersonPicker: View {
                 .disabled(selected == nil)
             }
         }
-        .padding(20)
+        .padding(HarcSpacing.xl)
         .frame(width: 320)
     }
 }
@@ -317,7 +317,7 @@ struct SplitNameSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             Text("New person name").font(.harcTitle)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
@@ -329,7 +329,7 @@ struct SplitNameSheet: View {
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(20)
+        .padding(HarcSpacing.xl)
         .frame(width: 320)
     }
 }

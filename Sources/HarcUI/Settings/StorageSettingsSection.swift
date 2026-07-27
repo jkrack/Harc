@@ -63,9 +63,9 @@ struct StorageSettingsSection: View {
     }
 
     private func row(for location: Location) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.md) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     Text(location.title)
                         .font(.harcLabel.weight(.medium))
                     if let bytes = sizes[location.path] {

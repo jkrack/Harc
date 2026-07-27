@@ -14,7 +14,7 @@ struct NewProjectSheet: View {
     let onCreate: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             Text("New project")
                 .font(.harcTitle)
             TextField("Project name", text: $name)
@@ -43,7 +43,7 @@ struct NewProjectSheet: View {
                 .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding(20)
+        .padding(HarcSpacing.xl)
         .frame(width: 340)
     }
 }
@@ -57,7 +57,7 @@ struct AddPersonSheet: View {
     @State private var name: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
             Text("Add person")
                 .font(.harcTitle)
             TextField("Name", text: $name)
@@ -75,7 +75,7 @@ struct AddPersonSheet: View {
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding(20)
+        .padding(HarcSpacing.xl)
         .frame(width: 320)
     }
 }

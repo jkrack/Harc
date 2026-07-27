@@ -48,7 +48,7 @@ public struct ActivityView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: HarcSpacing.lg) {
                     jobsSection
                     if let recovery = bridge.stopRecovery {
                         stopRecoverySection(recovery)
@@ -73,11 +73,11 @@ public struct ActivityView: View {
     @ViewBuilder
     private var jobsSection: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 Label("Now", systemImage: "clock")
                     .font(.harcCaption.weight(.semibold))
                 if let job = currentJobText {
-                    HStack(spacing: 8) {
+                    HStack(spacing: HarcSpacing.sm) {
                         ProgressView()
                             .controlSize(.small)
                         Text(job)
@@ -111,12 +111,12 @@ public struct ActivityView: View {
 
     private var recoverySection: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 Label("Recovery", systemImage: "arrow.counterclockwise.circle")
                     .font(.harcCaption.weight(.semibold))
                 ForEach(RecoveryInboxModel.rows(for: bridge.recoveryArtifacts)) { row in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                        HStack(spacing: HarcSpacing.sm) {
                             Text(row.title)
                                 .font(.harcCaption.weight(.semibold))
                             Spacer()
@@ -135,7 +135,7 @@ public struct ActivityView: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        HStack(spacing: 8) {
+                        HStack(spacing: HarcSpacing.sm) {
                             Button("Recover") { bridge.onRecoverRecoveryArtifact(row.id) }
                                 .buttonStyle(.borderedProminent)
                                 .controlSize(.small)
@@ -161,7 +161,7 @@ public struct ActivityView: View {
     /// can show, since a recording is sitting in cache waiting to be saved.
     private func stopRecoverySection(_ recovery: StopRecoveryInfo) -> some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                 Label(recovery.title, systemImage: "exclamationmark.triangle.fill")
                     .font(.harcCaption.weight(.semibold))
                     .foregroundStyle(Color.harc(.attention))
@@ -169,7 +169,7 @@ public struct ActivityView: View {
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
+                HStack(spacing: HarcSpacing.sm) {
                     Button(recovery.isRecovering ? "Retrying…" : "Retry") { bridge.onRetryStopRecovery() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)

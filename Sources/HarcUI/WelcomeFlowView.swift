@@ -178,12 +178,12 @@ public struct WelcomeFlowView: View {
                 Spacer(minLength: 8)
                 stepRail
             }
-            .padding(28)
+            .padding(HarcSpacing.xxl)
         }
     }
 
     private var brandHeader: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: HarcSpacing.md) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(HarcBrand.gradient)
                 .frame(width: 36, height: 36)
@@ -203,8 +203,8 @@ public struct WelcomeFlowView: View {
     }
 
     private func canvasIllustration(step: WelcomeFlowStep) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
+            HStack(spacing: HarcSpacing.sm) {
                 Circle()
                     .fill(step.tint)
                     .frame(width: 8, height: 8)
@@ -217,7 +217,7 @@ public struct WelcomeFlowView: View {
                     .foregroundStyle(step.tint)
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: HarcSpacing.md) {
                 VStack(alignment: .leading, spacing: 9) {
                     ForEach(model.steps) { railStep in
                         Capsule()
@@ -227,12 +227,12 @@ public struct WelcomeFlowView: View {
                 }
                 .frame(width: 104, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: HarcSpacing.md) {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(step.tint.opacity(0.14))
                         .frame(height: 96)
                         .overlay(
-                            VStack(spacing: 8) {
+                            VStack(spacing: HarcSpacing.sm) {
                                 Image(systemName: step.symbolName)
                                     .font(.system(size: 32, weight: .medium))
                                     .foregroundStyle(step.tint)
@@ -240,11 +240,11 @@ public struct WelcomeFlowView: View {
                                     .font(.harcCaption.weight(.semibold))
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
-                                    .padding(.horizontal, 14)
+                                    .padding(.horizontal, HarcSpacing.lg)
                             }
                         )
                     ForEach(0..<3, id: \.self) { index in
-                        HStack(spacing: 8) {
+                        HStack(spacing: HarcSpacing.sm) {
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(index == 0 ? step.tint.opacity(0.55) : Color.secondary.opacity(0.2))
                                 .frame(width: 26, height: 18)
@@ -261,7 +261,7 @@ public struct WelcomeFlowView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(HarcSpacing.lg)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -270,7 +270,7 @@ public struct WelcomeFlowView: View {
     }
 
     private var stepRail: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: HarcSpacing.sm) {
             ForEach(model.steps) { step in
                 Button {
                     model.select(step)
@@ -303,14 +303,14 @@ public struct WelcomeFlowView: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 pointRow(model.selectedStep.primaryPoint, icon: "checkmark.circle.fill")
                 pointRow(model.selectedStep.secondaryPoint, icon: "arrow.triangle.branch")
             }
-            .padding(.top, 4)
+            .padding(.top, HarcSpacing.xs)
 
             if model.selectedStep.id == WelcomeFlowModel.dictationStepID {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: HarcSpacing.md) {
                     // Ready-to-use hotkey (ships with a ⌃⌥D default) —
                     // re-recordable right here so "hold the hotkey" is
                     // never a dead instruction.
@@ -343,7 +343,7 @@ public struct WelcomeFlowView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(28)
+        .padding(HarcSpacing.xxl)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -378,7 +378,7 @@ public struct WelcomeFlowView: View {
                 stepContent
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: HarcSpacing.md) {
                 Button {
                     model.goBack()
                 } label: {
@@ -420,7 +420,7 @@ public struct WelcomeFlowView: View {
             // download — recording works the moment the model lands.
             if model.isLastStep, let setup {
                 WelcomeSTTFootnote(setup: setup)
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, HarcSpacing.xxl)
             }
             Spacer(minLength: 20).frame(maxHeight: 28)
         }
@@ -439,7 +439,7 @@ public struct WelcomeFlowView: View {
     }
 
     private func pointRow(_ text: String, icon: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
             Image(systemName: icon)
                 .foregroundStyle(model.selectedStep.tint)
                 .frame(width: 18)

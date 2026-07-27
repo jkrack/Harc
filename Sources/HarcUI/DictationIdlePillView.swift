@@ -31,7 +31,7 @@ public struct DictationIdlePillView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             micGlyph
             if hovered {
                 revealedControls
@@ -39,7 +39,7 @@ public struct DictationIdlePillView: View {
             }
         }
         .padding(.horizontal, hovered ? 12 : 10)
-        .padding(.vertical, 7)
+        .padding(.vertical, HarcSpacing.sm)
         .glassEffect(in: Capsule())
         .opacity(hovered ? 1.0 : 0.55)
         .fixedSize()
@@ -71,7 +71,7 @@ public struct DictationIdlePillView: View {
     }
 
     private var revealedControls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             // Same borderless Menu approach as the live HUD's chip — NSMenu
             // tracks in its own window, so no activation.
             Menu {

@@ -22,9 +22,9 @@ extension HarcWindowRootView {
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let mutationFailure {
                     mutationFailureBanner(mutationFailure)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                        .padding(.bottom, 8)
+                        .padding(.horizontal, HarcSpacing.lg)
+                        .padding(.top, HarcSpacing.md)
+                        .padding(.bottom, HarcSpacing.sm)
                 }
             }
     }
@@ -35,7 +35,7 @@ extension HarcWindowRootView {
     }
 
     func mutationFailureBanner(_ failure: LibraryMutationFailure) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: HarcSpacing.md) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(Color.harc(.failure))
             VStack(alignment: .leading, spacing: 2) {
@@ -57,7 +57,7 @@ extension HarcWindowRootView {
             .buttonStyle(.borderless)
             .help("Dismiss")
         }
-        .padding(10)
+        .padding(HarcSpacing.md)
         .background(Color.harc(.failure).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -115,7 +115,7 @@ extension HarcWindowRootView {
 
     func detailContent(recording: Recording) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 detailTitleRow(recording: recording)
 
                 WaveformPlayerView(
@@ -159,7 +159,7 @@ extension HarcWindowRootView {
                 }
             }
             .padding([.horizontal, .top])
-            .padding(.bottom, 8)
+            .padding(.bottom, HarcSpacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider()
@@ -192,7 +192,7 @@ extension HarcWindowRootView {
     /// had (the view-model API existed with no caller; the retired editor
     /// window was the only place a title could be changed).
     func detailTitleRow(recording: Recording) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
             TextField("Untitled", text: $titleDraft)
                 .textFieldStyle(.plain)
                 .font(.title2.weight(.semibold))
@@ -345,7 +345,7 @@ extension HarcWindowRootView {
     func inspectorSummaryChips(for recording: Recording) -> some View {
         let speakerCount = speakerIndices(for: recording).count
         let fileCount = [recording.wavPath, recording.txtPath, recording.jsonPath].compactMap(\.self).count
-        return HStack(spacing: 8) {
+        return HStack(spacing: HarcSpacing.sm) {
             inspectorChip(
                 title: inspectorPendingSuggestions.isEmpty
                     ? Pluralize.count(speakerCount, "speaker")
@@ -379,7 +379,7 @@ extension HarcWindowRootView {
     // MARK: - Find (flat text — the editor applies the highlight)
 
     func transcriptFindBar() -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: HarcSpacing.sm) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(Color.secondary)
             TextField("Find in transcript", text: $transcriptSearchText)
@@ -435,7 +435,7 @@ extension HarcWindowRootView {
             .buttonStyle(.borderless)
             .help("Close find")
         }
-        .padding(10)
+        .padding(HarcSpacing.md)
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)

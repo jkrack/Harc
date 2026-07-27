@@ -48,7 +48,7 @@ public struct HarcSettingsForm: View {
             Text("No settings match “\(query.trimmingCharacters(in: .whitespaces))”.")
                 .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
-                .padding(.vertical, 4)
+                .padding(.vertical, HarcSpacing.xs)
         } else {
             // Grouped by pane so a hit reads as "Speakers — in Transcription",
             // which teaches where the setting lives instead of teleporting to
