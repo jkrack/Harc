@@ -258,7 +258,7 @@ private struct PendingSpeakerSuggestionRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.yellow.opacity(0.12))
+                .fill(Color.harc(.attention).opacity(0.12))
         )
     }
 
@@ -285,7 +285,7 @@ private struct PendingSpeakerSuggestionRow: View {
 
     private var icon: some View {
         Image(systemName: "questionmark.circle.fill")
-            .foregroundStyle(Color.yellow)
+            .foregroundStyle(Color.harc(.attention))
     }
 
     private var suggestionText: some View {

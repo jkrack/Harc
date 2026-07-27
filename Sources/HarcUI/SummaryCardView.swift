@@ -109,7 +109,7 @@ public struct SummaryCardView: View {
                 tintedContainer {
                     Text("Active summarizer model is unknown.")
                         .font(.harcBody)
-                        .foregroundStyle(Color.red)
+                        .foregroundStyle(Color.harc(.failure))
                 }
             }
         }
@@ -119,7 +119,7 @@ public struct SummaryCardView: View {
         tintedContainer {
             HStack(spacing: 12) {
                 Image(systemName: "text.badge.xmark")
-                    .foregroundStyle(Color.yellow)
+                    .foregroundStyle(Color.harc(.attention))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("No transcript available")
                         .font(.harcBody)
@@ -181,7 +181,7 @@ public struct SummaryCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.yellow)
+                        .foregroundStyle(Color.harc(.attention))
                     Text("Summarization failed")
                         .font(.harcBody)
                         .foregroundStyle(Color.primary)
@@ -208,7 +208,7 @@ public struct SummaryCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "pause.circle.fill")
-                        .foregroundStyle(Color.yellow)
+                        .foregroundStyle(Color.harc(.attention))
                     Text("Summarization skipped")
                         .font(.harcBody)
                         .foregroundStyle(Color.primary)
@@ -341,7 +341,7 @@ public struct SummaryCardView: View {
         NativeStatusCallout(intent: .warning) {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(Color.harc(.attention))
                 Text("Summary is based on an older transcript.")
                     .font(.harcLabel)
                     .foregroundStyle(.secondary)

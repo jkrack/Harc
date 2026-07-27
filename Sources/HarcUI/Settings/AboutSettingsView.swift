@@ -47,7 +47,7 @@ public struct AboutSettingsView: View {
                     ForEach(RecordingPermissionService.allCases, id: \.rawValue) { service in
                         HStack(spacing: 6) {
                             Image(systemName: service.isGranted ? "checkmark.circle.fill" : "xmark.circle")
-                                .foregroundStyle(service.isGranted ? Color.green : Color.secondary)
+                                .foregroundStyle(service.isGranted ? Color.harc(.ready) : Color.secondary)
                             Text(service.displayName)
                                 .font(.harcCaption)
                             Spacer()
@@ -72,7 +72,7 @@ public struct AboutSettingsView: View {
             if let permissionRepairError {
                 Label(permissionRepairError, systemImage: "exclamationmark.triangle")
                     .font(.harcCaption)
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(Color.harc(.attention))
             }
         } header: {
             Text("Troubleshooting")
@@ -211,7 +211,7 @@ public struct AboutSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "lock.shield.fill")
-                    .foregroundStyle(Color.green)
+                    .foregroundStyle(Color.harc(.ready))
                 Text("Local-first")
                     .font(.harcTitle)
             }

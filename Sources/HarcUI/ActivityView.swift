@@ -164,7 +164,7 @@ public struct ActivityView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label(recovery.title, systemImage: "exclamationmark.triangle.fill")
                     .font(.harcCaption.weight(.semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.harc(.attention))
                 Text(recovery.message)
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)

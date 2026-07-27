@@ -51,7 +51,7 @@ public struct DictationModesSettingsView: View {
             if let importError {
                 Text(importError)
                     .font(.harcCaption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.harc(.failure))
             }
         } header: {
             Text("Dictation Modes")

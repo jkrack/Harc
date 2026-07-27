@@ -37,7 +37,7 @@ extension HarcWindowRootView {
     func mutationFailureBanner(_ failure: LibraryMutationFailure) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.red)
+                .foregroundStyle(Color.harc(.failure))
             VStack(alignment: .leading, spacing: 2) {
                 Text(failure.title)
                     .font(.harcCaption.weight(.semibold))
@@ -58,10 +58,10 @@ extension HarcWindowRootView {
             .help("Dismiss")
         }
         .padding(10)
-        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.harc(.failure).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.red.opacity(0.25), lineWidth: 1)
+                .strokeBorder(Color.harc(.failure).opacity(0.25), lineWidth: 1)
         )
     }
 
@@ -201,7 +201,7 @@ extension HarcWindowRootView {
             if let error = editorSaveError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.harcCaption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.harc(.attention))
                     .lineLimit(1)
                     .help(error)
             } else if editorDirty {

@@ -253,7 +253,7 @@ struct WelcomeSetupSection: View {
             if model.screenAudioNeedsRelaunch {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "arrow.clockwise.circle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.harc(.attention))
                     Text("Screen Recording is granted, but macOS keeps the old answer until Harc restarts. Quit and reopen to capture system audio.")
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
@@ -281,7 +281,7 @@ struct WelcomeSetupSection: View {
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: granted ? "checkmark.circle.fill" : "lock.shield")
-                .foregroundStyle(granted ? Color.green : Color.secondary)
+                .foregroundStyle(granted ? Color.harc(.ready) : Color.secondary)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(service.displayName)

@@ -228,7 +228,7 @@ public struct RecordingSettingsView: View {
         HStack(spacing: 12) {
             Image(systemName: app.symbolName)
                 .font(.harcBody)
-                .foregroundStyle(Color.purple)
+                .foregroundStyle(Color.accentColor) // app glyphs are decoration, not status
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.displayName)
@@ -368,7 +368,7 @@ public struct RecordingSettingsView: View {
         NativeStatusCallout(intent: .warning) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(Color.harc(.attention))
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Notifications disabled")
                         .font(.harcCaption.weight(.semibold))
@@ -401,7 +401,7 @@ public struct RecordingSettingsView: View {
         NativeStatusCallout(intent: .danger) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.red)
+                    .foregroundStyle(Color.harc(.failure))
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Destination folder not found")
                         .font(.harcCaption.weight(.semibold))

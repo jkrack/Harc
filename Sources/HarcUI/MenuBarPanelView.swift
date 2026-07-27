@@ -545,8 +545,8 @@ public struct MenuBarPanelView: View {
                       ? "checkmark.circle.fill"
                       : statusTone == .attention ? "exclamationmark.circle.fill" : "xmark.octagon.fill")
                     .font(.harcCaption)
-                    .foregroundStyle(statusTone == .ready ? Color.green
-                                     : statusTone == .attention ? Color.orange : Color.red)
+                    .foregroundStyle(statusTone == .ready ? Color.harc(.ready)
+                                     : statusTone == .attention ? Color.harc(.attention) : Color.harc(.failure))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(statusSummary)
                         .font(.harcCaption)
@@ -692,7 +692,7 @@ public struct MenuBarPanelView: View {
         NativeStatusCallout(intent: .warning) {
             HStack(spacing: 8) {
                 Image(systemName: "clock.badge.checkmark")
-                    .foregroundStyle(Color.yellow)
+                    .foregroundStyle(Color.harc(.attention))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Auto-stopped")
                         .font(.harcLabel.weight(.semibold))
@@ -865,8 +865,8 @@ private enum ReadinessStatus {
 
     var color: Color {
         switch self {
-        case .ready: return Color.green
-        case .warning: return Color.yellow
+        case .ready: return Color.harc(.ready)
+        case .warning: return Color.harc(.attention)
         case .muted: return Color.secondary
         }
     }

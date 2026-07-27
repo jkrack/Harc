@@ -48,7 +48,7 @@ public struct AIModelsSettingsView: View {
                 if let downloadStartError {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(Color.yellow)
+                            .foregroundStyle(Color.harc(.attention))
                         Text(downloadStartError)
                             .font(.harcLabel)
                             .foregroundStyle(Color.secondary)
@@ -97,7 +97,7 @@ public struct AIModelsSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     if isActiveSummarizerMissing {
                         Text("The active summarizer isn't installed, so auto-summarize and the Generate button have no effect. Download a tier above to enable them.")
-                            .foregroundStyle(Color.red)
+                            .foregroundStyle(Color.harc(.failure))
                     }
                     Text("Summarizers are multi-GB resident and use power. The battery toggle is off by default.")
                     Text("When enabled, Markdown, DOCX, and prompt exports prepend Summary and Action Items above the transcript.")
@@ -294,12 +294,12 @@ private struct ModelRow: View {
                         Text("Your Mac has \(ramGB) GB — \(descriptor.recommendedRAMGB) GB recommended.")
                     }
                     .font(.harcCaption)
-                    .foregroundStyle(Color.yellow)
+                    .foregroundStyle(Color.harc(.attention))
                 }
                 if case .failed(let reason) = state {
                     Text(reason)
                         .font(.harcLabel)
-                        .foregroundStyle(Color.red)
+                        .foregroundStyle(Color.harc(.failure))
                 }
                 if case .downloading(let progress) = state {
                     ProgressView(value: progress)
@@ -320,17 +320,17 @@ private struct ModelRow: View {
     @ViewBuilder
     private var statusChip: some View {
         if !descriptor.manifestVerified {
-            chip("Manifest pending", color: Color.yellow)
+            chip("Manifest pending", color: Color.harc(.attention))
         } else {
             switch state {
             case .installed:
-                chip("Installed · \(sizeText)\(measuredSpeedSuffix)", color: Color.green)
+                chip("Installed · \(sizeText)\(measuredSpeedSuffix)", color: Color.harc(.ready))
             case .downloading:
                 chip("Downloading · \(sizeText)", color: Color.accentColor)
             case .verifying:
                 chip("Verifying", color: Color.accentColor)
             case .failed:
-                chip("Failed", color: Color.red)
+                chip("Failed", color: Color.harc(.failure))
             case .absent:
                 chip("Not installed · \(sizeText)", color: Color(nsColor: .tertiaryLabelColor))
             }

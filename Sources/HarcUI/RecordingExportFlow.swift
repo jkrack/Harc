@@ -245,7 +245,7 @@ private struct InlineExportError: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.harc(.failure))
             Text(message)
                 .font(.harcBody)
                 .foregroundStyle(.primary)
@@ -253,7 +253,7 @@ private struct InlineExportError: View {
             Spacer(minLength: 0)
         }
         .padding(10)
-        .background(Color.red.opacity(0.08))
+        .background(Color.harc(.failure).opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

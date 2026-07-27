@@ -127,7 +127,7 @@ public struct CountdownWarningPanel: View {
         .glassEffect(in: RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.yellow.opacity(0.45), lineWidth: 1)
+                .strokeBorder(Color.harc(.attention).opacity(0.45), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(voiceOverLabel))
@@ -212,11 +212,11 @@ private struct CountdownRing: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.yellow.opacity(0.18), lineWidth: 3)
+                .stroke(Color.harc(.attention).opacity(0.18), lineWidth: 3)
             Circle()
                 .trim(from: 0, to: progress)
                 .stroke(
-                    Color.yellow,
+                    Color.harc(.attention),
                     style: StrokeStyle(lineWidth: 3, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
@@ -224,7 +224,7 @@ private struct CountdownRing: View {
             Text("\(secondsLeft)")
                 .font(.harcTitle.monospaced().weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(Color.yellow)
+                .foregroundStyle(Color.harc(.attention))
         }
     }
 }

@@ -23,7 +23,7 @@ struct NewProjectSheet: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.harcCaption)
-                    .foregroundStyle(Color.red)
+                    .foregroundStyle(Color.harc(.failure))
             }
             HStack {
                 Spacer()

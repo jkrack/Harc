@@ -425,7 +425,7 @@ public struct HarcWindowRootView: View {
             Text("LOCAL")
                 .font(.harcMono.weight(.semibold))
                 .tracking(1.0)
-                .foregroundStyle(Color.green)
+                .foregroundStyle(Color.harc(.ready))
                 .help("All transcription and summarization runs on this Mac")
         }
     }
@@ -857,7 +857,7 @@ public struct HarcWindowRootView: View {
                         .font(.harcCaption.weight(.semibold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.yellow.opacity(0.25)))
+                        .background(Capsule().fill(Color.harc(.attention).opacity(0.25)))
                         .foregroundStyle(.primary)
                 }
             }
@@ -986,7 +986,7 @@ public struct HarcWindowRootView: View {
         let isSelected = selection == .recording(wavPath: rec.wavPath)
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: rec.pinned ? "pin.fill" : "waveform")
-                .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
+                .foregroundStyle(Color.accentColor) // pinned is decoration, not status — the glyph shape carries it
                 .frame(width: 18, alignment: .center)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
