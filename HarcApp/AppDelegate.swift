@@ -718,6 +718,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         main.setSubmenu(appMenu, for: appItem)
 
         let fileMenu = NSMenu(title: "File")
+        // Import moved here from the Library toolbar — a rare action's
+        // proper home. The empty state carries the discoverable button.
+        let importItem = fileMenu.addItem(withTitle: "Import Audio or Video…",
+                                          action: #selector(presentImportOpenPanel(_:)),
+                                          keyEquivalent: "i")
+        importItem.keyEquivalentModifierMask = [.command, .shift]
+        importItem.target = self
+        fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Close Window",
                          action: #selector(NSWindow.performClose(_:)),
                          keyEquivalent: "w")
@@ -1939,6 +1947,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     static func transcriptBody(ofSidecarAt url: URL) -> String? {
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         return OKFMarkdown.extractTranscript(from: raw) ?? raw
+    }
+
+    /// File › Import…: the app-level entry to media import, replacing the
+    /// Library toolbar button. Opens the Library first so progress and the
+    /// resulting row have somewhere to land.
+    @objc private func presentImportOpenPanel(_ sender: Any?) {
+        openLibrary()
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = MediaImportService.supportedExtensions
+            .compactMap { UTType(filenameExtension: $0) }
+        panel.allowsMultipleSelection = true
+        panel.message = "Choose audio or video files to transcribe"
+        panel.begin { [weak self] response in
+            guard response == .OK else { return }
+            self?.importMediaFiles(panel.urls)
+        }
     }
 
     func importMediaFiles(_ urls: [URL]) {

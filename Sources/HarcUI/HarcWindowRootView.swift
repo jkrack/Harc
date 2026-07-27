@@ -263,47 +263,35 @@ public struct HarcWindowRootView: View {
                 recordToolbarControl
             }
 
-            // Trailing group: Import / Copy / Edit / Export / Delete + Inspector toggle.
+            // Trailing group, cut to the three things people actually do
+            // here. Six undifferentiated icon buttons put Delete beside
+            // Export; Delete now lives in the row context menu and on the
+            // delete key, and Import lives in File › Import and the empty
+            // state, where a rare action belongs.
             ToolbarItemGroup {
-                if onImportFiles != nil {
-                    Button {
-                        presentImportPanel()
-                    } label: {
-                        Label("Import", systemImage: "square.and.arrow.down")
-                    }
-                    .help("Import an audio or video file and transcribe it")
-                }
-
                 Button {
-                    if let rec = currentRecording { copyTranscript(rec) }
+                    if let rec = currentRecording { copyForPrompt(rec) }
                 } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
+                    // The actual job, labeled: this is what feeds an LLM.
+                    Label("Copy for Prompt", systemImage: "doc.on.doc")
+                        .labelStyle(.titleAndIcon)
                 }
                 .disabled(currentRecording == nil)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
+                .help("Copy the prompt-formatted transcript for pasting into an LLM")
 
-                Button {
-                    if let rec = currentRecording { onEdit(rec) }
+                Menu {
+                    Button("Copy Transcript Only") {
+                        if let rec = currentRecording { copyTranscript(rec) }
+                    }
+                    Divider()
+                    Button("Export…") {
+                        if let rec = currentRecording { presentExport(rec) }
+                    }
                 } label: {
-                    Label("Edit", systemImage: "pencil")
+                    Label("Share", systemImage: "square.and.arrow.up")
                 }
                 .disabled(currentRecording == nil)
-
-                Button {
-                    if let rec = currentRecording { presentExport(rec) }
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .disabled(currentRecording == nil)
-
-                Button(role: .destructive) {
-                    if let rec = currentRecording { onDelete(rec) }
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .disabled(currentRecording == nil)
-
-                Spacer()
 
                 Button {
                     inspectorOpen.toggle()
@@ -493,6 +481,12 @@ public struct HarcWindowRootView: View {
         }
         .navigationTitle("Library")
         .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
+        // Delete left the toolbar (it sat beside Export, icon-only); the
+        // keyboard path is the delete key, routed through the same
+        // confirmation alert as the context menu.
+        .onDeleteCommand {
+            if let rec = currentRecording { pendingDeleteRecording = rec }
+        }
     }
 
     // MARK: - Date scope
@@ -836,6 +830,10 @@ public struct HarcWindowRootView: View {
             HStack(spacing: 8) {
                 Button("Record") { bridge.onStartStop() }
                     .buttonStyle(.borderedProminent)
+                if onImportFiles != nil {
+                    Button("Import…") { presentImportPanel() }
+                        .buttonStyle(.bordered)
+                }
                 Button("Settings") { openSettings() }
                     .buttonStyle(.bordered)
             }
@@ -1233,6 +1231,18 @@ public struct HarcWindowRootView: View {
     var currentRecording: Recording? { selectedRecording }
 
     /// Copies the currently loaded transcript text to the system pasteboard.
+    /// The headline copy action: prompt-formatted, ready for an LLM — the
+    /// same blob the post-stop tray pastes. Plain transcript stays available
+    /// in the share menu.
+    func copyForPrompt(_ recording: Recording) {
+        let blob = ExportService.promptString(
+            for: recording,
+            includeSummary: prefs.includeSummaryInPrompt
+        )
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(blob, forType: .string)
+    }
+
     func copyTranscript(_ recording: Recording) {
         let text = transcriptText.isEmpty ? (recording.transcriptText ?? "") : transcriptText
         NSPasteboard.general.clearContents()
