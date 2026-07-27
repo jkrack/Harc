@@ -342,38 +342,46 @@ extension HarcWindowRootView {
         }
     }
 
+    /// Speakers as content, not chips. "1 speaker" and "3 files" were
+    /// bordered buttons tinted like tags; the file count was a storage
+    /// implementation detail promoted to an affordance — the user did not
+    /// create three files, Harc did (the inspector still lists them). Named
+    /// avatars carry the real information and click through to renaming.
     func inspectorSummaryChips(for recording: Recording) -> some View {
-        let speakerCount = speakerIndices(for: recording).count
-        let fileCount = [recording.wavPath, recording.txtPath, recording.jsonPath].compactMap(\.self).count
-        return HStack(spacing: HarcSpacing.sm) {
-            inspectorChip(
-                title: inspectorPendingSuggestions.isEmpty
-                    ? Pluralize.count(speakerCount, "speaker")
-                    : Pluralize.count(inspectorPendingSuggestions.count, "speaker") + " review",
-                icon: inspectorPendingSuggestions.isEmpty ? "person.wave.2" : "person.crop.circle.badge.questionmark",
-                tint: inspectorPendingSuggestions.isEmpty ? .secondary : .yellow
-            )
-            inspectorChip(
-                title: Pluralize.count(fileCount, "file"),
-                icon: "folder",
-                tint: .secondary
-            )
+        HStack(spacing: HarcSpacing.sm) {
+            if !inspectorPendingSuggestions.isEmpty {
+                Button {
+                    inspectorOpen = true
+                } label: {
+                    Label(
+                        Pluralize.count(inspectorPendingSuggestions.count, "speaker") + " to review",
+                        systemImage: "person.crop.circle.badge.questionmark"
+                    )
+                    .font(.harcCaption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color.harc(.attention))
+            }
+            ForEach(speakerIndices(for: recording), id: \.self) { index in
+                let name = resolvedSpeakerLabels[index] ?? "Speaker \(index + 1)"
+                Button {
+                    inspectorOpen = true
+                } label: {
+                    HStack(spacing: HarcSpacing.xs) {
+                        PersonAvatar(displayName: name, size: 18)
+                        Text(name)
+                            .font(.harcCaption)
+                            .lineLimit(1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Rename speakers in the inspector")
+            }
             Spacer(minLength: 0)
         }
     }
 
-    func inspectorChip(title: String, icon: String, tint: Color) -> some View {
-        Button {
-            inspectorOpen = true
-        } label: {
-            Label(title, systemImage: icon)
-                .font(.harcCaption)
-                .lineLimit(1)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .tint(tint)
-    }
 
     @ViewBuilder
     // MARK: - Find (flat text — the editor applies the highlight)
