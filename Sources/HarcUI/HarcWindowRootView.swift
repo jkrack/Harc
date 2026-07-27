@@ -698,20 +698,54 @@ public struct HarcWindowRootView: View {
 
 
 
+    /// Sections, not disclosure groups. Recordings render as one flat
+    /// day-grouped run of top-level sections — sticky headers, no nesting to
+    /// open before the content is visible — and People is a peer root, not a
+    /// second drawer. The old expansion state stays persisted but unused
+    /// until the reorder mechanism is retired with it.
     @ViewBuilder
     func sidebarSection(_ section: LibrarySidebarSection) -> some View {
         switch section {
         case .recordings:
-            DisclosureGroup(isExpanded: persistedExpansionBinding(.recordings)) {
-                recordingSidebarList
-            } label: {
+            recordingsSections
+        case .people:
+            Section {
+                peopleSidebarList
+            } header: {
                 sidebarSectionHeader(section)
             }
-        case .people:
-            DisclosureGroup(isExpanded: persistedExpansionBinding(.people)) {
-                peopleSidebarList
-            } label: {
-                sidebarSectionHeader(section)
+        }
+    }
+
+    @ViewBuilder
+    var recordingsSections: some View {
+        if libraryVM.recordings.isEmpty {
+            Section {
+                recordingsEmptyState
+            } header: {
+                sidebarSectionHeader(.recordings)
+            }
+        } else {
+            let pinned = libraryVM.recordings.filter(\.pinned)
+            if !pinned.isEmpty {
+                Section {
+                    ForEach(pinned) { rec in
+                        recordingLabel(rec)
+                    }
+                } header: {
+                    Text("Pinned")
+                }
+            }
+
+            let unpinned = libraryVM.recordings.filter { !$0.pinned }
+            ForEach(Self.dateBuckets(from: unpinned), id: \.label) { bucket in
+                Section {
+                    ForEach(bucket.recordings) { rec in
+                        recordingLabel(rec)
+                    }
+                } header: {
+                    Text(bucket.label)
+                }
             }
         }
     }
@@ -763,47 +797,21 @@ public struct HarcWindowRootView: View {
         return "Start a capture with the Record button or the menu bar icon."
     }
 
-    @ViewBuilder
-    var recordingSidebarList: some View {
-        if libraryVM.recordings.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                EmptyStateView(
-                    icon: "waveform.slash",
-                    title: "No recordings yet",
-                    subtitle: emptyStateSubtitle
-                )
-                HStack(spacing: 8) {
-                    Button("Record") { bridge.onStartStop() }
-                        .buttonStyle(.borderedProminent)
-                    Button("Settings") { openSettings() }
-                        .buttonStyle(.bordered)
-                }
-                .controlSize(.small)
-                .frame(maxWidth: .infinity)
+    var recordingsEmptyState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            EmptyStateView(
+                icon: "waveform.slash",
+                title: "No recordings yet",
+                subtitle: emptyStateSubtitle
+            )
+            HStack(spacing: 8) {
+                Button("Record") { bridge.onStartStop() }
+                    .buttonStyle(.borderedProminent)
+                Button("Settings") { openSettings() }
+                    .buttonStyle(.bordered)
             }
-        } else {
-            let pinned = libraryVM.recordings.filter(\.pinned)
-            if !pinned.isEmpty {
-                Text("Pinned")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
-                ForEach(pinned) { rec in
-                    recordingLabel(rec)
-                }
-            }
-
-            let unpinned = libraryVM.recordings.filter { !$0.pinned }
-            let buckets = Self.dateBuckets(from: unpinned)
-            ForEach(buckets, id: \.label) { bucket in
-                Text(bucket.label)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
-                ForEach(bucket.recordings) { rec in
-                    recordingLabel(rec)
-                }
-            }
+            .controlSize(.small)
+            .frame(maxWidth: .infinity)
         }
     }
 
