@@ -42,16 +42,61 @@ public struct DictationHUDView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
+        // Fixed width. The pill floats over another app while the user is
+        // mid-sentence; content that swapped between a 200pt waveform, a
+        // silence warning, and a two-line error made it jump position and
+        // size mid-session. Messages truncate or wrap inside the fixed
+        // bounds instead.
+        .frame(width: 360)
         .glassEffect(in: Capsule())
-        .fixedSize()
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
     }
 
+    /// Three states, told by shape and motion rather than hue: a pulsing
+    /// live dot while listening, a spinner while working, a static symbol
+    /// when resolved. Eight phase colors on a 9pt dot — several of them
+    /// adjacent hues, beside a waveform in a similar color — asked the user
+    /// to read state from a paint chip. Detail stays in the text beside it.
+    @ViewBuilder
     private var statusDot: some View {
-        Circle()
-            .fill(dotColor)
-            .frame(width: 9, height: 9)
+        switch hudState {
+        case .listening:
+            Circle()
+                .fill(Color.harc(.live))
+                .frame(width: 9, height: 9)
+                .modifier(PulsingDot())
+        case .working:
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 13, height: 13)
+        case .resolvedOK:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.harc(.ready))
+        case .resolvedProblem:
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.harc(.attention))
+        case .idle:
+            Circle()
+                .fill(Color.secondary.opacity(0.4))
+                .frame(width: 9, height: 9)
+        }
+    }
+
+    private enum HUDVisualState { case listening, working, resolvedOK, resolvedProblem, idle }
+
+    private var hudState: HUDVisualState {
+        switch state.phase {
+        case .listening: return .listening
+        case .requestingMic, .loadingModel, .loadingTransformModel,
+             .transcribing, .transforming, .inserting: return .working
+        case .done(let outcome):
+            return outcome.kind == .inserted || outcome.kind == .copied ? .resolvedOK : .resolvedProblem
+        case .error: return .resolvedProblem
+        case .idle: return .idle
+        }
     }
 
     /// Waveform while listening; status text everywhere else. The old layout
@@ -91,7 +136,7 @@ public struct DictationHUDView: View {
             HStack(alignment: .center, spacing: 2) {
                 ForEach(Array(bars.enumerated()), id: \.offset) { _, level in
                     Capsule()
-                        .fill(dotColor.opacity(0.85))
+                        .fill(Color.harc(.live).opacity(0.85))
                         .frame(width: barWidth, height: max(2, geo.size.height * CGFloat(level)))
                 }
             }
@@ -252,22 +297,6 @@ public struct DictationHUDView: View {
         }
     }
 
-    private var dotColor: Color {
-        switch state.phase {
-        case .requestingMic, .loadingModel, .loadingTransformModel: return .yellow
-        case .listening: return HarcBrand.live
-        case .transcribing, .inserting: return .accentColor
-        case .transforming: return .indigo
-        case .done(let outcome):
-            switch outcome.kind {
-            case .inserted: return .green
-            case .copied: return .orange
-            case .notice: return .accentColor
-            }
-        case .error: return .orange
-        case .idle: return .secondary
-        }
-    }
 
     private var statusTextColor: Color {
         switch state.phase {
@@ -294,5 +323,18 @@ public struct DictationHUDView: View {
 
     private var accessibilityLabel: String {
         "Dictation: \(statusText), mode \(modeStore.activeMode.name)"
+    }
+}
+
+/// The listening pulse — motion carries "live" so hue doesn't have to.
+private struct PulsingDot: ViewModifier {
+    @State private var pulsing = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(pulsing ? 1.25 : 0.9)
+            .opacity(pulsing ? 1.0 : 0.75)
+            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
+            .onAppear { pulsing = true }
     }
 }
