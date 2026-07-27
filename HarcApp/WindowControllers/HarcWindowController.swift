@@ -19,7 +19,6 @@ final class HarcWindowController: NSWindowController {
         queueStore: SummarizationQueueStore,
         modelStore: ModelManagerStore,
         importState: MediaImportState,
-        onEdit: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void,
         onImportFiles: @escaping ([URL]) -> Void,
         onCancelImport: @escaping () -> Void
@@ -33,7 +32,6 @@ final class HarcWindowController: NSWindowController {
             store: store,
             reIDService: reIDService,
             summarizerService: summarizerService,
-            onEdit: onEdit,
             onDelete: onDelete,
             onImportFiles: onImportFiles,
             onCancelImport: onCancelImport,

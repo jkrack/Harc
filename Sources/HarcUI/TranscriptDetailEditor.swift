@@ -1,10 +1,15 @@
 import SwiftUI
 import AppKit
 
-/// SwiftUI wrapper around `NSTextView` so we can: bind plain text two-way,
-/// apply a background-color attribute to a specific range (current-word
-/// highlight during playback), and report cmd-click character offsets.
-public struct TranscriptTextView: NSViewRepresentable {
+/// The transcript, editable in place — the Library detail pane's single
+/// text surface, replacing the separate editor window that used to duplicate
+/// this recording's toolbar, transport, find bar and waveform.
+///
+/// SwiftUI wrapper around `NSTextView` (not `TextEditor`) because the two
+/// things this surface must do are things `TextEditor` cannot: apply a
+/// background attribute to an arbitrary range (find match, playback word
+/// highlight) and report ⌘-click character offsets for click-to-seek.
+public struct TranscriptDetailEditor: NSViewRepresentable {
     @Binding public var text: String
     public let highlightRange: NSRange?
     public let onCommandClick: (Int) -> Void
@@ -88,14 +93,22 @@ public struct TranscriptTextView: NSViewRepresentable {
             range: range
         )
         coordinator.appliedHighlightRange = range
+
+        // The highlight is only useful on screen — find navigation and
+        // playback both want the eye taken to it.
+        if range != coordinator.lastScrolledRange {
+            textView.scrollRangeToVisible(range)
+            coordinator.lastScrolledRange = range
+        }
     }
 
     public final class Coordinator: NSObject, NSTextViewDelegate {
-        let parent: TranscriptTextView
+        let parent: TranscriptDetailEditor
         weak var textView: NSTextView?
         var appliedHighlightRange: NSRange?
+        var lastScrolledRange: NSRange?
 
-        init(parent: TranscriptTextView) {
+        init(parent: TranscriptDetailEditor) {
             self.parent = parent
         }
 

@@ -367,7 +367,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var preRollCapture: PreRollCapture?
     private var preRollTicker: Timer?
     private var recordingsVM: RecordingsViewModel?
-    private var editorWindows: [String: TranscriptEditorWindowController] = [:]
     private var harcWindow: HarcWindowController?
     private var settingsWindow: NSWindowController?
     private var welcomeWindow: NSWindowController?
@@ -1820,31 +1819,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         openLibrary()
     }
 
-    private func openEditor(for recording: Recording) {
-        if let existing = editorWindows[recording.wavPath] {
-            existing.showWindow(nil)
-            existing.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        guard let store else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let vm = await TranscriptEditorViewModel(recording: recording, store: store)
-            let controller = TranscriptEditorWindowController(
-                vm: vm,
-                store: store,
-                onClose: { [weak self] in
-                    self?.editorWindows.removeValue(forKey: recording.wavPath)
-                }
-            )
-            self.editorWindows[recording.wavPath] = controller
-            controller.showWindow(nil)
-            controller.window?.makeKeyAndOrderFront(nil)
-            self.trackManagedWindow(controller.window)
-            NSApp.activate(ignoringOtherApps: true)
-        }
-    }
 
     /// Called by the "Identify speakers" / "Retry" buttons in the inspector panel
     /// and the panel post-stop tray. Runs a fresh full-WAV diarize pass against
@@ -2618,7 +2592,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             queueStore: queueStore,
             modelStore: modelStore,
             importState: importState,
-            onEdit: { [weak self] rec in self?.openEditor(for: rec) },
             onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) },
             onImportFiles: { [weak self] urls in self?.importMediaFiles(urls) },
             onCancelImport: { [weak self] in self?.cancelImport() }

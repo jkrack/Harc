@@ -12,12 +12,28 @@ public struct WaveformPlayerView: View {
     let audioURL: URL?
     let tint: Color
 
-    @StateObject private var model = WaveformPlayerModel()
+    // Owned externally when the caller needs to drive it (the detail pane's
+    // ⌘-click-to-seek and playback word highlight); self-owned otherwise.
+    @ObservedObject var model: WaveformPlayerModel
 
-    public init(envelope: [Float], audioURL: URL?, tint: Color = WavePalette.center) {
+    @StateObject private var fallbackModel = WaveformPlayerModel()
+
+    public init(
+        envelope: [Float],
+        audioURL: URL?,
+        tint: Color = WavePalette.center,
+        model: WaveformPlayerModel? = nil
+    ) {
         self.envelope = envelope
         self.audioURL = audioURL
         self.tint = tint
+        if let model {
+            self._model = ObservedObject(wrappedValue: model)
+        } else {
+            // A private stable instance per view identity; harmless when an
+            // external model is supplied because it is simply never used.
+            self._model = ObservedObject(wrappedValue: WaveformPlayerModel.shared(for: audioURL))
+        }
     }
 
     public var body: some View {
@@ -137,7 +153,20 @@ public struct WaveformPlayerView: View {
 // MARK: - Model
 
 @MainActor
-final class WaveformPlayerModel: ObservableObject {
+public final class WaveformPlayerModel: ObservableObject {
+    /// Stable per-URL instances for callers that don't inject a model, so a
+    /// SwiftUI re-init doesn't reset playback mid-listen.
+    private static var sharedModels: [String: WaveformPlayerModel] = [:]
+    static func shared(for url: URL?) -> WaveformPlayerModel {
+        let key = url?.path ?? "-"
+        if let existing = sharedModels[key] { return existing }
+        let created = WaveformPlayerModel()
+        // Cap the cache — entries are tiny, but unbounded growth is a leak.
+        if sharedModels.count > 16 { sharedModels.removeAll() }
+        sharedModels[key] = created
+        return created
+    }
+
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0

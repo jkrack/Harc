@@ -37,7 +37,6 @@ public struct HarcWindowRootView: View {
     let store: RecordingStore
     let reIDService: SpeakerReIDService
     let summarizerService: SummarizerService
-    let onEdit: (Recording) -> Void
     let onDelete: (Recording) -> Void
     /// Import audio/video files into the library. Nil hides the import
     /// button and disables drag-and-drop (e.g. in previews/tests).
@@ -69,6 +68,24 @@ public struct HarcWindowRootView: View {
     @State var transcriptSearchIndex = 0
     @FocusState var transcriptSearchFocused: Bool
     @State var detailEnvelope: [Float] = []
+    /// Loader/saver for the recording open in the detail pane — the OKF-aware
+    /// engine the retired editor window used, now serving the single surface.
+    @State var detailDocument: TranscriptDocument? = nil
+    /// The editable transcript the pane binds to. Autosaved on pause.
+    @State var editorText: String = ""
+    @State var editorHighlight: NSRange? = nil
+    @State var editorDirty = false
+    @State var editorSaveError: String? = nil
+    @State var lastAutosaveAt: Date? = nil
+    @State var autosaveTask: Task<Void, Never>? = nil
+    /// Character offsets where a speaker turn begins ("Name: …" lines),
+    /// computed at load for the boundary-jump commands.
+    @State var speakerBoundaries: [Int] = []
+    @State var titleDraft: String = ""
+    /// The one playback transport for the pane — the transcript's
+    /// ⌘-click-to-seek and word highlight drive the same clock the waveform
+    /// shows, instead of the second player the editor window used to own.
+    @StateObject var playerModel = WaveformPlayerModel()
     /// Resolved speaker labels for the current selection, keyed by speaker
     /// index. Populated asynchronously on selection change via
     /// `loadResolvedLabels()` so Person-linked names show up in transcript
@@ -107,7 +124,6 @@ public struct HarcWindowRootView: View {
         store: RecordingStore,
         reIDService: SpeakerReIDService,
         summarizerService: SummarizerService,
-        onEdit: @escaping (Recording) -> Void,
         onDelete: @escaping (Recording) -> Void,
         onImportFiles: (([URL]) -> Void)? = nil,
         onCancelImport: (() -> Void)? = nil,
@@ -120,7 +136,6 @@ public struct HarcWindowRootView: View {
         self.store = store
         self.reIDService = reIDService
         self.summarizerService = summarizerService
-        self.onEdit = onEdit
         self.onDelete = onDelete
         self.onImportFiles = onImportFiles
         self.onCancelImport = onCancelImport
@@ -176,7 +191,8 @@ public struct HarcWindowRootView: View {
         }
         .onAppear(perform: handleAppear)
         .onDisappear(perform: handleDisappear)
-        .onChange(of: selection) { _, _ in
+        .onChange(of: selection) { old, _ in
+            flushPendingDetailEdits(previousSelection: old)
             persistNavigationSnapshot()
             loadTranscript()
             Task { await loadEnvelope() }
@@ -974,7 +990,9 @@ public struct HarcWindowRootView: View {
                 Section("Recordings") {
                     ForEach(libraryVM.hits) { hit in
                         TranscriptHitRow(hit: hit, onEdit: {
-                            onEdit(hit.recording)
+                            // "Edit" from search means: open it — the pane
+                            // edits in place.
+                            selection = .recording(wavPath: hit.recording.wavPath)
                         })
                         .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
                         .contextMenu { contextMenu(for: hit.recording) }
@@ -1038,12 +1056,8 @@ public struct HarcWindowRootView: View {
         .onTapGesture {
             selection = .recording(wavPath: rec.wavPath)
         }
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                selection = .recording(wavPath: rec.wavPath)
-                onEdit(rec)
-            }
-        )
+        // Double-click used to open the second window; the detail pane IS
+        // the editor now, so a second click has nothing extra to add.
         .contextMenu { contextMenu(for: rec) }
     }
 
@@ -1062,7 +1076,6 @@ public struct HarcWindowRootView: View {
                 }
             }
         }
-        Button("Open in Editor…") { onEdit(rec) }
         Button("Export…") { presentExport(rec) }
         Divider()
         Button("Show in Finder") {
@@ -1317,7 +1330,23 @@ public struct HarcWindowRootView: View {
         transcriptLoadError = nil
         transcriptText = ""
         transcriptSegments = []
+        detailDocument = nil
+        editorText = ""
+        editorHighlight = nil
+        editorDirty = false
+        editorSaveError = nil
+        lastAutosaveAt = nil
+        speakerBoundaries = []
         guard let recording = selectedRecording else { return }
+        titleDraft = recording.title ?? ""
+
+        // The pane edits in place now, so it loads through the same tolerant
+        // document the editor window used: .md transcript section preferred,
+        // JSON joinedText fallback, word index for click-to-seek.
+        let doc = TranscriptDocument.load(recording: recording)
+        detailDocument = doc
+        editorText = doc.initialText
+        speakerBoundaries = Self.speakerTurnOffsets(in: doc.initialText)
 
         // Plain text for fallback / pasteboard copy.
         if let cached = recording.transcriptText, !cached.isEmpty {

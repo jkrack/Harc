@@ -114,21 +114,23 @@ extension HarcWindowRootView {
     }
 
     func detailContent(recording: Recording) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    WaveformPlayerView(
-                        envelope: detailEnvelope,
-                        audioURL: URL(fileURLWithPath: recording.wavPath)
-                    )
-                    .padding(.horizontal)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                detailTitleRow(recording: recording)
 
-                    inspectorSummaryChips(for: recording)
-                        .padding(.horizontal)
+                WaveformPlayerView(
+                    envelope: detailEnvelope,
+                    audioURL: URL(fileURLWithPath: recording.wavPath),
+                    model: playerModel
+                )
 
-                    // Summary card — requires SummarizationQueueStore and
-                    // ModelManagerStore injected as environment objects by the
-                    // window controller.
+                inspectorSummaryChips(for: recording)
+
+                // Summary card — requires SummarizationQueueStore and
+                // ModelManagerStore injected as environment objects by the
+                // window controller. Scrolls internally past a bound so a
+                // long summary can't push the transcript off screen.
+                ScrollView {
                     SummaryCardView(
                         recording: recording,
                         store: store,
@@ -145,23 +147,26 @@ extension HarcWindowRootView {
                             }
                         }
                     )
-                    .padding(.horizontal)
-
-                    if transcriptFindVisible {
-                        transcriptFindBar(proxy: proxy)
-                            .padding(.horizontal)
-                    }
-
-                    // Transcript text
-                    transcriptBody(proxy: proxy)
-                        .padding(.horizontal)
                 }
-                .padding(.vertical)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: 280)
+                .fixedSize(horizontal: false, vertical: true)
+
+                if transcriptFindVisible {
+                    transcriptFindBar()
+                }
             }
-            .background(transcriptKeyboardShortcuts(proxy: proxy))
+            .padding([.horizontal, .top])
+            .padding(.bottom, 8)
+
+            Divider()
+
+            // The transcript, editable in place. This pane is the single
+            // surface — the separate editor window, its second toolbar,
+            // second find bar and hash-derived waveform are gone.
+            transcriptEditorBody
         }
         .navigationTitle(recording.displayTitle)
+        .background(transcriptKeyboardShortcuts())
         // Reload transcript when the selection's recording row changes in the DB.
         .task(id: recording.wavPath) {
             await observeRecording(recording: recording)
@@ -169,6 +174,159 @@ extension HarcWindowRootView {
         }
         .onChange(of: transcriptSearchText) { _, _ in
             transcriptSearchIndex = 0
+            syncFindHighlight()
+        }
+        .onChange(of: editorText) { _, _ in
+            editorTextDidChange()
+        }
+        .onReceive(playerModel.$currentTime) { time in
+            updatePlaybackHighlight(at: time)
+        }
+    }
+
+    /// Title as an editable field — the rename affordance the Library never
+    /// had (the view-model API existed with no caller; the retired editor
+    /// window was the only place a title could be changed).
+    func detailTitleRow(recording: Recording) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            TextField("Untitled", text: $titleDraft)
+                .textFieldStyle(.plain)
+                .font(.title2.weight(.semibold))
+                .onSubmit { commitTitle(for: recording) }
+            Spacer(minLength: 8)
+            if let error = editorSaveError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .help(error)
+            } else if editorDirty {
+                Text("Editing…")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else if lastAutosaveAt != nil {
+                // The quiet "Saved" — no button, no dirty dot, no
+                // save-on-close alert. The document regenerates after every
+                // edit; the UI just says so.
+                Text("Saved")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    var transcriptEditorBody: some View {
+        Group {
+            if let err = transcriptLoadError, editorText.isEmpty {
+                EmptyStateView(
+                    icon: "doc.text.magnifyingglass",
+                    title: "No transcript available",
+                    subtitle: err
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                EmptyStateView(
+                    icon: "doc.text.magnifyingglass",
+                    title: "No transcript available",
+                    subtitle: "Transcribe this recording to make the transcript searchable and editable."
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                TranscriptDetailEditor(
+                    text: $editorText,
+                    highlightRange: editorHighlight,
+                    onCommandClick: { offset in seekToWord(atCharOffset: offset) }
+                )
+            }
+        }
+    }
+
+    // MARK: - Editing lifecycle
+
+    func editorTextDidChange() {
+        guard let doc = detailDocument else { return }
+        guard editorText != doc.initialText || editorDirty else { return }
+        editorDirty = true
+        // Word ranges no longer line up once the text shifts — stop
+        // highlighting rather than highlight the wrong words. This is the
+        // subtle version of the old "timestamps approximate" banner.
+        editorHighlight = nil
+        scheduleAutosave()
+    }
+
+    /// Autosave on pause: ~2s after the last keystroke. ⌘S flushes
+    /// immediately; switching selection flushes synchronously.
+    func scheduleAutosave() {
+        autosaveTask?.cancel()
+        autosaveTask = Task { [text = editorText] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await performAutosave(text: text)
+        }
+    }
+
+    func performAutosave(text: String) async {
+        guard let doc = detailDocument, editorDirty else { return }
+        do {
+            _ = try doc.save(editedText: text)
+            if let id = doc.recordingID {
+                try await store.updateTranscriptText(id: id, text: text)
+            }
+            editorDirty = (editorText != text)
+            editorSaveError = nil
+            lastAutosaveAt = Date()
+        } catch {
+            editorSaveError = "Couldn't save: \(error.localizedDescription)"
+        }
+    }
+
+    /// Synchronous flush used when the selection is about to change — the
+    /// debounce must not lose the last two seconds of typing.
+    func flushPendingDetailEdits(previousSelection: LibrarySelection?) {
+        autosaveTask?.cancel()
+        guard case .recording(let wavPath) = previousSelection,
+              let doc = detailDocument, editorDirty else { return }
+        let text = editorText
+        let recID = doc.recordingID
+        Task.detached { [store] in
+            _ = try? doc.save(editedText: text)
+            if let recID {
+                try? await store.updateTranscriptText(id: recID, text: text)
+            }
+            _ = wavPath
+        }
+        // Commit any pending title edit through the same exit.
+        if let rec = libraryVM.recordings.first(where: { $0.wavPath == wavPath }) {
+            commitTitle(for: rec)
+        }
+    }
+
+    func commitTitle(for recording: Recording) {
+        guard let id = recording.id else { return }
+        let trimmed = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = recording.title ?? ""
+        guard trimmed != current else { return }
+        Task {
+            try? await libraryVM.rename(id: id, title: trimmed.isEmpty ? nil : trimmed)
+        }
+    }
+
+    // MARK: - Seek + playback highlight
+
+    func seekToWord(atCharOffset offset: Int) {
+        guard let doc = detailDocument, !editorDirty,
+              let entry = doc.wordIndex.wordAt(charOffset: offset) else { return }
+        Task {
+            await playerModel.seek(to: Double(entry.word.startMs) / 1000.0, andPlay: true)
+        }
+    }
+
+    func updatePlaybackHighlight(at time: Double) {
+        guard playerModel.isPlaying, !editorDirty, transcriptSearchQuery.isEmpty,
+              let doc = detailDocument, !doc.wordIndex.entries.isEmpty else { return }
+        let entry = doc.wordIndex.wordAt(timeMs: Int(time * 1000))
+        if entry?.range != editorHighlight {
+            editorHighlight = entry?.range
         }
     }
 
@@ -206,75 +364,22 @@ extension HarcWindowRootView {
     }
 
     @ViewBuilder
-    func transcriptBody(proxy: ScrollViewProxy) -> some View {
-        if let err = transcriptLoadError {
-            Text(err)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else if !transcriptSegments.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(transcriptSegments) { seg in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text(formatTimestamp(seconds: seg.startSec))
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.10), in: Capsule())
-                            Text(seg.speakerName)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                        }
-                    Text(highlightedTranscriptText(seg.text, activeMatch: activeTranscriptMatch(for: seg.id)))
-                            .font(.body)
-                            .lineSpacing(4)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .id(seg.id)
-                    .padding(.vertical, activeTranscriptMatchSegmentID == seg.id ? 6 : 0)
-                    .padding(.horizontal, activeTranscriptMatchSegmentID == seg.id ? 8 : 0)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(activeTranscriptMatchSegmentID == seg.id ? Color.accentColor.opacity(0.08) : Color.clear)
-                    )
-                }
-            }
-        } else if transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Trimmed, not just `.isEmpty`: a transcript of a single newline
-            // is not empty by that test, so the pane rendered a blank void
-            // instead of the empty state that exists for exactly this case.
-            EmptyStateView(
-                icon: "doc.text.magnifyingglass",
-                title: "No transcript available",
-                subtitle: "Transcribe this recording to make the transcript searchable and editable."
-            )
-        } else {
-            Text(highlightedTranscriptText(transcriptText, activeMatch: activeTranscriptMatch))
-                .font(.body)
-                .lineSpacing(4)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id("flat-transcript")
-        }
-    }
+    // MARK: - Find (flat text — the editor applies the highlight)
 
-    func transcriptFindBar(proxy: ScrollViewProxy) -> some View {
+    func transcriptFindBar() -> some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(Color.secondary)
             TextField("Find in transcript", text: $transcriptSearchText)
                 .textFieldStyle(.roundedBorder)
                 .focused($transcriptSearchFocused)
-                .onSubmit { jumpToNextTranscriptMatch(proxy: proxy) }
+                .onSubmit { jumpToNextTranscriptMatch() }
             Text(transcriptSearchStatus)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(Color.secondary)
                 .frame(minWidth: 58, alignment: .trailing)
             Button {
-                jumpToPreviousTranscriptMatch(proxy: proxy)
+                jumpToPreviousTranscriptMatch()
             } label: {
                 Label("Previous match", systemImage: "chevron.up")
             }
@@ -282,7 +387,7 @@ extension HarcWindowRootView {
             .disabled(transcriptSearchMatches.isEmpty)
             .help("Previous match")
             Button {
-                jumpToNextTranscriptMatch(proxy: proxy)
+                jumpToNextTranscriptMatch()
             } label: {
                 Label("Next match", systemImage: "chevron.down")
             }
@@ -292,26 +397,25 @@ extension HarcWindowRootView {
             Divider()
                 .frame(height: 18)
             Button {
-                jumpToPreviousSpeakerBoundary(proxy: proxy)
+                jumpToSpeakerBoundary(forward: false)
             } label: {
                 Label("Previous speaker", systemImage: "person.fill.turn.up.left")
             }
             .labelStyle(.iconOnly)
-            .disabled(transcriptSegments.isEmpty)
-            .keyboardShortcut(.upArrow, modifiers: [.command])
+            .disabled(speakerBoundaries.isEmpty)
             .help("Previous speaker change (⌘↑)")
             Button {
-                jumpToNextSpeakerBoundary(proxy: proxy)
+                jumpToSpeakerBoundary(forward: true)
             } label: {
                 Label("Next speaker", systemImage: "person.fill.turn.down.right")
             }
             .labelStyle(.iconOnly)
-            .disabled(transcriptSegments.isEmpty)
-            .keyboardShortcut(.downArrow, modifiers: [.command])
+            .disabled(speakerBoundaries.isEmpty)
             .help("Next speaker change (⌘↓)")
             Button {
                 transcriptSearchText = ""
                 transcriptFindVisible = false
+                editorHighlight = nil
             } label: {
                 Label("Close find", systemImage: "xmark.circle.fill")
             }
@@ -327,19 +431,24 @@ extension HarcWindowRootView {
         )
     }
 
-    func transcriptKeyboardShortcuts(proxy: ScrollViewProxy) -> some View {
+    func transcriptKeyboardShortcuts() -> some View {
         HStack {
             Button("Find in transcript") {
                 transcriptFindVisible = true
                 transcriptSearchFocused = true
             }
             .keyboardShortcut("f", modifiers: [.command])
+            Button("Save transcript now") {
+                autosaveTask?.cancel()
+                Task { await performAutosave(text: editorText) }
+            }
+            .keyboardShortcut("s", modifiers: [.command])
             Button("Next speaker") {
-                jumpToNextSpeakerBoundary(proxy: proxy)
+                jumpToSpeakerBoundary(forward: true)
             }
             .keyboardShortcut(.downArrow, modifiers: [.command])
             Button("Previous speaker") {
-                jumpToPreviousSpeakerBoundary(proxy: proxy)
+                jumpToSpeakerBoundary(forward: false)
             }
             .keyboardShortcut(.upArrow, modifiers: [.command])
         }
@@ -355,14 +464,7 @@ extension HarcWindowRootView {
     var transcriptSearchMatches: [TranscriptSearchMatch] {
         let query = transcriptSearchQuery
         guard !query.isEmpty else { return [] }
-
-        if !transcriptSegments.isEmpty {
-            return transcriptSegments.flatMap { segment in
-                TranscriptFind.matches(in: segment.text, query: query, segmentID: segment.id)
-            }
-        }
-
-        return TranscriptFind.matches(in: transcriptText, query: query)
+        return TranscriptFind.matches(in: editorText, query: query)
     }
 
     var transcriptSearchStatus: String {
@@ -372,99 +474,72 @@ extension HarcWindowRootView {
         return "\(min(transcriptSearchIndex + 1, matches.count))/\(matches.count)"
     }
 
-    var activeTranscriptMatchSegmentID: UUID? {
-        activeTranscriptMatch?.segmentID
-    }
-
     var activeTranscriptMatch: TranscriptSearchMatch? {
         let matches = transcriptSearchMatches
         guard !matches.isEmpty else { return nil }
         return matches[min(transcriptSearchIndex, matches.count - 1)]
     }
 
-    func activeTranscriptMatch(for segmentID: UUID) -> TranscriptSearchMatch? {
-        guard let match = activeTranscriptMatch, match.segmentID == segmentID else { return nil }
-        return match
+    func syncFindHighlight() {
+        editorHighlight = activeTranscriptMatch?.range
     }
 
-    func jumpToNextTranscriptMatch(proxy: ScrollViewProxy) {
+    func jumpToNextTranscriptMatch() {
         let matches = transcriptSearchMatches
         guard !matches.isEmpty else { return }
         transcriptSearchIndex = (transcriptSearchIndex + 1) % matches.count
-        scrollToTranscriptMatch(matches[transcriptSearchIndex], proxy: proxy)
+        syncFindHighlight()
     }
 
-    func jumpToPreviousTranscriptMatch(proxy: ScrollViewProxy) {
+    func jumpToPreviousTranscriptMatch() {
         let matches = transcriptSearchMatches
         guard !matches.isEmpty else { return }
-        transcriptSearchIndex = (transcriptSearchIndex + matches.count - 1) % matches.count
-        scrollToTranscriptMatch(matches[transcriptSearchIndex], proxy: proxy)
+        transcriptSearchIndex = (transcriptSearchIndex - 1 + matches.count) % matches.count
+        syncFindHighlight()
     }
 
-    func scrollToTranscriptMatch(_ match: TranscriptSearchMatch, proxy: ScrollViewProxy) {
-        withAnimation(.easeInOut(duration: 0.18)) {
-            if let segmentID = match.segmentID {
-                proxy.scrollTo(segmentID, anchor: .center)
-            } else {
-                proxy.scrollTo("flat-transcript", anchor: .center)
+    /// Speaker turns in flat text: line starts that look like "Name: ".
+    /// Computed at load; jumping moves the highlight (and the scroll) to the
+    /// start of the neighboring turn relative to the current highlight.
+    static func speakerTurnOffsets(in text: String) -> [Int] {
+        let ns = text as NSString
+        var offsets: [Int] = []
+        var lineStart = 0
+        while lineStart < ns.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            ns.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd,
+                            for: NSRange(location: lineStart, length: 0))
+            let line = ns.substring(with: NSRange(location: lineStart, length: contentsEnd - lineStart))
+            if let colon = line.firstIndex(of: ":"),
+               line.distance(from: line.startIndex, to: colon) <= 40,
+               !line[..<colon].trimmingCharacters(in: .whitespaces).isEmpty {
+                offsets.append(lineStart)
             }
+            lineStart = lineEnd
         }
+        return offsets
     }
 
-    func jumpToNextSpeakerBoundary(proxy: ScrollViewProxy) {
-        guard let id = nextSpeakerBoundaryID(forward: true) else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
-            proxy.scrollTo(id, anchor: .center)
-        }
-    }
-
-    func jumpToPreviousSpeakerBoundary(proxy: ScrollViewProxy) {
-        guard let id = nextSpeakerBoundaryID(forward: false) else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
-            proxy.scrollTo(id, anchor: .center)
-        }
-    }
-
-    func nextSpeakerBoundaryID(forward: Bool) -> UUID? {
-        let boundaries = transcriptSegments.indices.dropFirst().compactMap { index -> UUID? in
-            transcriptSegments[index].speaker == transcriptSegments[index - 1].speaker
-                ? nil
-                : transcriptSegments[index].id
-        }
-        guard !boundaries.isEmpty else { return transcriptSegments.first?.id }
-
-        let activeID = activeTranscriptMatchSegmentID
-        let activeIndex = activeID.flatMap { id in transcriptSegments.firstIndex { $0.id == id } } ?? 0
-
+    func jumpToSpeakerBoundary(forward: Bool) {
+        guard !speakerBoundaries.isEmpty else { return }
+        let current = editorHighlight?.location ?? 0
+        let target: Int?
         if forward {
-            return transcriptSegments[activeIndex...].dropFirst().first { segment in
-                boundaries.contains(segment.id)
-            }?.id ?? boundaries.first
+            target = speakerBoundaries.first { $0 > current }
+        } else {
+            target = speakerBoundaries.last { $0 < current }
         }
-
-        return transcriptSegments[..<max(activeIndex, 1)].reversed().first { segment in
-            boundaries.contains(segment.id)
-        }?.id ?? boundaries.last
+        guard let target else { return }
+        // Highlight the turn's leading line briefly-ish (until the next
+        // navigation) so the jump is visible; length to end of "Name:".
+        let ns = editorText as NSString
+        var contentsEnd = 0
+        ns.getLineStart(nil, end: nil, contentsEnd: &contentsEnd,
+                        for: NSRange(location: target, length: 0))
+        editorHighlight = NSRange(location: target, length: max(1, min(contentsEnd - target, 60)))
     }
 
-    func highlightedTranscriptText(_ text: String, activeMatch: TranscriptSearchMatch?) -> AttributedString {
-        let query = transcriptSearchQuery
-        guard !query.isEmpty else { return AttributedString(text) }
-
-        let highlighted = NSMutableAttributedString(string: text)
-        for match in TranscriptFind.matches(in: text, query: query, segmentID: activeMatch?.segmentID) {
-            let isActive = activeMatch?.range == match.range
-            highlighted.addAttribute(
-                .backgroundColor,
-                value: NSColor.selectedTextBackgroundColor.withAlphaComponent(isActive ? 0.72 : 0.30),
-                range: match.range
-            )
-            if isActive {
-                highlighted.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range)
-            }
-        }
-        return AttributedString(highlighted)
-    }
 
     func formatTimestamp(seconds: Int) -> String {
         let h = seconds / 3600
