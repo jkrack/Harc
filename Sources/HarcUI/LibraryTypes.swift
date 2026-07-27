@@ -6,9 +6,13 @@ import Foundation
 
 // MARK: - LibrarySelection
 
-/// Discriminated union for the sidebar selection. Either a recording (keyed
-/// by wav path) or a Person row (keyed by DB id).
+/// Discriminated union for the sidebar selection. A recording (keyed by wav
+/// path), a Person row (keyed by DB id), or the in-progress recording.
 public enum LibrarySelection: Hashable {
+    /// The recording happening right now. At most one exists, it has no wav
+    /// path until it finishes, and it must never be persisted — recordings do
+    /// not span launches, so restoring it would select a ghost.
+    case live
     case recording(wavPath: String)
     case person(id: Int64)
 }

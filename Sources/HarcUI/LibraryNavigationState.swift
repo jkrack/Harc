@@ -28,8 +28,13 @@ struct PersistedLibrarySelection: Codable, Equatable {
     var kind: Kind
     var value: String
 
-    init(_ selection: LibrarySelection) {
+    /// Nil for `.live`: the in-progress recording is a session-scoped fact,
+    /// and persisting it would restore a selection with nothing behind it on
+    /// the next launch.
+    init?(_ selection: LibrarySelection) {
         switch selection {
+        case .live:
+            return nil
         case .recording(let wavPath):
             kind = .recording
             value = wavPath
@@ -141,6 +146,11 @@ enum LibraryNavigationResolver {
         personIDs: Set<Int64>
     ) -> Bool {
         switch selection {
+        case .live:
+            // Never restorable: `PersistedLibrarySelection` refuses to encode
+            // it, and validating it as a *restored* value would resurrect a
+            // recording that ended with the last session.
+            return false
         case .recording(let wavPath):
             return recordingPaths.contains(wavPath)
         case .person(let id):

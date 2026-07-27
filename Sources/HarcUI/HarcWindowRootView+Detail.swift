@@ -80,20 +80,29 @@ extension HarcWindowRootView {
                 },
                 onPersonDeleted: { selection = nil }
             )
+        case .live:
+            // The in-progress recording is a real destination now, not a
+            // fallback for having nothing selected. If it stops while
+            // selected, the selection handoff in the root view moves to the
+            // finished file; this branch only renders while capture is live.
+            if recordingState.isRecording {
+                LiveTranscriptPane(
+                    recordingState: recordingState,
+                    lastUpdateAge: bridge.activeCaptureStatus?.transcriptAgeText()
+                )
+            } else {
+                ContentUnavailableView(
+                    "Recording Finished",
+                    systemImage: "waveform",
+                    description: Text("The recording is being saved.")
+                )
+            }
         case .recording, .none:
             if let recording = selectedRecording {
                 detailContent(recording: recording)
                     .inspector(isPresented: $inspectorOpen) {
                         inspectorContent(recording: recording)
                     }
-            } else if recordingState.isRecording {
-                // A recording in progress is the most interesting thing the
-                // window could be showing, and it used to show "No Item
-                // Selected" for the entire meeting.
-                LiveTranscriptPane(
-                    recordingState: recordingState,
-                    lastUpdateAge: bridge.activeCaptureStatus?.transcriptAgeText()
-                )
             } else {
                 ContentUnavailableView(
                     "No Item Selected",

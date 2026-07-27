@@ -550,6 +550,15 @@ public struct HarcWindowRootView: View {
     // remain available without competing with the common record-review loop.
     var groupedList: some View {
         List(selection: $selection) {
+            // The in-progress recording is the most interesting thing the
+            // app can show, so it is the first row whenever it exists —
+            // selectable like any other, not a mode you reach by deselecting.
+            if recordingState.isRecording {
+                Section {
+                    liveRecordingRow
+                }
+            }
+
             Section {
                 captureSidebarActions
             }
@@ -559,6 +568,57 @@ public struct HarcWindowRootView: View {
             }
             .onMove(perform: moveSidebarSections)
         }
+        .onChange(of: recordingState.isRecording) { _, isRecording in
+            if isRecording {
+                // Starting a capture is the strongest possible statement of
+                // intent — show it.
+                selection = .live
+            } else if selection == .live {
+                // Hand off to the finished file once it exists; the library
+                // observer will deliver the row moments after stop.
+                if let finished = recordingState.lastResult?.wavURL.path {
+                    selection = .recording(wavPath: finished)
+                } else {
+                    selection = nil
+                }
+            }
+        }
+    }
+
+    /// The saturated row is reserved for this — the one place urgency is
+    /// real. Everything else uses the system's quiet selection.
+    var liveRecordingRow: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(.white)
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Recording")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.white)
+                if let start = recordingState.recordingStartedAt {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(ElapsedFormatter.string(since: start, now: context.date))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                }
+            }
+            Spacer(minLength: 4)
+            LiveWaveformView(
+                history: bridge.amplitudeHistory,
+                size: .pill,
+                isActive: true,
+                tint: .white
+            )
+            .frame(width: 44, height: 14)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(HarcBrand.live, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .tag(LibrarySelection.live)
+        .accessibilityIdentifier("harc.library.liveRow")
+        .accessibilityLabel("Recording in progress")
     }
 
     var captureSidebarActions: some View {
@@ -586,20 +646,6 @@ public struct HarcWindowRootView: View {
             // it would make the UI test's query ambiguous. This whole block
             // is deleted by the sidebar rebuild a few commits from now.
 
-            // The live transcript replaces the empty detail pane, so it is
-            // unreachable while an older recording is selected. This is the
-            // way back to it without deselecting by hand.
-            if recordingState.isRecording, selectedRecording != nil {
-                Button {
-                    selection = nil
-                } label: {
-                    Label("View live transcript", systemImage: "waveform")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
-                .accessibilityIdentifier("harc.library.capture.viewLiveTranscript")
-            }
 
             if let recordingActionStatusText {
                 Text(recordingActionStatusText)
@@ -897,7 +943,9 @@ public struct HarcWindowRootView: View {
 
     func persistNavigationSnapshot() {
         LibraryNavigationStateStore.save(LibraryNavigationSnapshot(
-            selection: selection.map(PersistedLibrarySelection.init),
+            // flatMap: the persisted form is failable — `.live` encodes as
+            // no selection at all.
+            selection: selection.flatMap(PersistedLibrarySelection.init),
             peopleExpanded: peopleExpanded,
             recordingsExpanded: recordingsExpanded,
             sidebarSectionOrder: sidebarSectionOrder
@@ -905,6 +953,10 @@ public struct HarcWindowRootView: View {
     }
 
     func restoreOrValidateSelection() {
+        // A live selection is owned by the recording lifecycle, not by list
+        // contents — imports or deletes mid-recording must not yank the user
+        // off the in-progress view. The stop handoff re-routes it.
+        if selection == .live, recordingState.isRecording { return }
         let candidate = restoredSelection ?? selection
         let resolved = LibraryNavigationResolver.resolvedSelection(
             restored: candidate,

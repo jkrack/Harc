@@ -94,4 +94,20 @@ struct LibraryNavigationStateTests {
 
         #expect(resolved == nil)
     }
+
+    /// The in-progress recording is session-scoped. It must neither persist
+    /// nor restore: encoding refuses it, and the resolver treats a restored
+    /// `.live` as invalid so launch always lands on a real row.
+    @Test("live selection is never persisted or restored")
+    func liveSelectionExcludedFromPersistence() {
+        #expect(PersistedLibrarySelection(.live) == nil)
+
+        let resolved = LibraryNavigationResolver.resolvedSelection(
+            restored: .live,
+            recordingPaths: ["/tmp/a.wav"],
+            personIDs: [],
+            fallbackRecordingPath: "/tmp/a.wav"
+        )
+        #expect(resolved == .recording(wavPath: "/tmp/a.wav"))
+    }
 }
