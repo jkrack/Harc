@@ -219,6 +219,25 @@ Do not read accessibility labels through AppleScript's `description`: it
 returns the *role* ("button") for SwiftUI controls, which reads as a missing
 label when one is present. Query `AXDescription` via the AX API directly.
 
+## v0.9.0 UI overhaul — structural facts agents must know
+
+- There is **no TranscriptEditor window**. `Sources/HarcUI/TranscriptEditor/`
+  is gone; the Library detail pane edits in place via
+  `TranscriptDetailEditor` + `TranscriptDocument` (loader/saver, OKF-aware).
+  `WordIndex`, `TranscriptAudioPlayer`, `TranscriptFind` live at the top of
+  `Sources/HarcUI/`.
+- `LibrarySelection` has a `.live` case for the in-progress recording. It is
+  never persisted and never restorable — `PersistedLibrarySelection` refuses
+  it and the resolver invalidates it.
+- Design tokens are mandatory (`Sources/HarcUI/DesignSystem/`): five type
+  roles (`.harcTitle/Body/Label/Caption/Mono`), status colors only via
+  `Color.harc(_:)`, spacing via `HarcSpacing`. Deliberate exceptions carry
+  `// token-exempt:`. Grep-audit before declaring UI work done.
+- The menu-bar panel must never scroll. New conditional surfaces go behind
+  the status row into `ActivityView`, not into the panel.
+- Readiness/recovery have one renderer: `ActivityView`. Do not add a second;
+  that is how the `pendingRecoveryCount: 0` suppression hack was born.
+
 ## Documentation
 
 Keep this file current when repository structure, build tooling, validation

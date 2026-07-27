@@ -140,10 +140,27 @@ these" can be checked in a diff, "use system" could not. Liquid Glass via
 `.glassEffect()`, system materials and `Color.primary`/`.secondary`
 remain the substrate.
 
-Surfaces:
-- **Meeting Library Window:** `HarcWindowRootView` — the primary window. `NavigationSplitView` with a sidebar of recordings (grouped by Pinned / Today / Yesterday / This Week / month buckets), a detail pane (transcript + summary), and an `Inspector` (speaker editor + file metadata).
-- **Menu-bar Panel:** `MenuBarPanelView` — the slim `MenuBarExtra.window`-style panel: recording state line, level bars, Start/Stop, Open Library. Includes a dictation mode pill and recent dictation history. 30-second post-stop tray (for recordings) with Copy and Paste buttons.
-- **Dictation HUD:** `DictationHUDView` — a non-activating `NSPanel` (Liquid Glass pill) positioned above the Dock on the pointer's screen. Shows live waveform (listening) or status text (other phases), status dot, active-mode chip with shortcut, context indicator, and stop/cancel buttons.
+Surfaces (post v0.9.0 overhaul — the audit-driven redesign):
+- **Meeting Library Window:** `HarcWindowRootView` — the primary window.
+  `NavigationSplitView`; Record lives in the toolbar's leading slot and
+  becomes the live pill while recording. The sidebar is navigation only:
+  a date-scope popover ("All dates ▾") under search, then flat day-grouped
+  recording sections (title / time·duration·speakers / snippet rows), the
+  in-progress recording as a pinned selectable `.live` row, and People as a
+  peer section. The detail pane is the **single editing surface**: editable
+  title, one waveform player, summary card, and the transcript hosted in
+  `TranscriptDetailEditor` (editable NSTextView — speaker-color channel,
+  ⌘-click-to-seek, autosave on pause with a quiet "Saved"). There is no
+  separate editor window. `ActivityView` (sheet) is the sole full renderer
+  of readiness, recovery and running jobs; the footer is the live status
+  line + LOCAL badge.
+- **Menu-bar Panel:** `MenuBarPanelView` — hard budget, never scrolls:
+  state line, level bars, Record/Dictate, one status row (tap → Activity),
+  last capture, footer. All conditional detail lives behind the status row.
+- **Dictation HUD:** `DictationHUDView` — a non-activating `NSPanel`
+  (Liquid Glass pill, fixed 360pt) above the Dock. Three states by shape
+  and motion: pulsing live dot (listening), spinner (working), static
+  symbol (resolved). Messages wrap inside the fixed pill.
 - **Dictation History Window:** `DictationHistoryWindowView` — searchable window over recent dictations (voice-vs-AI toggle when a mode transformed the text). Copy and re-process actions (re-process is copy-only by design — the window is key, so a synthetic paste would land in Harc itself).
 - **Settings:** `HarcSettingsForm` — a `NavigationSplitView` (sidebar +
   detail), the shape System Settings itself uses. Panes are declared by the
@@ -166,7 +183,6 @@ Surfaces:
   This replaced a single 21-section scroll. Keep panes topic-complete: the
   flat form let transcription knobs drift into three non-adjacent places and
   produced two pickers bound to the same `activeSummarizerID`.
-- **Transcript Editor:** `TranscriptEditorView` — a separate window for editing transcript text, with a native `.toolbar` and Inspector sections.
 - **App Bridge:** `HarcAppBridge` — the observable that wires `RecordingState`, `PostStopTrayState`, `DictationState`, frontmost-app name, scope-history FFT, and panel actions through to the SwiftUI scene.
 
 ## Decided

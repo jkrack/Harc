@@ -1,5 +1,11 @@
 # Screenshot checklist
 
+> **v0.9.0 overhaul: every screenshot below is stale.** The sidebar,
+> toolbar, detail pane, menu-bar panel and HUD were all redesigned
+> (audit-driven, see the release notes). Retake the full set from a
+> v0.9.0 build before the next README update — the capture method and
+> house style below still apply.
+
 The README's screenshots live in `docs/images/`. Six exist. Four are missing,
 and all four need something this project's primary development Mac does not
 have: **a microphone, and a library with a real recording in it.**
