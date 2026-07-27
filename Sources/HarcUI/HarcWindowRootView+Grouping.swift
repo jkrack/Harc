@@ -6,21 +6,6 @@ import HarcStore
 // extensions in that file; they are `internal` here so the view (now in a
 // separate file) can call them.
 
-extension LibrarySidebarSection {
-    var sidebarTitle: String {
-        switch self {
-        case .recordings: return "Recent Recordings"
-        case .people: return "People"
-        }
-    }
-
-    var sidebarIconName: String {
-        switch self {
-        case .recordings: return "waveform"
-        case .people: return "person.2"
-        }
-    }
-}
 
 // MARK: - Date grouping
 

@@ -1,24 +1,5 @@
 import Foundation
 
-enum LibrarySidebarSection: String, Codable, CaseIterable, Identifiable {
-    case recordings
-    case people
-
-    var id: String { rawValue }
-
-    static let defaultOrder: [LibrarySidebarSection] = [.recordings, .people]
-
-    static func normalizedOrder(_ order: [LibrarySidebarSection]) -> [LibrarySidebarSection] {
-        var seen: Set<LibrarySidebarSection> = []
-        var result: [LibrarySidebarSection] = []
-        for section in order + defaultOrder where !seen.contains(section) {
-            seen.insert(section)
-            result.append(section)
-        }
-        return result
-    }
-}
-
 struct PersistedLibrarySelection: Codable, Equatable {
     enum Kind: String, Codable {
         case recording
@@ -55,46 +36,28 @@ struct PersistedLibrarySelection: Codable, Equatable {
     }
 }
 
+/// What survives a relaunch: the selection, nothing else. Expansion state
+/// died with the disclosure groups, and the section order died with the
+/// reorder mechanism — drag-to-reorder plus three context-menu commands
+/// plus persistence, to arrange a two-item list. The UserDefaults key is
+/// unchanged: Codable ignores the legacy fields on decode, so old blobs
+/// load and new writes simply omit them.
 struct LibraryNavigationSnapshot: Codable, Equatable {
     var selection: PersistedLibrarySelection?
-    var peopleExpanded: Bool
-    var recordingsExpanded: Bool
-    var sidebarSectionOrder: [LibrarySidebarSection]
 
-    static let defaults = LibraryNavigationSnapshot(
-        selection: nil,
-        peopleExpanded: false,
-        recordingsExpanded: true,
-        sidebarSectionOrder: LibrarySidebarSection.defaultOrder
-    )
+    static let defaults = LibraryNavigationSnapshot(selection: nil)
 
     private enum CodingKeys: String, CodingKey {
         case selection
-        case peopleExpanded
-        case recordingsExpanded
-        case sidebarSectionOrder
     }
 
-    init(
-        selection: PersistedLibrarySelection?,
-        peopleExpanded: Bool,
-        recordingsExpanded: Bool,
-        sidebarSectionOrder: [LibrarySidebarSection]
-    ) {
+    init(selection: PersistedLibrarySelection?) {
         self.selection = selection
-        self.peopleExpanded = peopleExpanded
-        self.recordingsExpanded = recordingsExpanded
-        self.sidebarSectionOrder = LibrarySidebarSection.normalizedOrder(sidebarSectionOrder)
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         selection = try container.decodeIfPresent(PersistedLibrarySelection.self, forKey: .selection)
-        peopleExpanded = try container.decodeIfPresent(Bool.self, forKey: .peopleExpanded) ?? Self.defaults.peopleExpanded
-        recordingsExpanded = try container.decodeIfPresent(Bool.self, forKey: .recordingsExpanded) ?? Self.defaults.recordingsExpanded
-        sidebarSectionOrder = LibrarySidebarSection.normalizedOrder(
-            try container.decodeIfPresent([LibrarySidebarSection].self, forKey: .sidebarSectionOrder) ?? Self.defaults.sidebarSectionOrder
-        )
     }
 }
 

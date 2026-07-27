@@ -3,95 +3,72 @@ import Testing
 @testable import HarcUI
 
 struct LibraryNavigationStateTests {
-    @Test("default sidebar layout prioritizes capture")
-    func defaultsPrioritizeCapture() {
-        let snapshot = LibraryNavigationSnapshot.defaults
-
-        #expect(snapshot.recordingsExpanded)
-        #expect(!snapshot.peopleExpanded)
-        #expect(snapshot.sidebarSectionOrder == [.recordings, .people])
-    }
-
-    @Test("snapshot persists selection and expansion state")
-    func snapshotPersistsSelectionAndExpansionState() {
-        let suiteName = "LibraryNavigationStateTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer {
-            LibraryNavigationStateStore.clear(defaults: defaults)
-            defaults.removePersistentDomain(forName: suiteName)
-        }
+    @Test("snapshot persists the selection")
+    func snapshotPersistsSelection() throws {
+        let suiteName = "harc.tests.navstate.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let snapshot = LibraryNavigationSnapshot(
-            selection: PersistedLibrarySelection(.recording(wavPath: "/tmp/a.wav")),
-            peopleExpanded: true,
-            recordingsExpanded: true,
-            sidebarSectionOrder: [.people, .recordings]
+            selection: PersistedLibrarySelection(.recording(wavPath: "/tmp/x.wav"))
         )
-
         LibraryNavigationStateStore.save(snapshot, defaults: defaults)
+        let loaded = LibraryNavigationStateStore.load(defaults: defaults)
 
-        #expect(LibraryNavigationStateStore.load(defaults: defaults) == snapshot)
+        #expect(loaded.selection?.librarySelection == .recording(wavPath: "/tmp/x.wav"))
     }
 
-    @Test("snapshot normalizes missing sidebar sections")
-    func snapshotNormalizesMissingSidebarSections() {
-        let snapshot = LibraryNavigationSnapshot(
-            selection: nil,
-            peopleExpanded: false,
-            recordingsExpanded: true,
-            sidebarSectionOrder: [.people]
-        )
+    /// The v1 key is unchanged from before the reorder mechanism and the
+    /// disclosure groups were deleted. A blob written by that version carries
+    /// `sidebarSectionOrder` and the expansion booleans; decoding must ignore
+    /// them and keep the selection.
+    @Test("a legacy v1 blob with dead fields still decodes")
+    func legacyBlobDecodes() throws {
+        let suiteName = "harc.tests.navstate.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        #expect(snapshot.sidebarSectionOrder == [.people, .recordings])
-    }
+        let legacyJSON = """
+        {"selection":{"kind":"person","value":"42"},
+         "peopleExpanded":true,"recordingsExpanded":false,
+         "sidebarSectionOrder":["people","recordings"]}
+        """
+        defaults.set(Data(legacyJSON.utf8), forKey: "harc.libraryNavigationState.v1")
 
-    @Test("snapshot decodes old state without sidebar order")
-    func snapshotDecodesOldStateWithoutSidebarOrder() throws {
-        let data = Data("""
-        {
-          "recordingsExpanded": true,
-          "peopleExpanded": false
-        }
-        """.utf8)
-
-        let snapshot = try JSONDecoder().decode(LibraryNavigationSnapshot.self, from: data)
-
-        #expect(snapshot.sidebarSectionOrder == LibrarySidebarSection.defaultOrder)
+        let loaded = LibraryNavigationStateStore.load(defaults: defaults)
+        #expect(loaded.selection?.librarySelection == .person(id: 42))
     }
 
     @Test("resolver restores valid selection")
-    func resolverRestoresValidSelection() {
+    func resolverRestoresValid() {
         let resolved = LibraryNavigationResolver.resolvedSelection(
             restored: .recording(wavPath: "/tmp/a.wav"),
-            recordingPaths: ["/tmp/a.wav"],
-            personIDs: [1],
-            fallbackRecordingPath: nil
+            recordingPaths: ["/tmp/a.wav", "/tmp/b.wav"],
+            personIDs: [],
+            fallbackRecordingPath: "/tmp/b.wav"
         )
-
         #expect(resolved == .recording(wavPath: "/tmp/a.wav"))
     }
 
     @Test("resolver falls back when restored recording is stale")
-    func resolverFallsBackWhenRestoredRecordingIsStale() {
+    func resolverFallsBack() {
         let resolved = LibraryNavigationResolver.resolvedSelection(
-            restored: .recording(wavPath: "/tmp/deleted.wav"),
-            recordingPaths: ["/tmp/a.wav"],
+            restored: .recording(wavPath: "/tmp/gone.wav"),
+            recordingPaths: ["/tmp/b.wav"],
             personIDs: [],
-            fallbackRecordingPath: "/tmp/a.wav"
+            fallbackRecordingPath: "/tmp/b.wav"
         )
-
-        #expect(resolved == .recording(wavPath: "/tmp/a.wav"))
+        #expect(resolved == .recording(wavPath: "/tmp/b.wav"))
     }
 
     @Test("resolver does not restore stale recording when no fallback exists")
-    func resolverDropsStaleRecordingWithoutFallback() {
+    func resolverNilWithoutFallback() {
         let resolved = LibraryNavigationResolver.resolvedSelection(
-            restored: .recording(wavPath: "/tmp/deleted.wav"),
+            restored: .recording(wavPath: "/tmp/gone.wav"),
             recordingPaths: [],
             personIDs: [],
             fallbackRecordingPath: nil
         )
-
         #expect(resolved == nil)
     }
 

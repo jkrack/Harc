@@ -101,9 +101,6 @@ public struct HarcWindowRootView: View {
     // Task 8.1/8.2: Person name lookup and full list for the picker
     @State var allPeopleByID: [Int64: String] = [:]
     @State var allPeople: [Person] = []
-    @State var peopleExpanded = false
-    @State var recordingsExpanded = true
-    @State var sidebarSectionOrder: [LibrarySidebarSection] = LibrarySidebarSection.defaultOrder
     @State var restoredSelection: LibrarySelection?
     @State var exportRecording: Recording?
     @State var exportDraft = RecordingExportDraft(includeSummary: true)
@@ -576,10 +573,13 @@ public struct HarcWindowRootView: View {
                 }
             }
 
-            ForEach(sidebarSectionOrder) { section in
-                sidebarSection(section)
+            recordingsSections
+
+            Section {
+                peopleSidebarList
+            } header: {
+                Label("People", systemImage: "person.2")
             }
-            .onMove(perform: moveSidebarSections)
         }
         .onChange(of: recordingState.isRecording) { _, isRecording in
             if isRecording {
@@ -720,19 +720,6 @@ public struct HarcWindowRootView: View {
     /// open before the content is visible — and People is a peer root, not a
     /// second drawer. The old expansion state stays persisted but unused
     /// until the reorder mechanism is retired with it.
-    @ViewBuilder
-    func sidebarSection(_ section: LibrarySidebarSection) -> some View {
-        switch section {
-        case .recordings:
-            recordingsSections
-        case .people:
-            Section {
-                peopleSidebarList
-            } header: {
-                sidebarSectionHeader(section)
-            }
-        }
-    }
 
     @ViewBuilder
     var recordingsSections: some View {
@@ -740,7 +727,7 @@ public struct HarcWindowRootView: View {
             Section {
                 recordingsEmptyState
             } header: {
-                sidebarSectionHeader(.recordings)
+                Label("Recordings", systemImage: "waveform")
             }
         } else {
             let pinned = libraryVM.recordings.filter(\.pinned)
@@ -767,42 +754,9 @@ public struct HarcWindowRootView: View {
         }
     }
 
-    func sidebarSectionHeader(_ section: LibrarySidebarSection) -> some View {
-        HStack(spacing: HarcSpacing.sm) {
-            Label(section.sidebarTitle, systemImage: section.sidebarIconName)
-            Spacer(minLength: 4)
-        }
-        .contextMenu {
-            Button("Move Up") { moveSidebarSection(section, by: -1) }
-                .disabled(!canMoveSidebarSection(section, by: -1))
-            Button("Move Down") { moveSidebarSection(section, by: 1) }
-                .disabled(!canMoveSidebarSection(section, by: 1))
-            Divider()
-            Button("Reset Sidebar Order") {
-                sidebarSectionOrder = LibrarySidebarSection.defaultOrder
-                persistNavigationSnapshot()
-            }
-        }
-    }
 
-    func canMoveSidebarSection(_ section: LibrarySidebarSection, by offset: Int) -> Bool {
-        guard let index = sidebarSectionOrder.firstIndex(of: section) else { return false }
-        return sidebarSectionOrder.indices.contains(index + offset)
-    }
 
-    func moveSidebarSection(_ section: LibrarySidebarSection, by offset: Int) {
-        guard let index = sidebarSectionOrder.firstIndex(of: section) else { return }
-        let destination = index + offset
-        guard sidebarSectionOrder.indices.contains(destination) else { return }
-        sidebarSectionOrder.swapAt(index, destination)
-        persistNavigationSnapshot()
-    }
 
-    func moveSidebarSections(from source: IndexSet, to destination: Int) {
-        sidebarSectionOrder.move(fromOffsets: source, toOffset: destination)
-        sidebarSectionOrder = LibrarySidebarSection.normalizedOrder(sidebarSectionOrder)
-        persistNavigationSnapshot()
-    }
 
     /// Names the actual hotkey when one is bound — the empty state is where
     /// a new user learns the keyboard path, now that the sidebar no longer
@@ -872,41 +826,11 @@ public struct HarcWindowRootView: View {
         .buttonStyle(.plain)
     }
 
-    enum SidebarExpansionGroup {
-        case people
-        case recordings
-    }
 
-    func expansionGroup(for section: LibrarySidebarSection) -> SidebarExpansionGroup {
-        switch section {
-        case .recordings: return .recordings
-        case .people: return .people
-        }
-    }
 
-    func persistedExpansionBinding(_ group: SidebarExpansionGroup) -> Binding<Bool> {
-        Binding(
-            get: {
-                switch group {
-                case .people: return peopleExpanded
-                case .recordings: return recordingsExpanded
-                }
-            },
-            set: { newValue in
-                switch group {
-                case .people: peopleExpanded = newValue
-                case .recordings: recordingsExpanded = newValue
-                }
-                persistNavigationSnapshot()
-            }
-        )
-    }
 
     func restoreNavigationSnapshot() {
         let snapshot = LibraryNavigationStateStore.load()
-        peopleExpanded = snapshot.peopleExpanded
-        recordingsExpanded = snapshot.recordingsExpanded
-        sidebarSectionOrder = LibrarySidebarSection.normalizedOrder(snapshot.sidebarSectionOrder)
         restoredSelection = snapshot.selection?.librarySelection
         if let restoredSelection {
             selection = restoredSelection
@@ -917,10 +841,7 @@ public struct HarcWindowRootView: View {
         LibraryNavigationStateStore.save(LibraryNavigationSnapshot(
             // flatMap: the persisted form is failable — `.live` encodes as
             // no selection at all.
-            selection: selection.flatMap(PersistedLibrarySelection.init),
-            peopleExpanded: peopleExpanded,
-            recordingsExpanded: recordingsExpanded,
-            sidebarSectionOrder: sidebarSectionOrder
+            selection: selection.flatMap(PersistedLibrarySelection.init)
         ))
     }
 
