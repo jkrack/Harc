@@ -117,7 +117,28 @@ The doubled year in the date folder keeps each day's directory self-identifying 
 
 ## UI
 
-The UI is native SwiftUI on macOS 26. There is no custom design system — `HarcBrand` (in `Sources/HarcUI/HarcBrand.swift`) is the entire palette: a recording-red `live` color and a brand `gradient` for the app icon and About panel. Everything else uses `Color.accentColor`, `Color.primary` / `.secondary`, system materials, system fonts, and Liquid Glass via `.glassEffect()`.
+The UI is native SwiftUI on macOS 26 with a deliberately small, closed
+design system in `Sources/HarcUI/DesignSystem/`:
+
+- **Type — five roles, no literals** (`HarcType.swift`): `.harcTitle`,
+  `.harcBody`, `.harcLabel`, `.harcCaption`, `.harcMono`. Do not use
+  `.caption`/`.subheadline`/etc. directly; pick the role. Rare deliberate
+  exceptions carry a `// token-exempt:` comment.
+- **Color — meaning first** (`HarcColor.swift`): status colors come only
+  from `Color.harc(_:)` with `HarcStatusIntent` (ready / working /
+  attention / failure / live). `HarcBrand` stays exactly two brand values
+  (`live` red, icon `gradient`); `WavePalette` stays the three waveform
+  blues; the transcript speaker ramp lives in `TranscriptDetailEditor`.
+  `Color.accentColor` remains for interactive tint — it is not a status.
+- **Spacing — 4pt scale** (`HarcSpacing.swift`): xs/sm/md/lg/xl/xxl
+  (4/8/12/16/24/32). Hairline 1–3pt tweaks are allowed as literals.
+
+The predecessor rule was "no tokens, use system" — it stopped brand tokens
+and did not stop tokens; warning ended up yellow in four files and orange
+in three. The closed set is the same restraint, now reviewable: "use
+these" can be checked in a diff, "use system" could not. Liquid Glass via
+`.glassEffect()`, system materials and `Color.primary`/`.secondary`
+remain the substrate.
 
 Surfaces:
 - **Meeting Library Window:** `HarcWindowRootView` — the primary window. `NavigationSplitView` with a sidebar of recordings (grouped by Pinned / Today / Yesterday / This Week / month buckets), a detail pane (transcript + summary), and an `Inspector` (speaker editor + file metadata).
