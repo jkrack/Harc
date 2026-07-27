@@ -53,11 +53,13 @@ final class HarcAppUITests: XCTestCase {
     func testSettingsCanOpenFromLibrary() throws {
         launchFixtureLibrary()
 
-        let openSettings = app.buttons["Open Settings"]
-        XCTAssertTrue(openSettings.waitForExistence(timeout: 8), app.debugDescription)
-        openSettings.click()
+        // The sidebar no longer carries an "Open Settings" link — that was
+        // onboarding copy shipped as permanent chrome. The canonical route
+        // is the standard shortcut, which exercises the SwiftUI Settings
+        // scene (the path that once crashed on the Transcription pane).
+        app.typeKey(",", modifierFlags: .command)
 
-        XCTAssertTrue(app.windows["Harc Settings"].waitForExistence(timeout: 6) || app.windows["Settings"].waitForExistence(timeout: 6))
+        XCTAssertTrue(app.windows["Harc Settings"].waitForExistence(timeout: 6) || app.windows["Settings"].waitForExistence(timeout: 6) || app.windows["General"].waitForExistence(timeout: 6))
         XCTAssertTrue(app.staticTexts["General"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 4))
     }

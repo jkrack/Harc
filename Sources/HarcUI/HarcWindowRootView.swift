@@ -559,10 +559,6 @@ public struct HarcWindowRootView: View {
                 }
             }
 
-            Section {
-                captureSidebarActions
-            }
-
             ForEach(sidebarSectionOrder) { section in
                 sidebarSection(section)
             }
@@ -621,56 +617,6 @@ public struct HarcWindowRootView: View {
         .accessibilityLabel("Recording in progress")
     }
 
-    var captureSidebarActions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                bridge.onStartStop()
-            } label: {
-                HStack(spacing: 8) {
-                    if isRecordingActionBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: recordingActionIconName)
-                    }
-                    Text(recordingActionTitle)
-                        .fontWeight(.semibold)
-                }
-                .frame(minWidth: 118, alignment: .center)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .tint(recordingState.isRecording ? HarcBrand.live : Color.accentColor)
-            .disabled(isRecordingActionBusy)
-            // Identifier moved to the toolbar control — two elements sharing
-            // it would make the UI test's query ambiguous. This whole block
-            // is deleted by the sidebar rebuild a few commits from now.
-
-
-            if let recordingActionStatusText {
-                Text(recordingActionStatusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            // The sidebar is narrow, and this row lives inside a
-            // `.listStyle(.sidebar)` List, which hands rows a single-line
-            // treatment — so the sentence truncated mid-phrase to
-            // "…configure the global hotkey in…", hiding the half that says
-            // where to go. `lineLimit(nil)` is what overrides the List's
-            // default; `fixedSize` alone did not.
-            Text("Use the menu bar icon or configure the global hotkey in Settings.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Open Settings", action: openSettings)
-                .font(.caption)
-                .buttonStyle(.plain)
-        }
-        .padding(.vertical, 4)
-    }
 
     /// The single Record control in the toolbar's leading slot.
     ///
@@ -750,20 +696,7 @@ public struct HarcWindowRootView: View {
         return recordingState.isRecording ? "Stop" : "Record"
     }
 
-    var recordingActionIconName: String {
-        if bridge.recordingStopInFlight || isIdentifyingStoppedRecording { return "hourglass" }
-        return recordingState.isRecording ? "stop.circle.fill" : "record.circle"
-    }
 
-    var recordingActionStatusText: String? {
-        if bridge.recordingStopInFlight {
-            return "Finalizing audio and transcript."
-        }
-        if isIdentifyingStoppedRecording {
-            return "Identifying speakers and saving the recording."
-        }
-        return nil
-    }
 
     @ViewBuilder
     func sidebarSection(_ section: LibrarySidebarSection) -> some View {
@@ -820,6 +753,16 @@ public struct HarcWindowRootView: View {
         persistNavigationSnapshot()
     }
 
+    /// Names the actual hotkey when one is bound — the empty state is where
+    /// a new user learns the keyboard path, now that the sidebar no longer
+    /// carries permanent onboarding copy.
+    var emptyStateSubtitle: String {
+        if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
+            return "Start a capture with the Record button, \(shortcut), or the menu bar icon."
+        }
+        return "Start a capture with the Record button or the menu bar icon."
+    }
+
     @ViewBuilder
     var recordingSidebarList: some View {
         if libraryVM.recordings.isEmpty {
@@ -827,7 +770,7 @@ public struct HarcWindowRootView: View {
                 EmptyStateView(
                     icon: "waveform.slash",
                     title: "No recordings yet",
-                    subtitle: "Start a capture here, from the menu bar icon, or set a global hotkey in Settings."
+                    subtitle: emptyStateSubtitle
                 )
                 HStack(spacing: 8) {
                     Button("Record") { bridge.onStartStop() }
