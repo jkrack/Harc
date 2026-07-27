@@ -129,7 +129,9 @@ extension HarcWindowRootView {
                 // Summary card — requires SummarizationQueueStore and
                 // ModelManagerStore injected as environment objects by the
                 // window controller. Scrolls internally past a bound so a
-                // long summary can't push the transcript off screen.
+                // long summary can't push the transcript off screen, and
+                // capped to the reading measure: comfortable prose is 60–75
+                // characters, not 140.
                 ScrollView {
                     SummaryCardView(
                         recording: recording,
@@ -148,15 +150,17 @@ extension HarcWindowRootView {
                         }
                     )
                 }
-                .frame(maxHeight: 280)
+                .frame(maxWidth: 680, maxHeight: 280, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
 
                 if transcriptFindVisible {
                     transcriptFindBar()
+                        .frame(maxWidth: 680)
                 }
             }
             .padding([.horizontal, .top])
             .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider()
 
@@ -232,11 +236,19 @@ extension HarcWindowRootView {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                TranscriptDetailEditor(
-                    text: $editorText,
-                    highlightRange: editorHighlight,
-                    onCommandClick: { offset in seekToWord(atCharOffset: offset) }
-                )
+                // The reading column: capped at 680pt and centered once the
+                // pane is wider than that. The single cheapest legibility
+                // win in the app, per the audit.
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    TranscriptDetailEditor(
+                        text: $editorText,
+                        highlightRange: editorHighlight,
+                        onCommandClick: { offset in seekToWord(atCharOffset: offset) }
+                    )
+                    .frame(maxWidth: 680)
+                    Spacer(minLength: 0)
+                }
             }
         }
     }

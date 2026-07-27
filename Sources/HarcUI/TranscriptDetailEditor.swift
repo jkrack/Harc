@@ -51,6 +51,7 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
 
         scroll.documentView = textView
         context.coordinator.textView = textView
+        Self.applySpeakerChannel(to: textView)
         return scroll
     }
 
@@ -60,8 +61,77 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
             let selected = textView.selectedRanges
             textView.string = text
             textView.selectedRanges = selected
+            Self.applySpeakerChannel(to: textView)
         }
         applyHighlight(on: textView, range: highlightRange, coordinator: context.coordinator)
+    }
+
+    // MARK: - Speaker channel
+
+    /// Gives speaker turns a visual channel inside the editable text: the
+    /// "Name:" head of each turn is semibold in a color that stays stable for
+    /// that speaker across the transcript, and turns get breathing room via
+    /// paragraph spacing. Re-applied after every edit — the attributes are
+    /// presentation only; the string stays plain.
+    static func applySpeakerChannel(to textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let ns = storage.string as NSString
+        guard ns.length > 0 else { return }
+
+        let baseFont = textView.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let turnStyle = NSMutableParagraphStyle()
+        turnStyle.paragraphSpacingBefore = 10
+        turnStyle.lineSpacing = 2
+        let bodyStyle = NSMutableParagraphStyle()
+        bodyStyle.lineSpacing = 2
+
+        storage.beginEditing()
+        storage.addAttribute(.paragraphStyle, value: bodyStyle,
+                             range: NSRange(location: 0, length: ns.length))
+
+        var lineStart = 0
+        while lineStart < ns.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            ns.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd,
+                            for: NSRange(location: lineStart, length: 0))
+            let lineRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+            let line = ns.substring(with: lineRange)
+            if let colon = line.firstIndex(of: ":"),
+               line.distance(from: line.startIndex, to: colon) <= 40 {
+                let name = line[..<colon].trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty {
+                    let headLength = line.distance(from: line.startIndex, to: colon) + 1
+                    let headRange = NSRange(location: lineStart, length: headLength)
+                    storage.addAttribute(
+                        .font,
+                        value: NSFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold),
+                        range: headRange
+                    )
+                    storage.addAttribute(.foregroundColor,
+                                         value: speakerColor(for: name),
+                                         range: headRange)
+                    storage.addAttribute(.paragraphStyle, value: turnStyle, range: lineRange)
+                }
+            }
+            lineStart = lineEnd
+        }
+        storage.endEditing()
+    }
+
+    /// Stable per-speaker hue: same name, same color, for the whole
+    /// transcript and across recordings. A small fixed ramp rather than
+    /// arbitrary hues, so adjacent speakers stay distinguishable.
+    static func speakerColor(for name: String) -> NSColor {
+        let ramp: [NSColor] = [
+            .systemBlue, .systemGreen, .systemOrange,
+            .systemPurple, .systemTeal, .systemPink,
+        ]
+        var hash = 5381
+        for byte in name.lowercased().utf8 {
+            hash = ((hash << 5) &+ hash) &+ Int(byte)
+        }
+        return ramp[abs(hash) % ramp.count]
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -118,6 +188,7 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
             if parent.text != newValue {
                 parent.text = newValue
             }
+            TranscriptDetailEditor.applySpeakerChannel(to: tv)
         }
     }
 }
