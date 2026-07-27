@@ -137,16 +137,17 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         )
     }
 
-    /// Display title: user's custom title if set; else the NLTagger-derived
-    /// suggestion if present; else derived from startedAt.
+    /// Display title: user's custom title if set; else the derived
+    /// suggestion (summary first-clause, or NLTagger entities as fallback);
+    /// else derived from startedAt.
+    ///
+    /// The suggestion no longer carries a baked-in timestamp prefix — the
+    /// title is the row's identity, and the timestamp is rendered as the
+    /// secondary line by whoever displays it. Prefixing here is what made
+    /// the library read as "May 24, 2026 at 3:55 PM" four rows in a row.
     public var displayTitle: String {
         if let t = title, !t.isEmpty { return t }
-        if let s = suggestedTitle, !s.isEmpty {
-            let fmt = DateFormatter()
-            fmt.dateStyle = .short
-            fmt.timeStyle = .short
-            return "\(fmt.string(from: startedAt)) — \(s)"
-        }
+        if let s = suggestedTitle, !s.isEmpty { return s }
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
         fmt.timeStyle = .short

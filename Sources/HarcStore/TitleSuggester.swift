@@ -60,4 +60,52 @@ public enum TitleSuggester {
         }
         return key.capitalized
     }
+
+    /// A title from the first clause of a generated summary.
+    ///
+    /// The summarizer already writes a sentence that names what the meeting
+    /// was about — "The team reviewed the weekly onboarding drop-off, which…"
+    /// — and that first clause beats any entity list as a row identity. This
+    /// runs at summary-save time; recordings that never summarize keep the
+    /// entity-based suggestion as their fallback.
+    ///
+    /// Deliberately dumb: first sentence, cut at the first clause boundary
+    /// once past a readable minimum, hard cap at a word boundary. No model,
+    /// deterministic, and safe to re-run (same summary, same title).
+    public static func fromSummary(_ summaryMarkdown: String?) -> String? {
+        guard var text = summaryMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+
+        // Strip leading markdown furniture — headings, list markers, bold.
+        while let first = text.first, "#-*> ".contains(first) {
+            text.removeFirst()
+        }
+        text = text.replacingOccurrences(of: "**", with: "")
+
+        // First sentence.
+        if let end = text.firstIndex(where: { ".!?\n".contains($0) }) {
+            text = String(text[..<end])
+        }
+
+        // First clause, once past a readable minimum — "The team reviewed
+        // the drop-off" is a title; "The team" is not.
+        let minReadable = 24
+        if text.count > 60 {
+            for boundary in [", which", ", and", ", but", "; ", " — ", ", "] {
+                if let r = text.range(of: boundary), text.distance(from: text.startIndex, to: r.lowerBound) >= minReadable {
+                    text = String(text[..<r.lowerBound])
+                    break
+                }
+            }
+        }
+
+        // Hard cap at a word boundary.
+        if text.count > 72 {
+            let prefix = String(text.prefix(72))
+            text = prefix[..<(prefix.lastIndex(of: " ") ?? prefix.endIndex)].trimmingCharacters(in: .whitespaces)
+        }
+
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.count >= 8 ? cleaned : nil
+    }
 }

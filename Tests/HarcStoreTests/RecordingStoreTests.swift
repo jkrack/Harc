@@ -172,7 +172,9 @@ struct RecordingStoreTests {
         ))
         let fetched = try #require(try await store.fetchByWavPath("/tmp/st/a.wav"))
         #expect(fetched.suggestedTitle == "Sarah, Q3 roadmap")
-        #expect(fetched.displayTitle.contains("Sarah, Q3 roadmap"))
+        // The suggestion IS the display title now — no timestamp prefix.
+        // The prefix is what made every row read as a date with a footnote.
+        #expect(fetched.displayTitle == "Sarah, Q3 roadmap")
         _ = rec
     }
 

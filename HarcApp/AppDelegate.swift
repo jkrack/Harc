@@ -1509,7 +1509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             if let transcriptText, let store = self.store {
                 Task.detached { [store] in
                     let entities = TitleSuggester.extractEntities(from: transcriptText)
-                    let suggestion = entities.isEmpty ? nil : Array(entities.prefix(2)).joined(separator: ", ")
+                    let suggestion = TitleSuggester.suggest(from: transcriptText)
                     guard suggestion != nil || !entities.isEmpty else { return }
                     guard let persisted = try? await store.fetchByWavPath(result.wavURL.path),
                           let id = persisted.id else { return }
@@ -2872,6 +2872,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             generatedAt: Date(),
             sourceWordCount: wordCount
         )
+
+        // Title the recording from the summary's first clause. Writes only
+        // suggested_title — a user's rename always wins via displayTitle's
+        // tiering — and upgrades the entity-based suggestion made at stop
+        // time, because "The team reviewed the onboarding drop-off" beats
+        // "Michelle, Acme" as a row identity. Best-effort: a failed title
+        // write must not fail the summarization it rides on.
+        if let derived = TitleSuggester.fromSummary(result.summary) {
+            try? await store.updateSuggestedTitle(id: id, title: derived)
+        }
     }
 
     /// Private helper — returns true when auto-summarize should fire. The

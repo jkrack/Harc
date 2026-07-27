@@ -102,6 +102,29 @@ extension HarcWindowRootView {
         }
         return String(format: "%d:%02d", m, s)
     }
+
+    /// The row's secondary line: time · duration · speakers — the facts that
+    /// used to masquerade as the title, demoted to context.
+    static func rowSecondaryLine(for rec: Recording) -> String {
+        var parts: [String] = []
+
+        let fmt = DateFormatter()
+        fmt.dateStyle = .none
+        fmt.timeStyle = .short
+        parts.append(fmt.string(from: rec.startedAt))
+
+        if let endedAt = rec.endedAt {
+            parts.append(formatDuration(from: rec.startedAt, to: endedAt))
+        }
+
+        // speakerNames is populated by diarization at save; its count is the
+        // cheap, already-on-the-row source for "how many voices".
+        if rec.speakerNames.count > 1 {
+            parts.append(Pluralize.count(rec.speakerNames.count, "speaker"))
+        }
+
+        return parts.joined(separator: " · ")
+    }
 }
 
 extension String {

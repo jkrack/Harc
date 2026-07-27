@@ -65,4 +65,41 @@ struct TitleSuggesterTests {
         let expected = Array(entities.prefix(2)).joined(separator: ", ")
         #expect(suggestion == expected)
     }
+
+    // MARK: - Summary-derived titles
+
+    /// The row identity the audit asked for: the summary's first clause.
+    @Test("summary first clause becomes the title")
+    func summaryFirstClause() {
+        let summary = "The team reviewed the weekly onboarding drop-off, which remains at 40% and is primarily caused by users misinterpreting the missing microphone prompt."
+        #expect(TitleSuggester.fromSummary(summary) == "The team reviewed the weekly onboarding drop-off")
+    }
+
+    @Test("short first sentence is taken whole")
+    func shortSentenceWhole() {
+        #expect(TitleSuggester.fromSummary("Pricing review for the Acme renewal. More detail follows.")
+                == "Pricing review for the Acme renewal")
+    }
+
+    @Test("markdown furniture is stripped")
+    func markdownStripped() {
+        #expect(TitleSuggester.fromSummary("## **Budget planning kickoff for Q3.** More.")
+                == "Budget planning kickoff for Q3")
+    }
+
+    @Test("empty and trivial summaries produce no title")
+    func trivialSummariesRejected() {
+        #expect(TitleSuggester.fromSummary(nil) == nil)
+        #expect(TitleSuggester.fromSummary("   ") == nil)
+        #expect(TitleSuggester.fromSummary("Okay.") == nil)
+    }
+
+    @Test("very long clause caps at a word boundary")
+    func longClauseCaps() {
+        let long = String(repeating: "onboarding ", count: 30)
+        let title = TitleSuggester.fromSummary(long)
+        #expect(title != nil)
+        #expect((title?.count ?? 0) <= 72)
+        #expect(title?.hasSuffix(" ") == false)
+    }
 }

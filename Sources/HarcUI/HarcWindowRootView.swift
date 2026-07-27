@@ -1000,11 +1000,22 @@ public struct HarcWindowRootView: View {
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
-                if let endedAt = rec.endedAt {
-                    Text(Self.formatDuration(from: rec.startedAt, to: endedAt))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                // The timestamp is context now, not identity — it shares the
+                // secondary line with duration and speaker count.
+                Text(Self.rowSecondaryLine(for: rec))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                // One line of what was actually said, so a row is scannable
+                // without opening it. Only when the title is a real title —
+                // under a bare timestamp a snippet just adds noise to noise.
+                if rec.title?.isEmpty == false || rec.suggestedTitle?.isEmpty == false,
+                   !rec.preview.isEmpty {
+                    Text(rec.preview)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
