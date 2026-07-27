@@ -56,13 +56,13 @@ public struct DictationIdlePillView: View {
     private var micGlyph: some View {
         if recording {
             Image(systemName: "mic.fill")
-                .font(.caption)
+                .font(.harcCaption)
                 .foregroundStyle(HarcBrand.live.opacity(0.8))
                 .help("Recording in progress — stop the recording to dictate")
         } else {
             Button(action: onStartDictation) {
                 Image(systemName: "mic.fill")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(hovered ? Color.accentColor : Color.secondary)
             }
             .buttonStyle(.plain)
@@ -88,7 +88,7 @@ public struct DictationIdlePillView: View {
                 }
             } label: {
                 Text(modeStore.activeMode.name)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }

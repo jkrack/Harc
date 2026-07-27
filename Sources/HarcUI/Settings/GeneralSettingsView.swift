@@ -28,7 +28,7 @@ public struct GeneralSettingsView: View {
             Text("General")
         } footer: {
             Text("System follows your macOS appearance setting.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
     }

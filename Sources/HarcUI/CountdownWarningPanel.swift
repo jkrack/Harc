@@ -48,10 +48,10 @@ public struct CountdownWarningPanel: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(headline)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.harcLabel.weight(.semibold))
                         .foregroundStyle(Color.primary)
                     Text(subheadline)
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -65,9 +65,9 @@ public struct CountdownWarningPanel: View {
                 Button(action: onKeepRecording) {
                     HStack(spacing: 6) {
                         Text("Keep Recording")
-                            .font(.caption.weight(.medium))
+                            .font(.harcCaption.weight(.medium))
                         Text("Space")
-                            .font(.caption2.monospaced())
+                            .font(.harcCaption.monospaced())
                             .foregroundStyle(.white.opacity(0.75))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -90,7 +90,7 @@ public struct CountdownWarningPanel: View {
 
                 Button(action: onStopNow) {
                     Text("Stop Now")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(Color.secondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -105,7 +105,7 @@ public struct CountdownWarningPanel: View {
             }
 
             Text("Or do nothing — recording will save and stop.")
-                .font(.caption2)
+                .font(.harcCaption)
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 .frame(maxWidth: .infinity, alignment: .center)
 
@@ -113,12 +113,12 @@ public struct CountdownWarningPanel: View {
 
             HStack {
                 Text(reason == .hardCap ? "hard cap reached" : "silence threshold · \(thresholdMinutes) min")
-                    .font(.caption2.monospaced())
+                    .font(.harcCaption.monospaced())
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 Spacer(minLength: 8)
                 Button("Change in Settings →", action: onOpenSettings)
                     .buttonStyle(.plain)
-                    .font(.caption2.monospaced())
+                    .font(.harcCaption.monospaced())
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
         }
@@ -173,15 +173,15 @@ public struct CountdownWarningPanel: View {
         HStack(spacing: 10) {
             HStack(spacing: 5) {
                 Image(systemName: "mic")
-                    .font(.caption2.weight(.medium))
+                    .font(.harcCaption.weight(.medium))
                 Text("mic \(dbText(micDb))")
-                    .font(.caption2.monospaced())
+                    .font(.harcCaption.monospaced())
             }
             HStack(spacing: 5) {
                 Image(systemName: "speaker.wave.2")
-                    .font(.caption2.weight(.medium))
+                    .font(.harcCaption.weight(.medium))
                 Text("sys \(dbText(systemDb))")
-                    .font(.caption2.monospaced())
+                    .font(.harcCaption.monospaced())
             }
         }
         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
@@ -222,7 +222,7 @@ private struct CountdownRing: View {
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.9), value: progress)
             Text("\(secondsLeft)")
-                .font(.headline.monospaced().weight(.semibold))
+                .font(.harcTitle.monospaced().weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(Color.yellow)
         }

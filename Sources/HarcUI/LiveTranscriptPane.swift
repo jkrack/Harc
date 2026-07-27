@@ -41,20 +41,20 @@ struct LiveTranscriptPane: View {
                 .fill(HarcBrand.live)
                 .frame(width: 8, height: 8)
             Text("Recording")
-                .font(.headline)
+                .font(.harcTitle)
             // TimelineView rather than a Timer: the pane only exists while
             // recording, so its clock should start and stop with it.
             if let start = recordingState.recordingStartedAt {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(ElapsedFormatter.string(since: start, now: context.date))
-                        .font(.subheadline.monospacedDigit())
+                        .font(.harcLabel.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
             if let lastUpdateAge {
                 Text(lastUpdateAge)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -72,9 +72,9 @@ struct LiveTranscriptPane: View {
                 .font(.system(size: 34))
                 .foregroundStyle(.secondary)
             Text("Transcribing as you record")
-                .font(.title3.weight(.semibold))
+                .font(.harcTitle.weight(.semibold))
             Text("Text appears about once a minute, as each chunk finishes. The full transcript is saved when you stop.")
-                .font(.callout)
+                .font(.harcBody)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
@@ -88,7 +88,7 @@ struct LiveTranscriptPane: View {
         ScrollViewReader { proxy in
             ScrollView {
                 Text(transcript)
-                    .font(.body)
+                    .font(.harcBody)
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -16,7 +16,7 @@ public struct PersonAvatar: View {
             Circle()
                 .fill(color)
             Text(initials)
-                .font(.caption.weight(.semibold))
+                .font(.harcCaption.weight(.semibold))
                 .minimumScaleFactor(0.65)
                 .foregroundStyle(.white)
         }

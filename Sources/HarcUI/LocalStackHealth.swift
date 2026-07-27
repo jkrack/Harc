@@ -521,7 +521,7 @@ struct LocalStackHealthView: View {
                         .font(compact ? .caption.weight(.semibold) : .headline)
                     Spacer()
                     Text(summaryText)
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(summaryColor)
                 }
 
@@ -533,7 +533,7 @@ struct LocalStackHealthView: View {
                     ForEach(LocalStackHealthModel.groupedItems(items), id: \.0) { group, groupItems in
                         VStack(alignment: .leading, spacing: 6) {
                             Text(group.title)
-                                .font(.caption.weight(.semibold))
+                                .font(.harcCaption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             ForEach(groupItems) { item in
                                 row(for: item)
@@ -548,14 +548,14 @@ struct LocalStackHealthView: View {
     private func row(for item: LocalStackHealthItem) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: item.state.iconName)
-                .font(.caption2.weight(.semibold))
+                .font(.harcCaption.weight(.semibold))
                 .foregroundStyle(item.state.color)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                 Text(item.detail)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     // These are sentences, not paths. Middle truncation on a
                     // single line inside the 320pt panel — with a fix button

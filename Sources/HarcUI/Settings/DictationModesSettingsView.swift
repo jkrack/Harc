@@ -50,14 +50,14 @@ public struct DictationModesSettingsView: View {
             }
             if let importError {
                 Text(importError)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.red)
             }
         } header: {
             Text("Dictation Modes")
         } footer: {
             Text("Modes reformat dictated text with the local model before inserting. If the model isn't available, the raw transcript is inserted instead.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
         .sheet(item: $editingMode) { mode in
@@ -131,7 +131,7 @@ public struct DictationModesSettingsView: View {
             Text(mode.name)
             if mode.isBuiltIn {
                 Text("Built-in")
-                    .font(.caption2)
+                    .font(.harcCaption)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Capsule().fill(Color.secondary.opacity(0.15)))
@@ -200,13 +200,13 @@ private struct DictationModeEditor: View {
                 if mode.postProcess == .llm {
                     Section {
                         TextEditor(text: $mode.instruction)
-                            .font(.body.monospaced())
+                            .font(.harcBody.monospaced())
                             .frame(minHeight: 110)
                     } header: {
                         Text("Instruction")
                     } footer: {
                         Text("Tell the model how to rewrite the dictated text. End with an explicit \"output only the result\" so it doesn't add commentary.")
-                            .font(.subheadline)
+                            .font(.harcLabel)
                             .foregroundStyle(Color.secondary)
                     }
 
@@ -222,7 +222,7 @@ private struct DictationModeEditor: View {
                         .pickerStyle(.menu)
                     } footer: {
                         Text("Following the summarizer default shares the resident model — picking a different tier reloads multi-GB weights per switch.")
-                            .font(.subheadline)
+                            .font(.harcLabel)
                             .foregroundStyle(Color.secondary)
                     }
 
@@ -233,7 +233,7 @@ private struct DictationModeEditor: View {
                         Text("Context")
                     } footer: {
                         Text("Captured when dictation starts and given to the model as reference material. Context is processed locally and never leaves this Mac.")
-                            .font(.subheadline)
+                            .font(.harcLabel)
                             .foregroundStyle(Color.secondary)
                     }
 
@@ -248,12 +248,12 @@ private struct DictationModeEditor: View {
                             }
                             if let testResult {
                                 Text(testResult)
-                                    .font(.callout)
+                                    .font(.harcBody)
                                     .textSelection(.enabled)
                             }
                         } footer: {
                             Text("Runs the instruction on: \u{201C}\(Self.testSample)\u{201D}")
-                                .font(.subheadline)
+                                .font(.harcLabel)
                                 .foregroundStyle(Color.secondary)
                         }
                     }
@@ -266,7 +266,7 @@ private struct DictationModeEditor: View {
                     )
                 } footer: {
                     Text("Starts dictation straight into this mode, without changing the active mode.")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                 }
 
@@ -275,7 +275,7 @@ private struct DictationModeEditor: View {
                         HStack {
                             Text(Self.displayName(forBundleID: bundleID))
                             Text(bundleID)
-                                .font(.caption.monospaced())
+                                .font(.harcCaption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -300,7 +300,7 @@ private struct DictationModeEditor: View {
                     Text("Activate in these apps")
                 } footer: {
                     Text("Dictating while one of these apps is frontmost uses this mode automatically. Mode shortcuts still win.")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                 }
             }

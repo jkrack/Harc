@@ -30,7 +30,7 @@ public struct AIModelsSettingsView: View {
         Group {
             Section {
                 Text("Harc runs all AI work on your Mac. Download only the tiers you need.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                 Picker("Performance", selection: $prefs.modelPerformanceMode) {
                     ForEach(HarcPreferences.ModelPerformanceMode.allCases) { mode in
@@ -38,7 +38,7 @@ public struct AIModelsSettingsView: View {
                     }
                 }
                 Text(prefs.modelPerformanceMode.detail)
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             } header: {
                 Text("On-device AI")
@@ -50,7 +50,7 @@ public struct AIModelsSettingsView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(Color.yellow)
                         Text(downloadStartError)
-                            .font(.subheadline)
+                            .font(.harcLabel)
                             .foregroundStyle(Color.secondary)
                         Spacer()
                         Button("Dismiss") { self.downloadStartError = nil }
@@ -71,7 +71,7 @@ public struct AIModelsSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Summarizer")
                     Text("Your Mac has \(ramGB) GB RAM")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                         .textCase(nil)
                 }
@@ -80,7 +80,7 @@ public struct AIModelsSettingsView: View {
                     Text("Pick one tier. Higher tiers produce better summaries at higher RAM and time cost.")
                     Text("Models download over HTTPS from Hugging Face, pinned to an exact version and checksum-verified before install. Downloads are the only time Harc's AI touches the network — inference is fully on-device.")
                 }
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
             }
 
@@ -102,7 +102,7 @@ public struct AIModelsSettingsView: View {
                     Text("Summarizers are multi-GB resident and use power. The battery toggle is off by default.")
                     Text("When enabled, Markdown, DOCX, and prompt exports prepend Summary and Action Items above the transcript.")
                 }
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
             }
         }
@@ -158,7 +158,7 @@ public struct AIModelsSettingsView: View {
     private var activeSummarizerPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Active model")
-                .font(.caption)
+                .font(.harcCaption)
                 .foregroundStyle(Color.secondary)
             Picker("", selection: $prefs.activeSummarizerID) {
                 ForEach(summarizers) { d in
@@ -184,13 +184,13 @@ public struct AIModelsSettingsView: View {
                 Image(systemName: "internaldrive")
                     .foregroundStyle(Color.secondary)
                 Text("You have \(installedSummarizerCount) models installed. Unless a dictation mode uses them, only the active one is needed.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             }
             ForEach(extraInstalled) { d in
                 HStack {
                     Text(d.tierDisplayName)
-                        .font(.subheadline)
+                        .font(.harcLabel)
                     Spacer()
                     Button("Remove · \(ByteCountFormatter.string(fromByteCount: d.totalBytes, countStyle: .file))",
                            role: .destructive) {
@@ -270,12 +270,12 @@ private struct ModelRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(descriptor.displayName)
-                        .font(.body)
+                        .font(.harcBody)
                         .fontWeight(.medium)
                     statusChip
                 }
                 Text(descriptor.summary)
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                 // Provenance: link to the exact pinned revision so anyone can
                 // inspect precisely what will be downloaded.
@@ -284,7 +284,7 @@ private struct ModelRow: View {
                         Text(descriptor.repoID)
                         Image(systemName: "arrow.up.forward.square")
                     }
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(.harcMono)
                     .foregroundStyle(Color.secondary)
                 }
                 .help("View this model at its pinned version on Hugging Face")
@@ -293,12 +293,12 @@ private struct ModelRow: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text("Your Mac has \(ramGB) GB — \(descriptor.recommendedRAMGB) GB recommended.")
                     }
-                    .font(.caption2)
+                    .font(.harcCaption)
                     .foregroundStyle(Color.yellow)
                 }
                 if case .failed(let reason) = state {
                     Text(reason)
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.red)
                 }
                 if case .downloading(let progress) = state {
@@ -376,7 +376,7 @@ private struct ModelRow: View {
 
     private func chip(_ label: String, color: Color) -> some View {
         Text(label)
-            .font(.system(.caption2, design: .monospaced).weight(.medium))
+            .font(.harcMono.weight(.medium))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

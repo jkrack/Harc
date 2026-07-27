@@ -19,16 +19,16 @@ struct MenuPanelRowButton: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.callout)
+                    .font(.harcBody)
                     .foregroundStyle(tint ?? Color.secondary)
                     .frame(width: 18)
                 Text(title)
-                    .font(.callout)
+                    .font(.harcBody)
                     .foregroundStyle(tint ?? Color.primary)
                 Spacer(minLength: 8)
                 if let detail {
                     Text(detail)
-                        .font(.callout)
+                        .font(.harcBody)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -59,7 +59,7 @@ struct HoverPillButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.caption.weight(.medium))
+                .font(.harcCaption.weight(.medium))
                 .foregroundStyle(tint)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
@@ -88,7 +88,7 @@ struct HoverIconButton<Menu: View>: View {
             menu()
         } label: {
             Image(systemName: icon)
-                .font(.callout)
+                .font(.harcBody)
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 24)
                 .contentShape(RoundedRectangle(cornerRadius: 6))

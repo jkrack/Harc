@@ -38,9 +38,9 @@ public struct AboutSettingsView: View {
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Permissions")
-                        .font(.body)
+                        .font(.harcBody)
                     Text("Use this when macOS shows Harc enabled but recording, dictation, or pasting still says permission is missing — most often after reinstalling or updating, when the grants get attached to the old copy of the app.")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -49,7 +49,7 @@ public struct AboutSettingsView: View {
                             Image(systemName: service.isGranted ? "checkmark.circle.fill" : "xmark.circle")
                                 .foregroundStyle(service.isGranted ? Color.green : Color.secondary)
                             Text(service.displayName)
-                                .font(.caption)
+                                .font(.harcCaption)
                             Spacer()
                             if !service.isGranted {
                                 Button("Open Settings") {
@@ -71,14 +71,14 @@ public struct AboutSettingsView: View {
 
             if let permissionRepairError {
                 Label(permissionRepairError, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(Color.orange)
             }
         } header: {
             Text("Troubleshooting")
         } footer: {
             Text("Reset clears Harc's Microphone, Screen & System Audio, and Accessibility grants, then restarts Harc automatically and walks you through granting them again. Restarting is required — macOS keeps the old answer until the app relaunches.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
     }
@@ -134,23 +134,23 @@ public struct AboutSettingsView: View {
                 .frame(width: 44, height: 44)
                 .overlay(
                     Image(systemName: "waveform")
-                        .font(.title3.weight(.semibold))
+                        .font(.harcTitle.weight(.semibold))
                         .foregroundStyle(.white)
                 )
             VStack(alignment: .leading, spacing: 2) {
                 Text("Harc")
-                    .font(.title3)
+                    .font(.harcTitle)
                     .fontWeight(.semibold)
                 Text("Local-first speech-to-text for meetings.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                 Text(versionLine)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.harcMono)
                     .foregroundStyle(Color.secondary)
                 // Read from the bundle rather than hard-coded, for the same
                 // reason the version is: a second copy of a fact drifts.
                 Text(copyrightLine)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(Color.secondary)
             }
             Spacer(minLength: 0)
@@ -161,10 +161,10 @@ public struct AboutSettingsView: View {
     private var updatesBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Updates")
-                .font(.headline)
+                .font(.harcTitle)
             Toggle("Check for updates automatically", isOn: $prefs.updateChecksEnabled)
             Text("Updates install in place via Sparkle; checks send nothing about you.")
-                .font(.caption)
+                .font(.harcCaption)
                 .foregroundStyle(Color.secondary)
             HStack(spacing: 10) {
                 Button("Check for Updates") {
@@ -174,14 +174,14 @@ public struct AboutSettingsView: View {
                 if let update = bridge.availableUpdate {
                     HStack(spacing: 4) {
                         Text("Harc \(update.version) available —")
-                            .font(.subheadline)
+                            .font(.harcLabel)
                         if bridge.onInstallUpdate != nil {
                             Button("Install") { bridge.onInstallUpdate?() }
                                 .buttonStyle(.link)
-                                .font(.subheadline)
+                                .font(.harcLabel)
                         } else {
                             Link("View release", destination: update.url)
-                                .font(.subheadline)
+                                .font(.harcLabel)
                         }
                     }
                 }
@@ -193,7 +193,7 @@ public struct AboutSettingsView: View {
     private var architectureBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Architecture")
-                .font(.headline)
+                .font(.harcTitle)
             bullet("Apple Silicon native — runs on the Neural Engine via Core ML.")
             bullet("Speech-to-text by FluidAudio + Parakeet TDT, hosted in a separate daemon process so model load amortizes across recordings.")
             bullet("Audio is mixed from your microphone (AVAudioEngine) and system audio (ScreenCaptureKit) into a durable WAV — your meeting survives a crash.")
@@ -213,10 +213,10 @@ public struct AboutSettingsView: View {
                 Image(systemName: "lock.shield.fill")
                     .foregroundStyle(Color.green)
                 Text("Local-first")
-                    .font(.headline)
+                    .font(.harcTitle)
             }
             Text("No cloud STT. No external telemetry. No accounts. Every byte of audio, every transcript, and every summary stays on this Mac. Harc's only network use is downloading models once from Hugging Face — your audio and text never leave this Mac.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -226,11 +226,11 @@ public struct AboutSettingsView: View {
     private var footerRow: some View {
         HStack {
             Text("Made for macOS 26.")
-                .font(.caption)
+                .font(.harcCaption)
                 .foregroundStyle(Color.secondary)
             Spacer()
             Link("github.com/jkrack/Harc", destination: URL(string: "https://github.com/jkrack/Harc")!)
-                .font(.caption)
+                .font(.harcCaption)
         }
         .padding(.top, 4)
     }
@@ -240,10 +240,10 @@ public struct AboutSettingsView: View {
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("•")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
             Text(text)
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }

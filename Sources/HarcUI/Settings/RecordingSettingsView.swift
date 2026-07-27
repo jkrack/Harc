@@ -34,7 +34,7 @@ public struct RecordingSettingsView: View {
                 Text("Destination folder")
             } footer: {
                 Text("Recordings are written here as YYYY/YYYY-MM-DD/HH-mm-ss.{wav,md,json}.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             }
 
@@ -66,7 +66,7 @@ public struct RecordingSettingsView: View {
                     Text("When recording stops, the prompt-formatted transcript is pasted into the frontmost app.")
                     Text("Hold ⇧ while clicking Stop, or ⌥-click the menu-bar icon, to skip for one recording. Locked apps are always skipped; you can add or remove your own apps above.")
                 }
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
             }
 
@@ -83,7 +83,7 @@ public struct RecordingSettingsView: View {
                 Text("Meeting detection")
             } footer: {
                 Text("Harc notices when you launch a video meeting app and offers to start recording.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             }
 
@@ -142,7 +142,7 @@ public struct RecordingSettingsView: View {
 
                 LabeledContent {
                     Text(preRollMemoryEstimate)
-                        .font(.caption.monospacedDigit())
+                        .font(.harcCaption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 } label: {
                     Text("Memory used")
@@ -154,7 +154,7 @@ public struct RecordingSettingsView: View {
             Text(prefs.preRollEnabled
                  ? "Harc holds the microphone open while idle and keeps the last \(prefs.preRollMinutes) minute\(prefs.preRollMinutes == 1 ? "" : "s") in memory — macOS shows the orange mic indicator the whole time. Nothing is written to disk or sent anywhere until you start a recording, and starting one includes what was already said."
                  : "Start a recording and keep what was said just before it. Audio is held in memory only, never written to disk until you record. Requires holding the microphone open while Harc is idle.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
     }
@@ -196,7 +196,7 @@ public struct RecordingSettingsView: View {
                         Text("Maximum length")
                         Spacer()
                         Text(formatCap(prefs.hardCapMinutes))
-                            .font(.caption.monospacedDigit())
+                            .font(.harcCaption.monospacedDigit())
                             .foregroundStyle(Color.secondary)
                     }
                 }
@@ -211,7 +211,7 @@ public struct RecordingSettingsView: View {
                 Text("Stops recording automatically when both the mic and system audio have been silent. Warns 60 s before stopping so you can keep recording.")
                 Text("The hard cap stops recording regardless of silence. The tray banner always shows after an auto-stop; the macOS notification is additive and respects Do Not Disturb.")
             }
-            .font(.subheadline)
+            .font(.harcLabel)
             .foregroundStyle(Color.secondary)
         }
     }
@@ -227,16 +227,16 @@ public struct RecordingSettingsView: View {
     private func monitoredAppRow(_ app: MeetingApp) -> some View {
         HStack(spacing: 12) {
             Image(systemName: app.symbolName)
-                .font(.body)
+                .font(.harcBody)
                 .foregroundStyle(Color.purple)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.displayName)
-                    .font(.body)
+                    .font(.harcBody)
                     .foregroundStyle(Color.primary)
                 if let note = app.settingsNote {
                     Text(note)
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                 }
             }
@@ -277,16 +277,16 @@ public struct RecordingSettingsView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(pasteDenyListDisplayName(for: bundleID))
-                    .font(.body)
+                    .font(.harcBody)
                 Text(bundleID)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(Color.secondary)
                     .textSelection(.enabled)
             }
             Spacer()
             if locked {
                 Text("Locked")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(Color.secondary)
             } else {
                 Button(role: .destructive) {
@@ -342,20 +342,20 @@ public struct RecordingSettingsView: View {
     private var googleMeetComingSoonRow: some View {
         HStack(spacing: 12) {
             Image(systemName: "globe")
-                .font(.body)
+                .font(.harcBody)
                 .foregroundStyle(Color.secondary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Google Meet")
-                    .font(.body)
+                    .font(.harcBody)
                     .foregroundStyle(Color.secondary)
                 Text("Runs in your browser — reliable detection is coming.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             }
             Spacer()
             Text("Coming soon")
-                .font(.caption.weight(.semibold))
+                .font(.harcCaption.weight(.semibold))
                 .foregroundStyle(Color.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -371,9 +371,9 @@ public struct RecordingSettingsView: View {
                     .foregroundStyle(Color.orange)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Notifications disabled")
-                        .font(.caption.weight(.semibold))
+                        .font(.harcCaption.weight(.semibold))
                     Text("Harc will still pulse the menu bar icon, but can't show a banner until you re-enable notifications.")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Open System Settings") {
@@ -404,9 +404,9 @@ public struct RecordingSettingsView: View {
                     .foregroundStyle(Color.red)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Destination folder not found")
-                        .font(.caption.weight(.semibold))
+                        .font(.harcCaption.weight(.semibold))
                     Text("Harc can't write recordings here until you choose a different folder or restore the missing one. New recordings will fail to save until this is resolved.")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 12) {

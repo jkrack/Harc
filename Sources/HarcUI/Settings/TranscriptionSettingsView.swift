@@ -29,7 +29,7 @@ public struct TranscriptionSettingsView: View {
                     Text("Speakers adds per-speaker segments to transcripts — worth keeping on for meetings, since it's what lets a downstream LLM tell participants apart.")
                     Text("Voice-activity detection skips silent regions before transcription. Faster and quieter on battery; disable if you suspect a word is being clipped.")
                 }
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
             }
 
@@ -38,7 +38,7 @@ public struct TranscriptionSettingsView: View {
                     Text("Chunk duration")
                     Spacer()
                     Text("\(Int(prefs.chunkDurationSeconds)) s")
-                        .font(.caption.monospacedDigit())
+                        .font(.harcCaption.monospacedDigit())
                         .foregroundStyle(Color.secondary)
                 }
                 Slider(value: $prefs.chunkDurationSeconds, in: 15...120, step: 15)
@@ -46,7 +46,7 @@ public struct TranscriptionSettingsView: View {
                 Text("Background processing")
             } footer: {
                 Text("How often the transcriber processes a slice while recording continues. Shorter slices finish sooner after you stop; longer slices give the model more context per pass.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             }
 
@@ -61,7 +61,7 @@ public struct TranscriptionSettingsView: View {
                             selection = []
                         } label: {
                             Text("Delete \(selection.count) selected")
-                                .font(.caption)
+                                .font(.harcCaption)
                         }
                     }
                 }
@@ -69,13 +69,13 @@ public struct TranscriptionSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Vocabulary")
                     Text("Replace mis-heard words and acronyms in every new transcript — names, product terms, jargon.")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                         .textCase(nil)
                 }
             } footer: {
                 Text("Drag rows to reorder — rules apply top to bottom. Applies to new recordings only.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             }
 
@@ -98,7 +98,7 @@ public struct TranscriptionSettingsView: View {
                     Text(maintenance.indexBacklog == 0
                          ? "Up to date"
                          : "\(maintenance.indexBacklog) waiting")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                     Button("Build index") { maintenance.startIndexing() }
                         .disabled(maintenance.job.isRunning || maintenance.indexBacklog == 0)
@@ -112,7 +112,7 @@ public struct TranscriptionSettingsView: View {
                     Text(maintenance.reprocessBacklog == 0
                          ? "All current"
                          : "\(maintenance.reprocessBacklog) older")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                     Button("Re-transcribe") { maintenance.startReprocess() }
                         .disabled(maintenance.job.isRunning || maintenance.reprocessBacklog == 0)
@@ -125,14 +125,14 @@ public struct TranscriptionSettingsView: View {
                 maintenanceProgressRow
             } else if let outcome = maintenance.lastOutcome {
                 Text(outcome)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
         } header: {
             Text("Library")
         } footer: {
             Text("Your audio never left this Mac, so a better speech model can be applied to everything you have already recorded — not only to what you record next. Re-transcribing replaces transcript text and rebuilds that recording's search index.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
     }
@@ -144,18 +144,18 @@ public struct TranscriptionSettingsView: View {
             case .reprocessing(let progress):
                 ProgressView(value: progress.fraction) {
                     Text(progress.currentTitle.map { "Re-transcribing \($0)" } ?? "Re-transcribing…")
-                        .font(.caption)
+                        .font(.harcCaption)
                 }
                 Text("\(progress.completed) of \(progress.total)"
                      + (progress.failed > 0 ? " · \(progress.failed) failed" : ""))
-                    .font(.caption2.monospacedDigit())
+                    .font(.harcCaption.monospacedDigit())
                     .foregroundStyle(.secondary)
             case .indexing(let completed, let total):
                 ProgressView(value: total > 0 ? Double(completed) / Double(total) : 0) {
-                    Text("Indexing transcripts…").font(.caption)
+                    Text("Indexing transcripts…").font(.harcCaption)
                 }
                 Text("\(completed) of \(total)")
-                    .font(.caption2.monospacedDigit())
+                    .font(.harcCaption.monospacedDigit())
                     .foregroundStyle(.secondary)
             case .idle:
                 EmptyView()
@@ -163,7 +163,7 @@ public struct TranscriptionSettingsView: View {
             HStack {
                 Spacer()
                 Button("Stop") { maintenance.cancel() }
-                    .font(.caption)
+                    .font(.harcCaption)
             }
         }
     }
@@ -172,7 +172,7 @@ public struct TranscriptionSettingsView: View {
     private var vocabularyList: some View {
         if prefs.vocabulary.entries.isEmpty {
             Text("No vocabulary entries yet. Add one below.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -234,7 +234,7 @@ private struct VocabularyRow: View {
             .toggleStyle(.checkbox)
 
             Text(entry.from)
-                .font(.body)
+                .font(.harcBody)
                 .foregroundStyle(entry.enabled ? Color.primary : Color.secondary)
                 .strikethrough(!entry.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -243,7 +243,7 @@ private struct VocabularyRow: View {
                 .foregroundStyle(Color.secondary)
 
             Text(entry.to)
-                .font(.body)
+                .font(.harcBody)
                 .foregroundStyle(entry.enabled ? Color.primary : Color.secondary)
                 .strikethrough(!entry.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

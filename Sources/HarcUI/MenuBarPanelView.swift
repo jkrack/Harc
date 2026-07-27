@@ -242,7 +242,7 @@ public struct MenuBarPanelView: View {
             Image(systemName: "mic.fill")
                 .foregroundStyle(dictationActive ? HarcBrand.live : .secondary)
             Text(dictationStatusText ?? "Dictation")
-                .font(.callout)
+                .font(.harcBody)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 8)
@@ -300,9 +300,9 @@ public struct MenuBarPanelView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "wand.and.stars")
-                    .font(.caption)
+                    .font(.harcCaption)
                 Text(dictationModes.first { $0.id == activeDictationModeID }?.name ?? "Raw")
-                    .font(.callout)
+                    .font(.harcBody)
                     .lineLimit(1)
             }
             .foregroundStyle(.secondary)
@@ -436,11 +436,11 @@ public struct MenuBarPanelView: View {
                 .fill(recordingState.isRecording ? HarcBrand.live : Color.secondary.opacity(0.4))
                 .frame(width: 8, height: 8)
             Text(recordingState.isRecording ? "Recording" : "Idle")
-                .font(.subheadline)
+                .font(.harcLabel)
             Spacer()
             if recordingState.isRecording {
                 Text(elapsedText)
-                    .font(.system(.subheadline, design: .monospaced))
+                    .font(.system(.subheadline, design: .monospaced)) // token-exempt: sized mono readout
                     .monospacedDigit()
             }
         }
@@ -481,7 +481,7 @@ public struct MenuBarPanelView: View {
             .keyboardShortcut("q", modifiers: .command)
 
             Text(appVersionText)
-                .font(.caption2.monospacedDigit())
+                .font(.harcCaption.monospacedDigit())
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 6)
@@ -544,16 +544,16 @@ public struct MenuBarPanelView: View {
                 Image(systemName: statusTone == .ready
                       ? "checkmark.circle.fill"
                       : statusTone == .attention ? "exclamationmark.circle.fill" : "xmark.octagon.fill")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(statusTone == .ready ? Color.green
                                      : statusTone == .attention ? Color.orange : Color.red)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(statusSummary)
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(statusTone == .ready ? .secondary : .primary)
                     if let statusSubtitle {
                         Text(statusSubtitle)
-                            .font(.caption2)
+                            .font(.harcCaption)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -564,12 +564,12 @@ public struct MenuBarPanelView: View {
                 // retroactive buffer must not require opening a window.
                 if case .listening = preRollStatus, let onClearPreRoll {
                     Button("Clear", action: onClearPreRoll)
-                        .font(.caption2)
+                        .font(.harcCaption)
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                 }
                 Image(systemName: "chevron.right")
-                    .font(.caption2)
+                    .font(.harcCaption)
                     .foregroundStyle(.tertiary)
             }
             .padding(8)
@@ -585,10 +585,10 @@ public struct MenuBarPanelView: View {
     private var durabilityLine: some View {
         HStack(spacing: 6) {
             Image(systemName: "internaldrive")
-                .font(.caption2)
+                .font(.harcCaption)
                 .foregroundStyle(.secondary)
             Text("Saving to \(destinationDisplayText) — safe through a crash.")
-                .font(.caption2)
+                .font(.harcCaption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -627,7 +627,7 @@ public struct MenuBarPanelView: View {
     ) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
-                .font(.caption2.weight(.semibold))
+                .font(.harcCaption.weight(.semibold))
                 .foregroundStyle(status.color)
                 .frame(width: 14)
             Text(text)
@@ -646,7 +646,7 @@ public struct MenuBarPanelView: View {
                     stopOutcomeView(outcome)
                 }
                 Text(trayState.lastTitle ?? "Last recording")
-                    .font(.headline)
+                    .font(.harcTitle)
                     .lineLimit(2)
                     .truncationMode(.tail)
                 HStack(spacing: 8) {
@@ -695,9 +695,9 @@ public struct MenuBarPanelView: View {
                     .foregroundStyle(Color.yellow)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Auto-stopped")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.harcLabel.weight(.semibold))
                     Text(autoStopSummary(reason: reason, at: at))
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -718,10 +718,10 @@ public struct MenuBarPanelView: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Last capture")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                     Text(trayState.lastTitle ?? "Last recording")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -754,7 +754,7 @@ public struct MenuBarPanelView: View {
 
     private func pasteStatus(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
+            .font(.harcCaption)
             .foregroundStyle(.secondary)
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
@@ -766,9 +766,9 @@ public struct MenuBarPanelView: View {
                 .foregroundStyle(stopOutcomeColor(outcome.kind))
             VStack(alignment: .leading, spacing: 2) {
                 Text(outcome.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.harcLabel.weight(.semibold))
                 Text(outcome.detail)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }

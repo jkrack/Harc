@@ -91,7 +91,7 @@ public struct DictationHistoryWindowView: View {
                     Text(historyStore.entries.isEmpty
                          ? "No dictations yet"
                          : "No matches")
-                        .font(.callout)
+                        .font(.harcBody)
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -115,7 +115,7 @@ public struct DictationHistoryWindowView: View {
             Divider()
             HStack {
                 Text("\(historyStore.entries.count) of \(DictationHistoryStore.maxEntries) kept")
-                    .font(.caption2)
+                    .font(.harcCaption)
                     .foregroundStyle(.tertiary)
                 Spacer()
                 Button("Clear History", role: .destructive) {
@@ -140,15 +140,15 @@ public struct DictationHistoryWindowView: View {
     private func entryRow(_ entry: DictationHistoryEntry) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(entry.text.replacingOccurrences(of: "\n", with: " "))
-                .font(.callout)
+                .font(.harcBody)
                 .lineLimit(2)
                 .truncationMode(.tail)
             HStack(spacing: 5) {
                 Text(entry.modeName)
-                    .font(.caption2.weight(.medium))
+                    .font(.harcCaption.weight(.medium))
                 if let app = entry.targetAppName {
                     Text("→ \(app)")
-                        .font(.caption2)
+                        .font(.harcCaption)
                 }
                 if entry.delivery == .copied {
                     Image(systemName: "doc.on.clipboard")
@@ -157,7 +157,7 @@ public struct DictationHistoryWindowView: View {
                 }
                 Spacer()
                 Text(entry.date.formatted(.relative(presentation: .named)))
-                    .font(.caption2)
+                    .font(.harcCaption)
             }
             .foregroundStyle(.secondary)
         }
@@ -186,7 +186,7 @@ public struct DictationHistoryWindowView: View {
                 }
                 ScrollView {
                     Text(displayText(for: entry))
-                        .font(.body)
+                        .font(.harcBody)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -211,15 +211,15 @@ public struct DictationHistoryWindowView: View {
     private func detailHeader(_ entry: DictationHistoryEntry) -> some View {
         HStack(spacing: 6) {
             Text(entry.modeName)
-                .font(.headline)
+                .font(.harcTitle)
             if let app = entry.targetAppName {
                 Text(entry.delivery == .pasted ? "inserted into \(app)" : "copied (\(app) frontmost)")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Text(entry.date.formatted(date: .abbreviated, time: .shortened))
-                .font(.caption)
+                .font(.harcCaption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -232,7 +232,7 @@ public struct DictationHistoryWindowView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(reprocessModeName.map { "As \($0)" } ?? "Result")
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Copy") { copy(result) }
@@ -240,7 +240,7 @@ public struct DictationHistoryWindowView: View {
             }
             ScrollView {
                 Text(result)
-                    .font(.body)
+                    .font(.harcBody)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

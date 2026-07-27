@@ -11,13 +11,13 @@ struct DictationDeepLinkConfirmView: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "mic.badge.plus")
-                .font(.callout)
+                .font(.harcBody)
                 .foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 1) {
                 Text(prompt)
-                    .font(.callout.weight(.medium))
+                    .font(.harcBody.weight(.medium))
                 Text(detail)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
             Button("Start", action: onStart)
@@ -27,7 +27,7 @@ struct DictationDeepLinkConfirmView: View {
                 onDismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
             }
             .buttonStyle(.plain)
             .help("Dismiss")

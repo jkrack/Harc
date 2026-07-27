@@ -62,7 +62,7 @@ public struct DictationHUDView: View {
         if case .listening = state.phase {
             if micLooksSilent {
                 Text("Mic is silent — check your input device")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             } else if state.levelHistory.isEmpty {
@@ -77,7 +77,7 @@ public struct DictationHUDView: View {
 
     private var statusLine: some View {
         Text(statusText)
-            .font(.caption)
+            .font(.harcCaption)
             .foregroundStyle(statusTextColor)
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
@@ -127,7 +127,7 @@ public struct DictationHUDView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: chipMode.symbolName)
-                    .font(.caption2)
+                    .font(.harcCaption)
                 if state.sessionModeViaRule {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 8))
@@ -135,7 +135,7 @@ public struct DictationHUDView: View {
                         .help("Activated by an app rule")
                 }
                 Text(chipTitle)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .lineLimit(1)
             }
             .foregroundStyle(.secondary)
@@ -181,7 +181,7 @@ public struct DictationHUDView: View {
     private var contextIndicator: some View {
         if state.context.hasWorkingMaterial {
             Image(systemName: "doc.text.viewfinder")
-                .font(.caption2)
+                .font(.harcCaption)
                 .foregroundStyle(Color.accentColor)
                 .help(contextHelp)
                 .accessibilityLabel(contextHelp)

@@ -82,7 +82,7 @@ public struct PersonDetailView: View {
                 Text("last seen \(last, style: .date)").foregroundStyle(.secondary)
             }
         }
-        .font(.subheadline)
+        .font(.harcLabel)
     }
 
     // MARK: - Suggestions
@@ -92,7 +92,7 @@ public struct PersonDetailView: View {
         if !viewModel.pendingSuggestions.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Suggested matches (\(viewModel.pendingSuggestions.count))").font(.headline)
+                    Text("Suggested matches (\(viewModel.pendingSuggestions.count))").font(.harcTitle)
                     Spacer()
                     Button("Confirm all") {
                         Task { await viewModel.confirmAll() }
@@ -103,10 +103,10 @@ public struct PersonDetailView: View {
                 ForEach(viewModel.pendingSuggestions) { s in
                     HStack(spacing: 8) {
                         Text("Recording #\(s.recordingID) Speaker \(s.speakerIndex + 1)")
-                            .font(.subheadline)
+                            .font(.harcLabel)
                         Spacer()
                         Text(String(format: "%.2f", s.score))
-                            .font(.system(.caption, design: .monospaced))
+                            .font(.harcMono)
                             .foregroundStyle(.secondary)
                         Button("Confirm") {
                             Task { await viewModel.confirm(s) }
@@ -132,7 +132,7 @@ public struct PersonDetailView: View {
     private var utterancesSection: some View {
         if !viewModel.utterances.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Recent utterances").font(.headline)
+                Text("Recent utterances").font(.harcTitle)
                 ForEach(viewModel.utterances) { u in
                     Button {
                         onSelectRecording(u.recordingID, u.speakerIndex)
@@ -140,14 +140,14 @@ public struct PersonDetailView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(u.recordingTitle)
-                                    .font(.subheadline.weight(.semibold))
+                                    .font(.harcLabel.weight(.semibold))
                                 Text("\u{00B7}").foregroundStyle(.secondary)
                                 Text(formatTimestamp(u.startMs))
-                                    .font(.system(.caption, design: .monospaced))
+                                    .font(.harcMono)
                                     .foregroundStyle(.secondary)
                             }
                             Text(u.snippet)
-                                .font(.body)
+                                .font(.harcBody)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -160,7 +160,7 @@ public struct PersonDetailView: View {
             }
         } else if viewModel.person != nil && viewModel.stats?.recordingCount == 0 {
             Text("No recordings yet. The next time this voice appears in a recording, link it from the Inspector to start building \(viewModel.person?.displayName ?? "this person")'s history.")
-                .font(.body)
+                .font(.harcBody)
                 .foregroundStyle(.secondary)
         }
     }
@@ -172,7 +172,7 @@ public struct PersonDetailView: View {
         if !viewModel.embeddings.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Voice prints (\(viewModel.embeddings.count))").font(.headline)
+                    Text("Voice prints (\(viewModel.embeddings.count))").font(.harcTitle)
                     Spacer()
                     Button("Merge\u{2026}") { showingMergeSheet = true }
                         .buttonStyle(.bordered).controlSize(.small)
@@ -193,7 +193,7 @@ public struct PersonDetailView: View {
                         Text("Recording #\(e.recordingID) Speaker \(e.speakerIndex + 1)")
                         Spacer()
                         Text("\(e.segmentCount) segs \u{00B7} \(e.totalMs / 1000)s \u{00B7} \(e.embedderKind ?? "\u{2014}")")
-                            .font(.system(.caption, design: .monospaced))
+                            .font(.harcMono)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 2)
@@ -227,14 +227,14 @@ public struct PersonDetailView: View {
     private var thresholdSection: some View {
         if let person = viewModel.person {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Match threshold").font(.headline)
+                Text("Match threshold").font(.harcTitle)
                 HStack {
                     Slider(value: Binding(
                         get: { person.matchThreshold ?? 0.65 },
                         set: { v in Task { await viewModel.updateThreshold(v) } }
                     ), in: 0.50...0.95)
                     Text(String(format: "%.2f", person.matchThreshold ?? 0.65))
-                        .font(.system(.caption, design: .monospaced))
+                        .font(.harcMono)
                         .frame(minWidth: 40)
                     if person.matchThreshold != nil {
                         Button("Reset") {
@@ -244,7 +244,7 @@ public struct PersonDetailView: View {
                     }
                 }
                 Text("Higher threshold = fewer false matches, more missed matches.")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -282,7 +282,7 @@ struct MergePersonPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Merge into\u{2026}").font(.headline)
+            Text("Merge into\u{2026}").font(.harcTitle)
             if allPeople.isEmpty {
                 Text("No other people exist yet.").foregroundStyle(.secondary)
             } else {
@@ -318,7 +318,7 @@ struct SplitNameSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New person name").font(.headline)
+            Text("New person name").font(.harcTitle)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
             HStack {

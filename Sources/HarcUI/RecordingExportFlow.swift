@@ -98,9 +98,9 @@ struct RecordingExportSheet: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("Export Recording")
-                .font(.title3.weight(.semibold))
+                .font(.harcTitle.weight(.semibold))
             Text(recording.displayTitle)
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }
@@ -109,7 +109,7 @@ struct RecordingExportSheet: View {
     private var formatPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Format")
-                .font(.headline)
+                .font(.harcTitle)
             ForEach(RecordingExportOption.allCases) { option in
                 Button {
                     draft.option = option
@@ -122,14 +122,14 @@ struct RecordingExportSheet: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
                                 Text(option.title)
-                                    .font(.subheadline.weight(.semibold))
+                                    .font(.harcLabel.weight(.semibold))
                                 Spacer()
                                 Text(".\(option.format.filenameExtension)")
-                                    .font(.caption.monospaced())
+                                    .font(.harcCaption.monospaced())
                                     .foregroundStyle(.secondary)
                             }
                             Text(option.description)
-                                .font(.caption)
+                                .font(.harcCaption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.leading)
                         }
@@ -148,7 +148,7 @@ struct RecordingExportSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("Include summary and action items when available", isOn: $draft.includeSummary)
             Text(summaryOptionDescription)
-                .font(.caption)
+                .font(.harcCaption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -156,12 +156,12 @@ struct RecordingExportSheet: View {
     private var destinationPreview: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Filename")
-                .font(.headline)
+                .font(.harcTitle)
             HStack(spacing: 8) {
                 Image(systemName: "doc")
                     .foregroundStyle(.secondary)
                 Text(draft.defaultFilename(for: recording))
-                    .font(.callout.monospaced())
+                    .font(.harcBody.monospaced())
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
@@ -247,7 +247,7 @@ private struct InlineExportError: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
             Text(message)
-                .font(.callout)
+                .font(.harcBody)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)

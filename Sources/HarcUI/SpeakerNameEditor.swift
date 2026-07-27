@@ -83,7 +83,7 @@ public struct SpeakerNameEditor: View {
             VStack(alignment: .leading, spacing: 8) {
                 if showsHeader {
                     Text("SPEAKERS")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(Color.secondary)
                         .tracking(1.2)
                 }
@@ -117,7 +117,7 @@ public struct SpeakerNameEditor: View {
         let currentLabel = draftNames[index] ?? "Speaker \(index + 1)"
         return HStack(spacing: 12) {
             Text("Speaker \(index + 1)")
-                .font(.body)
+                .font(.harcBody)
                 .foregroundStyle(Color.primary)
                 .frame(minWidth: 78, idealWidth: 90, alignment: .leading)
             Menu {
@@ -144,7 +144,7 @@ public struct SpeakerNameEditor: View {
                     Spacer()
                     Image(systemName: "chevron.down")
                         .foregroundStyle(.secondary)
-                        .font(.caption)
+                        .font(.harcCaption)
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
@@ -290,7 +290,7 @@ private struct PendingSpeakerSuggestionRow: View {
 
     private var suggestionText: some View {
         Text("May be \(personName) · \(String(format: "%.2f", score))")
-            .font(.caption)
+            .font(.harcCaption)
             .foregroundStyle(.primary)
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
@@ -315,7 +315,7 @@ private struct AddPersonNameSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New person").font(.headline)
+            Text("New person").font(.harcTitle)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
             HStack {

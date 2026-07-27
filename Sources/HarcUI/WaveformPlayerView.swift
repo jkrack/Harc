@@ -62,7 +62,7 @@ public struct WaveformPlayerView: View {
             Task { await model.toggle() }
         } label: {
             Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                .font(.subheadline.weight(.semibold))
+                .font(.harcLabel.weight(.semibold))
                 .foregroundStyle(.white)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(tint))
@@ -89,7 +89,7 @@ public struct WaveformPlayerView: View {
 
     private var timeLabel: some View {
         Text(formatRange(current: model.currentTime, total: model.duration))
-            .font(.system(.caption, design: .monospaced))
+            .font(.harcMono)
             .foregroundStyle(.secondary)
             .monospacedDigit()
             .frame(minWidth: 80, alignment: .trailing)

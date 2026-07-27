@@ -38,7 +38,7 @@ public struct ActivityView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Activity")
-                    .font(.title3.weight(.semibold))
+                    .font(.harcTitle.weight(.semibold))
                 Spacer()
                 Button("Done") { onDismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -75,17 +75,17 @@ public struct ActivityView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Now", systemImage: "clock")
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                 if let job = currentJobText {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
                         Text(job)
-                            .font(.caption)
+                            .font(.harcCaption)
                     }
                 } else {
                     Text("Nothing running")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -113,25 +113,25 @@ public struct ActivityView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Recovery", systemImage: "arrow.counterclockwise.circle")
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                 ForEach(RecoveryInboxModel.rows(for: bridge.recoveryArtifacts)) { row in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(row.title)
-                                .font(.caption.weight(.semibold))
+                                .font(.harcCaption.weight(.semibold))
                             Spacer()
                             Text(row.statusText)
-                                .font(.caption2.weight(.semibold))
+                                .font(.harcCaption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                         }
                         Text(row.sourcePath)
-                            .font(.caption2.monospaced())
+                            .font(.harcCaption.monospaced())
                             .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if !row.detail.isEmpty, row.detail != row.title {
                             Text(row.detail)
-                                .font(.caption2)
+                                .font(.harcCaption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -163,10 +163,10 @@ public struct ActivityView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Label(recovery.title, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                     .foregroundStyle(.orange)
                 Text(recovery.message)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {

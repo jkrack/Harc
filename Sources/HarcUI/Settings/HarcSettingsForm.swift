@@ -46,7 +46,7 @@ public struct HarcSettingsForm: View {
         let results = SettingsSearchIndex.results(for: query)
         if results.isEmpty {
             Text("No settings match “\(query.trimmingCharacters(in: .whitespaces))”.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
                 .padding(.vertical, 4)
         } else {

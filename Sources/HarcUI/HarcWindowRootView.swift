@@ -344,7 +344,7 @@ public struct HarcWindowRootView: View {
     var libraryFooter: some View {
         HStack(spacing: 0) {
             Text(footerCountAndStorage)
-                .font(.system(.caption, design: .monospaced))
+                .font(.harcMono)
                 .foregroundStyle(Color.secondary)
             Spacer(minLength: 16)
             footerStatus
@@ -413,7 +413,7 @@ public struct HarcWindowRootView: View {
                         ProgressView()
                             .controlSize(.mini)
                         Text(live)
-                            .font(.caption)
+                            .font(.harcCaption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -423,7 +423,7 @@ public struct HarcWindowRootView: View {
                 Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
             }
             Text("LOCAL")
-                .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                .font(.harcMono.weight(.semibold))
                 .tracking(1.0)
                 .foregroundStyle(Color.green)
                 .help("All transcription and summarization runs on this Mac")
@@ -504,9 +504,9 @@ public struct HarcWindowRootView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "calendar")
                     Text(selectedFilterDay.map(formatFilterDay) ?? "All dates")
-                        .font(.caption)
+                        .font(.harcCaption)
                     Image(systemName: "chevron.down")
-                        .font(.caption2)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -539,7 +539,7 @@ public struct HarcWindowRootView: View {
                     libraryVM.filter = .all
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -607,12 +607,12 @@ public struct HarcWindowRootView: View {
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Recording")
-                    .font(.body.weight(.semibold))
+                    .font(.harcBody.weight(.semibold))
                     .foregroundStyle(.white)
                 if let start = recordingState.recordingStartedAt {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(ElapsedFormatter.string(since: start, now: context.date))
-                            .font(.caption.monospacedDigit())
+                            .font(.harcCaption.monospacedDigit())
                             .foregroundStyle(.white.opacity(0.85))
                     }
                 }
@@ -661,12 +661,12 @@ public struct HarcWindowRootView: View {
                     if let start = recordingState.recordingStartedAt {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text(ElapsedFormatter.string(since: start, now: context.date))
-                                .font(.subheadline.monospacedDigit())
+                                .font(.harcLabel.monospacedDigit())
                                 .foregroundStyle(.primary)
                         }
                     } else {
                         Text("Recording")
-                            .font(.subheadline)
+                            .font(.harcLabel)
                             .foregroundStyle(.primary)
                     }
                 }
@@ -843,18 +843,18 @@ public struct HarcWindowRootView: View {
                 PersonAvatar(displayName: item.person.displayName, size: 22)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.person.displayName)
-                        .font(.body)
+                        .font(.harcBody)
                         .lineLimit(1)
                     if let lastSeen = item.lastSeen {
                         Text(Self.relativeDate(lastSeen))
-                            .font(.caption)
+                            .font(.harcCaption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 4)
                 if item.suggestionCount > 0 {
                     Text("\(item.suggestionCount)")
-                        .font(.caption2.weight(.semibold))
+                        .font(.harcCaption.weight(.semibold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.yellow.opacity(0.25)))
@@ -867,7 +867,7 @@ public struct HarcWindowRootView: View {
             showingAddPerson = true
         } label: {
             Label("Add person\u{2026}", systemImage: "person.crop.circle.badge.plus")
-                .font(.subheadline)
+                .font(.harcLabel)
         }
         .buttonStyle(.plain)
     }
@@ -998,7 +998,7 @@ public struct HarcWindowRootView: View {
                 // The timestamp is context now, not identity — it shares the
                 // secondary line with duration and speaker count.
                 Text(Self.rowSecondaryLine(for: rec))
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 // One line of what was actually said, so a row is scannable
@@ -1007,7 +1007,7 @@ public struct HarcWindowRootView: View {
                 if rec.title?.isEmpty == false || rec.suggestedTitle?.isEmpty == false,
                    !rec.preview.isEmpty {
                     Text(rec.preview)
-                        .font(.caption2)
+                        .font(.harcCaption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)

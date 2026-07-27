@@ -255,7 +255,7 @@ struct WelcomeSetupSection: View {
                     Image(systemName: "arrow.clockwise.circle.fill")
                         .foregroundStyle(.orange)
                     Text("Screen Recording is granted, but macOS keeps the old answer until Harc restarts. Quit and reopen to capture system audio.")
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
@@ -285,10 +285,10 @@ struct WelcomeSetupSection: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(service.displayName)
-                    .font(.caption.weight(.medium))
+                    .font(.harcCaption.weight(.medium))
                 if !granted {
                     Text(service.purpose)
-                        .font(.caption2)
+                        .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -320,9 +320,9 @@ struct WelcomeSetupSection: View {
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.subheadline.weight(.medium))
+                    .font(.harcLabel.weight(.medium))
                 Text(detail)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

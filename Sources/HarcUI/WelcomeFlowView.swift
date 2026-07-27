@@ -194,9 +194,9 @@ public struct WelcomeFlowView: View {
                 )
             VStack(alignment: .leading, spacing: 1) {
                 Text("Harc")
-                    .font(.title3.weight(.semibold))
+                    .font(.harcTitle.weight(.semibold))
                 Text("Meeting memory for your Mac")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -209,11 +209,11 @@ public struct WelcomeFlowView: View {
                     .fill(step.tint)
                     .frame(width: 8, height: 8)
                 Text(step.eyebrow)
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Image(systemName: step.symbolName)
-                    .font(.title3)
+                    .font(.harcTitle)
                     .foregroundStyle(step.tint)
             }
 
@@ -237,7 +237,7 @@ public struct WelcomeFlowView: View {
                                     .font(.system(size: 32, weight: .medium))
                                     .foregroundStyle(step.tint)
                                 Text(step.title)
-                                    .font(.caption.weight(.semibold))
+                                    .font(.harcCaption.weight(.semibold))
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
                                     .padding(.horizontal, 14)
@@ -291,14 +291,14 @@ public struct WelcomeFlowView: View {
     private var stepContent: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(model.selectedStep.eyebrow.uppercased())
-                .font(.caption.weight(.bold))
+                .font(.harcCaption.weight(.bold))
                 .foregroundStyle(model.selectedStep.tint)
             Text(model.selectedStep.title)
                 .font(.largeTitle.weight(.semibold))
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             Text(model.selectedStep.body)
-                .font(.body)
+                .font(.harcBody)
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -339,7 +339,7 @@ public struct WelcomeFlowView: View {
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 Text("A meeting recorder that isn't running misses the meeting.")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -351,7 +351,7 @@ public struct WelcomeFlowView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(model.progressText)
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Skip") {
@@ -444,7 +444,7 @@ public struct WelcomeFlowView: View {
                 .foregroundStyle(model.selectedStep.tint)
                 .frame(width: 18)
             Text(text)
-                .font(.subheadline)
+                .font(.harcLabel)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -458,7 +458,7 @@ private struct WelcomeSTTFootnote: View {
     var body: some View {
         if !setup.sttReady {
             Text("The speech model finishes downloading in the background — recording unlocks when it's ready.")
-                .font(.caption)
+                .font(.harcCaption)
                 .foregroundStyle(.secondary)
         }
     }

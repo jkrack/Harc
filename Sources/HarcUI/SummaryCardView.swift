@@ -83,7 +83,7 @@ public struct SummaryCardView: View {
                 Image(systemName: "sparkles")
                     .foregroundStyle(Color.accentColor)
                 Text("No summary yet.")
-                    .font(.body)
+                    .font(.harcBody)
                     .foregroundStyle(Color.secondary)
                 Spacer()
                 Button("Generate") { enqueueSelf() }
@@ -108,7 +108,7 @@ public struct SummaryCardView: View {
             } else {
                 tintedContainer {
                     Text("Active summarizer model is unknown.")
-                        .font(.body)
+                        .font(.harcBody)
                         .foregroundStyle(Color.red)
                 }
             }
@@ -122,10 +122,10 @@ public struct SummaryCardView: View {
                     .foregroundStyle(Color.yellow)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("No transcript available")
-                        .font(.body)
+                        .font(.harcBody)
                         .foregroundStyle(Color.primary)
                     Text("Summaries need transcript text. Re-transcribe this audio before generating a summary.")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                 }
                 Spacer(minLength: 0)
@@ -140,10 +140,10 @@ public struct SummaryCardView: View {
                     .foregroundStyle(Color.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Summarization queued")
-                        .font(.body)
+                        .font(.harcBody)
                         .foregroundStyle(Color.primary)
                     Text("Queued · #\(position) of \(totalInFlight)")
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                 }
                 Spacer()
@@ -160,10 +160,10 @@ public struct SummaryCardView: View {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Summarizing with \(currentModelDisplay)…")
-                        .font(.body)
+                        .font(.harcBody)
                         .foregroundStyle(Color.primary)
                     Text(liveThroughputText ?? currentModelResourceHint)
-                        .font(.subheadline)
+                        .font(.harcLabel)
                         .foregroundStyle(Color.secondary)
                         .monospacedDigit()
                         .contentTransition(.numericText())
@@ -183,12 +183,12 @@ public struct SummaryCardView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(Color.yellow)
                     Text("Summarization failed")
-                        .font(.body)
+                        .font(.harcBody)
                         .foregroundStyle(Color.primary)
                     Spacer()
                 }
                 Text(message)
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
@@ -210,12 +210,12 @@ public struct SummaryCardView: View {
                     Image(systemName: "pause.circle.fill")
                         .foregroundStyle(Color.yellow)
                     Text("Summarization skipped")
-                        .font(.body)
+                        .font(.harcBody)
                         .foregroundStyle(Color.primary)
                     Spacer()
                 }
                 Text(message)
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
@@ -235,7 +235,7 @@ public struct SummaryCardView: View {
             VStack(alignment: .leading, spacing: 12) {
                 summaryHeader
                 Text(markdown: recording.summaryMarkdown ?? "")
-                    .font(.body)
+                    .font(.harcBody)
                     .foregroundStyle(Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let items = parsedActionItems, !items.isEmpty {
@@ -247,7 +247,7 @@ public struct SummaryCardView: View {
                     actionItemsLabel
                     if raw.lowercased() == "_none identified._" {
                         Text("No action items identified.")
-                            .font(.subheadline)
+                            .font(.harcLabel)
                             .italic()
                             .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                     } else {
@@ -256,7 +256,7 @@ public struct SummaryCardView: View {
                         // user sees what the model produced rather than a
                         // silently-dropped section.
                         Text(markdown: raw)
-                            .font(.body)
+                            .font(.harcBody)
                             .foregroundStyle(Color.primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -270,14 +270,14 @@ public struct SummaryCardView: View {
             Image(systemName: "sparkles")
                 .foregroundStyle(Color.accentColor)
             Text("Summary")
-                .font(.headline)
+                .font(.harcTitle)
                 .foregroundStyle(Color.primary)
             Text("· generated with \(persistedTierDisplay)")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             if let when = recording.summaryGeneratedAt {
                 Text("· \(RelativeTimeFormatter.relativeOrDated(when))")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
             }
             Spacer()
@@ -308,7 +308,7 @@ public struct SummaryCardView: View {
 
     private var actionItemsLabel: some View {
         Text("ACTION ITEMS")
-            .font(.caption)
+            .font(.harcCaption)
             .foregroundStyle(Color.secondary)
     }
 
@@ -334,7 +334,7 @@ public struct SummaryCardView: View {
             }
             Spacer(minLength: 0)
         }
-        .font(.body)
+        .font(.harcBody)
     }
 
     private var stalenessBanner: some View {
@@ -343,7 +343,7 @@ public struct SummaryCardView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Color.orange)
                 Text("Summary is based on an older transcript.")
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 Button("Regenerate") { enqueueSelf() }

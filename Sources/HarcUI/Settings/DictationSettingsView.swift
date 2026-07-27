@@ -29,7 +29,7 @@ public struct DictationSettingsView: View {
             Text("Dictation")
         } footer: {
             Text("Push-to-talk: hold the key to dictate, release to insert. Toggle: tap to start and stop. Restoring the clipboard puts whatever you had copied back after the dictation lands. The pill stays visible when idle — hover it to start dictation or switch modes.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
 
@@ -47,7 +47,7 @@ public struct DictationSettingsView: View {
             Text("Dictation performance & privacy")
         } footer: {
             Text("Keep-ready holds the speech model in memory so dictation starts instantly. History keeps your last \(DictationHistoryStore.maxEntries) dictations as plain JSON in Application Support on this Mac — Clear History deletes the file; turn it off and nothing is written.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
     }

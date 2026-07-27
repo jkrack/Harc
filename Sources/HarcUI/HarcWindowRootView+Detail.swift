@@ -40,9 +40,9 @@ extension HarcWindowRootView {
                 .foregroundStyle(Color.red)
             VStack(alignment: .leading, spacing: 2) {
                 Text(failure.title)
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                 Text(failure.message)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .textSelection(.enabled)
@@ -200,20 +200,20 @@ extension HarcWindowRootView {
             Spacer(minLength: 8)
             if let error = editorSaveError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.orange)
                     .lineLimit(1)
                     .help(error)
             } else if editorDirty {
                 Text("Editing…")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.tertiary)
             } else if lastAutosaveAt != nil {
                 // The quiet "Saved" — no button, no dirty dot, no
                 // save-on-close alert. The document regenerates after every
                 // edit; the UI just says so.
                 Text("Saved")
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -367,7 +367,7 @@ extension HarcWindowRootView {
             inspectorOpen = true
         } label: {
             Label(title, systemImage: icon)
-                .font(.caption)
+                .font(.harcCaption)
                 .lineLimit(1)
         }
         .buttonStyle(.bordered)
@@ -387,7 +387,7 @@ extension HarcWindowRootView {
                 .focused($transcriptSearchFocused)
                 .onSubmit { jumpToNextTranscriptMatch() }
             Text(transcriptSearchStatus)
-                .font(.caption.monospacedDigit())
+                .font(.harcCaption.monospacedDigit())
                 .foregroundStyle(Color.secondary)
                 .frame(minWidth: 58, alignment: .trailing)
             Button {

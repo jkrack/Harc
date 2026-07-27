@@ -18,7 +18,7 @@ struct StorageSettingsSection: View {
             Text("Storage")
         } footer: {
             Text("To uninstall Harc completely: quit the app, delete Harc.app, then remove the folders above. Recordings and transcripts are yours — they stay wherever your recordings folder points.")
-                .font(.subheadline)
+                .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
         .task { await computeSizes() }
@@ -67,18 +67,18 @@ struct StorageSettingsSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text(location.title)
-                        .font(.subheadline.weight(.medium))
+                        .font(.harcLabel.weight(.medium))
                     if let bytes = sizes[location.path] {
                         Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
-                            .font(.system(.caption, design: .monospaced))
+                            .font(.harcMono)
                             .foregroundStyle(Color.secondary)
                     }
                 }
                 Text(location.detail)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(Color.secondary)
                 Text((location.path as NSString).abbreviatingWithTildeInPath)
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(.harcMono)
                     .foregroundStyle(Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)

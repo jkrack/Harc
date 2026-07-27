@@ -22,29 +22,29 @@ public struct TranscriptHitRow: View {
                 .frame(width: 32, height: 32)
                 .overlay(
                     Image(systemName: icon)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.harcLabel.weight(.semibold))
                         .foregroundStyle(accent)
                 )
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(hit.recording.displayTitle)
-                        .font(.headline)
+                        .font(.harcTitle)
                         .foregroundStyle(Color.primary)
                         .lineLimit(1)
                     Spacer()
                     Text(RelativeTimeFormatter.format(hit.recording.startedAt))
-                        .font(.caption)
+                        .font(.harcCaption)
                         .foregroundStyle(Color.secondary)
                 }
                 Text(TranscriptHitRow.highlight(hit.snippet))
-                    .font(.subheadline)
+                    .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Button(action: onEdit) {
                 Image(systemName: "pencil")
-                    .font(.caption.weight(.semibold))
+                    .font(.harcCaption.weight(.semibold))
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.borderless)

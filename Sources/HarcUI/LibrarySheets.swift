@@ -16,13 +16,13 @@ struct NewProjectSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("New project")
-                .font(.headline)
+                .font(.harcTitle)
             TextField("Project name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .disabled(isSaving)
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.caption)
+                    .font(.harcCaption)
                     .foregroundStyle(Color.red)
             }
             HStack {
@@ -59,7 +59,7 @@ struct AddPersonSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add person")
-                .font(.headline)
+                .font(.harcTitle)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
             HStack {

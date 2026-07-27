@@ -18,14 +18,14 @@ public struct FileInspectorSection: View {
             LabeledContent("Started", value: startedString)
             LabeledContent("Audio") {
                 Text(URL(fileURLWithPath: recording.wavPath).lastPathComponent)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.harcMono)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             if let txtPath = recording.txtPath {
                 LabeledContent("Transcript") {
                     Text(URL(fileURLWithPath: txtPath).lastPathComponent)
-                        .font(.system(.callout, design: .monospaced))
+                        .font(.harcMono)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -33,7 +33,7 @@ public struct FileInspectorSection: View {
             if let jsonPath = recording.jsonPath {
                 LabeledContent("Sidecar") {
                     Text(URL(fileURLWithPath: jsonPath).lastPathComponent)
-                        .font(.system(.callout, design: .monospaced))
+                        .font(.harcMono)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
