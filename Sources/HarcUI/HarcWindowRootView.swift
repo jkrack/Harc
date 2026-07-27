@@ -989,14 +989,15 @@ public struct HarcWindowRootView: View {
     /// Recording row for use inside a `List(selection:)`. The tag is `wavPath`
     /// to match `selection`.
     func recordingLabel(_ rec: Recording) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        let isSelected = selection == .recording(wavPath: rec.wavPath)
+        return HStack(alignment: .top, spacing: 8) {
             Image(systemName: rec.pinned ? "pin.fill" : "waveform")
                 .foregroundStyle(rec.pinned ? Color.purple : Color.accentColor)
                 .frame(width: 18, alignment: .center)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(rec.displayTitle)
-                    .font(.body)
+                    .font(isSelected ? .body.weight(.semibold) : .body)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1022,6 +1023,17 @@ public struct HarcWindowRootView: View {
         }
         .padding(.vertical, 4)
         .frame(minHeight: 44, alignment: .topLeading)
+        // Quiet selection. The system's emphasized accent fill made the
+        // selected row the loudest element in a window whose real content is
+        // a paragraph of text — the eye landed in the sidebar and had to be
+        // dragged out. A low-opacity wash plus the semibold title above is
+        // the treatment Finder-class sidebars use; the saturated fill is
+        // reserved for the live recording row, where urgency is real.
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+                .padding(.horizontal, 4)
+        )
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
         .accessibilityIdentifier("harc.library.recording.\(rec.id.map(String.init) ?? rec.wavPath)")
         .contentShape(Rectangle())
