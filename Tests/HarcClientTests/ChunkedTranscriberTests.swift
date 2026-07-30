@@ -240,8 +240,8 @@ struct ChunkedTranscriberRetryTests {
         #expect(await fake.calls.count >= 3)
     }
 
-    @Test("non-model errors keep the drop-and-log behavior — no retry")
-    func genericErrorsAreNotRetried() async throws {
+    @Test("every chunk failure is retried, and an exhausted chunk becomes a visible hole")
+    func genericErrorsAreRetriedThenMarked() async throws {
         let url = tempWAVPath()
         defer { try? FileManager.default.removeItem(at: url) }
         try writeSineWAV(to: url, seconds: 1.2)
@@ -258,19 +258,90 @@ struct ChunkedTranscriberRetryTests {
             client: fake,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.02,
-            chunkRetryDelaySeconds: 0.02
+            chunkRetryDelaySeconds: 0.06
         )
         await transcriber.start(audioURL: url)
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 400_000_000)
 
         let result = try await transcriber.finalize(
             startedAt: Date().addingTimeInterval(-2), endedAt: Date()
         )
-        #expect(result.transcript.joinedText.isEmpty)
-        // Chunk + tail each attempted once via the pump — the exact count
-        // depends on pump timing, but a retry storm would show far more
-        // calls than chunks. 1.2s of audio = at most 2 chunks.
-        #expect(await fake.calls <= 4)
+        // Retried beyond the first attempt — the old policy deleted the
+        // chunk WAV on first failure, which is how a field recording lost
+        // seven and a half minutes with one stderr line as the only witness.
+        #expect(await fake.calls > 2)
+        // The hole is part of the record now: a range, and a marker in the
+        // transcript naming the repair path.
+        let failed = await transcriber.failedRanges
+        #expect(!failed.isEmpty)
+        #expect(result.transcript.joinedText.contains("could not be transcribed"))
+        #expect(result.transcript.joinedText.contains("Re-transcribe"))
+    }
+
+    @Test("an energetic chunk that comes back empty under VAD is retried without VAD")
+    func vadEmptyFallsBackToUnvadded() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        // Full-scale sine: unambiguous audible energy.
+        try writeSineWAV(to: url, seconds: 1.2)
+
+        actor QuietRoomClient: TranscribingClient {
+            private(set) var calls: [(vad: Bool, path: String)] = []
+            func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
+                calls.append((vad, audioPath))
+                if vad {
+                    // VAD classified the far-field speaker as silence.
+                    return TranscribeResult(text: "", words: [], speakers: [], processingMs: 1)
+                }
+                return TranscribeResult(
+                    text: "neal from across the room",
+                    words: [Word(text: "neal", startMs: 0, endMs: 300)],
+                    speakers: [], processingMs: 1
+                )
+            }
+        }
+        let fake = QuietRoomClient()
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            vadEnabled: true,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.02,
+            chunkRetryDelaySeconds: 0.02
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let result = try await transcriber.finalize(
+            startedAt: Date().addingTimeInterval(-2), endedAt: Date()
+        )
+        #expect(result.transcript.joinedText.contains("neal from across the room"))
+        let calls = await fake.calls
+        #expect(calls.contains { $0.vad == false }, "expected a no-VAD retry for the energetic empty chunk")
+        #expect(await transcriber.failedRanges.isEmpty)
+    }
+
+    @Test("a genuinely silent chunk is not retried without VAD")
+    func silentChunkStaysCheap() {
+        // Below the −50 dBFS floor: hasAudibleEnergy must be false so the
+        // fallback never fires on true silence.
+        let url = URL(fileURLWithPath: "/tmp/harc-ct-silence-\(UUID().uuidString.prefix(6)).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        let file = try! AVAudioFile(forWriting: url, settings: settings)
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+        let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 16000)!
+        buf.frameLength = 16000
+        for i in 0..<16000 { buf.floatChannelData![0][i] = Float.random(in: -0.0005...0.0005) }
+        try! file.write(from: buf)
+
+        #expect(!ChunkedTranscriber.hasAudibleEnergy(url))
     }
 
     @Test("late-retried chunks assemble in spoken order, not completion order")

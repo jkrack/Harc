@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import HarcCore
 
 /// Protocol boundary for testing — any client that can transcribe a WAV path.
@@ -41,6 +42,25 @@ public struct ChunkedTranscriberFinalize: Sendable {
 /// assembles a session transcript. After tail flush, calls `diarize` once
 /// on the full WAV via the DiarizingClient and uses its segments as the
 /// authoritative speaker labels for the recording.
+/// A stretch of the recording that produced no transcript after all
+/// retries. The audio still exists in the master WAV.
+public struct FailedChunkRange: Sendable, Equatable {
+    public let startMs: Int
+    public let endMs: Int
+    public let reason: String
+
+    /// The marker inserted into the transcript where the audio should be —
+    /// a hole the user can see beats a silence the user discovers in a
+    /// meeting's minutes three weeks later.
+    var markerText: String {
+        func stamp(_ ms: Int) -> String {
+            let s = ms / 1000
+            return String(format: "%d:%02d", s / 60, s % 60)
+        }
+        return "[\(stamp(startMs))–\(stamp(endMs)) could not be transcribed — Re-transcribe in Settings → Transcription repairs this from the saved audio]"
+    }
+}
+
 public actor ChunkedTranscriber {
     private let client: any TranscribingClient
     private let diarizer: (any DiarizingClient)?
@@ -56,19 +76,35 @@ public actor ChunkedTranscriber {
     private var pumpTask: Task<Void, Never>?
     private var stopped = false
 
-    /// Chunks that failed with `model_not_loaded` — the daemon is still
-    /// downloading/loading the model (typically the first-run download).
-    /// The chunk WAV is kept on disk and re-attempted with backoff so a
-    /// recording made during the download recovers with no transcript holes.
+    /// Chunks whose transcription failed and are awaiting another attempt.
+    ///
+    /// Every failure is retried, not just `model_not_loaded`. The original
+    /// policy retried only the model-loading case and *deleted the chunk WAV*
+    /// for anything else — a daemon timeout or socket hiccup silently erased
+    /// minutes of a meeting from the transcript, with one line on stderr as
+    /// the only witness. A field recording produced a transcript with a
+    /// seven-and-a-half-minute hole this way.
     private struct PendingChunkRetry {
         let chunk: WAVChunker.Chunk
         var attempts: Int
+        var maxAttempts: Int
+        var retryDelay: Double
         var nextAttemptAt: Date
+        var lastError: String
     }
     private var retryQueue: [PendingChunkRetry] = []
+
+    /// Time ranges whose audio never produced a transcript, after all
+    /// retries. Recorded so the hole is visible in the transcript itself and
+    /// repairable via the archive re-transcribe — the durable master WAV
+    /// still has the audio; only this pass lost it.
+    public private(set) var failedRanges: [FailedChunkRange] = []
     /// 40 × 15s default delay ≈ 10 minutes of cover — enough for the
     /// ~460 MB first-run model download on a slow connection.
     static let maxChunkRetries = 40
+    /// Transient failures (timeouts, socket errors) either recover fast or
+    /// not at all — four tries at a shorter delay.
+    static let maxTransientRetries = 4
     /// Bounded patience at finalize: keep retrying `model_not_loaded`
     /// chunks for up to this long after stop before giving up. Reliability
     /// over stop-latency, per the project north star.
@@ -138,11 +174,30 @@ public actor ChunkedTranscriber {
         }
         for abandoned in retryQueue {
             FileHandle.standardError.write(Data(
-                "harc-client: giving up on chunk \(abandoned.chunk.startMs)ms after model wait budget\n".utf8
+                "harc-client: giving up on chunk \(abandoned.chunk.startMs)ms after retry budget\n".utf8
+            ))
+            failedRanges.append(FailedChunkRange(
+                startMs: abandoned.chunk.startMs,
+                endMs: abandoned.chunk.endMs,
+                reason: abandoned.lastError
             ))
             try? FileManager.default.removeItem(at: abandoned.chunk.audioURL)
         }
         retryQueue = []
+
+        // Holes become part of the transcript, in spoken order, where the
+        // missing audio belongs — visible in the pane, the .md, and every
+        // export, each naming the repair path.
+        for range in failedRanges {
+            assembler.add(ChunkResult(
+                startMs: range.startMs,
+                endMs: range.endMs,
+                text: range.markerText,
+                words: [],
+                speakers: [],
+                processingMs: 0
+            ))
+        }
 
         updatesContinuation.finish()
 
@@ -218,6 +273,32 @@ public actor ChunkedTranscriber {
         retryQueue.append(contentsOf: stillPending)
     }
 
+    /// Cheap RMS gate for the VAD fallback: read the 16 kHz mono Int16
+    /// chunk and ask whether anything in it rises above a quiet-room floor.
+    /// −50 dBFS is far below any audible speaker — even one across a big
+    /// room — but above electrical noise, so true silence never triggers
+    /// the second pass.
+    static func hasAudibleEnergy(_ url: URL, thresholdDBFS: Double = -50) -> Bool {
+        guard let file = try? AVAudioFile(forReading: url) else { return false }
+        let format = file.processingFormat
+        let frames = AVAudioFrameCount(min(file.length, Int64(16_000 * 120)))
+        guard frames > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              (try? file.read(into: buffer)) != nil,
+              let data = buffer.floatChannelData else { return false }
+        let n = Int(buffer.frameLength)
+        guard n > 0 else { return false }
+        var sum: Double = 0
+        for i in 0..<n {
+            let v = Double(data[0][i])
+            sum += v * v
+        }
+        let rms = (sum / Double(n)).squareRoot()
+        guard rms > 0 else { return false }
+        let dbfs = 20 * log10(rms)
+        return dbfs > thresholdDBFS
+    }
+
     private static func isModelNotLoaded(_ error: Error) -> Bool {
         if case ClientError.transcribeFailed(let code, _) = error {
             return code == "model_not_loaded"
@@ -228,26 +309,62 @@ public actor ChunkedTranscriber {
     private func processChunk(_ chunk: WAVChunker.Chunk, retryAttempt: Int = 0) async throws {
         // Per-chunk diarization is OFF — labels come from the post-stop
         // full-WAV diarize call in `finalize`.
-        let result: TranscribeResult
+        var result: TranscribeResult
         do {
             result = try await client.transcribe(audioPath: chunk.audioURL.path, diarize: false, vad: vadEnabled)
         } catch {
-            if Self.isModelNotLoaded(error), retryAttempt < Self.maxChunkRetries {
-                // Model still downloading/loading — keep the chunk WAV and
-                // retry after a delay instead of dropping transcript forever.
+            let isModelWait = Self.isModelNotLoaded(error)
+            let maxAttempts = isModelWait ? Self.maxChunkRetries : Self.maxTransientRetries
+            if retryAttempt < maxAttempts {
+                // Keep the chunk WAV and retry — every failure, not just the
+                // model-loading one. Deleting on first failure is how minutes
+                // of a meeting used to vanish with one stderr line as the
+                // only witness.
                 retryQueue.append(PendingChunkRetry(
                     chunk: chunk,
                     attempts: retryAttempt + 1,
-                    nextAttemptAt: Date().addingTimeInterval(chunkRetryDelaySeconds)
+                    maxAttempts: maxAttempts,
+                    retryDelay: isModelWait ? chunkRetryDelaySeconds : max(2, chunkRetryDelaySeconds / 3),
+                    nextAttemptAt: Date().addingTimeInterval(
+                        isModelWait ? chunkRetryDelaySeconds : max(2, chunkRetryDelaySeconds / 3)
+                    ),
+                    lastError: error.localizedDescription
                 ))
                 FileHandle.standardError.write(Data(
-                    "harc-client: chunk \(chunk.startMs)ms waiting for model (attempt \(retryAttempt + 1))\n".utf8
+                    "harc-client: chunk \(chunk.startMs)ms failed (attempt \(retryAttempt + 1)/\(maxAttempts)): \(error.localizedDescription)\n".utf8
                 ))
             } else {
+                // Out of retries: the hole becomes part of the record instead
+                // of a silent absence. The master WAV still has the audio.
+                failedRanges.append(FailedChunkRange(
+                    startMs: chunk.startMs,
+                    endMs: chunk.endMs,
+                    reason: error.localizedDescription
+                ))
                 try? FileManager.default.removeItem(at: chunk.audioURL)
             }
             throw error
         }
+
+        // Far-field guard: VAD tuned for near-field speech can classify a
+        // quiet speaker across a big room as silence and return nothing —
+        // successfully. If the chunk carries audible energy but VAD-gated
+        // transcription came back empty, run it once more with VAD off
+        // before accepting the silence. Costs one extra pass only on
+        // energetic-but-"silent" chunks; true silence stays cheap.
+        if vadEnabled,
+           result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           Self.hasAudibleEnergy(chunk.audioURL) {
+            FileHandle.standardError.write(Data(
+                "harc-client: chunk \(chunk.startMs)ms empty under VAD but energetic — retrying without VAD\n".utf8
+            ))
+            if let unvadded = try? await client.transcribe(
+                audioPath: chunk.audioURL.path, diarize: false, vad: false
+            ), !unvadded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                result = unvadded
+            }
+        }
+
         try? FileManager.default.removeItem(at: chunk.audioURL)
         let cleanedText = VocabularyReplacer.apply(result.text, using: vocabulary)
         let cr = ChunkResult(

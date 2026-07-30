@@ -189,7 +189,7 @@ Surfaces (post v0.9.0 overhaul — the audit-driven redesign):
 
 These architectural choices are locked in. Update this section only when rethinking a constraint.
 
-- **Chunking strategy:** Fixed 60s rolling windows with overlap-stitching. Matches FluidAudio's tolerance and provides natural crash-recovery points.
+- **Chunking strategy:** Fixed 60s rolling windows, hard-cut (overlap-stitching is designed but **not yet implemented** — words straddling a boundary can split; a field recording showed "…rn." artifacts at exactly 60s edges). Every chunk failure is retried with backoff; a chunk that exhausts retries becomes a visible `[m:ss–m:ss could not be transcribed…]` marker in the transcript, repairable via archive re-transcribe from the durable WAV. An energetic chunk that comes back empty under VAD is retried once without VAD (far-field speakers read as silence otherwise).
 - **Recording format:** WAV, 16 kHz, mono. Model's native rate; no resampling.
 - **Storage:** GRDB/SQLite for the recordings library and metadata. Small config-like data (dictation modes, dictation history) is JSON in Application Support.
 - **File naming:** Time-based (`YYYY/YYYY-MM-DD/HH-mm-ss.wav`). The doubled year keeps each day's directory self-identifying out of context.

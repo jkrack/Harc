@@ -71,6 +71,11 @@ Flag the user before violating these product decisions.
   can block recording; missing summaries/search/paste helpers must not make core
   capture look broken.
 - System audio denial is degraded "mic only" capture, not a hard block.
+- **Never silently drop transcript audio.** Chunk failures retry with
+  backoff (all errors, not just model_not_loaded); exhausted chunks become
+  visible in-transcript markers + `ChunkedTranscriber.failedRanges`, never
+  a silent hole. Empty-under-VAD chunks with audible energy get one no-VAD
+  retry. A change that can discard a chunk without a marker is a bug.
 - Dictation clips in `~/Library/Caches/Harc/dictation/` are disposable — never
   route them into the recording recovery inbox. `DictationCacheCleaner` deletes
   orphans.
