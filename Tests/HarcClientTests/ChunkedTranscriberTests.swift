@@ -76,6 +76,9 @@ struct ChunkedTranscriberTests {
 
         let transcriber = ChunkedTranscriber(
             client: fake,
+            // Canned-result fakes: VAD fallback must not consume extra
+            // queued results — these tests are not about VAD.
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05
         )
@@ -146,6 +149,9 @@ struct ChunkedTranscriberTests {
         let vocab = Vocabulary(entries: [VocabularyEntry(from: "Arakeet", to: "Parakeet")])
         let transcriber = ChunkedTranscriber(
             client: fake,
+            // Canned-result fakes: VAD fallback must not consume extra
+            // queued results — these tests are not about VAD.
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
             vocabulary: vocab
@@ -225,6 +231,9 @@ struct ChunkedTranscriberRetryTests {
         let fake = ModelWarmupClient(failuresBeforeSuccess: 2)
         let transcriber = ChunkedTranscriber(
             client: fake,
+            // Canned-result fakes: VAD fallback must not consume extra
+            // queued results — these tests are not about VAD.
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.02,
             chunkRetryDelaySeconds: 0.02
@@ -256,6 +265,9 @@ struct ChunkedTranscriberRetryTests {
         let fake = AlwaysFailingClient()
         let transcriber = ChunkedTranscriber(
             client: fake,
+            // Canned-result fakes: VAD fallback must not consume extra
+            // queued results — these tests are not about VAD.
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.02,
             chunkRetryDelaySeconds: 0.06
@@ -318,6 +330,46 @@ struct ChunkedTranscriberRetryTests {
         let calls = await fake.calls
         #expect(calls.contains { $0.vad == false }, "expected a no-VAD retry for the energetic empty chunk")
         #expect(await transcriber.failedRanges.isEmpty)
+    }
+
+    @Test("a shredded-but-nonempty VAD result is also retried, and the longer text wins")
+    func sparseVadResultFallsBack() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSineWAV(to: url, seconds: 1.2)
+
+        actor ShreddingClient: TranscribingClient {
+            private(set) var calls: [(vad: Bool, path: String)] = []
+            func transcribe(audioPath: String, diarize: Bool, vad: Bool) async throws -> TranscribeResult {
+                calls.append((vad, audioPath))
+                if vad {
+                    // The field-recording failure mode: VAD keeps a fragment
+                    // and reports success. 96% of the minute is gone.
+                    return TranscribeResult(text: "to", words: [], speakers: [], processingMs: 1)
+                }
+                return TranscribeResult(
+                    text: "the full minute of what neal actually said about the renewal plan",
+                    words: [], speakers: [], processingMs: 1
+                )
+            }
+        }
+        let fake = ShreddingClient()
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            vadEnabled: true,
+            chunkDurationSeconds: 1.0,
+            pollIntervalSeconds: 0.02,
+            chunkRetryDelaySeconds: 0.02
+        )
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let result = try await transcriber.finalize(
+            startedAt: Date().addingTimeInterval(-2), endedAt: Date()
+        )
+        #expect(result.transcript.joinedText.contains("what neal actually said"))
+        #expect(!result.transcript.joinedText.contains("to\n"))
+        #expect(await fake.calls.contains { $0.vad == false })
     }
 
     @Test("a genuinely silent chunk is not retried without VAD")
@@ -447,7 +499,10 @@ struct ChunkedTranscriberDiarizeTests {
 
         let transcriber = ChunkedTranscriber(
             client: fake,
+            // Canned-result fakes: VAD fallback must not consume extra
+            // queued results — these tests are not about VAD.
             diarizer: fakeDi,
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05
         )
@@ -483,7 +538,10 @@ struct ChunkedTranscriberDiarizeTests {
 
         let transcriber = ChunkedTranscriber(
             client: fake,
+            // Canned-result fakes: VAD fallback must not consume extra
+            // queued results — these tests are not about VAD.
             diarizer: fakeDi,
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05
         )
@@ -512,6 +570,9 @@ struct ChunkedTranscriberDiarizeTests {
         ])
         let transcriber = ChunkedTranscriber(
             client: fake,
+            // Canned-result fakes: VAD fallback must not consume extra
+            // queued results — these tests are not about VAD.
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05
         )

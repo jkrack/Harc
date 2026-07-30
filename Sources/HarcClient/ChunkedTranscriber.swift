@@ -105,6 +105,10 @@ public actor ChunkedTranscriber {
     /// Transient failures (timeouts, socket errors) either recover fast or
     /// not at all — four tries at a shorter delay.
     static let maxTransientRetries = 4
+    /// Below this, a VAD-gated chunk is suspect. Engaged speech runs
+    /// 700–900 chars/min; even a sparse meeting minute clears 150. The
+    /// field recording's VAD-shredded chunks all sat under 105.
+    static let suspiciouslySparseCharsPerMinute: Double = 120
     /// Bounded patience at finalize: keep retrying `model_not_loaded`
     /// chunks for up to this long after stop before giving up. Reliability
     /// over stop-latency, per the project north star.
@@ -346,21 +350,26 @@ public actor ChunkedTranscriber {
             throw error
         }
 
-        // Far-field guard: VAD tuned for near-field speech can classify a
-        // quiet speaker across a big room as silence and return nothing —
-        // successfully. If the chunk carries audible energy but VAD-gated
-        // transcription came back empty, run it once more with VAD off
-        // before accepting the silence. Costs one extra pass only on
-        // energetic-but-"silent" chunks; true silence stays cheap.
+        // Far-field guard: VAD tuned for near-field speech mangles a quiet
+        // room. On a real field recording it kept 8% of the transcript —
+        // four chunks returned empty and every other chunk lost 77–98% of
+        // its text, all "successfully". So the trigger is sparseness, not
+        // emptiness: if a chunk with audible energy yields implausibly
+        // little text under VAD, run it once without VAD and keep whichever
+        // result says more. Over-triggering is harmless — a genuinely quiet
+        // minute returns the same text both ways and costs one extra pass;
+        // true silence stays below the energy floor and is never retried.
+        let vadChars = result.text.trimmingCharacters(in: .whitespacesAndNewlines).count
+        let chunkMinutes = max(0.25, Double(chunk.endMs - chunk.startMs) / 60_000.0)
         if vadEnabled,
-           result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           Double(vadChars) < Self.suspiciouslySparseCharsPerMinute * chunkMinutes,
            Self.hasAudibleEnergy(chunk.audioURL) {
             FileHandle.standardError.write(Data(
-                "harc-client: chunk \(chunk.startMs)ms empty under VAD but energetic — retrying without VAD\n".utf8
+                "harc-client: chunk \(chunk.startMs)ms sparse under VAD (\(vadChars) chars) — retrying without VAD\n".utf8
             ))
             if let unvadded = try? await client.transcribe(
                 audioPath: chunk.audioURL.path, diarize: false, vad: false
-            ), !unvadded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ), unvadded.text.trimmingCharacters(in: .whitespacesAndNewlines).count > vadChars {
                 result = unvadded
             }
         }
