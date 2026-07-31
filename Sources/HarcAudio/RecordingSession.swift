@@ -91,16 +91,26 @@ public actor RecordingSession {
     /// recording actually reaches.
     public private(set) var preRolledSeconds: Double = 0
 
+    /// Fired once, on the first live-audio write failure (e.g. ENOSPC on the
+    /// cache volume). Without it the session kept "recording" with animating
+    /// levels while persisting nothing — the user learned an hour later, at
+    /// transcription time. The owner should stop the session and tell the
+    /// user; audio written before the failure is intact.
+    nonisolated private let writeFailureLatch = OnceLatch()
+    nonisolated private let onWriteFailure: (@Sendable (String) -> Void)?
+
     public init(
         mic: any MicCaptureSource,
         systemAudio: any SystemAudioCaptureSource,
         destination: RecordingDestination,
-        transcriber: ChunkedTranscriber? = nil
+        transcriber: ChunkedTranscriber? = nil,
+        onWriteFailure: (@Sendable (String) -> Void)? = nil
     ) {
         self.mic = mic
         self.systemAudio = systemAudio
         self.destination = destination
         self.transcriber = transcriber
+        self.onWriteFailure = onWriteFailure
         var continuation: AsyncStream<AudioLevels>.Continuation!
         self.levels = AsyncStream(bufferingPolicy: .bufferingNewest(2)) { continuation = $0 }
         self.levelsContinuation = continuation
@@ -128,12 +138,10 @@ public actor RecordingSession {
 
         let cache = RecordingDestination.cachePath()
         self.cacheURL = cache
-        let preRollSeconds = Double(preRoll.count) / RollingAudioBuffer.sampleRate
-        self.startedAt = date.addingTimeInterval(-preRollSeconds)
-        self.preRolledSeconds = preRollSeconds
         let newWriter = try AudioFileWriter(url: cache)
         self.writer = newWriter
 
+        var preRollFramesWritten = 0
         if !preRoll.isEmpty {
             for buffer in RollingAudioBuffer.buffers(from: preRoll) {
                 // A failure here costs the retroactive window but must not stop
@@ -141,16 +149,23 @@ public actor RecordingSession {
                 // user outranks the minutes behind them.
                 do {
                     try newWriter.write(buffer)
+                    preRollFramesWritten += Int(buffer.frameLength)
                 } catch {
                     FileHandle.standardError.write(Data(
                         "harc-audio: pre-roll write failed: \(error.localizedDescription)\n".utf8
                     ))
-                    self.startedAt = date
-                    self.preRolledSeconds = 0
                     break
                 }
             }
         }
+        // Timeline offset from what actually landed in the file, not from
+        // what we intended to write: a mid-pre-roll failure leaves the
+        // already-written buffers in the WAV, and zeroing the offset then
+        // would shift every downstream timestamp (transcript ms,
+        // ⌘-click-to-seek, word times) by the orphaned prefix's duration.
+        let preRollSeconds = Double(preRollFramesWritten) / RollingAudioBuffer.sampleRate
+        self.startedAt = date.addingTimeInterval(-preRollSeconds)
+        self.preRolledSeconds = preRollSeconds
 
         if let transcriber {
             await transcriber.start(audioURL: cache)
@@ -188,8 +203,19 @@ public actor RecordingSession {
     public func stop() async throws -> RecordingResult {
         await mic.stop()
         await systemAudio.stop()
-        pumpTask?.cancel()
-        _ = await pumpTask?.value
+        // Drain, don't cancel: both capture streams were just finished, so
+        // the pump exits once it consumes what was already buffered.
+        // Cancelling here discarded that backlog — the final fraction of a
+        // second of the last utterance. The watchdog only covers a capture
+        // source that fails to finish its stream.
+        if let pumpTask {
+            let watchdog = Task {
+                try? await Task.sleep(for: .seconds(5))
+                pumpTask.cancel()
+            }
+            _ = await pumpTask.value
+            watchdog.cancel()
+        }
         pumpTask = nil
         levelsContinuation.finish()
 
@@ -250,6 +276,32 @@ public actor RecordingSession {
         )
     }
 
+    /// Tear down a partially started session WITHOUT publishing anything.
+    /// `stop()` unconditionally moves the cache WAV to the user's destination
+    /// folder; calling it from a failed start deposited a ~44-byte junk WAV
+    /// there on every attempt, which launch-time ingest then turned into a
+    /// phantom "Recovered" library row. An aborted start leaves nothing
+    /// behind: captures stopped, writer closed, cache file deleted.
+    public func abort() async {
+        await mic.stop()
+        await systemAudio.stop()
+        pumpTask?.cancel()
+        _ = await pumpTask?.value
+        pumpTask = nil
+        levelsContinuation.finish()
+        try? writer?.close()
+        writer = nil
+        if let transcriber {
+            // Winds down the chunk pump/preview; the near-empty cache WAV
+            // makes this cheap. Result intentionally discarded.
+            _ = try? await transcriber.finalize(startedAt: startedAt ?? Date(), endedAt: Date())
+        }
+        if let cache = cacheURL {
+            try? FileManager.default.removeItem(at: cache)
+        }
+        cacheURL = nil
+    }
+
     /// Resample raw system-audio buffers and append them to `fifo`. Called only
     /// from the mix loop, so the mixer's system converter is never touched
     /// concurrently with `processPair`'s mic conversion.
@@ -281,7 +333,16 @@ public actor RecordingSession {
             let sysMono = systemFIFO?.take(Int(micMono.frameLength), format: AudioMixer.targetFormat)
             let sysDb = sysMono.map(rmsDb) ?? -.infinity
             let mixed = try sysMono.map { try mixer.sum(mic: micMono, system: $0) } ?? micMono
-            try writer?.write(mixed)
+            do {
+                try writer?.write(mixed)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harc-audio: WAV write failed: \(error.localizedDescription)\n".utf8
+                ))
+                if writeFailureLatch.claim() {
+                    onWriteFailure?(error.localizedDescription)
+                }
+            }
             let levels = levelComputer.compute(
                 micMono: micMono,
                 systemMono: sysMono,
@@ -350,6 +411,19 @@ private func pumpStreams(
 
     sysTask.cancel()
     _ = await sysTask.value
+}
+
+/// Thread-safe fire-once flag for the write-failure signal.
+final class OnceLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
+    }
 }
 
 /// Sendable envelope for an `AVAudioPCMBuffer`. PCM buffers aren't annotated

@@ -16,8 +16,30 @@ public protocol SystemAudioCaptureSource: Sendable {
 
 /// Real implementation backed by SCStream.
 public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOutput {
+    /// Hands sample buffers from the (nonisolated) SCStream callback to the
+    /// consumer stream *synchronously*, so arrival order is delivery order.
+    /// The old path spawned one unstructured Task per buffer — tasks reach
+    /// an actor in scheduler order, not creation order, so system-audio
+    /// samples could land in the WAV out of sequence under load.
+    private final class ContinuationBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cont: AsyncStream<AVAudioPCMBuffer>.Continuation?
+        func set(_ c: AsyncStream<AVAudioPCMBuffer>.Continuation?) {
+            lock.lock(); cont = c; lock.unlock()
+        }
+        func yield(_ b: AVAudioPCMBuffer) {
+            lock.lock(); cont?.yield(b); lock.unlock()
+        }
+        func finish() {
+            lock.lock(); cont?.finish(); cont = nil; lock.unlock()
+        }
+    }
+
     private var stream: SCStream?
-    private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+    private let continuationBox = ContinuationBox()
+    /// Serial: `.global(qos:)` is a concurrent queue, which lets SCStream run
+    /// two sample callbacks at once — the second half of the ordering bug.
+    private let sampleQueue = DispatchQueue(label: "com.harc.system-audio.samples", qos: .userInteractive)
     private var isRunning = false
     // Cached across requestPermission→start within a single session so the TCC
     // path fires once, not twice. Consumed on start; cleared on stop.
@@ -67,19 +89,19 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
 
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         do {
-            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInteractive))
+            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
         } catch {
             throw AudioError.systemAudioStreamFailed("addStreamOutput: \(error.localizedDescription)")
         }
 
         let (s, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
-        self.continuation = cont
+        continuationBox.set(cont)
         self.stream = stream
 
         do {
             try await stream.startCapture()
         } catch {
-            cont.finish()
+            continuationBox.finish()
             throw AudioError.systemAudioStreamFailed("startCapture: \(error.localizedDescription)")
         }
         isRunning = true
@@ -91,8 +113,7 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
         guard isRunning, let stream else { return }
         try? await stream.stopCapture()
         self.stream = nil
-        continuation?.finish()
-        continuation = nil
+        continuationBox.finish()
         isRunning = false
     }
 
@@ -103,11 +124,8 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
     ) {
         guard type == .audio else { return }
         guard let buffer = Self.convertToPCM(sampleBuffer) else { return }
-        Task { await self.yieldBuffer(buffer) }
-    }
-
-    private func yieldBuffer(_ buffer: AVAudioPCMBuffer) {
-        continuation?.yield(buffer)
+        // Synchronous yield on the serial sample queue: ordered by construction.
+        continuationBox.yield(buffer)
     }
 
     /// Convert a CMSampleBuffer from SCStream into a Float32 AVAudioPCMBuffer.

@@ -26,8 +26,10 @@ public final class AudioMixer {
 
     private var micConverter: AVAudioConverter?
     private var micInputFormat: AVAudioFormat?
+    private var micFrameCarry: Double = 0
     private var systemConverter: AVAudioConverter?
     private var systemInputFormat: AVAudioFormat?
+    private var systemFrameCarry: Double = 0
 
     public init() {}
 
@@ -36,6 +38,7 @@ public final class AudioMixer {
             buffer,
             converter: &micConverter,
             inputFormat: &micInputFormat,
+            frameCarry: &micFrameCarry,
             label: "mic"
         )
     }
@@ -45,6 +48,7 @@ public final class AudioMixer {
             buffer,
             converter: &systemConverter,
             inputFormat: &systemInputFormat,
+            frameCarry: &systemFrameCarry,
             label: "system"
         )
     }
@@ -91,6 +95,7 @@ public final class AudioMixer {
         _ buffer: AVAudioPCMBuffer,
         converter: inout AVAudioConverter?,
         inputFormat: inout AVAudioFormat?,
+        frameCarry: inout Double,
         label: String
     ) throws -> AVAudioPCMBuffer {
         if converter == nil || inputFormat != buffer.format {
@@ -102,6 +107,7 @@ public final class AudioMixer {
             c.primeMethod = .pre
             converter = c
             inputFormat = buffer.format
+            frameCarry = 0
         }
 
         // Extend the input buffer by primeExtension frames of the same last-sample
@@ -130,10 +136,16 @@ public final class AudioMixer {
             for i in inputFrames..<totalInput { dst[i] = lastValue }
         }
 
-        // Expected output frame count from the original (unextended) input
-        let expectedOutput = AVAudioFrameCount(
-            Double(inputFrames) * AudioMixer.targetSampleRate / buffer.format.sampleRate
-        )
+        // Expected output frame count from the original (unextended) input.
+        // The fractional remainder is carried to the next buffer instead of
+        // truncated: flooring per buffer discarded ~0.33 samples per 4096-frame
+        // 48 kHz mic buffer (~0.9 s per hour), and since the mic cursor drives
+        // the WAV timeline, the loss showed up as progressive mic/system-audio
+        // desync and word-timestamp drift against the waveform player.
+        let exactOutput = Double(inputFrames) * AudioMixer.targetSampleRate
+            / buffer.format.sampleRate + frameCarry
+        let expectedOutput = AVAudioFrameCount(exactOutput)
+        frameCarry = exactOutput - Double(expectedOutput)
         let capacity = expectedOutput + AVAudioFrameCount(extraInput) + 4
 
         guard let out = AVAudioPCMBuffer(pcmFormat: AudioMixer.targetFormat, frameCapacity: capacity) else {
