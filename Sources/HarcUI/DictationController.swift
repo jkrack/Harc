@@ -284,11 +284,25 @@ public final class DictationController {
     }
 
     public func start() async {
-        guard !state.isActive else { return }
+        guard !state.isActive else {
+            // The active session already resolved its mode into
+            // `sessionMode`; a one-shot intent that arrives now is refused,
+            // so consume it rather than letting it re-route the next start.
+            oneShotMode = nil
+            return
+        }
         deepLinkOrigin = nextSessionDeepLinkOrigin
         nextSessionDeepLinkOrigin = nil
-        // Mutual exclusion: the mic + daemon are single-user resources.
-        guard !recordingState.isRecording else {
+        // Mutual exclusion: the mic + daemon are single-user resources. The
+        // preparing check matters as much as the recording one — a meeting
+        // start spends whole seconds in awaits before `isRecording` flips,
+        // and a dictation slipping in during that window opened the mic
+        // under the starting session.
+        guard !recordingState.isActiveOrPreparing else {
+            // Consume the one-shot intent on refusal, like every other exit:
+            // a leaked mode would silently re-route the user's *next* plain
+            // dictation through a transform they didn't ask for.
+            oneShotMode = nil
             onBlockedByRecording()
             return
         }
@@ -299,6 +313,7 @@ public final class DictationController {
         // HUD pill, on a Mac whose actual problem is that no input device is
         // attached at all.
         guard hasInputDevice() else {
+            oneShotMode = nil
             state.setPhase(.error("No microphone connected"))
             return
         }

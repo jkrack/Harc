@@ -19,7 +19,18 @@ import IOKit.ps
 import KeyboardShortcuts
 
 /// Thrown by stopRecording's timeout race when session.stop() exceeds the cap.
-private struct StopTimeoutError: Error {}
+/// First-resume-wins gate for racing unstructured tasks onto one continuation.
+private final class ResumeOnceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if resumed { return false }
+        resumed = true
+        return true
+    }
+}
 
 /// Publishes Sparkle's discovered updates onto the bridge so HarcUI stays
 /// Sparkle-free. Delegate callbacks arrive off the main actor — primitives
@@ -379,10 +390,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// fresh permission read into it — the user grants in System Settings and
     /// comes back expecting the checkmarks to have moved.
     private var welcomeSetupModel: WelcomeSetupModel?
+    /// Welcome-window-scoped subscriptions; cleared on close so the setup
+    /// model can actually deallocate (see showWelcome).
+    private var welcomeCancellables = Set<AnyCancellable>()
     private var previewTask: Task<Void, Never>?
     private var prefsObserver: AnyCancellable?
     private var modelPerformanceObserver: AnyCancellable?
     private var pendingSkipPaste = false
+    /// Set when Stop arrives while startRecording is still awaiting daemon
+    /// launch / engine spin-up; honored the moment the session is fully up.
+    private var stopRequestedDuringStart = false
     private var uiTestRecordingStartedAt: Date?
     private var frontmostPoller: Timer?
     private var hasShownMicOnlyNotice = false
@@ -775,7 +792,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func toggleRecording() async {
         guard !bridge.recordingStopInFlight else { return }
-        if state.isRecording {
+        if state.isActiveOrPreparing {
+            // A toggle during the start window means "never mind" — queue
+            // the stop rather than silently ignoring the press.
             await stopRecording(autoStopReason: nil)
         } else {
             await startRecording()
@@ -1332,7 +1351,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func startRecording() async {
-        guard session == nil else { return }
+        // `isPreparing` closes the re-entrancy window: this method suspends
+        // for seconds (daemon launch, engine spin-up) before `session` is
+        // assigned, and a second trigger (hotkey double-press, meeting
+        // detection, deep link) entering during that window used to start a
+        // second session that overwrote the first — leaving an orphaned live
+        // mic with no owner.
+        guard session == nil, !state.isPreparing else { return }
 
         // Mutual exclusion: dictation and meeting capture share the mic and the
         // STT daemon; only one may hold the mic at a time.
@@ -1349,6 +1374,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             presentDestinationMissingAlert()
             return
         }
+
+        state.markPreparing()
+        stopRequestedDuringStart = false
 
         meetingState.clearAll()
         autoStop.resetPostStop()
@@ -1377,7 +1405,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 mic: MicCapture(),
                 systemAudio: SystemAudioCapture(),
                 destination: RecordingDestination(baseDirectory: prefs.destinationURL),
-                transcriber: transcriber
+                transcriber: transcriber,
+                onWriteFailure: { [weak self] message in
+                    Task { @MainActor in await self?.handleRecordingWriteFailure(message) }
+                }
             )
             self.session = session
 
@@ -1422,12 +1453,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     presentMicOnlyFallbackNotification()
                 }
             }
+            // A Stop that arrived mid-start was queued, not dropped: honor
+            // it now that the session is fully up and can stop cleanly.
+            if stopRequestedDuringStart {
+                stopRequestedDuringStart = false
+                await stopRecording(autoStopReason: nil)
+            }
         } catch {
             // session.start may have brought up mic / system-audio captures
-            // BEFORE the throw. Best-effort stop so a partial start doesn't
-            // leave the mic running with no controller (state would show Idle
-            // but the macOS mic indicator would stay on).
-            _ = try? await self.session?.stop()
+            // BEFORE the throw. Abort (not stop) so a partial start doesn't
+            // leave the mic running with no controller — and doesn't move a
+            // near-empty junk WAV into the user's destination folder, where
+            // launch-time ingest would resurrect it as a phantom row.
+            stopRequestedDuringStart = false
+            await self.session?.abort()
             self.session = nil
             presentError(error)
             resetUI()
@@ -1436,6 +1475,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func stopRecording(autoStopReason: AutoStopController.StopReason?) async {
         guard !bridge.recordingStopInFlight else { return }
+        // Stop pressed while the start is still in flight: stopping now
+        // would interleave with `session.start()` at its suspension points
+        // and close the writer under the live session — the UI would show
+        // a recording that persists nothing. Queue the intent instead;
+        // startRecording honors it the moment the session is fully up.
+        if state.isPreparing, !state.isRecording {
+            stopRequestedDuringStart = true
+            return
+        }
         bridge.beginRecordingStop()
         defer {
             bridge.endRecordingStop()
@@ -1459,41 +1507,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             return
         }
-        // Hard cap on how long session.stop() can block. session.stop() runs
-        // the post-stop transcribe finalize + full-WAV diarize through the
-        // daemon. Either can hang (no timeout on HarcSTTClient.roundTrip yet).
-        // Without this cap, the UI stays "Recording" forever and ⌥V can't
-        // toggle off. The mic + system-audio captures are stopped synchronously
-        // at the top of session.stop(), so the macOS mic indicator turns off
-        // immediately even when finalize hangs.
-        let stopResult: RecordingResult?
-        do {
-            stopResult = try await withThrowingTaskGroup(of: RecordingResult.self) { group in
-                group.addTask { try await session.stop() }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(30))
-                    throw StopTimeoutError()
+        // Dead-man cap on how long stopRecording waits for session.stop().
+        // Finalize legitimately takes minutes on a long meeting (retry drain
+        // is budgeted at 180 s, the full-WAV diarize IPC timeout at 300 s),
+        // so the cap must sit above their sum — a 30 s cap used to route
+        // perfectly healthy hour-long recordings into "Recovery needed" and
+        // discard the finished result. The cap only trips on a genuine hang;
+        // IPC-level hangs are already bounded by HarcSTTClient's kernel
+        // receive timeouts, and mic + system-audio captures are stopped
+        // synchronously at the top of session.stop(), so the macOS mic
+        // indicator turns off immediately either way.
+        //
+        // Structure note: this is a first-resume-wins continuation, NOT a
+        // racing throwing task group — a task group awaits all children
+        // before returning, so a group can never actually unblock the UI
+        // while stop is stuck (and `Task.value` awaits are not
+        // cancellation-responsive either). On timeout the stop task keeps
+        // running unstructured; if it completes later, its result is
+        // ingested then — never discarded.
+        let stopTask = Task { try await session.stop() }
+        enum StopOutcome {
+            case finished(RecordingResult?)
+            case failed(Error)
+            case timedOut
+        }
+        let outcome = await withCheckedContinuation { (cont: CheckedContinuation<StopOutcome, Never>) in
+            let resumed = ResumeOnceGate()
+            Task {
+                do {
+                    let r = try await stopTask.value
+                    if resumed.claim() { cont.resume(returning: .finished(r)) }
+                } catch {
+                    if resumed.claim() { cont.resume(returning: .failed(error)) }
                 }
-                let first = try await group.next()!
-                group.cancelAll()
-                return first
             }
-        } catch is StopTimeoutError {
-            // session.stop() didn't return in time. Free the UI; the leaked
-            // session keeps trying to finalize in the background. The cache
-            // WAV at ~/Library/Caches/Harc/recordings/<uuid>.wav remains as
-            // a recovery artifact even if it never makes it to the public
-            // destination.
+            Task {
+                try? await Task.sleep(for: .seconds(Self.stopFinalizeCapSeconds))
+                if resumed.claim() { cont.resume(returning: .timedOut) }
+            }
+        }
+
+        let stopResult: RecordingResult?
+        switch outcome {
+        case .finished(let r):
+            stopResult = r
+        case .timedOut:
+            // session.stop() didn't return within the cap — a genuine hang,
+            // not a slow finalize. Free the UI; the stop task keeps running
+            // in the background, and the cache WAV remains as a recovery
+            // artifact. If the task does eventually finish, ingest the
+            // result then: audio that survived must never be thrown away
+            // because it arrived late.
             FileHandle.standardError.write(Data(
-                "harc: session.stop() exceeded 30s; freeing UI, finalize continues in background\n".utf8
+                "harc: session.stop() exceeded \(Self.stopFinalizeCapSeconds)s; freeing UI, finalize continues in background\n".utf8
             ))
             self.session = nil
             state.markIdle()
             bridge.setActiveCaptureStatus(nil)
             presentStopTimeoutRecovery()
             resetUI()
+            let lateShiftHeld = shiftHeldAtStopTrigger || skipFromOptionClick
+            Task { [weak self] in
+                guard let result = try? await stopTask.value else { return }
+                guard let self else { return }
+                await MainActor.run { self.bridge.clearStopRecovery() }
+                await self.ingestStopResult(
+                    result,
+                    shiftHeld: lateShiftHeld,
+                    autoStopReason: autoStopReason,
+                    late: true
+                )
+            }
             return
-        } catch {
+        case .failed(let error):
             self.session = nil
             presentError(error)
             resetUI()
@@ -1505,7 +1591,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             resetUI()
             return
         }
-        state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
+        await ingestStopResult(
+            result,
+            shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick,
+            autoStopReason: autoStopReason,
+            late: false
+        )
+        previewTask?.cancel()
+        previewTask = nil
+        resetUI()
+    }
+
+    /// How long stopRecording waits before declaring finalize hung. Must
+    /// exceed the worst *healthy* finalize: tail-chunk transcribe (≤60 s) +
+    /// finalize retry drain (≤180 s) + full-WAV diarize (≤300 s IPC timeout).
+    private static let stopFinalizeCapSeconds = 600
+
+    /// Everything that happens to a successfully stopped recording: state,
+    /// library row, title/tags, embeddings, auto-paste, tray, auto-summary.
+    /// `late: true` means the result arrived after the stop cap already
+    /// reset the UI — persist and surface it, but don't touch live recording
+    /// state and never synthesize a paste into whatever app is now frontmost.
+    private func ingestStopResult(
+        _ result: RecordingResult,
+        shiftHeld: Bool,
+        autoStopReason: AutoStopController.StopReason?,
+        late: Bool
+    ) async {
+        if !late {
+            state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
+        }
             let transcriptText = result.txtURL.flatMap { Self.transcriptBody(ofSidecarAt: $0) }
             let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
             let rec = Recording(
@@ -1571,7 +1686,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     }
                 }
             }
-            runAutoPaste(for: rec, shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick)
+            if !late {
+                runAutoPaste(for: rec, shiftHeld: shiftHeld)
+            }
             // Show the post-stop outcome for every durable save. Copy/Paste
             // actions remain available only when transcript text exists.
             do {
@@ -1598,15 +1715,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     previewText: transcriptText
                 )
         }
-        previewTask?.cancel()
-        previewTask = nil
-        resetUI()
     }
 
     private func resetUI() {
         session = nil
         state.markIdle()
         bridge.setActiveCaptureStatus(nil)
+    }
+
+    /// First live-audio write failure (disk full, cache volume vanished).
+    /// Stop immediately — every further minute would be silently dropped —
+    /// then say what happened over the stop tray's "Saved safely", because
+    /// only the audio captured *before* the failure was saved.
+    private func handleRecordingWriteFailure(_ message: String) async {
+        guard state.isActiveOrPreparing else { return }
+        FileHandle.standardError.write(Data(
+            "harc: stopping recording after write failure: \(message)\n".utf8
+        ))
+        await stopRecording(autoStopReason: nil)
+        bridge.trayState.showOutcome(
+            title: "Recording stopped early",
+            outcome: StopOutcome(
+                kind: .savedWithWarnings,
+                title: "Recording stopped early",
+                detail: "Harc couldn't keep writing audio (\(message)). Audio captured before the failure was saved. Check free disk space."
+            )
+        )
     }
 
     private func presentStopTimeoutRecovery() {
@@ -1625,6 +1759,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func retryStopRecovery() async {
         guard let store else {
             openSettings()
+            return
+        }
+
+        // Never scan the cache while a recording is live or starting: the
+        // in-progress rolling WAV has no DB row yet, so the scan would
+        // classify it as an interrupted recording — and recovery *deletes
+        // the source WAV* after copying, killing the live session's file
+        // out from under the writer.
+        guard !state.isActiveOrPreparing else {
+            bridge.showStopRecovery(StopRecoveryInfo(
+                title: "Recording in progress",
+                message: "Recovery scans the cache folder, and the current recording lives there until it finishes. Stop the recording, then try again.",
+                cacheDirectoryPath: RecordingDestination.cacheDirectory().path
+            ))
             return
         }
 
@@ -1709,7 +1857,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             workspace: SystemWorkspace.shared,
             isGloballyEnabled: { [weak self] in self?.prefs.meetingDetectionEnabled ?? false },
             isAppEnabled: { [weak self] app in self?.prefs.meetingAppEnabled[app.id] ?? true },
-            isRecordingInProgress: { [weak self] in self?.state.isRecording ?? false }
+            isRecordingInProgress: { [weak self] in self?.state.isActiveOrPreparing ?? false }
         )
         d.delegate = self
         d.start()
@@ -1946,7 +2094,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     func importMediaFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
-        guard !state.isRecording, !dictationState.isActive else {
+        guard !state.isActiveOrPreparing, !dictationState.isActive else {
             // Don't clobber a running import's banner with the rejection.
             if importState.current == nil {
                 importState.fail(message: "Finish recording or dictation before importing files.")
@@ -2134,6 +2282,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// has already handed its contents over. Called on launch, when the
     /// preference changes, and after a recording ends.
     func syncPreRollCapture() {
+        // Freeze during the start window: the in-flight start owns the ring
+        // and will consume it via `promote()`. Tearing it down here would
+        // discard the banked retroactive audio; starting a fresh one here
+        // (e.g. a dictation afterglow resetting to idle mid-start) used to
+        // leave a ring running through the whole meeting, which then
+        // prepended that meeting to the *next* recording.
+        if state.isPreparing { return }
+
         // Dictation is the third consumer of a single-user resource. The mic
         // can't be held by an idle pre-roll tap while dictation wants it, and
         // banking dictation audio into the retroactive ring would be a quiet
@@ -2475,19 +2631,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         welcomeSetupModel = setup
         setup.sttReady = bridge.sttReady
         setup.sttText = bridge.sttReadinessText
+        setup.sttProgress = bridge.sttDownloadProgress
+        // Weak sinks in a per-window bag — `assign(to:on:)` retains its
+        // target, and storing those in the app-lifetime `cancellables` made
+        // every welcome model immortal: each reopen added three more
+        // permanent subscriptions writing readiness into dead models.
+        welcomeCancellables.removeAll()
         bridge.$sttReady
             .receive(on: DispatchQueue.main)
-            .assign(to: \.sttReady, on: setup)
-            .store(in: &cancellables)
+            .sink { [weak setup] in setup?.sttReady = $0 }
+            .store(in: &welcomeCancellables)
         bridge.$sttReadinessText
             .receive(on: DispatchQueue.main)
-            .assign(to: \.sttText, on: setup)
-            .store(in: &cancellables)
-        setup.sttProgress = bridge.sttDownloadProgress
+            .sink { [weak setup] in setup?.sttText = $0 }
+            .store(in: &welcomeCancellables)
         bridge.$sttDownloadProgress
             .receive(on: DispatchQueue.main)
-            .assign(to: \.sttProgress, on: setup)
-            .store(in: &cancellables)
+            .sink { [weak setup] in setup?.sttProgress = $0 }
+            .store(in: &welcomeCancellables)
 
         let root = WelcomeFlowView(
             onFinish: { [weak self] in
@@ -2527,6 +2688,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             Task { @MainActor [weak self] in
                 self?.welcomeWindow = nil
                 self?.welcomeSetupModel = nil
+                self?.welcomeCancellables.removeAll()
                 // Closing the window counts as answering the re-offer. The
                 // key is written here rather than at show time so a flow the
                 // user never actually saw through doesn't burn their one
@@ -2547,6 +2709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         welcomeWindow?.close()
         welcomeWindow = nil
         welcomeSetupModel = nil
+        welcomeCancellables.removeAll()
         if openLibraryAfterClose {
             openLibrary()
         }
