@@ -77,7 +77,27 @@ public actor Transcriber {
         if date != nil { state = .failed(message: "test-injected failure") }
     }
 
+    /// One load at a time. `loadModels` suspends inside `downloadAndLoad`
+    /// for minutes on a first run, and actor reentrancy means the startup
+    /// preload, the first chunk request, and the live-preview pass can all
+    /// re-enter during that window — each passing a naive `!isLoaded` guard
+    /// and kicking off its own ~460 MB download. Everyone awaits the one
+    /// in-flight load instead.
+    private var loadTask: Task<Void, Error>?
+
     public func loadModels() async throws {
+        guard !isLoaded else { return }
+        if let existing = loadTask {
+            try await existing.value
+            return
+        }
+        let task = Task { try await performLoad() }
+        loadTask = task
+        defer { loadTask = nil }
+        try await task.value
+    }
+
+    private func performLoad() async throws {
         guard !isLoaded else { return }
         state = .loading
         do {
