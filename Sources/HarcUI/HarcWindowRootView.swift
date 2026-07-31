@@ -472,6 +472,27 @@ public struct HarcWindowRootView: View {
         }
         .navigationTitle("Library")
         .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
+        // Attached to the sidebar container, NOT to groupedList: the grouped
+        // list leaves the hierarchy while a search is active, and a modifier
+        // on a removed view never fires. Stopping a recording mid-search
+        // used to strand `selection == .live` on the "Recording Finished"
+        // placeholder, and the eventual DB-observation fallback landed on
+        // the pinned-first head of the list instead of the new recording.
+        .onChange(of: recordingState.isRecording) { _, isRecording in
+            if isRecording {
+                // Starting a capture is the strongest possible statement of
+                // intent — show it.
+                selection = .live
+            } else if selection == .live {
+                // Hand off to the finished file once it exists; the library
+                // observer will deliver the row moments after stop.
+                if let finished = recordingState.lastResult?.wavURL.path {
+                    selection = .recording(wavPath: finished)
+                } else {
+                    selection = nil
+                }
+            }
+        }
         // Delete left the toolbar (it sat beside Export, icon-only); the
         // keyboard path is the delete key, routed through the same
         // confirmation alert as the context menu.
@@ -579,21 +600,6 @@ public struct HarcWindowRootView: View {
                 peopleSidebarList
             } header: {
                 Label("People", systemImage: "person.2")
-            }
-        }
-        .onChange(of: recordingState.isRecording) { _, isRecording in
-            if isRecording {
-                // Starting a capture is the strongest possible statement of
-                // intent — show it.
-                selection = .live
-            } else if selection == .live {
-                // Hand off to the finished file once it exists; the library
-                // observer will deliver the row moments after stop.
-                if let finished = recordingState.lastResult?.wavURL.path {
-                    selection = .recording(wavPath: finished)
-                } else {
-                    selection = nil
-                }
             }
         }
     }

@@ -338,8 +338,8 @@ enum LocalStackHealthState: Equatable {
 
     var color: Color {
         switch self {
-        case .ready: return .green
-        case .warning: return .orange
+        case .ready: return .harc(.ready)
+        case .warning: return .harc(.attention)
         case .muted: return .secondary
         }
     }
@@ -579,8 +579,8 @@ struct LocalStackHealthView: View {
     }
 
     private var summaryColor: Color {
-        if items.contains(where: { $0.state == .warning }) { return .orange }
+        if items.contains(where: { $0.state == .warning }) { return .harc(.attention) }
         if items.contains(where: { $0.state == .muted }) { return .secondary }
-        return .green
+        return .harc(.ready)
     }
 }

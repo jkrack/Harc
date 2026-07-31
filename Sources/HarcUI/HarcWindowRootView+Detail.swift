@@ -172,9 +172,15 @@ extension HarcWindowRootView {
         .navigationTitle(recording.displayTitle)
         .background(transcriptKeyboardShortcuts())
         // Reload transcript when the selection's recording row changes in the DB.
+        // Two child tasks, not two awaits: `observeRecording` iterates a DB
+        // observation stream that never finishes, so anything sequenced after
+        // it is dead code — the summary/suggestions load silently never ran,
+        // which starved the "N speakers to review" chip whenever the
+        // inspector was closed.
         .task(id: recording.wavPath) {
-            await observeRecording(recording: recording)
-            await loadInspectorSummaryData(for: recording)
+            async let observation: Void = observeRecording(recording: recording)
+            async let inspectorData: Void = loadInspectorSummaryData(for: recording)
+            _ = await (observation, inspectorData)
         }
         .onChange(of: transcriptSearchText) { _, _ in
             transcriptSearchIndex = 0
@@ -182,6 +188,9 @@ extension HarcWindowRootView {
         }
         .onChange(of: editorText) { _, _ in
             editorTextDidChange()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            flushPendingDetailEditsForTermination()
         }
         .onReceive(playerModel.$currentTime) { time in
             updatePlaybackHighlight(at: time)
@@ -311,6 +320,28 @@ extension HarcWindowRootView {
         if let rec = libraryVM.recordings.first(where: { $0.wavPath == wavPath }) {
             commitTitle(for: rec)
         }
+    }
+
+    /// ⌘Q inside the 2 s debounce used to drop the edit on the floor: the
+    /// on-screen state promised a save that never ran. At termination the
+    /// async flush shape is useless — a detached Task doesn't outlive the
+    /// process — so this one blocks: the OKF file save is synchronous, and
+    /// the DB write gets a bounded wait. Blocking the main thread for up to
+    /// a few seconds during quit is the correct trade against losing text.
+    func flushPendingDetailEditsForTermination() {
+        autosaveTask?.cancel()
+        guard let doc = detailDocument, editorDirty else { return }
+        let text = editorText
+        _ = try? doc.save(editedText: text)
+        if let id = doc.recordingID {
+            let done = DispatchSemaphore(value: 0)
+            Task.detached { [store] in
+                try? await store.updateTranscriptText(id: id, text: text)
+                done.signal()
+            }
+            _ = done.wait(timeout: .now() + 3)
+        }
+        editorDirty = false
     }
 
     func commitTitle(for recording: Recording) {

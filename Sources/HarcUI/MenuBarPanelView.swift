@@ -786,9 +786,9 @@ public struct MenuBarPanelView: View {
 
     private func stopOutcomeColor(_ kind: StopOutcome.Kind) -> Color {
         switch kind {
-        case .savedSafely: return .green
+        case .savedSafely: return .harc(.ready)
         case .transcriptPending, .summaryQueued, .speakerIDPending: return .accentColor
-        case .savedWithWarnings, .recoveryNeeded: return .orange
+        case .savedWithWarnings, .recoveryNeeded: return .harc(.attention)
         }
     }
 

@@ -73,7 +73,18 @@ public struct DictationModesSettingsView: View {
                     }
                     editingMode = nil
                 },
-                onCancel: { editingMode = nil }
+                onCancel: {
+                    // The shortcut Recorder persists into KeyboardShortcuts
+                    // storage the moment it's recorded, keyed by this mode's
+                    // fresh UUID. Cancelling a never-saved mode must release
+                    // that key: nothing else ever references the UUID again,
+                    // so the combo would stay reserved system-wide forever
+                    // with no UI able to free it.
+                    if !modeStore.modes.contains(where: { $0.id == mode.id }) {
+                        KeyboardShortcuts.reset(.dictationMode(mode.id))
+                    }
+                    editingMode = nil
+                }
             )
             .environmentObject(prefs)
             .environmentObject(models)
