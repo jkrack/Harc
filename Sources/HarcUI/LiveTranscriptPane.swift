@@ -73,7 +73,7 @@ struct LiveTranscriptPane: View {
                 .foregroundStyle(.secondary)
             Text("Transcribing as you record")
                 .font(.harcTitle.weight(.semibold))
-            Text("Text appears about once a minute, as each chunk finishes. The full transcript is saved when you stop.")
+            Text("Text appears within a few seconds and firms up as each chunk finishes. The full transcript is saved when you stop.")
                 .font(.harcBody)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

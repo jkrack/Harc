@@ -80,7 +80,9 @@ struct ChunkedTranscriberTests {
             // queued results — these tests are not about VAD.
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
-            pollIntervalSeconds: 0.05
+            pollIntervalSeconds: 0.05,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         // Give the pump time to consume 2 full chunks.
@@ -116,7 +118,9 @@ struct ChunkedTranscriberTests {
             client: fake,
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
-            pollIntervalSeconds: 0.05
+            pollIntervalSeconds: 0.05,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -154,7 +158,9 @@ struct ChunkedTranscriberTests {
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
-            vocabulary: vocab
+            vocabulary: vocab,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -236,7 +242,9 @@ struct ChunkedTranscriberRetryTests {
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.02,
-            chunkRetryDelaySeconds: 0.02
+            chunkRetryDelaySeconds: 0.02,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -270,7 +278,9 @@ struct ChunkedTranscriberRetryTests {
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.02,
-            chunkRetryDelaySeconds: 0.06
+            chunkRetryDelaySeconds: 0.06,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -318,7 +328,9 @@ struct ChunkedTranscriberRetryTests {
             vadEnabled: true,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.02,
-            chunkRetryDelaySeconds: 0.02
+            chunkRetryDelaySeconds: 0.02,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -359,7 +371,9 @@ struct ChunkedTranscriberRetryTests {
             vadEnabled: true,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.02,
-            chunkRetryDelaySeconds: 0.02
+            chunkRetryDelaySeconds: 0.02,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -504,7 +518,9 @@ struct ChunkedTranscriberDiarizeTests {
             diarizer: fakeDi,
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
-            pollIntervalSeconds: 0.05
+            pollIntervalSeconds: 0.05,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -543,7 +559,9 @@ struct ChunkedTranscriberDiarizeTests {
             diarizer: fakeDi,
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
-            pollIntervalSeconds: 0.05
+            pollIntervalSeconds: 0.05,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -574,7 +592,9 @@ struct ChunkedTranscriberDiarizeTests {
             // queued results — these tests are not about VAD.
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
-            pollIntervalSeconds: 0.05
+            pollIntervalSeconds: 0.05,
+            // Previews off: canned fakes must see only chunk-pump calls.
+            livePreviewIntervalSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -583,5 +603,102 @@ struct ChunkedTranscriberDiarizeTests {
         )
 
         #expect(await fake.calls.allSatisfy { $0.diarize == false })
+    }
+}
+
+@Suite("ChunkedTranscriber live preview")
+struct ChunkedTranscriberLivePreviewTests {
+
+    private func tempWAVPath() -> URL {
+        URL(fileURLWithPath: "/tmp/harc-ctlp-\(UUID().uuidString.prefix(8)).wav")
+    }
+
+    // MARK: - composeLivePreview (pure)
+
+    @Test("the preview is appended after committed text")
+    func appendsWholePreview() {
+        let composed = ChunkedTranscriber.composeLivePreview(
+            committedText: "hello world",
+            previewText: "and then some"
+        )
+        #expect(composed == "hello world and then some")
+    }
+
+    @Test("an empty preview emits nothing")
+    func emptyPreviewIsNil() {
+        let composed = ChunkedTranscriber.composeLivePreview(
+            committedText: "hello world",
+            previewText: "   "
+        )
+        #expect(composed == nil)
+    }
+
+    @Test("with nothing committed the preview stands alone")
+    func firstPreviewStandsAlone() {
+        let composed = ChunkedTranscriber.composeLivePreview(
+            committedText: "",
+            previewText: "first words"
+        )
+        #expect(composed == "first words")
+    }
+
+    // MARK: - Integration
+
+    @Test("preview updates reach the stream while no chunk has completed")
+    func previewUpdatesFlow() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+        let frames = AVAudioFrameCount(2.5 * 16000)
+        let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames)!
+        buf.frameLength = frames
+        for i in 0..<Int(frames) {
+            buf.floatChannelData![0][i] = sinf(Float(2.0 * .pi * 440.0 * Double(i) / 16000.0))
+        }
+        try file.write(from: buf)
+
+        let canned = TranscribeResult(
+            text: "live preview",
+            words: [
+                Word(text: "live", startMs: 0, endMs: 300),
+                Word(text: "preview", startMs: 300, endMs: 700),
+            ],
+            speakers: [],
+            processingMs: 5
+        )
+        let fake = FakeClient(results: Array(repeating: canned, count: 50))
+        // 60 s chunks over a 2.5 s file: the chunk pump never completes a
+        // chunk while recording, so any transcribe call before finalize is
+        // a preview pass.
+        let transcriber = ChunkedTranscriber(
+            client: fake,
+            vadEnabled: false,
+            chunkDurationSeconds: 60.0,
+            pollIntervalSeconds: 0.05,
+            livePreviewIntervalSeconds: 0.1
+        )
+        let firstUpdate = Task { () -> TranscriptUpdate? in
+            for await update in await transcriber.updates { return update }
+            return nil
+        }
+        await transcriber.start(audioURL: url)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+
+        let callsBeforeStop = await fake.calls.count
+        _ = try await transcriber.finalize(startedAt: Date(), endedAt: Date())
+
+        #expect(callsBeforeStop >= 1, "expected at least one preview pass while recording")
+        #expect(await fake.calls.prefix(callsBeforeStop).allSatisfy { $0.vad == false })
+        let update = await firstUpdate.value
+        #expect(update?.joinedTextSoFar == "live preview")
     }
 }

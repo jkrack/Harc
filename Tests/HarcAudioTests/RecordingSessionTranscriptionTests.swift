@@ -98,8 +98,13 @@ struct RecordingSessionTranscriptionTests {
         ])
         let transcriber = ChunkedTranscriber(
             client: stub,
+            // Canned-result stub: the sparse-VAD fallback and the live-preview
+            // pass would each consume extra queued results — this test is about
+            // artifact files, not VAD or previews.
+            vadEnabled: false,
             chunkDurationSeconds: 1.0,
-            pollIntervalSeconds: 0.05
+            pollIntervalSeconds: 0.05,
+            livePreviewIntervalSeconds: 0
         )
 
         let session = RecordingSession(

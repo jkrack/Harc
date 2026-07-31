@@ -4,8 +4,9 @@ import Foundation
 
 /// Yields fixed-duration slices of a growing WAV file.
 /// Each chunk is written to `/tmp/harc-chunk-<uuid>.wav`; caller is responsible for cleanup.
-/// @unchecked Sendable: access is serialized by ChunkedTranscriber — pump is the sole caller
-/// during recording; finalize awaits the pump before touching the chunker.
+/// @unchecked Sendable: the chunk pump and the live-preview pass both read the
+/// file, so the public methods serialize on `ioLock` (they contain no awaits;
+/// holding the lock across the blocking file I/O is the point).
 public final class WAVChunker: @unchecked Sendable {
     public struct Chunk: Sendable {
         public let audioURL: URL
@@ -17,6 +18,7 @@ public final class WAVChunker: @unchecked Sendable {
     private let chunkDurationSeconds: Double
     private var consumedFrames: AVAudioFramePosition = 0
     private let targetSampleRate: Double = 16000
+    private let ioLock = NSLock()
 
     /// Cached data-chunk body offset (bytes from start of file to first PCM sample).
     /// Computed once by scanning the RIFF chunk list on first use.
@@ -30,6 +32,12 @@ public final class WAVChunker: @unchecked Sendable {
     /// Returns the next full chunk if at least `chunkDurationSeconds` worth of
     /// unseen audio has accumulated; otherwise nil.
     public func nextChunk() async throws -> Chunk? {
+        try lockedNextChunk()
+    }
+
+    private func lockedNextChunk() throws -> Chunk? {
+        ioLock.lock()
+        defer { ioLock.unlock() }
         let chunkFrames = AVAudioFramePosition(chunkDurationSeconds * targetSampleRate)
         let currentLength = try readCurrentLength()
         guard currentLength - consumedFrames >= chunkFrames else { return nil }
@@ -43,6 +51,12 @@ public final class WAVChunker: @unchecked Sendable {
 
     /// Write out whatever remains past `consumedFrames` as a final chunk.
     public func flush() async throws -> Chunk? {
+        try lockedFlush()
+    }
+
+    private func lockedFlush() throws -> Chunk? {
+        ioLock.lock()
+        defer { ioLock.unlock() }
         let currentLength = try readCurrentLength()
         guard currentLength > consumedFrames else { return nil }
 
@@ -51,6 +65,29 @@ public final class WAVChunker: @unchecked Sendable {
         let chunk = try writeSlice(startFrame: start, endFrame: end)
         consumedFrames = end
         return chunk
+    }
+
+    /// A slice from `fromMs` to the end of the audio, without consuming
+    /// anything — `nextChunk`/`flush` see the same file position afterward.
+    /// Feeds the live-preview pass: anchoring at the committed-chunk boundary
+    /// (rather than "the last N seconds") means the preview text is always
+    /// entirely new relative to committed text, so no timestamp trimming —
+    /// which would have to reason about sub-word tokens — is ever needed.
+    /// `maxSeconds` bounds the slice when chunk retries let the uncommitted
+    /// span grow pathologically. Nil until a second of new audio exists.
+    public func previewWindow(fromMs: Int, maxSeconds: Double) async throws -> Chunk? {
+        try lockedPreviewWindow(fromMs: fromMs, maxSeconds: maxSeconds)
+    }
+
+    private func lockedPreviewWindow(fromMs: Int, maxSeconds: Double) throws -> Chunk? {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        let currentLength = try readCurrentLength()
+        let fromFrame = AVAudioFramePosition(Double(fromMs) / 1000.0 * targetSampleRate)
+        let maxFrames = AVAudioFramePosition(maxSeconds * targetSampleRate)
+        let start = max(fromFrame, currentLength - maxFrames)
+        guard currentLength - start >= AVAudioFramePosition(targetSampleRate) else { return nil }
+        return try writeSlice(startFrame: start, endFrame: currentLength)
     }
 
     // MARK: - Private helpers

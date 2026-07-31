@@ -91,4 +91,48 @@ struct WAVChunkerTests {
 
         for c in chunks { try? FileManager.default.removeItem(at: c.audioURL) }
     }
+
+    @Test("previewWindow slices the tail without consuming anything")
+    func previewWindowNonConsuming() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let file = try openGrowingWAV(url: url)
+        try appendSine(file, seconds: 3.0)
+
+        let chunker = WAVChunker(audioURL: url, chunkDurationSeconds: 1.0)
+        // Anchored at 0 with a 2 s cap over 3 s of audio: the cap wins.
+        let window = try await chunker.previewWindow(fromMs: 0, maxSeconds: 2.0)
+        #expect(window != nil)
+        if let window {
+            defer { try? FileManager.default.removeItem(at: window.audioURL) }
+            #expect(window.startMs == 1000)
+            #expect(window.endMs == 3000)
+            let readback = try AVAudioFile(forReading: window.audioURL)
+            #expect(readback.length == 32000)
+        }
+        // Anchored past 0: the boundary wins over the cap.
+        let anchored = try await chunker.previewWindow(fromMs: 1500, maxSeconds: 60.0)
+        #expect(anchored?.startMs == 1500)
+        #expect(anchored?.endMs == 3000)
+        if let anchored { try? FileManager.default.removeItem(at: anchored.audioURL) }
+        // The previews consumed nothing: the next chunk still starts at zero.
+        let first = try await chunker.nextChunk()
+        #expect(first?.startMs == 0)
+        if let first { try? FileManager.default.removeItem(at: first.audioURL) }
+        _ = file
+    }
+
+    @Test("previewWindow is nil until a second of new audio exists")
+    func previewWindowTiny() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let file = try openGrowingWAV(url: url)
+        try appendSine(file, seconds: 1.5)
+
+        let chunker = WAVChunker(audioURL: url, chunkDurationSeconds: 1.0)
+        // Only 0.5 s exists past the anchor — not enough for a preview.
+        let window = try await chunker.previewWindow(fromMs: 1000, maxSeconds: 60.0)
+        #expect(window == nil)
+        _ = file
+    }
 }

@@ -69,11 +69,16 @@ public actor ChunkedTranscriber {
     private let pollIntervalSeconds: Double
     private let vocabulary: Vocabulary
     private let chunkRetryDelaySeconds: Double
+    private let livePreviewIntervalSeconds: Double
+    private let livePreviewWindowSeconds: Double
 
     nonisolated(unsafe) private let assembler = TranscriptAssembler()
     private var chunker: WAVChunker?
     private var audioURL: URL?
     private var pumpTask: Task<Void, Never>?
+    private var previewTask: Task<Void, Never>?
+    private var previewInFlight = false
+    private var lastComposedPreview: String?
     private var stopped = false
 
     /// Chunks whose transcription failed and are awaiting another attempt.
@@ -124,7 +129,9 @@ public actor ChunkedTranscriber {
         chunkDurationSeconds: Double = 60.0,
         pollIntervalSeconds: Double = 2.0,
         vocabulary: Vocabulary = .empty,
-        chunkRetryDelaySeconds: Double = 15.0
+        chunkRetryDelaySeconds: Double = 15.0,
+        livePreviewIntervalSeconds: Double = 5.0,
+        livePreviewWindowSeconds: Double = 30.0
     ) {
         self.client = client
         self.diarizer = diarizer
@@ -133,6 +140,8 @@ public actor ChunkedTranscriber {
         self.pollIntervalSeconds = pollIntervalSeconds
         self.vocabulary = vocabulary
         self.chunkRetryDelaySeconds = chunkRetryDelaySeconds
+        self.livePreviewIntervalSeconds = livePreviewIntervalSeconds
+        self.livePreviewWindowSeconds = livePreviewWindowSeconds
         let (stream, cont) = AsyncStream<TranscriptUpdate>.makeStream()
         self.updates = stream
         self.updatesContinuation = cont
@@ -142,6 +151,9 @@ public actor ChunkedTranscriber {
         self.audioURL = audioURL
         self.chunker = WAVChunker(audioURL: audioURL, chunkDurationSeconds: chunkDurationSeconds)
         self.pumpTask = Task.detached { [self] in await self.pump() }
+        if livePreviewIntervalSeconds > 0 {
+            self.previewTask = Task.detached { [self] in await self.previewPump() }
+        }
     }
 
     /// Stops polling, processes any remaining tail chunk, runs the full-WAV
@@ -149,8 +161,11 @@ public actor ChunkedTranscriber {
     public func finalize(startedAt: Date, endedAt: Date) async throws -> ChunkedTranscriberFinalize {
         stopped = true
         pumpTask?.cancel()
+        previewTask?.cancel()
         _ = await pumpTask?.value
+        _ = await previewTask?.value
         pumpTask = nil
+        previewTask = nil
 
         if let chunker {
             do {
@@ -234,6 +249,67 @@ public actor ChunkedTranscriber {
             speakerEmbeddings: speakerEmbeddings,
             diarizationError: diarizationError
         )
+    }
+
+    /// Live-preview pass: every few seconds, transcribe a rolling window of
+    /// the most recent audio and splice its tail onto the committed text, so
+    /// the live pane trails the meeting by seconds instead of a chunk. The
+    /// preview never touches the assembler — the durable transcript is built
+    /// only from full chunks, and a failed preview pass is simply skipped.
+    private func previewPump() async {
+        while !Task.isCancelled, !stopped {
+            try? await Task.sleep(nanoseconds: UInt64(livePreviewIntervalSeconds * 1_000_000_000))
+            guard !Task.isCancelled, !stopped else { return }
+            await emitPreview()
+        }
+    }
+
+    private func emitPreview() async {
+        guard let chunker, !previewInFlight else { return }
+        previewInFlight = true
+        defer { previewInFlight = false }
+
+        // Anchor the window at the committed boundary so the preview text is
+        // entirely new — no timestamp trimming, which would have to reason
+        // about sub-word tokens and would garble words at the cut. The cap
+        // only matters when chunk retries let the uncommitted span grow past
+        // two chunks; previews then cover the most recent stretch and the
+        // retry machinery owns the rest.
+        let committedEndMs = assembler.currentEndMs
+        guard let window = try? await chunker.previewWindow(
+            fromMs: committedEndMs, maxSeconds: chunkDurationSeconds * 2
+        ) else { return }
+        defer { try? FileManager.default.removeItem(at: window.audioURL) }
+
+        // No VAD on preview passes: a minute of audio costs well under a
+        // second on the ANE either way, and far-field VAD shredding would
+        // make the pane lie.
+        guard let result = try? await client.transcribe(
+            audioPath: window.audioURL.path, diarize: false, vad: false
+        ) else { return }
+
+        // If a chunk committed while the transcribe ran, this window's text
+        // now overlaps committed text — skip; the next tick re-covers.
+        guard assembler.currentEndMs == committedEndMs else { return }
+
+        guard let composed = Self.composeLivePreview(
+            committedText: assembler.currentJoinedText,
+            previewText: result.text
+        ), composed != lastComposedPreview else { return }
+        lastComposedPreview = composed
+        updatesContinuation.yield(TranscriptUpdate(
+            chunkIndex: composed.split(separator: " ").count,
+            joinedTextSoFar: composed
+        ))
+    }
+
+    /// Appends a preview transcription — which by construction covers only
+    /// audio past the committed boundary — onto the committed transcript.
+    /// Returns nil when the preview says nothing: emit no update this tick.
+    static func composeLivePreview(committedText: String, previewText: String) -> String? {
+        let preview = previewText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !preview.isEmpty else { return nil }
+        return committedText.isEmpty ? preview : committedText + " " + preview
     }
 
     private func pump() async {

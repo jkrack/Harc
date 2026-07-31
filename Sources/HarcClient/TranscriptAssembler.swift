@@ -24,6 +24,12 @@ public final class TranscriptAssembler {
         orderedChunks.map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
+    /// Session-time end of the newest committed chunk — the boundary past
+    /// which live-preview text is genuinely new rather than a duplicate.
+    public var currentEndMs: Int {
+        chunks.map(\.endMs).max() ?? 0
+    }
+
     public func finalize(
         startedAt: Date,
         endedAt: Date,
