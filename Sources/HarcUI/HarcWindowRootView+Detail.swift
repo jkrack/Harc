@@ -158,9 +158,14 @@ extension HarcWindowRootView {
                         .frame(maxWidth: 680)
                 }
             }
+            // Same reading measure as the transcript below, centered the
+            // same way — the header (title, player, summary) and the
+            // transcript are one document, not a left-hugging control strip
+            // above a floating text column.
+            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: .infinity)
             .padding([.horizontal, .top])
             .padding(.bottom, HarcSpacing.sm)
-            .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider()
 
@@ -202,7 +207,12 @@ extension HarcWindowRootView {
     /// window was the only place a title could be changed).
     func detailTitleRow(recording: Recording) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
-            TextField("Untitled", text: $titleDraft)
+            // The suggested title as the placeholder, not "Untitled": the
+            // window title bar and sidebar row already show the suggestion
+            // via displayTitle, and a field that says "Untitled" under a
+            // titled window reads as two surfaces disagreeing about the
+            // recording's name.
+            TextField(recording.suggestedTitle ?? "Untitled", text: $titleDraft)
                 .textFieldStyle(.plain)
                 .font(.title2.weight(.semibold))
                 .onSubmit { commitTitle(for: recording) }

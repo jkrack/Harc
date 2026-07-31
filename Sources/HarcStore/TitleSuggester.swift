@@ -87,15 +87,41 @@ public enum TitleSuggester {
             text = String(text[..<end])
         }
 
+        // Generic summarizer lead-ins carry no identity — "The discussion
+        // focused on various models of interaction" is a title about the
+        // models, not about the discussing. Strip the boilerplate and let
+        // the subject stand, unless what's left is too thin to be a title.
+        let leadIns = [
+            "the discussion focused on", "the discussion centered on",
+            "the discussion covered", "the conversation focused on",
+            "the conversation covered", "the speakers discussed",
+            "the team discussed", "the group discussed",
+            "the meeting covered", "this meeting covered",
+            "the discussion was about", "the conversation was about",
+        ]
+        let lowered = text.lowercased()
+        for lead in leadIns where lowered.hasPrefix(lead) {
+            let stripped = String(text.dropFirst(lead.count)).trimmingCharacters(in: .whitespaces)
+            if stripped.count >= 12 {
+                text = stripped.prefix(1).uppercased() + stripped.dropFirst()
+            }
+            break
+        }
+
         // First clause, once past a readable minimum — "The team reviewed
         // the drop-off" is a title; "The team" is not.
         let minReadable = 24
         if text.count > 60 {
-            for boundary in [", which", ", and", ", but", "; ", " — ", ", "] {
-                if let r = text.range(of: boundary), text.distance(from: text.startIndex, to: r.lowerBound) >= minReadable {
-                    text = String(text[..<r.lowerBound])
-                    break
-                }
+            // Earliest qualifying boundary wins — matching pattern-by-pattern
+            // let a ", and" deep in the sentence beat a ", including" right
+            // after the subject, keeping half a sentence of trailing clause.
+            let boundaries = [", which", ", and", ", but", ", including", "; ", " — ", ", "]
+            let cut = boundaries
+                .compactMap { text.range(of: $0)?.lowerBound }
+                .filter { text.distance(from: text.startIndex, to: $0) >= minReadable }
+                .min()
+            if let cut {
+                text = String(text[..<cut])
             }
         }
 
@@ -105,7 +131,25 @@ public enum TitleSuggester {
             text = prefix[..<(prefix.lastIndex(of: " ") ?? prefix.endIndex)].trimmingCharacters(in: .whitespaces)
         }
 
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Never end on a dangling function word: the hard cap and clause
+        // cuts can land mid-phrase, and "…models of interaction, including
+        // the" is not a title anyone wants on a row.
+        let danglers: Set<String> = [
+            "the", "a", "an", "and", "or", "but", "of", "to", "in", "on",
+            "at", "for", "with", "including", "like", "such", "as", "that",
+            "which", "their", "its", "his", "her", "was", "were", "is", "are",
+            "how", "what", "when", "where", "who", "why",
+        ]
+        var words = text.split(separator: " ").map(String.init)
+        while let last = words.last,
+              danglers.contains(last.lowercased().trimmingCharacters(in: .punctuationCharacters)) {
+            words.removeLast()
+        }
+        text = words.joined(separator: " ")
+
+        let cleaned = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ",;:—-"))
         return cleaned.count >= 8 ? cleaned : nil
     }
 }

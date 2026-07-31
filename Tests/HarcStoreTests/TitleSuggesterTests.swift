@@ -102,4 +102,29 @@ struct TitleSuggesterTests {
         #expect((title?.count ?? 0) <= 72)
         #expect(title?.hasSuffix(" ") == false)
     }
+
+    /// The field case that motivated the dangler rule: a real summary
+    /// produced the row title "The discussion focused on various models of
+    /// interaction, including the" — boilerplate lead-in kept, phrase cut
+    /// mid-article. The title should be the subject, ending on a real word.
+    @Test("generic lead-ins are stripped and titles never end on a function word")
+    func leadInsAndDanglers() {
+        let summary = "The discussion focused on various models of interaction, including the three C's framework of collaboration, cooperation, and competition."
+        let title = TitleSuggester.fromSummary(summary)
+        #expect(title == "Various models of interaction")
+
+        // Dangler trimming alone, without a lead-in.
+        let capped = "Quarterly planning session about the migration and rollout of the"
+        let trimmed = TitleSuggester.fromSummary(capped)
+        #expect(trimmed == "Quarterly planning session about the migration and rollout")
+    }
+
+    @Test("lead-in is kept when stripping it leaves nothing usable")
+    func leadInKeptWhenTooThin() {
+        let summary = "The speakers discussed colors."
+        let title = TitleSuggester.fromSummary(summary)
+        // "Colors" is too thin to be a row identity; the unstripped
+        // sentence survives instead.
+        #expect(title == "The speakers discussed colors")
+    }
 }
