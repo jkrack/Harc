@@ -86,8 +86,16 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
         bodyStyle.lineSpacing = 2
 
         storage.beginEditing()
-        storage.addAttribute(.paragraphStyle, value: bodyStyle,
-                             range: NSRange(location: 0, length: ns.length))
+        // Reset the whole channel before re-applying, colors included.
+        // NSTextView's typing attributes inherit from the insertion point,
+        // and a later programmatic `textView.string =` restyles the ENTIRE
+        // document with them — with the caret parked at a colored head,
+        // one reload painted every body in Speaker 1's green. Only the
+        // "Name:" heads may carry color; bodies stay label-colored.
+        let fullRange = NSRange(location: 0, length: ns.length)
+        storage.addAttribute(.font, value: baseFont, range: fullRange)
+        storage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
+        storage.addAttribute(.paragraphStyle, value: bodyStyle, range: fullRange)
 
         var lineStart = 0
         while lineStart < ns.length {
@@ -117,6 +125,14 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
             lineStart = lineEnd
         }
         storage.endEditing()
+
+        // Future programmatic string sets must come in plain, not in
+        // whatever the caret last touched.
+        textView.typingAttributes = [
+            .font: baseFont,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: bodyStyle,
+        ]
     }
 
     /// Stable per-speaker hue: same name, same color, for the whole
