@@ -321,6 +321,16 @@ public actor RecordingStore {
             try Recording
                 .filter(Recording.Columns.deletedAt == nil)
                 .filter(Recording.Columns.summaryMarkdown == nil)
+                // Rows the summarizer already declined (no sidecar, too few
+                // words) stay skipped on every future pass — they used to
+                // re-occupy this newest-N window on every launch, so rows
+                // past the window that *could* be summarized never got
+                // another chance. `.failed` rows stay eligible: their causes
+                // (model missing, transient errors) are repairable.
+                .filter(
+                    Recording.Columns.summaryStatusKind == nil
+                        || Recording.Columns.summaryStatusKind != RecordingSummaryStatusKind.skipped.rawValue
+                )
                 .order(Recording.Columns.startedAt.desc)
                 .limit(limit)
                 .fetchAll(db)
@@ -456,17 +466,30 @@ public actor RecordingStore {
     // MARK: - Transcript text
 
     /// Atomically update the stored transcript text. The FTS5 `synchronize`
-    /// trigger picks this up automatically so search is consistent post-edit.
+    /// trigger picks this up automatically so keyword search is consistent
+    /// post-edit; the semantic chunk index is NOT trigger-backed, so it must
+    /// be invalidated here the same way `applyReprocessedTranscript` does —
+    /// otherwise an edited recording keeps its `chunks_indexed_at` stamp,
+    /// `recordingsNeedingIndex` never re-lists it, and semantic search
+    /// returns passages (and seek offsets) from the pre-edit transcript
+    /// forever, including text the user deliberately deleted.
     public func updateTranscriptText(id: Int64, text: String) async throws {
         try await dbQueue.write { db in
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.transcriptText.set(to: text),
+                    Recording.Columns.chunksIndexedAt.set(to: nil),
                     Recording.Columns.updatedAt.set(to: Date()),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            // Chunks are keyed to the old text; a stale index is worse than
+            // no index.
+            try db.execute(
+                sql: "DELETE FROM transcript_chunks WHERE recording_id = ?",
+                arguments: [id]
+            )
         }
         await reprojectOKF(id: id)
     }
@@ -544,12 +567,17 @@ public actor RecordingStore {
     }
 
     /// Sanitise a user query into a safe FTS5 MATCH expression. Splits on any
-    /// non-alphanumeric boundary (keeping `-`), prefix-stars every token,
-    /// joins with spaces (FTS5's implicit AND). Guarantees no operator injection.
+    /// non-alphanumeric boundary, double-quotes every token, prefix-stars it,
+    /// joins with spaces (FTS5's implicit AND). Quoting is what makes this
+    /// injection-proof: a bare hyphenated token ("check-in") is FTS5
+    /// column-filter *syntax* and raises "no such column" — which used to
+    /// surface as a search error and zero hits for any query containing "-".
+    /// The porter/unicode61 tokenizer splits hyphenated words at index time
+    /// anyway, so `"check" "in"*`-style patterns match the indexed terms.
     static func ftsPattern(from raw: String) -> String {
         raw.lowercased()
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" })
-            .map { "\($0)*" }
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map { "\"\($0)\"*" }
             .joined(separator: " ")
     }
 

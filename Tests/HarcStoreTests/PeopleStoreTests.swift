@@ -38,6 +38,25 @@ final class PeopleStoreTests: XCTestCase {
         XCTAssertEqual(people.count, 0)
     }
 
+    // MARK: - fetchPersonStats
+
+    /// Regression: `started_at` is a GRDB .datetime TEXT column; the stats
+    /// query used to decode MIN/MAX of it `as Double?`, which traps inside
+    /// GRDB's `try!` for any person with at least one linked recording.
+    /// The zero-link case returned NULL aggregates and survived, which is
+    /// exactly why no earlier test caught it.
+    func test_fetchPersonStats_withLinkedRecording_doesNotTrapAndReturnsBounds() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recID = try await seedRecording(in: store, wav: "/tmp/stats.wav")
+        let personID = try await store.createPerson(displayName: "Sarah")
+        try await store.linkSpeaker(personID: personID, recordingID: recID, speakerIndex: 0)
+
+        let stats = try await store.fetchPersonStats(personID: personID)
+        XCTAssertEqual(stats.recordingCount, 1)
+        XCTAssertNotNil(stats.firstSeen)
+        XCTAssertNotNil(stats.lastSeen)
+    }
+
     // MARK: - Group C: linkSpeaker + unlinkSpeaker + fetchPersonSpeakerLinks
 
     func test_linkSpeaker_writesPersonSpeakersRow() async throws {

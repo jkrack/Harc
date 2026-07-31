@@ -317,7 +317,7 @@ public extension RecordingStore {
                     SELECT MAX(r.started_at)
                     FROM person_speakers ps
                     JOIN recordings r ON r.id = ps.recording_id
-                    WHERE ps.person_id = ?
+                    WHERE ps.person_id = ? AND r.deleted_at IS NULL
                     """, arguments: [person.id])
                 return PersonRowItem(person: person, suggestionCount: count, lastSeen: lastSeen)
             }
@@ -396,9 +396,12 @@ public extension RecordingStore {
 
     func fetchPersonStats(personID: Int64) async throws -> PersonStats {
         try await db.read { db in
-            let recCount = try Int.fetchOne(db,
-                sql: "SELECT COUNT(DISTINCT recording_id) FROM person_speakers WHERE person_id = ?",
-                arguments: [personID]) ?? 0
+            let recCount = try Int.fetchOne(db, sql: """
+                SELECT COUNT(DISTINCT ps.recording_id)
+                FROM person_speakers ps
+                JOIN recordings r ON r.id = ps.recording_id
+                WHERE ps.person_id = ? AND r.deleted_at IS NULL
+                """, arguments: [personID]) ?? 0
             // Total speaking ms is approximated as the sum of total_ms across
             // linked speaker_embeddings rows. SpeakerSegments live in the
             // .json sidecar, not the DB — using embeddings' summed totalMs
@@ -408,26 +411,21 @@ public extension RecordingStore {
                 FROM person_speakers ps
                 JOIN speaker_embeddings e
                   ON e.recording_id = ps.recording_id AND e.speaker_index = ps.speaker_index
-                WHERE ps.person_id = ?
+                JOIN recordings r ON r.id = ps.recording_id
+                WHERE ps.person_id = ? AND r.deleted_at IS NULL
                 """, arguments: [personID]) ?? 0
             let bounds = try Row.fetchOne(db, sql: """
                 SELECT MIN(r.started_at) AS first_seen, MAX(r.started_at) AS last_seen
                 FROM person_speakers ps
                 JOIN recordings r ON r.id = ps.recording_id
-                WHERE ps.person_id = ?
+                WHERE ps.person_id = ? AND r.deleted_at IS NULL
                 """, arguments: [personID])
-            // recordings.started_at is stored as a unix timestamp (REAL).
-            // Extract via Double and construct Date to match the pattern used
-            // throughout RecordingStore (e.g. createdAt, updatedAt).
-            let firstSeen: Date?
-            let lastSeen: Date?
-            if let bounds {
-                firstSeen = (bounds["first_seen"] as Double?).map { Date(timeIntervalSince1970: $0) }
-                lastSeen  = (bounds["last_seen"]  as Double?).map { Date(timeIntervalSince1970: $0) }
-            } else {
-                firstSeen = nil
-                lastSeen  = nil
-            }
+            // recordings.started_at is a GRDB .datetime column — TEXT, not a
+            // unix REAL. Decoding it `as Double?` traps inside GRDB's `try!`
+            // the moment the aggregate is non-null (i.e. for any person with
+            // a linked recording); decode as Date, which owns that format.
+            let firstSeen = bounds.flatMap { $0["first_seen"] as Date? }
+            let lastSeen  = bounds.flatMap { $0["last_seen"]  as Date? }
             return PersonStats(
                 recordingCount: recCount,
                 totalSpeakingMs: totalMs,
@@ -446,7 +444,7 @@ public extension RecordingStore {
                 SELECT ps.recording_id, ps.speaker_index, r.title, r.json_path, r.started_at, r.suggested_title
                 FROM person_speakers ps
                 JOIN recordings r ON r.id = ps.recording_id
-                WHERE ps.person_id = ?
+                WHERE ps.person_id = ? AND r.deleted_at IS NULL
                 ORDER BY r.started_at DESC
                 LIMIT ?
                 """, arguments: [personID, limit])
