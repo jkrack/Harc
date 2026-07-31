@@ -35,6 +35,27 @@ struct HarcSTTClientTests {
         try await fakeTask.value
     }
 
+    /// Regression: the old racing-task-group "timeout" could never actually
+    /// return early — a throwing task group awaits all children, and the
+    /// round-trip child sat in an uncancellable blocking read(), so a silent
+    /// daemon held the caller for as long as the daemon stayed silent. This
+    /// test was impossible to write against that implementation: it would
+    /// have hung. The kernel-level SO_RCVTIMEO deadline makes it pass.
+    @Test("a silent daemon trips the timeout instead of blocking forever")
+    func silentPeerTimesOut() async throws {
+        let (serverFd, clientFd) = try makePair()
+        defer { close(serverFd) }   // held open, never written to: a wedged daemon
+
+        let client = HarcSTTClient(connectedFd: clientFd)
+        let began = Date()
+        await #expect(throws: ClientError.self) {
+            _ = try await client.roundTripWithTimeout(.status, seconds: 1)
+        }
+        // Must return promptly after the 1 s deadline — not whenever the
+        // peer deigns to close.
+        #expect(Date().timeIntervalSince(began) < 5)
+    }
+
     @Test("transcribe() sends a transcribe request and decodes a result")
     func transcribeRoundTrip() async throws {
         let (serverFd, clientFd) = try makePair()
