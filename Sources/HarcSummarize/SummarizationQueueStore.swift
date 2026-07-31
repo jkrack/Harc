@@ -87,6 +87,8 @@ public final class SummarizationQueueStore: ObservableObject {
             if let idx = pending.firstIndex(of: id) { pending.remove(at: idx) }
             current = id
             liveStats = nil
+        case .cancelled(let id):
+            if let idx = pending.firstIndex(of: id) { pending.remove(at: idx) }
         case .finished(let id, let result):
             if current == id { current = nil }
             liveStats = nil

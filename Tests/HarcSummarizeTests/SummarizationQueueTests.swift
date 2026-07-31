@@ -135,6 +135,7 @@ struct SummarizationQueueTests {
             switch ev {
             case .enqueued(let i):    observed.append("enqueued(\(i))")
             case .started(let i):     observed.append("started(\(i))")
+            case .cancelled(let i):   observed.append("cancelled(\(i))")
             case .finished(let i, let r):
                 switch r {
                 case .success: observed.append("finished(\(i), success)")
