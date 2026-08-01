@@ -113,6 +113,9 @@ public struct HarcWindowRootView: View {
 
     // Task 8.1: pending suggestions for the inspector chip system
     @State var inspectorPendingSuggestions: [PendingSuggestion] = []
+    /// Stats for Nerds for the current selection, assembled async from the
+    /// JSON sidecar + store. Nil hides the section.
+    @State var nerdStats: RecordingNerdStats? = nil
     // Task 8.1/8.2: Person name lookup and full list for the picker
     @State var allPeopleByID: [Int64: String] = [:]
     @State var allPeople: [Person] = []
@@ -1228,14 +1231,55 @@ public struct HarcWindowRootView: View {
                 }
             )
 
+            if let nerdStats {
+                NerdStatsSection(stats: nerdStats, speakerLabels: resolvedSpeakerLabels)
+            }
+
             FileInspectorSection(recording: recording)
         }
         .formStyle(.grouped)
         .background(.thinMaterial)
         .navigationTitle("Inspector")
         .task(id: recording.id) {
-            await loadInspectorSummaryData(for: recording)
+            async let summaryData: Void = loadInspectorSummaryData(for: recording)
+            async let stats: Void = loadNerdStats(for: recording)
+            _ = await (summaryData, stats)
         }
+    }
+
+    /// Assemble Stats for Nerds off the main thread: sidecar decode, store
+    /// reads, and the WAV's file size. Best-effort — a recording without a
+    /// JSON sidecar still gets audio/model/index rows.
+    func loadNerdStats(for recording: Recording) async {
+        let transcript: SessionTranscript? = await Task.detached(priority: .utility) { [jsonPath = recording.jsonPath] in
+            guard let jsonPath,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else { return nil }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .secondsSince1970
+            return try? decoder.decode(SessionTranscript.self, from: data)
+        }.value
+
+        var voiceprints: [RecordingStore.SpeakerEmbeddingRow] = []
+        var chunkStats: (count: Int, embedderID: String?) = (0, nil)
+        if let id = recording.id {
+            for index in speakerIndices(for: recording) {
+                if let row = try? await store.speakerEmbedding(recordingID: id, speakerIndex: index) {
+                    voiceprints.append(row)
+                }
+            }
+            chunkStats = (try? await store.semanticChunkStats(recordingID: id)) ?? (0, nil)
+        }
+        let wavBytes = (try? URL(fileURLWithPath: recording.wavPath)
+            .resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
+
+        nerdStats = RecordingNerdStats.build(
+            recording: recording,
+            transcript: transcript,
+            voiceprintRows: voiceprints,
+            semanticChunkCount: chunkStats.count,
+            semanticEmbedderID: chunkStats.embedderID,
+            wavBytes: wavBytes
+        )
     }
 
     func loadInspectorSummaryData(for recording: Recording) async {

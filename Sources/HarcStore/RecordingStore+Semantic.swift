@@ -42,6 +42,24 @@ public struct ChunkHit: Sendable, Equatable {
 // same API.
 public extension RecordingStore {
 
+    /// How much of a recording is in the semantic index, and under which
+    /// embedder — surfaced in the detail pane's Stats for Nerds.
+    func semanticChunkStats(recordingID: Int64) async throws -> (count: Int, embedderID: String?) {
+        try await db.read { database in
+            let count = try Int.fetchOne(
+                database,
+                sql: "SELECT COUNT(*) FROM transcript_chunks WHERE recording_id = ?",
+                arguments: [recordingID]
+            ) ?? 0
+            let model = try String.fetchOne(
+                database,
+                sql: "SELECT embedding_model_id FROM transcript_chunks WHERE recording_id = ? LIMIT 1",
+                arguments: [recordingID]
+            )
+            return (count, model)
+        }
+    }
+
     /// Chunk, embed and store a recording's transcript, replacing any previous
     /// index for it. Marks `chunks_indexed_at` so re-indexing can be skipped.
     @discardableResult
