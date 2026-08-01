@@ -9,6 +9,17 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         case llm
     }
 
+    /// Where the mode's output lands. `.insertAtCursor` is the classic
+    /// dictation flow; `.replaceSelection` pastes over the active selection
+    /// — the "make this shorter / more formal" command shape (#98). The
+    /// paste itself already overwrites a live selection in AppKit text
+    /// views; the kind exists so a mode can *require* a selection and the
+    /// transform can be built around it.
+    public enum Delivery: String, Codable, Sendable {
+        case insertAtCursor
+        case replaceSelection
+    }
+
     public var id: String
     public var name: String
     /// SF Symbol shown in pickers and the HUD chip.
@@ -31,6 +42,7 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
     /// apps is frontmost uses this mode for the session (the persisted
     /// active mode is untouched). One-shot mode hotkeys still win.
     public var activationBundleIDs: [String]
+    public var delivery: Delivery
 
     public init(
         id: String,
@@ -43,7 +55,8 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         isBuiltIn: Bool = false,
         includeSelectedText: Bool = false,
         includeClipboard: Bool = false,
-        activationBundleIDs: [String] = []
+        activationBundleIDs: [String] = [],
+        delivery: Delivery = .insertAtCursor
     ) {
         self.id = id
         self.name = name
@@ -56,6 +69,7 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         self.includeSelectedText = includeSelectedText
         self.includeClipboard = includeClipboard
         self.activationBundleIDs = activationBundleIDs
+        self.delivery = delivery
     }
 
     /// True when this mode should capture working context at dictation start.
@@ -80,6 +94,7 @@ public struct DictationMode: Codable, Equatable, Identifiable, Sendable {
         includeSelectedText = try c.decodeIfPresent(Bool.self, forKey: .includeSelectedText) ?? false
         includeClipboard = try c.decodeIfPresent(Bool.self, forKey: .includeClipboard) ?? false
         activationBundleIDs = try c.decodeIfPresent([String].self, forKey: .activationBundleIDs) ?? []
+        delivery = try c.decodeIfPresent(Delivery.self, forKey: .delivery) ?? .insertAtCursor
     }
 }
 
@@ -169,6 +184,26 @@ extension DictationMode {
             isBuiltIn: true,
             includeSelectedText: true,
             includeClipboard: true
+        ),
+        // Wispr Flow "command mode" analog, local: select text anywhere,
+        // dictate the change ("make this shorter", "translate to German"),
+        // and the transform result replaces the selection in place.
+        DictationMode(
+            id: "builtin.edit",
+            name: "Edit",
+            symbolName: "pencil.line",
+            postProcess: .llm,
+            instruction: """
+            Apply the dictated request to the selected text. The dictated \
+            words are an editing instruction ("make it shorter", "more \
+            formal", "fix the grammar", "translate to French"); the selected \
+            text is the material. Preserve meaning and any formatting the \
+            request doesn't touch. Output only the edited text, no preamble \
+            or explanation.
+            """,
+            isBuiltIn: true,
+            includeSelectedText: true,
+            delivery: .replaceSelection
         ),
     ]
 

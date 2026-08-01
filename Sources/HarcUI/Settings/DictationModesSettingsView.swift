@@ -240,6 +240,10 @@ private struct DictationModeEditor: View {
                     Section {
                         Toggle("Include selected text", isOn: $mode.includeSelectedText)
                         Toggle("Include clipboard", isOn: $mode.includeClipboard)
+                        Picker("Deliver result", selection: $mode.delivery) {
+                            Text("Insert at the cursor").tag(DictationMode.Delivery.insertAtCursor)
+                            Text("Replace the selection").tag(DictationMode.Delivery.replaceSelection)
+                        }
                     } header: {
                         Text("Context")
                     } footer: {

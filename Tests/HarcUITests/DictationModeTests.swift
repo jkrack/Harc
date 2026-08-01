@@ -149,4 +149,37 @@ struct DictationModeStoreTests {
         store.setActiveMode(id: "does.not.exist")
         #expect(prefs.activeDictationModeID == before)
     }
+
+    // MARK: - Delivery (#98)
+
+    @Test("modes persisted before delivery existed decode as insert-at-cursor")
+    func deliveryBackCompat() throws {
+        let legacyJSON = """
+        {"id":"custom.x","name":"X","symbolName":"star","postProcess":"llm",
+         "instruction":"do things","isBuiltIn":false}
+        """
+        let mode = try JSONDecoder().decode(DictationMode.self, from: Data(legacyJSON.utf8))
+        #expect(mode.delivery == .insertAtCursor)
+    }
+
+    @Test("the built-in Edit mode replaces the selection and requires it as context")
+    func editBuiltIn() {
+        let edit = DictationMode.builtIn(id: "builtin.edit")
+        #expect(edit != nil)
+        #expect(edit?.delivery == .replaceSelection)
+        #expect(edit?.includeSelectedText == true)
+        #expect(edit?.postProcess == .llm)
+    }
+
+    @Test("delivery round-trips through Codable")
+    func deliveryRoundTrip() throws {
+        var mode = DictationMode(
+            id: "custom.replace", name: "R", symbolName: "pencil",
+            postProcess: .llm, instruction: "edit"
+        )
+        mode.delivery = .replaceSelection
+        let data = try JSONEncoder().encode(mode)
+        let decoded = try JSONDecoder().decode(DictationMode.self, from: data)
+        #expect(decoded.delivery == .replaceSelection)
+    }
 }

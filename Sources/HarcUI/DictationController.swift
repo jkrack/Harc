@@ -344,6 +344,20 @@ public final class DictationController {
             }
         }
 
+        // Replace-selection modes are meaningless without a selection —
+        // refuse before the mic opens rather than pasting an "edit" of
+        // nothing at the cursor. Deny-listed apps land here too (their
+        // selection is never read), which is exactly right: no editing
+        // inside password managers.
+        if mode.delivery == .replaceSelection,
+           (capturedContext.selectedText ?? "")
+               .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            oneShotMode = nil
+            sessionMode = nil
+            state.setPhase(.error("Select the text to edit, then dictate the change"))
+            return
+        }
+
         // Mic preflight — BEFORE capture starts, so the one-time system
         // prompt can't race the push-to-talk key-hold.
         state.setPhase(.requestingMic)
