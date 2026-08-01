@@ -157,6 +157,8 @@ extension HarcWindowRootView {
                     transcriptFindBar()
                         .frame(maxWidth: 680)
                 }
+
+                vocabularySuggestionBar
             }
             // Same reading measure as the transcript below, centered the
             // same way — the header (title, player, summary) and the
@@ -306,8 +308,62 @@ extension HarcWindowRootView {
             editorDirty = (editorText != text)
             editorSaveError = nil
             lastAutosaveAt = Date()
+            offerVocabularyCorrections(newText: text)
         } catch {
             editorSaveError = "Couldn't save: \(error.localizedDescription)"
+        }
+    }
+
+    /// Corrections should feed the vocabulary (#101): diff the edit against
+    /// the last saved text, offer "Always replace X → Y" for
+    /// proper-noun-ish fixes. One click adds; nothing is ever added
+    /// silently; dismissals hold for the session.
+    func offerVocabularyCorrections(newText: String) {
+        defer { lastSavedEditorText = newText }
+        guard let old = lastSavedEditorText, old != newText else { return }
+        let existing = Set(prefs.vocabulary.entries.map { $0.from.lowercased() })
+        let fresh = VocabularyCorrectionDetector.detect(old: old, new: newText)
+            .filter { !existing.contains($0.from.lowercased()) }
+            .filter { !dismissedVocabPairs.contains($0) }
+        guard !fresh.isEmpty else { return }
+        var merged = vocabCandidates
+        for candidate in fresh where !merged.contains(candidate) {
+            merged.append(candidate)
+        }
+        vocabCandidates = merged
+    }
+
+    func addVocabularyCandidate(_ candidate: VocabularyCorrectionDetector.Candidate) {
+        var vocab = prefs.vocabulary
+        vocab.entries.append(VocabularyEntry(from: candidate.from, to: candidate.to))
+        prefs.vocabulary = vocab
+        vocabCandidates.removeAll { $0 == candidate }
+    }
+
+    func dismissVocabularyCandidate(_ candidate: VocabularyCorrectionDetector.Candidate) {
+        dismissedVocabPairs.insert(candidate)
+        vocabCandidates.removeAll { $0 == candidate }
+    }
+
+    @ViewBuilder
+    var vocabularySuggestionBar: some View {
+        if let candidate = vocabCandidates.first {
+            HStack(spacing: HarcSpacing.sm) {
+                Image(systemName: "character.book.closed")
+                    .foregroundStyle(.secondary)
+                Text("Always replace \u{201C}\(candidate.from)\u{201D} with \u{201C}\(candidate.to)\u{201D} in future transcripts?")
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Button("Add") { addVocabularyCandidate(candidate) }
+                    .buttonStyle(.link)
+                    .font(.harcCaption)
+                Button("No Thanks") { dismissVocabularyCandidate(candidate) }
+                    .buttonStyle(.link)
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
         }
     }
 

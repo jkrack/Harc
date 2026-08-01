@@ -78,6 +78,12 @@ public struct HarcWindowRootView: View {
     @State var editorSaveError: String? = nil
     @State var lastAutosaveAt: Date? = nil
     @State var autosaveTask: Task<Void, Never>? = nil
+    /// Vocabulary suggestions from the latest transcript edit (#101) —
+    /// offered, never auto-added. Session-scoped dismissals so a refused
+    /// pair doesn't reappear on every subsequent save.
+    @State var vocabCandidates: [VocabularyCorrectionDetector.Candidate] = []
+    @State var dismissedVocabPairs: Set<VocabularyCorrectionDetector.Candidate> = []
+    @State var lastSavedEditorText: String? = nil
     /// Character offsets where a speaker turn begins ("Name: …" lines),
     /// computed at load for the boundary-jump commands.
     @State var speakerBoundaries: [Int] = []
@@ -1252,6 +1258,8 @@ public struct HarcWindowRootView: View {
         detailDocument = doc
         editorText = doc.initialText
         speakerBoundaries = Self.speakerTurnOffsets(in: doc.initialText)
+        vocabCandidates = []
+        lastSavedEditorText = doc.initialText
 
         // Plain text for fallback / pasteboard copy.
         if let cached = recording.transcriptText, !cached.isEmpty {
