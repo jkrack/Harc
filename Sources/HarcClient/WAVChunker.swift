@@ -16,6 +16,12 @@ public final class WAVChunker: @unchecked Sendable {
 
     private let audioURL: URL
     private let chunkDurationSeconds: Double
+    /// Seconds of audio past the nominal boundary included in each chunk's
+    /// slice. `consumedFrames` still advances by the nominal duration, so
+    /// adjacent chunks share this much audio — both hear the boundary word
+    /// whole, and the assembler stitches the duplicate away. Zero disables
+    /// (hard cuts, the pre-stitching behavior).
+    private let overlapSeconds: Double
     private var consumedFrames: AVAudioFramePosition = 0
     private let targetSampleRate: Double = 16000
     private let ioLock = NSLock()
@@ -24,9 +30,10 @@ public final class WAVChunker: @unchecked Sendable {
     /// Computed once by scanning the RIFF chunk list on first use.
     private var dataBodyOffset: Int? = nil
 
-    public init(audioURL: URL, chunkDurationSeconds: Double = 60.0) {
+    public init(audioURL: URL, chunkDurationSeconds: Double = 60.0, overlapSeconds: Double = 0) {
         self.audioURL = audioURL
         self.chunkDurationSeconds = chunkDurationSeconds
+        self.overlapSeconds = max(0, overlapSeconds)
     }
 
     /// Returns the next full chunk if at least `chunkDurationSeconds` worth of
@@ -39,13 +46,17 @@ public final class WAVChunker: @unchecked Sendable {
         ioLock.lock()
         defer { ioLock.unlock() }
         let chunkFrames = AVAudioFramePosition(chunkDurationSeconds * targetSampleRate)
+        let overlapFrames = AVAudioFramePosition(overlapSeconds * targetSampleRate)
         let currentLength = try readCurrentLength()
-        guard currentLength - consumedFrames >= chunkFrames else { return nil }
+        // Wait for the overlap tail too: emitting the extended slice costs
+        // `overlapSeconds` of extra latency per chunk and buys a boundary
+        // word that both neighbors heard in full.
+        guard currentLength - consumedFrames >= chunkFrames + overlapFrames else { return nil }
 
         let start = consumedFrames
-        let end = start + chunkFrames
-        let chunk = try writeSlice(startFrame: start, endFrame: end)
-        consumedFrames = end
+        let nominalEnd = start + chunkFrames
+        let chunk = try writeSlice(startFrame: start, endFrame: nominalEnd + overlapFrames)
+        consumedFrames = nominalEnd
         return chunk
     }
 

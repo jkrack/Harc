@@ -82,7 +82,9 @@ struct ChunkedTranscriberTests {
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         // Give the pump time to consume 2 full chunks.
@@ -120,7 +122,9 @@ struct ChunkedTranscriberTests {
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -160,7 +164,9 @@ struct ChunkedTranscriberTests {
             pollIntervalSeconds: 0.05,
             vocabulary: vocab,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -244,7 +250,9 @@ struct ChunkedTranscriberRetryTests {
             pollIntervalSeconds: 0.02,
             chunkRetryDelaySeconds: 0.02,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -280,7 +288,9 @@ struct ChunkedTranscriberRetryTests {
             pollIntervalSeconds: 0.02,
             chunkRetryDelaySeconds: 0.06,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -330,7 +340,9 @@ struct ChunkedTranscriberRetryTests {
             pollIntervalSeconds: 0.02,
             chunkRetryDelaySeconds: 0.02,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -373,7 +385,9 @@ struct ChunkedTranscriberRetryTests {
             pollIntervalSeconds: 0.02,
             chunkRetryDelaySeconds: 0.02,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -520,7 +534,9 @@ struct ChunkedTranscriberDiarizeTests {
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -561,7 +577,9 @@ struct ChunkedTranscriberDiarizeTests {
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -594,7 +612,9 @@ struct ChunkedTranscriberDiarizeTests {
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
             // Previews off: canned fakes must see only chunk-pump calls.
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)

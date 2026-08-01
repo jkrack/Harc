@@ -92,6 +92,34 @@ struct WAVChunkerTests {
         for c in chunks { try? FileManager.default.removeItem(at: c.audioURL) }
     }
 
+    @Test("overlap extends the slice while consumption advances nominally")
+    func overlapExtendsSlice() async throws {
+        let url = tempWAVPath()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let file = try openGrowingWAV(url: url)
+        try appendSine(file, seconds: 3.0)
+
+        let chunker = WAVChunker(audioURL: url, chunkDurationSeconds: 1.0, overlapSeconds: 0.5)
+        let first = try await chunker.nextChunk()
+        #expect(first?.startMs == 0)
+        #expect(first?.endMs == 1500, "slice extends past the nominal boundary")
+        if let first {
+            let readback = try AVAudioFile(forReading: first.audioURL)
+            #expect(readback.length == 24000)
+            try? FileManager.default.removeItem(at: first.audioURL)
+        }
+        // Consumption advanced by the nominal second only: the next chunk
+        // starts at the boundary and re-hears the overlap.
+        let second = try await chunker.nextChunk()
+        #expect(second?.startMs == 1000)
+        #expect(second?.endMs == 2500)
+        if let second { try? FileManager.default.removeItem(at: second.audioURL) }
+        // 3.0s total, 2.0s consumed, next needs 1.5s → not yet.
+        let third = try await chunker.nextChunk()
+        #expect(third == nil)
+        _ = file
+    }
+
     @Test("previewWindow slices the tail without consuming anything")
     func previewWindowNonConsuming() async throws {
         let url = tempWAVPath()

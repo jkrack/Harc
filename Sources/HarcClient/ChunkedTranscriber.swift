@@ -71,6 +71,9 @@ public actor ChunkedTranscriber {
     private let chunkRetryDelaySeconds: Double
     private let livePreviewIntervalSeconds: Double
     private let livePreviewWindowSeconds: Double
+    /// Audio shared between adjacent chunks so boundary words arrive whole
+    /// in both; the assembler stitches the duplicate away. See issue #102.
+    private let chunkOverlapSeconds: Double
 
     nonisolated(unsafe) private let assembler = TranscriptAssembler()
     private var chunker: WAVChunker?
@@ -131,7 +134,8 @@ public actor ChunkedTranscriber {
         vocabulary: Vocabulary = .empty,
         chunkRetryDelaySeconds: Double = 15.0,
         livePreviewIntervalSeconds: Double = 5.0,
-        livePreviewWindowSeconds: Double = 30.0
+        livePreviewWindowSeconds: Double = 30.0,
+        chunkOverlapSeconds: Double = 2.0
     ) {
         self.client = client
         self.diarizer = diarizer
@@ -142,6 +146,7 @@ public actor ChunkedTranscriber {
         self.chunkRetryDelaySeconds = chunkRetryDelaySeconds
         self.livePreviewIntervalSeconds = livePreviewIntervalSeconds
         self.livePreviewWindowSeconds = livePreviewWindowSeconds
+        self.chunkOverlapSeconds = chunkOverlapSeconds
         let (stream, cont) = AsyncStream<TranscriptUpdate>.makeStream()
         self.updates = stream
         self.updatesContinuation = cont
@@ -149,7 +154,11 @@ public actor ChunkedTranscriber {
 
     public func start(audioURL: URL) {
         self.audioURL = audioURL
-        self.chunker = WAVChunker(audioURL: audioURL, chunkDurationSeconds: chunkDurationSeconds)
+        self.chunker = WAVChunker(
+            audioURL: audioURL,
+            chunkDurationSeconds: chunkDurationSeconds,
+            overlapSeconds: chunkOverlapSeconds
+        )
         self.pumpTask = Task.detached { [self] in await self.pump() }
         if livePreviewIntervalSeconds > 0 {
             self.previewTask = Task.detached { [self] in await self.previewPump() }

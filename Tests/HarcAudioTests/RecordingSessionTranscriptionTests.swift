@@ -104,7 +104,9 @@ struct RecordingSessionTranscriptionTests {
             vadEnabled: false,
             chunkDurationSeconds: 1.0,
             pollIntervalSeconds: 0.05,
-            livePreviewIntervalSeconds: 0
+            livePreviewIntervalSeconds: 0,
+            // Overlap off: these tests assert exact nominal chunk cadence.
+            chunkOverlapSeconds: 0
         )
 
         let session = RecordingSession(
