@@ -114,6 +114,8 @@ enum SettingsSearchIndex {
               keywords: ["push to talk", "toggle", "hold"]),
         .init(pane: .dictation, label: "Dictated text",
               keywords: ["cursor", "insert", "clipboard", "copy"]),
+        .init(pane: .dictation, label: "Spoken commands",
+              keywords: ["new line", "new paragraph", "scratch that", "delete that", "inline", "commands", "voice editing"]),
         .init(pane: .dictation, label: "Restore clipboard after inserting",
               keywords: ["clipboard", "pasteboard", "restore"]),
         .init(pane: .dictation, label: "Sounds",

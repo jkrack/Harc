@@ -445,12 +445,26 @@ public final class DictationController {
             return
         }
 
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             oneShotMode = nil
             sessionMode = nil
             state.setPhase(.error("No speech detected — check that the waveform moves when you talk"))
             return
+        }
+
+        // Spoken editing commands, before the mode transform so they work
+        // in Raw and LLM modes alike. "Scratch that" can legitimately
+        // erase the whole utterance — that's a successful cancel, not a
+        // transcription failure.
+        if prefs.dictationInlineCommandsEnabled {
+            trimmed = DictationInlineCommands.apply(to: trimmed)
+            guard !trimmed.isEmpty else {
+                oneShotMode = nil
+                sessionMode = nil
+                state.setPhase(.idle)
+                return
+            }
         }
 
         let mode = currentMode()

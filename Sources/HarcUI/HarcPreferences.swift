@@ -32,6 +32,7 @@ public final class HarcPreferences: ObservableObject {
         static let welcomeFlowCompleted = "harc.welcomeFlowCompleted"
         static let modelPerformanceMode = "harc.modelPerformanceMode"
         static let dictationTriggerStyle = "harc.dictationTriggerStyle"
+        static let dictationInlineCommandsEnabled = "harc.dictationInlineCommandsEnabled"
         static let activeDictationModeID = "harc.activeDictationModeID"
         static let keepDictationWarm = "harc.keepDictationWarm"
         static let keepDictationWarmWindow = "harc.keepDictationWarmWindow"
@@ -287,6 +288,13 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(modelPerformanceMode.rawValue, forKey: Key.modelPerformanceMode) }
     }
 
+    /// Spoken editing commands ("new line", "scratch that") parsed out of
+    /// dictated text before any mode transform. Clause-bounded matching
+    /// keeps mid-sentence phrases ("a new line of products") intact.
+    @Published public var dictationInlineCommandsEnabled: Bool {
+        didSet { UserDefaults.standard.set(dictationInlineCommandsEnabled, forKey: Key.dictationInlineCommandsEnabled) }
+    }
+
     @Published public var dictationTriggerStyle: DictationTriggerStyle {
         didSet { UserDefaults.standard.set(dictationTriggerStyle.rawValue, forKey: Key.dictationTriggerStyle) }
     }
@@ -401,6 +409,7 @@ public final class HarcPreferences: ObservableObject {
         self.modelPerformanceMode = ModelPerformanceMode(rawValue: rawModelPerformanceMode) ?? .balanced
         let rawDictationTriggerStyle = defaults.string(forKey: Key.dictationTriggerStyle) ?? DictationTriggerStyle.pushToTalk.rawValue
         self.dictationTriggerStyle = DictationTriggerStyle(rawValue: rawDictationTriggerStyle) ?? .pushToTalk
+        self.dictationInlineCommandsEnabled = defaults.object(forKey: Key.dictationInlineCommandsEnabled) as? Bool ?? true
         self.activeDictationModeID = defaults.string(forKey: Key.activeDictationModeID) ?? DictationMode.rawID
         self.keepDictationWarm = defaults.object(forKey: Key.keepDictationWarm) as? Bool ?? true
         let rawKeepWarmWindow = defaults.string(forKey: Key.keepDictationWarmWindow) ?? DictationKeepWarmWindow.always.rawValue

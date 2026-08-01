@@ -25,10 +25,11 @@ public struct DictationSettingsView: View {
             }
             Toggle("Sounds", isOn: $prefs.dictationSoundsEnabled)
             Toggle("Keep the dictation pill on screen", isOn: $prefs.persistentDictationHUD)
+            Toggle("Spoken commands", isOn: $prefs.dictationInlineCommandsEnabled)
         } header: {
             Text("Dictation")
         } footer: {
-            Text("Push-to-talk: hold the key to dictate, release to insert. Toggle: tap to start and stop. Restoring the clipboard puts whatever you had copied back after the dictation lands. The pill stays visible when idle — hover it to start dictation or switch modes.")
+            Text("Push-to-talk: hold the key to dictate, release to insert. Toggle: tap to start and stop. Restoring the clipboard puts whatever you had copied back after the dictation lands. The pill stays visible when idle — hover it to start dictation or switch modes. Spoken commands: say \u{201C}new line\u{201D}, \u{201C}new paragraph\u{201D}, or \u{201C}scratch that\u{201D} as their own short sentence while dictating; mid-sentence phrases like \u{201C}a new line of products\u{201D} are left alone.")
                 .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }
