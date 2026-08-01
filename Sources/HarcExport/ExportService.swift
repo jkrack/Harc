@@ -5,12 +5,16 @@ public enum ExportFormat: Sendable {
     case markdown
     case docx
     case prompt
+    case srt
+    case vtt
 
     public var filenameExtension: String {
         switch self {
         case .markdown: return "md"
         case .docx:     return "docx"
         case .prompt:   return "md"
+        case .srt:      return "srt"
+        case .vtt:      return "vtt"
         }
     }
 }
@@ -25,7 +29,7 @@ public enum ExportService {
         let stem = wav.deletingPathExtension().lastPathComponent
         let folder = wav.deletingLastPathComponent()
         switch format {
-        case .markdown, .docx:
+        case .markdown, .docx, .srt, .vtt:
             return folder.appendingPathComponent("\(stem).\(format.filenameExtension)")
         case .prompt:
             return folder.appendingPathComponent("\(stem).prompt.md")
@@ -49,6 +53,19 @@ public enum ExportService {
             data = try DocxExporter.render(input, summary: summary)
         case .prompt:
             data = Data(ExportService.promptString(for: recording, includeSummary: includeSummary).utf8)
+        case .srt, .vtt:
+            // Subtitles need the raw word timings, not collapsed segments.
+            guard let transcript = ExportInputBuilder.loadTranscript(from: recording),
+                  !transcript.words.isEmpty else {
+                throw ExportError.noWordTimings
+            }
+            let cues = SubtitleExporter.makeCues(
+                words: transcript.words, speakers: transcript.speakers
+            )
+            let rendered = format == .srt
+                ? SubtitleExporter.srt(cues: cues, speakerNames: recording.speakerNames)
+                : SubtitleExporter.vtt(cues: cues, speakerNames: recording.speakerNames)
+            data = Data(rendered.utf8)
         }
         do {
             try data.write(to: url, options: .atomic)

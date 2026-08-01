@@ -6,6 +6,7 @@ public enum ExportError: Error, Sendable {
     case writeFailed(url: URL, underlying: String)
     case permissionDenied(url: URL)
     case diskFull
+    case noWordTimings
 }
 
 extension ExportError: LocalizedError {
@@ -21,6 +22,8 @@ extension ExportError: LocalizedError {
             return "No permission to write to \(url.path)."
         case .diskFull:
             return "Not enough disk space for the export."
+        case .noWordTimings:
+            return "This recording has no word timings — re-transcribe it to export subtitles."
         }
     }
 }

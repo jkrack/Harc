@@ -8,27 +8,33 @@ import HarcStore
 /// segments. Falls back to `Recording.transcriptText` when the JSON is
 /// missing or unreadable.
 public enum ExportInputBuilder {
+    /// The decoded JSON sidecar, when present and readable. Shared by the
+    /// segment-collapsing path and the subtitle exporters, which need the
+    /// raw word timings rather than collapsed segments.
+    public static func loadTranscript(from recording: Recording) -> SessionTranscript? {
+        guard let path = recording.jsonPath,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try? decoder.decode(SessionTranscript.self, from: data)
+    }
+
     public static func build(from recording: Recording) -> ExportInput {
         let duration: Int? = recording.endedAt.map {
             max(0, Int($0.timeIntervalSince(recording.startedAt)))
         }
         let title = recording.displayTitle
 
-        if let path = recording.jsonPath,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .secondsSince1970
-            if let transcript = try? decoder.decode(SessionTranscript.self, from: data) {
-                let segments = collapseToSegments(transcript: transcript)
-                return ExportInput(
-                    title: title,
-                    startedAt: recording.startedAt,
-                    durationSeconds: duration,
-                    tags: recording.tags,
-                    speakerNames: recording.speakerNames,
-                    segments: segments
-                )
-            }
+        if let transcript = loadTranscript(from: recording) {
+            let segments = collapseToSegments(transcript: transcript)
+            return ExportInput(
+                title: title,
+                startedAt: recording.startedAt,
+                durationSeconds: duration,
+                tags: recording.tags,
+                speakerNames: recording.speakerNames,
+                segments: segments
+            )
         }
 
         if let text = recording.transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines),

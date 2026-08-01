@@ -8,6 +8,8 @@ enum RecordingExportOption: String, CaseIterable, Identifiable {
     case markdown
     case docx
     case prompt
+    case srt
+    case vtt
 
     var id: String { rawValue }
 
@@ -16,6 +18,8 @@ enum RecordingExportOption: String, CaseIterable, Identifiable {
         case .markdown: return .markdown
         case .docx: return .docx
         case .prompt: return .prompt
+        case .srt: return .srt
+        case .vtt: return .vtt
         }
     }
 
@@ -24,6 +28,8 @@ enum RecordingExportOption: String, CaseIterable, Identifiable {
         case .markdown: return "Markdown"
         case .docx: return "DOCX"
         case .prompt: return "LLM Prompt"
+        case .srt: return "SRT Subtitles"
+        case .vtt: return "WebVTT Subtitles"
         }
     }
 
@@ -35,6 +41,10 @@ enum RecordingExportOption: String, CaseIterable, Identifiable {
             return "Word document with transcript content and optional summary sections."
         case .prompt:
             return "Markdown with front matter tuned for pasting into an LLM."
+        case .srt:
+            return "Timed subtitles from the stored word timings, for video editors and players."
+        case .vtt:
+            return "Web-native timed subtitles, for browsers and HTML5 players."
         }
     }
 
@@ -43,6 +53,8 @@ enum RecordingExportOption: String, CaseIterable, Identifiable {
         case .markdown: return "doc.plaintext"
         case .docx: return "doc.richtext"
         case .prompt: return "sparkles"
+        case .srt: return "captions.bubble"
+        case .vtt: return "captions.bubble.fill"
         }
     }
 }
@@ -146,10 +158,18 @@ struct RecordingExportSheet: View {
 
     private var options: some View {
         VStack(alignment: .leading, spacing: HarcSpacing.sm) {
-            Toggle("Include summary and action items when available", isOn: $draft.includeSummary)
-            Text(summaryOptionDescription)
-                .font(.harcCaption)
-                .foregroundStyle(.secondary)
+            // Subtitles are pure timed transcript — a summary toggle that
+            // silently does nothing would be a lie in a checkbox.
+            if draft.option != .srt && draft.option != .vtt {
+                Toggle("Include summary and action items when available", isOn: $draft.includeSummary)
+                Text(summaryOptionDescription)
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Cues are segmented from word timings; speaker names label each cue.")
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
