@@ -83,9 +83,9 @@ public final class WelcomeFlowModel: ObservableObject {
             id: "local",
             eyebrow: "Local first",
             title: "Private by design, fast on Apple Silicon",
-            body: "Speech-to-text, diarization, summaries, and audio all stay on this Mac. Harc records to disk while it captures, then processes locally in rolling chunks.",
+            body: "Speech-to-text, diarization, summaries, and audio all stay on this Mac. Harc records to disk while it captures, then processes locally in rolling chunks. Your notes live as plain Markdown on disk, and a built-in MCP connector lets AI agents you run — Claude Desktop, Claude Code — search and annotate them.",
             primaryPoint: "No cloud STT, no external telemetry, no account requirement.",
-            secondaryPoint: "Models are downloaded once from Hugging Face; your audio and text never leave this Mac.",
+            secondaryPoint: "Models are downloaded once from Hugging Face; your audio and text never leave this Mac unless you hand them to an agent yourself.",
             symbolName: "lock.shield",
             tint: .teal
         ),

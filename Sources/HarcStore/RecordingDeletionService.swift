@@ -62,6 +62,9 @@ public struct RecordingDeletionService<Trasher: RecordingFileTrashing>: Sendable
 
         do {
             try trashExistingFiles(for: recording)
+            // Keep any owning session consistent: dissolve when fewer than
+            // two active members remain, otherwise refresh its document.
+            await store.pruneSessionIfNeeded(afterMemberChange: id)
         } catch let error as RecordingDeletionError {
             let restored = await restoreIfPossible(id: id)
             if case .fileTrashFailed(let path, let description, _) = error {

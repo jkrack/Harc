@@ -249,6 +249,66 @@ extension DatabaseMigrator {
             }
         }
 
+        // Virtual day sessions: a grouping row over untouched recordings.
+        // A session never owns audio or transcripts — it has its own title
+        // and combined summary, and points at member recordings through
+        // `session_recordings`. Members are same-local-day by construction
+        // (enforced in `createSession`), which also guarantees all members
+        // share one day directory for the OKF `session-*.md` projection.
+        migrator.registerMigration("v14_sessions") { db in
+            try db.create(table: "sessions") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("day", .text).notNull()  // "YYYY-MM-DD", local TZ at creation
+                t.column("title", .text)
+                t.column("summary_markdown", .text)
+                t.column("action_items_markdown", .text)
+                t.column("summary_model_id", .text)
+                t.column("summary_generated_at", .integer)  // Unix ms
+                t.column("summary_source_word_count", .integer)
+                t.column("summary_status_kind", .text)
+                t.column("summary_status_message", .text)
+                t.column("summary_status_updated_at", .integer)  // Unix ms
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+            try db.create(index: "idx_sessions_day", on: "sessions", columns: ["day"])
+
+            try db.create(table: "session_recordings") { t in
+                t.column("session_id", .integer)
+                    .notNull()
+                    .references("sessions", onDelete: .cascade)
+                t.column("recording_id", .integer)
+                    .notNull()
+                    .references("recordings", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.primaryKey(["session_id", "recording_id"])
+            }
+            // A recording belongs to at most one session. Overlapping
+            // sessions would make the OKF projection and the detail pane
+            // ambiguous for no product win.
+            try db.create(
+                index: "idx_session_recordings_recording",
+                on: "session_recordings",
+                columns: ["recording_id"],
+                options: .unique
+            )
+        }
+
+        // Free-form notes on recordings and sessions — the enrichment
+        // channel. Users edit them in the detail pane; agents append through
+        // harc-mcp's append_note (append-only there, so an agent can never
+        // destroy what a user wrote). Projected as an OKF `## Notes` section.
+        // Deliberately NOT mirrored into recordings_fts: search stays over
+        // transcripts.
+        migrator.registerMigration("v15_notes") { db in
+            try db.alter(table: "recordings") { t in
+                t.add(column: "notes_markdown", .text)
+            }
+            try db.alter(table: "sessions") { t in
+                t.add(column: "notes_markdown", .text)
+            }
+        }
+
         return migrator
     }
 }

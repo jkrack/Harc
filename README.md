@@ -138,8 +138,27 @@ should not mean trapped: if you decide a meeting is worth handing to a cloud
 model, that is a copy-paste, not an export ritual, and it is *your* decision
 each time rather than a setting you forgot you enabled.
 
-There is no plugin API and no MCP server today. There does not need to be one
-for an agent to read a folder of Markdown.
+The folder of Markdown remains the primary agent surface — an agent with
+filesystem access needs no API to read it. For agents that should also
+*search* the library and *write back safely*, Harc bundles a small MCP
+server, `harc-mcp` (inside the app at `Contents/MacOS/harc-mcp`). Register it
+with the agent you already run:
+
+```
+claude mcp add harc -- /Applications/Harc.app/Contents/MacOS/harc-mcp
+```
+
+It exposes hybrid search plus store-mediated writes — titles, tags, speaker
+names, summaries, and appended notes — so agent edits go through the same
+database mutators the app uses and the Markdown regenerates correctly
+(direct file edits to generated sections get overwritten by the next
+projection). Notes are append-only for agents: each note lands under the
+document's `## Notes` section with an author-and-date stamp, and an agent
+can never rewrite what you (or an earlier note) already said. Transcripts
+are read-only to agents by design. The server talks JSON-RPC over stdio to the
+locally spawned host, works while Harc is closed, and opens no network
+connections and holds no API keys: the agent brings its own model, on your
+own account. The app itself remains fully local.
 
 ## Privacy
 

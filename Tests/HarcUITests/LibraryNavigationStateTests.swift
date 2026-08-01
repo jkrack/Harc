@@ -72,6 +72,39 @@ struct LibraryNavigationStateTests {
         #expect(resolved == nil)
     }
 
+    @Test("session selection persists and restores when the session exists")
+    func sessionSelectionRoundTrip() throws {
+        let suiteName = "harc.tests.navstate.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let snapshot = LibraryNavigationSnapshot(
+            selection: PersistedLibrarySelection(.session(id: 7))
+        )
+        LibraryNavigationStateStore.save(snapshot, defaults: defaults)
+        let loaded = LibraryNavigationStateStore.load(defaults: defaults)
+        #expect(loaded.selection?.librarySelection == .session(id: 7))
+
+        let valid = LibraryNavigationResolver.resolvedSelection(
+            restored: .session(id: 7),
+            recordingPaths: [],
+            personIDs: [],
+            sessionIDs: [7],
+            fallbackRecordingPath: nil
+        )
+        #expect(valid == .session(id: 7))
+
+        // A dissolved session falls back like a stale recording does.
+        let stale = LibraryNavigationResolver.resolvedSelection(
+            restored: .session(id: 7),
+            recordingPaths: ["/tmp/a.wav"],
+            personIDs: [],
+            sessionIDs: [],
+            fallbackRecordingPath: "/tmp/a.wav"
+        )
+        #expect(stale == .recording(wavPath: "/tmp/a.wav"))
+    }
+
     /// The in-progress recording is session-scoped. It must neither persist
     /// nor restore: encoding refuses it, and the resolver treats a restored
     /// `.live` as invalid so launch always lands on a real row.

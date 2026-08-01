@@ -43,6 +43,9 @@ public struct HarcWindowRootView: View {
     let onImportFiles: (([URL]) -> Void)?
     /// Cancel the in-flight import batch. Nil hides the banner's Cancel.
     let onCancelImport: (() -> Void)?
+    /// Enqueue a combined summary for a session. Nil (previews/tests) hides
+    /// the Summarize affordances in the session detail pane.
+    let onSummarizeSession: ((Int64) -> Void)?
     @ObservedObject var importState: MediaImportState
 
     // MARK: View state
@@ -59,6 +62,12 @@ public struct HarcWindowRootView: View {
     /// Set when the user picks Delete from a sidebar context menu — drives
     /// the destructive confirmation alert.
     @State var pendingDeleteRecording: Recording? = nil
+    /// Set when the user picks "Combine Into Session…" — drives the sheet
+    /// listing that day's recordings.
+    @State var combineSessionContext: CombineSessionContext? = nil
+    /// Set when the user asks to dissolve a session — drives the confirm
+    /// alert (recordings are untouched; the wording says so).
+    @State var pendingDissolveSession: Session? = nil
     /// When the .json sidecar is available, we render structured turns
     /// (timestamp + speaker + text) instead of the flat .txt blob.
     @State var transcriptSegments: [TranscriptDisplaySegment] = []
@@ -132,7 +141,8 @@ public struct HarcWindowRootView: View {
         onDelete: @escaping (Recording) -> Void,
         onImportFiles: (([URL]) -> Void)? = nil,
         onCancelImport: (() -> Void)? = nil,
-        importState: MediaImportState = MediaImportState()
+        importState: MediaImportState = MediaImportState(),
+        onSummarizeSession: ((Int64) -> Void)? = nil
     ) {
         self.libraryVM = libraryVM
         self.recordingState = recordingState
@@ -145,6 +155,7 @@ public struct HarcWindowRootView: View {
         self.onImportFiles = onImportFiles
         self.onCancelImport = onCancelImport
         self.importState = importState
+        self.onSummarizeSession = onSummarizeSession
     }
 
     // MARK: Body
@@ -166,10 +177,15 @@ public struct HarcWindowRootView: View {
         peopleVM.people.map { $0.person.id }
     }
 
+    var sessionIDsForNavigation: [Int64] {
+        libraryVM.sessions.map(\.id)
+    }
+
     var navigationValidationToken: String {
         [
             recordingPathsForNavigation.joined(separator: "\u{1f}"),
             personIDsForNavigation.map(String.init).joined(separator: "\u{1f}"),
+            sessionIDsForNavigation.map(String.init).joined(separator: "\u{1f}"),
         ].joined(separator: "\u{1e}")
     }
 
@@ -255,6 +271,47 @@ public struct HarcWindowRootView: View {
                 onCancel: { exportRecording = nil },
                 onExported: { exportRecording = nil }
             )
+        }
+        .sheet(item: $combineSessionContext) { context in
+            CombineSessionSheet(
+                context: context,
+                store: store,
+                onCancel: { combineSessionContext = nil },
+                onCreated: { sessionID in
+                    combineSessionContext = nil
+                    selection = .session(id: sessionID)
+                    // Auto-summarize follows the same preference the
+                    // recording flow honors.
+                    if prefs.autoSummarizeEnabled {
+                        onSummarizeSession?(sessionID)
+                    }
+                }
+            )
+        }
+        .alert(
+            "Dissolve session?",
+            isPresented: Binding(
+                get: { pendingDissolveSession != nil },
+                set: { if !$0 { pendingDissolveSession = nil } }
+            ),
+            presenting: pendingDissolveSession
+        ) { session in
+            Button("Dissolve", role: .destructive) {
+                pendingDissolveSession = nil
+                guard let id = session.id else { return }
+                Task {
+                    do {
+                        try await libraryVM.deleteSession(id: id)
+                        if selection == .session(id: id) { selection = nil }
+                        mutationFailure = nil
+                    } catch {
+                        reportMutationFailure(.dissolveSession(session.displayTitle), error: error)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingDissolveSession = nil }
+        } message: { session in
+            Text("\u{201C}\(session.displayTitle)\u{201D} will be removed. The recordings it groups stay in the library, untouched.")
         }
     }
 
@@ -754,14 +811,70 @@ public struct HarcWindowRootView: View {
             }
 
             let unpinned = libraryVM.recordings.filter { !$0.pinned }
-            ForEach(Self.dateBuckets(from: unpinned), id: \.label) { bucket in
+            ForEach(
+                Self.dateBuckets(from: unpinned, sessions: libraryVM.filteredSessions),
+                id: \.label
+            ) { bucket in
                 Section {
+                    // Sessions lead their day: the grouping is the day's
+                    // headline, but every member stays individually listed
+                    // below it — no disclosure nesting to open first.
+                    ForEach(bucket.sessions) { overview in
+                        sessionLabel(overview)
+                    }
                     ForEach(bucket.recordings) { rec in
                         recordingLabel(rec)
                     }
                 } header: {
                     Text(bucket.label)
                 }
+            }
+        }
+    }
+
+    /// Session row for use inside a `List(selection:)`. Peer of
+    /// `recordingLabel`; the stacked glyph + member count carry the "this is
+    /// a grouping" signal without disclosure chrome.
+    func sessionLabel(_ overview: SessionOverview) -> some View {
+        let isSelected = selection == .session(id: overview.id)
+        return HStack(alignment: .top, spacing: HarcSpacing.sm) {
+            Image(systemName: "square.stack.3d.up")
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 18, alignment: .center)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(overview.session.displayTitle)
+                    .font(isSelected ? .body.weight(.semibold) : .body)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(Self.sessionSecondaryLine(for: overview))
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, HarcSpacing.xs)
+        .frame(minHeight: 44, alignment: .topLeading)
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+                .padding(.horizontal, HarcSpacing.xs)
+        )
+        .tag(LibrarySelection.session(id: overview.id))
+        .accessibilityIdentifier("harc.library.session.\(overview.id)")
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selection = .session(id: overview.id)
+        }
+        .contextMenu {
+            if let onSummarizeSession {
+                Button("Summarize Session") { onSummarizeSession(overview.id) }
+            }
+            Divider()
+            Button("Dissolve Session…") {
+                pendingDissolveSession = overview.session
             }
         }
     }
@@ -867,6 +980,7 @@ public struct HarcWindowRootView: View {
             restored: candidate,
             recordingPaths: Set(libraryVM.recordings.map(\.wavPath)),
             personIDs: Set(peopleVM.people.map { $0.person.id }),
+            sessionIDs: Set(sessionIDsForNavigation),
             fallbackRecordingPath: libraryVM.recordings.first?.wavPath
         )
         restoredSelection = nil
@@ -988,6 +1102,12 @@ public struct HarcWindowRootView: View {
             }
         }
         Button("Export…") { presentExport(rec) }
+        Button("Combine Into Session…") {
+            combineSessionContext = CombineSessionContext(
+                day: rec.startedAt,
+                preselectedRecordingID: rec.id
+            )
+        }
         Divider()
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: rec.wavPath)])

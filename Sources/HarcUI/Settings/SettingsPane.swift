@@ -146,6 +146,9 @@ enum SettingsSearchIndex {
               keywords: ["prompt", "copy", "export", "markdown", "docx"]),
 
         // About
+        .init(pane: .about, label: "Connect agents (MCP)",
+              keywords: ["mcp", "claude", "agent", "model context protocol", "connect",
+                         "chatgpt", "server", "bridge", "tools"]),
         .init(pane: .about, label: "Check for updates",
               keywords: ["sparkle", "version", "upgrade", "release"]),
         .init(pane: .about, label: "Storage",

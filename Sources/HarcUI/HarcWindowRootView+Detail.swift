@@ -80,6 +80,18 @@ extension HarcWindowRootView {
                 },
                 onPersonDeleted: { selection = nil }
             )
+        case .session(let id):
+            SessionDetailView(
+                sessionID: id,
+                store: store,
+                onSelectRecording: { rec in
+                    selection = .recording(wavPath: rec.wavPath)
+                },
+                onSummarize: onSummarizeSession,
+                onDissolve: { session in
+                    pendingDissolveSession = session
+                }
+            )
         case .live:
             // The in-progress recording is a real destination now, not a
             // fallback for having nothing selected. If it stops while
@@ -152,6 +164,17 @@ extension HarcWindowRootView {
                 }
                 .frame(maxWidth: 680, maxHeight: 280, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
+
+                if let recID = recording.id {
+                    NotesCardView(
+                        itemID: recID,
+                        notes: recording.notesMarkdown,
+                        onSave: { [store] text in
+                            try await store.updateNotes(id: recID, markdown: text)
+                        }
+                    )
+                    .frame(maxWidth: 680, alignment: .leading)
+                }
 
                 if transcriptFindVisible {
                     transcriptFindBar()

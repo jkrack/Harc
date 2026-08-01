@@ -45,6 +45,74 @@ struct OKFMarkdownTests {
         #expect(md.contains(#"title: "He said \"go\" now""#))
     }
 
+    @Test("render places ## Notes between Action Items and Transcript")
+    func renderNotesOrdering() {
+        let md = OKFMarkdown.render(OKFMarkdown.Fields(
+            title: "T",
+            summaryMarkdown: "Sum",
+            actionItemsMarkdown: "- [ ] do",
+            notesMarkdown: "extra context here",
+            transcript: "words"
+        ))
+        let actions = md.range(of: "## Action Items")!.lowerBound
+        let notes = md.range(of: "## Notes")!.lowerBound
+        let transcript = md.range(of: "## Transcript")!.lowerBound
+        #expect(actions < notes)
+        #expect(notes < transcript)
+        #expect(md.contains("## Notes\n\nextra context here"))
+
+        // Empty notes render no section.
+        let bare = OKFMarkdown.render(OKFMarkdown.Fields(title: "T", transcript: "x"))
+        #expect(!bare.contains("## Notes"))
+    }
+
+    @Test("renderSession emits type, member list, and no transcript section")
+    func renderSession() {
+        let md = OKFMarkdown.renderSession(OKFMarkdown.SessionFields(
+            title: "Offsite day",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            tags: ["Amy"],
+            summaryMarkdown: "Everything combined.",
+            actionItemsMarkdown: "- [ ] follow up",
+            recordings: [
+                .init(fileName: "10-00-00.md", title: "Standup", detail: "10:00 AM · 15 min"),
+                .init(fileName: "14-00-00.md", title: "Retro"),
+            ]
+        ))
+        #expect(md.hasPrefix("---\ntype: Session\ntitle: \"Offsite day\"\n"))
+        #expect(md.contains("recordings:\n  - ./10-00-00.md\n  - ./14-00-00.md"))
+        #expect(md.contains("\n## Summary\n\nEverything combined."))
+        #expect(md.contains("\n## Action Items\n\n- [ ] follow up"))
+        #expect(md.contains("\n## Recordings\n\n- [Standup](./10-00-00.md) — 10:00 AM · 15 min\n- [Retro](./14-00-00.md)"))
+        #expect(!md.contains("## Transcript"))
+    }
+
+    @Test("regenerateDayIndex lists session docs after member docs")
+    func dayIndexSessionOrdering() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("okf-session-index-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        for (name, title) in [
+            ("10-00-00.md", "Standup"),
+            ("14-00-00.md", "Retro"),
+            ("session-10-00-00.md", "Offsite day"),
+        ] {
+            let content = "---\ntype: X\ntitle: \"\(title)\"\n---\nbody\n"
+            try content.data(using: .utf8)!.write(to: dir.appendingPathComponent(name))
+        }
+        OKFMarkdown.regenerateDayIndex(in: dir)
+
+        let index = try String(
+            contentsOf: dir.appendingPathComponent("index.md"), encoding: .utf8
+        )
+        let links = index.split(separator: "\n").filter { $0.hasPrefix("- [") }
+        #expect(links.count == 3)
+        #expect(links.last?.contains("session-10-00-00.md") == true)
+        #expect(links.last?.contains("Offsite day") == true)
+    }
+
     @Test("extractTranscript returns the transcript body")
     func extract() {
         let md = OKFMarkdown.render(OKFMarkdown.Fields(

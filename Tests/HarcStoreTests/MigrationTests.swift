@@ -229,6 +229,110 @@ struct MigrationTests {
         }
     }
 
+    @Test("v14 creates sessions tables with unique membership and cascades")
+    func v14SessionsSchema() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.write { db in
+            let tables = try String.fetchAll(db, sql:
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            )
+            #expect(tables.contains("sessions"))
+            #expect(tables.contains("session_recordings"))
+
+            // Seed two recordings + a session.
+            for path in ["/tmp/v14-a.wav", "/tmp/v14-b.wav"] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO recordings (wav_path, started_at, pinned, created_at, updated_at)
+                    VALUES (?, ?, 0, ?, ?)
+                    """,
+                    arguments: [path, Date(), Date(), Date()]
+                )
+            }
+            try db.execute(
+                sql: "INSERT INTO sessions (day, created_at, updated_at) VALUES (?, ?, ?)",
+                arguments: ["2026-07-31", Date(), Date()]
+            )
+            let sid = db.lastInsertedRowID
+            try db.execute(
+                sql: "INSERT INTO session_recordings (session_id, recording_id, position) VALUES (?, 1, 0)",
+                arguments: [sid]
+            )
+            try db.execute(
+                sql: "INSERT INTO session_recordings (session_id, recording_id, position) VALUES (?, 2, 1)",
+                arguments: [sid]
+            )
+
+            // A recording can belong to only one session.
+            try db.execute(
+                sql: "INSERT INTO sessions (day, created_at, updated_at) VALUES (?, ?, ?)",
+                arguments: ["2026-07-31", Date(), Date()]
+            )
+            let sid2 = db.lastInsertedRowID
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: "INSERT INTO session_recordings (session_id, recording_id, position) VALUES (?, 1, 0)",
+                    arguments: [sid2]
+                )
+            }
+
+            // Deleting the session cascades its join rows.
+            try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [sid])
+            let joinCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM session_recordings") ?? -1
+            #expect(joinCount == 0)
+
+            // Recordings survive session deletion.
+            let recCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM recordings") ?? -1
+            #expect(recCount == 2)
+        }
+    }
+
+    @Test("v14 join rows cascade when a recording is hard-deleted")
+    func v14RecordingCascade() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.write { db in
+            for path in ["/tmp/v14-c.wav", "/tmp/v14-d.wav"] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO recordings (wav_path, started_at, pinned, created_at, updated_at)
+                    VALUES (?, ?, 0, ?, ?)
+                    """,
+                    arguments: [path, Date(), Date(), Date()]
+                )
+            }
+            try db.execute(
+                sql: "INSERT INTO sessions (day, created_at, updated_at) VALUES (?, ?, ?)",
+                arguments: ["2026-07-31", Date(), Date()]
+            )
+            let sid = db.lastInsertedRowID
+            try db.execute(
+                sql: "INSERT INTO session_recordings (session_id, recording_id, position) VALUES (?, 1, 0)",
+                arguments: [sid]
+            )
+            try db.execute(sql: "DELETE FROM recordings WHERE id = 1")
+            let joinCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM session_recordings") ?? -1
+            #expect(joinCount == 0)
+        }
+    }
+
+    @Test("v15 adds notes_markdown to recordings and sessions")
+    func v15NotesColumns() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.read { db in
+            for table in ["recordings", "sessions"] {
+                let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(\(table))")
+                    .compactMap { $0["name"] as String? }
+                #expect(columns.contains("notes_markdown"), "\(table) should carry notes_markdown")
+            }
+        }
+    }
+
     @Test("v11 adds semantic chunk table and recording index timestamp")
     func v11SemanticChunkSchema() throws {
         let dbq = try DatabaseQueue()

@@ -87,6 +87,11 @@ targets:
           "${SRCROOT}/scripts/build-daemon.sh"
         outputFiles:
           - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/harc-stt
+      - name: Embed harc-mcp agent bridge
+        script: |
+          "${SRCROOT}/scripts/build-mcp.sh"
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/harc-mcp
   HarcAppUITests:
     type: bundle.ui-testing
     platform: macOS

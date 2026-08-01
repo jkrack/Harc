@@ -16,6 +16,16 @@ on-device. Nothing about you or your content leaves this Mac.
   you or your machine.
 - Nothing else. No telemetry, no crash reporting, no analytics.
 
+The bundled `harc-mcp` executable (the MCP agent bridge) opens **no network
+connections**: it speaks JSON-RPC over stdio to a locally spawned agent host
+(Claude Desktop, Claude Code, etc.) and touches only the Harc database in
+Application Support and the user's chosen notes folder. Any network traffic
+in that flow belongs to the agent host the user runs, on their own account.
+Note that because harc-mcp is spawned by the host process, writes to the
+notes folder under `~/Documents` are TCC-attributed to that host — if the
+user denied it Documents access, OKF file regeneration silently no-ops
+(database writes in Application Support are unaffected).
+
 ## Accepted trade-offs
 
 - **No App Sandbox.** Harc needs Accessibility (insert-at-cursor),

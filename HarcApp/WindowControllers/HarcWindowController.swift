@@ -21,7 +21,8 @@ final class HarcWindowController: NSWindowController {
         importState: MediaImportState,
         onDelete: @escaping (Recording) -> Void,
         onImportFiles: @escaping ([URL]) -> Void,
-        onCancelImport: @escaping () -> Void
+        onCancelImport: @escaping () -> Void,
+        onSummarizeSession: ((Int64) -> Void)? = nil
     ) {
         let peopleVM = PeopleViewModel(store: store)
         let root = HarcWindowRootView(
@@ -35,7 +36,8 @@ final class HarcWindowController: NSWindowController {
             onDelete: onDelete,
             onImportFiles: onImportFiles,
             onCancelImport: onCancelImport,
-            importState: importState
+            importState: importState,
+            onSummarizeSession: onSummarizeSession
         )
         .environmentObject(prefs)
         .environmentObject(postProcessingState)

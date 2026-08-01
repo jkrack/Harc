@@ -23,9 +23,60 @@ public struct AboutSettingsView: View {
             Text("About")
         }
 
+        agentsSection
+
         StorageSettingsSection()
 
         troubleshootingSection
+    }
+
+    // MARK: - Connect agents (MCP)
+
+    /// The bundled harc-mcp bridge, discoverable where the rest of the
+    /// install-level facts live. It exposes search + safe metadata writes to
+    /// MCP hosts the user runs on their own account; the app itself still
+    /// makes no cloud calls.
+    private var agentsSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                Text("Harc ships a small MCP server so AI agents you run — Claude Desktop, Claude Code, or any MCP client — can search your transcripts and write back titles, tags, speaker names, summaries, and appended notes. It talks directly to the library on this Mac, works while Harc is closed, and opens no network connections of its own: the agent brings its model and account. Transcripts are read-only to agents, and agent notes are append-only with an author stamp.")
+                    .font(.harcLabel)
+                    .foregroundStyle(Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: HarcSpacing.sm) {
+                    Text(mcpAddCommand)
+                        .font(.harcMono)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, HarcSpacing.sm)
+                        .padding(.vertical, HarcSpacing.xs)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    Button("Copy") {
+                        let pb = NSPasteboard.general
+                        pb.clearContents()
+                        pb.setString(mcpAddCommand, forType: .string)
+                    }
+                    .controlSize(.small)
+                }
+
+                Text("That command registers it with Claude Code. For Claude Desktop, add the same executable path under \u{201C}mcpServers\u{201D} in claude_desktop_config.json.")
+                    .font(.harcCaption)
+                    .foregroundStyle(Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, HarcSpacing.xs)
+        } header: {
+            Text("Connect Agents (MCP)")
+        }
+    }
+
+    /// Resolved from the running bundle so dev builds show their real path.
+    private var mcpAddCommand: String {
+        let path = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/harc-mcp").path
+        return "claude mcp add harc -- \(path)"
     }
 
     // MARK: - Troubleshooting

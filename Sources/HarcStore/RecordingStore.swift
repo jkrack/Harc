@@ -7,6 +7,11 @@ import GRDB
 public actor RecordingStore {
     private let dbQueue: DatabaseQueue
 
+    /// Distributed-notification name harc-mcp posts after a successful write.
+    /// GRDB's ValueObservation only sees this process's commits, so the app
+    /// observes this to refetch after an agent edits the library.
+    public static let externalChangeNotification = "com.harc.storeDidChangeExternally"
+
     /// Default database location: `~/Library/Application Support/Harc/Harc.db`.
     public static func defaultURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -19,7 +24,13 @@ public actor RecordingStore {
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let dbq: DatabaseQueue
         do {
-            dbq = try DatabaseQueue(path: url.path)
+            // Busy timeout because the DB is no longer single-process: the
+            // harc-mcp agent bridge opens the same file from its own process.
+            // Without it, a write colliding with the other process's lock
+            // fails immediately with SQLITE_BUSY instead of waiting its turn.
+            var config = Configuration()
+            config.busyMode = .timeout(5)
+            dbq = try DatabaseQueue(path: url.path, configuration: config)
         } catch {
             throw StoreError.databaseOpenFailed(error.localizedDescription)
         }
@@ -148,6 +159,11 @@ public actor RecordingStore {
     private func reprojectOKF(id: Int64) async {
         guard let rec = try? await fetch(id: id) else { return }
         OKFProjection.write(recording: rec)
+        // A retitled/retagged member changes the session document's link
+        // list and tag union — cascade to the owning session, if any.
+        if let sessionID = try? await sessionID(forRecording: id) {
+            await reprojectSessionOKF(id: sessionID)
+        }
     }
 
     /// Post-process path: set the NLTagger-derived title hint. No `notFound`
@@ -210,6 +226,53 @@ public actor RecordingStore {
             try db.execute(
                 sql: "UPDATE recordings SET speaker_names = ?, updated_at = ? WHERE id = ?",
                 arguments: [json, Date(), id]
+            )
+        }
+        await reprojectOKF(id: id)
+    }
+
+    // MARK: - Notes
+
+    /// Replace the free-form notes (the in-app editor's save path). Empty or
+    /// whitespace-only clears the column.
+    public func updateNotes(id: Int64, markdown: String?) async throws {
+        let trimmed = markdown?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (trimmed?.isEmpty == false) ? markdown : nil
+        try await dbQueue.write { db in
+            let count = try Recording.filter(key: id).updateAll(
+                db,
+                [
+                    Recording.Columns.notesMarkdown.set(to: value),
+                    Recording.Columns.updatedAt.set(to: Date()),
+                ]
+            )
+            guard count > 0 else { throw StoreError.notFound }
+        }
+        await reprojectOKF(id: id)
+    }
+
+    /// Append a block to the notes (harc-mcp's path — append-only there, so
+    /// an agent can never destroy what a user wrote). The block lands after
+    /// a blank line; formatting/attribution is the caller's job.
+    public func appendNote(id: Int64, block: String) async throws {
+        let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        try await dbQueue.write { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT notes_markdown FROM recordings WHERE id = ?",
+                arguments: [id]
+            ) else { throw StoreError.notFound }
+            let existing: String? = row["notes_markdown"]
+            let combined: String
+            if let existing, !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                combined = existing.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + trimmed
+            } else {
+                combined = trimmed
+            }
+            try db.execute(
+                sql: "UPDATE recordings SET notes_markdown = ?, updated_at = ? WHERE id = ?",
+                arguments: [combined, Date(), id]
             )
         }
         await reprojectOKF(id: id)

@@ -369,6 +369,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var summarizerService: SummarizerService?
     private var summarizationQueue: SummarizationQueue?
     private var summarizationQueueStore: SummarizationQueueStore?
+    /// Second queue instance for session (multi-recording) summaries. Shares
+    /// the recording queue's `BackgroundWorkCoordinator`, so the one resident
+    /// model never runs two jobs at once.
+    private var sessionSummarizationQueue: SummarizationQueue?
     private var recoveryQueue: RecoveryQueue?
     private var memoryObservation: SummarizerService.MemoryPressureObservation?
     private let postProcessingState = RecordingPostProcessingState()
@@ -2767,7 +2771,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             importState: importState,
             onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) },
             onImportFiles: { [weak self] urls in self?.importMediaFiles(urls) },
-            onCancelImport: { [weak self] in self?.cancelImport() }
+            onCancelImport: { [weak self] in self?.cancelImport() },
+            onSummarizeSession: { [weak self] id in self?.enqueueSessionSummary(sessionID: id) }
         )
         harcWindow = controller
         controller.showWindow(nil)
@@ -2824,6 +2829,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             self.summarizerService = service
             self.summarizationQueue = queue
             self.summarizationQueueStore = await SummarizationQueueStore(queue: queue)
+            self.sessionSummarizationQueue = SummarizationQueue(
+                coordinator: coordinator,
+                perform: { [weak self] id in
+                    guard let self else { return }
+                    try await self.performSessionSummarization(id: id)
+                }
+            )
             observeModelPerformanceMode()
 
             // Failure surfaces now live on `summarizationQueueStore.lastFailures`
@@ -3052,6 +3064,143 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if let derived = TitleSuggester.fromSummary(result.summary) {
             try? await store.updateSuggestedTitle(id: id, title: derived)
         }
+    }
+
+    // MARK: - Session summarization
+
+    /// Public entry for the session detail pane's Summarize button and the
+    /// create-session auto-trigger. Clears stale status, then enqueues.
+    func enqueueSessionSummary(sessionID: Int64) {
+        Task {
+            guard let queue = sessionSummarizationQueue else {
+                try? await store?.updateSessionSummaryStatus(
+                    id: sessionID,
+                    kind: .failed,
+                    message: "The summarization queue is not available yet."
+                )
+                return
+            }
+            await queue.enqueue(sessionID)
+        }
+    }
+
+    /// The session queue's perform closure. Mirrors `performSummarization`
+    /// but assembles one combined prompt from every member recording's JSON
+    /// sidecar, with speaker labels resolved through People so the same
+    /// person reads as one speaker across sittings.
+    private func performSessionSummarization(id: Int64) async throws {
+        guard let store = self.store else { return }
+        guard let service = self.summarizerService else {
+            try? await store.updateSessionSummaryStatus(
+                id: id,
+                kind: .failed,
+                message: "The summarization service is not available."
+            )
+            return
+        }
+        do {
+            try await performSessionSummarizationBody(id: id, store: store, service: service)
+        } catch {
+            if !(error is CancellationError) {
+                try? await store.updateSessionSummaryStatus(
+                    id: id,
+                    kind: .failed,
+                    message: error.localizedDescription
+                )
+            }
+            throw error
+        }
+    }
+
+    private func performSessionSummarizationBody(
+        id: Int64,
+        store: RecordingStore,
+        service: SummarizerService
+    ) async throws {
+        guard try await store.session(id: id) != nil else { return }
+        let members = try await store.recordings(inSession: id)
+
+        var parts: [SessionPromptAssembler.Part] = []
+        for member in members {
+            guard let memberID = member.id, let jsonPath = member.jsonPath else { continue }
+            guard let transcript: SessionTranscript = try? await Task.detached(priority: .utility, operation: {
+                let data = try Data(contentsOf: URL(fileURLWithPath: jsonPath))
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .secondsSince1970
+                return try decoder.decode(SessionTranscript.self, from: data)
+            }).value else { continue }
+
+            // Resolve each diarization index through People > overrides >
+            // default. This is what unifies "Speaker 1 at 10am" and
+            // "Speaker 2 at 2pm" into one label when both link to a Person.
+            var names: [Int: String] = [:]
+            for index in Set(transcript.speakers.map(\.speaker)) {
+                names[index] = try? await store.resolvedSpeakerName(
+                    recordingID: memberID,
+                    speakerIndex: index
+                )
+            }
+
+            parts.append(.init(
+                joinedText: transcript.joinedText,
+                words: transcript.words,
+                speakers: transcript.speakers,
+                speakerNames: names.compactMapValues { $0 },
+                startedAt: member.startedAt
+            ))
+        }
+
+        guard !parts.isEmpty else {
+            try? await store.updateSessionSummaryStatus(
+                id: id,
+                kind: .skipped,
+                message: "No transcript sidecars were found for this session's recordings."
+            )
+            return
+        }
+
+        let promptTranscript = SessionPromptAssembler.make(parts: parts)
+        let sourceWordCount = parts
+            .map { $0.joinedText.split(whereSeparator: { $0.isWhitespace }).count }
+            .reduce(0, +)
+        guard sourceWordCount >= Self.minWordsToSummarize else {
+            try? await store.updateSessionSummaryStatus(
+                id: id,
+                kind: .skipped,
+                message: sourceWordCount == 0
+                    ? "The session's recordings contained no transcribable speech."
+                    : "The session is too short to summarize (\(sourceWordCount) words)."
+            )
+            return
+        }
+
+        let modelID = prefs.activeSummarizerID
+        guard let descriptor = await modelManager.descriptor(for: modelID) else {
+            try? await store.updateSessionSummaryStatus(
+                id: id,
+                kind: .skipped,
+                message: "The active summarizer model is unknown."
+            )
+            return
+        }
+        let directory = try await modelManager.requireInstalled(modelID)
+        let budgetWords = SummaryPrompt.budgetWords(contextTokens: descriptor.contextTokens)
+
+        let result = try await service.summarize(
+            transcript: promptTranscript,
+            modelID: modelID,
+            modelDirectory: directory,
+            budgetWords: budgetWords
+        )
+
+        try await store.updateSessionSummary(
+            id: id,
+            markdown: result.summary,
+            actionItemsMarkdown: ActionItemsMarkdown.render(result.actionItems),
+            modelID: modelID,
+            generatedAt: Date(),
+            sourceWordCount: sourceWordCount
+        )
     }
 
     /// Private helper — returns true when auto-summarize should fire. The

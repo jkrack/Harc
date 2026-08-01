@@ -4,6 +4,7 @@ struct PersistedLibrarySelection: Codable, Equatable {
     enum Kind: String, Codable {
         case recording
         case person
+        case session
     }
 
     var kind: Kind
@@ -22,6 +23,9 @@ struct PersistedLibrarySelection: Codable, Equatable {
         case .person(let id):
             kind = .person
             value = String(id)
+        case .session(let id):
+            kind = .session
+            value = String(id)
         }
     }
 
@@ -32,6 +36,9 @@ struct PersistedLibrarySelection: Codable, Equatable {
         case .person:
             guard let id = Int64(value) else { return nil }
             return .person(id: id)
+        case .session:
+            guard let id = Int64(value) else { return nil }
+            return .session(id: id)
         }
     }
 }
@@ -88,12 +95,14 @@ enum LibraryNavigationResolver {
         restored: LibrarySelection?,
         recordingPaths: Set<String>,
         personIDs: Set<Int64>,
+        sessionIDs: Set<Int64> = [],
         fallbackRecordingPath: String?
     ) -> LibrarySelection? {
         if let restored, isValid(
             restored,
             recordingPaths: recordingPaths,
-            personIDs: personIDs
+            personIDs: personIDs,
+            sessionIDs: sessionIDs
         ) {
             return restored
         }
@@ -106,7 +115,8 @@ enum LibraryNavigationResolver {
     static func isValid(
         _ selection: LibrarySelection,
         recordingPaths: Set<String>,
-        personIDs: Set<Int64>
+        personIDs: Set<Int64>,
+        sessionIDs: Set<Int64> = []
     ) -> Bool {
         switch selection {
         case .live:
@@ -118,6 +128,8 @@ enum LibraryNavigationResolver {
             return recordingPaths.contains(wavPath)
         case .person(let id):
             return personIDs.contains(id)
+        case .session(let id):
+            return sessionIDs.contains(id)
         }
     }
 }

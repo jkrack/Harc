@@ -16,6 +16,7 @@ let package = Package(
         .library(name: "HarcSummarize", targets: ["HarcSummarize"]),
         .library(name: "HarcVoiceprint", targets: ["HarcVoiceprint"]),
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
+        .executable(name: "harc-mcp", targets: ["HarcMCP"]),
     ],
     dependencies: [
         .package(
@@ -41,6 +42,10 @@ let package = Package(
         .package(
             url: "https://github.com/huggingface/swift-transformers.git",
             from: "1.3.0"
+        ),
+        .package(
+            url: "https://github.com/modelcontextprotocol/swift-sdk.git",
+            .upToNextMinor(from: "0.12.1")
         ),
     ],
     targets: [
@@ -96,6 +101,14 @@ let package = Package(
             dependencies: [
                 "HarcCore",
                 .product(name: "FluidAudio", package: "FluidAudio"),
+            ]
+        ),
+        .executableTarget(
+            name: "HarcMCP",
+            dependencies: [
+                "HarcCore",
+                "HarcStore",
+                .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
         .target(
@@ -163,6 +176,10 @@ let package = Package(
         .testTarget(
             name: "HarcStoreTests",
             dependencies: ["HarcStore", "HarcCore"]
+        ),
+        .testTarget(
+            name: "HarcMCPTests",
+            dependencies: ["HarcMCP", "HarcStore", "HarcCore"]
         ),
     ]
 )

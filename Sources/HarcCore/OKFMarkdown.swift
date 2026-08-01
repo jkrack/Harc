@@ -21,6 +21,7 @@ public enum OKFMarkdown {
         public var tags: [String]
         public var summaryMarkdown: String?
         public var actionItemsMarkdown: String?
+        public var notesMarkdown: String?
         public var transcript: String
 
         public init(
@@ -30,6 +31,7 @@ public enum OKFMarkdown {
             tags: [String] = [],
             summaryMarkdown: String? = nil,
             actionItemsMarkdown: String? = nil,
+            notesMarkdown: String? = nil,
             transcript: String
         ) {
             self.title = title
@@ -38,6 +40,7 @@ public enum OKFMarkdown {
             self.tags = tags
             self.summaryMarkdown = summaryMarkdown
             self.actionItemsMarkdown = actionItemsMarkdown
+            self.notesMarkdown = notesMarkdown
             self.transcript = transcript
         }
     }
@@ -68,8 +71,109 @@ public enum OKFMarkdown {
            !a.isEmpty {
             sections.append("## Action Items\n\n\(a)")
         }
+        if let n = f.notesMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !n.isEmpty {
+            sections.append("## Notes\n\n\(n)")
+        }
         let transcript = f.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         sections.append("\(transcriptHeader)\n\n\(transcript)")
+        return sections.joined(separator: "\n\n") + "\n"
+    }
+
+    // MARK: - Session documents
+
+    public static let sessionDocumentType = "Session"
+
+    /// One member link in a session document's `## Recordings` section.
+    public struct SessionLink: Sendable {
+        /// The member document's filename within the same day directory,
+        /// e.g. `"10-04-00.md"`.
+        public var fileName: String
+        public var title: String
+        /// Optional secondary text after the link, e.g. `"10:04 AM · 42 min"`.
+        public var detail: String?
+
+        public init(fileName: String, title: String, detail: String? = nil) {
+            self.fileName = fileName
+            self.title = title
+            self.detail = detail
+        }
+    }
+
+    public struct SessionFields: Sendable {
+        public var title: String
+        public var startedAt: Date?
+        public var tags: [String]
+        public var summaryMarkdown: String?
+        public var actionItemsMarkdown: String?
+        public var notesMarkdown: String?
+        public var recordings: [SessionLink]
+
+        public init(
+            title: String,
+            startedAt: Date? = nil,
+            tags: [String] = [],
+            summaryMarkdown: String? = nil,
+            actionItemsMarkdown: String? = nil,
+            notesMarkdown: String? = nil,
+            recordings: [SessionLink] = []
+        ) {
+            self.title = title
+            self.startedAt = startedAt
+            self.tags = tags
+            self.summaryMarkdown = summaryMarkdown
+            self.actionItemsMarkdown = actionItemsMarkdown
+            self.notesMarkdown = notesMarkdown
+            self.recordings = recordings
+        }
+    }
+
+    /// Render a session document — a grouping projection over a day's
+    /// recordings. Deliberately carries no transcript section: the member
+    /// documents own their transcripts, and duplicating an hour of text
+    /// into a second file that must be kept in sync is the failure mode
+    /// OKF projections exist to avoid.
+    public static func renderSession(_ f: SessionFields) -> String {
+        var front: [String] = ["---", "type: \(sessionDocumentType)"]
+        front.append("title: \(yamlString(f.title))")
+        let tags = f.tags.filter { !$0.isEmpty }
+        if !tags.isEmpty {
+            front.append("tags: [\(tags.map(yamlString).joined(separator: ", "))]")
+        }
+        if let date = f.startedAt {
+            front.append("timestamp: \(iso8601.string(from: date))")
+        }
+        if !f.recordings.isEmpty {
+            front.append("recordings:")
+            for link in f.recordings {
+                front.append("  - ./\(link.fileName)")
+            }
+        }
+        front.append("---")
+
+        var sections: [String] = [front.joined(separator: "\n")]
+        if let s = f.summaryMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !s.isEmpty {
+            sections.append("## Summary\n\n\(s)")
+        }
+        if let a = f.actionItemsMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !a.isEmpty {
+            sections.append("## Action Items\n\n\(a)")
+        }
+        if let n = f.notesMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !n.isEmpty {
+            sections.append("## Notes\n\n\(n)")
+        }
+        if !f.recordings.isEmpty {
+            let lines = f.recordings.map { link in
+                var line = "- [\(link.title)](./\(link.fileName))"
+                if let detail = link.detail, !detail.isEmpty {
+                    line += " — \(detail)"
+                }
+                return line
+            }
+            sections.append("## Recordings\n\n\(lines.joined(separator: "\n"))")
+        }
         return sections.joined(separator: "\n\n") + "\n"
     }
 

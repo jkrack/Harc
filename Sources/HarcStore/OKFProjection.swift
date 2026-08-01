@@ -45,6 +45,7 @@ public enum OKFProjection {
             tags: tags,
             summaryMarkdown: recording.summaryMarkdown,
             actionItemsMarkdown: recording.actionItemsMarkdown,
+            notesMarkdown: recording.notesMarkdown,
             transcript: transcript
         ))
 

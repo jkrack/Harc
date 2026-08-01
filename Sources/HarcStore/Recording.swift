@@ -16,6 +16,9 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var speakerNames: [Int: String] = [:]
     public var summaryMarkdown: String?
     public var actionItemsMarkdown: String?
+    /// Free-form user/agent notes. Users edit in the detail pane; agents
+    /// append via harc-mcp. Projected as the OKF `## Notes` section.
+    public var notesMarkdown: String?
     public var summaryModelID: String?
     public var summaryGeneratedAt: Date?
     public var summarySourceWordCount: Int?
@@ -50,6 +53,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         updatedAt: Date = Date(),
         summaryMarkdown: String? = nil,
         actionItemsMarkdown: String? = nil,
+        notesMarkdown: String? = nil,
         summaryModelID: String? = nil,
         summaryGeneratedAt: Date? = nil,
         summarySourceWordCount: Int? = nil,
@@ -71,6 +75,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.speakerNames = speakerNames
         self.summaryMarkdown = summaryMarkdown
         self.actionItemsMarkdown = actionItemsMarkdown
+        self.notesMarkdown = notesMarkdown
         self.summaryModelID = summaryModelID
         self.summaryGeneratedAt = summaryGeneratedAt
         self.summarySourceWordCount = summarySourceWordCount
@@ -198,6 +203,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         self.summaryMarkdown = try c.decodeIfPresent(String.self, forKey: .summaryMarkdown)
         self.actionItemsMarkdown = try c.decodeIfPresent(String.self, forKey: .actionItemsMarkdown)
+        self.notesMarkdown = try c.decodeIfPresent(String.self, forKey: .notesMarkdown)
         self.summaryModelID = try c.decodeIfPresent(String.self, forKey: .summaryModelID)
         if let ms = try c.decodeIfPresent(Int64.self, forKey: .summaryGeneratedAt) {
             self.summaryGeneratedAt = Date(timeIntervalSince1970: Double(ms) / 1000.0)
@@ -266,6 +272,7 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         try c.encode(updatedAt, forKey: .updatedAt)
         try c.encodeIfPresent(summaryMarkdown, forKey: .summaryMarkdown)
         try c.encodeIfPresent(actionItemsMarkdown, forKey: .actionItemsMarkdown)
+        try c.encodeIfPresent(notesMarkdown, forKey: .notesMarkdown)
         try c.encodeIfPresent(summaryModelID, forKey: .summaryModelID)
         if let d = summaryGeneratedAt {
             let ms = Int64(d.timeIntervalSince1970 * 1000)
@@ -320,6 +327,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         case updatedAt = "updated_at"
         case summaryMarkdown = "summary_markdown"
         case actionItemsMarkdown = "action_items_markdown"
+        case notesMarkdown = "notes_markdown"
         case summaryModelID = "summary_model_id"
         case summaryGeneratedAt = "summary_generated_at"
         case summarySourceWordCount = "summary_source_word_count"
@@ -349,6 +357,7 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let updatedAt = Column("updated_at")
         static let summaryMarkdown = Column("summary_markdown")
         static let actionItemsMarkdown = Column("action_items_markdown")
+        static let notesMarkdown = Column("notes_markdown")
         static let summaryModelID = Column("summary_model_id")
         static let summaryGeneratedAt = Column("summary_generated_at")
         static let summarySourceWordCount = Column("summary_source_word_count")

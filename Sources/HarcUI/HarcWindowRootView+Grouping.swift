@@ -13,57 +13,83 @@ extension HarcWindowRootView {
     struct DateBucket {
         let label: String
         let recordings: [Recording]
+        /// Sessions whose day falls in this bucket — rendered first, as peer
+        /// rows above the individual recordings (no disclosure nesting).
+        let sessions: [SessionOverview]
+
+        init(label: String, recordings: [Recording], sessions: [SessionOverview] = []) {
+            self.label = label
+            self.recordings = recordings
+            self.sessions = sessions
+        }
     }
 
     /// Groups recordings (assumed already sorted newest-first by the VM) into
     /// human-readable date buckets: Today, Yesterday, This Week, then
-    /// month-and-year labels for older entries.
-    static func dateBuckets(from recordings: [Recording]) -> [DateBucket] {
+    /// month-and-year labels for older entries. Sessions land in the same
+    /// buckets keyed off their local day.
+    static func dateBuckets(from recordings: [Recording], sessions: [SessionOverview] = []) -> [DateBucket] {
         let cal = Calendar.current
         let now = Date()
         guard let yesterday = cal.date(byAdding: .day, value: -1, to: now),
               let weekStart = cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))
         else {
-            return [DateBucket(label: "All", recordings: recordings)]
+            return [DateBucket(label: "All", recordings: recordings, sessions: sessions)]
         }
-
-        var today: [Recording] = []
-        var yesterdayBucket: [Recording] = []
-        var thisWeek: [Recording] = []
-        var older: [String: [Recording]] = [:]
-        var olderOrder: [String] = []
 
         let monthFormatter = DateFormatter()
         monthFormatter.dateFormat = "MMMM yyyy"
 
-        for rec in recordings {
-            let date = rec.startedAt
-            if cal.isDate(date, inSameDayAs: now) {
-                today.append(rec)
-            } else if cal.isDate(date, inSameDayAs: yesterday) {
-                yesterdayBucket.append(rec)
-            } else if date >= weekStart {
-                thisWeek.append(rec)
-            } else {
-                let label = monthFormatter.string(from: date)
-                if older[label] == nil {
-                    older[label] = []
-                    olderOrder.append(label)
-                }
-                older[label]!.append(rec)
-            }
+        func label(for date: Date) -> String {
+            if cal.isDate(date, inSameDayAs: now) { return "Today" }
+            if cal.isDate(date, inSameDayAs: yesterday) { return "Yesterday" }
+            if date >= weekStart { return "This Week" }
+            return monthFormatter.string(from: date)
         }
 
-        var buckets: [DateBucket] = []
-        if !today.isEmpty { buckets.append(DateBucket(label: "Today", recordings: today)) }
-        if !yesterdayBucket.isEmpty { buckets.append(DateBucket(label: "Yesterday", recordings: yesterdayBucket)) }
-        if !thisWeek.isEmpty { buckets.append(DateBucket(label: "This Week", recordings: thisWeek)) }
-        for label in olderOrder {
-            if let recs = older[label], !recs.isEmpty {
-                buckets.append(DateBucket(label: label, recordings: recs))
-            }
+        var recordingsByLabel: [String: [Recording]] = [:]
+        var sessionsByLabel: [String: [SessionOverview]] = [:]
+        var order: [String] = []
+
+        func noteLabel(_ l: String) {
+            if !order.contains(l) { order.append(l) }
         }
-        return buckets
+
+        for rec in recordings {
+            let l = label(for: rec.startedAt)
+            noteLabel(l)
+            recordingsByLabel[l, default: []].append(rec)
+        }
+        for overview in sessions {
+            guard let day = LibraryViewModel.dayDate(fromKey: overview.session.day) else { continue }
+            let l = label(for: day.addingTimeInterval(12 * 3600))
+            noteLabel(l)
+            sessionsByLabel[l, default: []].append(overview)
+        }
+
+        // Named buckets keep their fixed precedence; month buckets keep the
+        // newest-first order they were first seen in.
+        let fixed = ["Today", "Yesterday", "This Week"]
+        var ordered: [String] = fixed.filter { order.contains($0) }
+        ordered.append(contentsOf: order.filter { !fixed.contains($0) })
+
+        return ordered.map { l in
+            DateBucket(
+                label: l,
+                recordings: recordingsByLabel[l] ?? [],
+                sessions: sessionsByLabel[l] ?? []
+            )
+        }
+    }
+
+    /// The session row's secondary line: "N recordings · total duration".
+    static func sessionSecondaryLine(for overview: SessionOverview) -> String {
+        var parts: [String] = [Pluralize.count(overview.memberIDs.count, "recording")]
+        if overview.totalSeconds > 0 {
+            let anchor = Date(timeIntervalSince1970: 0)
+            parts.append(formatDuration(from: anchor, to: anchor.addingTimeInterval(overview.totalSeconds)))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private static let relativeFormatter: RelativeDateTimeFormatter = {

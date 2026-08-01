@@ -11,6 +11,9 @@ enum LibraryMutationAction: Equatable {
     case linkSpeaker
     case createAndLinkPerson(String)
     case unlinkSpeaker
+    case createSession
+    case dissolveSession(String)
+    case renameSession(String)
 
     var title: String {
         switch self {
@@ -34,6 +37,12 @@ enum LibraryMutationAction: Equatable {
             return "Could not create person"
         case .unlinkSpeaker:
             return "Could not unlink speaker"
+        case .createSession:
+            return "Could not create session"
+        case .dissolveSession:
+            return "Could not dissolve session"
+        case .renameSession:
+            return "Could not rename session"
         }
     }
 
@@ -43,13 +52,16 @@ enum LibraryMutationAction: Equatable {
              .pinRecording(let value),
              .clearSummary(let value),
              .addPerson(let value),
-             .createAndLinkPerson(let value):
+             .createAndLinkPerson(let value),
+             .dissolveSession(let value),
+             .renameSession(let value):
             return value
         case .renameSpeaker,
              .confirmSpeakerSuggestion,
              .dismissSpeakerSuggestion,
              .linkSpeaker,
-             .unlinkSpeaker:
+             .unlinkSpeaker,
+             .createSession:
             return nil
         }
     }

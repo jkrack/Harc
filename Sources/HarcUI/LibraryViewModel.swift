@@ -36,6 +36,10 @@ public enum LibraryFilter: Equatable, Sendable {
 public final class LibraryViewModel: ObservableObject {
     @Published public var searchText: String = ""
     @Published public private(set) var recordings: [Recording] = []
+    /// Virtual day sessions, newest first, with member counts/durations.
+    /// Rendered as peer rows inside the sidebar's day buckets; observation
+    /// mirrors `recordings`.
+    @Published public private(set) var sessions: [SessionOverview] = []
     @Published public private(set) var totalBytes: Int64 = 0
     /// Populated only when `searchText` is non-empty. BM25-ranked.
     @Published public private(set) var hits: [TranscriptHit] = []
@@ -55,6 +59,7 @@ public final class LibraryViewModel: ObservableObject {
 
     public let store: RecordingStore
     private var observationTask: Task<Void, Never>?
+    private var sessionObservationTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -93,12 +98,45 @@ public final class LibraryViewModel: ObservableObject {
             }
         }
 
+        sessionObservationTask = Task { [weak self, store] in
+            guard let self else { return }
+            for await list in store.observeSessionOverviews() {
+                await MainActor.run {
+                    self.sessions = list
+                }
+            }
+        }
+
+        // harc-mcp writes from its own process; GRDB's observation is blind
+        // to those commits, so the agent bridge posts a distributed
+        // notification after each write and we refetch here.
+        DistributedNotificationCenter.default()
+            .publisher(for: Notification.Name(RecordingStore.externalChangeNotification))
+            .sink { [weak self] _ in
+                self?.refreshAfterExternalChange()
+            }
+            .store(in: &cancellables)
+
         Task { [weak self] in await self?.refreshDaysWithRecordings() }
+    }
+
+    /// Refetch everything the observations would have delivered had the
+    /// write happened in-process.
+    private func refreshAfterExternalChange() {
+        performSearch(searchText)
+        Task { [weak self, store] in
+            guard let self else { return }
+            if let overviews = try? await store.sessionOverviews() {
+                await MainActor.run { self.sessions = overviews }
+            }
+        }
     }
 
     public func stop() {
         observationTask?.cancel()
         observationTask = nil
+        sessionObservationTask?.cancel()
+        sessionObservationTask = nil
         searchTask?.cancel()
         cancellables.removeAll()
     }
@@ -236,5 +274,49 @@ public final class LibraryViewModel: ObservableObject {
 
     public func delete(recording: Recording) async throws {
         try await RecordingDeletionService(store: store).delete(recording: recording)
+    }
+
+    // MARK: Sessions (pass-through to store)
+
+    @discardableResult
+    public func createSession(recordingIDs: [Int64], title: String?) async throws -> Int64 {
+        try await store.createSession(recordingIDs: recordingIDs, title: title)
+    }
+
+    public func deleteSession(id: Int64) async throws {
+        try await store.deleteSession(id: id)
+    }
+
+    public func renameSession(id: Int64, title: String?) async throws {
+        try await store.updateSessionTitle(id: id, title: title)
+    }
+
+    /// Sessions passing the active date filter. Sessions carry a day key,
+    /// not a timestamp — the filter is evaluated against that local day.
+    public var filteredSessions: [SessionOverview] {
+        sessions.filter { overview in
+            guard let day = Self.dayDate(fromKey: overview.session.day) else { return false }
+            switch filter {
+            case .pinned:
+                return false  // sessions have no pin
+            case .all, .today, .yesterday, .thisWeek, .day:
+                // Reuse the recording matcher by probing with noon of the
+                // session's day (noon dodges DST-edge midnight ambiguity).
+                let probe = day.addingTimeInterval(12 * 3600)
+                let stand = Recording(wavPath: "", startedAt: probe)
+                return filter.matches(stand)
+            }
+        }
+    }
+
+    /// Parse a `"YYYY-MM-DD"` session day key to local midnight.
+    static func dayDate(fromKey key: String) -> Date? {
+        let parts = key.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        var comps = DateComponents()
+        comps.year = parts[0]
+        comps.month = parts[1]
+        comps.day = parts[2]
+        return Calendar.current.date(from: comps)
     }
 }
