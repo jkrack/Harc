@@ -110,6 +110,15 @@ public struct DictationHUDView: View {
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+            } else if let partial = state.livePartialText {
+                // Streaming preview (#97): the words so far, freshest end
+                // visible. The growing text itself is the liveness signal —
+                // the pulsing dot still says "recording".
+                Text(partial)
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.head)
             } else if state.levelHistory.isEmpty {
                 statusLine
             } else {

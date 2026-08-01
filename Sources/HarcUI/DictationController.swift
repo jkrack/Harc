@@ -74,6 +74,7 @@ public final class DictationController {
     public var onNeedsAccessibility: () -> Void = {}
 
     private var activeRecorder: (any DictationRecording)?
+    private var partialPreviewTask: Task<Void, Never>?
     private var levelsTask: Task<Void, Never>?
     /// Mode override for the current session (per-mode hotkey). One-shot:
     /// consumed by this session only, never persisted as the active mode.
@@ -410,6 +411,34 @@ public final class DictationController {
             if case .listening = state.phase {
                 state.setPhase(.error(Self.hudMessage(for: error)))
             }
+            return
+        }
+        startPartialPreview(recorder: recorder)
+    }
+
+    /// Streaming preview (#97, HUD half): while listening, transcribe the
+    /// growing capture every second and show the words so far in the pill.
+    /// Best-effort and display-only — failures are skipped silently, and
+    /// the inserted text always comes from the full-clip transcribe at
+    /// stop. Windows are sliced with WAVChunker so the daemon never sees
+    /// the writer's unfinalized WAV header.
+    private func startPartialPreview(recorder: any DictationRecording) {
+        partialPreviewTask?.cancel()
+        partialPreviewTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(900))
+                guard let self, !Task.isCancelled else { return }
+                guard case .listening = self.state.phase else { return }
+                guard let url = await recorder.currentAudioURL() else { continue }
+                let chunker = WAVChunker(audioURL: url, chunkDurationSeconds: 60)
+                guard let window = try? await chunker.previewWindow(fromMs: 0, maxSeconds: 600)
+                else { continue }
+                defer { try? FileManager.default.removeItem(at: window.audioURL) }
+                guard let text = try? await self.transcribe(window.audioURL.path) else { continue }
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard case .listening = self.state.phase, !trimmed.isEmpty else { continue }
+                self.state.setLivePartial(trimmed)
+            }
         }
     }
 
@@ -672,6 +701,8 @@ public final class DictationController {
     private func cleanup() {
         levelsTask?.cancel()
         levelsTask = nil
+        partialPreviewTask?.cancel()
+        partialPreviewTask = nil
         activeRecorder = nil
     }
 

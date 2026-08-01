@@ -17,6 +17,13 @@ public protocol DictationRecording: Sendable {
     func stop() async throws -> URL
     /// Stop capture and discard the file.
     func cancel() async
+    /// The growing capture WAV while recording — the streaming-preview
+    /// pass reads windows out of it (#97). Nil when unsupported or idle.
+    func currentAudioURL() async -> URL?
+}
+
+public extension DictationRecording {
+    func currentAudioURL() async -> URL? { nil }
 }
 
 public actor MicDictationRecorder: DictationRecording {
@@ -62,6 +69,10 @@ public actor MicDictationRecorder: DictationRecording {
         } catch {
             // Best-effort: drop a bad buffer rather than tearing down capture.
         }
+    }
+
+    public func currentAudioURL() async -> URL? {
+        cacheURL
     }
 
     public func stop() async throws -> URL {

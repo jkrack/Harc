@@ -58,6 +58,10 @@ public final class DictationState: ObservableObject {
     /// Transient non-fatal note (e.g. "mode fell back to raw text"). Rendered
     /// in the delivery end-state; cleared on the next fresh start.
     @Published public private(set) var notice: String?
+    /// Streaming preview of the words so far while listening (#97) —
+    /// best-effort, cleared on every phase exit. Display-only: the final
+    /// transcript always comes from the full-clip transcribe at stop.
+    @Published public private(set) var livePartialText: String?
     /// Working context captured at dictation start (Super Mode). Empty when
     /// the active mode doesn't request context or capture was skipped.
     /// Drives the HUD context indicator; cleared when the session ends.
@@ -102,13 +106,19 @@ public final class DictationState: ObservableObject {
             confirmingCancel = false
             sessionModeOverride = nil
             sessionModeViaRule = false
+            livePartialText = nil
         case .requestingMic:
             notice = nil
             confirmingCancel = false
+            livePartialText = nil
         case .listening, .loadingModel, .loadingTransformModel, .transcribing,
              .transforming, .inserting:
             break
         }
+    }
+
+    public func setLivePartial(_ text: String?) {
+        livePartialText = text
     }
 
     public func setSessionModeOverride(_ mode: DictationMode?, viaRule: Bool) {
