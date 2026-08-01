@@ -145,7 +145,18 @@ server, `harc-mcp` (inside the app at `Contents/MacOS/harc-mcp`). Register it
 with the agent you already run:
 
 ```
-claude mcp add harc -- /Applications/Harc.app/Contents/MacOS/harc-mcp
+claude mcp add --scope user harc -- /Applications/Harc.app/Contents/MacOS/harc-mcp
+```
+
+(`--scope user` registers it for every project; the default scope is the
+current directory only.) The same server as JSON — paste into a project's
+`.mcp.json`, Claude Desktop's `claude_desktop_config.json` (under
+`mcpServers`), or `claude mcp add-json harc '<json>'`:
+
+```json
+{
+  "command": "/Applications/Harc.app/Contents/MacOS/harc-mcp"
+}
 ```
 
 It exposes hybrid search plus store-mediated writes — titles, tags, speaker

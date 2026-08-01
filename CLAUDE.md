@@ -172,6 +172,7 @@ Surfaces (post v0.9.0 overhaul — the audit-driven redesign):
   - **Dictation** — hotkey, trigger style, insertion, keep-warm, history
   - **Modes** — list, create/edit modes, per-mode hotkeys, per-app rules
   - **AI Models** — download/manage summarizer tiers, active model, auto-summarize
+  - **Agents** — connect MCP clients to the bundled harc-mcp bridge; the read/write contract for agents
   - **About** — version, updates, storage, permission repair
 
   The sidebar is searchable via `SettingsSearchIndex`, which maps the words

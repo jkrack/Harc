@@ -87,6 +87,8 @@ public struct HarcSettingsForm: View {
                 DictationModesSettingsView()
             case .ai:
                 AIModelsSettingsView()
+            case .agents:
+                AgentsSettingsView()
             case .about:
                 AboutSettingsView()
             }

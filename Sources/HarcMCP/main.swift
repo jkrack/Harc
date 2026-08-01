@@ -9,7 +9,7 @@ import MCP
 // It opens no network connections and holds no credentials: the agent
 // brings its own model, on its own account. Register with e.g.
 //
-//   claude mcp add harc -- /Applications/Harc.app/Contents/MacOS/harc-mcp
+//   claude mcp add --scope user harc -- /Applications/Harc.app/Contents/MacOS/harc-mcp
 //
 // The process lifetime is owned by the host: it serves until stdin closes.
 

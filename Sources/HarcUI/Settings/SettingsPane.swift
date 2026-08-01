@@ -9,6 +9,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Hashable, Sendable
     case dictation
     case modes
     case ai
+    case agents
     case about
 
     public var id: String { rawValue }
@@ -21,6 +22,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Hashable, Sendable
         case .dictation: return "Dictation"
         case .modes: return "Modes"
         case .ai: return "AI Models"
+        case .agents: return "Agents"
         case .about: return "About"
         }
     }
@@ -33,6 +35,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Hashable, Sendable
         case .dictation: return "mic"
         case .modes: return "sparkles"
         case .ai: return "brain"
+        case .agents: return "point.3.connected.trianglepath.dotted"
         case .about: return "info.circle"
         }
     }
@@ -145,10 +148,15 @@ enum SettingsSearchIndex {
         .init(pane: .ai, label: "Include summary in exports",
               keywords: ["prompt", "copy", "export", "markdown", "docx"]),
 
+        // Agents
+        .init(pane: .agents, label: "Connect an agent (MCP)",
+              keywords: ["mcp", "claude", "model context protocol", "connect",
+                         "chatgpt", "server", "bridge", "claude desktop", "claude code"]),
+        .init(pane: .agents, label: "What agents can read and write",
+              keywords: ["tools", "search", "notes", "append", "write back",
+                         "read-only", "transcript", "permissions"]),
+
         // About
-        .init(pane: .about, label: "Connect agents (MCP)",
-              keywords: ["mcp", "claude", "agent", "model context protocol", "connect",
-                         "chatgpt", "server", "bridge", "tools"]),
         .init(pane: .about, label: "Check for updates",
               keywords: ["sparkle", "version", "upgrade", "release"]),
         .init(pane: .about, label: "Storage",
