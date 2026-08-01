@@ -635,10 +635,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func handleDidBecomeActive() {
         updateMenuBarReadiness()
         welcomeSetupModel?.refreshPermissions()
+        let snapshot = PermissionSnapshot.current()
         // A repair that has since been satisfied shouldn't keep nagging.
-        if PermissionSnapshot.current().coreGrantsIntact {
+        if snapshot.coreGrantsIntact {
             UserDefaults.standard.removeObject(forKey: RecordingPermissionRepair.pendingRepairKey)
         }
+        CoreGrantHistory.noteGranted(snapshot)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -2590,13 +2592,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             showWelcome(markAsFirstRun: true)
             return
         }
-        guard !PermissionSnapshot.current().coreGrantsIntact else { return }
+        let snapshot = PermissionSnapshot.current()
+        guard !snapshot.coreGrantsIntact else {
+            CoreGrantHistory.record(snapshot)
+            return
+        }
 
         // A reset deliberately revokes everything, so the repair path must
-        // appear no matter how many times the re-offer has already run. This
-        // used to be gated purely per-build, which meant the one flow that
-        // reliably needs guidance — right after the user asked us to wipe
-        // their grants — was the one flow that silently got none.
+        // appear no matter what the grant history says — right after the
+        // user asked us to wipe their grants is the one flow that reliably
+        // needs guidance.
         let defaults = UserDefaults.standard
         if defaults.bool(forKey: RecordingPermissionRepair.pendingRepairKey) {
             defaults.removeObject(forKey: RecordingPermissionRepair.pendingRepairKey)
@@ -2604,17 +2609,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
 
-        // Otherwise: core grants look broken without the user having asked
-        // for it — the classic delete-and-reinstall or re-signed-build case,
-        // where prefs survive but the TCC identity changed underneath them.
-        // Offer once per build so healthy installs and deliberate decliners
-        // aren't nagged.
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
-        guard UserDefaults.standard.string(forKey: Self.welcomeReofferKey) != build else { return }
+        // Otherwise: re-offer only when a grant this install has actually
+        // seen granted has gone missing — the delete-and-reinstall or
+        // re-signed-build case, where prefs survive but the TCC identity
+        // changed underneath them. "Never granted" is a standing choice, not
+        // breakage: the old once-per-build gate re-nagged deliberate
+        // decliners on every Sparkle update, because each update mints a
+        // fresh build number.
+        guard CoreGrantHistory.revocationDetected(current: snapshot) else {
+            CoreGrantHistory.record(snapshot)
+            return
+        }
+        // Deliberately NOT recording here — the welcome window's close
+        // observer records the baseline, so a flow the user never actually
+        // saw (crash, quit) doesn't consume the revocation evidence.
         showWelcome(markAsFirstRun: false)
     }
-
-    static let welcomeReofferKey = "harc.welcomeReofferedForBuild"
 
     private func showWelcome(markAsFirstRun: Bool) {
         if let controller = welcomeWindow, let window = controller.window {
@@ -2690,10 +2700,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 self?.welcomeSetupModel = nil
                 self?.welcomeCancellables.removeAll()
                 // Closing the window counts as answering the re-offer. The
-                // key is written here rather than at show time so a flow the
-                // user never actually saw through doesn't burn their one
-                // chance for this build.
-                self?.markWelcomeReofferSpent()
+                // baseline is written here rather than at show time so a
+                // flow the user never actually saw through doesn't consume
+                // the revocation evidence that summoned it.
+                CoreGrantHistory.record(PermissionSnapshot.current())
             }
         }
 
@@ -2705,7 +2715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func completeWelcomeFlow(openLibraryAfterClose: Bool) {
         prefs.completeWelcomeFlow()
-        markWelcomeReofferSpent()
+        // The window's willClose observer records the new grant baseline.
         welcomeWindow?.close()
         welcomeWindow = nil
         welcomeSetupModel = nil
@@ -2713,11 +2723,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if openLibraryAfterClose {
             openLibrary()
         }
-    }
-
-    private func markWelcomeReofferSpent() {
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
-        UserDefaults.standard.set(build, forKey: Self.welcomeReofferKey)
     }
 
     @objc private func openLibrary() {

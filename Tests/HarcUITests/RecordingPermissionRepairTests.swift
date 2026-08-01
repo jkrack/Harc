@@ -107,4 +107,102 @@ struct RecordingPermissionRepairTests {
             "Without this flag the post-reset launch shows no repair guidance."
         )
     }
+
+    // MARK: - Core grant history
+
+    /// The bug this guards: the welcome re-offer used to be gated once per
+    /// build, and every Sparkle update mints a new build number — so a user
+    /// who deliberately declined a grant got the full welcome flow again on
+    /// every single update. Revocation must mean granted → ungranted, not
+    /// merely "ungranted right now".
+    @Test("never-granted is a standing choice, not a revocation")
+    func neverGrantedIsNotARevocation() {
+        let suiteName = "RecordingPermissionRepairTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let declined = PermissionSnapshot(microphone: true, screenCapture: false, accessibility: false)
+
+        // No history at all — first launch of this mechanism.
+        #expect(!CoreGrantHistory.revocationDetected(current: declined, defaults: defaults))
+
+        // History agrees the grant was never there.
+        CoreGrantHistory.record(declined, defaults: defaults)
+        #expect(!CoreGrantHistory.revocationDetected(current: declined, defaults: defaults))
+    }
+
+    @Test("a grant seen granted that goes missing is a revocation")
+    func grantedToUngrantedIsARevocation() {
+        let suiteName = "RecordingPermissionRepairTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let healthy = PermissionSnapshot(microphone: true, screenCapture: true, accessibility: true)
+        CoreGrantHistory.record(healthy, defaults: defaults)
+
+        let micLost = PermissionSnapshot(microphone: false, screenCapture: true, accessibility: true)
+        let axLost = PermissionSnapshot(microphone: true, screenCapture: true, accessibility: false)
+        #expect(CoreGrantHistory.revocationDetected(current: micLost, defaults: defaults))
+        #expect(CoreGrantHistory.revocationDetected(current: axLost, defaults: defaults))
+    }
+
+    /// Screen capture degrades rather than breaks (`coreGrantsIntact`
+    /// excludes it), so losing it must not summon the welcome flow.
+    @Test("losing screen capture alone is not a revocation")
+    func screenCaptureLossIsNotARevocation() {
+        let suiteName = "RecordingPermissionRepairTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let healthy = PermissionSnapshot(microphone: true, screenCapture: true, accessibility: true)
+        CoreGrantHistory.record(healthy, defaults: defaults)
+
+        let scLost = PermissionSnapshot(microphone: true, screenCapture: false, accessibility: true)
+        #expect(!CoreGrantHistory.revocationDetected(current: scLost, defaults: defaults))
+    }
+
+    @Test("recording the ungranted state makes the nag one-shot")
+    func recordConsumesTheTransition() {
+        let suiteName = "RecordingPermissionRepairTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        CoreGrantHistory.record(
+            PermissionSnapshot(microphone: true, screenCapture: true, accessibility: true),
+            defaults: defaults
+        )
+        let revoked = PermissionSnapshot(microphone: false, screenCapture: true, accessibility: false)
+        #expect(CoreGrantHistory.revocationDetected(current: revoked, defaults: defaults))
+
+        // What the launch path does right after checking.
+        CoreGrantHistory.record(revoked, defaults: defaults)
+        #expect(!CoreGrantHistory.revocationDetected(current: revoked, defaults: defaults))
+    }
+
+    /// noteGranted runs on every app activation, including after a
+    /// mid-session revocation the user hasn't seen yet — it must never
+    /// downgrade a remembered grant, or the evidence would be erased before
+    /// the next launch could act on it.
+    @Test("noteGranted upgrades the baseline but never downgrades it")
+    func noteGrantedOnlyUpgrades() {
+        let suiteName = "RecordingPermissionRepairTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Mid-session grant with no prior history is remembered…
+        CoreGrantHistory.noteGranted(
+            PermissionSnapshot(microphone: true, screenCapture: false, accessibility: false),
+            defaults: defaults
+        )
+        // …and a later activation that reads everything as ungranted
+        // (mid-session revocation) must not forget it.
+        CoreGrantHistory.noteGranted(
+            PermissionSnapshot(microphone: false, screenCapture: false, accessibility: false),
+            defaults: defaults
+        )
+        #expect(CoreGrantHistory.revocationDetected(
+            current: PermissionSnapshot(microphone: false, screenCapture: false, accessibility: false),
+            defaults: defaults
+        ))
+    }
 }

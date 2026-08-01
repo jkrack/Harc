@@ -116,6 +116,59 @@ public struct PermissionSnapshot: Equatable, Sendable {
     }
 }
 
+/// The last core-grant state this install observed, persisted so launch can
+/// tell "TCC revoked a grant underneath us" (re-offer the welcome) apart from
+/// "the user never granted it" (a standing choice — leave them alone). The
+/// previous gate was once-per-build, and every Sparkle update mints a new
+/// build number, so deliberate decliners were re-shown the full welcome flow
+/// on every single update.
+public enum CoreGrantHistory {
+    public static let key = "harc.lastSeenCoreGrants"
+
+    /// True when a grant that was granted the last time we recorded is no
+    /// longer granted. No stored history means no verdict: nagging on the
+    /// first launch of this mechanism would hit every decliner once more.
+    public static func revocationDetected(
+        current: PermissionSnapshot,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard let last = defaults.dictionary(forKey: key) as? [String: Bool] else { return false }
+        return ((last["microphone"] ?? false) && !current.microphone)
+            || ((last["accessibility"] ?? false) && !current.accessibility)
+    }
+
+    /// Launch-time overwrite. Persisting the ungranted state right after the
+    /// launch check consumes the transition — that is what makes the re-offer
+    /// one nag per revocation event rather than one per launch.
+    public static func record(
+        _ current: PermissionSnapshot,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(
+            ["microphone": current.microphone, "accessibility": current.accessibility],
+            forKey: key
+        )
+    }
+
+    /// Activation-time merge: upgrades only. A grant seen granted stays
+    /// remembered granted until the launch check consumes the transition —
+    /// recording a mid-session revocation here would erase the evidence
+    /// before the next launch could act on it.
+    public static func noteGranted(
+        _ current: PermissionSnapshot,
+        defaults: UserDefaults = .standard
+    ) {
+        let last = defaults.dictionary(forKey: key) as? [String: Bool] ?? [:]
+        defaults.set(
+            [
+                "microphone": (last["microphone"] ?? false) || current.microphone,
+                "accessibility": (last["accessibility"] ?? false) || current.accessibility,
+            ],
+            forKey: key
+        )
+    }
+}
+
 struct RecordingPermissionRepairPlan: Equatable {
     var bundleID: String
     var services: [RecordingPermissionService]
