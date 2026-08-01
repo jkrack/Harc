@@ -2558,6 +2558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         window.setContentSize(NSSize(width: 760, height: 720))
         window.minSize = NSSize(width: 640, height: 560)
         window.isReleasedWhenClosed = false
+        positionSettingsWindow(window)
 
         let controller = NSWindowController(window: window)
         settingsWindow = controller
@@ -2575,6 +2576,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         window.makeKeyAndOrderFront(nil)
         trackManagedWindow(window)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// A brand-new NSWindow lands wherever AppKit's cascade left it — for a
+    /// menu-bar app that reads as a random corner. Settings belongs with the
+    /// window the user is working in: centered over the library when it's
+    /// open, centered on screen otherwise. Only runs at creation; re-showing
+    /// an open Settings window must not teleport a window the user placed.
+    private func positionSettingsWindow(_ window: NSWindow) {
+        guard let library = harcWindow?.window, library.isVisible else {
+            window.center()
+            return
+        }
+        let size = window.frame.size
+        var origin = NSPoint(
+            x: library.frame.midX - size.width / 2,
+            y: library.frame.midY - size.height / 2
+        )
+        // Keep it fully on the library's screen — a library dragged half
+        // off-screen must not take Settings with it.
+        if let visible = (library.screen ?? NSScreen.main)?.visibleFrame {
+            origin.x = min(max(origin.x, visible.minX), max(visible.maxX - size.width, visible.minX))
+            origin.y = min(max(origin.y, visible.minY), max(visible.maxY - size.height, visible.minY))
+        }
+        window.setFrameOrigin(origin)
     }
 
     @objc private func showWelcomeWindow(_ sender: Any?) {
