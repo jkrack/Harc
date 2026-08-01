@@ -56,7 +56,7 @@ if [[ ! -d "$APP_SRC" ]]; then
   exit 1
 fi
 
-for BIN in Harc harc-stt; do
+for BIN in Harc harc-stt harc-mcp; do
   ARCHS_FOUND="$(/usr/bin/lipo -archs "$APP_SRC/Contents/MacOS/$BIN")"
   if [[ "$ARCHS_FOUND" != "arm64" ]]; then
     echo "error: expected arm64-only $BIN binary, got: $ARCHS_FOUND" >&2
@@ -96,6 +96,9 @@ find "$APP_DST/Contents/Frameworks" -depth \
 
 codesign --force --options runtime --timestamp --sign "$IDENTITY" \
   "$APP_DST/Contents/MacOS/harc-stt"
+
+codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+  "$APP_DST/Contents/MacOS/harc-mcp"
 
 codesign --force --options runtime --timestamp \
   --entitlements HarcApp/Harc.entitlements \
