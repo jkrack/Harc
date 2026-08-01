@@ -13,15 +13,23 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
     @Binding public var text: String
     public let highlightRange: NSRange?
     public let onCommandClick: (Int) -> Void
+    /// Session time (ms) for a character offset, or nil to draw no stamp —
+    /// the timestamp gutter (audit P1-6). The caller returns nil while the
+    /// editor is dirty: offsets shift under edits and a stale WordIndex
+    /// would stamp the wrong times, the quiet cousin of the old
+    /// "timestamps approximate" banner.
+    public let timestampForOffset: ((Int) -> Int?)?
 
     public init(
         text: Binding<String>,
         highlightRange: NSRange?,
-        onCommandClick: @escaping (Int) -> Void
+        onCommandClick: @escaping (Int) -> Void,
+        timestampForOffset: ((Int) -> Int?)? = nil
     ) {
         self._text = text
         self.highlightRange = highlightRange
         self.onCommandClick = onCommandClick
+        self.timestampForOffset = timestampForOffset
     }
 
     public func makeNSView(context: Context) -> NSScrollView {
@@ -51,6 +59,16 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
 
         scroll.documentView = textView
         context.coordinator.textView = textView
+
+        if timestampForOffset != nil {
+            let ruler = TranscriptTimestampRuler(scrollView: scroll, orientation: .verticalRuler)
+            ruler.clientView = textView
+            ruler.textView = textView
+            scroll.verticalRulerView = ruler
+            scroll.hasVerticalRuler = true
+            scroll.rulersVisible = true
+        }
+
         Self.applySpeakerChannel(to: textView)
         return scroll
     }
@@ -62,6 +80,12 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
             textView.string = text
             textView.selectedRanges = selected
             Self.applySpeakerChannel(to: textView)
+        }
+        if let ruler = scrollView.verticalRulerView as? TranscriptTimestampRuler {
+            // Rebind every pass: the closure captures the current document
+            // and dirty state, both of which change under the same view.
+            ruler.timestampForOffset = timestampForOffset
+            ruler.needsDisplay = true
         }
         applyHighlight(on: textView, range: highlightRange, coordinator: context.coordinator)
     }
@@ -206,6 +230,80 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
             }
             TranscriptDetailEditor.applySpeakerChannel(to: tv)
         }
+    }
+}
+
+/// The timestamp gutter (audit P1-6): one quiet stamp per speaker-turn
+/// paragraph, derived from the same WordIndex that powers ⌘-click-to-seek,
+/// drawn in the margin the reading measure already creates. Presentation
+/// only — nothing enters the text storage.
+final class TranscriptTimestampRuler: NSRulerView {
+    weak var textView: NSTextView?
+    var timestampForOffset: ((Int) -> Int?)?
+
+    override init(scrollView: NSScrollView?, orientation: NSRulerView.Orientation) {
+        super.init(scrollView: scrollView, orientation: orientation)
+        ruleThickness = 52
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("not used")
+    }
+
+    override func drawHashMarksAndLabels(in rect: NSRect) {
+        guard let tv = textView,
+              let layout = tv.layoutManager,
+              let container = tv.textContainer,
+              let provider = timestampForOffset else { return }
+        let ns = tv.string as NSString
+        guard ns.length > 0 else { return }
+
+        let visibleGlyphs = layout.glyphRange(forBoundingRect: tv.visibleRect, in: container)
+        let visibleChars = layout.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+
+        // Walk paragraph starts from the first visible one; stamp each
+        // paragraph whose start resolves to a time.
+        var lineStart = ns.lineRange(for: NSRange(location: visibleChars.location, length: 0)).location
+        while lineStart < NSMaxRange(visibleChars) {
+            let lineRange = ns.lineRange(for: NSRange(location: lineStart, length: 0))
+            let next = NSMaxRange(lineRange)
+            defer { lineStart = max(next, lineStart + 1) }
+
+            let firstChar = ns.substring(with: NSRange(location: lineStart, length: min(1, lineRange.length)))
+            guard !firstChar.isEmpty, firstChar != "\n", let ms = provider(lineStart) else { continue }
+
+            let glyph = layout.glyphIndexForCharacter(at: lineStart)
+            var frag = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            frag.origin.y += tv.textContainerInset.height
+            let converted = convert(frag, from: tv)
+
+            let label = Self.format(ms: ms) as NSString
+            let size = label.size(withAttributes: attrs)
+            label.draw(
+                at: NSPoint(
+                    x: ruleThickness - size.width - 8,
+                    y: converted.minY + (frag.height - size.height) / 2
+                ),
+                withAttributes: attrs
+            )
+        }
+    }
+
+    /// "3:07" under an hour, "1:02:07" past it — the same shape the
+    /// waveform player uses.
+    static func format(ms: Int) -> String {
+        let total = max(0, ms) / 1_000
+        let h = total / 3_600
+        let m = (total / 60) % 60
+        let s = total % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%d:%02d", m, s)
     }
 }
 

@@ -265,7 +265,13 @@ extension HarcWindowRootView {
                     TranscriptDetailEditor(
                         text: $editorText,
                         highlightRange: editorHighlight,
-                        onCommandClick: { offset in seekToWord(atCharOffset: offset) }
+                        onCommandClick: { offset in seekToWord(atCharOffset: offset) },
+                        timestampForOffset: { offset in
+                            // Dirty edits shift offsets under the index —
+                            // no stamp beats a wrong stamp.
+                            guard !editorDirty else { return nil }
+                            return detailDocument?.wordIndex.wordAt(charOffset: offset)?.word.startMs
+                        }
                     )
                     .frame(maxWidth: 680)
                     Spacer(minLength: 0)

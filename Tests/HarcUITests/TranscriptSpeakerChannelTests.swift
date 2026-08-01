@@ -56,4 +56,14 @@ struct TranscriptSpeakerChannelTests {
         let typingColor = tv.typingAttributes[.foregroundColor] as? NSColor
         #expect(typingColor == NSColor.labelColor)
     }
+
+    // MARK: - Timestamp gutter (#104)
+
+    @Test("gutter stamps format like the player readout")
+    func gutterFormat() {
+        #expect(TranscriptTimestampRuler.format(ms: 0) == "0:00")
+        #expect(TranscriptTimestampRuler.format(ms: 187_000) == "3:07")
+        #expect(TranscriptTimestampRuler.format(ms: 3_727_000) == "1:02:07")
+        #expect(TranscriptTimestampRuler.format(ms: -50) == "0:00")
+    }
 }
