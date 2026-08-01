@@ -149,13 +149,21 @@ claude mcp add --scope user harc -- /Applications/Harc.app/Contents/MacOS/harc-m
 ```
 
 (`--scope user` registers it for every project; the default scope is the
-current directory only.) The same server as JSON — paste into a project's
-`.mcp.json`, Claude Desktop's `claude_desktop_config.json` (under
-`mcpServers`), or `claude mcp add-json harc '<json>'`:
+current directory only.)
+
+**Claude Desktop** has no command line — use the one-click **Add to Claude
+Desktop** button in Settings → Agents instead (it merges the entry into
+`~/Library/Application Support/Claude/claude_desktop_config.json`, backing
+the file up first; restart Desktop afterwards). For any other stdio MCP
+client — or a project `.mcp.json` — this block works verbatim:
 
 ```json
 {
-  "command": "/Applications/Harc.app/Contents/MacOS/harc-mcp"
+  "mcpServers": {
+    "harc": {
+      "command": "/Applications/Harc.app/Contents/MacOS/harc-mcp"
+    }
+  }
 }
 ```
 

@@ -10,6 +10,11 @@ import AppKit
 public struct AgentsSettingsView: View {
     @State private var didCopyCommand = false
     @State private var didCopyJSON = false
+    @State private var desktopStatus: ClaudeDesktopConfigurator.Status = .desktopNotFound
+    @State private var desktopJustAdded = false
+    @State private var desktopError: String?
+
+    private let desktopConfig = ClaudeDesktopConfigurator()
 
     public init() {}
 
@@ -27,10 +32,23 @@ public struct AgentsSettingsView: View {
         }
 
         Section {
+            // Claude Desktop first — it has no command line, so this is the
+            // one host where "here's a terminal command" goes nowhere. Harc
+            // writes the entry into Desktop's own config instead.
             VStack(alignment: .leading, spacing: HarcSpacing.sm) {
-                Text("For Claude Code, run:")
-                    .font(.harcLabel)
+                Text("Claude Desktop")
+                    .font(.harcBody)
+                desktopRow
+                Text("Claude Desktop reads its configuration at launch — restart it after adding, then Harc's tools appear in the search-and-tools menu.")
+                    .font(.harcCaption)
+                    .foregroundStyle(Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, HarcSpacing.xs)
 
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                Text("Claude Code")
+                    .font(.harcBody)
                 HStack(spacing: HarcSpacing.sm) {
                     Text(mcpAddCommand)
                         .font(.harcMono)
@@ -41,39 +59,30 @@ public struct AgentsSettingsView: View {
                         .padding(.vertical, HarcSpacing.xs)
                         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
                     Button(didCopyCommand ? "Copied" : "Copy") {
-                        let pb = NSPasteboard.general
-                        pb.clearContents()
-                        pb.setString(mcpAddCommand, forType: .string)
-                        didCopyCommand = true
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            didCopyCommand = false
-                        }
+                        copyToPasteboard(mcpAddCommand)
+                        flashCopied($didCopyCommand)
                     }
                     .controlSize(.small)
-                    // The same server as JSON — pastes cleanly into a
-                    // project .mcp.json or claude_desktop_config.json
-                    // without scope ambiguity.
-                    Button(didCopyJSON ? "Copied" : "Copy JSON") {
-                        let pb = NSPasteboard.general
-                        pb.clearContents()
-                        pb.setString(mcpServerJSON, forType: .string)
-                        didCopyJSON = true
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            didCopyJSON = false
-                        }
-                    }
-                    .controlSize(.small)
-                    .help("The server entry as JSON, for .mcp.json or claude_desktop_config.json")
                 }
-
-                Text("\u{201C}--scope user\u{201D} registers Harc for every project, not just the current directory. Verify with \u{201C}claude mcp get harc\u{201D}; a session already running when you add it needs a restart to discover the tools. For Claude Desktop, add the same executable path under \u{201C}mcpServers\u{201D} in claude_desktop_config.json. Any MCP client that speaks stdio works.")
+                Text("Run in a terminal. \u{201C}--scope user\u{201D} registers Harc for every project, not just the current directory. Verify with \u{201C}claude mcp get harc\u{201D}; a session already running when you add it needs a restart to discover the tools.")
                     .font(.harcCaption)
                     .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, HarcSpacing.xs)
 
-                Text("If your recordings folder lives in Documents, macOS may ask the agent's app — not Harc — for Documents access the first time an agent writes; grant it there. If it's denied, the database write still succeeds and the Markdown file catches up the next time Harc edits that recording.")
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                HStack(spacing: HarcSpacing.sm) {
+                    Text("Other MCP clients")
+                        .font(.harcBody)
+                    Button(didCopyJSON ? "Copied" : "Copy JSON") {
+                        copyToPasteboard(mcpServersJSON)
+                        flashCopied($didCopyJSON)
+                    }
+                    .controlSize(.small)
+                    .help("A complete mcpServers config block — valid as a project .mcp.json or merged into any MCP client's config")
+                }
+                Text("Copies a complete \u{201C}mcpServers\u{201D} block that works verbatim as a project .mcp.json and merges into any stdio MCP client's configuration.")
                     .font(.harcCaption)
                     .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -81,6 +90,10 @@ public struct AgentsSettingsView: View {
             .padding(.vertical, HarcSpacing.xs)
         } header: {
             Text("Connect an Agent (MCP)")
+        } footer: {
+            Text("If your recordings folder lives in Documents, macOS may ask the agent's app — not Harc — for Documents access the first time an agent writes; grant it there. If it's denied, the database write still succeeds and the Markdown file catches up the next time Harc edits that recording.")
+                .font(.harcLabel)
+                .foregroundStyle(Color.secondary)
         }
 
         Section {
@@ -116,6 +129,71 @@ public struct AgentsSettingsView: View {
         }
     }
 
+    // MARK: - Claude Desktop
+
+    @ViewBuilder
+    private var desktopRow: some View {
+        HStack(spacing: HarcSpacing.sm) {
+            switch desktopStatus {
+            case .desktopNotFound:
+                Text("Claude Desktop doesn't appear to be installed on this Mac.")
+                    .font(.harcLabel)
+                    .foregroundStyle(Color.secondary)
+            case .notConfigured:
+                Button("Add to Claude Desktop") { installIntoDesktop() }
+            case .configuredElsewhere:
+                Button("Update Path") { installIntoDesktop() }
+                Text("Connected, but pointing at an older copy of Harc.")
+                    .font(.harcLabel)
+                    .foregroundStyle(Color.secondary)
+            case .configured:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.harc(.ready))
+                Text(desktopJustAdded
+                    ? "Added — restart Claude Desktop to pick it up."
+                    : "Connected.")
+                    .font(.harcLabel)
+            }
+            Spacer(minLength: 0)
+        }
+        .task { desktopStatus = desktopConfig.status(expectedCommand: mcpBinaryPath) }
+
+        if let desktopError {
+            Label(desktopError, systemImage: "exclamationmark.triangle.fill")
+                .font(.harcCaption)
+                .foregroundStyle(Color.harc(.attention))
+        }
+    }
+
+    /// Merge the harc entry into Claude Desktop's config (backed up first,
+    /// everything else in the file preserved).
+    private func installIntoDesktop() {
+        do {
+            try desktopConfig.install(command: mcpBinaryPath)
+            desktopJustAdded = true
+            desktopError = nil
+        } catch {
+            desktopError = "Couldn't update Claude Desktop's config: \(error.localizedDescription)"
+        }
+        desktopStatus = desktopConfig.status(expectedCommand: mcpBinaryPath)
+    }
+
+    // MARK: - Helpers
+
+    private func copyToPasteboard(_ s: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(s, forType: .string)
+    }
+
+    private func flashCopied(_ flag: Binding<Bool>) {
+        flag.wrappedValue = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            flag.wrappedValue = false
+        }
+    }
+
     private func capabilityRow(symbol: String, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: HarcSpacing.md) {
             Image(systemName: symbol)
@@ -132,21 +210,26 @@ public struct AgentsSettingsView: View {
         }
     }
 
-    /// Resolved from the running bundle so dev builds show their real path.
-    private var mcpAddCommand: String {
-        let path = Bundle.main.bundleURL
+    /// Resolved from the running bundle so dev builds register their own binary.
+    private var mcpBinaryPath: String {
+        Bundle.main.bundleURL
             .appendingPathComponent("Contents/MacOS/harc-mcp").path
-        return "claude mcp add --scope user harc -- \(path)"
     }
 
-    /// The server entry as JSON — the shape `.mcp.json` and
-    /// `claude_desktop_config.json` both take under a server name.
-    private var mcpServerJSON: String {
-        let path = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/harc-mcp").path
-        return """
+    private var mcpAddCommand: String {
+        "claude mcp add --scope user harc -- \(mcpBinaryPath)"
+    }
+
+    /// A complete `mcpServers` block — valid verbatim as a project
+    /// `.mcp.json`, and the same shape every stdio MCP client's config takes.
+    private var mcpServersJSON: String {
+        """
         {
-          "command": "\(path)"
+          "mcpServers": {
+            "harc": {
+              "command": "\(mcpBinaryPath)"
+            }
+          }
         }
         """
     }

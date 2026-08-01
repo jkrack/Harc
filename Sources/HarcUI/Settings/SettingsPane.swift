@@ -151,7 +151,8 @@ enum SettingsSearchIndex {
         // Agents
         .init(pane: .agents, label: "Connect an agent (MCP)",
               keywords: ["mcp", "claude", "model context protocol", "connect",
-                         "chatgpt", "server", "bridge", "claude desktop", "claude code"]),
+                         "chatgpt", "server", "bridge", "claude desktop", "claude code",
+                         "desktop", "config", "json", "add to claude"]),
         .init(pane: .agents, label: "What agents can read and write",
               keywords: ["tools", "search", "notes", "append", "write back",
                          "read-only", "transcript", "permissions"]),
