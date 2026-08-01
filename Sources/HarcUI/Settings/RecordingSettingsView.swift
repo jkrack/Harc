@@ -72,8 +72,14 @@ public struct RecordingSettingsView: View {
 
             Section {
                 KeyboardShortcuts.Recorder("Toggle recording:", name: .toggleRecording)
+                KeyboardShortcuts.Recorder("Quick Capture:", name: .quickCapture)
+                Toggle("Capture system audio", isOn: $prefs.systemAudioEnabled)
             } header: {
                 Text("Global hotkey")
+            } footer: {
+                Text("Toggle recording starts instantly with a timestamp name. Quick Capture opens the name-it-first sheet with capture options. System audio records the other side of the call via ScreenCaptureKit; turning it off records the microphone only.")
+                    .font(.harcLabel)
+                    .foregroundStyle(Color.secondary)
             }
 
             Section {

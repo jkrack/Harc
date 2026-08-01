@@ -142,8 +142,11 @@ remain the substrate.
 
 Surfaces (post v0.9.0 overhaul — the audit-driven redesign):
 - **Meeting Library Window:** `HarcWindowRootView` — the primary window.
-  `NavigationSplitView`; Record lives in the toolbar's leading slot and
-  becomes the live pill while recording. The sidebar is navigation only:
+  `NavigationSplitView`; Record is a permanent card at the top of the
+  sidebar (`RecordCardView` — idle / recording with timer+envelope+Stop /
+  finishing / retroactive-armed; the design-doc 3e states), holding the
+  `harc.library.capture.recordButton` identifier in every state. Below it
+  the sidebar is navigation only:
   a date-scope popover ("All dates ▾") under search, then flat day-grouped
   recording sections (title / time·duration·speakers / snippet rows), the
   in-progress recording as a pinned selectable `.live` row, and People as a
@@ -157,6 +160,21 @@ Surfaces (post v0.9.0 overhaul — the audit-driven redesign):
 - **Menu-bar Panel:** `MenuBarPanelView` — hard budget, never scrolls:
   state line, level bars, Record/Dictate, one status row (tap → Activity),
   last capture, footer. All conditional detail lives behind the status row.
+- **Recording Island:** `RecordingIslandView` + `RecordingIslandPanel` — a
+  non-activating floating pill at top-center (DictationHUD panel pattern),
+  existing only while a recording (or its save/discard tail) does. One
+  state at a time: resting (pulsing dot · elapsed · live bars), hover-
+  expanded after a 120ms dwell (Stop / Discard, 34pt targets), mic-silent
+  amber (≈2.4s of near-zero frames), "Saving → Library", and the
+  discard-undo countdown. Dims to 40% while the Library window is key.
+- **Quick Capture:** `QuickCaptureView` + `QuickCapturePanel` — ⌘⇧R from
+  any app; Spotlight-style key-capable non-activating panel: name field,
+  system-audio toggle (`prefs.systemAudioEnabled`), "include the last N"
+  when the pre-roll ring is armed, Start ↵. The title lands on
+  `Recording.title` at ingest (wins over the async suggestion). ⌃⌥R still
+  starts instantly with a timestamp name. Discard is stop-with-suppressed-
+  side-effects + a 10s undo window; expiry routes through
+  `RecordingDeletionService`.
 - **Dictation HUD:** `DictationHUDView` — a non-activating `NSPanel`
   (Liquid Glass pill, fixed 360pt) above the Dock. Three states by shape
   and motion: pulsing live dot (listening), spinner (working), static

@@ -68,6 +68,14 @@ public final class HarcAppBridge: ObservableObject {
     @Published public private(set) var pasteFlash: PasteFlash? = nil
     @Published public private(set) var pasteStatusMessage: String? = nil
     @Published public private(set) var recordingStopInFlight: Bool = false
+    /// Title chosen in Quick Capture, live for the duration of the capture —
+    /// the island and the sidebar record card both show it. Nil when the
+    /// recording started nameless (⌃⌥R path).
+    @Published public var activeCaptureTitle: String? = nil
+    /// Open discard-undo window, shown on the island: the recording was
+    /// stopped via Discard and will be deleted when `secondsRemaining` runs
+    /// out unless the user hits Undo. Nil when no discard is pending.
+    @Published public var discardCountdown: DiscardCountdown? = nil
     /// Newer release Sparkle has found (published by the app target's
     /// updater delegate) so the panel and About can show an update row.
     @Published public var availableUpdate: AvailableUpdate? = nil
@@ -100,6 +108,11 @@ public final class HarcAppBridge: ObservableObject {
     /// Run a dictation mode's transform on sample text (settings "Test"
     /// button). nil when the LLM stack isn't wired (previews/tests).
     public var testDictationTransform: ((DictationMode, String) async throws -> String)?
+    /// Discard the running recording (island trash button): stops capture,
+    /// holds the audio through a 10s undo window, then deletes.
+    public var onDiscardRecording: () -> Void = {}
+    /// Cancel a pending discard — the recording stays in the library.
+    public var onUndoDiscard: () -> Void = {}
 
     public init(recordingState: RecordingState, trayState: PostStopTrayState) {
         self.recordingState = recordingState
@@ -186,6 +199,18 @@ public enum PasteFlash: Sendable, Equatable {
     case success
     case skipped
     case failure
+}
+
+/// The island's discard-undo state: what was discarded and how long until
+/// the deletion is real.
+public struct DiscardCountdown: Equatable, Sendable {
+    public var durationText: String
+    public var secondsRemaining: Int
+
+    public init(durationText: String, secondsRemaining: Int) {
+        self.durationText = durationText
+        self.secondsRemaining = secondsRemaining
+    }
 }
 
 public struct StopRecoveryInfo: Equatable, Sendable {

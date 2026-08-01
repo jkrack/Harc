@@ -175,3 +175,21 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
         return pcm
     }
 }
+
+/// The "system audio off" source: declines permission without ever touching
+/// TCC, which routes the session down its tested mic-only fallback path.
+/// Used when the user turns system audio off in Quick Capture — a choice,
+/// not a failure, so the caller suppresses the permission nag.
+public struct DisabledSystemAudioCapture: SystemAudioCaptureSource {
+    public init() {}
+
+    public func requestPermission() async throws {
+        throw AudioError.systemAudioPermissionDenied
+    }
+
+    public func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
+        AsyncStream { $0.finish() }
+    }
+
+    public func stop() async {}
+}

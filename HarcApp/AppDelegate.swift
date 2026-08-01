@@ -74,6 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     lazy var dictationHistoryStore = DictationHistoryStore(prefs: prefs)
     private var dictationController: DictationController?
     private var dictationHUD: DictationHUDPanel?
+    private var recordingIsland: RecordingIslandPanel?
+    private let recordingIslandModel = RecordingIslandModel()
+    private var quickCapturePanel: QuickCapturePanel?
+    private var islandObservers: [AnyCancellable] = []
     private let dictationHUDPresentation = DictationHUDPresentationModel()
     /// Set by the idle pill's ✕ — keeps the pill hidden until the next
     /// dictation runs (not persisted; a fresh launch shows the pill again).
@@ -110,6 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         super.init()
         bridge.onStartStop = { [weak self] in
             Task { await self?.toggleRecording() }
+        }
+        bridge.onDiscardRecording = { [weak self] in
+            Task { await self?.discardRecording() }
+        }
+        bridge.onUndoDiscard = { [weak self] in
+            self?.undoDiscard()
         }
         bridge.onOpenWindow = { [weak self] in
             self?.openLibrary()
@@ -483,6 +493,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         updateMenuBarReadiness()
         observeAutoStopPrefs()
         observeAutoStopPhase()
+        setupRecordingIsland()
+        registerQuickCaptureHotkey()
         autoStop.onAutoStop = { [weak self] reason in
             Task { @MainActor in
                 await self?.stopRecording(autoStopReason: reason)
@@ -1356,7 +1368,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
-    private func startRecording() async {
+    /// Title chosen in Quick Capture before the recording exists. Applied to
+    /// the row at ingest; `displayTitle` prefers it over the async suggested
+    /// title, so there is no race with the post-stop suggester.
+    private var pendingCaptureTitle: String?
+    /// True while a Discard's 10-second undo window is open: the stop result
+    /// is ingested normally (the audio is held one beat longer than the user
+    /// thinks), but paste/tray/summary side effects are suppressed and the
+    /// countdown decides whether the row survives.
+    private var pendingDiscard = false
+    private var discardCountdownTask: Task<Void, Never>?
+
+    private func startRecording(title: String? = nil, includePreRoll: Bool = true) async {
         // `isPreparing` closes the re-entrancy window: this method suspends
         // for seconds (daemon launch, engine spin-up) before `session` is
         // assigned, and a second trigger (hotkey double-press, meeting
@@ -1383,6 +1406,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         state.markPreparing()
         stopRequestedDuringStart = false
+        pendingCaptureTitle = title?.harcTrimmedNonEmpty
+        pendingDiscard = false
 
         meetingState.clearAll()
         autoStop.resetPostStop()
@@ -1407,9 +1432,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 chunkDurationSeconds: prefs.chunkDurationSeconds,
                 vocabulary: prefs.vocabulary
             )
+            // System audio is a per-install choice now (Quick Capture exposes
+            // it): when off, a disabled source declines permission and the
+            // session's tested mic-only fallback path takes over — minus the
+            // "needs permission" nag, which would be wrong for a choice.
+            let systemAudioOn = prefs.systemAudioEnabled
+            let systemSource: any SystemAudioCaptureSource = systemAudioOn
+                ? SystemAudioCapture()
+                : DisabledSystemAudioCapture()
             let session = RecordingSession(
                 mic: MicCapture(),
-                systemAudio: SystemAudioCapture(),
+                systemAudio: systemSource,
                 destination: RecordingDestination(baseDirectory: prefs.destinationURL),
                 transcriber: transcriber,
                 onWriteFailure: { [weak self] message in
@@ -1432,12 +1465,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // Hand the pre-roll ring over, if it has been listening. This both
             // stops the idle mic tap (the session is about to take the mic) and
             // clears the ring, so the same seconds can never be prepended twice.
-            let preRoll = await preRollCapture?.promote() ?? []
+            // Quick Capture can decline the banked audio; the ring is cleared
+            // either way so those seconds can't resurface on a later start.
+            let preRoll: [Int16]
+            if includePreRoll {
+                preRoll = await preRollCapture?.promote() ?? []
+            } else {
+                await preRollCapture?.clear()
+                preRoll = []
+            }
             preRollCapture = nil
             try await session.start(at: startedAt, preRoll: preRoll)
             state.markStarted(at: startedAt)
+            bridge.activeCaptureTitle = pendingCaptureTitle
             bridge.setActiveCaptureStatus(ActiveCaptureStatus(
-                sourceState: .micAndSystemAudio,
+                sourceState: systemAudioOn ? .micAndSystemAudio : .micOnly,
                 cachePath: RecordingDestination.cacheDirectory().path,
                 destinationPath: prefs.destinationPath,
                 startedAt: startedAt
@@ -1450,7 +1492,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // notice so the user knows other meeting participants will be
             // missing from the transcript. Gated to once per app session
             // (no nagging on every recording).
-            if await session.systemAudioFellBack {
+            if systemAudioOn, await session.systemAudioFellBack {
                 bridge.captureReadinessText = "Mic only; system audio needs permission"
                 bridge.captureReadinessWarning = true
                 bridge.updateActiveCaptureSource(.micOnly)
@@ -1629,14 +1671,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
             let transcriptText = result.txtURL.flatMap { Self.transcriptBody(ofSidecarAt: $0) }
             let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
+            let discarding = pendingDiscard
             let rec = Recording(
                 wavPath: result.wavURL.path,
                 txtPath: result.txtURL?.path,
                 jsonPath: result.jsonURL?.path,
                 startedAt: startedAt,
                 endedAt: Date(),
+                title: pendingCaptureTitle,
                 transcriptText: transcriptText
             )
+            pendingCaptureTitle = nil
             var savedID: Int64? = nil
             savedID = await persistStoppedRecording(rec)
             if let transcriptText, let store = self.store {
@@ -1692,6 +1737,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     }
                 }
             }
+            // A pending Discard still ingests (the audio is held for the undo
+            // window), but none of the outward side effects fire — no paste
+            // into the frontmost app, no tray, no summary spend.
+            if discarding {
+                let duration = rec.endedAt.map {
+                    formatAutoStopDuration($0.timeIntervalSince(rec.startedAt))
+                } ?? "recording"
+                startDiscardCountdown(
+                    recordingID: savedID,
+                    wavPath: rec.wavPath,
+                    durationText: duration
+                )
+                autoStop.end(autoStopReason: autoStopReason)
+                return
+            }
             if !late {
                 runAutoPaste(for: rec, shiftHeld: shiftHeld)
             }
@@ -1710,6 +1770,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     outcome: .savedSafely(title: rec.displayTitle, wavPath: rec.wavPath)
                 )
             }
+            // Step 3 · Land: the library comes forward with the new
+            // recording. Only for user-triggered stops of a real recording —
+            // auto-stop fires when the user walked away, and yanking a window
+            // over whatever they're doing then would be hostile.
+            if !late, autoStopReason == nil {
+                openLibrary()
+            }
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
             bridge.autoStopLastDurationText = rec.endedAt.map { formatAutoStopDuration($0.timeIntervalSince(rec.startedAt)) }
             autoStop.end(autoStopReason: autoStopReason)
@@ -1727,6 +1794,159 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         session = nil
         state.markIdle()
         bridge.setActiveCaptureStatus(nil)
+        bridge.activeCaptureTitle = nil
+    }
+
+    // MARK: - Recording island
+
+    /// The island exists exactly while a recording (or its save/discard
+    /// tail) does. Visibility follows three published signals; size follows
+    /// the pill's hover state.
+    private func setupRecordingIsland() {
+        guard !isUITesting else { return }
+        let island = RecordingIslandPanel(
+            rootView: RecordingIslandView(
+                bridge: bridge,
+                recordingState: state,
+                model: recordingIslandModel
+            ),
+            isLibraryFrontmost: { [weak self] in
+                self?.harcWindow?.window?.isKeyWindow ?? false
+            }
+        )
+        recordingIsland = island
+
+        state.$isRecording
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.syncIslandVisibility() }
+            .store(in: &islandObservers)
+        bridge.$recordingStopInFlight
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.syncIslandVisibility() }
+            .store(in: &islandObservers)
+        bridge.$discardCountdown
+            .map { $0 != nil }
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.syncIslandVisibility() }
+            .store(in: &islandObservers)
+        recordingIslandModel.$expanded
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.recordingIsland?.refit() }
+            .store(in: &islandObservers)
+    }
+
+    private func syncIslandVisibility() {
+        let shouldShow = state.isRecording
+            || bridge.recordingStopInFlight
+            || bridge.discardCountdown != nil
+        // Defer a beat so SwiftUI has swapped the pill state before the
+        // panel measures its fitting size.
+        Task { @MainActor [weak self] in
+            guard let self, let island = self.recordingIsland else { return }
+            if shouldShow {
+                island.show()
+                island.refit()
+            } else {
+                self.recordingIslandModel.expanded = false
+                island.hide()
+            }
+        }
+    }
+
+    // MARK: - Quick Capture
+
+    private func registerQuickCaptureHotkey() {
+        KeyboardShortcuts.onKeyDown(for: .quickCapture) { [weak self] in
+            Task { @MainActor in self?.toggleQuickCapture() }
+        }
+    }
+
+    private func toggleQuickCapture() {
+        // Quick Capture is about starting; while a recording runs the island
+        // owns the screen. The instant path (⌃⌥R) still stops as always.
+        guard !state.isActiveOrPreparing else { return }
+        if quickCapturePanel?.isVisible == true {
+            dismissQuickCapture()
+            return
+        }
+        let banked = bridge.preRollStatus.flatMap { status -> String? in
+            guard case .listening(let seconds) = status, seconds >= 1 else { return nil }
+            return MenuBarPanelView.formatBanked(seconds)
+        }
+        let panel = QuickCapturePanel(
+            rootView: QuickCaptureView(
+                prefs: prefs,
+                bankedText: banked,
+                onStart: { [weak self] title, includePreRoll in
+                    guard let self else { return }
+                    self.dismissQuickCapture()
+                    Task { await self.startRecording(title: title, includePreRoll: includePreRoll) }
+                },
+                onCancel: { [weak self] in self?.dismissQuickCapture() }
+            )
+            .environmentObject(prefs),
+            onDismiss: { [weak self] in self?.dismissQuickCapture() }
+        )
+        quickCapturePanel = panel
+        panel.show()
+    }
+
+    private func dismissQuickCapture() {
+        quickCapturePanel?.hide()
+        quickCapturePanel = nil
+    }
+
+    // MARK: - Discard with undo
+
+    /// Discard the running recording. Not an abort: the stop path runs and
+    /// the audio is ingested (held one beat longer than the user thinks),
+    /// but outward side effects are suppressed and a 10-second undo window
+    /// on the island decides whether the row survives. Undo costs nothing;
+    /// expiry routes through the tested deletion service.
+    private func discardRecording() async {
+        guard state.isActiveOrPreparing, !pendingDiscard else { return }
+        pendingDiscard = true
+        await stopRecording(autoStopReason: nil)
+    }
+
+    private func startDiscardCountdown(recordingID: Int64?, wavPath: String, durationText: String) {
+        pendingDiscard = false
+        discardCountdownTask?.cancel()
+        bridge.discardCountdown = DiscardCountdown(durationText: durationText, secondsRemaining: 10)
+        discardCountdownTask = Task { [weak self] in
+            for remaining in stride(from: 9, through: 0, by: -1) {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, let self else { return }
+                if remaining > 0 {
+                    self.bridge.discardCountdown?.secondsRemaining = remaining
+                } else {
+                    self.bridge.discardCountdown = nil
+                    await self.finalizeDiscard(recordingID: recordingID, wavPath: wavPath)
+                }
+            }
+        }
+    }
+
+    private func undoDiscard() {
+        discardCountdownTask?.cancel()
+        discardCountdownTask = nil
+        guard bridge.discardCountdown != nil else { return }
+        bridge.discardCountdown = nil
+        // The row already exists with side effects suppressed — surviving is
+        // just not deleting. Summaries catch up via the launch scan.
+    }
+
+    private func finalizeDiscard(recordingID: Int64?, wavPath: String) async {
+        guard let store else { return }
+        let rec: Recording?
+        if let recordingID {
+            rec = try? await store.fetch(id: recordingID)
+        } else {
+            rec = try? await store.fetchByWavPath(wavPath)
+        }
+        guard let rec else { return }
+        try? await RecordingDeletionService(store: store).delete(recording: rec)
     }
 
     /// First live-audio write failure (disk full, cache volume vanished).

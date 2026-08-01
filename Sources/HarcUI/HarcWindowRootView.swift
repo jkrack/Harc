@@ -343,15 +343,11 @@ public struct HarcWindowRootView: View {
             prompt: "Search titles and transcripts"
         )
         .toolbar {
-            // Leading: the app's primary action, present in every state.
-            // Idle it is a prominent Record button; recording it becomes the
-            // live pill — the same control, so starting and stopping live in
-            // one place and the accessibility identifier never moves. This
-            // replaced a Record button buried ~310pt down the sidebar, below
-            // the calendar, where short windows put it under the fold.
-            ToolbarItem(placement: .navigation) {
-                recordToolbarControl
-            }
+            // Record left the toolbar for the sidebar's top (design 3e): a
+            // permanent card can hold state — the live timer, envelope, and
+            // banked pre-roll — where a toolbar button could only mutate.
+            // The card is above the fold by construction now that the
+            // calendar is a popover.
 
             // Trailing group, cut to the three things people actually do
             // here. Six undifferentiated icon buttons put Delete beside
@@ -526,6 +522,14 @@ public struct HarcWindowRootView: View {
     @ViewBuilder
     var sidebar: some View {
         VStack(spacing: 0) {
+            // Design 3e: the permanent record panel. Idle it's the Record
+            // affordance; recording it's the live card (timer + envelope +
+            // Stop); finishing it narrates the save.
+            RecordCardView(
+                bridge: bridge,
+                recordingState: recordingState,
+                postProcessing: postProcessing
+            )
             dateScopeBar
             Group {
                 if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -705,86 +709,6 @@ public struct HarcWindowRootView: View {
         .accessibilityIdentifier("harc.library.liveRow")
         .accessibilityLabel("Recording in progress")
     }
-
-
-    /// The single Record control in the toolbar's leading slot.
-    ///
-    /// One button, three faces: Record when idle, the live pill (dot +
-    /// waveform + elapsed) while recording — tap to stop — and an hourglass
-    /// while a stop is finalizing. The `harc.library.capture.recordButton`
-    /// identifier stays on the control across all three, which is what keeps
-    /// the record→stop UI test's three clicks landing on one element.
-    var recordToolbarControl: some View {
-        Button {
-            bridge.onStartStop()
-        } label: {
-            if recordingState.isRecording {
-                HStack(spacing: HarcSpacing.sm) {
-                    Circle()
-                        .fill(.white)
-                        .frame(width: 8, height: 8)
-                    LiveWaveformView(
-                        history: bridge.amplitudeHistory,
-                        size: .pill,
-                        isActive: true,
-                        tint: WavePalette.center
-                    )
-                    .frame(width: 60, height: 16)
-                    if let start = recordingState.recordingStartedAt {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(ElapsedFormatter.string(since: start, now: context.date))
-                                .font(.harcLabel.monospacedDigit())
-                                .foregroundStyle(.primary)
-                        }
-                    } else {
-                        Text("Recording")
-                            .font(.harcLabel)
-                            .foregroundStyle(.primary)
-                    }
-                }
-                .padding(.horizontal, HarcSpacing.md)
-                .padding(.vertical, HarcSpacing.xs)
-                .glassEffect(.regular.tint(HarcBrand.live), in: Capsule())
-                .overlay(Capsule().stroke(HarcBrand.live.opacity(0.4), lineWidth: 1))
-            } else if isRecordingActionBusy {
-                Label(recordingActionTitle, systemImage: "hourglass")
-            } else {
-                Label("Record", systemImage: "record.circle")
-                    .foregroundStyle(HarcBrand.live)
-                    .fontWeight(.semibold)
-                    .labelStyle(.titleAndIcon)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(isRecordingActionBusy)
-        .help(recordToolbarHelp)
-        .accessibilityIdentifier("harc.library.capture.recordButton")
-        .accessibilityLabel(recordingState.isRecording ? "Stop recording" : "Start recording")
-    }
-
-    var recordToolbarHelp: String {
-        if recordingState.isRecording { return "Stop recording" }
-        if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
-            return "Start recording (\(shortcut))"
-        }
-        return "Start recording"
-    }
-
-    var isRecordingActionBusy: Bool {
-        bridge.recordingStopInFlight || isIdentifyingStoppedRecording
-    }
-
-    var isIdentifyingStoppedRecording: Bool {
-        if case .identifying = postProcessing.current?.phase { return true }
-        return false
-    }
-
-    var recordingActionTitle: String {
-        if bridge.recordingStopInFlight { return "Stopping..." }
-        if isIdentifyingStoppedRecording { return "Processing..." }
-        return recordingState.isRecording ? "Stop" : "Record"
-    }
-
 
 
     /// Sections, not disclosure groups. Recordings render as one flat

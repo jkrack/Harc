@@ -362,7 +362,7 @@ public struct MenuBarPanelView: View {
     /// something they don't want kept.
     @ViewBuilder
 
-    static func formatBanked(_ seconds: TimeInterval) -> String {
+    public static func formatBanked(_ seconds: TimeInterval) -> String {
         let whole = Int(seconds.rounded())
         if whole < 60 { return "\(whole)s" }
         let minutes = whole / 60

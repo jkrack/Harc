@@ -138,7 +138,7 @@ extension HarcWindowRootView {
     }
 }
 
-extension String {
+public extension String {
     var harcTrimmedNonEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed

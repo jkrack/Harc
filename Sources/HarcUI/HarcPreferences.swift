@@ -43,6 +43,7 @@ public final class HarcPreferences: ObservableObject {
         static let persistentDictationHUD = "harc.persistentDictationHUD"
         static let updateChecksEnabled = "harc.updateChecksEnabled"
         static let preRollEnabled = "harc.preRollEnabled"
+        static let systemAudioEnabled = "harc.systemAudioEnabled"
         static let preRollMinutes = "harc.preRollMinutes"
         static let semanticSearchEnabled = "harc.semanticSearchEnabled"
     }
@@ -197,6 +198,13 @@ public final class HarcPreferences: ObservableObject {
     /// Off by default and never silently enabled: this holds the microphone
     /// open whenever Harc is idle, which macOS advertises with the orange mic
     /// indicator. That is a decision the user has to make deliberately.
+    /// Capture the other side of the call via ScreenCaptureKit. On by
+    /// default — it's the single biggest transcript-quality win for meetings
+    /// — but Quick Capture exposes it per-install for mic-only setups.
+    @Published public var systemAudioEnabled: Bool {
+        didSet { UserDefaults.standard.set(systemAudioEnabled, forKey: Key.systemAudioEnabled) }
+    }
+
     @Published public var preRollEnabled: Bool {
         didSet { UserDefaults.standard.set(preRollEnabled, forKey: Key.preRollEnabled) }
     }
@@ -387,6 +395,7 @@ public final class HarcPreferences: ObservableObject {
         }
         self.pasteDenyListBundleIDs = normalizedPasteDenyList
         let shouldPersistPasteDenyList = Set(storedPasteDenyList ?? []) != normalizedPasteDenyList
+        self.systemAudioEnabled = defaults.object(forKey: Key.systemAudioEnabled) as? Bool ?? true
         self.preRollEnabled = defaults.object(forKey: Key.preRollEnabled) as? Bool ?? false
         let rawPreRoll = defaults.object(forKey: Key.preRollMinutes) as? Int ?? 2
         self.preRollMinutes = [1, 2, 5, 10].contains(rawPreRoll) ? rawPreRoll : 2

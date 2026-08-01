@@ -10,6 +10,13 @@ public extension KeyboardShortcuts.Name {
         "harc.toggleRecording",
         default: .init(.r, modifiers: [.control, .option])
     )
+    /// Quick Capture: the name-it-first start sheet (⌘⇧R). Distinct from
+    /// `toggleRecording`, which starts instantly with a timestamp name —
+    /// both paths stay live so muscle memory keeps working.
+    static let quickCapture = Self(
+        "harc.quickCapture",
+        default: .init(.r, modifiers: [.command, .shift])
+    )
     /// Dictation hotkey. Behaviour (push-to-talk vs toggle) is decided by
     /// `HarcPreferences.dictationTriggerStyle`, not by the shortcut itself.
     /// Ships with a default (⌃⌥D) so first-run dictation works before the
