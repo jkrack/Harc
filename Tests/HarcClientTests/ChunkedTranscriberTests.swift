@@ -711,9 +711,14 @@ struct ChunkedTranscriberLivePreviewTests {
             return nil
         }
         await transcriber.start(audioURL: url)
-        try await Task.sleep(nanoseconds: 1_000_000_000)
-
-        let callsBeforeStop = await fake.calls.count
+        // Poll rather than a fixed sleep: under parallel test load a 1s
+        // window can starve the preview tick entirely.
+        var callsBeforeStop = 0
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while callsBeforeStop == 0, ContinuousClock.now < deadline {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            callsBeforeStop = await fake.calls.count
+        }
         _ = try await transcriber.finalize(startedAt: Date(), endedAt: Date())
 
         #expect(callsBeforeStop >= 1, "expected at least one preview pass while recording")
