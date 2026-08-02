@@ -38,6 +38,12 @@ public struct RecordingIslandView: View {
                 } else {
                     restingPill
                 }
+            } else if recordingState.isPreparing {
+                // A cold daemon start takes a couple of seconds. Feedback-free
+                // startup invited a second hotkey press that used to kill the
+                // recording it was waiting for — the island now appears the
+                // moment the start is requested.
+                startingPill
             }
         }
         .onHover { inside in
@@ -128,6 +134,19 @@ public struct RecordingIslandView: View {
         .padding(.trailing, 12)
         .frame(height: 52)
         .background(islandBackground(borderTint: HarcBrand.live, cornerRadius: 26))
+    }
+
+    private var startingPill: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Starting…")
+                .font(.harcCaption)
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 34)
+        .background(islandBackground(borderTint: HarcBrand.live.opacity(0.6)))
     }
 
     private var stoppingPill: some View {

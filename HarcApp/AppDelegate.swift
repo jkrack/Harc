@@ -808,13 +808,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         Task { await stopRecording(autoStopReason: nil) }
     }
 
+    /// When the last hotkey-triggered start began. Toggle events inside the
+    /// debounce window after it are dropped, not treated as stops.
+    private var lastStartAttemptAt: Date?
+
     private func toggleRecording() async {
         guard !bridge.recordingStopInFlight else { return }
         if state.isActiveOrPreparing {
-            // A toggle during the start window means "never mind" — queue
-            // the stop rather than silently ignoring the press.
+            // Debounce, then "never mind". Carbon global hotkeys deliver key
+            // auto-repeats while the app is inactive, and a cold daemon start
+            // leaves a ~2s feedback-free window that invites a second press —
+            // both used to read as "stop the recording I just asked for":
+            // the island appeared and the recording died in the same breath,
+            // with Land opening the Library over the two-second corpse. A
+            // toggle this soon after a start is the same press echoing, not a
+            // change of heart; a deliberate stop comes later than 1.5s.
+            if let at = lastStartAttemptAt, Date().timeIntervalSince(at) < 1.5 {
+                return
+            }
             await stopRecording(autoStopReason: nil)
         } else {
+            lastStartAttemptAt = Date()
             await startRecording()
         }
     }
@@ -1820,6 +1834,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .removeDuplicates()
             .sink { [weak self] _ in self?.syncIslandVisibility() }
             .store(in: &islandObservers)
+        state.$isPreparing
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.syncIslandVisibility() }
+            .store(in: &islandObservers)
         bridge.$recordingStopInFlight
             .removeDuplicates()
             .sink { [weak self] _ in self?.syncIslandVisibility() }
@@ -1838,6 +1856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func syncIslandVisibility() {
         let shouldShow = state.isRecording
+            || state.isPreparing
             || bridge.recordingStopInFlight
             || bridge.discardCountdown != nil
         // Defer a beat so SwiftUI has swapped the pill state before the
