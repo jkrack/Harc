@@ -61,6 +61,7 @@ final class RecordingIslandPanel {
     var isVisible: Bool { panel.isVisible }
 
     func show() {
+        FileHandle.standardError.write(Data("harc-island: show() visible=\(panel.isVisible) frame=\(panel.frame)\n".utf8))
         refit()
         if !panel.isVisible {
             userMoved = false
@@ -77,6 +78,7 @@ final class RecordingIslandPanel {
     }
 
     func hide() {
+        FileHandle.standardError.write(Data("harc-island: hide() visible=\(panel.isVisible)\n".utf8))
         guard panel.isVisible else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22

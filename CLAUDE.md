@@ -6,21 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Harc** — a macOS speech-to-text menu bar app with two surfaces. (1) Meeting capture: start recording on toggle-hotkey, transcribe diarized audio in background, save to searchable library, paste into LLM. (2) Dictation: hold hotkey, speak, release to insert text at cursor with optional AI mode (Clean-up, Email, Message, Answer, etc.) — all local.
 
-Status: v0.11.0 (v0.11.0 adds Quick Capture, the recording island, the sidebar record card, and discard-with-undo — the recording-redesign design doc's resolved system; **the redesigned capture flow has not yet been exercised on a Mac with a microphone**). Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT (Parakeet), GRDB-backed library, MLX summarization, speaker re-identification, push-to-talk dictation with modes all in place. Settings is a searchable sidebar; recordings project to Open Knowledge Format artifacts. v0.8.0 added retroactive record, hybrid search and archive reprocessing. v0.10.0 adds virtual day sessions (migration v14 `sessions` + `session_recordings`; combined summaries; `session-*.md` OKF docs), the `harc-mcp` agent bridge (second embedded executable — MCP over stdio, direct GRDB access, store-mediated write-back), and notes (migration v15; user-editable, agent-append-only).
+Status: v0.11.3 (0.11.x adds Quick Capture, the recording island, the sidebar record card, and discard-with-undo — the recording-redesign design doc's resolved system — plus the field fixes from the first real-hardware runs). Native macOS 26 (Liquid Glass) UI in `HarcUI` + `HarcApp`. Daemon-backed STT (Parakeet), GRDB-backed library, MLX summarization, speaker re-identification, push-to-talk dictation with modes all in place. Settings is a searchable sidebar; recordings project to Open Knowledge Format artifacts. v0.8.0 added retroactive record, hybrid search and archive reprocessing. v0.10.0 adds virtual day sessions (migration v14 `sessions` + `session_recordings`; combined summaries; `session-*.md` OKF docs), the `harc-mcp` agent bridge (second embedded executable — MCP over stdio, direct GRDB access, store-mediated write-back), and notes (migration v15; user-editable, agent-append-only).
 
-**The audio path has never been exercised end-to-end.** The primary
-development Mac is a Mac mini with no microphone, so meeting capture and
-dictation have only ever been verified at the build-and-unit-test level —
-never recorded, never transcribed, never inserted at a cursor. Every library
-row that has existed on that machine came from UI-test seeding. On any Mac
-with an input device, running one real recording (record → chunked transcribe
-→ summary → OKF artifacts → library row) and one real dictation is the
-highest-value validation available, and it is the largest untested surface in
-the product.
+**The meeting-capture path was exercised end-to-end for the first time on
+2026-08-02** (the dev Mac gained a working microphone): hotkey start from
+another app → island → real mic capture → chunked transcription (silent-room
+audio exercised the VAD sparse-retry path) → stop → OKF artifacts + library
+row → Land. That first run surfaced three shipped bugs (island never shown —
+a willSet-stale Combine verdict; Land's window never drawn from background;
+cooperative-activation denial poisoning the menu bar), all fixed in 0.11.3.
+**Dictation remains unexercised on real hardware** — no real hold-speak-
+release-insert has ever run. **One known-open capture bug:** a multi-minute
+recording's stop hung far past the 600s dead-man cap in the wild (silent
+chunks retried without VAD; finalize never returned, no recovery surfaced) —
+reproduce with a long recording before trusting stop on hour-long meetings.
 
-That gap is also why the app now reports capture readiness from the presence
-of an input device rather than from permission alone: for months it displayed
-"Capture ready" on hardware that could not capture a sample.
+The historical no-mic gap is also why the app reports capture readiness from
+the presence of an input device rather than from permission alone: for months
+it displayed "Capture ready" on hardware that could not capture a sample.
 
 ## Hard Constraints
 

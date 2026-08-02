@@ -94,6 +94,7 @@ public struct RecordingIslandView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 34)
+        .fixedSize()
         .background(islandBackground(borderTint: micIsSilent ? Color.harc(.attention) : HarcBrand.live))
     }
 
@@ -133,6 +134,7 @@ public struct RecordingIslandView: View {
         .padding(.leading, 18)
         .padding(.trailing, 12)
         .frame(height: 52)
+        .fixedSize()
         .background(islandBackground(borderTint: HarcBrand.live, cornerRadius: 26))
     }
 
@@ -146,6 +148,7 @@ public struct RecordingIslandView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 34)
+        .fixedSize()
         .background(islandBackground(borderTint: HarcBrand.live.opacity(0.6)))
     }
 
@@ -159,6 +162,7 @@ public struct RecordingIslandView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 34)
+        .fixedSize()
         .background(islandBackground(borderTint: Color.white.opacity(0.14)))
     }
 
@@ -185,6 +189,7 @@ public struct RecordingIslandView: View {
         .padding(.leading, 16)
         .padding(.trailing, 8)
         .frame(height: 34)
+        .fixedSize()
         .background(islandBackground(borderTint: Color.white.opacity(0.14)))
     }
 

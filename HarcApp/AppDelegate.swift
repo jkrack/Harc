@@ -698,6 +698,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
+    /// Bring a managed window to the user without fighting macOS 26's
+    /// cooperative activation. Active app: normal key-and-front + activate.
+    /// Background (e.g. the post-stop Land path): activation may be DENIED —
+    /// and makeKeyAndOrderFront from a denied app never draws the window at
+    /// all. orderFrontRegardless is the sanctioned background move: the
+    /// window appears above the user's app, focus and menu bar stay where
+    /// the user is, and the first click on the window activates Harc
+    /// normally (policy is already .regular by then, so the menu follows).
+    private func orderManagedWindowFront(_ window: NSWindow) {
+        if NSApp.isActive {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            if NSApp.isActive {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                window.orderFrontRegardless()
+            }
+        }
+    }
+
     private func refreshActivationPolicy() {
         let desired: NSApplication.ActivationPolicy = managedWindowCount > 0 ? .regular : .accessory
         guard NSApp.activationPolicy() != desired else { return }
@@ -1868,14 +1890,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func syncIslandVisibility() {
-        let shouldShow = state.isRecording
-            || state.isPreparing
-            || bridge.recordingStopInFlight
-            || bridge.discardCountdown != nil
-        // Defer a beat so SwiftUI has swapped the pill state before the
-        // panel measures its fitting size.
+        // Deferred AND re-read: the Combine sinks fire on willSet, when the
+        // published properties still hold their old values — a verdict
+        // computed in the sink is one transition stale (the island hid on
+        // start and showed on stop). Deciding inside the deferred Task reads
+        // settled state, and also lets SwiftUI swap the pill content before
+        // the panel measures its fitting size.
         Task { @MainActor [weak self] in
             guard let self, let island = self.recordingIsland else { return }
+            let shouldShow = self.state.isRecording
+                || self.state.isPreparing
+                || self.bridge.recordingStopInFlight
+                || self.bridge.discardCountdown != nil
+            FileHandle.standardError.write(Data(
+                "harc-island: sync shouldShow=\(shouldShow) rec=\(self.state.isRecording) prep=\(self.state.isPreparing) stop=\(self.bridge.recordingStopInFlight)\n".utf8
+            ))
             if shouldShow {
                 island.show()
                 island.refit()
@@ -2790,8 +2819,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     @objc private func openSettings() {
         if let controller = settingsWindow, let window = controller.window {
             controller.showWindow(nil)
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            orderManagedWindowFront(window)
             return
         }
 
@@ -2825,9 +2853,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
 
         controller.showWindow(nil)
-        window.makeKeyAndOrderFront(nil)
         trackManagedWindow(window)
-        NSApp.activate(ignoringOtherApps: true)
+        orderManagedWindowFront(window)
     }
 
     /// A brand-new NSWindow lands wherever AppKit's cascade left it — for a
@@ -2910,8 +2937,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func showWelcome(markAsFirstRun: Bool) {
         if let controller = welcomeWindow, let window = controller.window {
             controller.showWindow(nil)
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            orderManagedWindowFront(window)
             return
         }
 
@@ -2989,9 +3015,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
 
         controller.showWindow(nil)
-        window.makeKeyAndOrderFront(nil)
         trackManagedWindow(window)
-        NSApp.activate(ignoringOtherApps: true)
+        orderManagedWindowFront(window)
     }
 
     private func completeWelcomeFlow(openLibraryAfterClose: Bool) {
