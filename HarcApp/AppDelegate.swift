@@ -704,12 +704,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if desired == .regular {
             installMainMenuIfNeeded()
             NSApp.setActivationPolicy(.regular)
-            // accessory→regular while already the active app: the system keeps
-            // the previous app's menu bar until our activation state visibly
-            // changes. Bounce activation — deactivate now, re-activate on a
-            // later runloop turn — so the menu bar picks us up.
-            NSApp.deactivate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if NSApp.isActive {
+                // accessory→regular while already the active app: the system
+                // keeps the previous app's menu bar until our activation state
+                // visibly changes. Bounce activation — deactivate now,
+                // re-activate on a later runloop turn — so the menu bar picks
+                // us up.
+                NSApp.deactivate()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
+                        .makeKeyAndOrderFront(nil)
+                }
+            } else {
+                // Promoted from the background (the post-stop Land path).
+                // Never call deactivate() here: deactivating an app that
+                // isn't active marks it user-deactivated, and macOS 26's
+                // cooperative activation then DENIES the activate() that
+                // follows — the library window ends up floating over the
+                // previous app with that app's menu bar still installed.
                 NSApp.activate(ignoringOtherApps: true)
                 NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
                     .makeKeyAndOrderFront(nil)
