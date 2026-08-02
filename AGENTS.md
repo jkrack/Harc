@@ -15,8 +15,13 @@ authoritative.
 
 Flag the user before violating these product decisions.
 
-- **Local inference only.** No cloud STT, no external telemetry, no off-device
-  audio processing.
+- **Private inference only.** No cloud STT, no third-party audio processing,
+  and no external telemetry. Standalone Harc keeps content on the current Mac.
+  The authenticated adopted host is the only automatic Harc-managed
+  synchronization or processing destination. A user may explicitly export a
+  local recording through a system share/export surface after Harc clearly
+  identifies that the chosen destination is outside the adopted-host trust
+  boundary; no unattended export or implicit cloud destination is allowed.
 - **Apple Silicon first.** The package currently targets macOS v26 in
   `Package.swift`; verify deployment-target changes against `project.yml`.
 - **Menu bar resident.** The primary recording surface is the status item and
@@ -56,6 +61,24 @@ Flag the user before violating these product decisions.
   `Sources/HarcMeetingDetect/`, and `Sources/HarcVoiceprint/` cover optional AI
   summaries, model management, export formats, meeting detection, and speaker
   embeddings.
+
+## Approved Host/Client Buildout
+
+The implementation contract for HarcMobile, Host mode, and secondary-Mac Client
+mode is `docs/specs/2026-08-02-host-client-mobile-implementation-spec.md`. The
+short architecture and ordered PR plan live beside it under `docs/architecture/`
+and `docs/plans/`. The spec wins if planning prose drifts.
+
+The new `HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcProtocol`, `HarcHost`,
+`HarcHostTransport`, `HarcClientTransport`, `HarcClientStore`, and
+`HarcAudioMobile`, `HarcAudioMac`, and `HarcInference` directories begin as
+documentation-only boundaries. Do not add them to `Package.swift` or
+`project.yml` until their ordered vertical slice has implementation and tests.
+Keep the V1 host in the resident Mac app, keep the existing daemon, issue the
+audio-safety receipt before derived processing, and do not expose local paths or
+GRDB records as network DTOs. In Host mode,
+`harc-mcp` must route through authenticated local IPC and must never fall back to
+direct database writes when the resident host is unavailable.
 
 ## Reliability Rules
 

@@ -1,7 +1,8 @@
 # Security
 
-Harc is a local-first app: audio is captured, transcribed, and summarized
-on-device. Nothing about you or your content leaves this Mac.
+The current Harc release is a local-first Mac app: audio is captured,
+transcribed, and summarized on the Mac. It has no adopted-device transport yet,
+so nothing about you or your content leaves this Mac through Harc.
 
 ## What talks to the network
 
@@ -14,17 +15,58 @@ on-device. Nothing about you or your content leaves this Mac.
   EdDSA-signed; Sparkle refuses unsigned or mis-signed updates. System
   profiling is permanently disabled — the update check sends nothing about
   you or your machine.
-- Nothing else. No telemetry, no crash reporting, no analytics.
+- **Current release:** nothing else. No telemetry, no crash reporting, no
+  analytics.
 
 The bundled `harc-mcp` executable (the MCP agent bridge) opens **no network
 connections**: it speaks JSON-RPC over stdio to a locally spawned agent host
 (Claude Desktop, Claude Code, etc.) and touches only the Harc database in
 Application Support and the user's chosen notes folder. Any network traffic
 in that flow belongs to the agent host the user runs, on their own account.
-Note that because harc-mcp is spawned by the host process, writes to the
-notes folder under `~/Documents` are TCC-attributed to that host — if the
-user denied it Documents access, OKF file regeneration silently no-ops
-(database writes in Application Support are unaffected).
+Note that because harc-mcp is spawned by the agent host/MCP client process,
+writes to the notes folder under `~/Documents` are TCC-attributed to that
+process — if the user denied it Documents access, OKF file regeneration
+silently no-ops (database writes in Application Support are unaffected).
+
+## Adopted-device mode (approved, not yet implemented)
+
+Harc's approved host/client architecture permits an iPhone or secondary Mac to
+send recordings and derived artifacts to an explicitly adopted, user-controlled
+Harc host. This remains private/local-first behavior, not cloud processing.
+
+The implementation is required to preserve these boundaries:
+
+- No Harc-operated cloud speech, diarization, summarization, telemetry, crash
+  reporting, or analytics service.
+- Pairing requires local approval on the host and establishes a separate,
+  revocable key identity for each client.
+- Audio moves automatically only over authenticated encrypted transport to the
+  adopted host. A foreground, user-directed system export may send a selected
+  recording elsewhere after Harc discloses that the destination is outside the
+  adopted-host trust boundary; Harc never schedules that export automatically.
+- The client writes and retains a durable local master until it stores a signed
+  receipt proving that the host committed the canonical audio.
+- Mobile masters, transfer derivatives/state, and downloaded host cache are
+  protected and explicitly excluded from OS device backup. Reinstall/restore
+  requires re-pair and cache resynchronization; unuploaded recordings remain
+  recoverable only from the physical source device or an explicit user export.
+- The host is the sole authority for its library database and portable
+  WAV/JSON/OKF projections; clients never open or copy the host database.
+- Bonjour, hostnames, IP addresses, VPN membership, and physical network
+  proximity are discovery or reachability signals only. None establishes trust.
+- Revocation is enforced against current host registry state on every new
+  operation and active transfer, rather than relying only on a previously
+  issued signed grant.
+- In Host mode, the bundled `harc-mcp` reaches the canonical store only through
+  authenticated same-user local IPC owned by the resident Harc process. It does
+  not fall back to direct writes while that host is unavailable.
+
+Until that architecture ships and this document's network inventory is updated,
+the current-release description above remains the behavior users receive.
+
+The approved cryptographic, pairing, authorization, revocation, and retention
+contract is specified in
+[`docs/specs/2026-08-02-host-client-mobile-implementation-spec.md`](docs/specs/2026-08-02-host-client-mobile-implementation-spec.md).
 
 ## Accepted trade-offs
 
