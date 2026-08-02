@@ -32,7 +32,7 @@ struct RecordingSessionTests {
     }
 
     actor FakeSystem: SystemAudioCaptureSource {
-        enum Mode: Sendable { case enabled([AVAudioPCMBuffer]), denied }
+        enum Mode: Sendable { case enabled([AVAudioPCMBuffer]), denied, startFails }
         nonisolated let mode: Mode
         private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
         init(_ mode: Mode) { self.mode = mode }
@@ -41,6 +41,9 @@ struct RecordingSessionTests {
         }
         func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
             guard case .enabled(let script) = mode else {
+                if case .startFails = mode {
+                    throw AudioError.audioEngineFailed("system capture start failed")
+                }
                 throw AudioError.systemAudioPermissionDenied
             }
             let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
@@ -120,17 +123,8 @@ struct RecordingSessionTests {
         return buf
     }
 
-    private func makeTempBase() throws -> URL {
-        let base = URL(fileURLWithPath: "/tmp/harc-session-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        return base
-    }
-
-    @Test("session writes a WAV at the destination and returns its URL")
-    func writesWAVAtDestination() async throws {
-        let base = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: base) }
-
+    @Test("stop returns a durable cache master without publishing it")
+    func stopReturnsUnpublishedCacheMaster() async throws {
         let mic = FakeMic(script: [
             makeConstantBuffer(0.2, frames: 16000),
             makeConstantBuffer(0.2, frames: 16000),
@@ -139,23 +133,23 @@ struct RecordingSessionTests {
             makeConstantBuffer(0.1, frames: 16000),
             makeConstantBuffer(0.1, frames: 16000),
         ]))
-        let destination = RecordingDestination(baseDirectory: base)
-
         let session = RecordingSession(
             mic: mic,
-            systemAudio: sys,
-            destination: destination
+            systemAudio: sys
         )
 
         try await session.start(at: Date())
         // Wait briefly for fake streams to drain.
         try await Task.sleep(nanoseconds: 300_000_000)
-        let result = try await session.stop()
-        let url = result.wavURL
+        let captured = try await session.stop()
+        let url = captured.localMasterURL
+        defer { try? FileManager.default.removeItem(at: url) }
 
         #expect(FileManager.default.fileExists(atPath: url.path))
-        #expect(url.path.hasPrefix(base.path))
+        #expect(url.deletingLastPathComponent() == RecordingDestination.cacheDirectory())
         #expect(url.pathExtension == "wav")
+        #expect(captured.transcript == nil)
+        #expect(captured.discontinuities.isEmpty)
 
         let file = try AVAudioFile(forReading: url)
         #expect(file.fileFormat.sampleRate == 16000)
@@ -165,15 +159,10 @@ struct RecordingSessionTests {
 
     @Test("pre-roll audio is prepended to the WAV and rolls startedAt back")
     func preRollIsPrependedAndDatesRolledBack() async throws {
-        let base = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: base) }
-
         let mic = FakeMic(script: [makeConstantBuffer(0.5, frames: 16000)])
-        let destination = RecordingDestination(baseDirectory: base)
         let session = RecordingSession(
             mic: mic,
-            systemAudio: FakeSystem(.denied),
-            destination: destination
+            systemAudio: FakeSystem(.denied)
         )
 
         // 2 s of banked audio at a distinct amplitude so it's identifiable in
@@ -186,9 +175,10 @@ struct RecordingSessionTests {
         let pressedStopwatch = Date()
         try await session.start(at: pressedStopwatch, preRoll: banked)
         try await Task.sleep(nanoseconds: 300_000_000)
-        let result = try await session.stop()
+        let captured = try await session.stop()
+        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
 
-        let file = try AVAudioFile(forReading: result.wavURL)
+        let file = try AVAudioFile(forReading: captured.localMasterURL)
         // 2 s of pre-roll + 1 s of live mic.
         #expect(file.length >= 48000, "expected ≥3s total, got \(file.length) frames")
 
@@ -204,56 +194,69 @@ struct RecordingSessionTests {
         // claims the time the audio happened rather than the button press.
         let preRolled = await session.preRolledSeconds
         #expect(abs(preRolled - 2.0) < 0.01)
+        #expect(abs(captured.startedAt.timeIntervalSince(pressedStopwatch) + 2.0) < 0.05)
+        #expect(captured.endedAt >= pressedStopwatch)
     }
 
     @Test("a recording with no pre-roll is unchanged")
     func noPreRollIsUnchanged() async throws {
-        let base = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: base) }
-
         let mic = FakeMic(script: [makeConstantBuffer(0.5, frames: 16000)])
         let session = RecordingSession(
             mic: mic,
-            systemAudio: FakeSystem(.denied),
-            destination: RecordingDestination(baseDirectory: base)
+            systemAudio: FakeSystem(.denied)
         )
 
         try await session.start(at: Date())
         try await Task.sleep(nanoseconds: 300_000_000)
-        let result = try await session.stop()
+        let captured = try await session.stop()
+        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
 
         let preRolled = await session.preRolledSeconds
         #expect(preRolled == 0)
-        let file = try AVAudioFile(forReading: result.wavURL)
+        let file = try AVAudioFile(forReading: captured.localMasterURL)
         #expect(file.length >= 16000)
         #expect(file.length < 32000, "no pre-roll should have been prepended")
     }
 
     @Test("session gracefully degrades to mic-only when system audio permission is denied")
     func degradesMicOnly() async throws {
-        let base = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: base) }
-
         let mic = FakeMic(script: [makeConstantBuffer(0.3, frames: 16000)])
         let sys = FakeSystem(.denied)
-        let destination = RecordingDestination(baseDirectory: base)
 
-        let session = RecordingSession(mic: mic, systemAudio: sys, destination: destination)
+        let session = RecordingSession(mic: mic, systemAudio: sys)
         try await session.start(at: Date())
         try await Task.sleep(nanoseconds: 200_000_000)
-        let result = try await session.stop()
-        let url = result.wavURL
+        let captured = try await session.stop()
+        let url = captured.localMasterURL
+        defer { try? FileManager.default.removeItem(at: url) }
 
         #expect(FileManager.default.fileExists(atPath: url.path))
         let file = try AVAudioFile(forReading: url)
         #expect(file.length >= 15000, "expected ~1s recorded with mic-only, got \(file.length) frames")
     }
 
+    @Test("system capture start failure becomes a typed non-fatal warning")
+    func systemStartFailureProducesWarning() async throws {
+        let session = RecordingSession(
+            mic: FakeMic(script: [makeConstantBuffer(0.3, frames: 1600)]),
+            systemAudio: FakeSystem(.startFails)
+        )
+
+        try await session.start(at: Date())
+        try await Task.sleep(for: .milliseconds(100))
+        let captured = try await session.stop()
+        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
+
+        #expect(await session.systemAudioFellBack)
+        #expect(captured.warnings.contains { warning in
+            if case .systemAudioUnavailable = warning { return true }
+            return false
+        })
+        #expect(FileManager.default.fileExists(atPath: captured.localMasterURL.path))
+    }
+
     @Test("mic pump survives a system stream that delivers fewer buffers than mic and doesn't finish")
     func micPumpSurvivesSlowSystemStream() async throws {
-        let base = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: base) }
-
         // 10 mic buffers, 1 sys buffer that stalls forever afterwards.
         let micBuffers = (0..<10).map { _ in makeConstantBuffer(0.1, frames: 1600) }
         let sysBuffers = [makeConstantBuffer(0.2, frames: 1600)]
@@ -263,7 +266,6 @@ struct RecordingSessionTests {
         let session = RecordingSession(
             mic: mic,
             systemAudio: sys,
-            destination: RecordingDestination(baseDirectory: base),
             transcriber: nil
         )
 
@@ -271,20 +273,18 @@ struct RecordingSessionTests {
         // Give the pump enough time to drain the 10-buffer mic stream.
         // If the pump deadlocks on sysIter.next(), this test will TIME OUT.
         try await Task.sleep(for: .milliseconds(500))
-        let result = try await session.stop()
+        let captured = try await session.stop()
+        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
 
         // Verify the WAV has > 1 buffer's worth of frames.
         // 10 buffers × 1600 frames = 16000 frames = 1.0s at 16kHz.
         // If the deadlock bug is present, the file will have ~1600 frames (0.1s).
-        let af = try AVAudioFile(forReading: result.wavURL)
+        let af = try AVAudioFile(forReading: captured.localMasterURL)
         #expect(af.length > 5000, "expected >5000 frames; got \(af.length) (pump deadlocked?)")
     }
 
     @Test("fast system stream is mixed continuously, not dropped to ~25% duty cycle")
     func fastSystemStreamIsNotDropped() async throws {
-        let base = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: base) }
-
         // Mic is SILENT and sparse (10 buffers, paced). System is a loud constant
         // arriving ~5× more often (50 small buffers). Both total 16000 frames = 1s.
         // The mixed WAV is therefore pure system audio. With the old single-slot
@@ -299,7 +299,6 @@ struct RecordingSessionTests {
         let session = RecordingSession(
             mic: mic,
             systemAudio: sys,
-            destination: RecordingDestination(baseDirectory: base),
             transcriber: nil
         )
 
@@ -324,9 +323,10 @@ struct RecordingSessionTests {
         }
         await waiter.value
         deadline.cancel()
-        let result = try await session.stop()
+        let captured = try await session.stop()
+        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
 
-        let af = try AVAudioFile(forReading: result.wavURL)
+        let af = try AVAudioFile(forReading: captured.localMasterURL)
         let frames = AVAudioFrameCount(af.length)
         #expect(frames > 12000, "expected ~16000 frames, got \(frames)")
         let buf = AVAudioPCMBuffer(pcmFormat: af.processingFormat, frameCapacity: frames)!

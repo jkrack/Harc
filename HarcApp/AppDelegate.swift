@@ -32,6 +32,22 @@ private final class ResumeOnceGate: @unchecked Sendable {
     }
 }
 
+/// Internal-invariant fallback: still let `RecordingSession.stop()` close a
+/// durable master, then fail publication without consuming it. This path
+/// should never be selected in production, but it must be recovery-safe if
+/// session/committer bookkeeping is ever corrupted.
+private struct MissingRecordingCommitter: RecordingCommitter {
+    struct CommitterMissingError: LocalizedError, Sendable {
+        var errorDescription: String? {
+            "The recording publisher was not initialized. The cache master was preserved for Recovery."
+        }
+    }
+
+    func commit(_ captured: CapturedRecording) async throws -> RecordingCommitOutcome {
+        throw CommitterMissingError()
+    }
+}
+
 /// Publishes Sparkle's discovered updates onto the bridge so HarcUI stays
 /// Sparkle-free. Delegate callbacks arrive off the main actor — primitives
 /// are extracted before hopping.
@@ -58,6 +74,10 @@ final class HarcUpdaterDelegate: NSObject, SPUUpdaterDelegate {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delegate, UNUserNotificationCenterDelegate {
     private var session: RecordingSession?
+    /// Frozen alongside `session` so changing the destination preference while
+    /// a recording is live cannot publish that recording somewhere other than
+    /// the destination that was validated when capture began.
+    private var sessionCommitter: (any RecordingCommitter)?
     private let launcher = DaemonLauncher()
     let state = RecordingState()
     let prefs = HarcPreferences.shared
@@ -157,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             Task { await self?.retryStopRecovery() }
         }
         bridge.onDismissStopRecovery = { [weak self] in
-            self?.bridge.clearStopRecovery()
+            self?.clearStopRecovery()
         }
         bridge.onRecoverRecoveryArtifact = { [weak self] id in
             Task { await self?.recoverRecoveryArtifact(id: id) }
@@ -414,6 +434,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Set when Stop arrives while startRecording is still awaiting daemon
     /// launch / engine spin-up; honored the moment the session is fully up.
     private var stopRequestedDuringStart = false
+    /// Recovery imports delete their cache source after making a canonical
+    /// copy. Keep one token per stop pipeline so a timed-out stop can coexist
+    /// safely with a newer recording while its late finalization/publication
+    /// still owns the old cache master.
+    private var cacheRecoveryProtectionTokens: Set<UUID> = []
+    /// Monotonic owner for the recovery card. A late completion may clear only
+    /// the timeout card it created, never a newer recording's failure UI.
+    private var stopRecoveryPresentationGeneration: UInt64 = 0
+    /// Launch-time recovery is best effort. If capture wins the startup race,
+    /// defer the scan until the protected capture/publication pipeline drains.
+    private var bootstrapRecoveryScanDeferred = false
     private var uiTestRecordingStartedAt: Date?
     private var frontmostPoller: Timer?
     private var hasShownMicOnlyNotice = false
@@ -1490,16 +1521,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             let systemSource: any SystemAudioCaptureSource = systemAudioOn
                 ? SystemAudioCapture()
                 : DisabledSystemAudioCapture()
+            // Freeze publication at capture start. In particular, a custom
+            // destination can disappear or the preference can change during a
+            // long meeting; this recording still belongs to the destination
+            // whose readiness check allowed it to start.
+            let committer = StandaloneRecordingCommitter(
+                destination: RecordingDestination(baseDirectory: prefs.destinationURL)
+            )
             let session = RecordingSession(
                 mic: MicCapture(),
                 systemAudio: systemSource,
-                destination: RecordingDestination(baseDirectory: prefs.destinationURL),
                 transcriber: transcriber,
                 onWriteFailure: { [weak self] message in
                     Task { @MainActor in await self?.handleRecordingWriteFailure(message) }
                 }
             )
             self.session = session
+            self.sessionCommitter = committer
 
             // Pipe transcript updates into the UI.
             self.previewTask?.cancel()
@@ -1566,6 +1604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             stopRequestedDuringStart = false
             await self.session?.abort()
             self.session = nil
+            self.sessionCommitter = nil
             presentError(error)
             resetUI()
         }
@@ -1605,7 +1644,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             return
         }
-        // Dead-man cap on how long stopRecording waits for session.stop().
+        let committer: any RecordingCommitter = sessionCommitter ?? MissingRecordingCommitter()
+        // Everything below is scoped to this exact recording. The timeout path
+        // deliberately frees `self.session` so a new capture can begin while
+        // this one finishes late; retaining shared title/discard/destination
+        // state would let the two recordings corrupt one another's outcome.
+        let captureTitle = pendingCaptureTitle
+        let discarding = pendingDiscard
+        self.sessionCommitter = nil
+        let recoveryProtection = beginCacheRecoveryProtection()
+        var protectionTransferredToLateTask = false
+        defer {
+            if !protectionTransferredToLateTask {
+                endCacheRecoveryProtection(recoveryProtection)
+            }
+        }
+        // Dead-man cap on how long stopRecording waits for capture finalization
+        // and standalone publication. Publication used to live inside
+        // `session.stop()`; keeping the whole stop -> commit pipeline inside
+        // the race preserves that bound now that the responsibilities are
+        // explicitly separated.
         // Finalize legitimately takes minutes on a long meeting (retry drain
         // is budgeted at 180 s, the full-WAV diarize IPC timeout at 300 s),
         // so the cap must sit above their sum — a 30 s cap used to route
@@ -1621,11 +1679,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // before returning, so a group can never actually unblock the UI
         // while stop is stuck (and `Task.value` awaits are not
         // cancellation-responsive either). On timeout the stop task keeps
-        // running unstructured; if it completes later, its result is
+        // running unstructured; if it completes later, its published result is
         // ingested then — never discarded.
-        let stopTask = Task { try await session.stop() }
+        let publicationTask = Task {
+            let captured = try await session.stop()
+            return try await committer.commit(captured)
+        }
         enum StopOutcome {
-            case finished(RecordingResult?)
+            case finished(RecordingCommitOutcome)
             case failed(Error)
             case timedOut
         }
@@ -1633,7 +1694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             let resumed = ResumeOnceGate()
             Task {
                 do {
-                    let r = try await stopTask.value
+                    let r = try await publicationTask.value
                     if resumed.claim() { cont.resume(returning: .finished(r)) }
                 } catch {
                     if resumed.claim() { cont.resume(returning: .failed(error)) }
@@ -1645,52 +1706,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
         }
 
-        let stopResult: RecordingResult?
+        let commitOutcome: RecordingCommitOutcome
         switch outcome {
-        case .finished(let r):
-            stopResult = r
+        case .finished(let published):
+            commitOutcome = published
         case .timedOut:
-            // session.stop() didn't return within the cap — a genuine hang,
-            // not a slow finalize. Free the UI; the stop task keeps running
-            // in the background, and the cache WAV remains as a recovery
-            // artifact. If the task does eventually finish, ingest the
-            // result then: audio that survived must never be thrown away
-            // because it arrived late.
+            // Finalize/publication didn't return within the cap — a genuine
+            // hang, not an ordinary long finalize. Free the UI; the pipeline
+            // keeps running in the background and retains exclusive recovery
+            // ownership of the cache master. If it eventually finishes,
+            // ingest the result then: audio that survived is never discarded.
             FileHandle.standardError.write(Data(
-                "harc: session.stop() exceeded \(Self.stopFinalizeCapSeconds)s; freeing UI, finalize continues in background\n".utf8
+                "harc: stop publication exceeded \(Self.stopFinalizeCapSeconds)s; freeing UI, work continues in background\n".utf8
             ))
             self.session = nil
             state.markIdle()
             bridge.setActiveCaptureStatus(nil)
-            presentStopTimeoutRecovery()
+            // Capture sources stop synchronously at the front of the composed
+            // task. Retire this generation's controller before allowing a new
+            // recording; its eventual late ingest must never end the newer
+            // generation's silence/hard-cap monitoring.
+            autoStop.end(autoStopReason: autoStopReason)
+            let timeoutRecoveryGeneration = presentStopTimeoutRecovery()
             resetUI()
             let lateShiftHeld = shiftHeldAtStopTrigger || skipFromOptionClick
-            Task { [weak self] in
-                guard let result = try? await stopTask.value else { return }
+            protectionTransferredToLateTask = true
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                await MainActor.run { self.bridge.clearStopRecovery() }
-                await self.ingestStopResult(
-                    result,
-                    shiftHeld: lateShiftHeld,
-                    autoStopReason: autoStopReason,
-                    late: true
-                )
+                defer { self.endCacheRecoveryProtection(recoveryProtection) }
+                do {
+                    let outcome = try await publicationTask.value
+                    self.clearStopRecovery(ifGeneration: timeoutRecoveryGeneration)
+                    await self.handleRecordingCommitOutcome(
+                        outcome,
+                        captureTitle: captureTitle,
+                        discarding: discarding,
+                        shiftHeld: lateShiftHeld,
+                        autoStopReason: autoStopReason,
+                        late: true
+                    )
+                } catch {
+                    self.presentCaptureRecovery(
+                        title: "Recording completion failed",
+                        message: "Harc could not finish or publish the recording, but its cache master was preserved.",
+                        error: error
+                    )
+                }
             }
             return
         case .failed(let error):
             self.session = nil
+            autoStop.end(autoStopReason: autoStopReason)
             presentError(error)
+            presentCaptureRecovery(
+                title: "Recording completion failed",
+                message: "Harc could not finish or publish the recording, but any completed cache audio was preserved.",
+                error: error
+            )
             resetUI()
             return
         }
-        guard let result = stopResult else {
-            self.session = nil
-            state.markIdle()
-            resetUI()
-            return
-        }
-        await ingestStopResult(
-            result,
+        await handleRecordingCommitOutcome(
+            commitOutcome,
+            captureTitle: captureTitle,
+            discarding: discarding,
             shiftHeld: shiftHeldAtStopTrigger || skipFromOptionClick,
             autoStopReason: autoStopReason,
             late: false
@@ -1700,7 +1779,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         resetUI()
     }
 
-    /// How long stopRecording waits before declaring finalize hung. Must
+    /// Mode-neutral handoff after a committer has accepted a capture.
+    /// Standalone publication deliberately retains the mature local ingest
+    /// pipeline. Deferred publication has transferred durable ownership to an
+    /// outbox and must not masquerade as a row in this Mac's canonical library.
+    private func handleRecordingCommitOutcome(
+        _ outcome: RecordingCommitOutcome,
+        captureTitle: String?,
+        discarding: Bool,
+        shiftHeld: Bool,
+        autoStopReason: AutoStopController.StopReason?,
+        late: Bool
+    ) async {
+        switch outcome {
+        case .standalonePublished(let capture, let result):
+            await ingestStopResult(
+                result,
+                capturedStartedAt: capture.startedAt,
+                capturedEndedAt: capture.endedAt,
+                captureTitle: captureTitle,
+                discarding: discarding,
+                shiftHeld: shiftHeld,
+                autoStopReason: autoStopReason,
+                late: late
+            )
+        case .acceptedForDeferredPublication:
+            // The accepting committer owns all durable outbox/UI state. In
+            // particular, do not persist a local canonical row, run local
+            // projections, paste, summarize, or show a "saved locally" tray.
+            if !late {
+                state.markDeferredStop()
+                autoStop.end(autoStopReason: autoStopReason)
+            }
+        }
+    }
+
+    /// How long stopRecording waits before declaring finalize/publication
+    /// hung. Must
     /// exceed the worst *healthy* finalize: tail-chunk transcribe (≤60 s) +
     /// finalize retry drain (≤180 s) + full-WAV diarize (≤300 s IPC timeout).
     private static let stopFinalizeCapSeconds = 600
@@ -1712,6 +1827,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// state and never synthesize a paste into whatever app is now frontmost.
     private func ingestStopResult(
         _ result: RecordingResult,
+        capturedStartedAt: Date,
+        capturedEndedAt: Date,
+        captureTitle: String?,
+        discarding: Bool,
         shiftHeld: Bool,
         autoStopReason: AutoStopController.StopReason?,
         late: Bool
@@ -1720,18 +1839,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             state.markStopped(wavURL: result.wavURL, txtURL: result.txtURL, jsonURL: result.jsonURL)
         }
             let transcriptText = result.txtURL.flatMap { Self.transcriptBody(ofSidecarAt: $0) }
-            let startedAt = result.wavURL.startedAtFromHarcPath() ?? Date()
-            let discarding = pendingDiscard
             let rec = Recording(
                 wavPath: result.wavURL.path,
                 txtPath: result.txtURL?.path,
                 jsonPath: result.jsonURL?.path,
-                startedAt: startedAt,
-                endedAt: Date(),
-                title: pendingCaptureTitle,
+                startedAt: capturedStartedAt,
+                endedAt: capturedEndedAt,
+                title: captureTitle,
                 transcriptText: transcriptText
             )
-            pendingCaptureTitle = nil
             var savedID: Int64? = nil
             savedID = await persistStoppedRecording(rec)
             if let transcriptText, let store = self.store {
@@ -1791,15 +1907,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // window), but none of the outward side effects fire — no paste
             // into the frontmost app, no tray, no summary spend.
             if discarding {
-                let duration = rec.endedAt.map {
-                    formatAutoStopDuration($0.timeIntervalSince(rec.startedAt))
-                } ?? "recording"
-                startDiscardCountdown(
-                    recordingID: savedID,
-                    wavPath: rec.wavPath,
-                    durationText: duration
-                )
-                autoStop.end(autoStopReason: autoStopReason)
+                if late {
+                    scheduleLateDiscard(recordingID: savedID, wavPath: rec.wavPath)
+                } else {
+                    let duration = rec.endedAt.map {
+                        formatAutoStopDuration($0.timeIntervalSince(rec.startedAt))
+                    } ?? "recording"
+                    startDiscardCountdown(
+                        recordingID: savedID,
+                        wavPath: rec.wavPath,
+                        durationText: duration
+                    )
+                    autoStop.end(autoStopReason: autoStopReason)
+                }
                 return
             }
             if !late {
@@ -1828,23 +1948,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 openLibrary()
             }
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
-            bridge.autoStopLastDurationText = rec.endedAt.map { formatAutoStopDuration($0.timeIntervalSince(rec.startedAt)) }
-            autoStop.end(autoStopReason: autoStopReason)
-            if let autoStopReason, prefs.postStopNotificationEnabled {
-                AutoStopNotification.post(
-                    reason: autoStopReason,
-                    duration: rec.endedAt.map { $0.timeIntervalSince(rec.startedAt) },
-                    thresholdMinutes: prefs.silenceThresholdMinutes,
-                    previewText: transcriptText
-                )
-        }
+            if !late {
+                bridge.autoStopLastDurationText = rec.endedAt.map { formatAutoStopDuration($0.timeIntervalSince(rec.startedAt)) }
+                autoStop.end(autoStopReason: autoStopReason)
+                if let autoStopReason, prefs.postStopNotificationEnabled {
+                    AutoStopNotification.post(
+                        reason: autoStopReason,
+                        duration: rec.endedAt.map { $0.timeIntervalSince(rec.startedAt) },
+                        thresholdMinutes: prefs.silenceThresholdMinutes,
+                        previewText: transcriptText
+                    )
+                }
+            }
     }
 
     private func resetUI() {
         session = nil
+        sessionCommitter = nil
+        pendingCaptureTitle = nil
+        pendingDiscard = false
         state.markIdle()
         bridge.setActiveCaptureStatus(nil)
         bridge.activeCaptureTitle = nil
+        resumeDeferredBootstrapRecoveryScanIfPossible()
     }
 
     // MARK: - Recording island
@@ -1973,7 +2099,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func startDiscardCountdown(recordingID: Int64?, wavPath: String, durationText: String) {
-        pendingDiscard = false
         discardCountdownTask?.cancel()
         bridge.discardCountdown = DiscardCountdown(durationText: durationText, secondsRemaining: 10)
         discardCountdownTask = Task { [weak self] in
@@ -1987,6 +2112,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     await self.finalizeDiscard(recordingID: recordingID, wavPath: wavPath)
                 }
             }
+        }
+    }
+
+    /// A result that arrives after the stop timeout belongs to an older capture
+    /// generation. Honor its pending discard without replacing the visible
+    /// undo countdown (or cancellation task) of a newer recording.
+    private func scheduleLateDiscard(recordingID: Int64?, wavPath: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            await self.finalizeDiscard(recordingID: recordingID, wavPath: wavPath)
         }
     }
 
@@ -2020,7 +2156,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         FileHandle.standardError.write(Data(
             "harc: stopping recording after write failure: \(message)\n".utf8
         ))
+        let recoveryGenerationBeforeStop = stopRecoveryPresentationGeneration
         await stopRecording(autoStopReason: nil)
+        // A finalize/publication failure already surfaced the truthful
+        // Recovery-needed outcome. Do not overwrite it with "saved" merely
+        // because this stop originated from a live write failure.
+        guard recoveryGenerationBeforeStop == stopRecoveryPresentationGeneration else { return }
         bridge.trayState.showOutcome(
             title: "Recording stopped early",
             outcome: StopOutcome(
@@ -2031,15 +2172,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         )
     }
 
-    private func presentStopTimeoutRecovery() {
+    @discardableResult
+    private func beginCacheRecoveryProtection() -> UUID {
+        let token = UUID()
+        cacheRecoveryProtectionTokens.insert(token)
+        return token
+    }
+
+    private func endCacheRecoveryProtection(_ token: UUID) {
+        cacheRecoveryProtectionTokens.remove(token)
+        resumeDeferredBootstrapRecoveryScanIfPossible()
+    }
+
+    private var isCacheRecoveryProtected: Bool {
+        state.isActiveOrPreparing || !cacheRecoveryProtectionTokens.isEmpty
+    }
+
+    @discardableResult
+    private func showStopRecovery(_ info: StopRecoveryInfo) -> UInt64 {
+        stopRecoveryPresentationGeneration &+= 1
+        bridge.showStopRecovery(info)
+        return stopRecoveryPresentationGeneration
+    }
+
+    private func clearStopRecovery(ifGeneration expectedGeneration: UInt64? = nil) {
+        if let expectedGeneration,
+           expectedGeneration != stopRecoveryPresentationGeneration {
+            return
+        }
+        // Clearing is itself a new generation so a second late task retaining
+        // the old value cannot clear a card presented afterward.
+        stopRecoveryPresentationGeneration &+= 1
+        bridge.clearStopRecovery()
+    }
+
+    private func presentRecoveryBusy() {
+        // A timeout already owns a more useful recovery card and generation.
+        // Replacing it merely because the user pressed Retry would prevent the
+        // eventual late success from clearing its own card.
+        guard cacheRecoveryProtectionTokens.isEmpty else { return }
+        let captureIsLive = state.isActiveOrPreparing
+        showStopRecovery(StopRecoveryInfo(
+            title: captureIsLive ? "Recording in progress" : "Finalization still running",
+            message: captureIsLive
+                ? "Recovery scans the cache folder, and the current recording lives there until it finishes. Stop the recording, then try again."
+                : "Harc is still finalizing or publishing a recording from the cache. Wait for it to finish before starting recovery.",
+            cacheDirectoryPath: RecordingDestination.cacheDirectory().path
+        ))
+    }
+
+    private func presentCaptureRecovery(title: String, message: String, error: Error) {
+        let detail = "\(message) \(error.localizedDescription)"
+        FileHandle.standardError.write(Data(
+            "harc: \(title.lowercased()): \(error.localizedDescription)\n".utf8
+        ))
+        bridge.trayState.showOutcome(
+            title: "Recovery needed",
+            outcome: .recoveryNeeded(detail: detail)
+        )
+        showStopRecovery(StopRecoveryInfo(
+            title: title,
+            message: detail,
+            cacheDirectoryPath: RecordingDestination.cacheDirectory().path
+        ))
+    }
+
+    private func resumeDeferredBootstrapRecoveryScanIfPossible() {
+        guard bootstrapRecoveryScanDeferred,
+              !isCacheRecoveryProtected,
+              let recoveryQueue else { return }
+        bootstrapRecoveryScanDeferred = false
+        Task { @MainActor [weak self, recoveryQueue] in
+            guard let self else { return }
+            // Capture may have restarted between scheduling and execution.
+            guard !self.isCacheRecoveryProtected else {
+                self.bootstrapRecoveryScanDeferred = true
+                return
+            }
+            try? await recoveryQueue.scanCache(
+                cacheDirectory: RecordingDestination.cacheDirectory(),
+                destinationDirectory: self.prefs.destinationURL
+            )
+            await self.refreshRecoveryArtifacts()
+        }
+    }
+
+    @discardableResult
+    private func presentStopTimeoutRecovery() -> UInt64 {
         let cacheDirectory = RecordingDestination.cacheDirectory()
         bridge.trayState.showOutcome(
             title: "Recovery needed",
-            outcome: .recoveryNeeded(detail: "Audio capture stopped, but finalization timed out. Use Recovery to import preserved cache files.")
+            outcome: .recoveryNeeded(detail: "Audio capture stopped, but finishing or publishing timed out. The cache master remains protected while Harc keeps trying.")
         )
-        bridge.showStopRecovery(StopRecoveryInfo(
-            title: "Finalization is still running",
-            message: "Audio capture stopped, but Harc timed out while finishing the transcript. Recovery files are kept in the cache and can be imported again.",
+        return showStopRecovery(StopRecoveryInfo(
+            title: "Recording completion is still running",
+            message: "Audio capture stopped, but Harc timed out while finishing or publishing it. The cache master remains protected until that work exits.",
             cacheDirectoryPath: cacheDirectory.path
         ))
     }
@@ -2055,17 +2282,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // classify it as an interrupted recording — and recovery *deletes
         // the source WAV* after copying, killing the live session's file
         // out from under the writer.
-        guard !state.isActiveOrPreparing else {
-            bridge.showStopRecovery(StopRecoveryInfo(
-                title: "Recording in progress",
-                message: "Recovery scans the cache folder, and the current recording lives there until it finishes. Stop the recording, then try again.",
-                cacheDirectoryPath: RecordingDestination.cacheDirectory().path
-            ))
+        guard !isCacheRecoveryProtected else {
+            presentRecoveryBusy()
             return
         }
 
         let cacheDirectory = RecordingDestination.cacheDirectory()
-        bridge.showStopRecovery(StopRecoveryInfo(
+        showStopRecovery(StopRecoveryInfo(
             title: "Retrying recovery",
             message: "Checking cached recording files and importing anything complete enough to recover.",
             cacheDirectoryPath: cacheDirectory.path,
@@ -2076,6 +2299,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             let queue = recoveryQueue ?? RecoveryQueue(fileURL: RecoveryQueue.defaultURL(), store: store)
             recoveryQueue = queue
             try await queue.scanCache(cacheDirectory: cacheDirectory, destinationDirectory: prefs.destinationURL)
+            // A recording may have entered stop/finalize while the scan actor
+            // was suspended. Scanning only queues metadata; never cross into
+            // the destructive recover step once a cache owner is protected.
+            guard !isCacheRecoveryProtected else {
+                presentRecoveryBusy()
+                await refreshRecoveryArtifacts()
+                return
+            }
             let pending = try await queue.fetchAll().filter { artifact in
                 artifact.status == .pending || artifact.status == .failed || artifact.status == .skipped
             }
@@ -2090,21 +2321,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             let ingestor = RecordingIngestor(baseDirectory: prefs.destinationURL, store: store)
             _ = try? await ingestor.ingestAll()
             if recoveredCount > 0 {
-                bridge.showStopRecovery(StopRecoveryInfo(
+                showStopRecovery(StopRecoveryInfo(
                     title: "Recovered \(recoveredCount) recording\(recoveredCount == 1 ? "" : "s")",
                     message: "Recovered audio was moved into your recordings folder and added to the Library.",
                     cacheDirectoryPath: cacheDirectory.path
                 ))
                 openLibrary()
             } else {
-                bridge.showStopRecovery(StopRecoveryInfo(
+                showStopRecovery(StopRecoveryInfo(
                     title: "No recoverable files yet",
                     message: "Finalization may still be running. You can try again, reveal the cache, or restart Harc to retry recovery automatically.",
                     cacheDirectoryPath: cacheDirectory.path
                 ))
             }
         } catch {
-            bridge.showStopRecovery(StopRecoveryInfo(
+            showStopRecovery(StopRecoveryInfo(
                 title: "Recovery failed",
                 message: error.localizedDescription,
                 cacheDirectoryPath: cacheDirectory.path
@@ -2113,6 +2344,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func recoverRecoveryArtifact(id: String) async {
+        guard !isCacheRecoveryProtected else {
+            presentRecoveryBusy()
+            return
+        }
         guard let queue = recoveryQueue else { return }
         _ = try? await queue.recover(id: id)
         await refreshRecoveryArtifacts()
@@ -3092,11 +3327,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             self.recoveryQueue = recoveryQueue
 
             // Keep interrupted cache artifacts visible until the user chooses
-            // Recover or Discard from the recovery inbox.
-            try? await recoveryQueue.scanCache(
-                cacheDirectory: RecordingDestination.cacheDirectory(),
-                destinationDirectory: prefs.destinationURL
-            )
+            // Recover or Discard from the recovery inbox. A user can begin a
+            // capture before store bootstrap finishes; never classify that
+            // live (or late-finalizing) cache master as interrupted.
+            if isCacheRecoveryProtected {
+                bootstrapRecoveryScanDeferred = true
+            } else {
+                try? await recoveryQueue.scanCache(
+                    cacheDirectory: RecordingDestination.cacheDirectory(),
+                    destinationDirectory: prefs.destinationURL
+                )
+            }
             await refreshRecoveryArtifacts()
 
             // Ingest existing filesystem recordings.

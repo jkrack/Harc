@@ -39,4 +39,21 @@ struct RecordingStateTests {
         #expect(state.livePreviewText.isEmpty)
         #expect(state.lastResult?.wavURL == wavURL)
     }
+
+    @Test("deferred stop clears the previous standalone result")
+    func markDeferredStop() {
+        let state = RecordingState()
+        let oldWavURL = URL(fileURLWithPath: "/tmp/previous-standalone.wav")
+        state.markStopped(wavURL: oldWavURL, txtURL: nil, jsonURL: nil)
+        state.markStarted(at: Date())
+        state.livePreviewText = "outbox capture"
+
+        state.markDeferredStop()
+
+        #expect(state.isRecording == false)
+        #expect(state.isPreparing == false)
+        #expect(state.recordingStartedAt == nil)
+        #expect(state.livePreviewText.isEmpty)
+        #expect(state.lastResult == nil)
+    }
 }

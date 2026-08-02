@@ -7,6 +7,8 @@ import HarcClient
 
 @Suite("RecordingSession + transcription")
 struct RecordingSessionTranscriptionTests {
+    private enum TestFailure: Error { case unexpectedCommitOutcome }
+
     private final class SendableBuffers: @unchecked Sendable {
         let buffers: [AVAudioPCMBuffer]
         init(_ buffers: [AVAudioPCMBuffer]) { self.buffers = buffers }
@@ -47,6 +49,17 @@ struct RecordingSessionTranscriptionTests {
         }
     }
 
+    private struct SlowDiarizationError: LocalizedError {
+        var errorDescription: String? { "delayed diarization failure" }
+    }
+
+    actor SlowFailingDiarizer: DiarizingClient {
+        func diarize(audioPath: String) async throws -> DiarizeResult {
+            try await Task.sleep(for: .milliseconds(350))
+            throw SlowDiarizationError()
+        }
+    }
+
     /// Resume once the transcriber has assembled its first chunk, or after
     /// `timeout` — whichever comes first. Returning on timeout rather than
     /// failing here keeps the diagnosis in the assertions below, which say what
@@ -75,8 +88,8 @@ struct RecordingSessionTranscriptionTests {
         return buf
     }
 
-    @Test("stop() returns .wav + .txt + .json when a transcriber is attached")
-    func stopReturnsAllArtifacts() async throws {
+    @Test("standalone commit publishes WAV and transcript siblings")
+    func standaloneCommitPublishesAllArtifacts() async throws {
         let base = URL(fileURLWithPath: "/tmp/harc-rst-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
@@ -112,7 +125,6 @@ struct RecordingSessionTranscriptionTests {
         let session = RecordingSession(
             mic: mic,
             systemAudio: sys,
-            destination: destination,
             transcriber: transcriber
         )
         try await session.start(at: Date())
@@ -127,9 +139,21 @@ struct RecordingSessionTranscriptionTests {
         // test needs. Bounded so a real hang still fails instead of hanging.
         await awaitFirstChunk(transcriber.updates, timeout: .seconds(10))
 
-        let result = try await session.stop()
+        let captured = try await session.stop()
+        #expect(FileManager.default.fileExists(atPath: captured.localMasterURL.path))
+        #expect(captured.transcript != nil)
+        #expect(captured.transcript?.startedAt == captured.startedAt)
+        #expect(captured.transcript?.endedAt == captured.endedAt)
+
+        let outcome = try await StandaloneRecordingCommitter(destination: destination).commit(captured)
+        guard case .standalonePublished(let acceptedCapture, let result) = outcome else {
+            throw TestFailure.unexpectedCommitOutcome
+        }
 
         #expect(FileManager.default.fileExists(atPath: result.wavURL.path))
+        #expect(!FileManager.default.fileExists(atPath: captured.localMasterURL.path))
+        #expect(acceptedCapture.startedAt == captured.startedAt)
+        #expect(acceptedCapture.endedAt == captured.endedAt)
         try #require(result.txtURL != nil)
         try #require(result.jsonURL != nil)
         #expect(FileManager.default.fileExists(atPath: result.txtURL!.path))
@@ -140,5 +164,48 @@ struct RecordingSessionTranscriptionTests {
         // Stub returned "one" and "two" — the flush tail must make it into the transcript.
         #expect(txt.contains("one"))
         #expect(txt.contains("two"))
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let persisted = try decoder.decode(
+            SessionTranscript.self,
+            from: Data(contentsOf: result.jsonURL!)
+        )
+        #expect(persisted.audioPath == result.wavURL.path)
+        #expect(abs(persisted.startedAt.timeIntervalSince(captured.startedAt)) < 0.000_001)
+        #expect(abs(persisted.endedAt.timeIntervalSince(captured.endedAt)) < 0.000_001)
+    }
+
+    @Test("capture endedAt is sampled before slow post-stop finalization")
+    func endedAtExcludesFinalizationLatency() async throws {
+        let mic = FakeMic(script: [makeConstantBuffer(frames: 1600)])
+        let transcriber = ChunkedTranscriber(
+            client: StubClient(results: [
+                TranscribeResult(text: "captured", words: [], speakers: [], processingMs: 1),
+            ]),
+            diarizer: SlowFailingDiarizer(),
+            vadEnabled: false,
+            chunkDurationSeconds: 60,
+            pollIntervalSeconds: 0.05,
+            livePreviewIntervalSeconds: 0,
+            chunkOverlapSeconds: 0
+        )
+        let session = RecordingSession(
+            mic: mic,
+            systemAudio: FakeSystem(),
+            transcriber: transcriber
+        )
+        try await session.start(at: Date())
+        try await Task.sleep(for: .milliseconds(100))
+
+        let captured = try await session.stop()
+        let returnedAt = Date()
+        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
+
+        #expect(returnedAt.timeIntervalSince(captured.endedAt) >= 0.30)
+        #expect(captured.transcript?.endedAt == captured.endedAt)
+        #expect(captured.warnings.contains(
+            .diarizationFailed(message: "delayed diarization failure")
+        ))
     }
 }

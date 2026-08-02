@@ -42,6 +42,18 @@ public final class RecordingState: ObservableObject {
         lastResult = RecordingResult(wavURL: wavURL, txtURL: txtURL, jsonURL: jsonURL)
     }
 
+    /// End a capture that was accepted by a non-standalone committer.
+    /// There is intentionally no local canonical path to select. Clearing the
+    /// previous standalone result prevents the recording-to-idle UI transition
+    /// from navigating back to an older library row.
+    public func markDeferredStop() {
+        isPreparing = false
+        isRecording = false
+        recordingStartedAt = nil
+        livePreviewText = ""
+        lastResult = nil
+    }
+
     public func markIdle() {
         isPreparing = false
         isRecording = false

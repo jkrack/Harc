@@ -3,8 +3,10 @@ import Foundation
 @preconcurrency import AVFAudio
 import HarcClient
 import HarcCore
+import HarcDomain
 
-/// Result of a completed recording.
+/// Compatibility result for a recording committed to the standalone public
+/// destination. Capture itself completes as `CapturedRecording`.
 public struct RecordingResult: Sendable {
     public let wavURL: URL
     public let txtURL: URL?
@@ -61,7 +63,6 @@ public struct AudioLevels: Sendable {
 public actor RecordingSession {
     private let mic: any MicCaptureSource
     private let systemAudio: any SystemAudioCaptureSource
-    private let destination: RecordingDestination
     private let transcriber: ChunkedTranscriber?
 
     nonisolated(unsafe) private let mixer = AudioMixer()
@@ -78,6 +79,7 @@ public actor RecordingSession {
     private var startedAt: Date?
     private var pumpTask: Task<Void, Never>?
     private var systemAudioAvailable = false
+    private var captureWarnings: [CaptureWarning] = []
 
     /// Set to true when `start` had to fall back to mic-only because system
     /// audio capture failed (permission revoked, no display, etc.). The
@@ -102,13 +104,11 @@ public actor RecordingSession {
     public init(
         mic: any MicCaptureSource,
         systemAudio: any SystemAudioCaptureSource,
-        destination: RecordingDestination,
         transcriber: ChunkedTranscriber? = nil,
         onWriteFailure: (@Sendable (String) -> Void)? = nil
     ) {
         self.mic = mic
         self.systemAudio = systemAudio
-        self.destination = destination
         self.transcriber = transcriber
         self.onWriteFailure = onWriteFailure
         var continuation: AsyncStream<AudioLevels>.Continuation!
@@ -190,6 +190,7 @@ public actor RecordingSession {
                 sysStream = nil
                 systemAudioAvailable = false
                 systemAudioFellBack = true
+                captureWarnings.append(.systemAudioUnavailable(message: error.localizedDescription))
             }
         } else {
             sysStream = nil
@@ -200,9 +201,17 @@ public actor RecordingSession {
         }
     }
 
-    public func stop() async throws -> RecordingResult {
+    /// Stop accepting audio, drain every accepted buffer, close the durable
+    /// local master, and finalize optional processing artifacts. Publication
+    /// is deliberately left to a `RecordingCommitter`.
+    public func stop() async throws -> CapturedRecording {
         await mic.stop()
         await systemAudio.stop()
+        // This is the one capture end timestamp used by both the returned
+        // value and transcription. Sample it at the stop-accepting boundary,
+        // before pump draining, writer close, retries, or diarization can add
+        // non-capture latency to the recording's duration.
+        let endedAt = Date()
         // Drain, don't cancel: both capture streams were just finished, so
         // the pump exits once it consumes what was already buffered.
         // Cancelling here discarded that backlog — the final fraction of a
@@ -228,51 +237,34 @@ public actor RecordingSession {
         // Finalize transcriber while cache file still exists.
         var finalTranscript: SessionTranscript? = nil
         var speakerEmbeddings: [SpeakerEmbeddingRow] = []
-        var diarizationError: String? = nil
         if let transcriber {
             do {
                 let finalized = try await transcriber.finalize(
                     startedAt: startedAt,
-                    endedAt: Date()
+                    endedAt: endedAt
                 )
                 finalTranscript = finalized.transcript
                 speakerEmbeddings = finalized.speakerEmbeddings
-                diarizationError = finalized.diarizationError
+                if let error = finalized.diarizationError {
+                    captureWarnings.append(.diarizationFailed(message: error))
+                }
             } catch {
                 FileHandle.standardError.write(Data(
                     "harc-audio: transcription finalize failed: \(error.localizedDescription)\n".utf8
                 ))
+                captureWarnings.append(.transcriptionFailed(message: error.localizedDescription))
             }
         }
 
-        // Now move the WAV to its public location.
-        let wavURL = try destination.publicPath(for: startedAt)
-        try RecordingDestination.atomicMove(from: cache, to: wavURL)
-
-        // Write sibling files at the final location with the final path.
-        var txtURL: URL? = nil
-        var jsonURL: URL? = nil
-        if var transcript = finalTranscript {
-            transcript.audioPath = wavURL.path
-            do {
-                try TranscriptWriter.writeSiblings(transcript: transcript, nextTo: wavURL)
-                let stem = wavURL.deletingPathExtension().lastPathComponent
-                let parent = wavURL.deletingLastPathComponent()
-                txtURL = parent.appendingPathComponent("\(stem).md")
-                jsonURL = parent.appendingPathComponent("\(stem).json")
-            } catch {
-                FileHandle.standardError.write(Data(
-                    "harc-audio: transcript sibling write failed: \(error.localizedDescription)\n".utf8
-                ))
-            }
-        }
-
-        return RecordingResult(
-            wavURL: wavURL,
-            txtURL: txtURL,
-            jsonURL: jsonURL,
+        cacheURL = nil
+        return CapturedRecording(
+            localMasterURL: cache,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            transcript: finalTranscript,
             speakerEmbeddings: speakerEmbeddings,
-            diarizationError: diarizationError
+            warnings: captureWarnings,
+            discontinuities: []
         )
     }
 

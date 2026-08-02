@@ -54,7 +54,7 @@ let package = Package(
         .target(name: "HarcDomain", exclude: ["README.md"]),
         .target(
             name: "HarcAudio",
-            dependencies: ["HarcCore", "HarcClient", "HarcAudioObjC"]
+            dependencies: ["HarcCore", "HarcDomain", "HarcClient", "HarcAudioObjC"]
         ),
         .target(
             name: "HarcAudioObjC",
@@ -163,7 +163,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcAudioTests",
-            dependencies: ["HarcAudio", "HarcCore", "HarcClient"]
+            dependencies: ["HarcAudio", "HarcCore", "HarcDomain", "HarcClient"]
         ),
         .testTarget(
             name: "HarcClientTests",
