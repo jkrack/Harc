@@ -711,12 +711,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         } else {
-            NSApp.activate(ignoringOtherApps: true)
-            if NSApp.isActive {
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                window.orderFrontRegardless()
-            }
+            NSRunningApplication.current.activate(
+                options: [.activateAllWindows, .activateIgnoringOtherApps]
+            )
+            window.makeKeyAndOrderFront(nil)
+            // Activation is asynchronous and may still be denied; regardless,
+            // the window itself must appear.
+            window.orderFrontRegardless()
         }
     }
 
