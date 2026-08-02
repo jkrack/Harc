@@ -69,14 +69,15 @@ mode is `docs/specs/2026-08-02-host-client-mobile-implementation-spec.md`. The
 short architecture and ordered PR plan live beside it under `docs/architecture/`
 and `docs/plans/`. The spec wins if planning prose drifts.
 
-The new `HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcProtocol`, `HarcHost`,
-`HarcHostTransport`, `HarcClientTransport`, `HarcClientStore`, and
-`HarcAudioMobile`, `HarcAudioMac`, and `HarcInference` directories begin as
-documentation-only boundaries. Do not add them to `Package.swift` or
-`project.yml` until their ordered vertical slice has implementation and tests.
-Keep the V1 host in the resident Mac app, keep the existing daemon, issue the
-audio-safety receipt before derived processing, and do not expose local paths or
-GRDB records as network DTOs. In Host mode,
+`HarcDomain` is active as the Foundation-only public identity/value layer. The
+remaining new `HarcIdentity`, `HarcTransfer`, `HarcProtocol`, `HarcHost`,
+`HarcHostTransport`, `HarcClientTransport`, `HarcClientStore`,
+`HarcAudioMobile`, `HarcAudioMac`, and `HarcInference` directories remain
+documentation-only boundaries until their ordered vertical slice has
+implementation and focused tests. Do not add a placeholder module to
+`Package.swift` or `project.yml`. Keep the V1 host in the resident Mac app, keep
+the existing daemon, issue the audio-safety receipt before derived processing,
+and do not expose local paths or GRDB records as network DTOs. In Host mode,
 `harc-mcp` must route through authenticated local IPC and must never fall back to
 direct database writes when the resident host is unavailable.
 

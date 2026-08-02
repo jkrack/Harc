@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v26)],
     products: [
         .library(name: "HarcCore", targets: ["HarcCore"]),
+        .library(name: "HarcDomain", targets: ["HarcDomain"]),
         .library(name: "HarcAudio", targets: ["HarcAudio"]),
         .library(name: "HarcClient", targets: ["HarcClient"]),
         .library(name: "HarcStore", targets: ["HarcStore"]),
@@ -50,6 +51,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "HarcCore"),
+        .target(name: "HarcDomain", exclude: ["README.md"]),
         .target(
             name: "HarcAudio",
             dependencies: ["HarcCore", "HarcClient", "HarcAudioObjC"]
@@ -70,6 +72,7 @@ let package = Package(
             name: "HarcStore",
             dependencies: [
                 "HarcCore",
+                "HarcDomain",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
@@ -131,6 +134,7 @@ let package = Package(
             ]
         ),
         .testTarget(name: "HarcCoreTests", dependencies: ["HarcCore"]),
+        .testTarget(name: "HarcDomainTests", dependencies: ["HarcDomain"]),
         .testTarget(
             name: "HarcModelsTests",
             dependencies: ["HarcModels", "HarcCore"]
@@ -175,7 +179,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcStoreTests",
-            dependencies: ["HarcStore", "HarcCore"]
+            dependencies: ["HarcStore", "HarcCore", "HarcDomain"]
         ),
         .testTarget(
             name: "HarcMCPTests",

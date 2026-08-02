@@ -1,9 +1,34 @@
 import Foundation
 import GRDB
+import HarcDomain
+
+func decodeStoredFailure(_ value: String?, fallbackCode: String) throws -> ProcessingFailure? {
+    guard let value else { return nil }
+    if let data = value.data(using: .utf8),
+       let decoded = try? JSONDecoder().decode(ProcessingFailure.self, from: data) {
+        return decoded
+    }
+    return try ProcessingFailure(code: fallbackCode, message: value)
+}
+
+func encodeStoredFailure(_ value: ProcessingFailure?) -> String? {
+    guard let value,
+          let data = try? JSONEncoder().encode(value)
+    else { return nil }
+    return String(data: data, encoding: .utf8)
+}
 
 /// A single recording row. Mirrors the `recordings` table.
 public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var id: Int64?
+    /// Stable public identity. `id` remains the host-local SQLite key.
+    public var canonicalID: CanonicalRecordingID
+    public var originID: OriginRecordingID?
+    public var canonicalPCMHash: CanonicalPCMHash?
+    public var canonicalPCMFrames: UInt64?
+    public var revision: EntityRevision
+    public var processing: ProcessingDescriptor
+    public var projection: ProjectionDescriptor
     public var wavPath: String
     public var txtPath: String?
     public var jsonPath: String?
@@ -60,9 +85,23 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         summaryStatusKind: RecordingSummaryStatusKind? = nil,
         summaryStatusMessage: String? = nil,
         summaryStatusUpdatedAt: Date? = nil,
-        chunksIndexedAt: Date? = nil
+        chunksIndexedAt: Date? = nil,
+        canonicalID: CanonicalRecordingID = .random(),
+        originID: OriginRecordingID? = nil,
+        canonicalPCMHash: CanonicalPCMHash? = nil,
+        canonicalPCMFrames: UInt64? = nil,
+        revision: EntityRevision = .initial,
+        processing: ProcessingDescriptor = .ready,
+        projection: ProjectionDescriptor = .readyV1
     ) {
         self.id = id
+        self.canonicalID = canonicalID
+        self.originID = originID
+        self.canonicalPCMHash = canonicalPCMHash
+        self.canonicalPCMFrames = canonicalPCMFrames
+        self.revision = revision
+        self.processing = processing
+        self.projection = projection
         self.wavPath = wavPath
         self.txtPath = txtPath
         self.jsonPath = jsonPath
@@ -169,6 +208,111 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decodeIfPresent(Int64.self, forKey: .id)
+        let canonicalUUIDString = try c.decode(String.self, forKey: .canonicalID)
+        guard let canonicalUUID = UUID(uuidString: canonicalUUIDString) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .canonicalID,
+                in: c,
+                debugDescription: "canonical_uuid is not a UUID"
+            )
+        }
+        self.canonicalID = CanonicalRecordingID(canonicalUUID)
+
+        let originDeviceBytes = try c.decodeIfPresent(Data.self, forKey: .originDeviceID)
+        let originUUIDString = try c.decodeIfPresent(String.self, forKey: .originRecordingUUID)
+        switch (originDeviceBytes, originUUIDString) {
+        case (nil, nil):
+            self.originID = nil
+        case let (.some(deviceBytes), .some(uuidString)):
+            guard let uuid = UUID(uuidString: uuidString) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .originRecordingUUID,
+                    in: c,
+                    debugDescription: "origin_recording_uuid is not a UUID"
+                )
+            }
+            self.originID = OriginRecordingID(
+                deviceID: try DeviceID(deviceBytes),
+                recordingUUID: uuid
+            )
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .originRecordingUUID,
+                in: c,
+                debugDescription: "origin identity columns must be both present or both absent"
+            )
+        }
+
+        if let hashBytes = try c.decodeIfPresent(Data.self, forKey: .canonicalPCMHash) {
+            self.canonicalPCMHash = try CanonicalPCMHash(hashBytes)
+        } else {
+            self.canonicalPCMHash = nil
+        }
+        if let frameCount = try c.decodeIfPresent(Int64.self, forKey: .canonicalPCMFrames) {
+            guard frameCount > 0 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .canonicalPCMFrames,
+                    in: c,
+                    debugDescription: "canonical_pcm_frames must be positive"
+                )
+            }
+            self.canonicalPCMFrames = UInt64(frameCount)
+        } else {
+            self.canonicalPCMFrames = nil
+        }
+        self.revision = try EntityRevision(
+            signedValue: try c.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+        )
+
+        let processingState = RecordingProcessingState(
+            rawValue: try c.decodeIfPresent(String.self, forKey: .processingState) ?? "ready"
+        )
+        guard let processingState else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .processingState,
+                in: c,
+                debugDescription: "unsupported processing_state"
+            )
+        }
+        self.processing = try ProcessingDescriptor(
+            state: processingState,
+            failure: decodeStoredFailure(
+                try c.decodeIfPresent(String.self, forKey: .processingFailureDetail),
+                fallbackCode: "processing.failure"
+            )
+        )
+
+        let projectionState = RecordingProjectionState(
+            rawValue: try c.decodeIfPresent(String.self, forKey: .projectionState) ?? "unknownLegacy"
+        )
+        guard let projectionState else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .projectionState,
+                in: c,
+                debugDescription: "unsupported projection_state"
+            )
+        }
+        let projectionVersion: ProjectionVersion?
+        if let storedVersion = try c.decodeIfPresent(Int64.self, forKey: .projectionVersion) {
+            guard storedVersion > 0 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .projectionVersion,
+                    in: c,
+                    debugDescription: "projection_version must be positive"
+                )
+            }
+            projectionVersion = try ProjectionVersion(UInt64(storedVersion))
+        } else {
+            projectionVersion = nil
+        }
+        self.projection = try ProjectionDescriptor(
+            state: projectionState,
+            version: projectionVersion,
+            failure: decodeStoredFailure(
+                try c.decodeIfPresent(String.self, forKey: .projectionFailureDetail),
+                fallbackCode: "projection.failure"
+            )
+        )
         self.wavPath = try c.decode(String.self, forKey: .wavPath)
         self.txtPath = try c.decodeIfPresent(String.self, forKey: .txtPath)
         self.jsonPath = try c.decodeIfPresent(String.self, forKey: .jsonPath)
@@ -238,6 +382,40 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(id, forKey: .id)
+        try c.encode(canonicalID.description, forKey: .canonicalID)
+        try c.encodeIfPresent(originID?.deviceID.rawBytes, forKey: .originDeviceID)
+        try c.encodeIfPresent(
+            originID?.recordingUUID.uuidString.lowercased(),
+            forKey: .originRecordingUUID
+        )
+        try c.encodeIfPresent(canonicalPCMHash?.rawBytes, forKey: .canonicalPCMHash)
+        if let canonicalPCMFrames {
+            guard let storedFrames = Int64(exactly: canonicalPCMFrames) else {
+                throw StoreError.invalidData("Canonical PCM frame count exceeds SQLite range")
+            }
+            try c.encode(storedFrames, forKey: .canonicalPCMFrames)
+        } else {
+            try c.encodeNil(forKey: .canonicalPCMFrames)
+        }
+        try c.encode(revision.signedInt64Value(), forKey: .revision)
+        try c.encode(processing.state.rawValue, forKey: .processingState)
+        try c.encodeIfPresent(
+            encodeStoredFailure(processing.failure),
+            forKey: .processingFailureDetail
+        )
+        try c.encode(projection.state.rawValue, forKey: .projectionState)
+        if let projectionVersion = projection.version {
+            guard let storedVersion = Int64(exactly: projectionVersion.rawValue) else {
+                throw StoreError.invalidData("Projection version exceeds SQLite range")
+            }
+            try c.encode(storedVersion, forKey: .projectionVersion)
+        } else {
+            try c.encodeNil(forKey: .projectionVersion)
+        }
+        try c.encodeIfPresent(
+            encodeStoredFailure(projection.failure),
+            forKey: .projectionFailureDetail
+        )
         try c.encode(wavPath, forKey: .wavPath)
         try c.encodeIfPresent(txtPath, forKey: .txtPath)
         try c.encodeIfPresent(jsonPath, forKey: .jsonPath)
@@ -311,6 +489,17 @@ extension Recording: FetchableRecord, PersistableRecord {
     // Map Swift camelCase property names to snake_case column names.
     private enum CodingKeys: String, CodingKey {
         case id
+        case canonicalID = "canonical_uuid"
+        case originDeviceID = "origin_device_id"
+        case originRecordingUUID = "origin_recording_uuid"
+        case canonicalPCMHash = "canonical_pcm_sha256"
+        case canonicalPCMFrames = "canonical_pcm_frames"
+        case revision
+        case processingState = "processing_state"
+        case processingFailureDetail = "processing_failure_detail"
+        case projectionState = "projection_state"
+        case projectionFailureDetail = "projection_failure_detail"
+        case projectionVersion = "projection_version"
         case wavPath = "wav_path"
         case txtPath = "txt_path"
         case jsonPath = "json_path"
@@ -341,6 +530,17 @@ extension Recording: FetchableRecord, PersistableRecord {
 
     public enum Columns {
         static let id = Column("id")
+        static let canonicalID = Column("canonical_uuid")
+        static let originDeviceID = Column("origin_device_id")
+        static let originRecordingUUID = Column("origin_recording_uuid")
+        static let canonicalPCMHash = Column("canonical_pcm_sha256")
+        static let canonicalPCMFrames = Column("canonical_pcm_frames")
+        static let revision = Column("revision")
+        static let processingState = Column("processing_state")
+        static let processingFailureDetail = Column("processing_failure_detail")
+        static let projectionState = Column("projection_state")
+        static let projectionFailureDetail = Column("projection_failure_detail")
+        static let projectionVersion = Column("projection_version")
         static let wavPath = Column("wav_path")
         static let txtPath = Column("txt_path")
         static let jsonPath = Column("json_path")
@@ -367,5 +567,39 @@ extension Recording: FetchableRecord, PersistableRecord {
         static let chunksIndexedAt = Column("chunks_indexed_at")
         static let sttModelID = Column("stt_model_id")
         static let transcribedAt = Column("transcribed_at")
+    }
+}
+
+extension Recording {
+    /// Equality of the path-free client-visible recording state. Local row
+    /// identity, filesystem locations, timestamps used only for maintenance,
+    /// and semantic-index markers deliberately do not participate.
+    func hasSamePublicContent(as other: Recording) -> Bool {
+        canonicalID == other.canonicalID
+            && originID == other.originID
+            && canonicalPCMHash == other.canonicalPCMHash
+            && canonicalPCMFrames == other.canonicalPCMFrames
+            && processing == other.processing
+            && projection == other.projection
+            && startedAt == other.startedAt
+            && endedAt == other.endedAt
+            && title == other.title
+            && transcriptText == other.transcriptText
+            && suggestedTitle == other.suggestedTitle
+            && tags == other.tags
+            && speakerNames == other.speakerNames
+            && summaryMarkdown == other.summaryMarkdown
+            && actionItemsMarkdown == other.actionItemsMarkdown
+            && notesMarkdown == other.notesMarkdown
+            && summaryModelID == other.summaryModelID
+            && summaryGeneratedAt == other.summaryGeneratedAt
+            && summarySourceWordCount == other.summarySourceWordCount
+            && summaryStatusKind == other.summaryStatusKind
+            && summaryStatusMessage == other.summaryStatusMessage
+            && summaryStatusUpdatedAt == other.summaryStatusUpdatedAt
+            && sttModelID == other.sttModelID
+            && transcribedAt == other.transcribedAt
+            && pinned == other.pinned
+            && deletedAt == other.deletedAt
     }
 }

@@ -4,6 +4,10 @@ public enum StoreError: Error, LocalizedError, Equatable {
     case databaseOpenFailed(String)
     case migrationFailed(String)
     case notFound
+    case originIdentityConflict
+    case canonicalPCMHashConflict
+    case revisionConflict(expected: UInt64, actual: UInt64)
+    case revisionOverflow
     case invalidData(String)
     case readFailed(String)
     case writeFailed(String)
@@ -16,6 +20,14 @@ public enum StoreError: Error, LocalizedError, Equatable {
             return "Database migration failed: \(reason)"
         case .notFound:
             return "Recording not found"
+        case .originIdentityConflict:
+            return "The origin recording identity is already bound to different audio"
+        case .canonicalPCMHashConflict:
+            return "The recording is already bound to a different canonical PCM hash"
+        case .revisionConflict(let expected, let actual):
+            return "Recording revision conflict: expected \(expected), found \(actual)"
+        case .revisionOverflow:
+            return "Recording revision exceeded the supported storage range"
         case .invalidData(let reason):
             return reason
         case .readFailed(let reason):

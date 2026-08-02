@@ -227,6 +227,11 @@ public extension RecordingStore {
                 sql: "DELETE FROM transcript_chunks WHERE recording_id = ?",
                 arguments: [recordingID]
             )
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: recordingID,
+                changedAt: now
+            )
         }
         // Keep the on-disk .md artifact in step with the DB, the same way every
         // other content mutation does. Best-effort: the write already
@@ -245,12 +250,19 @@ public extension RecordingStore {
     ) async throws {
         let stamp = Int64(now.timeIntervalSince1970 * 1000)
         try await db.write { db in
-            _ = try Recording.filter(key: recordingID).updateAll(
+            let count = try Recording.filter(key: recordingID).updateAll(
                 db,
                 [
                     Recording.Columns.sttModelID.set(to: modelID),
                     Recording.Columns.transcribedAt.set(to: stamp),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
+            )
+            guard count > 0 else { return }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: recordingID,
+                changedAt: now
             )
         }
     }

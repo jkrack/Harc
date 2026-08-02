@@ -309,6 +309,177 @@ extension DatabaseMigrator {
             }
         }
 
+        // Stable public library/recording identity. Keep this migration
+        // additive: `recordings` is the external-content table for FTS and is
+        // referenced by several child tables. Rebuilding or renaming it would
+        // put those triggers and foreign keys at risk during an upgrade.
+        migrator.registerMigration("v16_canonical_library_identity") { db in
+            try db.execute(sql: """
+                CREATE TABLE library_metadata (
+                    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+                    library_uuid TEXT NOT NULL UNIQUE CHECK (length(library_uuid) = 36),
+                    writer_mode TEXT NOT NULL CHECK (writer_mode IN ('standalone', 'host')),
+                    host_authority_id BLOB,
+                    host_state_uuid TEXT,
+                    current_change_cursor INTEGER NOT NULL DEFAULT 0
+                        CHECK (current_change_cursor >= 0),
+                    updated_at DATETIME NOT NULL,
+                    CHECK (host_authority_id IS NULL OR length(host_authority_id) = 32),
+                    CHECK (host_state_uuid IS NULL OR length(host_state_uuid) = 36),
+                    CHECK (
+                        (host_authority_id IS NULL AND host_state_uuid IS NULL)
+                        OR (host_authority_id IS NOT NULL AND host_state_uuid IS NOT NULL)
+                    ),
+                    CHECK (
+                        writer_mode <> 'host'
+                        OR (host_authority_id IS NOT NULL AND host_state_uuid IS NOT NULL)
+                    )
+                )
+                """)
+            try db.execute(
+                sql: """
+                    INSERT INTO library_metadata
+                        (id, library_uuid, writer_mode, current_change_cursor, updated_at)
+                    VALUES (1, ?, 'standalone', 0, ?)
+                    """,
+                arguments: [UUID().uuidString.lowercased(), Date()]
+            )
+
+            // SQLite cannot add a NOT NULL column whose default is a fresh
+            // random UUID per existing row. Add a temporary empty default,
+            // backfill every legacy row below, then install guards which reject
+            // that sentinel on all future inserts/updates.
+            try db.alter(table: "recordings") { t in
+                t.add(column: "canonical_uuid", .text).notNull().defaults(to: "")
+                t.add(column: "origin_device_id", .blob)
+                t.add(column: "origin_recording_uuid", .text)
+                t.add(column: "canonical_pcm_sha256", .blob)
+                t.add(column: "canonical_pcm_frames", .integer)
+                t.add(column: "revision", .integer).notNull().defaults(to: 1)
+                t.add(column: "processing_state", .text).notNull().defaults(to: "ready")
+                t.add(column: "processing_failure_detail", .text)
+                t.add(column: "projection_state", .text).notNull().defaults(to: "unknownLegacy")
+                t.add(column: "projection_failure_detail", .text)
+                t.add(column: "projection_version", .integer)
+            }
+
+            let legacyRecordingIDs = try Int64.fetchAll(
+                db,
+                sql: "SELECT id FROM recordings ORDER BY id"
+            )
+            for recordingID in legacyRecordingIDs {
+                try db.execute(
+                    sql: "UPDATE recordings SET canonical_uuid = ? WHERE id = ?",
+                    arguments: [UUID().uuidString.lowercased(), recordingID]
+                )
+            }
+
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX recordings_canonical_uuid_uq
+                ON recordings(canonical_uuid)
+                """)
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX recordings_origin_identity_uq
+                ON recordings(origin_device_id, origin_recording_uuid)
+                WHERE origin_device_id IS NOT NULL
+                  AND origin_recording_uuid IS NOT NULL
+                """)
+
+            // Constraint triggers are used because SQLite cannot attach the
+            // required per-row checks while adding columns to a populated table.
+            // They validate both future inserts and identity-bearing updates.
+            let recordingIdentityIsInvalid = """
+                length(NEW.canonical_uuid) <> 36
+                OR (
+                    (NEW.origin_device_id IS NULL AND NEW.origin_recording_uuid IS NOT NULL)
+                    OR (NEW.origin_device_id IS NOT NULL AND NEW.origin_recording_uuid IS NULL)
+                )
+                OR (NEW.origin_device_id IS NOT NULL AND length(NEW.origin_device_id) <> 32)
+                OR (NEW.origin_recording_uuid IS NOT NULL AND length(NEW.origin_recording_uuid) <> 36)
+                OR (
+                    (NEW.canonical_pcm_sha256 IS NULL AND NEW.canonical_pcm_frames IS NOT NULL)
+                    OR (NEW.canonical_pcm_sha256 IS NOT NULL AND NEW.canonical_pcm_frames IS NULL)
+                )
+                OR (NEW.canonical_pcm_sha256 IS NOT NULL AND length(NEW.canonical_pcm_sha256) <> 32)
+                OR (NEW.canonical_pcm_frames IS NOT NULL AND NEW.canonical_pcm_frames <= 0)
+                OR NEW.revision < 1
+                OR NEW.processing_state NOT IN (
+                    'pending', 'transcribing', 'projecting', 'ready',
+                    'degraded', 'failedRecoverable'
+                )
+                OR (
+                    NEW.processing_failure_detail IS NOT NULL
+                    AND NEW.processing_state NOT IN ('degraded', 'failedRecoverable')
+                )
+                OR NEW.projection_state NOT IN (
+                    'unknownLegacy', 'pending', 'projecting', 'ready',
+                    'degraded', 'failedRecoverable'
+                )
+                OR (
+                    NEW.projection_state = 'unknownLegacy'
+                    AND (NEW.projection_version IS NOT NULL OR NEW.projection_failure_detail IS NOT NULL)
+                )
+                OR (
+                    NEW.projection_state = 'ready'
+                    AND (NEW.projection_version IS NULL OR NEW.projection_version < 1)
+                )
+                OR (NEW.projection_version IS NOT NULL AND NEW.projection_version < 1)
+                OR (
+                    NEW.projection_failure_detail IS NOT NULL
+                    AND NEW.projection_state NOT IN ('degraded', 'failedRecoverable')
+                )
+                """
+            try db.execute(sql: """
+                CREATE TRIGGER recordings_v16_validate_insert
+                BEFORE INSERT ON recordings
+                FOR EACH ROW
+                WHEN \(recordingIdentityIsInvalid)
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid canonical recording identity');
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER recordings_v16_validate_update
+                BEFORE UPDATE OF canonical_uuid, origin_device_id,
+                    origin_recording_uuid, canonical_pcm_sha256,
+                    canonical_pcm_frames, revision, processing_state,
+                    processing_failure_detail, projection_state,
+                    projection_failure_detail, projection_version
+                ON recordings
+                FOR EACH ROW
+                WHEN \(recordingIdentityIsInvalid)
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid canonical recording identity');
+                END
+                """)
+
+            // The log deliberately starts empty on upgrade. Initial clients
+            // obtain legacy rows (and soft-deleted tombstones) from an anchored
+            // snapshot of the canonical tables; only post-v16 mutations append
+            // changes.
+            try db.execute(sql: """
+                CREATE TABLE library_changes (
+                    cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type TEXT NOT NULL,
+                    entity_uuid TEXT NOT NULL CHECK (length(entity_uuid) = 36),
+                    revision INTEGER NOT NULL CHECK (revision >= 1),
+                    operation TEXT NOT NULL CHECK (operation IN ('upsert', 'tombstone')),
+                    changed_at DATETIME NOT NULL,
+                    is_tombstone INTEGER NOT NULL CHECK (is_tombstone IN (0, 1)),
+                    CHECK (is_tombstone = (operation = 'tombstone')),
+                    UNIQUE (entity_type, entity_uuid, revision)
+                )
+                """)
+            try db.execute(sql: """
+                CREATE INDEX library_changes_entity_cursor_idx
+                ON library_changes(entity_type, entity_uuid, cursor)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX library_changes_changed_at_idx
+                ON library_changes(changed_at)
+                """)
+        }
+
         return migrator
     }
 }

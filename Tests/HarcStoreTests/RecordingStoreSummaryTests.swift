@@ -26,9 +26,13 @@ struct RecordingStoreSummaryTests {
         try dbq.write { db in
             try db.execute(sql: """
                 INSERT INTO recordings
-                  (wav_path, started_at, transcript_text, pinned, created_at, updated_at)
-                VALUES (?, ?, ?, 0, ?, ?)
-                """, arguments: ["/tmp/seed.wav", Date(), "seed body", Date(), Date()])
+                  (wav_path, started_at, transcript_text, pinned, created_at,
+                   updated_at, canonical_uuid)
+                VALUES (?, ?, ?, 0, ?, ?, ?)
+                """, arguments: [
+                    "/tmp/seed.wav", Date(), "seed body", Date(), Date(),
+                    UUID().uuidString.lowercased(),
+                ])
         }
 
         try dbq.read { db in

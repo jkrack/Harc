@@ -44,13 +44,23 @@ struct MigrationTests {
 
         try dbq.write { db in
             let now = Date()
-            var rec = Recording(
-                wavPath: "/tmp/fake.wav",
-                startedAt: now,
-                title: "Meeting with Alice",
-                transcriptText: "discussing quarterly earnings"
+            try db.execute(
+                sql: """
+                    INSERT INTO recordings
+                        (wav_path, canonical_uuid, started_at, title,
+                         transcript_text, pinned, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+                    """,
+                arguments: [
+                    "/tmp/fake.wav",
+                    UUID().uuidString.lowercased(),
+                    now,
+                    "Meeting with Alice",
+                    "discussing quarterly earnings",
+                    now,
+                    now,
+                ]
             )
-            try rec.insert(db)
 
             let matches = try Row.fetchAll(db, sql:
                 "SELECT rowid, transcript_text FROM recordings_fts WHERE recordings_fts MATCH 'quarterly'"
@@ -124,10 +134,17 @@ struct MigrationTests {
         try dbq.write { db in
             try db.execute(
                 sql: """
-                INSERT INTO recordings (wav_path, started_at, pinned, created_at, updated_at)
-                VALUES (?, ?, 0, ?, ?)
+                INSERT INTO recordings
+                    (wav_path, canonical_uuid, started_at, pinned, created_at, updated_at)
+                VALUES (?, ?, ?, 0, ?, ?)
                 """,
-                arguments: ["/tmp/v9-fixture.wav", Date(), Date(), Date()]
+                arguments: [
+                    "/tmp/v9-fixture.wav",
+                    UUID().uuidString.lowercased(),
+                    Date(),
+                    Date(),
+                    Date(),
+                ]
             )
             let recID = db.lastInsertedRowID
             try db.execute(
@@ -245,10 +262,17 @@ struct MigrationTests {
             for path in ["/tmp/v14-a.wav", "/tmp/v14-b.wav"] {
                 try db.execute(
                     sql: """
-                    INSERT INTO recordings (wav_path, started_at, pinned, created_at, updated_at)
-                    VALUES (?, ?, 0, ?, ?)
+                    INSERT INTO recordings
+                        (wav_path, canonical_uuid, started_at, pinned, created_at, updated_at)
+                    VALUES (?, ?, ?, 0, ?, ?)
                     """,
-                    arguments: [path, Date(), Date(), Date()]
+                    arguments: [
+                        path,
+                        UUID().uuidString.lowercased(),
+                        Date(),
+                        Date(),
+                        Date(),
+                    ]
                 )
             }
             try db.execute(
@@ -298,10 +322,17 @@ struct MigrationTests {
             for path in ["/tmp/v14-c.wav", "/tmp/v14-d.wav"] {
                 try db.execute(
                     sql: """
-                    INSERT INTO recordings (wav_path, started_at, pinned, created_at, updated_at)
-                    VALUES (?, ?, 0, ?, ?)
+                    INSERT INTO recordings
+                        (wav_path, canonical_uuid, started_at, pinned, created_at, updated_at)
+                    VALUES (?, ?, ?, 0, ?, ?)
                     """,
-                    arguments: [path, Date(), Date(), Date()]
+                    arguments: [
+                        path,
+                        UUID().uuidString.lowercased(),
+                        Date(),
+                        Date(),
+                        Date(),
+                    ]
                 )
             }
             try db.execute(
@@ -329,6 +360,345 @@ struct MigrationTests {
                 let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(\(table))")
                     .compactMap { $0["name"] as String? }
                 #expect(columns.contains("notes_markdown"), "\(table) should carry notes_markdown")
+            }
+        }
+    }
+
+    @Test("v16 creates canonical identity, metadata, and an empty change log")
+    func v16CanonicalIdentitySchema() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.read { db in
+            let tables = try String.fetchAll(
+                db,
+                sql: "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+            )
+            #expect(tables.contains("library_metadata"))
+            #expect(tables.contains("library_changes"))
+
+            let recordingColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(recordings)")
+                .compactMap { $0["name"] as String? }
+            for column in [
+                "canonical_uuid",
+                "origin_device_id",
+                "origin_recording_uuid",
+                "canonical_pcm_sha256",
+                "canonical_pcm_frames",
+                "revision",
+                "processing_state",
+                "processing_failure_detail",
+                "projection_state",
+                "projection_failure_detail",
+                "projection_version",
+            ] {
+                #expect(recordingColumns.contains(column), "recordings should carry \(column)")
+            }
+
+            let fetchedMetadata = try Row.fetchOne(db, sql: "SELECT * FROM library_metadata")
+            let metadata = try #require(fetchedMetadata)
+            #expect(metadata["id"] as Int64? == 1)
+            #expect((metadata["library_uuid"] as String?)?.count == 36)
+            #expect(metadata["writer_mode"] as String? == "standalone")
+            #expect((metadata["host_authority_id"] as Data?) == nil)
+            #expect((metadata["host_state_uuid"] as String?) == nil)
+            #expect(metadata["current_change_cursor"] as Int64? == 0)
+
+            let metadataCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_metadata")
+            let changeCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_changes")
+            #expect(metadataCount == 1)
+            #expect(changeCount == 0)
+
+            let recordingIndexes = try Row.fetchAll(db, sql: "PRAGMA index_list(recordings)")
+                .compactMap { $0["name"] as String? }
+            #expect(recordingIndexes.contains("recordings_canonical_uuid_uq"))
+            #expect(recordingIndexes.contains("recordings_origin_identity_uq"))
+        }
+    }
+
+    @Test("v16 guards canonical identity shape and the singleton metadata row")
+    func v16CanonicalIdentityGuards() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.write { db in
+            let now = Date()
+            let validInsert = """
+                INSERT INTO recordings
+                    (wav_path, canonical_uuid, origin_device_id,
+                     origin_recording_uuid, canonical_pcm_sha256,
+                     canonical_pcm_frames, revision, started_at, pinned,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                """
+            let validCanonicalUUID = UUID().uuidString.lowercased()
+            let validOriginUUID = UUID().uuidString.lowercased()
+            let validDeviceID = Data(repeating: 0x11, count: 32)
+            let validPCMHash = Data(repeating: 0x22, count: 32)
+
+            try db.execute(
+                sql: validInsert,
+                arguments: [
+                    "/tmp/v16-valid.wav",
+                    validCanonicalUUID,
+                    validDeviceID,
+                    validOriginUUID,
+                    validPCMHash,
+                    16_000,
+                    1,
+                    now,
+                    now,
+                    now,
+                ]
+            )
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: "UPDATE recordings SET projection_state = 'ready' WHERE wav_path = ?",
+                    arguments: ["/tmp/v16-valid.wav"]
+                )
+            }
+            try db.execute(
+                sql: """
+                    UPDATE recordings
+                    SET projection_state = 'ready', projection_version = 1
+                    WHERE wav_path = ?
+                    """,
+                arguments: ["/tmp/v16-valid.wav"]
+            )
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: "UPDATE recordings SET projection_state = 'unknownLegacy' WHERE wav_path = ?",
+                    arguments: ["/tmp/v16-valid.wav"]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: """
+                        INSERT INTO recordings
+                            (wav_path, started_at, pinned, created_at, updated_at)
+                        VALUES (?, ?, 0, ?, ?)
+                        """,
+                    arguments: ["/tmp/v16-empty-default.wav", now, now, now]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-short-uuid.wav",
+                        "too-short",
+                        nil,
+                        nil,
+                        nil,
+                        nil,
+                        1,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-unpaired-frames.wav",
+                        UUID().uuidString.lowercased(),
+                        nil,
+                        nil,
+                        nil,
+                        16_000,
+                        1,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-zero-frames.wav",
+                        UUID().uuidString.lowercased(),
+                        nil,
+                        nil,
+                        validPCMHash,
+                        0,
+                        1,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-half-origin.wav",
+                        UUID().uuidString.lowercased(),
+                        validDeviceID,
+                        nil,
+                        nil,
+                        nil,
+                        1,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-short-device.wav",
+                        UUID().uuidString.lowercased(),
+                        Data(repeating: 0x33, count: 31),
+                        UUID().uuidString.lowercased(),
+                        nil,
+                        nil,
+                        1,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-short-hash.wav",
+                        UUID().uuidString.lowercased(),
+                        nil,
+                        nil,
+                        Data(repeating: 0x44, count: 31),
+                        16_000,
+                        1,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-zero-revision.wav",
+                        UUID().uuidString.lowercased(),
+                        nil,
+                        nil,
+                        nil,
+                        nil,
+                        0,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: validInsert,
+                    arguments: [
+                        "/tmp/v16-unpaired-audio.wav",
+                        UUID().uuidString.lowercased(),
+                        nil,
+                        nil,
+                        validPCMHash,
+                        nil,
+                        1,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: """
+                        INSERT INTO library_metadata
+                            (id, library_uuid, writer_mode, current_change_cursor, updated_at)
+                        VALUES (2, ?, 'standalone', 0, ?)
+                        """,
+                    arguments: [UUID().uuidString.lowercased(), now]
+                )
+            }
+        }
+    }
+
+    @Test("v16 enforces unique canonical and origin identities")
+    func v16CanonicalIdentityUniqueness() throws {
+        let dbq = try DatabaseQueue()
+        try DatabaseMigrator.harcMigrator().migrate(dbq)
+
+        try dbq.write { db in
+            let now = Date()
+            let canonicalUUID = UUID().uuidString.lowercased()
+            let originDeviceID = Data(repeating: 0x55, count: 32)
+            let originRecordingUUID = UUID().uuidString.lowercased()
+            let insert = """
+                INSERT INTO recordings
+                    (wav_path, canonical_uuid, origin_device_id,
+                     origin_recording_uuid, started_at, pinned, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+                """
+
+            try db.execute(
+                sql: insert,
+                arguments: [
+                    "/tmp/v16-origin-a.wav",
+                    canonicalUUID,
+                    originDeviceID,
+                    originRecordingUUID,
+                    now,
+                    now,
+                    now,
+                ]
+            )
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: insert,
+                    arguments: [
+                        "/tmp/v16-canonical-duplicate.wav",
+                        canonicalUUID,
+                        Data(repeating: 0x66, count: 32),
+                        UUID().uuidString.lowercased(),
+                        now,
+                        now,
+                        now,
+                    ]
+                )
+            }
+
+            #expect(throws: DatabaseError.self) {
+                try db.execute(
+                    sql: insert,
+                    arguments: [
+                        "/tmp/v16-origin-duplicate.wav",
+                        UUID().uuidString.lowercased(),
+                        originDeviceID,
+                        originRecordingUUID,
+                        now,
+                        now,
+                        now,
+                    ]
+                )
             }
         }
     }

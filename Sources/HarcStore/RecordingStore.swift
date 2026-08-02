@@ -78,21 +78,53 @@ public actor RecordingStore {
         do {
             return try await dbQueue.write { db in
                 var rec = recording
-                rec.updatedAt = Date()
+                let now = Date()
+                rec.updatedAt = now
                 if let existing = try Recording
                     .filter(Recording.Columns.wavPath == rec.wavPath)
                     .fetchOne(db)
                 {
                     rec.id = existing.id
                     rec.createdAt = existing.createdAt
+                    rec.canonicalID = existing.canonicalID
+                    rec.originID = existing.originID
+                    rec.canonicalPCMHash = existing.canonicalPCMHash
+                    rec.canonicalPCMFrames = existing.canonicalPCMFrames
+                    rec.revision = existing.revision
+                    rec.processing = existing.processing
+                    rec.projection = existing.projection
+                    rec.deletedAt = existing.deletedAt
                     rec.chunksIndexedAt = existing.transcriptText == rec.transcriptText
                         ? existing.chunksIndexedAt
                         : nil
+                    let publicContentChanged = !rec.hasSamePublicContent(as: existing)
+                    if !publicContentChanged {
+                        rec.updatedAt = existing.updatedAt
+                    }
                     try rec.update(db)
+                    if publicContentChanged {
+                        try Self.bumpRevisionAndAppendLibraryChange(
+                            in: db,
+                            recordingID: existing.id!,
+                            changedAt: now
+                        )
+                    }
+                    return try Recording.fetchOne(db, key: existing.id!)!
                 } else {
-                    rec.createdAt = Date()
+                    rec.createdAt = now
+                    rec.canonicalID = .random()
+                    rec.originID = nil
+                    rec.canonicalPCMHash = nil
+                    rec.canonicalPCMFrames = nil
+                    rec.revision = .initial
                     try rec.insert(db)
                     rec.id = db.lastInsertedRowID
+                    try Self.appendLibraryChange(
+                        in: db,
+                        recordingID: rec.id!,
+                        operation: rec.deletedAt == nil ? .upsert : .tombstone,
+                        changedAt: now
+                    )
                 }
                 return rec
             }
@@ -141,14 +173,24 @@ public actor RecordingStore {
 
     public func rename(id: Int64, title: String?) async throws {
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id) else {
+                throw StoreError.notFound
+            }
+            guard existing.title != title else { return }
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.title.set(to: title),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
         await reprojectOKF(id: id)
     }
@@ -171,9 +213,19 @@ public actor RecordingStore {
     /// soft-deleted row is benign (store just no-ops).
     public func updateSuggestedTitle(id: Int64, title: String?) async throws {
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id),
+                  existing.deletedAt == nil,
+                  existing.suggestedTitle != title
+            else { return }
+            let now = Date()
             try db.execute(
                 sql: "UPDATE recordings SET suggested_title = ?, updated_at = ? WHERE id = ?",
-                arguments: [title, Date(), id]
+                arguments: [title, now, id]
+            )
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
             )
         }
         await reprojectOKF(id: id)
@@ -192,9 +244,19 @@ public actor RecordingStore {
             json = nil
         }
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id),
+                  existing.deletedAt == nil,
+                  existing.tags != tags
+            else { return }
+            let now = Date()
             try db.execute(
                 sql: "UPDATE recordings SET tags = ?, updated_at = ? WHERE id = ?",
-                arguments: [json, Date(), id]
+                arguments: [json, now, id]
+            )
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
             )
         }
         await reprojectOKF(id: id)
@@ -204,14 +266,19 @@ public actor RecordingStore {
     /// Empty dict clears the column (stored as NULL). No `notFound` throw —
     /// late updates are benign.
     public func updateSpeakerNames(id: Int64, names: [Int: String]) async throws {
+        var normalizedNames: [Int: String] = [:]
+        for (index, value) in names {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { normalizedNames[index] = trimmed }
+        }
+        let stableNames = normalizedNames
         let json: String?
-        if names.isEmpty {
+        if stableNames.isEmpty {
             json = nil
         } else {
             var stringKeyed: [String: String] = [:]
-            for (k, v) in names {
-                let trimmed = v.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { stringKeyed[String(k)] = trimmed }
+            for (index, value) in stableNames {
+                stringKeyed[String(index)] = value
             }
             if stringKeyed.isEmpty {
                 json = nil
@@ -223,9 +290,19 @@ public actor RecordingStore {
             }
         }
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id),
+                  existing.deletedAt == nil,
+                  existing.speakerNames != stableNames
+            else { return }
+            let now = Date()
             try db.execute(
                 sql: "UPDATE recordings SET speaker_names = ?, updated_at = ? WHERE id = ?",
-                arguments: [json, Date(), id]
+                arguments: [json, now, id]
+            )
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
             )
         }
         await reprojectOKF(id: id)
@@ -239,14 +316,24 @@ public actor RecordingStore {
         let trimmed = markdown?.trimmingCharacters(in: .whitespacesAndNewlines)
         let value = (trimmed?.isEmpty == false) ? markdown : nil
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id) else {
+                throw StoreError.notFound
+            }
+            guard existing.deletedAt == nil, existing.notesMarkdown != value else { return }
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.notesMarkdown.set(to: value),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
         await reprojectOKF(id: id)
     }
@@ -258,6 +345,7 @@ public actor RecordingStore {
         let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         try await dbQueue.write { db in
+            let now = Date()
             guard let row = try Row.fetchOne(
                 db,
                 sql: "SELECT notes_markdown FROM recordings WHERE id = ?",
@@ -272,7 +360,12 @@ public actor RecordingStore {
             }
             try db.execute(
                 sql: "UPDATE recordings SET notes_markdown = ?, updated_at = ? WHERE id = ?",
-                arguments: [combined, Date(), id]
+                arguments: [combined, now, id]
+            )
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
             )
         }
         await reprojectOKF(id: id)
@@ -294,6 +387,7 @@ public actor RecordingStore {
     ) async throws {
         let ms = Int64(generatedAt.timeIntervalSince1970 * 1000)
         try await dbQueue.write { db in
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
@@ -305,10 +399,15 @@ public actor RecordingStore {
                     Recording.Columns.summaryStatusKind.set(to: nil),
                     Recording.Columns.summaryStatusMessage.set(to: nil),
                     Recording.Columns.summaryStatusUpdatedAt.set(to: nil),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
         await reprojectOKF(id: id)
     }
@@ -316,6 +415,7 @@ public actor RecordingStore {
     /// Null all five summary columns for a recording.
     public func clearSummary(id: Int64) async throws {
         try await dbQueue.write { db in
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
@@ -327,10 +427,15 @@ public actor RecordingStore {
                     Recording.Columns.summaryStatusKind.set(to: nil),
                     Recording.Columns.summaryStatusMessage.set(to: nil),
                     Recording.Columns.summaryStatusUpdatedAt.set(to: nil),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
         await reprojectOKF(id: id)
     }
@@ -346,31 +451,43 @@ public actor RecordingStore {
     ) async throws {
         let ms = Int64(updatedAt.timeIntervalSince1970 * 1000)
         try await dbQueue.write { db in
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.summaryStatusKind.set(to: kind.rawValue),
                     Recording.Columns.summaryStatusMessage.set(to: message),
                     Recording.Columns.summaryStatusUpdatedAt.set(to: ms),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
     }
 
     public func clearSummaryStatus(id: Int64) async throws {
         try await dbQueue.write { db in
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.summaryStatusKind.set(to: nil),
                     Recording.Columns.summaryStatusMessage.set(to: nil),
                     Recording.Columns.summaryStatusUpdatedAt.set(to: nil),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
     }
 
@@ -538,12 +655,13 @@ public actor RecordingStore {
     /// forever, including text the user deliberately deleted.
     public func updateTranscriptText(id: Int64, text: String) async throws {
         try await dbQueue.write { db in
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.transcriptText.set(to: text),
                     Recording.Columns.chunksIndexedAt.set(to: nil),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
@@ -553,46 +671,82 @@ public actor RecordingStore {
                 sql: "DELETE FROM transcript_chunks WHERE recording_id = ?",
                 arguments: [id]
             )
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
         await reprojectOKF(id: id)
     }
 
     public func setPinned(id: Int64, pinned: Bool) async throws {
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id) else {
+                throw StoreError.notFound
+            }
+            guard existing.pinned != pinned else { return }
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.pinned.set(to: pinned),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
     }
 
     public func softDelete(id: Int64) async throws {
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id) else {
+                throw StoreError.notFound
+            }
+            guard existing.deletedAt == nil else { return }
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
-                    Recording.Columns.deletedAt.set(to: Date()),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.deletedAt.set(to: now),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                operation: .tombstone,
+                changedAt: now
+            )
         }
     }
 
     public func restore(id: Int64) async throws {
         try await dbQueue.write { db in
+            guard let existing = try Recording.fetchOne(db, key: id) else {
+                throw StoreError.notFound
+            }
+            guard existing.deletedAt != nil else { return }
+            let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
                 [
                     Recording.Columns.deletedAt.set(to: nil),
-                    Recording.Columns.updatedAt.set(to: Date()),
+                    Recording.Columns.updatedAt.set(to: now),
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            try Self.bumpRevisionAndAppendLibraryChange(
+                in: db,
+                recordingID: id,
+                changedAt: now
+            )
         }
     }
 
