@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package harc.v1;
+
+option swift_prefix = "Harc_V1_";
+
+import "harc_common.proto";
+
+message ComponentRevisionV1 {
+  string component_id = 1;
+  string revision = 2;
+}
+
+message ExplainedFrameRangeV1 {
+  CanonicalFrameRangeV1 frames = 1;
+  string reason_code = 2;
+}
+
+message ArtifactCoverageV1 {
+  repeated CanonicalFrameRangeV1 covered_ranges = 1;
+  repeated ExplainedFrameRangeV1 degraded_ranges = 2;
+  repeated ExplainedFrameRangeV1 failed_ranges = 3;
+}
+
+// Payload type harc.v1.ProcessingArtifactV1. The bundle hash covers the
+// separate exact HARCPB1 container and is intentionally not self-referential.
+message ProcessingArtifactV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  HostAuthorityIDV1 host_authority_id = 3;
+  ArtifactIDV1 artifact_id = 4;
+  OriginRecordingIDV1 origin_recording_id = 5;
+  SHA256DigestV1 canonical_audio_sha256 = 6;
+  DeviceIDV1 producing_device_id = 7;
+  GrantIDV1 grant_id = 8;
+  uint64 grant_epoch = 9;
+  OperationIDV1 operation_id = 10;
+  // Artifact creation time and the mirrored signed-envelope issued time.
+  uint64 issued_at_unix_ms = 11;
+  uint64 submission_expires_at_unix_ms = 12;
+  string engine_revision = 13;
+  string build_revision = 14;
+  repeated ComponentRevisionV1 model_revisions = 15;
+  string diarization_revision = 16;
+  string vad_revision = 17;
+  string vocabulary_revision = 18;
+  string prompt_revision = 19;
+  string word_timing_schema_id = 20;
+  ArtifactCoverageV1 coverage = 21;
+  uint64 exact_bundle_byte_length = 22;
+  SHA256DigestV1 exact_bundle_sha256 = 23;
+}
+
+enum ProcessingBundleEntryTypeV1 {
+  PROCESSING_BUNDLE_ENTRY_TYPE_UNSPECIFIED = 0;
+  PROCESSING_BUNDLE_ENTRY_TYPE_TRANSCRIPT = 1;
+  PROCESSING_BUNDLE_ENTRY_TYPE_DIARIZATION = 2;
+  PROCESSING_BUNDLE_ENTRY_TYPE_SUMMARY = 3;
+  PROCESSING_BUNDLE_ENTRY_TYPE_COVERAGE = 4;
+}
+
+message ProcessingBundleEntryDescriptorV1 {
+  ProcessingBundleEntryTypeV1 entry_type = 1;
+  uint32 schema_version = 2;
+  uint64 payload_byte_length = 3;
+  SHA256DigestV1 payload_sha256 = 4;
+}
+
+// Exact header_payload in the HARCPB1 container.
+message ProcessingBundleHeaderV1 {
+  ProtocolVersionV1 protocol = 1;
+  ArtifactIDV1 artifact_id = 2;
+  OriginRecordingIDV1 origin_recording_id = 3;
+  SHA256DigestV1 canonical_audio_sha256 = 4;
+  repeated ProcessingBundleEntryDescriptorV1 entries = 5;
+}
+
+message TranscriptWordV1 {
+  string text = 1;
+  uint64 start_frame = 2;
+  uint64 end_frame_exclusive = 3;
+  optional float confidence = 4;
+  optional string local_speaker_id = 5;
+}
+
+message TranscriptUtteranceV1 {
+  string text = 1;
+  uint64 start_frame = 2;
+  uint64 end_frame_exclusive = 3;
+  optional float confidence = 4;
+  optional string local_speaker_id = 5;
+  repeated TranscriptWordV1 words = 6;
+}
+
+message TranscriptArtifactV1 {
+  ProtocolVersionV1 protocol = 1;
+  string locale = 2;
+  repeated TranscriptUtteranceV1 utterances = 3;
+}
+
+message SpeakerTurnV1 {
+  uint64 start_frame = 1;
+  uint64 end_frame_exclusive = 2;
+  string local_cluster_id = 3;
+  optional float confidence = 4;
+}
+
+message DiarizationArtifactV1 {
+  ProtocolVersionV1 protocol = 1;
+  repeated SpeakerTurnV1 turns = 2;
+}
+
+message SummaryArtifactV1 {
+  ProtocolVersionV1 protocol = 1;
+  optional string summary_markdown = 2;
+  optional string action_items_markdown = 3;
+  string prompt_id = 4;
+  string prompt_revision = 5;
+  repeated ComponentRevisionV1 model_revisions = 6;
+}
+
+message CoverageArtifactV1 {
+  ProtocolVersionV1 protocol = 1;
+  ArtifactCoverageV1 coverage = 2;
+}
+
+// Normative SubmitOwnArtifact V1 stream framing:
+// - The first request MUST carry begin, begin MUST occur exactly once, and every
+//   later request MUST carry frame. A missing, repeated, or late begin fails the
+//   stream before the bundle is interpreted.
+// - Frames MUST start at frame_index 0 and byte_offset 0. Each later frame_index
+//   MUST be exactly one greater and byte_offset MUST equal the total accepted
+//   data bytes before that frame; gaps, overlaps, duplicates, and reordering fail.
+// - frame.data MUST contain 1...1,048,576 bytes. Empty or oversized frames fail.
+// - The host MUST first verify the exact signed ProcessingArtifactV1 and enforce
+//   exact_bundle_byte_length <= 33,554,432. It MUST stream into bounded staging
+//   storage while hashing and MUST NOT allocate from a peer-supplied length,
+//   frame index, or byte offset.
+// - The client's successful half-close is the only end-of-bundle marker. Before
+//   parsing, publishing, or responding, the host MUST require the received byte
+//   count and SHA-256 to equal the signed exact_bundle_byte_length and
+//   exact_bundle_sha256. Early EOF, extra/trailing bytes, or mismatch fails.
+message ProcessingSubmissionBeginV1 {
+  // Exact signed ProcessingArtifactV1 HARCSO1 frame, preserved before decode.
+  ExactSignedObjectV1 exact_signed_processing_artifact = 1;
+}
+
+message ProcessingBundleFrameV1 {
+  uint32 frame_index = 1;
+  uint64 byte_offset = 2;
+  bytes data = 3;
+}
+
+message SubmitOwnArtifactRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  oneof value {
+    ProcessingSubmissionBeginV1 begin = 2;
+    ProcessingBundleFrameV1 frame = 3;
+  }
+}
+
+enum ProcessingSubmissionDispositionV1 {
+  PROCESSING_SUBMISSION_DISPOSITION_UNSPECIFIED = 0;
+  PROCESSING_SUBMISSION_DISPOSITION_ACCEPTED_EDGE_ARTIFACT = 1;
+  PROCESSING_SUBMISSION_DISPOSITION_EXACT_REPLAY = 2;
+  PROCESSING_SUBMISSION_DISPOSITION_HOST_PROCESSING_SCHEDULED = 3;
+}
+
+message ProcessingStatusV1 {
+  CanonicalRecordingIDV1 canonical_recording_id = 1;
+  optional OriginRecordingIDV1 origin_recording_id = 2;
+  ProcessingDescriptorV1 processing = 3;
+  ProjectionDescriptorV1 projection = 4;
+  optional SHA256DigestV1 canonical_audio_sha256 = 5;
+  uint64 updated_at_unix_ms = 6;
+}
+
+message SubmitOwnArtifactResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  ProcessingSubmissionDispositionV1 disposition = 2;
+  ProcessingStatusV1 status = 3;
+}
+
+message GetProcessingStatusRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  oneof recording_key {
+    CanonicalRecordingIDV1 canonical_recording_id = 2;
+    OriginRecordingIDV1 origin_recording_id = 3;
+  }
+}
+
+message GetProcessingStatusResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  ProcessingStatusV1 status = 2;
+}
+
+service ProcessingService {
+  rpc SubmitOwnArtifact(stream SubmitOwnArtifactRequestV1)
+      returns (SubmitOwnArtifactResponseV1);
+  rpc GetProcessingStatus(GetProcessingStatusRequestV1)
+      returns (GetProcessingStatusResponseV1);
+}

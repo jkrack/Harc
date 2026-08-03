@@ -1,5 +1,6 @@
 import Foundation
 import HarcIdentity
+import HarcProtocol
 import HarcTransfer
 
 // This file deliberately belongs to no SwiftPM target. The focused boundary
@@ -47,4 +48,10 @@ func forgeAuthorityReplacementEvidence(
         replacingHostTrust: replacingHostTrust,
         replacementAdoption: replacementAdoption
     )
+}
+
+func forgeCurrentGrantBinding(
+    registryEntry: DeviceRegistryEntry
+) throws {
+    _ = try HarcCurrentGrantBindingV1(registryEntry: registryEntry)
 }

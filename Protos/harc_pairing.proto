@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package harc.v1;
+
+option swift_prefix = "Harc_V1_";
+
+import "harc_common.proto";
+import "harc_identity.proto";
+
+enum PairingClaimStateV1 {
+  PAIRING_CLAIM_STATE_UNSPECIFIED = 0;
+  PAIRING_CLAIM_STATE_PENDING = 1;
+  PAIRING_CLAIM_STATE_APPROVED = 2;
+  PAIRING_CLAIM_STATE_DENIED = 3;
+  PAIRING_CLAIM_STATE_EXPIRED = 4;
+  PAIRING_CLAIM_STATE_CANCELLED = 5;
+}
+
+message BeginPairingClaimRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  TicketIDV1 ticket_id = 2;
+  bytes ticket_secret = 3;
+  bytes client_nonce = 4;
+  bytes device_public_key_x963 = 5;
+  repeated AuthorizationScopeV1 requested_scopes = 6;
+  // Display-only claim metadata persisted with the reservation. It never
+  // selects authorization policy; client kind is fixed by host ticket state.
+  string device_label = 7;
+}
+
+message BeginPairingClaimResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  ClaimIDV1 claim_id = 2;
+  bytes host_nonce = 3;
+  // Returned once. Later calls send it only as Authorization: HarcPairing
+  // metadata; the host persists a domain-separated hash, never this secret.
+  bytes claimant_token = 4;
+  uint64 expires_at_unix_ms = 5;
+}
+
+message ProvePairingClaimRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  ClaimIDV1 claim_id = 2;
+  // Raw low-S P-256 r || s over the canonical pairing proof digest.
+  bytes client_signature_raw = 3;
+}
+
+message ProvePairingClaimResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  PairingClaimStateV1 state = 2;
+  uint64 expires_at_unix_ms = 3;
+}
+
+message GetPairingStatusRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  ClaimIDV1 claim_id = 2;
+}
+
+message GetPairingStatusResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  PairingClaimStateV1 state = 2;
+  // Present only for APPROVED. These are exact HARCSO1 bytes and must be
+  // persisted and verified before the grant payload is interpreted.
+  optional ExactSignedObjectV1 exact_signed_device_grant = 3;
+}
+
+service PairingService {
+  rpc BeginPairingClaim(BeginPairingClaimRequestV1)
+      returns (BeginPairingClaimResponseV1);
+  rpc ProvePairingClaim(ProvePairingClaimRequestV1)
+      returns (ProvePairingClaimResponseV1);
+  rpc GetPairingStatus(GetPairingStatusRequestV1)
+      returns (GetPairingStatusResponseV1);
+}

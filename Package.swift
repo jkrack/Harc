@@ -9,6 +9,8 @@ let package = Package(
         .library(name: "HarcDomain", targets: ["HarcDomain"]),
         .library(name: "HarcIdentity", targets: ["HarcIdentity"]),
         .library(name: "HarcTransfer", targets: ["HarcTransfer"]),
+        .library(name: "HarcProtocolWire", targets: ["HarcProtocolWire"]),
+        .library(name: "HarcProtocol", targets: ["HarcProtocol"]),
         .library(name: "HarcClientStore", targets: ["HarcClientStore"]),
         .library(name: "HarcHost", targets: ["HarcHost"]),
         .library(name: "HarcAudio", targets: ["HarcAudio"]),
@@ -52,6 +54,19 @@ let package = Package(
             url: "https://github.com/modelcontextprotocol/swift-sdk.git",
             .upToNextMinor(from: "0.12.1")
         ),
+        .package(
+            url: "https://github.com/grpc/grpc-swift-2.git",
+            exact: "2.4.2"
+        ),
+        .package(
+            url: "https://github.com/grpc/grpc-swift-protobuf.git",
+            exact: "2.4.1"
+        ),
+        .package(
+            url: "https://github.com/apple/swift-protobuf.git",
+            exact: "1.38.1",
+            traits: []
+        ),
     ],
     targets: [
         .target(name: "HarcCore"),
@@ -65,6 +80,35 @@ let package = Package(
             name: "HarcTransfer",
             dependencies: ["HarcDomain", "HarcIdentity"],
             exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcProtocolWire",
+            dependencies: [
+                .product(name: "GRPCCore", package: "grpc-swift-2"),
+                .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            ],
+            path: "Protos",
+            exclude: ["Fixtures", "README.md"],
+            plugins: [
+                .plugin(
+                    name: "GRPCProtobufGenerator",
+                    package: "grpc-swift-protobuf"
+                ),
+            ]
+        ),
+        .target(
+            name: "HarcProtocol",
+            dependencies: [
+                "HarcProtocolWire",
+                "HarcDomain",
+                "HarcIdentity",
+                "HarcTransfer",
+            ],
+            exclude: ["README.md"],
+            resources: [
+                .copy("../../Protos/Fixtures/harc-sas-words-v1.txt"),
+            ]
         ),
         .target(
             name: "HarcClientStore",
@@ -175,6 +219,16 @@ let package = Package(
         .testTarget(
             name: "HarcTransferTests",
             dependencies: ["HarcTransfer", "HarcIdentity", "HarcDomain"]
+        ),
+        .testTarget(
+            name: "HarcProtocolTests",
+            dependencies: [
+                "HarcProtocol",
+                "HarcProtocolWire",
+                "HarcDomain",
+                "HarcIdentity",
+                "HarcTransfer",
+            ]
         ),
         .testTarget(
             name: "HarcClientStoreTests",

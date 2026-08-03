@@ -16,6 +16,10 @@ env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/build-module-cache" \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/build-clang-cache" \
     swift build --disable-sandbox --target HarcHost
+env \
+    SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/build-module-cache" \
+    CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/build-clang-cache" \
+    swift build --disable-sandbox --target HarcProtocol
 
 HARC_BOUNDARY_BIN_PATH=$(env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/path-module-cache" \
@@ -45,6 +49,7 @@ HARC_BOUNDARY_TRANSPORT_ERROR="'ValidatedTransportSetEvidence' initializer is in
 HARC_BOUNDARY_GRANT_ERROR="'ValidatedDeviceGrantEvidence' initializer is inaccessible due to 'package' protection level"
 HARC_BOUNDARY_ADOPTION_ERROR="'ValidatedClientAdoptionEvidence' initializer is inaccessible due to 'package' protection level"
 HARC_BOUNDARY_AUTHORITY_REPLACEMENT_ERROR="'ValidatedClientAuthorityReplacementEvidence' initializer is inaccessible due to 'package' protection level"
+HARC_BOUNDARY_CURRENT_GRANT_ERROR="'HarcCurrentGrantBindingV1' initializer is inaccessible due to 'package' protection level"
 
 if [[ "$HARC_BOUNDARY_OUTPUT" != *"$HARC_BOUNDARY_TRANSPORT_ERROR"* ]]; then
     echo "error: missing external-construction failure for transport evidence" >&2
@@ -66,6 +71,12 @@ fi
 
 if [[ "$HARC_BOUNDARY_OUTPUT" != *"$HARC_BOUNDARY_AUTHORITY_REPLACEMENT_ERROR"* ]]; then
     echo "error: missing external-construction failure for authority-replacement evidence" >&2
+    echo "$HARC_BOUNDARY_OUTPUT" >&2
+    exit 1
+fi
+
+if [[ "$HARC_BOUNDARY_OUTPUT" != *"$HARC_BOUNDARY_CURRENT_GRANT_ERROR"* ]]; then
+    echo "error: missing external-construction failure for current grant binding" >&2
     echo "$HARC_BOUNDARY_OUTPUT" >&2
     exit 1
 fi
@@ -97,4 +108,4 @@ if [[ "$HARC_HOST_BOUNDARY_OUTPUT" != *"$HARC_HOST_TESTING_SEAM_ERROR"* ]]; then
     exit 1
 fi
 
-echo "External trust-evidence and host testing-seam boundaries passed."
+echo "External trust-evidence, live-grant, and host testing-seam boundaries passed."

@@ -1,0 +1,452 @@
+syntax = "proto3";
+
+package harc.v1;
+
+option swift_prefix = "Harc_V1_";
+
+import "harc_common.proto";
+
+enum UploadProfilePurposeV1 {
+  UPLOAD_PROFILE_PURPOSE_UNSPECIFIED = 0;
+  UPLOAD_PROFILE_PURPOSE_PRODUCTION = 1;
+  UPLOAD_PROFILE_PURPOSE_PHYSICAL_DEVICE_CODEC_EVALUATION = 2;
+  UPLOAD_PROFILE_PURPOSE_FIXTURE_LOOPBACK = 3;
+}
+
+message UploadProfileV1 {
+  ProtocolVersionV1 protocol = 1;
+  string descriptor_schema_id = 2;
+  LosslessEncodingConfigurationV1 encoding = 3;
+  CanonicalPCMFormatV1 canonical_format = 4;
+  repeated string required_capability_ids = 5;
+  SHA256DigestV1 negotiated_capabilities_sha256 = 6;
+  UploadProfilePurposeV1 purpose = 7;
+}
+
+enum CaptureFinalizationReasonV1 {
+  CAPTURE_FINALIZATION_REASON_UNSPECIFIED = 0;
+  CAPTURE_FINALIZATION_REASON_USER_STOPPED = 1;
+  CAPTURE_FINALIZATION_REASON_SYSTEM_ENDED = 2;
+  CAPTURE_FINALIZATION_REASON_RECOVERED_DURABLE_PREFIX = 3;
+  CAPTURE_FINALIZATION_REASON_STORAGE_EXHAUSTED = 4;
+  CAPTURE_FINALIZATION_REASON_WRITER_FAILURE = 5;
+}
+
+enum CaptureDiscontinuityReasonV1 {
+  CAPTURE_DISCONTINUITY_REASON_UNSPECIFIED = 0;
+  CAPTURE_DISCONTINUITY_REASON_INTERRUPTION_BEGAN = 1;
+  CAPTURE_DISCONTINUITY_REASON_INTERRUPTION_ENDED = 2;
+  CAPTURE_DISCONTINUITY_REASON_ROUTE_CHANGED = 3;
+  CAPTURE_DISCONTINUITY_REASON_ENGINE_CONFIGURATION_CHANGED = 4;
+  CAPTURE_DISCONTINUITY_REASON_MEDIA_SERVICES_LOST = 5;
+  CAPTURE_DISCONTINUITY_REASON_MEDIA_SERVICES_RESET = 6;
+  CAPTURE_DISCONTINUITY_REASON_WRITER_FAILURE = 7;
+  CAPTURE_DISCONTINUITY_REASON_BUFFER_OVERRUN = 8;
+  CAPTURE_DISCONTINUITY_REASON_RECOVERY = 9;
+}
+
+enum CaptureCanonicalizationPolicyV1 {
+  CAPTURE_CANONICALIZATION_POLICY_UNSPECIFIED = 0;
+  CAPTURE_CANONICALIZATION_POLICY_PRESERVE_CAPTURED_PCM = 1;
+  CAPTURE_CANONICALIZATION_POLICY_ANNOTATE_GAP_WITHOUT_INSERTED_SILENCE = 2;
+}
+
+message CaptureRouteDescriptorV1 {
+  optional string identifier = 1;
+  optional string name = 2;
+  optional double sample_rate_hz = 3;
+  optional uint32 channel_count = 4;
+}
+
+message CaptureDiscontinuityV1 {
+  OriginRecordingIDV1 origin_recording_id = 1;
+  uint64 monotonic_time_nanoseconds = 2;
+  uint64 wall_time_unix_ms = 3;
+  CaptureDiscontinuityReasonV1 reason = 4;
+  optional CaptureRouteDescriptorV1 old_route = 5;
+  optional CaptureRouteDescriptorV1 new_route = 6;
+  CanonicalFrameRangeV1 affected_frames = 7;
+  CaptureCanonicalizationPolicyV1 canonicalization_policy = 8;
+}
+
+message ChunkDescriptorV1 {
+  OriginRecordingIDV1 origin_recording_id = 1;
+  ChunkIDV1 chunk_id = 2;
+  uint32 chunk_index = 3;
+  uint64 canonical_start_frame = 4;
+  uint64 canonical_frame_count = 5;
+  CanonicalPCMFormatV1 canonical_format = 6;
+  LosslessEncodingConfigurationV1 encoding = 7;
+  uint64 encoded_byte_length = 8;
+  SHA256DigestV1 encoded_sha256 = 9;
+  uint64 canonical_decoded_byte_length = 10;
+  SHA256DigestV1 canonical_decoded_sha256 = 11;
+}
+
+// Payload type harc.v1.RecordingManifestV1.
+message RecordingManifestV1 {
+  ProtocolVersionV1 protocol = 1;
+  uint32 manifest_version = 2;
+  // Manifest creation time and the mirrored signed-envelope issued time.
+  uint64 issued_at_unix_ms = 3;
+  LibraryIDV1 library_id = 4;
+  HostAuthorityIDV1 host_authority_id = 5;
+  OriginRecordingIDV1 origin_recording_id = 6;
+  UploadIDV1 upload_id = 7;
+  DeviceIDV1 producing_device_id = 8;
+  SHA256DigestV1 upload_profile_sha256 = 9;
+  string descriptor_schema_id = 10;
+  LosslessEncodingConfigurationV1 encoding = 11;
+  uint64 capture_started_at_unix_ms = 12;
+  uint64 capture_ended_at_unix_ms = 13;
+  uint64 capture_started_monotonic_nanoseconds = 14;
+  uint64 capture_ended_monotonic_nanoseconds = 15;
+  CaptureFinalizationReasonV1 finalization_reason = 16;
+  CanonicalPCMFormatV1 canonical_format = 17;
+  uint64 total_canonical_frames = 18;
+  uint64 total_canonical_bytes = 19;
+  SHA256DigestV1 canonical_pcm_sha256 = 20;
+  repeated ChunkDescriptorV1 chunks = 21;
+  repeated CaptureDiscontinuityV1 discontinuities = 22;
+  repeated SHA256DigestV1 processing_artifact_object_ids = 23;
+}
+
+message AudioBatchEntryV1 {
+  ChunkIDV1 chunk_id = 1;
+  uint32 chunk_index = 2;
+  uint32 encoded_length = 3;
+  SHA256DigestV1 encoded_sha256 = 4;
+  uint64 canonical_start_frame = 5;
+  uint64 canonical_frame_count = 6;
+  SHA256DigestV1 canonical_decoded_sha256 = 7;
+  LosslessEncodingConfigurationV1 encoding = 8;
+}
+
+// Exact header_payload in the HARCAB1 container.
+message AudioBatchHeaderV1 {
+  ProtocolVersionV1 protocol = 1;
+  AudioBatchIDV1 batch_id = 2;
+  UploadIDV1 upload_id = 3;
+  SHA256DigestV1 upload_profile_sha256 = 4;
+  OriginRecordingIDV1 origin_recording_id = 5;
+  DeviceIDV1 device_id = 6;
+  repeated AudioBatchEntryV1 entries = 7;
+}
+
+message DurableChunkV1 {
+  uint32 chunk_index = 1;
+  ChunkIDV1 chunk_id = 2;
+  SHA256DigestV1 encoded_sha256 = 3;
+}
+
+message AcceptedBatchChunkV1 {
+  uint32 chunk_index = 1;
+  SHA256DigestV1 encoded_sha256 = 2;
+}
+
+// Session-authenticated staging acknowledgement. This is intentionally not a
+// RecordingReceipt and does not authorize client deletion.
+message ChunkAckV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  uint64 upload_generation = 3;
+  SHA256DigestV1 upload_profile_sha256 = 4;
+  DurableChunkV1 durable_chunk = 5;
+  uint64 durable_at_unix_ms = 6;
+}
+
+// Payload type harc.v1.BatchAckV1.
+message BatchAckV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  HostAuthorityIDV1 host_authority_id = 3;
+  DeviceIDV1 device_id = 4;
+  UploadIDV1 upload_id = 5;
+  AudioBatchIDV1 batch_id = 6;
+  SHA256DigestV1 exact_batch_body_sha256 = 7;
+  repeated AcceptedBatchChunkV1 accepted_chunks = 8;
+  uint64 durable_at_unix_ms = 9;
+  BatchAckIDV1 ack_id = 10;
+  uint64 issued_at_unix_ms = 11;
+}
+
+// Payload type harc.v1.RecordingReceiptV1.
+message RecordingReceiptV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  HostAuthorityIDV1 host_authority_id = 3;
+  DeviceIDV1 producing_device_id = 4;
+  OriginRecordingIDV1 origin_recording_id = 5;
+  CanonicalRecordingIDV1 canonical_recording_id = 6;
+  UploadIDV1 upload_id = 7;
+  SHA256DigestV1 signed_manifest_object_sha256 = 8;
+  SHA256DigestV1 canonical_pcm_sha256 = 9;
+  uint64 total_canonical_frames = 10;
+  CanonicalPCMFormatV1 canonical_format = 11;
+  uint64 canonical_recording_revision = 12;
+  uint64 change_cursor = 13;
+  uint64 issued_at_unix_ms = 14;
+  RecordingProcessingStateV1 processing_state = 15;
+  ReceiptIDV1 receipt_id = 16;
+}
+
+enum BeginUploadDispositionV1 {
+  BEGIN_UPLOAD_DISPOSITION_UNSPECIFIED = 0;
+  BEGIN_UPLOAD_DISPOSITION_CREATED = 1;
+  BEGIN_UPLOAD_DISPOSITION_EXACT_REPLAY = 2;
+  BEGIN_UPLOAD_DISPOSITION_REOPENED = 3;
+  BEGIN_UPLOAD_DISPOSITION_ALREADY_COMMITTED = 4;
+}
+
+message BeginUploadRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  HostAuthorityIDV1 host_authority_id = 3;
+  UploadIDV1 upload_id = 4;
+  OriginRecordingIDV1 origin_recording_id = 5;
+  DeviceIDV1 producing_device_id = 6;
+  CanonicalPCMFormatV1 canonical_format = 7;
+  optional uint64 capture_started_at_unix_ms = 8;
+  optional uint64 capture_started_monotonic_nanoseconds = 9;
+  // Preserve and hash these exact serialized UploadProfileV1 bytes before
+  // decoding. profile_sha256 must equal that exact byte sequence's SHA-256.
+  bytes exact_upload_profile_payload = 10;
+  SHA256DigestV1 upload_profile_sha256 = 11;
+}
+
+message BeginUploadResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  BeginUploadDispositionV1 disposition = 2;
+  UploadIDV1 upload_id = 3;
+  uint64 upload_generation = 4;
+  uint64 generation_expires_at_unix_ms = 5;
+  SHA256DigestV1 upload_profile_sha256 = 6;
+  optional CanonicalRecordingIDV1 existing_canonical_recording_id = 7;
+  optional ExactSignedObjectV1 exact_existing_receipt = 8;
+  optional ReconcileUploadResponseV1 reconciliation = 9;
+}
+
+message DeclareChunksRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  uint64 upload_generation = 3;
+  SHA256DigestV1 upload_profile_sha256 = 4;
+  repeated ChunkDescriptorV1 descriptors = 5;
+}
+
+enum ChunkDeclarationDispositionV1 {
+  CHUNK_DECLARATION_DISPOSITION_UNSPECIFIED = 0;
+  CHUNK_DECLARATION_DISPOSITION_APPENDED = 1;
+  CHUNK_DECLARATION_DISPOSITION_EXACT_REPLAY = 2;
+  CHUNK_DECLARATION_DISPOSITION_CLOSED = 3;
+  CHUNK_DECLARATION_DISPOSITION_CONFLICT_BLOCKED = 4;
+}
+
+enum ChunkDeclarationConflictKindV1 {
+  CHUNK_DECLARATION_CONFLICT_KIND_UNSPECIFIED = 0;
+  CHUNK_DECLARATION_CONFLICT_KIND_INDEX_REUSED = 1;
+  CHUNK_DECLARATION_CONFLICT_KIND_IDENTIFIER_REUSED = 2;
+  CHUNK_DECLARATION_CONFLICT_KIND_INDEX_AND_IDENTIFIER_REUSED = 3;
+}
+
+message ChunkDeclarationConflictV1 {
+  ChunkDeclarationConflictKindV1 kind = 1;
+  ChunkDescriptorV1 existing = 2;
+  ChunkDescriptorV1 attempted = 3;
+}
+
+message DeclareChunksResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  uint64 upload_generation = 3;
+  ChunkDeclarationDispositionV1 disposition = 4;
+  optional uint32 first_appended_index = 5;
+  optional uint32 appended_count = 6;
+  optional ChunkDeclarationConflictV1 conflict = 7;
+}
+
+message UploadChunkRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  uint64 upload_generation = 3;
+  SHA256DigestV1 upload_profile_sha256 = 4;
+  uint32 chunk_index = 5;
+  ChunkIDV1 chunk_id = 6;
+  uint64 encoded_byte_length = 7;
+  SHA256DigestV1 encoded_sha256 = 8;
+  bytes encoded_chunk = 9;
+}
+
+enum RejectedChunkReasonV1 {
+  REJECTED_CHUNK_REASON_UNSPECIFIED = 0;
+  REJECTED_CHUNK_REASON_MISSING_BYTES = 1;
+  REJECTED_CHUNK_REASON_LENGTH_MISMATCH = 2;
+  REJECTED_CHUNK_REASON_ENCODED_HASH_MISMATCH = 3;
+  REJECTED_CHUNK_REASON_DECODED_HASH_MISMATCH = 4;
+  REJECTED_CHUNK_REASON_CORRUPT_CONTAINER = 5;
+  REJECTED_CHUNK_REASON_UNSUPPORTED_ENCODING = 6;
+  REJECTED_CHUNK_REASON_QUOTA_EXHAUSTED = 7;
+}
+
+message RejectedChunkV1 {
+  uint32 chunk_index = 1;
+  ChunkIDV1 chunk_id = 2;
+  RejectedChunkReasonV1 reason = 3;
+}
+
+message UploadChunkResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  oneof result {
+    ChunkAckV1 acknowledgement = 2;
+    RejectedChunkV1 rejection = 3;
+  }
+}
+
+message ReconcileUploadRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  SHA256DigestV1 upload_profile_sha256 = 3;
+}
+
+enum UploadTerminalReasonV1 {
+  UPLOAD_TERMINAL_REASON_UNSPECIFIED = 0;
+  UPLOAD_TERMINAL_REASON_EXPIRED = 1;
+  UPLOAD_TERMINAL_REASON_ABANDONED = 2;
+  UPLOAD_TERMINAL_REASON_DECLARATION_CONFLICT = 3;
+  UPLOAD_TERMINAL_REASON_COMMITTED = 4;
+}
+
+message ReconcileUploadResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  DeviceIDV1 owner_device_id = 3;
+  OriginRecordingIDV1 origin_recording_id = 4;
+  SHA256DigestV1 upload_profile_sha256 = 5;
+  uint64 upload_generation = 6;
+  uint64 generation_expires_at_unix_ms = 7;
+  repeated ChunkDescriptorV1 declarations = 8;
+  optional SHA256DigestV1 bound_manifest_object_sha256 = 9;
+  repeated DurableChunkV1 durable_chunks = 10;
+  repeated RejectedChunkV1 rejected_chunks = 11;
+  UploadTerminalReasonV1 terminal_reason = 12;
+  optional ExactSignedObjectV1 exact_existing_receipt = 13;
+}
+
+message CommitUploadRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  uint64 upload_generation = 3;
+  SHA256DigestV1 upload_profile_sha256 = 4;
+  ExactSignedObjectV1 exact_signed_recording_manifest = 5;
+}
+
+enum CommitUploadDispositionV1 {
+  COMMIT_UPLOAD_DISPOSITION_UNSPECIFIED = 0;
+  COMMIT_UPLOAD_DISPOSITION_COMMITTED = 1;
+  COMMIT_UPLOAD_DISPOSITION_EXACT_REPLAY = 2;
+}
+
+message CommitUploadResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  CommitUploadDispositionV1 disposition = 2;
+  ExactSignedObjectV1 exact_signed_recording_receipt = 3;
+}
+
+message AbandonUploadRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  uint64 upload_generation = 3;
+  SHA256DigestV1 upload_profile_sha256 = 4;
+}
+
+message AbandonUploadResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  UploadTerminalReasonV1 terminal_reason = 3;
+  uint64 terminal_at_unix_ms = 4;
+}
+
+message GetRecordingStatusRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  oneof recording_key {
+    UploadIDV1 upload_id = 2;
+    OriginRecordingIDV1 origin_recording_id = 3;
+  }
+}
+
+enum RecordingIngestStateV1 {
+  RECORDING_INGEST_STATE_UNSPECIFIED = 0;
+  RECORDING_INGEST_STATE_RECEIVING = 1;
+  RECORDING_INGEST_STATE_MANIFEST_VERIFIED = 2;
+  RECORDING_INGEST_STATE_ASSEMBLING = 3;
+  RECORDING_INGEST_STATE_AUDIO_PUBLISHED = 4;
+  RECORDING_INGEST_STATE_RECORDING_COMMITTED = 5;
+  RECORDING_INGEST_STATE_RECEIPTED = 6;
+  RECORDING_INGEST_STATE_PROCESSING = 7;
+  RECORDING_INGEST_STATE_COMPLETE = 8;
+  RECORDING_INGEST_STATE_FAILED_RECOVERABLE = 9;
+  RECORDING_INGEST_STATE_ABANDONED = 10;
+  RECORDING_INGEST_STATE_EXPIRED = 11;
+  RECORDING_INGEST_STATE_CONFLICT_BLOCKED = 12;
+}
+
+message GetRecordingStatusResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  OriginRecordingIDV1 origin_recording_id = 3;
+  RecordingIngestStateV1 ingest_state = 4;
+  optional ProcessingDescriptorV1 processing = 5;
+  optional CanonicalRecordingIDV1 canonical_recording_id = 6;
+  optional uint64 canonical_recording_revision = 7;
+  optional ExactSignedObjectV1 exact_recording_receipt = 8;
+}
+
+message BackgroundChunkBindingV1 {
+  uint32 chunk_index = 1;
+  SHA256DigestV1 encoded_sha256 = 2;
+}
+
+message MintBackgroundCapabilityRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  UploadIDV1 upload_id = 2;
+  uint64 upload_generation = 3;
+  SHA256DigestV1 upload_profile_sha256 = 4;
+  AudioBatchIDV1 batch_id = 5;
+  repeated BackgroundChunkBindingV1 chunks = 6;
+  SHA256DigestV1 exact_batch_body_sha256 = 7;
+  uint64 exact_batch_body_length = 8;
+  uint64 requested_expires_at_unix_ms = 9;
+}
+
+message MintBackgroundCapabilityResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  string absolute_upload_url = 2;
+  bytes opaque_capability_credential = 3;
+  uint64 issued_at_unix_ms = 4;
+  uint64 expires_at_unix_ms = 5;
+  uint64 byte_ceiling = 6;
+  uint64 minimum_transport_set_epoch = 7;
+  ExactSignedObjectV1 exact_signed_transport_set = 8;
+  UploadIDV1 upload_id = 9;
+  uint64 upload_generation = 10;
+  AudioBatchIDV1 batch_id = 11;
+  SHA256DigestV1 exact_batch_body_sha256 = 12;
+  string http_method = 13;
+  string http_path = 14;
+  bool expiry_was_clamped = 15;
+}
+
+service RecordingTransferService {
+  rpc BeginUpload(BeginUploadRequestV1) returns (BeginUploadResponseV1);
+  rpc DeclareChunks(DeclareChunksRequestV1) returns (DeclareChunksResponseV1);
+  rpc UploadChunks(stream UploadChunkRequestV1)
+      returns (stream UploadChunkResponseV1);
+  rpc ReconcileUpload(ReconcileUploadRequestV1)
+      returns (ReconcileUploadResponseV1);
+  rpc CommitUpload(CommitUploadRequestV1) returns (CommitUploadResponseV1);
+  rpc AbandonUpload(AbandonUploadRequestV1) returns (AbandonUploadResponseV1);
+  rpc GetRecordingStatus(GetRecordingStatusRequestV1)
+      returns (GetRecordingStatusResponseV1);
+  rpc MintBackgroundCapability(MintBackgroundCapabilityRequestV1)
+      returns (MintBackgroundCapabilityResponseV1);
+}

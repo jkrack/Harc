@@ -1,0 +1,166 @@
+syntax = "proto3";
+
+package harc.v1;
+
+option swift_prefix = "Harc_V1_";
+
+// Unknown protobuf fields are additive by default. A sender lists only fields
+// whose absence would change semantics in critical_field_numbers. Both lists
+// are canonical: ascending/sorted, duplicate-free, and validated by
+// HarcProtocol before the enclosing value reaches a domain module.
+message ProtocolRequirementsV1 {
+  repeated string required_features = 1;
+  repeated uint32 critical_field_numbers = 2;
+}
+
+message ProtocolVersionV1 {
+  uint32 major = 1;
+  uint32 minor = 2;
+  ProtocolRequirementsV1 requirements = 3;
+}
+
+// UUID fields are exactly 16 bytes in RFC 4122 network byte order.
+message LibraryIDV1 { bytes value = 1; }
+message HostStateIDV1 { bytes value = 1; }
+message GrantIDV1 { bytes value = 1; }
+message TicketIDV1 { bytes value = 1; }
+message ClaimIDV1 { bytes value = 1; }
+message ChallengeIDV1 { bytes value = 1; }
+message UploadIDV1 { bytes value = 1; }
+message ChunkIDV1 { bytes value = 1; }
+message AudioBatchIDV1 { bytes value = 1; }
+message BatchAckIDV1 { bytes value = 1; }
+message CanonicalRecordingIDV1 { bytes value = 1; }
+message OperationIDV1 { bytes value = 1; }
+message ArtifactIDV1 { bytes value = 1; }
+message ReceiptIDV1 { bytes value = 1; }
+message ExportIDV1 { bytes value = 1; }
+message RevocationIDV1 { bytes value = 1; }
+
+// Authority and device identities are exactly 32-byte domain-separated
+// SHA-256 digests of their P-256 X9.63 public keys.
+message HostAuthorityIDV1 { bytes sha256 = 1; }
+message DeviceIDV1 { bytes sha256 = 1; }
+
+message OriginRecordingIDV1 {
+  DeviceIDV1 device_id = 1;
+  bytes recording_uuid = 2;
+}
+
+// A SHA-256 digest. The containing field name defines the digest's domain.
+message SHA256DigestV1 { bytes value = 1; }
+
+// Exact HARCSO1 framed bytes. Verifiers preserve framed_bytes and verify the
+// embedded payload bytes directly; they never decode and reserialize before
+// signature verification. object_sha256 is derived from the exact frame and is
+// checked rather than trusted when present alongside this value.
+message ExactSignedObjectV1 { bytes framed_bytes = 1; }
+
+enum CanonicalPCMEncodingV1 {
+  CANONICAL_PCM_ENCODING_UNSPECIFIED = 0;
+  CANONICAL_PCM_ENCODING_SIGNED_INT16_LITTLE_ENDIAN = 1;
+}
+
+message CanonicalPCMFormatV1 {
+  uint32 sample_rate_hz = 1;
+  uint32 channel_count = 2;
+  CanonicalPCMEncodingV1 encoding = 3;
+}
+
+message CanonicalFrameRangeV1 {
+  uint64 start_frame = 1;
+  uint64 end_frame_exclusive = 2;
+}
+
+message UnixTimeRangeV1 {
+  optional uint64 start_unix_ms = 1;
+  optional uint64 end_unix_ms = 2;
+}
+
+// A deterministic replacement for protobuf map fields. Entries are sorted by
+// key and duplicate keys are rejected.
+message NamedStringV1 {
+  string key = 1;
+  string value = 2;
+}
+
+enum LosslessAudioCodecV1 {
+  LOSSLESS_AUDIO_CODEC_UNSPECIFIED = 0;
+  LOSSLESS_AUDIO_CODEC_APPLE_LOSSLESS = 1;
+  LOSSLESS_AUDIO_CODEC_FLAC = 2;
+  LOSSLESS_AUDIO_CODEC_RAW_CANONICAL_PCM_FIXTURE = 3;
+}
+
+enum LosslessAudioContainerV1 {
+  LOSSLESS_AUDIO_CONTAINER_UNSPECIFIED = 0;
+  LOSSLESS_AUDIO_CONTAINER_CORE_AUDIO_FORMAT = 1;
+  LOSSLESS_AUDIO_CONTAINER_FLAC = 2;
+  LOSSLESS_AUDIO_CONTAINER_RAW_CANONICAL_PCM_FIXTURE = 3;
+}
+
+message LosslessEncodingConfigurationV1 {
+  LosslessAudioCodecV1 codec = 1;
+  LosslessAudioContainerV1 container = 2;
+  optional uint32 flac_compression_level = 3;
+}
+
+enum RecordingProcessingStateV1 {
+  RECORDING_PROCESSING_STATE_UNSPECIFIED = 0;
+  RECORDING_PROCESSING_STATE_PENDING = 1;
+  RECORDING_PROCESSING_STATE_TRANSCRIBING = 2;
+  RECORDING_PROCESSING_STATE_PROJECTING = 3;
+  RECORDING_PROCESSING_STATE_READY = 4;
+  RECORDING_PROCESSING_STATE_DEGRADED = 5;
+  RECORDING_PROCESSING_STATE_FAILED_RECOVERABLE = 6;
+}
+
+message ProcessingFailureV1 {
+  string code = 1;
+  optional string message = 2;
+}
+
+message ProcessingDescriptorV1 {
+  RecordingProcessingStateV1 state = 1;
+  optional ProcessingFailureV1 failure = 2;
+}
+
+enum RecordingProjectionStateV1 {
+  RECORDING_PROJECTION_STATE_UNSPECIFIED = 0;
+  RECORDING_PROJECTION_STATE_UNKNOWN_LEGACY = 1;
+  RECORDING_PROJECTION_STATE_PENDING = 2;
+  RECORDING_PROJECTION_STATE_PROJECTING = 3;
+  RECORDING_PROJECTION_STATE_READY = 4;
+  RECORDING_PROJECTION_STATE_DEGRADED = 5;
+  RECORDING_PROJECTION_STATE_FAILED_RECOVERABLE = 6;
+}
+
+message ProjectionDescriptorV1 {
+  RecordingProjectionStateV1 state = 1;
+  optional uint64 version = 2;
+  optional ProcessingFailureV1 failure = 3;
+}
+
+enum HarcErrorCodeV1 {
+  HARC_ERROR_CODE_UNSPECIFIED = 0;
+  HARC_ERROR_CODE_INVALID_ARGUMENT = 1;
+  HARC_ERROR_CODE_UNAUTHENTICATED = 2;
+  HARC_ERROR_CODE_PERMISSION_DENIED = 3;
+  HARC_ERROR_CODE_NOT_FOUND = 4;
+  HARC_ERROR_CODE_CONFLICT = 5;
+  HARC_ERROR_CODE_EXPIRED = 6;
+  HARC_ERROR_CODE_RATE_LIMITED = 7;
+  HARC_ERROR_CODE_RESOURCE_EXHAUSTED = 8;
+  HARC_ERROR_CODE_FULL_RESYNC_REQUIRED = 9;
+  HARC_ERROR_CODE_SECURITY_BLOCKED = 10;
+  HARC_ERROR_CODE_UNSUPPORTED_PROTOCOL = 11;
+  HARC_ERROR_CODE_UNSUPPORTED_REQUIRED_FEATURE = 12;
+  HARC_ERROR_CODE_UNKNOWN_CRITICAL_FIELD = 13;
+  HARC_ERROR_CODE_FAILED_PRECONDITION = 14;
+  HARC_ERROR_CODE_INTERNAL = 15;
+}
+
+message HarcErrorV1 {
+  HarcErrorCodeV1 code = 1;
+  string reason = 2;
+  optional uint64 retry_after_unix_ms = 3;
+}

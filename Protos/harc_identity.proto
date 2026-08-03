@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+package harc.v1;
+
+option swift_prefix = "Harc_V1_";
+
+import "harc_common.proto";
+
+enum AuthorizationScopeV1 {
+  AUTHORIZATION_SCOPE_UNSPECIFIED = 0;
+  AUTHORIZATION_SCOPE_LIBRARY_AUDIO_READ = 1;
+  AUTHORIZATION_SCOPE_LIBRARY_METADATA_READ = 2;
+  AUTHORIZATION_SCOPE_LIBRARY_METADATA_WRITE = 3;
+  AUTHORIZATION_SCOPE_LIBRARY_TRANSCRIPT_READ = 4;
+  AUTHORIZATION_SCOPE_PROCESSING_SUBMIT_OWN = 5;
+  AUTHORIZATION_SCOPE_RECORDING_READ_OWN = 6;
+  AUTHORIZATION_SCOPE_RECORDING_UPLOAD_OWN = 7;
+}
+
+// Payload type harc.v1.DeviceGrantV1. Scopes are sorted by their stable enum
+// number and duplicate-free before signing.
+message DeviceGrantV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  HostAuthorityIDV1 host_authority_id = 3;
+  GrantIDV1 grant_id = 4;
+  DeviceIDV1 device_id = 5;
+  bytes device_public_key_x963 = 6;
+  repeated AuthorizationScopeV1 scopes = 7;
+  uint64 grant_epoch = 8;
+  uint64 issued_at_unix_ms = 9;
+  optional uint64 expires_at_unix_ms = 10;
+  uint32 minimum_compatible_protocol_minor = 11;
+  uint32 maximum_compatible_protocol_minor = 12;
+}
+
+// Payload type harc.v1.DeviceRevocationV1.
+message DeviceRevocationV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  HostAuthorityIDV1 host_authority_id = 3;
+  DeviceIDV1 device_id = 4;
+  GrantIDV1 grant_id = 5;
+  uint64 prior_grant_epoch = 6;
+  uint64 new_grant_epoch = 7;
+  RevocationIDV1 revocation_id = 8;
+  string reason_code = 9;
+  uint64 issued_at_unix_ms = 10;
+}
+
+// A capability offer is canonical when every repeated scalar list is sorted
+// and duplicate-free. Raw fixture PCM is advertised only by fixture/loopback
+// builds and can never be selected for a production profile.
+message CapabilityOfferV1 {
+  uint32 protocol_major = 1;
+  uint32 minimum_protocol_minor = 2;
+  uint32 maximum_protocol_minor = 3;
+  ProtocolRequirementsV1 requirements = 4;
+  repeated string supported_feature_ids = 5;
+  repeated string supported_descriptor_schema_ids = 6;
+  repeated LosslessEncodingConfigurationV1 supported_encodings = 7;
+  repeated CanonicalPCMFormatV1 supported_canonical_formats = 8;
+}
+
+// Exact payload whose serialized bytes are persisted and hashed into the
+// session transcript and each frozen upload profile.
+message NegotiatedCapabilitiesV1 {
+  ProtocolVersionV1 protocol = 1;
+  repeated string selected_feature_ids = 2;
+  string descriptor_schema_id = 3;
+  LosslessEncodingConfigurationV1 encoding = 4;
+  CanonicalPCMFormatV1 canonical_format = 5;
+}
+
+message GetHostInfoRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+}
+
+message GetHostInfoResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  string display_name = 2;
+  LibraryIDV1 library_id = 3;
+  HostAuthorityIDV1 host_authority_id = 4;
+  bytes host_authority_public_key_x963 = 5;
+  repeated CapabilityOfferV1 offers = 6;
+  ExactSignedObjectV1 exact_signed_transport_set = 7;
+  uint64 server_time_unix_ms = 8;
+}
+
+message NegotiateCapabilitiesRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  CapabilityOfferV1 client_offer = 2;
+}
+
+message NegotiateCapabilitiesResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  // Exact serialized NegotiatedCapabilitiesV1 bytes. Preserve before decode.
+  bytes exact_negotiated_capabilities_payload = 2;
+  SHA256DigestV1 negotiated_capabilities_sha256 = 3;
+  ExactSignedObjectV1 exact_signed_transport_set = 4;
+  uint64 server_time_unix_ms = 5;
+}
+
+message BeginSessionRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  DeviceIDV1 claimed_device_id = 2;
+  GrantIDV1 grant_id = 3;
+}
+
+message BeginSessionResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  ChallengeIDV1 challenge_id = 2;
+  bytes server_nonce = 3;
+  uint64 expires_at_unix_ms = 4;
+  ExactSignedObjectV1 exact_signed_device_grant = 5;
+  uint64 server_time_unix_ms = 6;
+}
+
+message OpenSessionRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  ChallengeIDV1 challenge_id = 2;
+  bytes client_nonce = 3;
+  // Echo the exact accepted capability payload, not a reserialization.
+  bytes exact_negotiated_capabilities_payload = 4;
+  SHA256DigestV1 negotiated_capabilities_sha256 = 5;
+  bytes client_signature_raw = 6;
+}
+
+message OpenSessionResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  // Exact token_id || token_secret. It is returned once and subsequently sent
+  // only as Authorization: HarcSession metadata.
+  bytes session_credential = 2;
+  uint64 issued_at_unix_ms = 3;
+  uint64 expires_at_unix_ms = 4;
+  uint64 server_time_unix_ms = 5;
+  SHA256DigestV1 negotiated_capabilities_sha256 = 6;
+}
+
+service HostInfoService {
+  rpc GetHostInfo(GetHostInfoRequestV1) returns (GetHostInfoResponseV1);
+  rpc NegotiateCapabilities(NegotiateCapabilitiesRequestV1)
+      returns (NegotiateCapabilitiesResponseV1);
+}
+
+service SessionService {
+  rpc BeginSession(BeginSessionRequestV1) returns (BeginSessionResponseV1);
+  rpc OpenSession(OpenSessionRequestV1) returns (OpenSessionResponseV1);
+}

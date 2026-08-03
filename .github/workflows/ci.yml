@@ -18,8 +18,14 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Protocol schema contract
+        run: ./scripts/check-harc-protocol-schemas.sh
+
       - name: swift test
         run: swift test
+
+      - name: Protocol external construction boundaries
+        run: ./scripts/test-external-trust-evidence-boundary.sh
 
       - name: Install xcodegen
         run: brew install xcodegen

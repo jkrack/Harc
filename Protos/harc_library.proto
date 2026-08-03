@@ -1,0 +1,385 @@
+syntax = "proto3";
+
+package harc.v1;
+
+option swift_prefix = "Harc_V1_";
+
+import "harc_common.proto";
+import "harc_transfer.proto";
+
+enum CanonicalAudioAvailabilityV1 {
+  CANONICAL_AUDIO_AVAILABILITY_UNSPECIFIED = 0;
+  CANONICAL_AUDIO_AVAILABILITY_UNAVAILABLE_PENDING_HASH = 1;
+  CANONICAL_AUDIO_AVAILABILITY_AVAILABLE = 2;
+}
+
+message CanonicalAudioDescriptorV1 {
+  CanonicalAudioAvailabilityV1 availability = 1;
+  optional SHA256DigestV1 canonical_pcm_sha256 = 2;
+  optional uint64 total_frames = 3;
+  optional CanonicalPCMFormatV1 canonical_format = 4;
+}
+
+message LibraryRecordingSummaryV1 {
+  CanonicalRecordingIDV1 canonical_recording_id = 1;
+  optional OriginRecordingIDV1 origin_recording_id = 2;
+  uint64 revision = 3;
+  uint64 started_at_unix_ms = 4;
+  optional uint64 ended_at_unix_ms = 5;
+  optional string title = 6;
+  optional string suggested_title = 7;
+  repeated string tags = 8;
+  bool pinned = 9;
+  CanonicalAudioDescriptorV1 canonical_audio = 10;
+  ProcessingDescriptorV1 processing = 11;
+  ProjectionDescriptorV1 projection = 12;
+}
+
+message SpeakerLabelV1 {
+  uint32 speaker_index = 1;
+  string display_name = 2;
+}
+
+message LibraryRecordingDetailV1 {
+  LibraryRecordingSummaryV1 summary = 1;
+  optional string transcript_text = 2;
+  repeated SpeakerLabelV1 speaker_labels = 3;
+  optional string summary_markdown = 4;
+  optional string action_items_markdown = 5;
+  optional string notes_markdown = 6;
+  repeated CaptureDiscontinuityV1 discontinuities = 7;
+}
+
+message RecordingTombstoneV1 {
+  CanonicalRecordingIDV1 canonical_recording_id = 1;
+  uint64 revision = 2;
+  uint64 deleted_at_unix_ms = 3;
+}
+
+enum LibraryChangeOperationV1 {
+  LIBRARY_CHANGE_OPERATION_UNSPECIFIED = 0;
+  LIBRARY_CHANGE_OPERATION_UPSERT = 1;
+  LIBRARY_CHANGE_OPERATION_TOMBSTONE = 2;
+}
+
+message LibraryChangeV1 {
+  uint64 cursor = 1;
+  CanonicalRecordingIDV1 canonical_recording_id = 2;
+  uint64 revision = 3;
+  LibraryChangeOperationV1 operation = 4;
+  uint64 changed_at_unix_ms = 5;
+  oneof value {
+    LibraryRecordingSummaryV1 upsert = 6;
+    RecordingTombstoneV1 tombstone = 7;
+  }
+}
+
+message BeginLibrarySnapshotRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  optional uint32 preferred_page_size = 2;
+}
+
+message BeginLibrarySnapshotResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  uint64 snapshot_anchor = 2;
+  bytes snapshot_token = 3;
+  uint64 expires_at_unix_ms = 4;
+  optional uint64 recording_count = 5;
+  optional uint64 tombstone_count = 6;
+}
+
+message ListSnapshotPageRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  bytes snapshot_token = 2;
+  optional bytes page_token = 3;
+}
+
+message SnapshotItemV1 {
+  oneof value {
+    LibraryRecordingSummaryV1 recording = 1;
+    RecordingTombstoneV1 tombstone = 2;
+  }
+}
+
+message ListSnapshotPageResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  uint64 snapshot_anchor = 2;
+  repeated SnapshotItemV1 items = 3;
+  optional bytes next_page_token = 4;
+  bool complete = 5;
+}
+
+message ListChangesRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  uint64 after_cursor = 2;
+  uint32 limit = 3;
+}
+
+enum ListChangesDispositionV1 {
+  LIST_CHANGES_DISPOSITION_UNSPECIFIED = 0;
+  LIST_CHANGES_DISPOSITION_PAGE = 1;
+  LIST_CHANGES_DISPOSITION_FULL_RESYNC_REQUIRED = 2;
+}
+
+message ListChangesResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  ListChangesDispositionV1 disposition = 2;
+  repeated LibraryChangeV1 changes = 3;
+  uint64 next_cursor = 4;
+}
+
+enum RecordingDetailFieldV1 {
+  RECORDING_DETAIL_FIELD_UNSPECIFIED = 0;
+  RECORDING_DETAIL_FIELD_METADATA = 1;
+  RECORDING_DETAIL_FIELD_TRANSCRIPT = 2;
+  RECORDING_DETAIL_FIELD_SPEAKER_LABELS = 3;
+  RECORDING_DETAIL_FIELD_SUMMARY = 4;
+  RECORDING_DETAIL_FIELD_ACTION_ITEMS = 5;
+  RECORDING_DETAIL_FIELD_NOTES = 6;
+  RECORDING_DETAIL_FIELD_DISCONTINUITIES = 7;
+}
+
+message GetRecordingRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  CanonicalRecordingIDV1 canonical_recording_id = 2;
+  repeated RecordingDetailFieldV1 requested_fields = 3;
+}
+
+message GetRecordingResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  // Fields not authorized for the active session are absent even if requested.
+  LibraryRecordingDetailV1 recording = 2;
+}
+
+enum AudioRepresentationV1 {
+  AUDIO_REPRESENTATION_UNSPECIFIED = 0;
+  AUDIO_REPRESENTATION_CANONICAL_WAV = 1;
+}
+
+// Normative GetAudio V1 stream framing:
+// - resume_byte_offset is an offset in the complete representation selected by
+//   representation. Absent is identical to zero. It MUST NOT exceed the
+//   descriptor's total_byte_length; equality returns only the descriptor and a
+//   successful server half-close. A resumed consumer MUST retain and hash the
+//   exact already-verified prefix [0, resume_byte_offset).
+// - The first response MUST carry descriptor, descriptor MUST occur exactly
+//   once, and every later response MUST carry frame. A missing, repeated, or
+//   late descriptor fails the stream.
+// - The first frame byte_offset MUST equal resume_byte_offset. Every later
+//   byte_offset MUST equal the prior offset plus the prior data length; gaps,
+//   overlaps, duplicates, and reordering fail.
+// - frame.data MUST contain 1...4,194,304 bytes. Empty or oversized frames fail.
+// - Both peers MUST use bounded streaming storage and MUST NOT allocate from a
+//   peer-supplied total_byte_length, resume_byte_offset, or frame byte_offset.
+// - The server's successful half-close is the only EOF marker and MUST occur
+//   exactly at total_byte_length. Before accepting the result, the consumer MUST
+//   verify the complete representation's exact byte count and content_sha256,
+//   including its retained prefix on resume; early EOF, extra bytes, or mismatch
+//   fails and MUST NOT expose partial audio as complete.
+message GetAudioRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  CanonicalRecordingIDV1 canonical_recording_id = 2;
+  uint64 expected_revision = 3;
+  AudioRepresentationV1 representation = 4;
+  optional uint64 resume_byte_offset = 5;
+}
+
+message AudioDownloadDescriptorV1 {
+  CanonicalRecordingIDV1 canonical_recording_id = 1;
+  uint64 revision = 2;
+  AudioRepresentationV1 representation = 3;
+  string content_type = 4;
+  uint64 total_byte_length = 5;
+  SHA256DigestV1 content_sha256 = 6;
+  CanonicalPCMFormatV1 canonical_format = 7;
+  uint64 total_canonical_frames = 8;
+  SHA256DigestV1 canonical_pcm_sha256 = 9;
+}
+
+message AudioDownloadFrameV1 {
+  uint64 byte_offset = 1;
+  bytes data = 2;
+}
+
+message GetAudioResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  oneof value {
+    AudioDownloadDescriptorV1 descriptor = 2;
+    AudioDownloadFrameV1 frame = 3;
+  }
+}
+
+enum MetadataSearchSortV1 {
+  METADATA_SEARCH_SORT_UNSPECIFIED = 0;
+  METADATA_SEARCH_SORT_STARTED_AT_DESCENDING = 1;
+  METADATA_SEARCH_SORT_STARTED_AT_ASCENDING = 2;
+  METADATA_SEARCH_SORT_TITLE_ASCENDING = 3;
+}
+
+message MetadataSearchFilterV1 {
+  optional string title_contains = 1;
+  repeated string tags_all = 2;
+  repeated string tags_any = 3;
+  UnixTimeRangeV1 started_at = 4;
+  repeated string speaker_display_names = 5;
+  optional bool pinned = 6;
+  repeated RecordingProcessingStateV1 processing_states = 7;
+}
+
+message SearchMetadataRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  MetadataSearchFilterV1 filter = 2;
+  MetadataSearchSortV1 sort = 3;
+  uint32 limit = 4;
+  optional bytes page_token = 5;
+}
+
+message SearchMetadataResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  repeated LibraryRecordingSummaryV1 recordings = 2;
+  optional bytes next_page_token = 3;
+}
+
+enum TranscriptSearchModeV1 {
+  TRANSCRIPT_SEARCH_MODE_UNSPECIFIED = 0;
+  TRANSCRIPT_SEARCH_MODE_LEXICAL = 1;
+  TRANSCRIPT_SEARCH_MODE_SEMANTIC = 2;
+  TRANSCRIPT_SEARCH_MODE_HYBRID = 3;
+}
+
+message TranscriptSearchFilterV1 {
+  repeated CanonicalRecordingIDV1 canonical_recording_ids = 1;
+  repeated string tags = 2;
+  UnixTimeRangeV1 started_at = 3;
+  repeated uint32 speaker_indices = 4;
+}
+
+message SearchTranscriptsRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  string query = 2;
+  TranscriptSearchModeV1 mode = 3;
+  TranscriptSearchFilterV1 filter = 4;
+  uint32 limit = 5;
+  optional bytes page_token = 6;
+}
+
+message TranscriptSearchSnippetV1 {
+  string text = 1;
+  CanonicalFrameRangeV1 frames = 2;
+  optional uint32 speaker_index = 3;
+}
+
+message TranscriptSearchHitV1 {
+  LibraryRecordingSummaryV1 recording = 1;
+  double score = 2;
+  repeated TranscriptSearchSnippetV1 snippets = 3;
+}
+
+message SearchTranscriptsResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  repeated TranscriptSearchHitV1 hits = 2;
+  optional bytes next_page_token = 3;
+}
+
+message SetTitleMutationV1 {
+  // Absent clears the user title; an empty present string is invalid.
+  optional string title = 1;
+}
+
+message ReplaceTagsMutationV1 {
+  // Complete replacement, canonical sorted order, duplicate-free.
+  repeated string tags = 1;
+}
+
+message SetSpeakerLabelMutationV1 {
+  uint32 speaker_index = 1;
+  // Absent clears this user label; an empty present string is invalid.
+  optional string display_name = 2;
+}
+
+message SetPinnedMutationV1 {
+  bool pinned = 1;
+}
+
+message SetNotesMarkdownMutationV1 {
+  // Absent clears notes; an empty present string is invalid.
+  optional string markdown = 1;
+}
+
+// Payload type harc.v1.MetadataMutationV1.
+message MetadataMutationV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  HostAuthorityIDV1 host_authority_id = 3;
+  DeviceIDV1 requesting_device_id = 4;
+  GrantIDV1 grant_id = 5;
+  uint64 grant_epoch = 6;
+  OperationIDV1 operation_id = 7;
+  uint64 issued_at_unix_ms = 8;
+  uint64 expires_at_unix_ms = 9;
+  CanonicalRecordingIDV1 canonical_recording_id = 10;
+  uint64 expected_revision = 11;
+  oneof mutation {
+    SetTitleMutationV1 set_title = 12;
+    ReplaceTagsMutationV1 replace_tags = 13;
+    SetSpeakerLabelMutationV1 set_speaker_label = 14;
+    SetNotesMarkdownMutationV1 set_notes_markdown = 15;
+    SetPinnedMutationV1 set_pinned = 16;
+  }
+}
+
+message MetadataTagsValueV1 { repeated string tags = 1; }
+message MetadataSpeakerLabelValueV1 {
+  uint32 speaker_index = 1;
+  optional string display_name = 2;
+}
+
+message MetadataFieldValueV1 {
+  oneof value {
+    string title = 1;
+    MetadataTagsValueV1 tags = 2;
+    MetadataSpeakerLabelValueV1 speaker_label = 3;
+    bool pinned = 4;
+    string notes_markdown = 5;
+  }
+  // Distinguishes a cleared optional field from a present empty-invalid value.
+  bool is_cleared = 6;
+}
+
+message ApplyMetadataMutationRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  ExactSignedObjectV1 exact_signed_metadata_mutation = 2;
+}
+
+message MetadataMutationAppliedV1 {
+  uint64 new_revision = 1;
+  uint64 change_cursor = 2;
+}
+
+message MetadataMutationConflictV1 {
+  uint64 current_revision = 1;
+  MetadataFieldValueV1 current_value = 2;
+}
+
+message ApplyMetadataMutationResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  oneof result {
+    MetadataMutationAppliedV1 applied = 2;
+    MetadataMutationConflictV1 conflict = 3;
+  }
+}
+
+service LibraryService {
+  rpc BeginLibrarySnapshot(BeginLibrarySnapshotRequestV1)
+      returns (BeginLibrarySnapshotResponseV1);
+  rpc ListSnapshotPage(ListSnapshotPageRequestV1)
+      returns (ListSnapshotPageResponseV1);
+  rpc ListChanges(ListChangesRequestV1) returns (ListChangesResponseV1);
+  rpc GetRecording(GetRecordingRequestV1) returns (GetRecordingResponseV1);
+  rpc GetAudio(GetAudioRequestV1) returns (stream GetAudioResponseV1);
+  rpc SearchMetadata(SearchMetadataRequestV1) returns (SearchMetadataResponseV1);
+  rpc SearchTranscripts(SearchTranscriptsRequestV1)
+      returns (SearchTranscriptsResponseV1);
+  rpc ApplyMetadataMutation(ApplyMetadataMutationRequestV1)
+      returns (ApplyMetadataMutationResponseV1);
+}

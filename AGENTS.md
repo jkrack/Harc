@@ -71,15 +71,21 @@ and `docs/plans/`. The spec wins if planning prose drifts.
 
 `HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcClientStore`, and the
 transport-free `HarcHost` core are active, focused-tested modules.
-`HarcProtocol`, `HarcHostTransport`, `HarcClientTransport`, `HarcAudioMobile`,
-`HarcAudioMac`, and `HarcInference` remain documentation-only boundaries until
-their ordered vertical slice has implementation and focused tests. Do not add a
-placeholder module to `Package.swift` or `project.yml`. Keep the V1 host in the
-resident Mac app, keep the existing daemon, issue the audio-safety receipt
-before derived processing, and do not expose local paths or GRDB records as
-network DTOs. In Host mode, `harc-mcp` must route through authenticated local
-IPC and must never fall back to direct database writes when the resident host is
-unavailable.
+`HarcProtocolWire` and `HarcProtocol` are active, completed PR 4 targets: the
+former is generated only from the seven schemas in `Protos/`, while the latter
+owns the validated domain boundary, exact binary/security codecs, signed-object
+authentication, capability policy, and container validation. PR 5 is the active
+slice for codec-neutral canonical host ingest, durable publication, receipts,
+and recovery. Do not infer that a passing protocol target closes the
+physical-device codec qualification gate. `HarcHostTransport`, `HarcClientTransport`,
+`HarcAudioMobile`, `HarcAudioMac`, and `HarcInference` remain documentation-only
+boundaries until their ordered vertical slice has implementation and focused
+tests. Do not add a placeholder module to `Package.swift` or `project.yml`.
+Keep the V1 host in the resident Mac app, keep the existing daemon, issue the
+audio-safety receipt before derived processing, and do not expose local paths
+or GRDB records as network DTOs. In Host mode, `harc-mcp` must route through
+authenticated local IPC and must never fall back to direct database writes when
+the resident host is unavailable.
 
 ## Reliability Rules
 

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package harc.v1;
+
+option swift_prefix = "Harc_V1_";
+
+import "harc_common.proto";
+
+message HistoricalDeviceTrustV1 {
+  DeviceIDV1 device_id = 1;
+  bytes device_public_key_x963 = 2;
+  // Exact HARCSO1 frames, ordered by grant epoch then object SHA-256.
+  repeated ExactSignedObjectV1 exact_signed_device_grants = 3;
+  // Exact HARCSO1 frames, ordered by new grant epoch then object SHA-256.
+  repeated ExactSignedObjectV1 exact_signed_device_revocations = 4;
+}
+
+// Payload type harc.v1.PortableTrustHistoryV1. This is historical provenance
+// only and can never authorize a live grant, session, capability, or listener.
+message PortableTrustHistoryV1 {
+  ProtocolVersionV1 protocol = 1;
+  LibraryIDV1 library_id = 2;
+  // The old/exporting authority and the mirrored signed-envelope authority.
+  HostAuthorityIDV1 host_authority_id = 3;
+  bytes old_host_authority_public_key_x963 = 4;
+  ExportIDV1 export_id = 5;
+  // Export time and the mirrored signed-envelope issued time.
+  uint64 issued_at_unix_ms = 6;
+  // Sorted by DeviceID bytes and duplicate-free. Private keys are forbidden.
+  repeated HistoricalDeviceTrustV1 devices = 7;
+}
