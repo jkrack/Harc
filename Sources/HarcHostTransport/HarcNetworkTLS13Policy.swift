@@ -1,6 +1,7 @@
 #if canImport(Network) && canImport(Security)
 import Network
 import Security
+import HarcHost
 
 public enum HarcTLSListenerProtocol: String, CaseIterable, Sendable {
     case grpcHTTP2 = "h2"
@@ -20,7 +21,23 @@ public enum HarcNetworkTLS13Policy {
     /// resumption is the enforceable way to exclude TLS 1.3 0-RTT.
     public static let sessionResumptionEnabled = false
 
-    public static func serverOptions(
+    package static func serverOptions(
+        material: HostTransportListenerMaterial,
+        protocol applicationProtocol: HarcTLSListenerProtocol
+    ) async throws -> NWProtocolTLS.Options {
+        let expectedRole: HostTransportListenerRole = switch applicationProtocol {
+        case .grpcHTTP2: .grpcControl
+        case .backgroundUploadHTTP1: .backgroundUpload
+        }
+        return try await material.bindServerIdentity(for: expectedRole) { identity in
+            try serverOptions(
+                identity: identity.securityIdentity,
+                protocol: applicationProtocol
+            )
+        }
+    }
+
+    static func serverOptions(
         identity: SecIdentity,
         protocol applicationProtocol: HarcTLSListenerProtocol
     ) throws -> NWProtocolTLS.Options {
@@ -45,11 +62,14 @@ public enum HarcNetworkTLS13Policy {
         return options
     }
 
-    public static func serverParameters(
-        identity: SecIdentity,
+    package static func serverParameters(
+        material: HostTransportListenerMaterial,
         protocol applicationProtocol: HarcTLSListenerProtocol
-    ) throws -> NWParameters {
-        let tls = try serverOptions(identity: identity, protocol: applicationProtocol)
+    ) async throws -> NWParameters {
+        let tls = try await serverOptions(
+            material: material,
+            protocol: applicationProtocol
+        )
         return NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
     }
 }

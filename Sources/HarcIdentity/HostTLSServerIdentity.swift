@@ -95,24 +95,24 @@ public struct HostTLSServerIdentity: @unchecked Sendable {
 
 extension HostTLSSigningIdentity {
     /// SHA-256 of the complete DER SubjectPublicKeyInfo for the TLS P-256 key.
-    public var tlsSPKISHA256: Data {
-        HostTLSCertificateDER.spkiSHA256(publicKey: publicKey)
+    package var tlsSPKISHA256: Data {
+        publicKey.tlsSPKISHA256
     }
 
-    /// Issues the exact self-signed Harc leaf profile, installs its public
-    /// certificate, and resolves it against the matching permanent TLS key.
-    /// The authority-signed transport set is accepted only as opaque framed
-    /// bytes and embedded exactly once in the mandated noncritical extension.
-    public func issueServerIdentity(
+    /// Issues the exact self-signed Harc leaf profile without mutating the
+    /// certificate Keychain. Callers persist these exact DER bytes in HostDB
+    /// before resolving the serving identity, so restart never proliferates
+    /// certificates or silently changes the embedded transport set.
+    package func issueServerCertificate(
         request: HostTLSServerCertificateRequest
-    ) throws -> HostTLSServerIdentity {
-        try issueServerIdentity(request: request, serialNumber: nil)
+    ) throws -> HostTLSServerCertificateFacts {
+        try issueServerCertificate(request: request, serialNumber: nil)
     }
 
-    func issueServerIdentity(
+    func issueServerCertificate(
         request: HostTLSServerCertificateRequest,
         serialNumber: Data?
-    ) throws -> HostTLSServerIdentity {
+    ) throws -> HostTLSServerCertificateFacts {
         guard case .securityFramework(let securityKey) = key else {
             throw HostCryptographicStateError.serverIdentityUnavailable
         }
@@ -137,15 +137,67 @@ extension HostTLSSigningIdentity {
         guard facts.publicKeyX963 == publicKey else {
             throw HostCryptographicStateError.serverCertificateKeyMismatch
         }
+        return facts
+    }
+
+    /// Revalidates previously persisted DER, installs that exact public
+    /// certificate if necessary, and resolves it against this permanent key.
+    package func resolveServerIdentity(
+        certificateDER: Data,
+        request: HostTLSServerCertificateRequest
+    ) throws -> HostTLSServerIdentity {
+        guard case .securityFramework(let securityKey) = key else {
+            throw HostCryptographicStateError.serverIdentityUnavailable
+        }
+        guard request.expectedTLSSPKISHA256 == tlsSPKISHA256 else {
+            throw HostCryptographicStateError.certificateProfileMismatch(
+                field: "transportSetSPKIBinding"
+            )
+        }
+        let facts = try HostTLSServerCertificateFacts.validate(
+            certificateDER: certificateDER,
+            request: request
+        )
+        guard facts.publicKeyX963 == publicKey else {
+            throw HostCryptographicStateError.serverCertificateKeyMismatch
+        }
         let identity = try HostTLSCertificateDER.installAndResolveIdentity(
             certificateDER: certificateDER,
             expectedPublicKey: publicKey,
             useDataProtectionKeychain: securityKey.usesDataProtectionKeychain
         )
-        return HostTLSServerIdentity(
-            securityIdentity: identity,
-            certificate: facts
+        return HostTLSServerIdentity(securityIdentity: identity, certificate: facts)
+    }
+
+    /// Compatibility composition for callers that do not need restart-stable
+    /// DER persistence. Host lifecycle code uses the split APIs above.
+    package func issueServerIdentity(
+        request: HostTLSServerCertificateRequest
+    ) throws -> HostTLSServerIdentity {
+        try issueServerIdentity(request: request, serialNumber: nil)
+    }
+
+    func issueServerIdentity(
+        request: HostTLSServerCertificateRequest,
+        serialNumber: Data?
+    ) throws -> HostTLSServerIdentity {
+        let facts = try issueServerCertificate(
+            request: request,
+            serialNumber: serialNumber
         )
+        return try resolveServerIdentity(
+            certificateDER: facts.certificateDER,
+            request: request
+        )
+    }
+}
+
+extension P256X963PublicKey {
+    /// SHA-256 of the complete DER SubjectPublicKeyInfo for this TLS P-256 key.
+    /// This public-only fact is safe to use when validating a non-mutating
+    /// cryptographic-state inspection during serving startup.
+    public var tlsSPKISHA256: Data {
+        HostTLSCertificateDER.spkiSHA256(publicKey: self)
     }
 }
 

@@ -4,6 +4,8 @@ import LocalAuthentication
 @preconcurrency import Security
 
 final class HostSecurityP256SigningKey: @unchecked Sendable {
+    private static let lifecycleLock = NSLock()
+
     private enum KeychainDomain: Sendable {
         case dataProtection
         /// SwiftPM's unsigned test executable has no Data Protection Keychain
@@ -51,20 +53,49 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
                 )
             } catch {
                 // A capability can be reported present while unavailable to
-                // the current process (notably simulators and restored test
-                // environments). Remove any partially-created tag before the
-                // noninteractive Keychain-software fallback.
-                _ = SecItemDelete(
-                    keyQuery(
-                        applicationTag: applicationTag,
-                        keychainDomain: .dataProtection
-                    ) as CFDictionary
-                )
+                // the current process. A duplicate may also mean another
+                // process recovered the same durable intent first; never
+                // delete that winner.
+                if let existing = try loadIfPresent(
+                    applicationTag: applicationTag,
+                    keychainDomain: .dataProtection
+                ) {
+                    return existing
+                }
             }
         }
-        return try create(
+        do {
+            return try create(
+                applicationTag: applicationTag,
+                protection: .keychainSoftware,
+                keychainDomain: .dataProtection
+            )
+        } catch {
+            if let existing = try loadIfPresent(
+                applicationTag: applicationTag,
+                keychainDomain: .dataProtection
+            ) {
+                return existing
+            }
+            throw error
+        }
+    }
+
+    static func loadOrCreatePreferred(applicationTag: Data) throws -> Self {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        if let existing = try loadIfPresent(
             applicationTag: applicationTag,
-            protection: .keychainSoftware,
+            keychainDomain: .dataProtection
+        ) {
+            return existing
+        }
+        return try createPreferred(applicationTag: applicationTag)
+    }
+
+    static func loadIfPresent(applicationTag: Data) throws -> Self? {
+        try loadIfPresent(
+            applicationTag: applicationTag,
             keychainDomain: .dataProtection
         )
     }
@@ -86,6 +117,43 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
         try create(
             applicationTag: applicationTag,
             protection: .keychainSoftware,
+            keychainDomain: .legacyTestFixture
+        )
+    }
+
+    static func loadOrCreateLegacyKeychainTestFixture(
+        applicationTag: Data
+    ) throws -> Self {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        if let existing = try loadIfPresent(
+            applicationTag: applicationTag,
+            keychainDomain: .legacyTestFixture
+        ) {
+            return existing
+        }
+        do {
+            return try create(
+                applicationTag: applicationTag,
+                protection: .keychainSoftware,
+                keychainDomain: .legacyTestFixture
+            )
+        } catch {
+            if let existing = try loadIfPresent(
+                applicationTag: applicationTag,
+                keychainDomain: .legacyTestFixture
+            ) {
+                return existing
+            }
+            throw error
+        }
+    }
+
+    static func loadLegacyKeychainTestFixtureIfPresent(
+        applicationTag: Data
+    ) throws -> Self? {
+        try loadIfPresent(
+            applicationTag: applicationTag,
             keychainDomain: .legacyTestFixture
         )
     }
@@ -143,6 +211,42 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
         )
     }
 
+    private static func loadIfPresent(
+        applicationTag: Data,
+        keychainDomain: KeychainDomain
+    ) throws -> Self? {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(
+            loadQuery(
+                applicationTag: applicationTag,
+                keychainDomain: keychainDomain
+            ) as CFDictionary,
+            &result
+        )
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else {
+            throw HostCryptographicStateError.unexpectedKeychainStatus(status)
+        }
+        guard let result, CFGetTypeID(result) == SecKeyGetTypeID() else {
+            throw HostCryptographicStateError.privateKeyUnavailable(role: .tlsServer)
+        }
+        let key = result as! SecKey
+        guard let attributes = SecKeyCopyAttributes(key) as? [String: Any] else {
+            throw HostCryptographicStateError.privateKeyUnavailable(role: .tlsServer)
+        }
+        let tokenID = attributes[kSecAttrTokenID as String] as? String
+        let protection: InstallationKeyProtection =
+            tokenID == (kSecAttrTokenIDSecureEnclave as String)
+            ? .secureEnclave
+            : .keychainSoftware
+        return try Self(
+            privateKey: key,
+            applicationTag: applicationTag,
+            protection: protection,
+            keychainDomain: keychainDomain
+        )
+    }
+
     func sign(digest: P256SHA256Digest) throws -> P256RawSignature {
         var signingError: Unmanaged<CFError>?
         guard let signature = SecKeyCreateSignature(
@@ -176,6 +280,68 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
                 keychainDomain: keychainDomain
             ) as CFDictionary
         )
+    }
+
+    static func deleteAndConfirmAbsent(
+        applicationTag: Data,
+        protection: InstallationKeyProtection,
+        expectedPublicKey: P256X963PublicKey
+    ) throws {
+        try deleteAndConfirmAbsent(
+            applicationTag: applicationTag,
+            protection: protection,
+            expectedPublicKey: expectedPublicKey,
+            keychainDomain: .dataProtection
+        )
+    }
+
+    static func deleteLegacyKeychainTestFixtureAndConfirmAbsent(
+        applicationTag: Data,
+        protection: InstallationKeyProtection,
+        expectedPublicKey: P256X963PublicKey
+    ) throws {
+        try deleteAndConfirmAbsent(
+            applicationTag: applicationTag,
+            protection: protection,
+            expectedPublicKey: expectedPublicKey,
+            keychainDomain: .legacyTestFixture
+        )
+    }
+
+    private static func deleteAndConfirmAbsent(
+        applicationTag: Data,
+        protection: InstallationKeyProtection,
+        expectedPublicKey: P256X963PublicKey,
+        keychainDomain: KeychainDomain
+    ) throws {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        if let existing = try loadIfPresent(
+            applicationTag: applicationTag,
+            keychainDomain: keychainDomain
+        ) {
+            guard existing.protection == protection,
+                  existing.publicKey == expectedPublicKey else {
+                throw HostCryptographicStateError.publicKeyMismatch(role: .tlsServer)
+            }
+            let status = SecItemDelete(
+                keyQuery(
+                    applicationTag: applicationTag,
+                    keychainDomain: keychainDomain
+                ) as CFDictionary
+            )
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw HostCryptographicStateError.unexpectedKeychainStatus(status)
+            }
+        }
+        guard try loadIfPresent(
+            applicationTag: applicationTag,
+            keychainDomain: keychainDomain
+        ) == nil else {
+            throw HostCryptographicStateError.persistentKeyDeletionIncomplete(
+                role: .tlsServer
+            )
+        }
     }
 
     private static func create(

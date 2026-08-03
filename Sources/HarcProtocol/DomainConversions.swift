@@ -277,6 +277,13 @@ public extension Harc_V1_AudioBatchIDV1 {
     func domainValue() throws -> AudioBatchID { AudioBatchID(try harcUUIDFromWire(value, field: "audioBatchID")) }
 }
 
+public extension Harc_V1_BatchAckIDV1 {
+    init(_ value: UUID) { self.init(); self.value = harcUUIDBytesForWire(value) }
+    func validatedUUID() throws -> UUID {
+        try harcUUIDFromWire(value, field: "batchAcknowledgementID")
+    }
+}
+
 public extension Harc_V1_HostAuthorityIDV1 {
     init(_ value: HostAuthorityID) { self.init(); sha256 = value.rawBytes }
     func domainValue() throws -> HostAuthorityID {

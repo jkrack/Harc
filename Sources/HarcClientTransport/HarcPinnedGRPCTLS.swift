@@ -1,4 +1,5 @@
 #if canImport(Network)
+import Foundation
 import GRPCNIOTransportHTTP2TransportServices
 import NIOCore
 import NIOSSL
@@ -15,6 +16,48 @@ public protocol HarcPeerCertificateVerifier: Sendable {
 
 public enum HarcPinnedGRPCTLSError: Error, Equatable {
     case emptyServerHostname
+}
+
+/// Concrete SwiftNIO bridge into the same serialized trust coordinator used by
+/// background URLSession. Harc's self-signed TLS profile has exactly one peer
+/// certificate. That certificate is exported to raw DER immediately; no NIOSSL
+/// certificate fields or chain-building result participates in the Harc
+/// identity decision.
+public struct HarcNIOSSLPeerCertificateVerifier: HarcPeerCertificateVerifier {
+    public let trustCoordinator: HarcTransportTrustCoordinator
+
+    public init(trustCoordinator: HarcTransportTrustCoordinator) {
+        self.trustCoordinator = trustCoordinator
+    }
+
+    public func verify(
+        peerCertificateChain: [NIOSSLCertificate],
+        promise: EventLoopPromise<NIOSSLVerificationResult>
+    ) {
+        let leafDER: Data
+        do {
+            guard peerCertificateChain.count == 1,
+                  let leaf = peerCertificateChain.first else {
+                promise.succeed(.failed)
+                return
+            }
+            leafDER = Data(try leaf.toDERBytes())
+        } catch {
+            promise.succeed(.failed)
+            return
+        }
+
+        promise.completeWithTask { [trustCoordinator] in
+            do {
+                try await trustCoordinator.validateServerLeaf(
+                    certificateDER: leafDER
+                )
+                return .certificateVerified
+            } catch {
+                return .failed
+            }
+        }
+    }
 }
 
 /// Compile-proven gRPC Swift 2 client configuration for Harc's pinned TLS
@@ -51,7 +94,7 @@ public struct HarcPinnedGRPCTLS: Sendable {
                     context: tlsContext,
                     serverHostname: serverHostname,
                     customVerificationCallback: { certificateChain, promise in
-                        guard !certificateChain.isEmpty else {
+                        guard certificateChain.count == 1 else {
                             promise.succeed(.failed)
                             return
                         }
@@ -73,6 +116,18 @@ public struct HarcPinnedGRPCTLS: Sendable {
         self.tlsConfiguration = tlsConfiguration
         self.transportSecurity = .customSecure
         self.transportConfig = transportConfig
+    }
+
+    public init(
+        serverHostname: String,
+        trustCoordinator: HarcTransportTrustCoordinator
+    ) throws {
+        try self.init(
+            serverHostname: serverHostname,
+            verifier: HarcNIOSSLPeerCertificateVerifier(
+                trustCoordinator: trustCoordinator
+            )
+        )
     }
 
     public func makeTransport(

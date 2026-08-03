@@ -136,7 +136,8 @@ actor SecurityHostCryptographicStateRecordBackend: HostCryptographicStateRecordB
 
 /// Production host cryptographic persistence. One non-synchronizing,
 /// `AfterFirstUnlockThisDeviceOnly` Keychain item atomically binds the exact
-/// host tuple, two distinct key references, and both anti-rollback marks.
+/// host tuple, distinct active/staged/retiring key references, and both
+/// anti-rollback marks.
 public struct KeychainHostCryptographicStateStore: HostCryptographicStateStore, Sendable {
     public static let defaultService = "com.harc.Harc.host-cryptographic-state"
     public static let defaultAccount = "authority-tls-and-marks-v1"
@@ -191,6 +192,12 @@ public struct KeychainHostCryptographicStateStore: HostCryptographicStateStore, 
         try await repository.resolve(requirement)
     }
 
+    public func inspect(
+        requiredTuple: HostCryptographicStateTuple
+    ) async throws -> HostCryptographicStateInspection {
+        try await repository.inspect(requiredTuple: requiredTuple)
+    }
+
     public func advanceSecurityRegistryRevision(
         for tuple: HostCryptographicStateTuple,
         from expectedRevision: UInt64,
@@ -212,6 +219,48 @@ public struct KeychainHostCryptographicStateStore: HostCryptographicStateStore, 
             for: tuple,
             from: expectedEpoch,
             to: newEpoch
+        )
+    }
+
+    public func stageReplacementTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedActivePublicKey: P256X963PublicKey
+    ) async throws -> HostCryptographicState {
+        try await repository.stageReplacementTLSIdentity(
+            for: tuple,
+            expectedActivePublicKey: expectedActivePublicKey
+        )
+    }
+
+    public func promoteStagedTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedActivePublicKey: P256X963PublicKey,
+        expectedStagedPublicKey: P256X963PublicKey
+    ) async throws -> HostCryptographicState {
+        try await repository.promoteStagedTLSIdentity(
+            for: tuple,
+            expectedActivePublicKey: expectedActivePublicKey,
+            expectedStagedPublicKey: expectedStagedPublicKey
+        )
+    }
+
+    public func discardStagedTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedStagedPublicKey: P256X963PublicKey
+    ) async throws -> HostCryptographicState {
+        try await repository.discardStagedTLSIdentity(
+            for: tuple,
+            expectedStagedPublicKey: expectedStagedPublicKey
+        )
+    }
+
+    public func finalizeRetiringTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedRetiringPublicKey: P256X963PublicKey
+    ) async throws -> HostCryptographicState {
+        try await repository.finalizeRetiringTLSIdentity(
+            for: tuple,
+            expectedRetiringPublicKey: expectedRetiringPublicKey
         )
     }
 }

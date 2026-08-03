@@ -48,6 +48,81 @@ public struct VerifiedHostTransportSetV1: Equatable, Hashable, Sendable {
 
     public var exactSignedBytes: Data { signedObject.exactFramedBytes }
 
+    /// Issues the exact registered, authority-signed transport-set object and
+    /// admits it through the same decoder/verifier used by clients. Requiring
+    /// the caller's canonical host tuple prevents a signer from silently
+    /// selecting a different authority identity than the resident Host state.
+    public static func issue(
+        protocolVersion: HarcProtocolVersion = .v1,
+        libraryID: LibraryID,
+        hostAuthorityID: HostAuthorityID,
+        setEpoch: UInt64,
+        issuedAtUnixMilliseconds: UInt64,
+        entries: [HostTransportEntryV1],
+        using hostAuthoritySigner: any P256DigestSigner,
+        versionPolicy: HarcProtocolVersionPolicy = .currentV1
+    ) throws -> Self {
+        guard hostAuthoritySigner.publicKey.hostAuthorityID == hostAuthorityID else {
+            throw HarcProtocolCodecError.invalidKeyBinding(field: "hostAuthorityID")
+        }
+
+        let payload = try HostTransportSetV1(
+            protocolVersion: protocolVersion,
+            libraryID: libraryID,
+            hostAuthorityID: hostAuthorityID,
+            setEpoch: setEpoch,
+            issuedAtUnixMilliseconds: issuedAtUnixMilliseconds,
+            entries: entries,
+            versionPolicy: versionPolicy
+        )
+        let exactPayloadBytes = payload.encoded()
+        let header = try HarcSignedEnvelopeV1(
+            messageType: .hostTransportSet,
+            protocolVersion: protocolVersion,
+            libraryID: libraryID,
+            hostAuthorityID: hostAuthorityID,
+            signerDeviceID: nil,
+            grantID: nil,
+            grantEpoch: 0,
+            operationID: nil,
+            issuedAtUnixMilliseconds: issuedAtUnixMilliseconds,
+            expiresAtUnixMilliseconds: nil,
+            payloadType: .hostTransportSet,
+            expectedRevision: nil,
+            payloadSHA256: HarcSignedEnvelopeV1.payloadDigest(exactPayloadBytes),
+            versionPolicy: versionPolicy
+        )
+        let signedObject = try HarcSignedObjectV1.signRegistered(
+            header: header,
+            exactPayloadBytes: exactPayloadBytes,
+            payloadBindings: HarcSignedPayloadBindingsV1(
+                protocolVersion: payload.protocolVersion,
+                libraryID: payload.libraryID,
+                hostAuthorityID: payload.hostAuthorityID,
+                issuedAtUnixMilliseconds: payload.issuedAtUnixMilliseconds
+            ),
+            using: hostAuthoritySigner
+        )
+
+        // Never return a privileged value assembled directly from producer
+        // inputs. A fresh exact-byte decode proves signature, registration,
+        // canonical payload, and all envelope mirrors. The explicit identity
+        // guard makes accidental frame/object-ID rewriting fail closed.
+        let verified = try Self.decode(
+            signedObject.exactFramedBytes,
+            hostAuthorityPublicKey: hostAuthoritySigner.publicKey,
+            versionPolicy: versionPolicy
+        )
+        guard verified.transportSet == payload,
+              verified.exactSignedBytes == signedObject.exactFramedBytes,
+              verified.signedObject.objectID == signedObject.objectID else {
+            throw HarcProtocolCodecError.headerPayloadMismatch(
+                field: "exactTransportSetObject"
+            )
+        }
+        return verified
+    }
+
     public static func decode(
         _ exactSignedBytes: Data,
         hostAuthorityPublicKey: P256X963PublicKey,

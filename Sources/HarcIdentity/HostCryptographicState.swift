@@ -30,6 +30,8 @@ public enum HostCryptographicStateRequirement: Equatable, Sendable {
 public enum HostCryptographicKeyRole: String, Codable, Equatable, Sendable {
     case authoritySigning
     case tlsServer
+    case tlsServerStaged
+    case tlsServerRetiring
 }
 
 public enum HostCryptographicMark: String, Codable, Equatable, Sendable {
@@ -51,6 +53,11 @@ public enum HostCryptographicStateError: Error, Equatable, Sendable {
     case publicKeyMismatch(role: HostCryptographicKeyRole)
     case authorityIdentityMismatch
     case keyRoleCollision
+    case tlsKeyTransitionInProgress
+    case stagedTLSKeyMissing
+    case retiringTLSKeyMissing
+    case unexpectedTLSKey(role: HostCryptographicKeyRole)
+    case tlsKeyExpectationMismatch(role: HostCryptographicKeyRole)
     case invalidCertificateValidity
     case transportSetExtensionEmpty
     case transportSetExtensionTooLarge(actual: Int)
@@ -67,6 +74,7 @@ public enum HostCryptographicStateError: Error, Equatable, Sendable {
     )
     case concurrentModification
     case unexpectedKeychainStatus(Int32)
+    case persistentKeyDeletionIncomplete(role: HostCryptographicKeyRole)
 }
 
 extension HostCryptographicStateError: LocalizedError {
@@ -91,7 +99,17 @@ extension HostCryptographicStateError: LocalizedError {
         case .authorityIdentityMismatch:
             "The recorded host authority ID does not derive from the authority public key."
         case .keyRoleCollision:
-            "The host authority and TLS server roles must use distinct P-256 keys."
+            "The host authority and every TLS server role must use distinct P-256 keys."
+        case .tlsKeyTransitionInProgress:
+            "A TLS key transition is already in progress."
+        case .stagedTLSKeyMissing:
+            "No staged TLS server key is available to promote or discard."
+        case .retiringTLSKeyMissing:
+            "No retiring TLS server key is available to finalize."
+        case .unexpectedTLSKey(let role):
+            "The protected record contains an unexpected \(role.rawValue) key for its lifecycle state."
+        case .tlsKeyExpectationMismatch(let role):
+            "The protected \(role.rawValue) key changed before the requested transition."
         case .invalidCertificateValidity:
             "The TLS certificate validity must be finite, positive, no longer than 90 days, and contained by its transport-set entry."
         case .transportSetExtensionEmpty:
@@ -114,6 +132,8 @@ extension HostCryptographicStateError: LocalizedError {
             "The protected host key record changed concurrently; the operation failed closed."
         case .unexpectedKeychainStatus(let status):
             "The Keychain returned unexpected status \(status)."
+        case .persistentKeyDeletionIncomplete(let role):
+            "The retired \(role.rawValue) private key could not be proven absent from the Keychain."
         }
     }
 }
@@ -139,25 +159,26 @@ public struct HostAuthoritySigningIdentity: P256DigestSigner, Sendable {
 /// The distinct P-256 TLS server key capability. Its narrow X.509 issuance API
 /// returns only an installed `SecIdentity` plus public certificate facts; the
 /// permanent private `SecKey` remains module-internal.
-public struct HostTLSSigningIdentity: P256DigestSigner, Sendable {
+public struct HostTLSSigningIdentity: Sendable {
     let key: HostProtectedP256SigningKey
 
     init(key: HostProtectedP256SigningKey) {
         self.key = key
     }
 
-    public var publicKey: P256X963PublicKey { key.publicKey }
-    public var keyProtection: InstallationKeyProtection { key.protection }
-
-    public func sign(digest: P256SHA256Digest) throws -> P256RawSignature {
-        try key.sign(digest: digest)
-    }
+    package var publicKey: P256X963PublicKey { key.publicKey }
+    package var keyProtection: InstallationKeyProtection { key.protection }
 }
 
 /// A validated snapshot of the single protected host record.
 public struct HostCryptographicState: Sendable {
     public let tuple: HostCryptographicStateTuple
     public let authorityIdentity: HostAuthoritySigningIdentity
+    public let activeTLSIdentity: HostTLSSigningIdentity
+    public let stagedTLSIdentity: HostTLSSigningIdentity?
+    public let retiringTLSIdentity: HostTLSSigningIdentity?
+    /// Compatibility spelling. The sole serving identity is always the active
+    /// slot; staged and retiring keys are never selected implicitly.
     public let tlsIdentity: HostTLSSigningIdentity
     public let securityRegistryRevision: UInt64
     public let highestIssuedTransportSetEpoch: UInt64
@@ -165,15 +186,93 @@ public struct HostCryptographicState: Sendable {
     init(
         tuple: HostCryptographicStateTuple,
         authorityKey: HostProtectedP256SigningKey,
-        tlsKey: HostProtectedP256SigningKey,
+        activeTLSKey: HostProtectedP256SigningKey,
+        stagedTLSKey: HostProtectedP256SigningKey?,
+        retiringTLSKey: HostProtectedP256SigningKey?,
         securityRegistryRevision: UInt64,
         highestIssuedTransportSetEpoch: UInt64
     ) {
         self.tuple = tuple
         self.authorityIdentity = HostAuthoritySigningIdentity(key: authorityKey)
-        self.tlsIdentity = HostTLSSigningIdentity(key: tlsKey)
+        self.activeTLSIdentity = HostTLSSigningIdentity(key: activeTLSKey)
+        self.stagedTLSIdentity = stagedTLSKey.map(HostTLSSigningIdentity.init(key:))
+        self.retiringTLSIdentity = retiringTLSKey.map(HostTLSSigningIdentity.init(key:))
+        self.tlsIdentity = self.activeTLSIdentity
         self.securityRegistryRevision = securityRegistryRevision
         self.highestIssuedTransportSetEpoch = highestIssuedTransportSetEpoch
+    }
+}
+
+/// Read-only facts about a crash-interrupted permanent TLS-key creation. The
+/// application tag and other private storage descriptors never leave this
+/// module.
+public struct HostCryptographicPendingTLSKeyCreation: Sendable {
+    public let targetRole: HostCryptographicKeyRole
+    public let keyExists: Bool
+    public let publicKey: P256X963PublicKey?
+
+    init(
+        targetRole: HostCryptographicKeyRole,
+        keyExists: Bool,
+        publicKey: P256X963PublicKey?
+    ) {
+        self.targetRole = targetRole
+        self.keyExists = keyExists
+        self.publicKey = publicKey
+    }
+}
+
+/// Read-only facts about a permanent TLS key whose role was removed but whose
+/// checked Keychain deletion has not yet been durably acknowledged.
+public struct HostCryptographicPendingTLSKeyDeletion: Sendable {
+    public let formerRole: HostCryptographicKeyRole
+    public let publicKey: P256X963PublicKey
+    public let keyExists: Bool
+
+    init(
+        formerRole: HostCryptographicKeyRole,
+        publicKey: P256X963PublicKey,
+        keyExists: Bool
+    ) {
+        self.formerRole = formerRole
+        self.publicKey = publicKey
+        self.keyExists = keyExists
+    }
+}
+
+/// A non-mutating view used to cross-check HostDB and transport journals before
+/// ordinary resolution is allowed to repair a protected-record journal.
+public struct HostCryptographicStateInspection: Sendable {
+    public let tuple: HostCryptographicStateTuple
+    public let authorityPublicKey: P256X963PublicKey
+    public let activeTLSPublicKey: P256X963PublicKey?
+    public let stagedTLSPublicKey: P256X963PublicKey?
+    public let retiringTLSPublicKey: P256X963PublicKey?
+    public let securityRegistryRevision: UInt64
+    public let highestIssuedTransportSetEpoch: UInt64
+    public let pendingTLSKeyCreation: HostCryptographicPendingTLSKeyCreation?
+    public let pendingTLSKeyDeletions: [HostCryptographicPendingTLSKeyDeletion]
+
+    init(
+        tuple: HostCryptographicStateTuple,
+        authorityKey: HostProtectedP256SigningKey,
+        activeTLSKey: HostProtectedP256SigningKey?,
+        stagedTLSKey: HostProtectedP256SigningKey?,
+        retiringTLSKey: HostProtectedP256SigningKey?,
+        securityRegistryRevision: UInt64,
+        highestIssuedTransportSetEpoch: UInt64,
+        pendingTLSKeyCreation: HostCryptographicPendingTLSKeyCreation?,
+        pendingTLSKeyDeletions: [HostCryptographicPendingTLSKeyDeletion]
+    ) {
+        self.tuple = tuple
+        authorityPublicKey = authorityKey.publicKey
+        activeTLSPublicKey = activeTLSKey?.publicKey
+        stagedTLSPublicKey = stagedTLSKey?.publicKey
+        retiringTLSPublicKey = retiringTLSKey?.publicKey
+        self.securityRegistryRevision = securityRegistryRevision
+        self.highestIssuedTransportSetEpoch = highestIssuedTransportSetEpoch
+        self.pendingTLSKeyCreation = pendingTLSKeyCreation
+        self.pendingTLSKeyDeletions = pendingTLSKeyDeletions
     }
 }
 
@@ -183,6 +282,12 @@ public protocol HostCryptographicStateStore: Sendable {
     func resolve(
         _ requirement: HostCryptographicStateRequirement
     ) async throws -> HostCryptographicState
+
+    /// Parses and validates the protected record without migration, journal
+    /// recovery, key creation/deletion, record CAS, or mark changes.
+    func inspect(
+        requiredTuple: HostCryptographicStateTuple
+    ) async throws -> HostCryptographicStateInspection
 
     @discardableResult
     func advanceSecurityRegistryRevision(
@@ -196,6 +301,39 @@ public protocol HostCryptographicStateStore: Sendable {
         for tuple: HostCryptographicStateTuple,
         from expectedEpoch: UInt64,
         to newEpoch: UInt64
+    ) async throws -> HostCryptographicState
+
+    /// Durably records a creation intent, creates or recovers its exact
+    /// permanent key, and atomically publishes it into the staged slot.
+    @discardableResult
+    func stageReplacementTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedActivePublicKey: P256X963PublicKey
+    ) async throws -> HostCryptographicState
+
+    /// Atomically promotes staged -> active and active -> retiring. Promotion
+    /// is only legal after the overlap transport set has been durably
+    /// published and its retirement floor has elapsed.
+    @discardableResult
+    func promoteStagedTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedActivePublicKey: P256X963PublicKey,
+        expectedStagedPublicKey: P256X963PublicKey
+    ) async throws -> HostCryptographicState
+
+    /// Removes an unpublished staged key through the durable deletion journal.
+    @discardableResult
+    func discardStagedTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedStagedPublicKey: P256X963PublicKey
+    ) async throws -> HostCryptographicState
+
+    /// Removes the old key after a one-key transport set and matching active
+    /// leaf are durable, through the durable deletion journal.
+    @discardableResult
+    func finalizeRetiringTLSIdentity(
+        for tuple: HostCryptographicStateTuple,
+        expectedRetiringPublicKey: P256X963PublicKey
     ) async throws -> HostCryptographicState
 }
 

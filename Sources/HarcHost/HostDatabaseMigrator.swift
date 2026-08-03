@@ -953,6 +953,343 @@ public extension DatabaseMigrator {
                 """)
         }
 
+        // PR 6 publishes authority-signed transport sets through a restart-
+        // safe three-phase journal. Exact signed bytes and exact leaf DER are
+        // immutable provenance; Keychain remains the anti-rollback mark.
+        migrator.registerMigration("v5_transport_set_lifecycle") { db in
+            try db.execute(sql: """
+                -- v4 temporarily placed negotiated capabilities in the
+                -- unauthenticated BeginSession challenge. Preserve deployed
+                -- rows losslessly, but make both legacy columns nullable and
+                -- all-or-none so corrected BeginSession stores neither. They
+                -- are migration baggage only; OpenSession owns this evidence.
+                ALTER TABLE session_challenges RENAME TO session_challenges_v4;
+                DROP INDEX session_challenges_outstanding;
+                DROP TRIGGER session_challenges_immutable_update;
+                CREATE TABLE session_challenges (
+                    challenge_id TEXT PRIMARY KEY,
+                    source_binding_sha256 BLOB NOT NULL
+                        CHECK (length(source_binding_sha256) = 32),
+                    subject_binding_sha256 BLOB NOT NULL
+                        CHECK (length(subject_binding_sha256) = 32),
+                    is_admitted INTEGER NOT NULL CHECK (is_admitted IN (0, 1)),
+                    device_id BLOB CHECK (device_id IS NULL OR length(device_id) = 32),
+                    grant_id TEXT,
+                    grant_epoch INTEGER CHECK (grant_epoch IS NULL OR grant_epoch > 0),
+                    device_public_key_x963 BLOB
+                        CHECK (device_public_key_x963 IS NULL
+                            OR length(device_public_key_x963) = 65),
+                    exact_grant_bytes BLOB NOT NULL CHECK (length(exact_grant_bytes) > 0),
+                    server_nonce BLOB NOT NULL CHECK (length(server_nonce) = 32),
+                    tls_spki_sha256 BLOB NOT NULL CHECK (length(tls_spki_sha256) = 32),
+                    exact_capabilities_bytes BLOB
+                        CHECK (exact_capabilities_bytes IS NULL
+                            OR length(exact_capabilities_bytes) BETWEEN 1 AND 65536),
+                    capabilities_sha256 BLOB
+                        CHECK (capabilities_sha256 IS NULL
+                            OR length(capabilities_sha256) = 32),
+                    protocol_major INTEGER NOT NULL CHECK (protocol_major = 1),
+                    protocol_minor INTEGER NOT NULL
+                        CHECK (protocol_minor BETWEEN 0 AND 65535),
+                    selected_codec TEXT
+                        CHECK (selected_codec IS NULL
+                            OR length(selected_codec) BETWEEN 1 AND 64),
+                    selected_container TEXT
+                        CHECK (selected_container IS NULL
+                            OR length(selected_container) BETWEEN 1 AND 64),
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    CHECK (expires_at > created_at AND expires_at <= created_at + 30),
+                    CHECK (
+                        (exact_capabilities_bytes IS NULL
+                            AND capabilities_sha256 IS NULL
+                            AND selected_codec IS NULL
+                            AND selected_container IS NULL)
+                        OR
+                        (exact_capabilities_bytes IS NOT NULL
+                            AND capabilities_sha256 IS NOT NULL
+                            AND selected_codec IS NOT NULL
+                            AND selected_container IS NOT NULL)
+                    ),
+                    CHECK (
+                        (is_admitted = 0 AND device_id IS NULL
+                            AND grant_id IS NULL AND grant_epoch IS NULL
+                            AND device_public_key_x963 IS NULL)
+                        OR
+                        (is_admitted = 1 AND device_id IS NOT NULL
+                            AND grant_id IS NOT NULL AND grant_epoch IS NOT NULL
+                            AND device_public_key_x963 IS NOT NULL)
+                    )
+                );
+                INSERT INTO session_challenges
+                    SELECT * FROM session_challenges_v4;
+                DROP TABLE session_challenges_v4;
+                CREATE INDEX session_challenges_outstanding
+                    ON session_challenges(source_binding_sha256,
+                        subject_binding_sha256, expires_at);
+                CREATE TRIGGER session_challenges_immutable_update
+                BEFORE UPDATE ON session_challenges
+                BEGIN
+                    SELECT RAISE(ABORT, 'session challenge rows are immutable');
+                END;
+
+                ALTER TABLE devices
+                    ADD COLUMN trust_repair_required INTEGER NOT NULL DEFAULT 0
+                        CHECK (trust_repair_required IN (0, 1));
+
+                CREATE TABLE host_transport_sets (
+                    epoch INTEGER PRIMARY KEY CHECK (epoch > 0),
+                    exact_signed_bytes BLOB NOT NULL
+                        CHECK (length(exact_signed_bytes) BETWEEN 1 AND 4096),
+                    object_id BLOB NOT NULL UNIQUE CHECK (length(object_id) = 32),
+                    publication_kind TEXT NOT NULL CHECK (publication_kind IN (
+                        'legacy', 'initial', 'stableRenewal',
+                        'plannedOverlap', 'plannedFinal', 'emergency'
+                    )),
+                    issued_at_unix_ms INTEGER NOT NULL CHECK (issued_at_unix_ms >= 0),
+                    published_at REAL NOT NULL,
+                    retirement_floor_unix_ms INTEGER NOT NULL
+                        CHECK (retirement_floor_unix_ms >= 0)
+                );
+
+                CREATE TABLE pending_transport_set_publications (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    previous_epoch INTEGER NOT NULL CHECK (previous_epoch >= 0),
+                    next_epoch INTEGER NOT NULL UNIQUE CHECK (next_epoch > 0),
+                    expected_previous_object_id BLOB
+                        CHECK (expected_previous_object_id IS NULL
+                            OR length(expected_previous_object_id) = 32),
+                    exact_signed_bytes BLOB NOT NULL
+                        CHECK (length(exact_signed_bytes) BETWEEN 1 AND 4096),
+                    object_id BLOB NOT NULL UNIQUE CHECK (length(object_id) = 32),
+                    publication_kind TEXT NOT NULL CHECK (publication_kind IN (
+                        'initial', 'stableRenewal',
+                        'plannedOverlap', 'plannedFinal', 'emergency'
+                    )),
+                    expected_active_spki_sha256 BLOB NOT NULL
+                        CHECK (length(expected_active_spki_sha256) = 32),
+                    secondary_spki_sha256 BLOB
+                        CHECK (secondary_spki_sha256 IS NULL
+                            OR length(secondary_spki_sha256) = 32),
+                    retirement_floor_unix_ms INTEGER NOT NULL
+                        CHECK (retirement_floor_unix_ms >= 0),
+                    created_at REAL NOT NULL,
+                    CHECK (next_epoch = previous_epoch + 1),
+                    CHECK (
+                        (previous_epoch = 0 AND expected_previous_object_id IS NULL)
+                        OR
+                        (previous_epoch > 0 AND expected_previous_object_id IS NOT NULL)
+                    ),
+                    CHECK (secondary_spki_sha256 IS NULL
+                        OR secondary_spki_sha256 != expected_active_spki_sha256)
+                );
+
+                CREATE TABLE host_tls_leaves (
+                    transport_epoch INTEGER NOT NULL
+                        REFERENCES host_transport_sets(epoch),
+                    tls_spki_sha256 BLOB NOT NULL CHECK (length(tls_spki_sha256) = 32),
+                    certificate_der BLOB NOT NULL
+                        CHECK (length(certificate_der) BETWEEN 1 AND 16384),
+                    certificate_sha256 BLOB NOT NULL CHECK (length(certificate_sha256) = 32),
+                    serial_number BLOB NOT NULL
+                        CHECK (length(serial_number) BETWEEN 1 AND 20),
+                    not_before_unix_ms INTEGER NOT NULL CHECK (not_before_unix_ms >= 0),
+                    not_after_unix_ms INTEGER NOT NULL CHECK (not_after_unix_ms > 0),
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (transport_epoch, tls_spki_sha256),
+                    UNIQUE (certificate_sha256),
+                    CHECK (not_after_unix_ms > not_before_unix_ms)
+                );
+
+                CREATE TABLE host_transport_rotation_intent (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    started_mode TEXT NOT NULL
+                        CHECK (started_mode IN ('planned', 'emergency')),
+                    mode TEXT NOT NULL CHECK (mode IN ('planned', 'emergency')),
+                    old_spki_sha256 BLOB NOT NULL CHECK (length(old_spki_sha256) = 32),
+                    new_spki_sha256 BLOB
+                        CHECK (new_spki_sha256 IS NULL OR length(new_spki_sha256) = 32),
+                    retirement_floor_unix_ms INTEGER NOT NULL
+                        CHECK (retirement_floor_unix_ms >= 0),
+                    created_at REAL NOT NULL,
+                    emergency_escalated_at REAL,
+                    CHECK (new_spki_sha256 IS NULL OR new_spki_sha256 != old_spki_sha256),
+                    CHECK (
+                        (started_mode = 'planned' AND mode = 'planned'
+                            AND emergency_escalated_at IS NULL)
+                        OR
+                        (started_mode = 'planned' AND mode = 'emergency'
+                            AND emergency_escalated_at IS NOT NULL
+                            AND emergency_escalated_at >= created_at)
+                        OR
+                        (started_mode = 'emergency' AND mode = 'emergency'
+                            AND emergency_escalated_at IS NULL)
+                    )
+                );
+
+                INSERT INTO host_transport_sets (
+                    epoch, exact_signed_bytes, object_id, publication_kind,
+                    issued_at_unix_ms, published_at, retirement_floor_unix_ms
+                )
+                SELECT highest_transport_set_epoch,
+                       exact_transport_set_bytes,
+                       transport_set_object_sha256,
+                       'legacy', 0, updated_at, leaf_retirement_floor
+                  FROM host_metadata
+                 WHERE singleton = 1
+                   AND highest_transport_set_epoch > 0
+                   AND exact_transport_set_bytes IS NOT NULL
+                   AND transport_set_object_sha256 IS NOT NULL;
+
+                CREATE TRIGGER host_metadata_transport_validate_insert
+                BEFORE INSERT ON host_metadata
+                FOR EACH ROW
+                WHEN NOT (
+                    (NEW.highest_transport_set_epoch = 0
+                        AND NEW.exact_transport_set_bytes IS NULL
+                        AND NEW.transport_set_object_sha256 IS NULL)
+                    OR
+                    (NEW.highest_transport_set_epoch > 0
+                        AND NEW.exact_transport_set_bytes IS NOT NULL
+                        AND length(NEW.exact_transport_set_bytes) BETWEEN 1 AND 4096
+                        AND NEW.transport_set_object_sha256 IS NOT NULL
+                        AND length(NEW.transport_set_object_sha256) = 32)
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid host transport metadata');
+                END;
+
+                CREATE TRIGGER host_metadata_transport_validate_update
+                BEFORE UPDATE ON host_metadata
+                FOR EACH ROW
+                WHEN NEW.highest_transport_set_epoch < OLD.highest_transport_set_epoch
+                    OR NEW.highest_transport_set_epoch > OLD.highest_transport_set_epoch + 1
+                    OR NEW.leaf_retirement_floor < OLD.leaf_retirement_floor
+                    OR NOT (
+                        (NEW.highest_transport_set_epoch = 0
+                            AND NEW.exact_transport_set_bytes IS NULL
+                            AND NEW.transport_set_object_sha256 IS NULL)
+                        OR
+                        (NEW.highest_transport_set_epoch > 0
+                            AND NEW.exact_transport_set_bytes IS NOT NULL
+                            AND length(NEW.exact_transport_set_bytes) BETWEEN 1 AND 4096
+                            AND NEW.transport_set_object_sha256 IS NOT NULL
+                            AND length(NEW.transport_set_object_sha256) = 32)
+                    )
+                    OR (
+                        NEW.highest_transport_set_epoch = OLD.highest_transport_set_epoch
+                        AND (
+                            NEW.exact_transport_set_bytes IS NOT OLD.exact_transport_set_bytes
+                            OR NEW.transport_set_object_sha256
+                                IS NOT OLD.transport_set_object_sha256
+                        )
+                    )
+                    OR (
+                        NEW.highest_transport_set_epoch = OLD.highest_transport_set_epoch + 1
+                        AND NOT EXISTS (
+                            SELECT 1 FROM host_transport_sets
+                             WHERE epoch = NEW.highest_transport_set_epoch
+                               AND exact_signed_bytes = NEW.exact_transport_set_bytes
+                               AND object_id = NEW.transport_set_object_sha256
+                        )
+                    )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid host transport metadata transition');
+                END;
+
+                CREATE TRIGGER host_transport_sets_immutable_update
+                BEFORE UPDATE ON host_transport_sets
+                BEGIN
+                    SELECT RAISE(ABORT, 'transport-set history is immutable');
+                END;
+                CREATE TRIGGER host_transport_sets_immutable_delete
+                BEFORE DELETE ON host_transport_sets
+                BEGIN
+                    SELECT RAISE(ABORT, 'transport-set history is immutable');
+                END;
+
+                CREATE TRIGGER pending_transport_sets_immutable_update
+                BEFORE UPDATE ON pending_transport_set_publications
+                BEGIN
+                    SELECT RAISE(ABORT, 'pending transport-set binding is immutable');
+                END;
+
+                CREATE TRIGGER host_tls_leaves_immutable_update
+                BEFORE UPDATE ON host_tls_leaves
+                BEGIN
+                    SELECT RAISE(ABORT, 'TLS leaf provenance is immutable');
+                END;
+                CREATE TRIGGER host_tls_leaves_immutable_delete
+                BEFORE DELETE ON host_tls_leaves
+                BEGIN
+                    SELECT RAISE(ABORT, 'TLS leaf provenance is immutable');
+                END;
+
+                CREATE TRIGGER host_rotation_intent_immutable_binding
+                BEFORE UPDATE ON host_transport_rotation_intent
+                FOR EACH ROW
+                WHEN NEW.started_mode IS NOT OLD.started_mode
+                    OR (
+                        NEW.mode IS NOT OLD.mode
+                        AND NOT (
+                            OLD.started_mode = 'planned'
+                            AND OLD.mode = 'planned'
+                            AND NEW.mode = 'emergency'
+                        )
+                    )
+                    OR NEW.old_spki_sha256 IS NOT OLD.old_spki_sha256
+                    OR OLD.new_spki_sha256 IS NOT NULL
+                       AND NEW.new_spki_sha256 IS NOT OLD.new_spki_sha256
+                    OR NEW.retirement_floor_unix_ms IS NOT OLD.retirement_floor_unix_ms
+                    OR NEW.created_at IS NOT OLD.created_at
+                    OR (
+                        NEW.emergency_escalated_at IS NOT OLD.emergency_escalated_at
+                        AND NOT (
+                            OLD.started_mode = 'planned'
+                            AND OLD.mode = 'planned'
+                            AND NEW.mode = 'emergency'
+                            AND OLD.emergency_escalated_at IS NULL
+                            AND NEW.emergency_escalated_at IS NOT NULL
+                        )
+                    )
+                BEGIN
+                    SELECT RAISE(ABORT, 'rotation intent binding is immutable');
+                END;
+
+                CREATE TRIGGER pending_security_rejects_emergency_transport
+                BEFORE INSERT ON pending_security_mutations
+                FOR EACH ROW
+                WHEN EXISTS (
+                    SELECT 1 FROM host_transport_rotation_intent
+                    WHERE singleton = 1 AND mode = 'emergency'
+                )
+                BEGIN
+                    SELECT RAISE(ABORT,
+                        'security mutation conflicts with emergency transport rotation');
+                END;
+
+                CREATE TRIGGER emergency_transport_rejects_pending_security_insert
+                BEFORE INSERT ON host_transport_rotation_intent
+                FOR EACH ROW
+                WHEN NEW.mode = 'emergency'
+                    AND EXISTS (SELECT 1 FROM pending_security_mutations)
+                BEGIN
+                    SELECT RAISE(ABORT,
+                        'emergency transport rotation conflicts with security mutation');
+                END;
+
+                CREATE TRIGGER emergency_transport_rejects_pending_security_update
+                BEFORE UPDATE OF mode ON host_transport_rotation_intent
+                FOR EACH ROW
+                WHEN OLD.mode = 'planned' AND NEW.mode = 'emergency'
+                    AND EXISTS (SELECT 1 FROM pending_security_mutations)
+                BEGIN
+                    SELECT RAISE(ABORT,
+                        'emergency transport rotation conflicts with security mutation');
+                END;
+                """)
+        }
+
         return migrator
     }
 }

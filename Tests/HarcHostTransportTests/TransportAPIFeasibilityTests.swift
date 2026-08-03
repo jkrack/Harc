@@ -1,19 +1,20 @@
 #if canImport(Network)
 import GRPCNIOTransportHTTP2TransportServices
+import HarcHost
 import HarcHostTransport
 import NIOCore
+import Network
 import Testing
 
 @Suite("Host transport API feasibility")
 struct HostTransportAPIFeasibilityTests {
-    @Test("A process-owned NWListener factory satisfies gRPC's custom transport")
-    func customListenerFactoryBoundary() {
-        let factory = HarcGRPCNWListenerFactory {
-            throw StubError.listenerMustNotStartInCompileTest
-        }
-
-        let transport = HTTP2ServerTransport.Custom(listenerFactory: factory)
-        #expect(type(of: transport) == HTTP2ServerTransport.Custom<HarcGRPCNWListenerFactory>.self)
+    @Test("A resident generation controller owns both one-shot listener factories")
+    func generationControllerBoundary() {
+        _ = HarcTransportGenerationController.init(
+            controlPort:uploadPort:eventLoopGroup:driver:
+        )
+        _ = HarcGRPCNWListenerFactory.init(lease:port:eventLoopGroup:)
+        _ = HarcHTTP11UploadTransportAPI.makeListener(lease:port:)
     }
 
     @Test("The two listeners have disjoint ALPN profiles")
@@ -28,10 +29,10 @@ struct HostTransportAPIFeasibilityTests {
         #expect(!HarcNetworkTLS13Policy.sessionResumptionEnabled)
     }
 
-    @Test("The server TLS policy requires a concrete Security identity")
-    func serverIdentityBoundary() {
-        _ = HarcNetworkTLS13Policy.serverOptions(identity:protocol:)
-        _ = HarcNetworkTLS13Policy.serverParameters(identity:protocol:)
+    @Test("The server TLS policy requires consumed listener material")
+    func serverListenerMaterialBoundary() {
+        _ = HarcNetworkTLS13Policy.serverOptions(material:protocol:)
+        _ = HarcNetworkTLS13Policy.serverParameters(material:protocol:)
     }
 
     @Test("The HTTP/1.1 boundary imports NIO body conversion separately")
@@ -42,10 +43,6 @@ struct HostTransportAPIFeasibilityTests {
         let data = HarcHTTP11UploadTransportAPI.data(copyingReadableBytes: buffer)
 
         #expect(Array(data) == Array("harc".utf8))
-    }
-
-    private enum StubError: Error {
-        case listenerMustNotStartInCompileTest
     }
 }
 #endif

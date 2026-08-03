@@ -33,8 +33,14 @@ public struct KeychainSecurityRegistryHighWaterMarkStore:
     }
 
     public func loadRegistryRevision() async throws -> UInt64 {
-        let state = try await cryptographicStateStore.load(requiredTuple: tuple)
-        return state.securityRegistryRevision
+        // Serving startup uses this read while both HostDB journals are still
+        // in their preflight-only phase. `load` is intentionally forbidden
+        // here because resolving the protected record may create/delete a TLS
+        // key or clear a crash journal before transport preflight succeeds.
+        let inspection = try await cryptographicStateStore.inspect(
+            requiredTuple: tuple
+        )
+        return inspection.securityRegistryRevision
     }
 
     public func advanceRegistryRevision(

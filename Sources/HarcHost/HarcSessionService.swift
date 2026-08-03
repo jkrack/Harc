@@ -1,12 +1,12 @@
-import CryptoKit
 import Foundation
 import GRDB
 import HarcDomain
 import HarcIdentity
-import HarcProtocol
 
 /// Durable challenge/response and short-lived session credentials. Transport
-/// adapters provide only already-pinned TLS and negotiated-capability facts.
+/// adapters provide already-pinned TLS facts and exact wire payloads; this
+/// service independently validates negotiated capabilities against current host
+/// policy before binding them into a session token.
 public actor HarcSessionService {
     public static let challengeLifetime: TimeInterval = 30
     public static let sessionLifetime: TimeInterval = 30 * 60
@@ -15,13 +15,16 @@ public actor HarcSessionService {
     public static let maximumOutstandingChallenges = 5
 
     private let store: HarcHostStore
+    private let protocolBoundary: any HostSessionAuthenticationProtocolBoundary
     private let randomness: any HostAuthenticationRandomness
 
     public init(
         store: HarcHostStore,
+        protocolBoundary: any HostSessionAuthenticationProtocolBoundary,
         randomness: any HostAuthenticationRandomness = SystemHostAuthenticationRandomness()
     ) {
         self.store = store
+        self.protocolBoundary = protocolBoundary
         self.randomness = randomness
     }
 
@@ -30,6 +33,14 @@ public actor HarcSessionService {
     ) async throws -> BeginHostSessionResponse {
         let serverTime = store.now()
         guard serverTime.timeIntervalSinceReferenceDate.isFinite else {
+            throw HarcHostError.sessionAdmissionRejected
+        }
+        do {
+            try protocolBoundary.validateProtocolVersion(
+                major: request.protocolMajor,
+                minor: request.protocolMinor
+            )
+        } catch {
             throw HarcHostError.sessionAdmissionRejected
         }
         let challengeID = try randomness.randomUUID()
@@ -101,6 +112,7 @@ public actor HarcSessionService {
                 sql: """
                     SELECT d.status, d.current_grant_id, d.current_grant_epoch,
                            d.public_key_x963, d.grant_expires_at,
+                           d.trust_repair_required,
                            g.exact_grant_bytes
                     FROM devices d
                     JOIN grants g
@@ -116,6 +128,7 @@ public actor HarcSessionService {
                 ]
             )
             let admitted = device?["status"] as String? == "active"
+                && device?["trust_repair_required"] as Int? == 0
                 && ((device?["grant_expires_at"] as Double?).map { now < $0 } ?? true)
             let exactGrant = admitted
                 ? (device?["exact_grant_bytes"] as Data? ?? dummyGrant)
@@ -145,12 +158,12 @@ public actor HarcSessionService {
                     exactGrant,
                     serverNonce,
                     request.tlsSPKISHA256,
-                    request.capabilities.exactBytes,
-                    request.capabilities.sha256,
-                    Int64(request.capabilities.protocolMajor),
-                    Int64(request.capabilities.protocolMinor),
-                    request.capabilities.selectedCodec,
-                    request.capabilities.selectedContainer,
+                    nil as Data?,
+                    nil as Data?,
+                    Int64(request.protocolMajor),
+                    Int64(request.protocolMinor),
+                    nil as String?,
+                    nil as String?,
                     now,
                     expiry,
                 ]
@@ -193,7 +206,27 @@ public actor HarcSessionService {
             throw HarcHostError.sessionProofRejected
         }
         let now = HarcHostStore.unixTime(openedAt)
-        let exactHash = Data(SHA256.hash(data: request.exactCapabilitiesBytes))
+        let capabilities: HostNegotiatedSessionCapabilities
+        do {
+            guard request.protocolMajor == challenge.protocolMajor,
+                  request.protocolMinor == challenge.protocolMinor else {
+                throw HarcHostError.sessionProofRejected
+            }
+            capabilities = try protocolBoundary.validateNegotiatedCapabilities(
+                exactBytes: request.exactCapabilitiesBytes,
+                expectedSHA256: request.capabilitiesSHA256,
+                protocolMajor: request.protocolMajor,
+                protocolMinor: request.protocolMinor
+            )
+        } catch {
+            try await deleteChallenge(request.challengeID)
+            try await auditAuthenticationFailure(
+                code: "session-proof-rejected",
+                at: openedAt
+            )
+            throw HarcHostError.sessionProofRejected
+        }
+
         // Compute every fixed-size binding check before consulting admission so
         // valid and dummy challenges share the same pre-proof work ordering.
         let tlsMatches = HostAuthenticationCrypto.constantTimeEqual(
@@ -202,19 +235,11 @@ public actor HarcSessionService {
         )
         let claimedHashMatches = HostAuthenticationCrypto.constantTimeEqual(
             request.capabilitiesSHA256,
-            challenge.capabilitiesSHA256
+            capabilities.sha256
         )
-        let exactHashMatches = HostAuthenticationCrypto.constantTimeEqual(
-            exactHash,
-            challenge.capabilitiesSHA256
-        )
-        let exactBytesMatch = request.exactCapabilitiesBytes
-            == challenge.exactCapabilitiesBytes
         let unexpired = now < HarcHostStore.unixTime(challenge.expiresAt)
         guard tlsMatches,
               claimedHashMatches,
-              exactHashMatches,
-              exactBytesMatch,
               unexpired,
               challenge.isAdmitted,
               let deviceID = challenge.deviceID,
@@ -230,25 +255,23 @@ public actor HarcSessionService {
         }
 
         do {
-            let transcript = try SessionTranscriptV1(
-                protocolVersion: HarcProtocolVersion(
-                    major: challenge.protocolMajor,
-                    minor: challenge.protocolMinor
-                ),
-                libraryID: store.expectedMetadata.libraryID,
-                hostAuthorityID: store.expectedMetadata.hostAuthorityID,
-                tlsSPKISHA256: challenge.tlsSPKISHA256,
-                deviceID: deviceID,
-                grantID: grantID.rawValue,
-                grantEpoch: grantEpoch.rawValue,
-                challengeID: challenge.challengeID,
-                serverNonce: challenge.serverNonce,
-                clientNonce: request.clientNonce,
-                capabilitiesSHA256: challenge.capabilitiesSHA256
-            )
-            try transcript.verifyClientProof(
-                request.clientSignature,
-                using: devicePublicKey
+            try protocolBoundary.validateSessionProof(
+                HostSessionProofValidationInput(
+                    protocolMajor: request.protocolMajor,
+                    protocolMinor: request.protocolMinor,
+                    libraryID: store.expectedMetadata.libraryID,
+                    hostAuthorityID: store.expectedMetadata.hostAuthorityID,
+                    tlsSPKISHA256: challenge.tlsSPKISHA256,
+                    deviceID: deviceID,
+                    devicePublicKey: devicePublicKey,
+                    grantID: grantID,
+                    grantEpoch: grantEpoch,
+                    challengeID: challenge.challengeID,
+                    serverNonce: challenge.serverNonce,
+                    clientNonce: request.clientNonce,
+                    capabilitiesSHA256: capabilities.sha256,
+                    clientSignature: request.clientSignature
+                )
             )
         } catch {
             try await deleteChallenge(request.challengeID)
@@ -280,6 +303,7 @@ public actor HarcSessionService {
                            d.current_grant_id AS live_grant_id,
                            d.current_grant_epoch AS live_grant_epoch,
                            d.grant_expires_at AS live_grant_expires_at,
+                           d.trust_repair_required AS live_trust_repair_required,
                            d.public_key_x963 AS live_public_key_x963
                     FROM session_challenges c
                     JOIN devices d ON d.device_id = c.device_id
@@ -292,20 +316,32 @@ public actor HarcSessionService {
                     """,
                 arguments: [request.challengeID.uuidString.lowercased()]
             ) else { return false }
-            let stillValid = live["is_admitted"] as Int == 1
-                && live["expires_at"] as Double > now
-                && live["device_status"] as String == "active"
-                && live["live_grant_id"] as String == grantID.description
-                && live["live_grant_epoch"] as Int64
-                    == Int64(grantEpoch.rawValue)
-                && (live["live_grant_expires_at"] as Double?).map { now < $0 } ?? true
-                && live["live_public_key_x963"] as Data == devicePublicKey.rawBytes
-                && live["server_nonce"] as Data == challenge.serverNonce
-                && live["tls_spki_sha256"] as Data == challenge.tlsSPKISHA256
-                && live["capabilities_sha256"] as Data
-                    == challenge.capabilitiesSHA256
-                && live["exact_capabilities_bytes"] as Data
-                    == challenge.exactCapabilitiesBytes
+            let isAdmitted: Int = live["is_admitted"]
+            let challengeExpiry: Double = live["expires_at"]
+            let deviceStatus: String = live["device_status"]
+            let trustRepairRequired: Int = live["live_trust_repair_required"]
+            let liveGrantID: String = live["live_grant_id"]
+            let liveGrantEpoch: Int64 = live["live_grant_epoch"]
+            let liveGrantExpiry: Double? = live["live_grant_expires_at"]
+            let livePublicKey: Data = live["live_public_key_x963"]
+            let durableServerNonce: Data = live["server_nonce"]
+            let durableTLSSPKI: Data = live["tls_spki_sha256"]
+            let durableProtocolMajor: Int64 = live["protocol_major"]
+            let durableProtocolMinor: Int64 = live["protocol_minor"]
+            let grantIsUnexpired = liveGrantExpiry.map { now < $0 } ?? true
+            let challengeStillValid = isAdmitted == 1
+                && challengeExpiry > now
+                && durableServerNonce == challenge.serverNonce
+                && durableTLSSPKI == challenge.tlsSPKISHA256
+                && durableProtocolMajor == Int64(request.protocolMajor)
+                && durableProtocolMinor == Int64(request.protocolMinor)
+            let grantStillValid = deviceStatus == "active"
+                && trustRepairRequired == 0
+                && liveGrantID == grantID.description
+                && liveGrantEpoch == Int64(grantEpoch.rawValue)
+                && grantIsUnexpired
+                && livePublicKey == devicePublicKey.rawBytes
+            let stillValid = challengeStillValid && grantStillValid
             guard stillValid else {
                 try db.execute(
                     sql: "DELETE FROM session_challenges WHERE challenge_id = ?",
@@ -335,12 +371,12 @@ public actor HarcSessionService {
                     grantID.description,
                     Int64(grantEpoch.rawValue),
                     challenge.tlsSPKISHA256,
-                    challenge.exactCapabilitiesBytes,
-                    challenge.capabilitiesSHA256,
-                    Int64(challenge.protocolMajor),
-                    Int64(challenge.protocolMinor),
-                    challenge.selectedCodec,
-                    challenge.selectedContainer,
+                    capabilities.exactBytes,
+                    capabilities.sha256,
+                    Int64(capabilities.protocolMajor),
+                    Int64(capabilities.protocolMinor),
+                    capabilities.selectedCodec,
+                    capabilities.selectedContainer,
                     now,
                     expiry,
                 ]
@@ -361,7 +397,7 @@ public actor HarcSessionService {
             credential: credential,
             issuedAt: openedAt,
             expiresAt: expiresAt,
-            capabilitiesSHA256: challenge.capabilitiesSHA256
+            capabilitiesSHA256: capabilities.sha256
         )
     }
 
@@ -401,7 +437,8 @@ public actor HarcSessionService {
                            d.current_grant_id AS live_grant_id,
                            d.current_grant_epoch AS live_grant_epoch,
                            d.scopes_json AS live_scopes_json,
-                           d.grant_expires_at AS live_grant_expires_at
+                           d.grant_expires_at AS live_grant_expires_at,
+                           d.trust_repair_required AS live_trust_repair_required
                     FROM session_tokens s
                     JOIN devices d ON d.device_id = s.device_id
                     JOIN grants g
@@ -426,6 +463,7 @@ public actor HarcSessionService {
                   row["invalidated_at"] as Double? == nil,
                   now < row["expires_at"] as Double,
                   row["device_status"] as String == "active",
+                  row["live_trust_repair_required"] as Int == 0,
                   row["live_grant_id"] as String == row["grant_id"] as String,
                   row["live_grant_epoch"] as Int64 == row["grant_epoch"] as Int64,
                   (row["live_grant_expires_at"] as Double?).map({ now < $0 }) ?? true,
@@ -550,12 +588,8 @@ private struct SessionChallengeRecord {
     let devicePublicKey: P256X963PublicKey?
     let serverNonce: Data
     let tlsSPKISHA256: Data
-    let exactCapabilitiesBytes: Data
-    let capabilitiesSHA256: Data
     let protocolMajor: UInt16
     let protocolMinor: UInt16
-    let selectedCodec: String
-    let selectedContainer: String
     let expiresAt: Date
 
     init(row: Row) throws {
@@ -589,12 +623,8 @@ private struct SessionChallengeRecord {
         }
         serverNonce = row["server_nonce"] as Data
         tlsSPKISHA256 = row["tls_spki_sha256"] as Data
-        exactCapabilitiesBytes = row["exact_capabilities_bytes"] as Data
-        capabilitiesSHA256 = row["capabilities_sha256"] as Data
         self.protocolMajor = protocolMajor
         self.protocolMinor = protocolMinor
-        selectedCodec = row["selected_codec"] as String
-        selectedContainer = row["selected_container"] as String
         expiresAt = HarcHostStore.date(row["expires_at"] as Double)
     }
 }

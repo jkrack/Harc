@@ -80,6 +80,103 @@ public struct AuthorizedDeviceContext: Equatable, Sendable {
 
 // MARK: - Security registry journal
 
+/// The durable transport-key transition mode. `startedMode` on the matching
+/// intent never changes; `mode` may make the single reviewed transition from
+/// planned to emergency when the old key becomes compromised mid-overlap.
+public enum HostTransportRotationMode: String, Codable, CaseIterable, Sendable {
+    case planned
+    case emergency
+}
+
+public struct HostTransportRotationIntent: Equatable, Sendable {
+    public let startedMode: HostTransportRotationMode
+    public let mode: HostTransportRotationMode
+    public let oldTLSSPKISHA256: Data
+    public let newTLSSPKISHA256: Data?
+    public let retirementFloorUnixMilliseconds: UInt64
+    public let createdAt: Date
+    public let emergencyEscalatedAt: Date?
+
+    public init(
+        startedMode: HostTransportRotationMode,
+        mode: HostTransportRotationMode,
+        oldTLSSPKISHA256: Data,
+        newTLSSPKISHA256: Data?,
+        retirementFloorUnixMilliseconds: UInt64,
+        createdAt: Date,
+        emergencyEscalatedAt: Date?
+    ) {
+        self.startedMode = startedMode
+        self.mode = mode
+        self.oldTLSSPKISHA256 = oldTLSSPKISHA256
+        self.newTLSSPKISHA256 = newTLSSPKISHA256
+        self.retirementFloorUnixMilliseconds = retirementFloorUnixMilliseconds
+        self.createdAt = createdAt
+        self.emergencyEscalatedAt = emergencyEscalatedAt
+    }
+}
+
+package enum HostAuthorityMutationKind: Sendable {
+    case securityRegistry
+    case emergencyTransport
+    case servingRecovery
+}
+
+/// One runtime-owned FIFO exclusion boundary shared by the security-registry
+/// and emergency transport journals. SQLite predicates remain the cross-process
+/// authority; this actor closes the in-process windows before either phase-A
+/// transaction becomes durable.
+package actor HostAuthorityMutationCoordinator {
+    private var mutationActive = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    package init() {}
+
+    package func withExclusiveMutation<T: Sendable>(
+        _: HostAuthorityMutationKind,
+        operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        await acquire()
+        defer { release() }
+        return try await operation()
+    }
+
+    private func acquire() async {
+        guard mutationActive else {
+            mutationActive = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        guard !waiters.isEmpty else {
+            mutationActive = false
+            return
+        }
+        waiters.removeFirst().resume()
+    }
+
+    /// Module-internal deterministic observation for `@testable` FIFO tests.
+    func queuedMutationCountForTesting() -> Int { waiters.count }
+}
+
+/// Opaque, exact read-only inspection of the security half of serving startup.
+/// Reconciliation must observe this same plan again before either durable mark
+/// is changed. The transport lifecycle performs its own read-only inspection
+/// while holding the same serving-recovery exclusion.
+package struct HostSecurityRegistryPreflightPlan: Equatable, Sendable {
+    package let databaseRevision: UInt64
+    package let protectedRevision: UInt64
+    package let pendingRevision: UInt64?
+    package let exactPendingMutationJSON: Data?
+    package let pendingMutation: SecurityRegistryMutation?
+    package let pendingCreatedAt: Date?
+    package let emergencyTransportIntentPresent: Bool
+}
+
 public protocol SecurityRegistryHighWaterMarkStore: Sendable {
     func loadRegistryRevision() async throws -> UInt64
     func advanceRegistryRevision(from expectedRevision: UInt64, to newRevision: UInt64) async throws
@@ -179,6 +276,7 @@ public enum SecurityRegistryMutationKind: String, Codable, CaseIterable, Sendabl
     case issueGrant
     case replaceGrant
     case readoptGrant
+    case repairTransportTrustGrant
     case revokeDevice
 }
 
@@ -202,6 +300,15 @@ public enum SecurityRegistryMutation: Codable, Equatable, Sendable {
         exactGrantBytes: Data,
         pairingTicketID: UUID
     )
+    /// Explicit same-key re-adoption after emergency TLS rotation. Keeping a
+    /// distinct Codable case preserves every durable v4 `readoptGrant` row as
+    /// ordinary re-adoption and prevents it from clearing trust-repair state.
+    case repairTransportTrustGrant(
+        entry: DeviceRegistryEntry,
+        grant: DeviceGrantClaims,
+        exactGrantBytes: Data,
+        pairingTicketID: UUID
+    )
     case revokeDevice(
         entry: DeviceRegistryEntry,
         revocation: DeviceRevocationClaims,
@@ -213,6 +320,7 @@ public enum SecurityRegistryMutation: Codable, Equatable, Sendable {
         case .issueGrant: .issueGrant
         case .replaceGrant: .replaceGrant
         case .readoptGrant: .readoptGrant
+        case .repairTransportTrustGrant: .repairTransportTrustGrant
         case .revokeDevice: .revokeDevice
         }
     }
@@ -222,6 +330,7 @@ public enum SecurityRegistryMutation: Codable, Equatable, Sendable {
         case .issueGrant(let entry, _, _, _),
              .replaceGrant(let entry, _, _),
              .readoptGrant(let entry, _, _, _),
+             .repairTransportTrustGrant(let entry, _, _, _),
              .revokeDevice(let entry, _, _):
             entry.deviceID
         }
@@ -677,9 +786,22 @@ public enum HarcHostError: Error, Equatable, Sendable {
     case localOSAuthenticationRequired
     case securityMutationAlreadyPending
     case securityRegistryTransitionInProgress
+    case hostAuthorityMutationConflict
     case securityMutationInvalid(String)
     case securityRegistryRollback(databaseRevision: UInt64, highWaterRevision: UInt64)
     case securityRegistryPendingMismatch
+    case deferredServingBootstrapRequired
+    case deferredServingPreflightMismatch
+    case transportSetTransitionInProgress
+    case transportSetNotInitialized
+    case transportSetPendingMismatch
+    case transportSetRollback(databaseEpoch: UInt64, highWaterEpoch: UInt64)
+    case invalidTransportSet(String)
+    case tlsLeafMismatch(String)
+    case tlsLeafNotReady
+    case transportRetirementFloorNotReached(requiredUnixMilliseconds: UInt64)
+    case transportRotationStateMismatch
+    case emergencyTrustRepairRequired
     case unknownDevice
     case deviceRevoked
     case grantExpired
@@ -753,9 +875,25 @@ extension HarcHostError: LocalizedError {
         case .localOSAuthenticationRequired: "Same-key re-adoption requires successful local OS user authentication."
         case .securityMutationAlreadyPending: "A security-registry mutation is already pending."
         case .securityRegistryTransitionInProgress: "A security-registry transition is in progress; retry after it completes."
+        case .hostAuthorityMutationConflict:
+            "Emergency transport retirement and security-registry mutation cannot overlap."
         case .securityMutationInvalid(let detail): "The security-registry mutation is invalid: \(detail)"
         case .securityRegistryRollback(let database, let mark): "Security registry rollback detected (database \(database), high-water \(mark))."
         case .securityRegistryPendingMismatch: "The pending security mutation does not form the exact next revision."
+        case .deferredServingBootstrapRequired:
+            "Serving startup has not completed its dual-journal recovery boundary."
+        case .deferredServingPreflightMismatch:
+            "Serving startup state changed after its read-only dual-journal preflight."
+        case .transportSetTransitionInProgress: "A transport-set publication or rotation is already in progress."
+        case .transportSetNotInitialized: "The host transport set has not been initialized."
+        case .transportSetPendingMismatch: "The pending transport set is not the exact valid successor of HostDB state."
+        case .transportSetRollback(let database, let mark): "Transport-set rollback detected (database epoch \(database), high-water epoch \(mark))."
+        case .invalidTransportSet(let detail): "The host transport set is invalid: \(detail)"
+        case .tlsLeafMismatch(let detail): "The persisted TLS leaf does not match its transport set: \(detail)"
+        case .tlsLeafNotReady: "No validated persisted TLS leaf is ready for the active transport key."
+        case .transportRetirementFloorNotReached(let floor): "The old TLS key cannot retire before Unix millisecond \(floor)."
+        case .transportRotationStateMismatch: "The durable transport rotation intent conflicts with the protected TLS key roles."
+        case .emergencyTrustRepairRequired: "This device must be re-adopted after emergency host transport rotation."
         case .unknownDevice: "The authenticated device is not registered."
         case .deviceRevoked: "The authenticated device is revoked."
         case .grantExpired: "The current device grant has expired."

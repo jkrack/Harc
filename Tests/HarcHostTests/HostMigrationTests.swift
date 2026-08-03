@@ -33,6 +33,10 @@ struct HostMigrationTests {
             "bound_exact_objects",
             "publication_journal",
             "audit_events",
+            "host_transport_sets",
+            "pending_transport_set_publications",
+            "host_tls_leaves",
+            "host_transport_rotation_intent",
         ]
         #expect(required.isSubset(of: tables))
 
@@ -72,6 +76,29 @@ struct HostMigrationTests {
             "canonical_artifact_change_time_seconds",
             "canonical_artifact_change_time_nanoseconds",
         ]).isSubset(of: publicationColumns))
+
+        let challengeColumns = try queue.read { db in
+            try Dictionary(uniqueKeysWithValues: Row.fetchAll(
+                db,
+                sql: "PRAGMA table_info(session_challenges)"
+            ).compactMap { row -> (String, Int)? in
+                guard let name: String = row["name"], let notNull: Int = row["notnull"] else {
+                    return nil
+                }
+                return (name, notNull)
+            })
+        }
+        #expect(challengeColumns["exact_capabilities_bytes"] == 0)
+        #expect(challengeColumns["capabilities_sha256"] == 0)
+        #expect(challengeColumns["selected_codec"] == 0)
+        #expect(challengeColumns["selected_container"] == 0)
+        #expect(challengeColumns["protocol_major"] == 1)
+
+        let deviceColumns = try queue.read { db in
+            try Set(Row.fetchAll(db, sql: "PRAGMA table_info(devices)")
+                .compactMap { $0["name"] as String? })
+        }
+        #expect(deviceColumns.contains("trust_repair_required"))
     }
 
     @Test("v3 quarantines published v2 rows without manufacturing artifact identity")
@@ -102,6 +129,63 @@ struct HostMigrationTests {
             == "legacy-publication-artifact-identity-unavailable")
         #expect(row?["canonical_artifact_device_number"] as Data? == nil)
         #expect(row?["canonical_artifact_change_time_nanoseconds"] as Int64? == nil)
+    }
+
+    @Test("v5 BeginSession challenge stores no negotiated-capability evidence")
+    func v5ChallengeCapabilityEvidenceIsDeferred() throws {
+        let queue = try DatabaseQueue()
+        try DatabaseMigrator.harcHostMigrator().migrate(queue)
+        try queue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO session_challenges (
+                        challenge_id, source_binding_sha256,
+                        subject_binding_sha256, is_admitted,
+                        exact_grant_bytes, server_nonce, tls_spki_sha256,
+                        protocol_major, protocol_minor, created_at, expires_at
+                    ) VALUES (?, ?, ?, 0, ?, ?, ?, 1, 0, 100, 110)
+                    """,
+                arguments: [
+                    UUID().uuidString.lowercased(),
+                    Data(repeating: 1, count: 32),
+                    Data(repeating: 2, count: 32),
+                    Data([1]),
+                    Data(repeating: 3, count: 32),
+                    Data(repeating: 4, count: 32),
+                ]
+            )
+        }
+        let row = try queue.read { db in
+            try Row.fetchOne(db, sql: "SELECT * FROM session_challenges")
+        }
+        #expect(row?["exact_capabilities_bytes"] as Data? == nil)
+        #expect(row?["capabilities_sha256"] as Data? == nil)
+        #expect(row?["selected_codec"] as String? == nil)
+        #expect(row?["selected_container"] as String? == nil)
+
+        #expect(throws: (any Error).self) {
+            try queue.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO session_challenges (
+                            challenge_id, source_binding_sha256,
+                            subject_binding_sha256, is_admitted,
+                            exact_grant_bytes, server_nonce, tls_spki_sha256,
+                            selected_codec, protocol_major, protocol_minor,
+                            created_at, expires_at
+                        ) VALUES (?, ?, ?, 0, ?, ?, ?, 'opus', 1, 0, 100, 110)
+                        """,
+                    arguments: [
+                        UUID().uuidString.lowercased(),
+                        Data(repeating: 1, count: 32),
+                        Data(repeating: 2, count: 32),
+                        Data([1]),
+                        Data(repeating: 3, count: 32),
+                        Data(repeating: 4, count: 32),
+                    ]
+                )
+            }
+        }
     }
 
     @Test("v3 preserves pre-publication v2 recovery rows without artifact identity")

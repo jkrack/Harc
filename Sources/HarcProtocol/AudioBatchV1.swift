@@ -119,7 +119,7 @@ public struct HarcAudioBatchV1: Sendable {
             supportedRequiredFeatures: supportedRequiredFeatures,
             versionPolicy: versionPolicy
         )
-        try validateDeclaredExactByteCount(
+        _ = try declaredExactByteCount(
             headerLength: headerLength,
             entries: header.entries
         )
@@ -173,7 +173,7 @@ public struct HarcAudioBatchV1: Sendable {
         )
     }
 
-    private static func validateHeader(
+    package static func validateHeader(
         _ header: Harc_V1_AudioBatchHeaderV1,
         supportedRequiredFeatures: Set<String>,
         versionPolicy: HarcProtocolVersionPolicy
@@ -306,10 +306,10 @@ public struct HarcAudioBatchV1: Sendable {
         }
     }
 
-    private static func validateDeclaredExactByteCount(
+    package static func declaredExactByteCount(
         headerLength: UInt64,
         entries: [Harc_V1_AudioBatchEntryV1]
-    ) throws {
+    ) throws -> UInt64 {
         var total = UInt64(magic.count)
         try addToExactByteCount(4, total: &total)
         try addToExactByteCount(headerLength, total: &total)
@@ -317,6 +317,7 @@ public struct HarcAudioBatchV1: Sendable {
             try addToExactByteCount(4, total: &total)
             try addToExactByteCount(UInt64(entry.encodedLength), total: &total)
         }
+        return total
     }
 
     private static func addToExactByteCount(_ count: UInt64, total: inout UInt64) throws {

@@ -142,7 +142,6 @@ let package = Package(
             dependencies: [
                 "HarcDomain",
                 "HarcIdentity",
-                "HarcProtocol",
                 "HarcStore",
                 "HarcTransfer",
                 .product(name: "GRDB", package: "GRDB.swift"),
@@ -313,7 +312,13 @@ let package = Package(
         .testTarget(
             name: "HarcHostTransportTests",
             dependencies: [
+                "HarcDomain",
+                "HarcHost",
                 "HarcHostTransport",
+                "HarcIdentity",
+                "HarcProtocol",
+                "HarcProtocolWire",
+                "HarcTransfer",
                 .product(
                     name: "GRPCNIOTransportHTTP2TransportServices",
                     package: "grpc-swift-nio-transport"
@@ -326,6 +331,10 @@ let package = Package(
             name: "HarcClientTransportTests",
             dependencies: [
                 "HarcClientTransport",
+                "HarcDomain",
+                "HarcIdentity",
+                "HarcProtocol",
+                "HarcTransfer",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),

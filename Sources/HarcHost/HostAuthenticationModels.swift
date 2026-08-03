@@ -2,8 +2,19 @@ import CryptoKit
 import Foundation
 import HarcDomain
 import HarcIdentity
-import HarcProtocol
 import HarcTransfer
+
+enum HostAuthenticationProtocolV1 {
+    static let major: UInt16 = 1
+    static let minor: UInt16 = 0
+    static let pairingDeviceLabelBytes = 256
+
+    static func validate(major: UInt16, minor: UInt16) throws {
+        guard major == Self.major, minor == Self.minor else {
+            throw HarcHostError.invalidAuthenticationInput("protocol version")
+        }
+    }
+}
 
 // MARK: - Shared pre-authentication inputs
 
@@ -56,8 +67,9 @@ public struct HostPairingClaimContext: Equatable, Sendable {
         hostAuthorityPublicKey: P256X963PublicKey,
         tlsSPKISHA256: Data
     ) throws {
-        try HarcProtocolVersionPolicy.currentV1.validate(
-            HarcProtocolVersion(major: protocolMajor, minor: protocolMinor)
+        try HostAuthenticationProtocolV1.validate(
+            major: protocolMajor,
+            minor: protocolMinor
         )
         guard tlsSPKISHA256.count == SHA256.Digest.byteCount else {
             throw HarcHostError.invalidAuthenticationInput("pairing context")
@@ -97,7 +109,8 @@ public struct BeginHostPairingClaimRequest: Sendable {
         }
         guard deviceLabel == deviceLabel.precomposedStringWithCanonicalMapping,
               !deviceLabel.isEmpty,
-              deviceLabel.utf8.count <= HarcProtocolLimits.pairingDeviceLabelBytes,
+              deviceLabel.utf8.count
+                <= HostAuthenticationProtocolV1.pairingDeviceLabelBytes,
               !deviceLabel.unicodeScalars.contains(where: {
                   CharacterSet.controlCharacters.contains($0)
               }) else {
@@ -185,6 +198,9 @@ public struct HostPendingPairingClaim: Equatable, Sendable {
     public let devicePublicKey: P256X963PublicKey
     public let deviceLabel: String
     public let requestedScopes: [AuthorizationScope]
+    /// The resident approval UI must present this as transport-trust repair,
+    /// not as an ordinary same-key re-adoption.
+    public let requiresTransportTrustRepair: Bool
     public let sasDigest: Data
     public let sasWordIndexes: [UInt16]
     public let sasWords: [String]
@@ -236,26 +252,10 @@ public struct HostNegotiatedSessionCapabilities: Equatable, Sendable {
     public let selectedCodec: String
     public let selectedContainer: String
 
-    /// The network-facing construction path accepts only HarcProtocol's
-    /// already-validated exact payload. This keeps the semantic codec,
-    /// container, and protocol fields inseparable from the bytes that are
-    /// hashed into the session transcript.
+    /// Protocol-neutral semantic projection. Production callers receive this
+    /// only from `HostNegotiatedCapabilitiesValidatingBoundary`; the public
+    /// initializer also supports explicit HarcHost test seams.
     public init(
-        validated capabilities: HarcValidatedNegotiatedCapabilitiesV1
-    ) throws {
-        try self.init(
-            exactBytes: capabilities.exactPayload.exactBytes,
-            sha256: capabilities.exactSHA256,
-            protocolMajor: capabilities.protocolVersion.major,
-            protocolMinor: capabilities.protocolVersion.minor,
-            selectedCodec: capabilities.encoding.codec.rawValue,
-            selectedContainer: capabilities.encoding.container.rawValue
-        )
-    }
-
-    /// Internal fixture seam. Production transport adapters must use the
-    /// validated-capabilities initializer above.
-    init(
         exactBytes: Data,
         sha256: Data? = nil,
         protocolMajor: UInt16 = 1,
@@ -265,8 +265,9 @@ public struct HostNegotiatedSessionCapabilities: Equatable, Sendable {
     ) throws {
         let digest = Data(SHA256.hash(data: exactBytes))
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789.-")
-        try HarcProtocolVersionPolicy.currentV1.validate(
-            HarcProtocolVersion(major: protocolMajor, minor: protocolMinor)
+        try HostAuthenticationProtocolV1.validate(
+            major: protocolMajor,
+            minor: protocolMinor
         )
         guard !exactBytes.isEmpty,
               exactBytes.count <= Self.maximumExactByteCount,
@@ -289,27 +290,30 @@ public struct HostNegotiatedSessionCapabilities: Equatable, Sendable {
 }
 
 public struct BeginHostSessionRequest: Sendable {
+    public let protocolMajor: UInt16
+    public let protocolMinor: UInt16
     public let claimedDeviceID: DeviceID
     public let grantID: GrantID
     public let source: HostPreauthenticationSource
     public let tlsSPKISHA256: Data
-    public let capabilities: HostNegotiatedSessionCapabilities
 
     public init(
+        protocolMajor: UInt16 = 1,
+        protocolMinor: UInt16 = 0,
         claimedDeviceID: DeviceID,
         grantID: GrantID,
         source: HostPreauthenticationSource,
-        tlsSPKISHA256: Data,
-        capabilities: HostNegotiatedSessionCapabilities
+        tlsSPKISHA256: Data
     ) throws {
         guard tlsSPKISHA256.count == SHA256.Digest.byteCount else {
             throw HarcHostError.invalidAuthenticationInput("TLS SPKI digest")
         }
+        self.protocolMajor = protocolMajor
+        self.protocolMinor = protocolMinor
         self.claimedDeviceID = claimedDeviceID
         self.grantID = grantID
         self.source = source
         self.tlsSPKISHA256 = tlsSPKISHA256
-        self.capabilities = capabilities
     }
 }
 
@@ -330,6 +334,8 @@ public struct BeginHostSessionResponse: Equatable, Sendable {
 }
 
 public struct OpenHostSessionRequest: Sendable {
+    public let protocolMajor: UInt16
+    public let protocolMinor: UInt16
     public let challengeID: UUID
     public let clientNonce: Data
     public let exactCapabilitiesBytes: Data
@@ -338,6 +344,8 @@ public struct OpenHostSessionRequest: Sendable {
     public let tlsSPKISHA256: Data
 
     public init(
+        protocolMajor: UInt16 = 1,
+        protocolMinor: UInt16 = 0,
         challengeID: UUID,
         clientNonce: Data,
         exactCapabilitiesBytes: Data,
@@ -353,6 +361,8 @@ public struct OpenHostSessionRequest: Sendable {
                 <= HostNegotiatedSessionCapabilities.maximumExactByteCount else {
             throw HarcHostError.invalidAuthenticationInput("open session")
         }
+        self.protocolMajor = protocolMajor
+        self.protocolMinor = protocolMinor
         self.challengeID = challengeID
         self.clientNonce = clientNonce
         self.exactCapabilitiesBytes = exactCapabilitiesBytes

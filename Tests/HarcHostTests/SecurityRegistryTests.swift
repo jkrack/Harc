@@ -1045,6 +1045,178 @@ struct SecurityRegistryTests {
         }
     }
 
+    @Test("emergency transport trust requires the explicit repair mutation")
+    func emergencyTransportTrustRequiresExplicitRepair() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let acceptedAt = fixture.beganAt.addingTimeInterval(10)
+        let store = try await HarcHostStore.inMemory(
+            stagingRoot: directory,
+            metadata: fixture.metadata,
+            localOSAuthenticationBoundary: FixedHostLocalOSAuthenticationBoundary(
+                authorized: true
+            ),
+            capacityProvider: FixedHostVolumeCapacityProvider(),
+            now: { acceptedAt }
+        )
+        let initial = try fixture.grant()
+        try await store.seedDeviceGrantForTesting(
+            initial,
+            exactGrantBytes: Data("initial".utf8)
+        )
+        try await store.dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE devices SET trust_repair_required = 1 WHERE device_id = ?",
+                arguments: [fixture.deviceID.rawBytes]
+            )
+        }
+        let ticketID = UUID()
+        try await installApprovedTicket(
+            ticketID,
+            for: fixture.deviceID,
+            fixture: fixture,
+            store: store
+        )
+        let repairedGrant = try fixture.grant(
+            id: initial.grantID,
+            epoch: initial.grantEpoch.next()
+        )
+
+        await #expect(throws: HarcHostError.emergencyTrustRepairRequired) {
+            try await store.readoptDevice(
+                repairedGrant,
+                exactGrantBytes: Data("repaired".utf8),
+                pairingTicketID: ticketID
+            )
+        }
+        #expect(try await ticketState(ticketID, in: store) == .approved)
+        #expect(try await store.registryRevision() == 1)
+
+        try await store.repairTransportTrust(
+            repairedGrant,
+            exactGrantBytes: Data("repaired".utf8),
+            pairingTicketID: ticketID
+        )
+        #expect(try await store.deviceRequiresTransportTrustRepair(
+            deviceID: fixture.deviceID
+        ) == false)
+        #expect(try await store.registryRevision() == 2)
+        #expect(try await ticketState(ticketID, in: store) == .consumed)
+        #expect(
+            try await store.deviceRegistryEntry(deviceID: fixture.deviceID)
+                == DeviceRegistryEntry(activeGrant: repairedGrant)
+        )
+    }
+
+    @Test("emergency transport-trust repair recovers across every journal crash boundary")
+    func emergencyTransportTrustRepairCrashRecovery() async throws {
+        for point in SecurityRegistryFailurePoint.allCases {
+            let fixture = HostTestFixture()
+            let directory = try fixture.temporaryDirectory(
+                "trust-repair-\(point.rawValue)-\(UUID())"
+            )
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let databaseURL = directory.appendingPathComponent("HarcHost.db")
+            let stagingRoot = directory.appendingPathComponent(
+                "staging",
+                isDirectory: true
+            )
+            let highWater = InMemorySecurityRegistryHighWaterMarkStore()
+            let initial = try fixture.grant()
+            let repairedGrant = try fixture.grant(
+                id: initial.grantID,
+                epoch: initial.grantEpoch.next()
+            )
+            let ticketID = UUID()
+            let acceptedAt = fixture.beganAt.addingTimeInterval(10)
+
+            do {
+                let setup = try await HarcHostStore.onDisk(
+                    databaseURL: databaseURL,
+                    stagingRoot: stagingRoot,
+                    metadata: fixture.metadata,
+                    highWaterMarkStore: highWater,
+                    capacityProvider: FixedHostVolumeCapacityProvider(),
+                    now: { acceptedAt }
+                )
+                try await setup.seedDeviceGrantForTesting(
+                    initial,
+                    exactGrantBytes: Data("initial".utf8)
+                )
+                try await setup.dbQueue.write { db in
+                    try db.execute(
+                        sql: """
+                            UPDATE devices
+                            SET trust_repair_required = 1
+                            WHERE device_id = ?
+                            """,
+                        arguments: [fixture.deviceID.rawBytes]
+                    )
+                }
+                try await installApprovedTicket(
+                    ticketID,
+                    for: fixture.deviceID,
+                    fixture: fixture,
+                    store: setup
+                )
+            }
+
+            do {
+                let crashing = try await HarcHostStore.onDisk(
+                    databaseURL: databaseURL,
+                    stagingRoot: stagingRoot,
+                    metadata: fixture.metadata,
+                    highWaterMarkStore: highWater,
+                    localOSAuthenticationBoundary:
+                        FixedHostLocalOSAuthenticationBoundary(authorized: true),
+                    securityFailureInjector: OneShotSecurityFailureInjector(point),
+                    capacityProvider: FixedHostVolumeCapacityProvider(),
+                    now: { acceptedAt }
+                )
+                await #expect(throws: InjectedHostCrash.security(point)) {
+                    try await crashing.repairTransportTrust(
+                        repairedGrant,
+                        exactGrantBytes: Data("repaired".utf8),
+                        pairingTicketID: ticketID
+                    )
+                }
+            }
+
+            let reopenTime = point == .beforePendingMutation
+                ? acceptedAt
+                : fixture.beganAt.addingTimeInterval(121)
+            let repaired = try await HarcHostStore.onDisk(
+                databaseURL: databaseURL,
+                stagingRoot: stagingRoot,
+                metadata: fixture.metadata,
+                highWaterMarkStore: highWater,
+                localOSAuthenticationBoundary: FixedHostLocalOSAuthenticationBoundary(
+                    authorized: point == .beforePendingMutation
+                ),
+                capacityProvider: FixedHostVolumeCapacityProvider(),
+                now: { reopenTime }
+            )
+            if point == .beforePendingMutation {
+                try await repaired.repairTransportTrust(
+                    repairedGrant,
+                    exactGrantBytes: Data("repaired".utf8),
+                    pairingTicketID: ticketID
+                )
+            }
+            #expect(try await repaired.registryRevision() == 2)
+            #expect(await highWater.loadRegistryRevision() == 2)
+            #expect(try await repaired.deviceRequiresTransportTrustRepair(
+                deviceID: fixture.deviceID
+            ) == false)
+            #expect(
+                try await repaired.deviceRegistryEntry(deviceID: fixture.deviceID)
+                    == DeviceRegistryEntry(activeGrant: repairedGrant)
+            )
+            #expect(try await ticketState(ticketID, in: repaired) == .consumed)
+        }
+    }
+
     @Test("public pairing admission uses host time and rejects future or expired tickets")
     func publicPairingAdmissionUsesHostClock() async throws {
         let fixture = HostTestFixture()

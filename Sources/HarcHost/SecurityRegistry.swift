@@ -11,8 +11,10 @@ struct ActiveSecurityRegistryRepair: Sendable {
 extension HarcHostStore {
     /// Executes the exact three durable phases required by the security
     /// registry: pending HostDB row, high-water advance, final HostDB apply.
-    func applySecurityRegistryMutation(_ mutation: SecurityRegistryMutation) async throws {
-        try await repairSecurityRegistryOnReopen()
+    private func applySecurityRegistryMutation(
+        _ mutation: SecurityRegistryMutation
+    ) async throws {
+        try await repairSecurityRegistryUnderAuthorityMutation()
         guard !securityRegistryTransitionActive else {
             throw HarcHostError.securityRegistryTransitionInProgress
         }
@@ -42,6 +44,15 @@ extension HarcHostStore {
                 sql: "SELECT COUNT(*) FROM pending_security_mutations"
             ) == 0 else {
                 throw HarcHostError.securityMutationAlreadyPending
+            }
+            guard try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM host_transport_rotation_intent
+                    WHERE mode = 'emergency'
+                    """
+            ) == 0 else {
+                throw HarcHostError.hostAuthorityMutationConflict
             }
             try self.validateSecurityMutation(
                 mutation,
@@ -85,27 +96,30 @@ extension HarcHostStore {
         exactGrantBytes: Data,
         pairingTicketID: UUID
     ) async throws {
-        let clientKind = try await pairingTicketClientKind(pairingTicketID)
-        if ScopePolicy.initialGrantRequiresOSAuthentication(
-            scopes: grant.scopes,
-            for: clientKind
-        ) {
-            guard try await localOSAuthenticationBoundary.authorizeInitialGrantExpansion(
-                for: grant.deviceID,
-                clientKind: clientKind,
-                requestedScopes: grant.scopes
-            ) else {
-                throw HarcHostError.localOSAuthenticationRequired
+        try await withSecurityRegistryMutationExclusion { [self] in
+            let clientKind = try await self.pairingTicketClientKind(pairingTicketID)
+            if ScopePolicy.initialGrantRequiresOSAuthentication(
+                scopes: grant.scopes,
+                for: clientKind
+            ) {
+                guard try await self.localOSAuthenticationBoundary
+                    .authorizeInitialGrantExpansion(
+                        for: grant.deviceID,
+                        clientKind: clientKind,
+                        requestedScopes: grant.scopes
+                    ) else {
+                    throw HarcHostError.localOSAuthenticationRequired
+                }
             }
-        }
-        try await applySecurityRegistryMutation(
-            .issueGrant(
-                entry: DeviceRegistryEntry(activeGrant: grant),
-                grant: grant,
-                exactGrantBytes: exactGrantBytes,
-                pairingTicketID: pairingTicketID
+            try await self.applySecurityRegistryMutation(
+                .issueGrant(
+                    entry: DeviceRegistryEntry(activeGrant: grant),
+                    grant: grant,
+                    exactGrantBytes: exactGrantBytes,
+                    pairingTicketID: pairingTicketID
+                )
             )
-        )
+        }
     }
 
     /// Fixture/bootstrap seam for tests that need an already-adopted device.
@@ -115,40 +129,46 @@ extension HarcHostStore {
         _ grant: DeviceGrantClaims,
         exactGrantBytes: Data
     ) async throws {
-        try await applySecurityRegistryMutation(
-            .issueGrant(
-                entry: DeviceRegistryEntry(activeGrant: grant),
-                grant: grant,
-                exactGrantBytes: exactGrantBytes,
-                pairingTicketID: nil
+        try await withSecurityRegistryMutationExclusion { [self] in
+            try await self.applySecurityRegistryMutation(
+                .issueGrant(
+                    entry: DeviceRegistryEntry(activeGrant: grant),
+                    grant: grant,
+                    exactGrantBytes: exactGrantBytes,
+                    pairingTicketID: nil
+                )
             )
-        )
+        }
     }
 
     public func replaceDeviceGrant(
         _ grant: DeviceGrantClaims,
         exactGrantBytes: Data
     ) async throws {
-        guard let current = try await deviceRegistryEntry(deviceID: grant.deviceID) else {
-            throw HarcHostError.unknownDevice
-        }
-        if current.currentScopes != grant.scopes,
-           ScopePolicy.scopeChangeRequiresOSAuthentication {
-            guard try await localOSAuthenticationBoundary.authorizeGrantScopeChange(
-                for: grant.deviceID,
-                currentScopes: current.currentScopes,
-                requestedScopes: grant.scopes
+        try await withSecurityRegistryMutationExclusion { [self] in
+            guard let current = try await self.deviceRegistryEntry(
+                deviceID: grant.deviceID
             ) else {
-                throw HarcHostError.localOSAuthenticationRequired
+                throw HarcHostError.unknownDevice
             }
-        }
-        try await applySecurityRegistryMutation(
-            .replaceGrant(
-                entry: DeviceRegistryEntry(activeGrant: grant),
-                grant: grant,
-                exactGrantBytes: exactGrantBytes
+            if current.currentScopes != grant.scopes,
+               ScopePolicy.scopeChangeRequiresOSAuthentication {
+                guard try await self.localOSAuthenticationBoundary.authorizeGrantScopeChange(
+                    for: grant.deviceID,
+                    currentScopes: current.currentScopes,
+                    requestedScopes: grant.scopes
+                ) else {
+                    throw HarcHostError.localOSAuthenticationRequired
+                }
+            }
+            try await self.applySecurityRegistryMutation(
+                .replaceGrant(
+                    entry: DeviceRegistryEntry(activeGrant: grant),
+                    grant: grant,
+                    exactGrantBytes: exactGrantBytes
+                )
             )
-        )
+        }
     }
 
     /// Re-adopts an installation whose signing key already has a registry
@@ -159,19 +179,61 @@ extension HarcHostStore {
         exactGrantBytes: Data,
         pairingTicketID: UUID
     ) async throws {
-        guard try await localOSAuthenticationBoundary.authorizeSameKeyReadoption(
-            for: grant.deviceID
-        ) else {
-            throw HarcHostError.localOSAuthenticationRequired
-        }
-        try await applySecurityRegistryMutation(
-            .readoptGrant(
-                entry: DeviceRegistryEntry(activeGrant: grant),
-                grant: grant,
-                exactGrantBytes: exactGrantBytes,
-                pairingTicketID: pairingTicketID
+        try await withSecurityRegistryMutationExclusion { [self] in
+            let requiresTrustRepair = try await self.deviceRequiresTransportTrustRepair(
+                deviceID: grant.deviceID
             )
-        )
+            guard !requiresTrustRepair else {
+                throw HarcHostError.emergencyTrustRepairRequired
+            }
+            guard try await self.localOSAuthenticationBoundary.authorizeSameKeyReadoption(
+                for: grant.deviceID
+            ) else {
+                throw HarcHostError.localOSAuthenticationRequired
+            }
+            try await self.applySecurityRegistryMutation(
+                .readoptGrant(
+                    entry: DeviceRegistryEntry(activeGrant: grant),
+                    grant: grant,
+                    exactGrantBytes: exactGrantBytes,
+                    pairingTicketID: pairingTicketID
+                )
+            )
+        }
+    }
+
+    /// Explicit, locally-visible re-adoption path after emergency TLS-key
+    /// replacement. A distinct durable mutation keeps crash recovery from ever
+    /// treating an ordinary same-key readoption as permission to clear the
+    /// emergency trust-repair gate.
+    public func repairTransportTrust(
+        _ grant: DeviceGrantClaims,
+        exactGrantBytes: Data,
+        pairingTicketID: UUID
+    ) async throws {
+        try await withSecurityRegistryMutationExclusion { [self] in
+            let requiresTrustRepair = try await self.deviceRequiresTransportTrustRepair(
+                deviceID: grant.deviceID
+            )
+            guard requiresTrustRepair else {
+                throw HarcHostError.securityMutationInvalid(
+                    "The device does not require emergency transport-trust repair."
+                )
+            }
+            guard try await self.localOSAuthenticationBoundary.authorizeSameKeyReadoption(
+                for: grant.deviceID
+            ) else {
+                throw HarcHostError.localOSAuthenticationRequired
+            }
+            try await self.applySecurityRegistryMutation(
+                .repairTransportTrustGrant(
+                    entry: DeviceRegistryEntry(activeGrant: grant),
+                    grant: grant,
+                    exactGrantBytes: exactGrantBytes,
+                    pairingTicketID: pairingTicketID
+                )
+            )
+        }
     }
 
     public func revokeDevice(
@@ -180,18 +242,39 @@ extension HarcHostStore {
         reasonCode: String,
         exactRevocationBytes: Data
     ) async throws {
-        try await revokeDevice(
-            deviceID,
-            revocationID: revocationID,
-            reasonCode: reasonCode,
-            exactRevocationBytes: exactRevocationBytes,
-            issuedAt: now()
-        )
+        let issuedAt = now()
+        try await withSecurityRegistryMutationExclusion { [self] in
+            try await self.revokeDeviceUnderAuthorityMutation(
+                deviceID,
+                revocationID: revocationID,
+                reasonCode: reasonCode,
+                exactRevocationBytes: exactRevocationBytes,
+                issuedAt: issuedAt
+            )
+        }
     }
 
     /// Deterministic `@testable` seam. Production revocation issuance always
     /// derives its time from the store's injected clock.
     func revokeDevice(
+        _ deviceID: DeviceID,
+        revocationID: UUID,
+        reasonCode: String,
+        exactRevocationBytes: Data,
+        issuedAt: Date
+    ) async throws {
+        try await withSecurityRegistryMutationExclusion { [self] in
+            try await self.revokeDeviceUnderAuthorityMutation(
+                deviceID,
+                revocationID: revocationID,
+                reasonCode: reasonCode,
+                exactRevocationBytes: exactRevocationBytes,
+                issuedAt: issuedAt
+            )
+        }
+    }
+
+    private func revokeDeviceUnderAuthorityMutation(
         _ deviceID: DeviceID,
         revocationID: UUID,
         reasonCode: String,
@@ -214,6 +297,15 @@ extension HarcHostStore {
         )
     }
 
+    private nonisolated func withSecurityRegistryMutationExclusion<T: Sendable>(
+        _ operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        try await authorityMutationCoordinator.withExclusiveMutation(
+            .securityRegistry,
+            operation: operation
+        )
+    }
+
     public func deviceRegistryEntry(deviceID: DeviceID) async throws -> DeviceRegistryEntry? {
         try await dbQueue.read { db in
             guard let bytes = try Data.fetchOne(
@@ -222,6 +314,24 @@ extension HarcHostStore {
                 arguments: [deviceID.rawBytes]
             ) else { return nil }
             return try Self.decode(DeviceRegistryEntry.self, from: bytes)
+        }
+    }
+
+    func deviceRequiresTransportTrustRepair(deviceID: DeviceID) async throws -> Bool {
+        try await dbQueue.read { db in
+            guard let required = try Int.fetchOne(
+                db,
+                sql: "SELECT trust_repair_required FROM devices WHERE device_id = ?",
+                arguments: [deviceID.rawBytes]
+            ) else {
+                throw HarcHostError.unknownDevice
+            }
+            guard required == 0 || required == 1 else {
+                throw HarcHostError.databaseFailure(
+                    "The durable transport-trust repair flag is malformed."
+                )
+            }
+            return required == 1
         }
     }
 
@@ -261,6 +371,12 @@ extension HarcHostStore {
     }
 
     func repairSecurityRegistryOnReopen() async throws {
+        try await withSecurityRegistryMutationExclusion { [self] in
+            try await self.repairSecurityRegistryUnderAuthorityMutation()
+        }
+    }
+
+    private func repairSecurityRegistryUnderAuthorityMutation() async throws {
         if let active = activeSecurityRegistryRepair {
             try await active.task.value
             return
@@ -296,6 +412,7 @@ extension HarcHostStore {
             let pendingRevision: UInt64?
             let pendingMutation: SecurityRegistryMutation?
             let pendingCreatedAt: Date?
+            let emergencyTransportIntentPresent: Bool
         }
 
         let snapshot: Snapshot = try await dbQueue.read { db in
@@ -307,6 +424,13 @@ extension HarcHostStore {
                 dbRevisionValue,
                 field: "securityRegistryRevision"
             )
+            let emergencyTransportIntentPresent = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM host_transport_rotation_intent
+                    WHERE mode = 'emergency'
+                    """
+            ) == 1
             guard let row = try Row.fetchOne(
                 db,
                 sql: "SELECT registry_revision, mutation_json, created_at FROM pending_security_mutations WHERE singleton = 1"
@@ -315,7 +439,8 @@ extension HarcHostStore {
                     databaseRevision: databaseRevision,
                     pendingRevision: nil,
                     pendingMutation: nil,
-                    pendingCreatedAt: nil
+                    pendingCreatedAt: nil,
+                    emergencyTransportIntentPresent: emergencyTransportIntentPresent
                 )
             }
             let pendingRevision = try Self.unsigned(
@@ -330,7 +455,8 @@ extension HarcHostStore {
                 databaseRevision: databaseRevision,
                 pendingRevision: pendingRevision,
                 pendingMutation: mutation,
-                pendingCreatedAt: Self.date(row["created_at"] as Double)
+                pendingCreatedAt: Self.date(row["created_at"] as Double),
+                emergencyTransportIntentPresent: emergencyTransportIntentPresent
             )
         }
 
@@ -348,7 +474,11 @@ extension HarcHostStore {
         }
 
         guard snapshot.databaseRevision < UInt64.max,
-              pendingRevision == snapshot.databaseRevision + 1 else {
+              pendingRevision == snapshot.databaseRevision + 1,
+              !snapshot.emergencyTransportIntentPresent else {
+            if snapshot.emergencyTransportIntentPresent {
+                throw HarcHostError.hostAuthorityMutationConflict
+            }
             throw HarcHostError.securityRegistryPendingMismatch
         }
 
@@ -384,13 +514,175 @@ extension HarcHostStore {
         )
     }
 
+    /// Phase one of production serving recovery. This method is read-only: it
+    /// validates the exact pending security row, its semantic effect against the
+    /// current registry, the external mark supplied from the protected host
+    /// record, and the independently composed high-water store. The transport
+    /// lifecycle must finish its own read-only inspection before calling the
+    /// reconciliation phase below.
+    package func preflightSecurityRegistry(
+        protectedRevision: UInt64
+    ) async throws -> HostSecurityRegistryPreflightPlan {
+        guard deferredServingBootstrapState == .awaitingSecurityPreflight else {
+            throw HarcHostError.deferredServingBootstrapRequired
+        }
+        return try await readAndValidateSecurityRegistryPreflight(
+            protectedRevision: protectedRevision
+        )
+    }
+
+    /// Applies only the exact plan previously inspected. Callers hold
+    /// `withServingRecoverySecurityExclusion` across security and transport
+    /// preflight/reconciliation so no new phase-A mutation can appear between
+    /// the two journals' read-only validation and activation.
+    package func reconcileSecurityRegistry(
+        using plan: HostSecurityRegistryPreflightPlan
+    ) async throws {
+        guard deferredServingBootstrapState == .awaitingSecurityPreflight,
+              !securityRegistryTransitionActive else {
+            throw HarcHostError.deferredServingBootstrapRequired
+        }
+        let current = try await readAndValidateSecurityRegistryPreflight(
+            protectedRevision: plan.protectedRevision
+        )
+        guard current == plan else {
+            throw HarcHostError.deferredServingPreflightMismatch
+        }
+
+        securityRegistryTransitionActive = true
+        defer { securityRegistryTransitionActive = false }
+        if let pendingRevision = plan.pendingRevision,
+           let pendingMutation = plan.pendingMutation {
+            switch plan.protectedRevision {
+            case plan.databaseRevision:
+                try await highWaterMarkStore.advanceRegistryRevision(
+                    from: plan.databaseRevision,
+                    to: pendingRevision
+                )
+            case pendingRevision:
+                break
+            default:
+                throw HarcHostError.securityRegistryRollback(
+                    databaseRevision: plan.databaseRevision,
+                    highWaterRevision: plan.protectedRevision
+                )
+            }
+            try await applyPendingSecurityMutation(
+                pendingMutation,
+                revision: pendingRevision,
+                appliedAt: now()
+            )
+        }
+        deferredServingBootstrapState = .securityReconciled
+    }
+
+    private func readAndValidateSecurityRegistryPreflight(
+        protectedRevision: UInt64
+    ) async throws -> HostSecurityRegistryPreflightPlan {
+        let plan = try await dbQueue.read { db in
+            guard let dbRevisionValue = try Int64.fetchOne(
+                db,
+                sql: "SELECT security_registry_revision FROM host_metadata WHERE singleton = 1"
+            ) else {
+                throw HarcHostError.metadataMismatch
+            }
+            let databaseRevision = try Self.unsigned(
+                dbRevisionValue,
+                field: "securityRegistryRevision"
+            )
+            let emergencyCount = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM host_transport_rotation_intent
+                    WHERE mode = 'emergency'
+                    """
+            ) ?? 0
+            guard emergencyCount == 0 || emergencyCount == 1 else {
+                throw HarcHostError.hostAuthorityMutationConflict
+            }
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM pending_security_mutations WHERE singleton = 1"
+            ) else {
+                return HostSecurityRegistryPreflightPlan(
+                    databaseRevision: databaseRevision,
+                    protectedRevision: protectedRevision,
+                    pendingRevision: nil,
+                    exactPendingMutationJSON: nil,
+                    pendingMutation: nil,
+                    pendingCreatedAt: nil,
+                    emergencyTransportIntentPresent: emergencyCount == 1
+                )
+            }
+            let exactJSON: Data = row["mutation_json"]
+            let mutation = try Self.decode(
+                SecurityRegistryMutation.self,
+                from: exactJSON
+            )
+            guard (row["mutation_kind"] as String) == mutation.kind.rawValue,
+                  (row["device_id"] as Data) == mutation.deviceID.rawBytes else {
+                throw HarcHostError.securityRegistryPendingMismatch
+            }
+            return HostSecurityRegistryPreflightPlan(
+                databaseRevision: databaseRevision,
+                protectedRevision: protectedRevision,
+                pendingRevision: try Self.unsigned(
+                    row["registry_revision"] as Int64,
+                    field: "pendingSecurityRegistryRevision"
+                ),
+                exactPendingMutationJSON: exactJSON,
+                pendingMutation: mutation,
+                pendingCreatedAt: Self.date(row["created_at"] as Double),
+                emergencyTransportIntentPresent: emergencyCount == 1
+            )
+        }
+
+        let observedProtectedRevision = try await highWaterMarkStore.loadRegistryRevision()
+        guard observedProtectedRevision == protectedRevision else {
+            throw HarcHostError.deferredServingPreflightMismatch
+        }
+        guard let pendingRevision = plan.pendingRevision,
+              let pendingMutation = plan.pendingMutation,
+              let pendingCreatedAt = plan.pendingCreatedAt,
+              plan.exactPendingMutationJSON != nil else {
+            guard plan.pendingRevision == nil,
+                  plan.pendingMutation == nil,
+                  plan.pendingCreatedAt == nil,
+                  plan.exactPendingMutationJSON == nil,
+                  protectedRevision == plan.databaseRevision else {
+                throw HarcHostError.securityRegistryRollback(
+                    databaseRevision: plan.databaseRevision,
+                    highWaterRevision: protectedRevision
+                )
+            }
+            return plan
+        }
+        guard !plan.emergencyTransportIntentPresent else {
+            throw HarcHostError.hostAuthorityMutationConflict
+        }
+        guard plan.databaseRevision < UInt64.max,
+              pendingRevision == plan.databaseRevision + 1,
+              (protectedRevision == plan.databaseRevision
+                || protectedRevision == pendingRevision) else {
+            throw HarcHostError.securityRegistryPendingMismatch
+        }
+        try await dbQueue.read { db in
+            try self.validateSecurityMutation(
+                pendingMutation,
+                initialGrantAcceptedAt: pendingCreatedAt,
+                in: db
+            )
+        }
+        return plan
+    }
+
     private func isSecurityMutationAlreadyApplied(
         _ mutation: SecurityRegistryMutation
     ) async throws -> Bool {
         try await dbQueue.read { db in
             guard let row = try Row.fetchOne(
                 db,
-                sql: "SELECT registry_entry_json FROM devices WHERE device_id = ?",
+                sql: "SELECT registry_entry_json, trust_repair_required FROM devices WHERE device_id = ?",
                 arguments: [mutation.deviceID.rawBytes]
             ) else { return false }
             let current = try Self.decode(
@@ -400,9 +692,15 @@ extension HarcHostStore {
             switch mutation {
             case .issueGrant(let entry, let grant, let exactBytes, _),
                  .replaceGrant(let entry, let grant, let exactBytes),
-                 .readoptGrant(let entry, let grant, let exactBytes, _):
+                 .readoptGrant(let entry, let grant, let exactBytes, _),
+                 .repairTransportTrustGrant(
+                    let entry,
+                    let grant,
+                    let exactBytes,
+                    _
+                 ):
                 guard current == entry else { return false }
-                return try Data.fetchOne(
+                let exactBytesMatch = try Data.fetchOne(
                     db,
                     sql: """
                         SELECT exact_grant_bytes FROM grants
@@ -413,6 +711,11 @@ extension HarcHostStore {
                         Self.sqliteInteger(grant.grantEpoch.rawValue, field: "grantEpoch"),
                     ]
                 ) == exactBytes
+                if mutation.kind == .repairTransportTrustGrant {
+                    return exactBytesMatch
+                        && row["trust_repair_required"] as Int == 0
+                }
+                return exactBytesMatch
             case .revokeDevice(let entry, let revocation, let exactBytes):
                 guard current == entry else { return false }
                 return try Data.fetchOne(
@@ -437,14 +740,18 @@ extension HarcHostStore {
             }
         }
 
-        let existingBytes = try Data.fetchOne(
+        let existingRow = try Row.fetchOne(
             db,
-            sql: "SELECT registry_entry_json FROM devices WHERE device_id = ?",
+            sql: "SELECT registry_entry_json, trust_repair_required FROM devices WHERE device_id = ?",
             arguments: [mutation.deviceID.rawBytes]
         )
-        let existing = try existingBytes.map {
-            try Self.decode(DeviceRegistryEntry.self, from: $0)
+        let existing = try existingRow.map {
+            try Self.decode(
+                DeviceRegistryEntry.self,
+                from: $0["registry_entry_json"] as Data
+            )
         }
+        let trustRepairRequired = existingRow?["trust_repair_required"] as Int? == 1
 
         func validateApprovedPairingTicket(
             _ ticketID: UUID,
@@ -496,10 +803,19 @@ extension HarcHostStore {
                   entry.currentGrantEpoch == (try existing.currentGrantEpoch.next()) else {
                 throw HarcHostError.securityMutationInvalid("Replacement grant is not the exact next live epoch.")
             }
-        case .readoptGrant(let entry, let grant, let exactBytes, let ticketID):
+        case .readoptGrant(let entry, let grant, let exactBytes, let ticketID),
+             .repairTransportTrustGrant(
+                let entry,
+                let grant,
+                let exactBytes,
+                let ticketID
+             ):
             try validateShared(entry: entry)
+            let isRepair = mutation.kind == .repairTransportTrustGrant
             guard !exactBytes.isEmpty,
                   let existing,
+                  trustRepairRequired == isRepair,
+                  !isRepair || existing.status == .active,
                   entry == DeviceRegistryEntry(activeGrant: grant),
                   entry.deviceID == existing.deviceID,
                   entry.devicePublicKey == existing.devicePublicKey,
@@ -553,6 +869,15 @@ extension HarcHostStore {
         let revisionValue = try Self.sqliteInteger(revision, field: "securityRegistryRevision")
         let appliedTime = Self.unixTime(appliedAt)
         try await dbQueue.write { db in
+            guard try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM host_transport_rotation_intent
+                    WHERE mode = 'emergency'
+                    """
+            ) == 0 else {
+                throw HarcHostError.hostAuthorityMutationConflict
+            }
             guard let pending = try Row.fetchOne(
                 db,
                 sql: "SELECT registry_revision, mutation_json, created_at FROM pending_security_mutations WHERE singleton = 1"
@@ -600,8 +925,27 @@ extension HarcHostStore {
                         """,
                     arguments: [appliedTime, grant.deviceID.rawBytes]
                 )
-            case .readoptGrant(let entry, let grant, let exactBytes, let ticketID):
+            case .readoptGrant(let entry, let grant, let exactBytes, let ticketID),
+                 .repairTransportTrustGrant(
+                    let entry,
+                    let grant,
+                    let exactBytes,
+                    let ticketID
+                 ):
                 try self.persist(entry: entry, grant: grant, exactGrantBytes: exactBytes, in: db, at: appliedTime)
+                if mutation.kind == .repairTransportTrustGrant {
+                    try db.execute(
+                        sql: """
+                            UPDATE devices
+                            SET trust_repair_required = 0, updated_at = ?
+                            WHERE device_id = ? AND trust_repair_required = 1
+                            """,
+                        arguments: [appliedTime, grant.deviceID.rawBytes]
+                    )
+                    guard db.changesCount == 1 else {
+                        throw HarcHostError.securityRegistryPendingMismatch
+                    }
+                }
                 try self.consumePairingTicket(
                     ticketID,
                     reservedFor: grant.deviceID,

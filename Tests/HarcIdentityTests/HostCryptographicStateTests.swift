@@ -29,11 +29,8 @@ struct HostCryptographicStateTests {
 
         let digest = P256SHA256Digest(hashing: Data("host-key-persistence".utf8))
         let authoritySignature = try first.authorityIdentity.sign(digest: digest)
-        let tlsSignature = try first.tlsIdentity.sign(digest: digest)
         #expect(first.authorityIdentity.publicKey.isValidSignature(authoritySignature, for: digest))
-        #expect(first.tlsIdentity.publicKey.isValidSignature(tlsSignature, for: digest))
         #expect(!first.tlsIdentity.publicKey.isValidSignature(authoritySignature, for: digest))
-        #expect(!first.authorityIdentity.publicKey.isValidSignature(tlsSignature, for: digest))
 
         let reopenedStore = KeychainHostCryptographicStateStore(backend: backend)
         let reopened = try await reopenedStore.load(requiredTuple: first.tuple)
@@ -45,6 +42,13 @@ struct HostCryptographicStateTests {
         #expect(idempotent.tuple == first.tuple)
         #expect(idempotent.authorityIdentity.publicKey == first.authorityIdentity.publicKey)
         #expect(idempotent.tlsIdentity.publicKey == first.tlsIdentity.publicKey)
+
+        let inspection = try await reopenedStore.inspect(requiredTuple: first.tuple)
+        #expect(inspection.activeTLSPublicKey == first.activeTLSIdentity.publicKey)
+        #expect(inspection.stagedTLSPublicKey == nil)
+        #expect(inspection.retiringTLSPublicKey == nil)
+        #expect(inspection.pendingTLSKeyCreation == nil)
+        #expect(inspection.pendingTLSKeyDeletions.isEmpty)
     }
 
     @Test("registry and transport marks advance independently by exactly one and persist")
@@ -201,7 +205,7 @@ struct HostCryptographicStateTests {
         var collisionObject = try #require(
             JSONSerialization.jsonObject(with: collisionOriginal) as? [String: Any]
         )
-        collisionObject["tlsKey"] = collisionObject["authorityKey"]
+        collisionObject["activeTLSKey"] = collisionObject["authorityKey"]
         let collisionBytes = try JSONSerialization.data(withJSONObject: collisionObject)
         #expect(
             await collisionBackend.replaceRecord(
@@ -232,6 +236,127 @@ struct HostCryptographicStateTests {
 
         let persisted = try await firstStore.load(requiredTuple: state.tuple)
         #expect(persisted.securityRegistryRevision == 1)
+    }
+
+    @Test("v1 records migrate atomically to protected-record v3")
+    func v1RecordMigration() async throws {
+        let backend = InMemoryHostCryptographicStateRecordBackend()
+        let firstStore = KeychainHostCryptographicStateStore(backend: backend)
+        let original = try await firstStore.loadOrCreate(libraryID: .random())
+        let v2Bytes = try #require(await backend.loadRecord())
+        var legacy = try #require(
+            JSONSerialization.jsonObject(with: v2Bytes) as? [String: Any]
+        )
+        legacy["formatVersion"] = 1
+        legacy["tlsKey"] = legacy.removeValue(forKey: "activeTLSKey")
+        legacy.removeValue(forKey: "stagedTLSKey")
+        legacy.removeValue(forKey: "retiringTLSKey")
+        legacy.removeValue(forKey: "nextTLSKeyGeneration")
+        legacy.removeValue(forKey: "pendingTLSKeyCreation")
+        legacy.removeValue(forKey: "pendingTLSKeyDeletions")
+        let v1Bytes = try JSONSerialization.data(withJSONObject: legacy)
+        #expect(await backend.replaceRecord(expected: v2Bytes, with: v1Bytes))
+
+        let reopened = KeychainHostCryptographicStateStore(backend: backend)
+        let migrated = try await reopened.load(requiredTuple: original.tuple)
+        #expect(migrated.activeTLSIdentity.publicKey == original.activeTLSIdentity.publicKey)
+        #expect(migrated.tlsIdentity.publicKey == original.activeTLSIdentity.publicKey)
+        #expect(migrated.stagedTLSIdentity == nil)
+        #expect(migrated.retiringTLSIdentity == nil)
+
+        let persisted = try #require(await backend.loadRecord())
+        let object = try #require(
+            JSONSerialization.jsonObject(with: persisted) as? [String: Any]
+        )
+        #expect(object["formatVersion"] as? Int == 3)
+        #expect(object["activeTLSKey"] != nil)
+        #expect(object["tlsKey"] == nil)
+        #expect(object["nextTLSKeyGeneration"] as? Int == 1)
+        #expect(object["pendingTLSKeyCreation"] == nil)
+        #expect((object["pendingTLSKeyDeletions"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test("v2 records migrate atomically to protected-record v3")
+    func v2RecordMigration() async throws {
+        let backend = InMemoryHostCryptographicStateRecordBackend()
+        let store = KeychainHostCryptographicStateStore(backend: backend)
+        let original = try await store.loadOrCreate(libraryID: .random())
+        let v3Bytes = try #require(await backend.loadRecord())
+        var v2 = try #require(
+            JSONSerialization.jsonObject(with: v3Bytes) as? [String: Any]
+        )
+        v2["formatVersion"] = 2
+        v2.removeValue(forKey: "nextTLSKeyGeneration")
+        v2.removeValue(forKey: "pendingTLSKeyCreation")
+        v2.removeValue(forKey: "pendingTLSKeyDeletions")
+        let v2Bytes = try JSONSerialization.data(withJSONObject: v2)
+        #expect(await backend.replaceRecord(expected: v3Bytes, with: v2Bytes))
+
+        let reopened = KeychainHostCryptographicStateStore(backend: backend)
+        let migrated = try await reopened.load(requiredTuple: original.tuple)
+        #expect(migrated.activeTLSIdentity.publicKey == original.activeTLSIdentity.publicKey)
+        let persisted = try #require(await backend.loadRecord())
+        let object = try #require(
+            JSONSerialization.jsonObject(with: persisted) as? [String: Any]
+        )
+        #expect(object["formatVersion"] as? Int == 3)
+        #expect(object["nextTLSKeyGeneration"] as? Int == 1)
+    }
+
+    @Test("staged promotion and retirement preserve distinct atomic key roles")
+    func tlsKeyLifecycle() async throws {
+        let store = InMemoryHostCryptographicStateStore()
+        let initial = try await store.loadOrCreate(libraryID: .random())
+        let oldKey = initial.activeTLSIdentity.publicKey
+
+        let staged = try await store.stageReplacementTLSIdentity(
+            for: initial.tuple,
+            expectedActivePublicKey: oldKey
+        )
+        let newKey = try #require(staged.stagedTLSIdentity).publicKey
+        #expect(newKey != oldKey)
+        #expect(staged.retiringTLSIdentity == nil)
+        await #expect(throws: HostCryptographicStateError.self) {
+            try await store.stageReplacementTLSIdentity(
+                for: initial.tuple,
+                expectedActivePublicKey: oldKey
+            )
+        }
+
+        let promoted = try await store.promoteStagedTLSIdentity(
+            for: initial.tuple,
+            expectedActivePublicKey: oldKey,
+            expectedStagedPublicKey: newKey
+        )
+        #expect(promoted.activeTLSIdentity.publicKey == newKey)
+        #expect(promoted.tlsIdentity.publicKey == newKey)
+        #expect(promoted.stagedTLSIdentity == nil)
+        #expect(promoted.retiringTLSIdentity?.publicKey == oldKey)
+
+        let finalized = try await store.finalizeRetiringTLSIdentity(
+            for: initial.tuple,
+            expectedRetiringPublicKey: oldKey
+        )
+        #expect(finalized.activeTLSIdentity.publicKey == newKey)
+        #expect(finalized.retiringTLSIdentity == nil)
+    }
+
+    @Test("unpublished staged keys can be discarded without changing active identity")
+    func discardStagedTLSKey() async throws {
+        let store = InMemoryHostCryptographicStateStore()
+        let initial = try await store.loadOrCreate(libraryID: .random())
+        let staged = try await store.stageReplacementTLSIdentity(
+            for: initial.tuple,
+            expectedActivePublicKey: initial.activeTLSIdentity.publicKey
+        )
+        let stagedKey = try #require(staged.stagedTLSIdentity).publicKey
+        let discarded = try await store.discardStagedTLSIdentity(
+            for: initial.tuple,
+            expectedStagedPublicKey: stagedKey
+        )
+        #expect(discarded.activeTLSIdentity.publicKey == initial.activeTLSIdentity.publicKey)
+        #expect(discarded.stagedTLSIdentity == nil)
+        #expect(discarded.retiringTLSIdentity == nil)
     }
 
     private func markRegistryOnce(

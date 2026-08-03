@@ -1,5 +1,6 @@
 #if canImport(Network)
 import GRPCNIOTransportHTTP2TransportServices
+import HarcHost
 import NIOCore
 import NIOTransportServices
 import Network
@@ -10,14 +11,34 @@ import Network
 public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
     public let eventLoopGroup: any EventLoopGroup
 
-    private let listenerProvider: @Sendable () throws -> NWListener
+    private let listenerProvider: @Sendable () async throws -> NWListener
 
-    public init(
+    /// Only the resident generation controller receives this one-shot lease.
+    /// Consumption and current-generation validation happen at listener bind.
+    package init(
+        lease: HostTransportListenerLease,
+        port: NWEndpoint.Port,
         eventLoopGroup: any EventLoopGroup = NIOTSEventLoopGroup.singletonNIOTSEventLoopGroup,
-        listenerProvider: @Sendable @escaping () throws -> NWListener
     ) {
         self.eventLoopGroup = eventLoopGroup
-        self.listenerProvider = listenerProvider
+        self.listenerProvider = {
+            let material = try await lease.consume(for: .grpcControl)
+            let parameters = try await HarcNetworkTLS13Policy.serverParameters(
+                material: material,
+                protocol: .grpcHTTP2
+            )
+            return try NWListener(using: parameters, on: port)
+        }
+    }
+
+    /// Compile-only seam for transport unit tests. Production composition
+    /// cannot access this unready path outside the module.
+    init(
+        eventLoopGroup: any EventLoopGroup = NIOTSEventLoopGroup.singletonNIOTSEventLoopGroup,
+        unreadyListenerProvider: @Sendable @escaping () throws -> NWListener
+    ) {
+        self.eventLoopGroup = eventLoopGroup
+        self.listenerProvider = { try unreadyListenerProvider() }
     }
 
     public func makeListeningChannel(
@@ -27,7 +48,7 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
         HTTP2ServerTransport.ConnectionConfigurator.ConnectionChannel,
         Never
     > {
-        let listener = try listenerProvider()
+        let listener = try await listenerProvider()
 
         return try await NIOTSListenerBootstrap(group: eventLoopGroup)
             .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)

@@ -4,7 +4,10 @@ import Security
 import Testing
 @testable import HarcIdentity
 
-@Suite("HarcIdentity permanent TLS key and X.509 server identity")
+// These tests install and remove process-global Security.framework keys and
+// certificates. Serial execution keeps one fixture's cleanup from racing
+// another fixture's SecIdentity/key lookup under a heavily parallel full run.
+@Suite("HarcIdentity permanent TLS key and X.509 server identity", .serialized)
 struct HostTLSServerIdentityTests {
     @Test("a permanent P-256 SecKey issues the exact Harc leaf and resolves a SecIdentity")
     func issuesAndResolvesServerIdentity() throws {
@@ -15,12 +18,17 @@ struct HostTLSServerIdentityTests {
         let tlsIdentity = HostTLSSigningIdentity(key: .securityFramework(key))
         let request = try request(for: tlsIdentity)
         let fixedSerial = Data([0x12, 0x34, 0x56, 0x78])
-        let issued = try tlsIdentity.issueServerIdentity(
+        let facts = try tlsIdentity.issueServerCertificate(
             request: request,
             serialNumber: fixedSerial
         )
+        let issued = try tlsIdentity.resolveServerIdentity(
+            certificateDER: facts.certificateDER,
+            request: request
+        )
         defer { deleteCertificate(issued.certificate.certificateDER) }
 
+        #expect(issued.certificate == facts)
         #expect(issued.certificate.serialNumber == fixedSerial)
         #expect(issued.certificate.publicKeyX963 == tlsIdentity.publicKey)
         #expect(issued.certificate.tlsSPKISHA256 == tlsIdentity.tlsSPKISHA256)
@@ -180,13 +188,11 @@ struct HostTLSServerIdentityTests {
         }
     }
 
-    @Test("a losing load-or-create CAS removes only its orphaned permanent TLS key")
-    func concurrentCreationCleansLosingKey() async throws {
+    @Test("concurrent load-or-create persists intent before creating one permanent TLS key")
+    func concurrentCreationUsesOnlyWinningIntent() async throws {
         let backend = ForcedConcurrentHostRecordBackend()
         let tracker = PermanentTLSKeyTracker()
-        let tlsFactory = HostProtectedP256SigningKeyFactory {
-            .securityFramework(try tracker.createKey())
-        }
+        let tlsFactory = durableLegacyFactory(tracker: tracker)
         let firstStore = KeychainHostCryptographicStateStore(
             backend: backend,
             tlsKeyFactory: tlsFactory,
@@ -207,36 +213,24 @@ struct HostTLSServerIdentityTests {
 
         let createdKeys = tracker.snapshot()
         defer { createdKeys.forEach { $0.deletePersistentKeyBestEffort() } }
-        #expect(createdKeys.count == 2)
-        let winningKey = try #require(
-            createdKeys.first { $0.publicKey == firstState.tlsIdentity.publicKey }
-        )
-        let losingKey = try #require(
-            createdKeys.first { $0.publicKey != firstState.tlsIdentity.publicKey }
-        )
+        #expect(createdKeys.count == 1)
+        let winningKey = try #require(createdKeys.only)
+        #expect(winningKey.publicKey == firstState.tlsIdentity.publicKey)
         #expect(
             try HostSecurityP256SigningKey.loadLegacyKeychainTestFixture(
                 applicationTag: winningKey.applicationTag,
                 protection: .keychainSoftware
             ).publicKey == winningKey.publicKey
         )
-        #expect(throws: HostCryptographicStateError.self) {
-            try HostSecurityP256SigningKey.loadLegacyKeychainTestFixture(
-                applicationTag: losingKey.applicationTag,
-                protection: .keychainSoftware
-            )
-        }
     }
 
-    @Test("a failed record insert removes its orphaned permanent TLS key")
-    func failedCreationCleansCandidateKey() async throws {
+    @Test("a failed record insert creates no permanent TLS key")
+    func failedCreationNeverCreatesCandidateKey() async throws {
         let backend = RejectingHostRecordBackend()
         let tracker = PermanentTLSKeyTracker()
         let store = KeychainHostCryptographicStateStore(
             backend: backend,
-            tlsKeyFactory: HostProtectedP256SigningKeyFactory {
-                .securityFramework(try tracker.createKey())
-            },
+            tlsKeyFactory: durableLegacyFactory(tracker: tracker),
             persistentSecurityKeyLoader: Self.loadLegacyTestFixture
         )
 
@@ -244,13 +238,206 @@ struct HostTLSServerIdentityTests {
             try await store.loadOrCreate(libraryID: LibraryID.random())
         }
 
-        let candidate = try #require(tracker.snapshot().only)
-        defer { candidate.deletePersistentKeyBestEffort() }
-        #expect(throws: HostCryptographicStateError.self) {
+        #expect(tracker.snapshot().isEmpty)
+    }
+
+    @Test("a losing staged-key CAS creates no orphaned permanent key")
+    func concurrentStageCreatesOnlyWinningIntentKey() async throws {
+        let tracker = PermanentTLSKeyTracker()
+        let factory = durableLegacyFactory(tracker: tracker)
+        let setupBackend = InMemoryHostCryptographicStateRecordBackend()
+        let setup = KeychainHostCryptographicStateStore(
+            backend: setupBackend,
+            tlsKeyFactory: factory,
+            persistentSecurityKeyLoader: Self.loadLegacyTestFixture
+        )
+        let initial = try await setup.loadOrCreate(libraryID: .random())
+        let initialRecord = try #require(await setupBackend.loadRecord())
+        let backend = ConcurrentStageHostRecordBackend(record: initialRecord)
+        let first = KeychainHostCryptographicStateStore(
+            backend: backend,
+            tlsKeyFactory: factory,
+            persistentSecurityKeyLoader: Self.loadLegacyTestFixture
+        )
+        let second = KeychainHostCryptographicStateStore(
+            backend: backend,
+            tlsKeyFactory: factory,
+            persistentSecurityKeyLoader: Self.loadLegacyTestFixture
+        )
+
+        async let firstWon = stageOnce(first, state: initial)
+        async let secondWon = stageOnce(second, state: initial)
+        let wins = await [firstWon, secondWon].filter { $0 }.count
+        #expect(wins == 1)
+
+        let persisted = try await first.load(requiredTuple: initial.tuple)
+        let staged = try #require(persisted.stagedTLSIdentity)
+        let keys = tracker.snapshot()
+        defer { keys.forEach { $0.deletePersistentKeyBestEffort() } }
+        #expect(keys.count == 2)
+        let winner = try #require(keys.first { $0.publicKey == staged.publicKey })
+        #expect(
             try HostSecurityP256SigningKey.loadLegacyKeychainTestFixture(
-                applicationTag: candidate.applicationTag,
+                applicationTag: winner.applicationTag,
                 protection: .keychainSoftware
+            ).publicKey == winner.publicKey
+        )
+    }
+
+    @Test("a created intent key is inspected without mutation and recovered idempotently")
+    func creationIntentCrashRecovery() async throws {
+        let backend = FailFirstReplaceHostRecordBackend()
+        let tracker = PermanentTLSKeyTracker()
+        let factory = durableLegacyFactory(tracker: tracker)
+        let authority = HostProtectedP256SigningKey.keychainSoftware(
+            SoftwareP256SigningKey()
+        )
+        let hostStateID = HostStateID.random()
+        let libraryID = LibraryID.random()
+        let tuple = HostCryptographicStateTuple(
+            libraryID: libraryID,
+            hostAuthorityID: authority.publicKey.hostAuthorityID,
+            hostStateID: hostStateID
+        )
+        let store = KeychainHostCryptographicStateStore(
+            backend: backend,
+            authorityKeyFactory: HostProtectedP256SigningKeyFactory { authority },
+            tlsKeyFactory: factory,
+            hostStateIDFactory: { hostStateID },
+            persistentSecurityKeyLoader: Self.loadLegacyTestFixture
+        )
+
+        await #expect(throws: ForcedHostRecordFailure.replace) {
+            try await store.loadOrCreate(libraryID: libraryID)
+        }
+        let beforeInspection = try #require(await backend.loadRecord())
+        let inspection = try await store.inspect(requiredTuple: tuple)
+        #expect(inspection.activeTLSPublicKey == nil)
+        #expect(inspection.pendingTLSKeyCreation?.targetRole == .tlsServer)
+        #expect(inspection.pendingTLSKeyCreation?.keyExists == true)
+        #expect(inspection.pendingTLSKeyCreation?.publicKey != nil)
+        #expect(await backend.loadRecord() == beforeInspection)
+
+        let recovered = try await store.load(requiredTuple: tuple)
+        #expect(
+            recovered.activeTLSIdentity.publicKey
+                == inspection.pendingTLSKeyCreation?.publicKey
+        )
+        let after = try await store.inspect(requiredTuple: tuple)
+        #expect(after.pendingTLSKeyCreation == nil)
+        #expect(after.activeTLSPublicKey == recovered.activeTLSIdentity.publicKey)
+        tracker.snapshot().forEach { $0.deletePersistentKeyBestEffort() }
+    }
+
+    @Test("checked deletion remains journaled after failure and retries on load")
+    func deletionJournalRetry() async throws {
+        let backend = InMemoryHostCryptographicStateRecordBackend()
+        let tracker = PermanentTLSKeyTracker()
+        let deletionGate = DeleteFailureGate()
+        let factory = durableLegacyFactory(
+            tracker: tracker,
+            deletionGate: deletionGate
+        )
+        let store = KeychainHostCryptographicStateStore(
+            backend: backend,
+            tlsKeyFactory: factory,
+            persistentSecurityKeyLoader: Self.loadLegacyTestFixture
+        )
+        let initial = try await store.loadOrCreate(libraryID: .random())
+        let staged = try await store.stageReplacementTLSIdentity(
+            for: initial.tuple,
+            expectedActivePublicKey: initial.activeTLSIdentity.publicKey
+        )
+        let stagedIdentity = try #require(staged.stagedTLSIdentity)
+        let stagedKey = try #require(
+            tracker.snapshot().first { $0.publicKey == stagedIdentity.publicKey }
+        )
+
+        do {
+            _ = try await store.discardStagedTLSIdentity(
+                for: initial.tuple,
+                expectedStagedPublicKey: stagedIdentity.publicKey
             )
+            Issue.record("Expected checked deletion failure to remain journaled")
+        } catch let error as HostCryptographicStateError {
+            #expect(
+                error == .persistentKeyDeletionIncomplete(role: .tlsServerStaged)
+            )
+        }
+        let journaledBytes = try #require(await backend.loadRecord())
+        let journaled = try await store.inspect(requiredTuple: initial.tuple)
+        #expect(journaled.stagedTLSPublicKey == nil)
+        #expect(journaled.pendingTLSKeyDeletions.count == 1)
+        #expect(journaled.pendingTLSKeyDeletions.first?.formerRole == .tlsServerStaged)
+        #expect(journaled.pendingTLSKeyDeletions.first?.keyExists == true)
+        #expect(await backend.loadRecord() == journaledBytes)
+
+        let recovered = try await store.load(requiredTuple: initial.tuple)
+        #expect(recovered.stagedTLSIdentity == nil)
+        let clean = try await store.inspect(requiredTuple: initial.tuple)
+        #expect(clean.pendingTLSKeyDeletions.isEmpty)
+        #expect(
+            try HostSecurityP256SigningKey.loadLegacyKeychainTestFixtureIfPresent(
+                applicationTag: stagedKey.applicationTag
+            ) == nil
+        )
+        tracker.snapshot().forEach { $0.deletePersistentKeyBestEffort() }
+    }
+
+    private func durableLegacyFactory(
+        tracker: PermanentTLSKeyTracker,
+        deletionGate: DeleteFailureGate? = nil
+    ) -> HostProtectedP256SigningKeyFactory {
+        let prefix = "com.harc.tests.durable-tls.\(UUID().uuidString.lowercased())"
+        return HostProtectedP256SigningKeyFactory(
+            makeKey: {
+                .securityFramework(try tracker.createKey())
+            },
+            permanentLifecycle: HostPermanentTLSKeyLifecycle(
+                applicationTag: { tuple, generation in
+                    Data("\(prefix).\(tuple.hostStateID).g\(generation)".utf8)
+                },
+                loadIfPresent: { tag in
+                    try tracker.loadIfPresent(applicationTag: tag)
+                        .map { .securityFramework($0) }
+                },
+                loadOrCreate: { tag in
+                    .securityFramework(
+                        try tracker.loadOrCreate(applicationTag: tag)
+                    )
+                },
+                deleteAndConfirmAbsent: { tag, protection, publicKey in
+                    if let deletionGate {
+                        try deletionGate.delete(
+                            applicationTag: tag,
+                            protection: protection,
+                            publicKey: publicKey
+                        )
+                    } else {
+                        try HostSecurityP256SigningKey
+                            .deleteLegacyKeychainTestFixtureAndConfirmAbsent(
+                                applicationTag: tag,
+                                protection: protection,
+                                expectedPublicKey: publicKey
+                            )
+                    }
+                }
+            )
+        )
+    }
+
+    private func stageOnce(
+        _ store: KeychainHostCryptographicStateStore,
+        state: HostCryptographicState
+    ) async -> Bool {
+        do {
+            _ = try await store.stageReplacementTLSIdentity(
+                for: state.tuple,
+                expectedActivePublicKey: state.activeTLSIdentity.publicKey
+            )
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -289,6 +476,41 @@ struct HostTLSServerIdentityTests {
     }
 }
 
+private actor ConcurrentStageHostRecordBackend: HostCryptographicStateRecordBackend {
+    private var record: Data
+    private var synchronizedLoads = 0
+    private var firstLoadContinuation: CheckedContinuation<Void, Never>?
+
+    init(record: Data) {
+        self.record = record
+    }
+
+    func loadRecord() async -> Data? {
+        if synchronizedLoads < 2 {
+            let snapshot = record
+            synchronizedLoads += 1
+            if synchronizedLoads == 1 {
+                await withCheckedContinuation { continuation in
+                    firstLoadContinuation = continuation
+                }
+            } else {
+                firstLoadContinuation?.resume()
+                firstLoadContinuation = nil
+            }
+            return snapshot
+        }
+        return record
+    }
+
+    func insertRecordIfAbsent(_ record: Data) -> Bool { false }
+
+    func replaceRecord(expected: Data, with replacement: Data) -> Bool {
+        guard record == expected else { return false }
+        record = replacement
+        return true
+    }
+}
+
 private actor ForcedConcurrentHostRecordBackend: HostCryptographicStateRecordBackend {
     private var forcedEmptyLoadsRemaining = 2
     private var record: Data?
@@ -316,6 +538,8 @@ private actor ForcedConcurrentHostRecordBackend: HostCryptographicStateRecordBac
 
 private enum ForcedHostRecordFailure: Error, Equatable {
     case insert
+    case replace
+    case delete
 }
 
 private actor RejectingHostRecordBackend: HostCryptographicStateRecordBackend {
@@ -328,6 +552,52 @@ private actor RejectingHostRecordBackend: HostCryptographicStateRecordBackend {
     func replaceRecord(expected: Data, with replacement: Data) -> Bool { false }
 }
 
+private actor FailFirstReplaceHostRecordBackend: HostCryptographicStateRecordBackend {
+    private var record: Data?
+    private var shouldFailReplacement = true
+
+    func loadRecord() -> Data? { record }
+
+    func insertRecordIfAbsent(_ record: Data) -> Bool {
+        guard self.record == nil else { return false }
+        self.record = record
+        return true
+    }
+
+    func replaceRecord(expected: Data, with replacement: Data) throws -> Bool {
+        guard record == expected else { return false }
+        if shouldFailReplacement {
+            shouldFailReplacement = false
+            throw ForcedHostRecordFailure.replace
+        }
+        record = replacement
+        return true
+    }
+}
+
+private final class DeleteFailureGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var shouldFail = true
+
+    func delete(
+        applicationTag: Data,
+        protection: InstallationKeyProtection,
+        publicKey: P256X963PublicKey
+    ) throws {
+        lock.lock()
+        let fail = shouldFail
+        shouldFail = false
+        lock.unlock()
+        if fail { throw ForcedHostRecordFailure.delete }
+        try HostSecurityP256SigningKey
+            .deleteLegacyKeychainTestFixtureAndConfirmAbsent(
+                applicationTag: applicationTag,
+                protection: protection,
+                expectedPublicKey: publicKey
+            )
+    }
+}
+
 private final class PermanentTLSKeyTracker: @unchecked Sendable {
     private let lock = NSLock()
     private var keys: [HostSecurityP256SigningKey] = []
@@ -338,6 +608,30 @@ private final class PermanentTLSKeyTracker: @unchecked Sendable {
         )
         lock.lock()
         keys.append(key)
+        lock.unlock()
+        return key
+    }
+
+    func loadIfPresent(
+        applicationTag: Data
+    ) throws -> HostSecurityP256SigningKey? {
+        try HostSecurityP256SigningKey.loadLegacyKeychainTestFixtureIfPresent(
+            applicationTag: applicationTag
+        )
+    }
+
+    func loadOrCreate(
+        applicationTag: Data
+    ) throws -> HostSecurityP256SigningKey {
+        if let existing = try loadIfPresent(applicationTag: applicationTag) {
+            return existing
+        }
+        let key = try HostSecurityP256SigningKey
+            .loadOrCreateLegacyKeychainTestFixture(applicationTag: applicationTag)
+        lock.lock()
+        if !keys.contains(where: { $0.applicationTag == applicationTag }) {
+            keys.append(key)
+        }
         lock.unlock()
         return key
     }

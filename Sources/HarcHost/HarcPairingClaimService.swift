@@ -2,7 +2,6 @@ import Foundation
 import GRDB
 import HarcDomain
 import HarcIdentity
-import HarcProtocol
 
 /// Network-neutral pairing application service. It owns no transport state and
 /// never receives a host signing key or a local-approval capability.
@@ -12,17 +11,17 @@ public actor HarcPairingClaimService {
 
     private let store: HarcHostStore
     private let randomness: any HostAuthenticationRandomness
-    private let sasDictionary: HarcSASDictionaryV1
+    private let protocolBoundary: any HostPairingAuthenticationProtocolBoundary
     private let beforeProofFailureTermination: (@Sendable () async -> Void)?
 
     public init(
         store: HarcHostStore,
-        randomness: any HostAuthenticationRandomness = SystemHostAuthenticationRandomness(),
-        sasDictionary: HarcSASDictionaryV1? = nil
+        protocolBoundary: any HostPairingAuthenticationProtocolBoundary,
+        randomness: any HostAuthenticationRandomness = SystemHostAuthenticationRandomness()
     ) throws {
         self.store = store
+        self.protocolBoundary = protocolBoundary
         self.randomness = randomness
-        self.sasDictionary = try sasDictionary ?? .bundled()
         beforeProofFailureTermination = nil
     }
 
@@ -30,13 +29,13 @@ public actor HarcPairingClaimService {
     /// racing a successful proof and local approval.
     init(
         store: HarcHostStore,
+        protocolBoundary: any HostPairingAuthenticationProtocolBoundary,
         randomness: any HostAuthenticationRandomness = SystemHostAuthenticationRandomness(),
-        sasDictionary: HarcSASDictionaryV1? = nil,
         beforeProofFailureTermination: @escaping @Sendable () async -> Void
     ) throws {
         self.store = store
+        self.protocolBoundary = protocolBoundary
         self.randomness = randomness
-        self.sasDictionary = try sasDictionary ?? .bundled()
         self.beforeProofFailureTermination = beforeProofFailureTermination
     }
 
@@ -55,7 +54,7 @@ public actor HarcPairingClaimService {
         let claimID = try randomness.randomUUID()
         let hostNonce = try randomness.randomBytes(count: 32)
         let claimantToken = try randomness.randomBytes(count: 32)
-        let submittedBinding = try HostAuthenticationCrypto.pairingTicketBinding(
+        let submittedBinding = try protocolBoundary.pairingTicketSecretBindingSHA256(
             ticketID: request.ticketID,
             secret: request.ticketSecret
         )
@@ -279,33 +278,24 @@ public actor HarcPairingClaimService {
 
         let proof: HostPairingProofResult
         do {
-            let transcript = try PairingTranscriptV1(
-                protocolVersion: HarcProtocolVersion(
-                    major: record.protocolMajor,
-                    minor: record.protocolMinor
-                ),
-                ticketID: record.ticketID,
-                claimID: request.claimID,
-                libraryID: store.expectedMetadata.libraryID,
-                hostAuthorityID: store.expectedMetadata.hostAuthorityID,
-                hostAuthorityPublicKey: record.hostAuthorityPublicKey,
-                tlsSPKISHA256: record.tlsSPKISHA256,
-                deviceID: record.deviceID,
-                devicePublicKey: record.devicePublicKey,
-                clientNonce: record.clientNonce,
-                hostNonce: record.hostNonce,
-                ticketSecretBindingSHA256: record.ticketSecretBindingSHA256,
-                requestedScopes: record.requestedScopes
-            )
-            try transcript.verifyClientProof(request.clientSignature)
-            let phrase = try sasDictionary.phrase(
-                for: transcript,
-                clientSignature: request.clientSignature
-            )
-            proof = try HostPairingProofResult(
-                sasDigest: phrase.digest,
-                sasWordIndexes: phrase.indexes.map(UInt16.init),
-                sasWords: phrase.words
+            proof = try protocolBoundary.validatePairingProofAndDeriveSAS(
+                HostPairingProofValidationInput(
+                    protocolMajor: record.protocolMajor,
+                    protocolMinor: record.protocolMinor,
+                    ticketID: record.ticketID,
+                    claimID: request.claimID,
+                    libraryID: store.expectedMetadata.libraryID,
+                    hostAuthorityID: store.expectedMetadata.hostAuthorityID,
+                    hostAuthorityPublicKey: record.hostAuthorityPublicKey,
+                    tlsSPKISHA256: record.tlsSPKISHA256,
+                    deviceID: record.deviceID,
+                    devicePublicKey: record.devicePublicKey,
+                    clientNonce: record.clientNonce,
+                    hostNonce: record.hostNonce,
+                    ticketSecretBindingSHA256: record.ticketSecretBindingSHA256,
+                    requestedScopes: record.requestedScopes,
+                    clientSignature: request.clientSignature
+                )
             )
         } catch {
             if let beforeProofFailureTermination {
@@ -651,6 +641,12 @@ public actor HarcLocalPairingApprovalService {
                 exactGrantBytes: issued.exactSignedGrantBytes,
                 pairingTicketID: pending.ticketID
             )
+        } else if pending.requiresTransportTrustRepair {
+            try await store.repairTransportTrust(
+                issued.claims,
+                exactGrantBytes: issued.exactSignedGrantBytes,
+                pairingTicketID: pending.ticketID
+            )
         } else {
             try await store.readoptDevice(
                 issued.claims,
@@ -668,9 +664,12 @@ public actor HarcLocalPairingApprovalService {
             guard let row = try Row.fetchOne(
                 db,
                 sql: """
-                    SELECT a.*, t.client_kind
+                    SELECT a.*, t.client_kind,
+                           COALESCE(d.trust_repair_required, 0)
+                               AS requires_transport_trust_repair
                     FROM pairing_attempts a
                     JOIN pairing_tickets t ON t.ticket_id = a.ticket_id
+                    LEFT JOIN devices d ON d.device_id = a.device_id
                     WHERE a.claim_id = ? AND a.protocol_state_version = 1
                       AND a.state = 'awaitingApproval'
                     """,
@@ -692,6 +691,8 @@ public actor HarcLocalPairingApprovalService {
                     [AuthorizationScope].self,
                     from: row["requested_scopes_json"] as Data
                 ),
+                requiresTransportTrustRepair:
+                    row["requires_transport_trust_repair"] as Int == 1,
                 sasDigest: row["sas_digest"] as Data,
                 sasWordIndexes: try HarcHostStore.decode(
                     [UInt16].self,

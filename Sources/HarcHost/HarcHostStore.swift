@@ -9,6 +9,17 @@ import HarcTransfer
 /// Sole owner of `HarcHost.db`. The actor is transport-independent: loopback,
 /// future gRPC, HTTPS, and authenticated local IPC all call this same service.
 public actor HarcHostStore {
+    enum DeferredServingBootstrapState: Equatable, Sendable {
+        case active
+        case awaitingSecurityPreflight
+        case securityReconciled
+    }
+
+    private enum BootstrapMode: Sendable {
+        case immediate
+        case deferredServing
+    }
+
     nonisolated let dbQueue: DatabaseQueue
     nonisolated let stagingRoot: URL
     nonisolated let stagingDirectory: HostStagingDirectory
@@ -22,9 +33,11 @@ public actor HarcHostStore {
     nonisolated let auditMaximumRows: Int
     nonisolated let operationMaximumRowsPerDevice: Int
     nonisolated let now: @Sendable () -> Date
+    nonisolated let authorityMutationCoordinator: HostAuthorityMutationCoordinator
     var securityRegistryTransitionActive = false
     var activeSecurityRegistryRepair: ActiveSecurityRegistryRepair?
     var activeStagingWrites: Set<HostActiveStagingWrite> = []
+    var deferredServingBootstrapState: DeferredServingBootstrapState
 
     public nonisolated var dbReader: any DatabaseReader { dbQueue }
 
@@ -85,7 +98,65 @@ public actor HarcHostStore {
             capacityProvider: capacityProvider,
             auditMaximumRows: auditMaximumRows,
             operationMaximumRowsPerDevice: operationMaximumRowsPerDevice,
-            now: now
+            now: now,
+            bootstrapMode: .immediate
+        )
+    }
+
+    /// Production serving open. Schema/resource setup and an exact read-only
+    /// identity check run here, but neither durable security journal is repaired.
+    /// The serving runtime must hold `withServingRecoverySecurityExclusion`,
+    /// preflight both journals, reconcile them, and complete the deferred
+    /// bootstrap before opening a listener.
+    package static func onDiskDeferredForServing(
+        databaseURL: URL = defaultDatabaseURL(),
+        stagingRoot: URL = defaultStagingRoot(),
+        metadata: HarcHostMetadata,
+        highWaterMarkStore: any SecurityRegistryHighWaterMarkStore,
+        localOSAuthenticationBoundary: any HostLocalOSAuthenticationBoundary = RejectingHostLocalOSAuthenticationBoundary(),
+        securityFailureInjector: any SecurityRegistryFailureInjector = NoSecurityRegistryFailureInjector(),
+        stagingFailureInjector: any StagingFailureInjector = NoStagingFailureInjector(),
+        quotaPolicy: HostStagingQuotaPolicy = HostStagingQuotaPolicy(),
+        capacityProvider: any HostVolumeCapacityProvider = FileSystemHostVolumeCapacityProvider(),
+        auditMaximumRows: Int = 100_000,
+        operationMaximumRowsPerDevice: Int = 100_000,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) async throws -> HarcHostStore {
+        do {
+            try ensureHostGeneratedDirectory(databaseURL.deletingLastPathComponent())
+            try ensureHostGeneratedDirectory(stagingRoot)
+        } catch let error as HarcHostError {
+            throw error
+        } catch {
+            throw HarcHostError.databaseOpenFailed(error.localizedDescription)
+        }
+
+        let queue: DatabaseQueue
+        do {
+            var configuration = Configuration()
+            configuration.busyMode = .timeout(5)
+            configuration.prepareDatabase { db in
+                try db.execute(sql: "PRAGMA foreign_keys = ON")
+                try db.execute(sql: "PRAGMA synchronous = FULL")
+            }
+            queue = try DatabaseQueue(path: databaseURL.path, configuration: configuration)
+        } catch {
+            throw HarcHostError.databaseOpenFailed(error.localizedDescription)
+        }
+        return try await make(
+            queue: queue,
+            stagingRoot: stagingRoot,
+            metadata: metadata,
+            highWaterMarkStore: highWaterMarkStore,
+            localOSAuthenticationBoundary: localOSAuthenticationBoundary,
+            securityFailureInjector: securityFailureInjector,
+            stagingFailureInjector: stagingFailureInjector,
+            quotaPolicy: quotaPolicy,
+            capacityProvider: capacityProvider,
+            auditMaximumRows: auditMaximumRows,
+            operationMaximumRowsPerDevice: operationMaximumRowsPerDevice,
+            now: now,
+            bootstrapMode: .deferredServing
         )
     }
 
@@ -126,7 +197,8 @@ public actor HarcHostStore {
             capacityProvider: capacityProvider,
             auditMaximumRows: auditMaximumRows,
             operationMaximumRowsPerDevice: operationMaximumRowsPerDevice,
-            now: now
+            now: now,
+            bootstrapMode: .immediate
         )
     }
 
@@ -142,7 +214,8 @@ public actor HarcHostStore {
         capacityProvider: any HostVolumeCapacityProvider,
         auditMaximumRows: Int,
         operationMaximumRowsPerDevice: Int,
-        now: @escaping @Sendable () -> Date
+        now: @escaping @Sendable () -> Date,
+        bootstrapMode: BootstrapMode
     ) async throws -> HarcHostStore {
         guard auditMaximumRows > 0, operationMaximumRowsPerDevice > 0 else {
             throw HarcHostError.databaseFailure("Retention limits must be positive.")
@@ -160,6 +233,13 @@ public actor HarcHostStore {
         } catch {
             throw HarcHostError.unsafeStagingRoot
         }
+        let initialBootstrapState: DeferredServingBootstrapState
+        switch bootstrapMode {
+        case .immediate:
+            initialBootstrapState = .active
+        case .deferredServing:
+            initialBootstrapState = .awaitingSecurityPreflight
+        }
         let store = HarcHostStore(
             dbQueue: queue,
             stagingDirectory: trustedStagingDirectory,
@@ -172,9 +252,10 @@ public actor HarcHostStore {
             capacityProvider: capacityProvider,
             auditMaximumRows: auditMaximumRows,
             operationMaximumRowsPerDevice: operationMaximumRowsPerDevice,
-            now: now
+            now: now,
+            deferredServingBootstrapState: initialBootstrapState
         )
-        try await store.bootstrap()
+        try await store.bootstrap(mode: bootstrapMode)
         return store
     }
 
@@ -190,7 +271,8 @@ public actor HarcHostStore {
         capacityProvider: any HostVolumeCapacityProvider,
         auditMaximumRows: Int,
         operationMaximumRowsPerDevice: Int,
-        now: @escaping @Sendable () -> Date
+        now: @escaping @Sendable () -> Date,
+        deferredServingBootstrapState: DeferredServingBootstrapState
     ) {
         self.dbQueue = dbQueue
         self.stagingDirectory = stagingDirectory
@@ -205,16 +287,84 @@ public actor HarcHostStore {
         self.auditMaximumRows = auditMaximumRows
         self.operationMaximumRowsPerDevice = operationMaximumRowsPerDevice
         self.now = now
+        self.authorityMutationCoordinator = HostAuthorityMutationCoordinator()
+        self.deferredServingBootstrapState = deferredServingBootstrapState
     }
 
-    private func bootstrap() async throws {
+    private func bootstrap(mode: BootstrapMode) async throws {
         try Self.ensureSafeStagingRoot(stagingRoot)
-        try await initializeOrValidateMetadata()
-        try await repairSecurityRegistryOnReopen()
+        switch mode {
+        case .immediate:
+            try await initializeOrValidateMetadata()
+            try await repairSecurityRegistryOnReopen()
+        case .deferredServing:
+            try await validateExistingMetadataForDeferredServing()
+            return
+        }
         try await pruneAuthenticationJournalOnReopen()
         try await validateUploadPersistenceOnReopen()
         try await reconcileStagingJournalOnReopen()
         try await pruneAuditEvents()
+    }
+
+    package func completeDeferredServingBootstrap() async throws {
+        guard deferredServingBootstrapState == .securityReconciled else {
+            throw HarcHostError.deferredServingBootstrapRequired
+        }
+        try await pruneAuthenticationJournalOnReopen()
+        try await validateUploadPersistenceOnReopen()
+        try await reconcileStagingJournalOnReopen()
+        try await pruneAuditEvents()
+        deferredServingBootstrapState = .active
+    }
+
+    package func requiresDeferredServingBootstrap() throws -> Bool {
+        switch deferredServingBootstrapState {
+        case .active:
+            return false
+        case .awaitingSecurityPreflight:
+            return true
+        case .securityReconciled:
+            // A partially completed startup must be reopened and preflighted
+            // from a fresh SQLite snapshot; it cannot skip directly to serving.
+            throw HarcHostError.deferredServingBootstrapRequired
+        }
+    }
+
+    package func requireServingBootstrapActive() throws {
+        guard deferredServingBootstrapState == .active else {
+            throw HarcHostError.deferredServingBootstrapRequired
+        }
+    }
+
+    package func requireDeferredServingTransportPreflightAllowed() throws {
+        guard deferredServingBootstrapState == .awaitingSecurityPreflight else {
+            throw HarcHostError.deferredServingBootstrapRequired
+        }
+    }
+
+    package func requireDeferredServingTransportReconcileAllowed() throws {
+        guard deferredServingBootstrapState == .securityReconciled else {
+            throw HarcHostError.deferredServingBootstrapRequired
+        }
+    }
+
+    package nonisolated func withEmergencyTransportSecurityExclusion<T: Sendable>(
+        _ operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        try await authorityMutationCoordinator.withExclusiveMutation(
+            .emergencyTransport,
+            operation: operation
+        )
+    }
+
+    package nonisolated func withServingRecoverySecurityExclusion<T: Sendable>(
+        _ operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        try await authorityMutationCoordinator.withExclusiveMutation(
+            .servingRecovery,
+            operation: operation
+        )
     }
 }
 
@@ -293,9 +443,191 @@ extension HarcHostStore {
     }
 }
 
+// MARK: - Shared host-authority mutation boundary
+
+extension HarcHostStore {
+    /// Inserts a fresh emergency intent or performs the sole legal durable mode
+    /// transition, planned -> emergency. Device flags and credential
+    /// invalidation share this exact transaction, so an idempotent retry cannot
+    /// observe an intent without its security consequences.
+    package func beginOrEscalateEmergencyTransportRotation(
+        compromisedSPKISHA256: Data,
+        retirementFloorUnixMilliseconds: UInt64,
+        at date: Date
+    ) async throws -> HostTransportRotationIntent {
+        guard compromisedSPKISHA256.count == SHA256.byteCount else {
+            throw HarcHostError.invalidTransportSet("emergency compromised SPKI")
+        }
+        guard date.timeIntervalSinceReferenceDate.isFinite else {
+            throw HarcHostError.transportRotationStateMismatch
+        }
+        let requestedFloor = try Self.sqliteInteger(
+            retirementFloorUnixMilliseconds,
+            field: "rotationRetirementFloorUnixMilliseconds"
+        )
+        let timestamp = Self.unixTime(date)
+
+        return try await dbQueue.write { db in
+            guard try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pending_security_mutations"
+            ) == 0 else {
+                throw HarcHostError.hostAuthorityMutationConflict
+            }
+            guard try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pending_transport_set_publications"
+            ) == 0 else {
+                throw HarcHostError.transportSetTransitionInProgress
+            }
+            guard let currentFloor = try Int64.fetchOne(
+                db,
+                sql: "SELECT leaf_retirement_floor FROM host_metadata WHERE singleton = 1"
+            ) else {
+                throw HarcHostError.metadataMismatch
+            }
+
+            if let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM host_transport_rotation_intent WHERE singleton = 1"
+            ) {
+                let intent = try Self.hostTransportRotationIntent(from: row)
+                guard intent.oldTLSSPKISHA256 == compromisedSPKISHA256,
+                      intent.retirementFloorUnixMilliseconds
+                        == retirementFloorUnixMilliseconds,
+                      currentFloor == requestedFloor else {
+                    throw HarcHostError.transportRotationStateMismatch
+                }
+                switch intent.mode {
+                case .planned:
+                    guard intent.startedMode == .planned,
+                          intent.emergencyEscalatedAt == nil,
+                          date >= intent.createdAt else {
+                        throw HarcHostError.transportRotationStateMismatch
+                    }
+                    try db.execute(
+                        sql: """
+                            UPDATE host_transport_rotation_intent
+                               SET mode = 'emergency', emergency_escalated_at = ?
+                             WHERE singleton = 1
+                               AND started_mode = 'planned'
+                               AND mode = 'planned'
+                               AND emergency_escalated_at IS NULL
+                            """,
+                        arguments: [timestamp]
+                    )
+                    guard db.changesCount == 1 else {
+                        throw HarcHostError.transportRotationStateMismatch
+                    }
+                case .emergency:
+                    guard (intent.startedMode == .emergency
+                            && intent.emergencyEscalatedAt == nil)
+                            || (intent.startedMode == .planned
+                                && intent.emergencyEscalatedAt != nil) else {
+                        throw HarcHostError.transportRotationStateMismatch
+                    }
+                }
+            } else {
+                guard currentFloor == requestedFloor else {
+                    throw HarcHostError.transportSetTransitionInProgress
+                }
+                try db.execute(
+                    sql: """
+                        INSERT INTO host_transport_rotation_intent (
+                            singleton, started_mode, mode, old_spki_sha256,
+                            new_spki_sha256, retirement_floor_unix_ms,
+                            created_at, emergency_escalated_at
+                        ) VALUES (1, 'emergency', 'emergency', ?, NULL, ?, ?, NULL)
+                        """,
+                    arguments: [compromisedSPKISHA256, requestedFloor, timestamp]
+                )
+            }
+
+            try db.execute(
+                sql: """
+                    UPDATE devices
+                       SET trust_repair_required = 1, updated_at = ?
+                     WHERE status = 'active' AND trust_repair_required = 0
+                    """,
+                arguments: [timestamp]
+            )
+            try db.execute(
+                sql: """
+                    UPDATE session_tokens
+                       SET invalidated_at = ?,
+                           invalidation_reason = 'emergencyTransportRotation'
+                     WHERE invalidated_at IS NULL
+                    """,
+                arguments: [timestamp]
+            )
+            try db.execute(
+                sql: """
+                    UPDATE background_capabilities
+                       SET invalidated_at = ?, state = 'invalidated'
+                     WHERE invalidated_at IS NULL
+                    """,
+                arguments: [timestamp]
+            )
+            guard let finalRow = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM host_transport_rotation_intent WHERE singleton = 1"
+            ) else {
+                throw HarcHostError.transportRotationStateMismatch
+            }
+            return try Self.hostTransportRotationIntent(from: finalRow)
+        }
+    }
+
+    private static func hostTransportRotationIntent(
+        from row: Row
+    ) throws -> HostTransportRotationIntent {
+        guard let startedMode = HostTransportRotationMode(
+            rawValue: row["started_mode"] as String
+        ), let mode = HostTransportRotationMode(rawValue: row["mode"] as String) else {
+            throw HarcHostError.transportRotationStateMismatch
+        }
+        let createdAt = Self.date(row["created_at"] as Double)
+        let escalatedAt = (row["emergency_escalated_at"] as Double?).map {
+            Self.date($0)
+        }
+        guard createdAt.timeIntervalSinceReferenceDate.isFinite,
+              escalatedAt?.timeIntervalSinceReferenceDate.isFinite != false else {
+            throw HarcHostError.transportRotationStateMismatch
+        }
+        return HostTransportRotationIntent(
+            startedMode: startedMode,
+            mode: mode,
+            oldTLSSPKISHA256: row["old_spki_sha256"],
+            newTLSSPKISHA256: row["new_spki_sha256"],
+            retirementFloorUnixMilliseconds: try Self.unsigned(
+                row["retirement_floor_unix_ms"] as Int64,
+                field: "rotationRetirementFloorUnixMilliseconds"
+            ),
+            createdAt: createdAt,
+            emergencyEscalatedAt: escalatedAt
+        )
+    }
+}
+
 // MARK: - Metadata and authorization
 
 extension HarcHostStore {
+    private func validateExistingMetadataForDeferredServing() async throws {
+        let expected = expectedMetadata
+        let matches = try await dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM host_metadata WHERE singleton = 1"
+            ) else {
+                return false
+            }
+            return (row["library_id"] as String) == expected.libraryID.description
+                && (row["host_authority_id"] as Data) == expected.hostAuthorityID.rawBytes
+                && (row["host_state_id"] as String) == expected.hostStateID.description
+        }
+        guard matches else { throw HarcHostError.metadataMismatch }
+    }
+
     private func initializeOrValidateMetadata() async throws {
         let metadata = expectedMetadata
         let currentTime = Self.unixTime(now())
@@ -328,13 +660,14 @@ extension HarcHostStore {
                 )
                 return .inserted
             }
+            // Mutable ports and transport lifecycle fields are reconciled by
+            // `HostTransportLifecycle` before it issues the only snapshot
+            // accepted by either public listener constructor. This gate proves
+            // the immutable canonical identity tuple; otherwise a legitimate
+            // N -> N+1 commit would make restart recovery impossible to open.
             let matches = (row["library_id"] as String) == metadata.libraryID.description
                 && (row["host_authority_id"] as Data) == metadata.hostAuthorityID.rawBytes
                 && (row["host_state_id"] as String) == metadata.hostStateID.description
-                && (row["control_port"] as Int64?) == metadata.controlPort.map { Int64($0) }
-                && (row["upload_port"] as Int64?) == metadata.uploadPort.map { Int64($0) }
-                && (row["highest_transport_set_epoch"] as Int64) == transportEpoch
-                && (row["leaf_retirement_floor"] as Int64) == leafFloor
             return matches ? .matches : .mismatch
         }
         if case .mismatch = result { throw HarcHostError.metadataMismatch }
@@ -384,10 +717,16 @@ extension HarcHostStore {
         }
         guard let row = try Row.fetchOne(
             db,
-            sql: "SELECT registry_entry_json FROM devices WHERE device_id = ?",
+            sql: """
+                SELECT registry_entry_json, trust_repair_required
+                FROM devices WHERE device_id = ?
+                """,
             arguments: [context.authenticatedDeviceID.rawBytes]
         ) else {
             throw HarcHostError.unknownDevice
+        }
+        guard row["trust_repair_required"] as Int == 0 else {
+            throw HarcHostError.emergencyTrustRepairRequired
         }
         let entry = try Self.decode(DeviceRegistryEntry.self, from: row["registry_entry_json"] as Data)
         guard entry.libraryID == expectedMetadata.libraryID,

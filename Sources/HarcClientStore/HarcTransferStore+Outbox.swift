@@ -936,10 +936,25 @@ extension HarcTransferStore {
         try database.read { db in try backgroundBatch(id: id, in: db) }
     }
 
-    /// Persists an already protocol-validated exact batch ACK and its matching
-    /// typed chunk facts. Staging durability never changes recording commit or
+    /// Persists one authority-authenticated, immutable-descriptor-bound batch
+    /// acknowledgement. Staging durability never changes recording commit or
     /// cleanup eligibility.
     public func persistVerifiedBatchACK(
+        _ evidence: ValidatedBatchAcknowledgementEvidence,
+        persistedAt: Date? = nil
+    ) throws {
+        try persistVerifiedBatchACK(
+            evidence.exactAcknowledgementObject,
+            batchID: evidence.batchID,
+            durableChunks: evidence.durableChunks,
+            persistedAt: persistedAt
+        )
+    }
+
+    /// Package-only compatibility seam for migration/tests. Production callers
+    /// must supply the validator-owned aggregate above so exact bytes and chunk
+    /// facts cannot be combined independently.
+    package func persistVerifiedBatchACK(
         _ ack: OpaqueExactObjectSlot,
         batchID: AudioBatchID,
         durableChunks: [DurableChunkStatus],

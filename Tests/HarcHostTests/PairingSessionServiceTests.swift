@@ -6,6 +6,7 @@ import Testing
 import HarcDomain
 import HarcIdentity
 import HarcProtocol
+import HarcTransfer
 
 @Suite("Pairing claims and application sessions", .serialized)
 struct PairingSessionServiceTests {
@@ -21,7 +22,10 @@ struct PairingSessionServiceTests {
             capacityProvider: FixedHostVolumeCapacityProvider(),
             now: clock.read
         )
-        let service = try HarcPairingClaimService(store: store)
+        let service = try HarcPairingClaimService(
+            store: store,
+            protocolBoundary: pairingProtocolBoundary()
+        )
         let scopes = ScopePolicy.minimalScopes(for: .mobile)
         let begun = try await beginPairing(
             service: service,
@@ -194,6 +198,7 @@ struct PairingSessionServiceTests {
         let interlock = SuspendingAuthenticationHook()
         let service = try HarcPairingClaimService(
             store: store,
+            protocolBoundary: pairingProtocolBoundary(),
             beforeProofFailureTermination: {
                 await interlock.suspend()
             }
@@ -261,7 +266,10 @@ struct PairingSessionServiceTests {
             capacityProvider: FixedHostVolumeCapacityProvider(),
             now: clock.read
         )
-        let service = try HarcPairingClaimService(store: store)
+        let service = try HarcPairingClaimService(
+            store: store,
+            protocolBoundary: pairingProtocolBoundary()
+        )
         let begun = try await beginPairing(
             service: service,
             store: store,
@@ -323,7 +331,10 @@ struct PairingSessionServiceTests {
                 capacityProvider: FixedHostVolumeCapacityProvider(),
                 now: clock.read
             )
-            let claims = try HarcPairingClaimService(store: crashing)
+            let claims = try HarcPairingClaimService(
+                store: crashing,
+                protocolBoundary: pairingProtocolBoundary()
+            )
             begun = try await beginPairing(
                 service: claims,
                 store: crashing,
@@ -383,7 +394,10 @@ struct PairingSessionServiceTests {
             capacityProvider: FixedHostVolumeCapacityProvider(),
             now: clock.read
         )
-        let claims = try HarcPairingClaimService(store: repaired)
+        let claims = try HarcPairingClaimService(
+            store: repaired,
+            protocolBoundary: pairingProtocolBoundary()
+        )
         #expect(
             try await claims.pairingStatus(
                 claimID: begun.response.claimID,
@@ -429,7 +443,12 @@ struct PairingSessionServiceTests {
         }
 
         let terminalAt = clock.read()
-        let sessions = HarcSessionService(store: repaired)
+        let sessions = HarcSessionService(
+            store: repaired,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        )
         clock.set(terminalAt.addingTimeInterval(
             HostAuthenticationRetention.terminalRowLifetime - 1
         ))
@@ -469,13 +488,21 @@ struct PairingSessionServiceTests {
             )
         }
 
-        let sessionService = HarcSessionService(store: store)
+        let sessionService = HarcSessionService(
+            store: store,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        )
         let session = try await openSession(
             service: sessionService,
             fixture: fixture,
             grant: initial
         )
-        let pairing = try HarcPairingClaimService(store: store)
+        let pairing = try HarcPairingClaimService(
+            store: store,
+            protocolBoundary: pairingProtocolBoundary()
+        )
         let begun = try await beginPairing(
             service: pairing,
             store: store,
@@ -528,6 +555,109 @@ struct PairingSessionServiceTests {
         #expect(invalidation.1 == "readopted")
     }
 
+    @Test("emergency trust repair blocks sessions and is visible in local pairing approval")
+    func emergencyTrustRepairUsesVisiblePairingPath() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let clock = LockedHostClock(fixture.beganAt.addingTimeInterval(10))
+        let store = try await HarcHostStore.inMemory(
+            stagingRoot: directory,
+            metadata: fixture.metadata,
+            localOSAuthenticationBoundary: AllowingHostLocalOSAuthenticationBoundary(),
+            capacityProvider: FixedHostVolumeCapacityProvider(),
+            now: clock.read
+        )
+        let initial = try fixture.grant()
+        try await store.seedDeviceGrantForTesting(
+            initial,
+            exactGrantBytes: Data("initial-grant".utf8)
+        )
+        let sessions = HarcSessionService(
+            store: store,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        )
+        let existingSession = try await openSession(
+            service: sessions,
+            fixture: fixture,
+            grant: initial
+        )
+        try await store.dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE devices
+                    SET trust_repair_required = 1
+                    WHERE device_id = ?
+                    """,
+                arguments: [fixture.deviceID.rawBytes]
+            )
+        }
+
+        await #expect(throws: HarcHostError.sessionCredentialRejected) {
+            _ = try await sessions.authenticate(
+                credential: existingSession.opened.credential,
+                tlsSPKISHA256: existingSession.tlsSPKISHA256
+            )
+        }
+        let deniedBegin = try await sessions.beginSession(
+            BeginHostSessionRequest(
+                claimedDeviceID: fixture.deviceID,
+                grantID: initial.grantID,
+                source: try source(0x58),
+                tlsSPKISHA256: tlsSPKISHA256
+            )
+        )
+        let admitted = try await store.dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT is_admitted FROM session_challenges WHERE challenge_id = ?",
+                arguments: [deniedBegin.challengeID.uuidString.lowercased()]
+            )
+        }
+        #expect(admitted == 0)
+
+        let pairing = try HarcPairingClaimService(
+            store: store,
+            protocolBoundary: pairingProtocolBoundary()
+        )
+        let begun = try await beginPairing(
+            service: pairing,
+            store: store,
+            fixture: fixture,
+            clock: clock,
+            label: "Repaired Work MacBook",
+            scopes: ScopePolicy.minimalScopes(for: .mobile),
+            sourceByte: 0x59
+        )
+        let transcript = try pairingTranscript(for: begun, fixture: fixture)
+        _ = try await pairing.provePairingClaim(
+            ProveHostPairingClaimRequest(
+                claimID: begun.response.claimID,
+                claimantToken: begun.response.claimantToken,
+                clientSignature: try transcript.signClientProof(using: fixture.deviceKey)
+            )
+        )
+        let approval = HarcLocalPairingApprovalService(
+            store: store,
+            issuer: TestPairingIssuer()
+        )
+        let pending = try await approval.pendingClaim(begun.response.claimID)
+        #expect(pending.requiresTransportTrustRepair)
+        let repairedGrant = try await approval.approve(begun.response.claimID)
+        #expect(repairedGrant.claims.grantEpoch == (try initial.grantEpoch.next()))
+        #expect(try await store.deviceRequiresTransportTrustRepair(
+            deviceID: fixture.deviceID
+        ) == false)
+
+        _ = try await openSession(
+            service: sessions,
+            fixture: fixture,
+            grant: repairedGrant.claims
+        )
+    }
+
     @Test("session proof is single-use, persists only a token binding, and survives restart")
     func sessionLifecycleAndRestart() async throws {
         let fixture = HostTestFixture()
@@ -553,12 +683,46 @@ struct PairingSessionServiceTests {
                 grant,
                 exactGrantBytes: Data("signed-grant".utf8)
             )
-            let service = HarcSessionService(store: store)
+            let service = HarcSessionService(
+                store: store,
+                protocolBoundary: sessionProtocolBoundary(
+                    capabilityPolicy: try sessionCapabilityPolicy()
+                )
+            )
             opened = try await openSession(
                 service: service,
                 fixture: fixture,
                 grant: grant,
                 inspectChallenge: { challengeID in
+                    let challenge = try await store.dbQueue.read {
+                        db -> (Data?, Data?, String?, String?, Int64, Int64) in
+                        let row = try #require(try Row.fetchOne(
+                            db,
+                            sql: """
+                                SELECT exact_capabilities_bytes,
+                                       capabilities_sha256,
+                                       selected_codec, selected_container,
+                                       protocol_major, protocol_minor
+                                FROM session_challenges
+                                WHERE challenge_id = ?
+                            """,
+                            arguments: [challengeID.uuidString.lowercased()]
+                        ))
+                        return (
+                            row["exact_capabilities_bytes"] as Data?,
+                            row["capabilities_sha256"] as Data?,
+                            row["selected_codec"] as String?,
+                            row["selected_container"] as String?,
+                            row["protocol_major"] as Int64,
+                            row["protocol_minor"] as Int64
+                        )
+                    }
+                    #expect(challenge.0 == nil)
+                    #expect(challenge.1 == nil)
+                    #expect(challenge.2 == nil)
+                    #expect(challenge.3 == nil)
+                    #expect(challenge.4 == 1)
+                    #expect(challenge.5 == 0)
                     await #expect(throws: DatabaseError.self) {
                         try await store.dbQueue.write { db in
                             try db.execute(
@@ -629,11 +793,86 @@ struct PairingSessionServiceTests {
             capacityProvider: FixedHostVolumeCapacityProvider(),
             now: clock.read
         )
-        let authenticated = try await HarcSessionService(store: reopened).authenticate(
+        let authenticated = try await HarcSessionService(
+            store: reopened,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        ).authenticate(
             credential: opened.opened.credential,
             tlsSPKISHA256: opened.tlsSPKISHA256
         )
         #expect(authenticated.context.authenticatedDeviceID == fixture.deviceID)
+    }
+
+    @Test("OpenSession, not BeginSession, validates the exact negotiated capability payload")
+    func openSessionOwnsCapabilityValidation() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try await HarcHostStore.inMemory(
+            stagingRoot: directory,
+            metadata: fixture.metadata,
+            capacityProvider: FixedHostVolumeCapacityProvider(),
+            now: { fixture.beganAt.addingTimeInterval(10) }
+        )
+        let grant = try fixture.grant()
+        try await store.seedDeviceGrantForTesting(
+            grant,
+            exactGrantBytes: Data("signed-grant".utf8)
+        )
+        let productionOnlyPolicy = try HarcCapabilityPolicyV1(
+            compatibility: HarcProtobufCompatibilityPolicy(
+                versionPolicy: .currentV1,
+                supportedRequiredFeatures: ["transfer.chunk.v1"]
+            ),
+            supportedFeatureIDs: ["capture.gaps.v1", "transfer.chunk.v1"],
+            supportedDescriptorSchemaIDs: ["harc.chunk-descriptor.v1"],
+            supportedEncodings: [.cafALAC]
+        )
+        let service = HarcSessionService(
+            store: store,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: productionOnlyPolicy
+            )
+        )
+        let begin = try await service.beginSession(
+            BeginHostSessionRequest(
+                claimedDeviceID: fixture.deviceID,
+                grantID: grant.grantID,
+                source: try source(0x54),
+                tlsSPKISHA256: tlsSPKISHA256
+            )
+        )
+        let capabilities = try sessionCapabilities()
+        let clientNonce = Data(repeating: 0x55, count: 32)
+        let transcript = try SessionTranscriptV1(
+            protocolVersion: sessionProtocolVersion,
+            libraryID: fixture.libraryID,
+            hostAuthorityID: fixture.hostKey.publicKey.hostAuthorityID,
+            tlsSPKISHA256: tlsSPKISHA256,
+            deviceID: fixture.deviceID,
+            grantID: grant.grantID.rawValue,
+            grantEpoch: grant.grantEpoch.rawValue,
+            challengeID: begin.challengeID,
+            serverNonce: begin.serverNonce,
+            clientNonce: clientNonce,
+            capabilitiesSHA256: capabilities.sha256
+        )
+        let request = try OpenHostSessionRequest(
+            challengeID: begin.challengeID,
+            clientNonce: clientNonce,
+            exactCapabilitiesBytes: capabilities.exactBytes,
+            capabilitiesSHA256: capabilities.sha256,
+            clientSignature: transcript.signClientProof(using: fixture.deviceKey),
+            tlsSPKISHA256: tlsSPKISHA256
+        )
+
+        await #expect(throws: HarcHostError.sessionProofRejected) {
+            _ = try await service.openSession(request)
+        }
+        #expect(try await challengeCount(store: store) == 0)
+        #expect(try await tokenCount(store: store) == 0)
     }
 
     @Test("session limits use device/source identity and challenges expire immediately")
@@ -653,16 +892,19 @@ struct PairingSessionServiceTests {
             grant,
             exactGrantBytes: Data("grant".utf8)
         )
-        let service = HarcSessionService(store: store)
-        let capabilities = try sessionCapabilities()
+        let service = HarcSessionService(
+            store: store,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        )
         for _ in 0..<HarcSessionService.maximumOutstandingChallenges {
             _ = try await service.beginSession(
                 BeginHostSessionRequest(
                     claimedDeviceID: fixture.deviceID,
                     grantID: .random(),
                     source: try source(0x61),
-                    tlsSPKISHA256: tlsSPKISHA256,
-                    capabilities: capabilities
+                    tlsSPKISHA256: tlsSPKISHA256
                 )
             )
         }
@@ -672,8 +914,7 @@ struct PairingSessionServiceTests {
                     claimedDeviceID: fixture.deviceID,
                     grantID: .random(),
                     source: try source(0x61),
-                    tlsSPKISHA256: tlsSPKISHA256,
-                    capabilities: capabilities
+                    tlsSPKISHA256: tlsSPKISHA256
                 )
             )
         }
@@ -701,7 +942,12 @@ struct PairingSessionServiceTests {
             expiryGrant,
             exactGrantBytes: Data("expiry-grant".utf8)
         )
-        let expiryService = HarcSessionService(store: expiryStore)
+        let expiryService = HarcSessionService(
+            store: expiryStore,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        )
         let expiring = try await openSession(
             service: expiryService,
             fixture: fixture,
@@ -741,7 +987,12 @@ struct PairingSessionServiceTests {
             revokeGrant,
             exactGrantBytes: Data("revoke-grant".utf8)
         )
-        let revokeService = HarcSessionService(store: revokeStore)
+        let revokeService = HarcSessionService(
+            store: revokeStore,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        )
         let revoked = try await openSession(
             service: revokeService,
             fixture: revokedFixture,
@@ -800,13 +1051,17 @@ struct PairingSessionServiceTests {
                 ]
             )
         }
-        let response = try await HarcSessionService(store: store).beginSession(
+        let response = try await HarcSessionService(
+            store: store,
+            protocolBoundary: sessionProtocolBoundary(
+                capabilityPolicy: try sessionCapabilityPolicy()
+            )
+        ).beginSession(
             BeginHostSessionRequest(
                 claimedDeviceID: fixture.deviceID,
                 grantID: grant.grantID,
                 source: try source(0x71),
-                tlsSPKISHA256: tlsSPKISHA256,
-                capabilities: try sessionCapabilities()
+                tlsSPKISHA256: tlsSPKISHA256
             )
         )
         let admitted = try await store.dbQueue.read { db in
@@ -841,7 +1096,8 @@ struct PairingSessionServiceTests {
                 ticketID: ticketID,
                 ticketSecretBindingSHA256: try HostPairingSecretBinding.sha256(
                     ticketID: ticketID,
-                    secret: ticketSecret
+                    secret: ticketSecret,
+                    using: pairingProtocolBoundary()
                 ),
                 issuedAt: now.addingTimeInterval(-1),
                 expiresAt: now.addingTimeInterval(119)
@@ -892,7 +1148,8 @@ struct PairingSessionServiceTests {
             hostNonce: begun.response.hostNonce,
             ticketSecretBindingSHA256: try HostPairingSecretBinding.sha256(
                 ticketID: begun.ticketID,
-                secret: begun.ticketSecret
+                secret: begun.ticketSecret,
+                using: pairingProtocolBoundary()
             ),
             requestedScopes: begun.scopes
         )
@@ -921,8 +1178,7 @@ struct PairingSessionServiceTests {
                 claimedDeviceID: fixture.deviceID,
                 grantID: grant.grantID,
                 source: try source(0x50),
-                tlsSPKISHA256: tlsSPKISHA256,
-                capabilities: capabilities
+                tlsSPKISHA256: tlsSPKISHA256
             )
         )
         try await inspectChallenge?(begin.challengeID)
@@ -960,12 +1216,38 @@ struct PairingSessionServiceTests {
     }
 
     private func sessionCapabilities() throws -> HostNegotiatedSessionCapabilities {
-        try HostNegotiatedSessionCapabilities(
-            exactBytes: Data("fixture-negotiated-capabilities-v1".utf8),
+        let exactBytes = try #require(Data(
+            base64Encoded: "ChcIARoTChF0cmFuc2Zlci5jaHVuay52MRIPY2FwdHVyZS5nYXBzLnYxEhF0cmFuc2Zlci5jaHVuay52MRoYaGFyYy5jaHVuay1kZXNjcmlwdG9yLnYxIgQIAxADKgcIgH0QARgB"
+        ))
+        return try HostNegotiatedSessionCapabilities(
+            exactBytes: exactBytes,
             protocolMinor: 0,
             selectedCodec: "raw-pcm-s16le-fixture",
             selectedContainer: "raw-pcm-fixture"
         )
+    }
+
+    private func sessionCapabilityPolicy() throws -> HarcCapabilityPolicyV1 {
+        try HarcCapabilityPolicyV1(
+            compatibility: HarcProtobufCompatibilityPolicy(
+                versionPolicy: .currentV1,
+                supportedRequiredFeatures: ["transfer.chunk.v1"]
+            ),
+            supportedFeatureIDs: ["capture.gaps.v1", "transfer.chunk.v1"],
+            supportedDescriptorSchemaIDs: ["harc.chunk-descriptor.v1"],
+            supportedEncodings: [.rawPCMFixture],
+            allowRawPCMFixture: true
+        )
+    }
+
+    private func pairingProtocolBoundary() throws -> TestPairingProtocolBoundary {
+        try TestPairingProtocolBoundary()
+    }
+
+    private func sessionProtocolBoundary(
+        capabilityPolicy: HarcCapabilityPolicyV1
+    ) -> TestSessionProtocolBoundary {
+        TestSessionProtocolBoundary(capabilityPolicy: capabilityPolicy)
     }
 
     private func source(_ byte: UInt8) throws -> HostPreauthenticationSource {
@@ -975,6 +1257,9 @@ struct PairingSessionServiceTests {
     }
 
     private var tlsSPKISHA256: Data { Data(repeating: 0x44, count: 32) }
+    private var sessionProtocolVersion: HarcProtocolVersion {
+        HarcProtocolVersion(major: 1, minor: 0)
+    }
 
     // MARK: - Durable assertions
 
@@ -1013,6 +1298,123 @@ struct PairingSessionServiceTests {
         try await store.dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM session_tokens") ?? 0
         }
+    }
+}
+
+private struct TestPairingProtocolBoundary:
+    HostPairingAuthenticationProtocolBoundary
+{
+    private let sasDictionary: HarcSASDictionaryV1
+
+    init() throws {
+        sasDictionary = try .bundled()
+    }
+
+    func pairingTicketSecretBindingSHA256(
+        ticketID: UUID,
+        secret: Data
+    ) throws -> Data {
+        try PairingTicketV1.ticketSecretBindingSHA256(
+            ticketID: ticketID,
+            secret: secret
+        )
+    }
+
+    func validatePairingProofAndDeriveSAS(
+        _ input: HostPairingProofValidationInput
+    ) throws -> HostPairingProofResult {
+        let transcript = try PairingTranscriptV1(
+            protocolVersion: HarcProtocolVersion(
+                major: input.protocolMajor,
+                minor: input.protocolMinor
+            ),
+            ticketID: input.ticketID,
+            claimID: input.claimID,
+            libraryID: input.libraryID,
+            hostAuthorityID: input.hostAuthorityID,
+            hostAuthorityPublicKey: input.hostAuthorityPublicKey,
+            tlsSPKISHA256: input.tlsSPKISHA256,
+            deviceID: input.deviceID,
+            devicePublicKey: input.devicePublicKey,
+            clientNonce: input.clientNonce,
+            hostNonce: input.hostNonce,
+            ticketSecretBindingSHA256: input.ticketSecretBindingSHA256,
+            requestedScopes: input.requestedScopes
+        )
+        try transcript.verifyClientProof(input.clientSignature)
+        let phrase = try sasDictionary.phrase(
+            for: transcript,
+            clientSignature: input.clientSignature
+        )
+        return try HostPairingProofResult(
+            sasDigest: phrase.digest,
+            sasWordIndexes: phrase.indexes.map(UInt16.init),
+            sasWords: phrase.words
+        )
+    }
+}
+
+private struct TestSessionProtocolBoundary:
+    HostSessionAuthenticationProtocolBoundary
+{
+    let capabilityPolicy: HarcCapabilityPolicyV1
+
+    func validateProtocolVersion(major: UInt16, minor: UInt16) throws {
+        try capabilityPolicy.compatibility.versionPolicy.validate(
+            HarcProtocolVersion(major: major, minor: minor)
+        )
+    }
+
+    func validateNegotiatedCapabilities(
+        exactBytes: Data,
+        expectedSHA256: Data,
+        protocolMajor: UInt16,
+        protocolMinor: UInt16
+    ) throws -> HostNegotiatedSessionCapabilities {
+        let validated = try HarcValidatedNegotiatedCapabilitiesV1(
+            decoding: exactBytes,
+            expectedSHA256: expectedSHA256,
+            policy: capabilityPolicy
+        )
+        guard validated.protocolVersion.major == protocolMajor,
+              validated.protocolVersion.minor == protocolMinor else {
+            throw HarcProtocolCodecError.headerPayloadMismatch(
+                field: "negotiatedCapabilities.protocol"
+            )
+        }
+        return try HostNegotiatedSessionCapabilities(
+            exactBytes: validated.exactPayload.exactBytes,
+            sha256: validated.exactSHA256,
+            protocolMajor: validated.protocolVersion.major,
+            protocolMinor: validated.protocolVersion.minor,
+            selectedCodec: validated.encoding.codec.rawValue,
+            selectedContainer: validated.encoding.container.rawValue
+        )
+    }
+
+    func validateSessionProof(
+        _ input: HostSessionProofValidationInput
+    ) throws {
+        let transcript = try SessionTranscriptV1(
+            protocolVersion: HarcProtocolVersion(
+                major: input.protocolMajor,
+                minor: input.protocolMinor
+            ),
+            libraryID: input.libraryID,
+            hostAuthorityID: input.hostAuthorityID,
+            tlsSPKISHA256: input.tlsSPKISHA256,
+            deviceID: input.deviceID,
+            grantID: input.grantID.rawValue,
+            grantEpoch: input.grantEpoch.rawValue,
+            challengeID: input.challengeID,
+            serverNonce: input.serverNonce,
+            clientNonce: input.clientNonce,
+            capabilitiesSHA256: input.capabilitiesSHA256
+        )
+        try transcript.verifyClientProof(
+            input.clientSignature,
+            using: input.devicePublicKey
+        )
     }
 }
 

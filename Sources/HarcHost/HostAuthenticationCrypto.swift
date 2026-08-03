@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 import HarcDomain
-import HarcProtocol
 
 enum HostAuthenticationCrypto {
     private static let pairingClaimTokenDomain = Data(
@@ -11,16 +10,6 @@ enum HostAuthenticationCrypto {
     private static let preauthenticationSubjectDomain = Data(
         "HARC-PREAUTH-SUBJECT-V1\0".utf8
     )
-
-    static func pairingTicketBinding(ticketID: UUID, secret: Data) throws -> Data {
-        guard secret.count == 24 else {
-            throw HarcHostError.invalidAuthenticationInput("pairing ticket secret")
-        }
-        return try PairingTicketV1.ticketSecretBindingSHA256(
-            ticketID: ticketID,
-            secret: secret
-        )
-    }
 
     static func pairingClaimTokenBinding(claimID: UUID, token: Data) throws -> Data {
         guard token.count == SHA256.Digest.byteCount else {
@@ -81,8 +70,12 @@ enum HostAuthenticationRetention {
 /// Shared with the future QR controller without exposing the rest of the
 /// authentication implementation surface.
 public enum HostPairingSecretBinding {
-    public static func sha256(ticketID: UUID, secret: Data) throws -> Data {
-        try HostAuthenticationCrypto.pairingTicketBinding(
+    public static func sha256(
+        ticketID: UUID,
+        secret: Data,
+        using boundary: any HostPairingTicketBindingBoundary
+    ) throws -> Data {
+        try boundary.pairingTicketSecretBindingSHA256(
             ticketID: ticketID,
             secret: secret
         )

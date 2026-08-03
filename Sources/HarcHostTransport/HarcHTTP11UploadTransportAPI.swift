@@ -1,5 +1,7 @@
 #if canImport(Network)
 import Foundation
+import HarcHost
+import Network
 import NIOCore
 import NIOFoundationCompat
 import NIOHTTP1
@@ -13,6 +15,20 @@ public enum HarcHTTP11UploadTransportAPI {
     public typealias ResponseHead = HTTPResponseHead
 
     public static let requiredALPN = HarcTLSListenerProtocol.backgroundUploadHTTP1.rawValue
+
+    /// Creates the independent TLS 1.3/http/1.1 listener by consuming the
+    /// resident generation's upload-role lease at bind time.
+    package static func makeListener(
+        lease: HostTransportListenerLease,
+        port: NWEndpoint.Port
+    ) async throws -> NWListener {
+        let material = try await lease.consume(for: .backgroundUpload)
+        let parameters = try await HarcNetworkTLS13Policy.serverParameters(
+            material: material,
+            protocol: .backgroundUploadHTTP1
+        )
+        return try NWListener(using: parameters, on: port)
+    }
 
     public static func listenerBootstrap(
         eventLoopGroup: any EventLoopGroup
