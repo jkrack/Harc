@@ -573,6 +573,7 @@ extension HarcHostStore {
                     try self.consumePairingTicket(
                         ticketID,
                         reservedFor: grant.deviceID,
+                        exactGrantBytes: exactBytes,
                         in: db,
                         at: appliedTime
                     )
@@ -591,11 +592,20 @@ extension HarcHostStore {
                         """,
                     arguments: [appliedTime, grant.deviceID.rawBytes]
                 )
+                try db.execute(
+                    sql: """
+                        UPDATE session_tokens
+                        SET invalidated_at = ?, invalidation_reason = 'grant-replaced'
+                        WHERE device_id = ? AND invalidated_at IS NULL
+                        """,
+                    arguments: [appliedTime, grant.deviceID.rawBytes]
+                )
             case .readoptGrant(let entry, let grant, let exactBytes, let ticketID):
                 try self.persist(entry: entry, grant: grant, exactGrantBytes: exactBytes, in: db, at: appliedTime)
                 try self.consumePairingTicket(
                     ticketID,
                     reservedFor: grant.deviceID,
+                    exactGrantBytes: exactBytes,
                     in: db,
                     at: appliedTime
                 )
@@ -608,6 +618,14 @@ extension HarcHostStore {
                         UPDATE background_capabilities
                         SET state = 'grant-replaced', invalidated_at = ?
                         WHERE owner_device_id = ? AND invalidated_at IS NULL
+                        """,
+                    arguments: [appliedTime, grant.deviceID.rawBytes]
+                )
+                try db.execute(
+                    sql: """
+                        UPDATE session_tokens
+                        SET invalidated_at = ?, invalidation_reason = 'readopted'
+                        WHERE device_id = ? AND invalidated_at IS NULL
                         """,
                     arguments: [appliedTime, grant.deviceID.rawBytes]
                 )
@@ -641,6 +659,14 @@ extension HarcHostStore {
                     sql: "UPDATE background_capabilities SET state = 'revoked', invalidated_at = ? WHERE owner_device_id = ? AND invalidated_at IS NULL",
                     arguments: [appliedTime, revocation.deviceID.rawBytes]
                 )
+                try db.execute(
+                    sql: """
+                        UPDATE session_tokens
+                        SET invalidated_at = ?, invalidation_reason = 'revoked'
+                        WHERE device_id = ? AND invalidated_at IS NULL
+                        """,
+                    arguments: [appliedTime, revocation.deviceID.rawBytes]
+                )
             }
 
             try db.execute(
@@ -663,6 +689,7 @@ extension HarcHostStore {
     nonisolated private func consumePairingTicket(
         _ ticketID: UUID,
         reservedFor deviceID: DeviceID,
+        exactGrantBytes: Data,
         in db: Database,
         at appliedTime: Double
     ) throws {
@@ -680,6 +707,62 @@ extension HarcHostStore {
         )
         guard db.changesCount == 1 else {
             throw HarcHostError.securityRegistryPendingMismatch
+        }
+
+        // PR 6 claim approval and exact grant delivery are part of this same
+        // final security-journal transaction. Recovery after a process death
+        // therefore cannot consume the ticket without also making status
+        // terminal and deliverable. Legacy PR 3 placeholder tickets have no
+        // protocol-state-v1 attempt and remain supported by existing callers.
+        let v1Attempt = try Row.fetchOne(
+            db,
+            sql: """
+                SELECT claim_id, device_id, device_label, state
+                FROM pairing_attempts
+                WHERE ticket_id = ? AND protocol_state_version = 1
+                """,
+            arguments: [ticketID.uuidString.lowercased()]
+        )
+        if let v1Attempt {
+            guard v1Attempt["device_id"] as Data == deviceID.rawBytes,
+                  v1Attempt["state"] as String
+                    == PairingAttemptState.awaitingApproval.rawValue,
+                  let deviceLabel = v1Attempt["device_label"] as String?,
+                  !deviceLabel.isEmpty else {
+                throw HarcHostError.securityRegistryPendingMismatch
+            }
+
+            // The normalized claimed label is immutable claim state. Copy it
+            // into the registry in this same final transaction so a crash can
+            // expose neither a consumed ticket without a label nor a renamed
+            // device before its grant/readoption becomes durable.
+            try db.execute(
+                sql: "UPDATE devices SET label = ?, updated_at = ? WHERE device_id = ?",
+                arguments: [deviceLabel, appliedTime, deviceID.rawBytes]
+            )
+            guard db.changesCount == 1 else {
+                throw HarcHostError.securityRegistryPendingMismatch
+            }
+
+            try db.execute(
+                sql: """
+                    UPDATE pairing_attempts
+                    SET state = 'approved', exact_grant_bytes = ?,
+                        terminal_at = ?, updated_at = ?
+                    WHERE ticket_id = ? AND protocol_state_version = 1
+                      AND device_id = ? AND state = 'awaitingApproval'
+                    """,
+                arguments: [
+                    exactGrantBytes,
+                    appliedTime,
+                    appliedTime,
+                    ticketID.uuidString.lowercased(),
+                    deviceID.rawBytes,
+                ]
+            )
+            guard db.changesCount == 1 else {
+                throw HarcHostError.securityRegistryPendingMismatch
+            }
         }
     }
 

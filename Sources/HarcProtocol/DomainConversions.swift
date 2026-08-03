@@ -235,6 +235,21 @@ public extension Harc_V1_GrantIDV1 {
     func domainValue() throws -> GrantID { GrantID(try harcUUIDFromWire(value, field: "grantID")) }
 }
 
+public extension Harc_V1_TicketIDV1 {
+    init(_ value: UUID) { self.init(); self.value = harcUUIDBytesForWire(value) }
+    func validatedUUID() throws -> UUID { try harcUUIDFromWire(value, field: "ticketID") }
+}
+
+public extension Harc_V1_ClaimIDV1 {
+    init(_ value: UUID) { self.init(); self.value = harcUUIDBytesForWire(value) }
+    func validatedUUID() throws -> UUID { try harcUUIDFromWire(value, field: "claimID") }
+}
+
+public extension Harc_V1_ChallengeIDV1 {
+    init(_ value: UUID) { self.init(); self.value = harcUUIDBytesForWire(value) }
+    func validatedUUID() throws -> UUID { try harcUUIDFromWire(value, field: "challengeID") }
+}
+
 public extension Harc_V1_CanonicalRecordingIDV1 {
     init(_ value: CanonicalRecordingID) { self.init(); self.value = harcUUIDBytesForWire(value.rawValue) }
     func domainValue() throws -> CanonicalRecordingID {

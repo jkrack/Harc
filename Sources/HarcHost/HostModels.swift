@@ -666,6 +666,14 @@ public enum HarcHostError: Error, Equatable, Sendable {
     case invalidOperationID
     case invalidOperationSigner
     case invalidPairingTransition
+    case invalidAuthenticationInput(String)
+    case pairingClaimRejected
+    case pairingProofRejected
+    case pairingClaimNotAwaitingApproval
+    case pairingGrantMismatch
+    case sessionAdmissionRejected
+    case sessionProofRejected
+    case sessionCredentialRejected
     case localOSAuthenticationRequired
     case securityMutationAlreadyPending
     case securityRegistryTransitionInProgress
@@ -734,6 +742,14 @@ extension HarcHostError: LocalizedError {
         case .invalidOperationID: "Operation IDs must be nonzero UUIDs."
         case .invalidOperationSigner: "A host operation signer must match the key's host authority."
         case .invalidPairingTransition: "The pairing placeholder transition is invalid."
+        case .invalidAuthenticationInput(let field): "Invalid authentication input: \(field)."
+        case .pairingClaimRejected: "The pairing claim could not be accepted."
+        case .pairingProofRejected: "The pairing proof could not be verified."
+        case .pairingClaimNotAwaitingApproval: "The pairing claim is not awaiting local approval."
+        case .pairingGrantMismatch: "The locally issued grant does not match the immutable pairing claim."
+        case .sessionAdmissionRejected: "The session challenge could not be admitted."
+        case .sessionProofRejected: "The session proof could not be verified."
+        case .sessionCredentialRejected: "The session credential is invalid or no longer current."
         case .localOSAuthenticationRequired: "Same-key re-adoption requires successful local OS user authentication."
         case .securityMutationAlreadyPending: "A security-registry mutation is already pending."
         case .securityRegistryTransitionInProgress: "A security-registry transition is in progress; retry after it completes."

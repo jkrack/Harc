@@ -13,6 +13,8 @@ let package = Package(
         .library(name: "HarcProtocol", targets: ["HarcProtocol"]),
         .library(name: "HarcClientStore", targets: ["HarcClientStore"]),
         .library(name: "HarcHost", targets: ["HarcHost"]),
+        .library(name: "HarcHostTransport", targets: ["HarcHostTransport"]),
+        .library(name: "HarcClientTransport", targets: ["HarcClientTransport"]),
         .library(name: "HarcAudio", targets: ["HarcAudio"]),
         .library(name: "HarcClient", targets: ["HarcClient"]),
         .library(name: "HarcStore", targets: ["HarcStore"]),
@@ -63,9 +65,25 @@ let package = Package(
             exact: "2.4.1"
         ),
         .package(
+            url: "https://github.com/grpc/grpc-swift-nio-transport.git",
+            exact: "2.9.0"
+        ),
+        .package(
             url: "https://github.com/apple/swift-protobuf.git",
             exact: "1.38.1",
             traits: []
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio.git",
+            exact: "2.99.0"
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio-transport-services.git",
+            exact: "1.28.0"
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio-ssl.git",
+            exact: "2.37.2"
         ),
     ],
     targets: [
@@ -124,9 +142,48 @@ let package = Package(
             dependencies: [
                 "HarcDomain",
                 "HarcIdentity",
+                "HarcProtocol",
                 "HarcStore",
                 "HarcTransfer",
                 .product(name: "GRDB", package: "GRDB.swift"),
+            ],
+            exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcHostTransport",
+            dependencies: [
+                "HarcHost",
+                "HarcProtocol",
+                .product(
+                    name: "GRPCNIOTransportHTTP2TransportServices",
+                    package: "grpc-swift-nio-transport"
+                ),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOFoundationCompat", package: "swift-nio"),
+                .product(
+                    name: "NIOTransportServices",
+                    package: "swift-nio-transport-services"
+                ),
+            ],
+            exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcClientTransport",
+            dependencies: [
+                "HarcProtocol",
+                "HarcIdentity",
+                "HarcTransfer",
+                .product(
+                    name: "GRPCNIOTransportHTTP2TransportServices",
+                    package: "grpc-swift-nio-transport"
+                ),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(
+                    name: "NIOTransportServices",
+                    package: "swift-nio-transport-services"
+                ),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
             ],
             exclude: ["README.md"]
         ),
@@ -247,9 +304,31 @@ let package = Package(
                 "HarcHost",
                 "HarcDomain",
                 "HarcIdentity",
+                "HarcProtocol",
                 "HarcStore",
                 "HarcTransfer",
                 .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .testTarget(
+            name: "HarcHostTransportTests",
+            dependencies: [
+                "HarcHostTransport",
+                .product(
+                    name: "GRPCNIOTransportHTTP2TransportServices",
+                    package: "grpc-swift-nio-transport"
+                ),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+            ]
+        ),
+        .testTarget(
+            name: "HarcClientTransportTests",
+            dependencies: [
+                "HarcClientTransport",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
             ]
         ),
         .testTarget(

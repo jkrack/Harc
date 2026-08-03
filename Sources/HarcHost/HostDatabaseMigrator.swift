@@ -587,6 +587,372 @@ public extension DatabaseMigrator {
                 """)
         }
 
+        // PR 6 replaces the pairing placeholders with durable claim state and
+        // adds the short-lived challenge/session journal. Bearer secrets are
+        // never persisted: every token column contains a domain-separated
+        // SHA-256 binding. Legacy placeholder attempts remain version 0 and
+        // are intentionally ineligible for the protocol service.
+        migrator.registerMigration("v4_pairing_and_sessions") { db in
+            try db.execute(sql: """
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN protocol_state_version INTEGER NOT NULL DEFAULT 0
+                        CHECK (protocol_state_version IN (0, 1));
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN device_public_key_x963 BLOB
+                        CHECK (device_public_key_x963 IS NULL
+                            OR length(device_public_key_x963) = 65);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN device_label TEXT;
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN client_nonce BLOB
+                        CHECK (client_nonce IS NULL OR length(client_nonce) = 32);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN host_nonce BLOB
+                        CHECK (host_nonce IS NULL OR length(host_nonce) = 32);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN tls_spki_sha256 BLOB
+                        CHECK (tls_spki_sha256 IS NULL OR length(tls_spki_sha256) = 32);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN host_authority_public_key_x963 BLOB
+                        CHECK (host_authority_public_key_x963 IS NULL
+                            OR length(host_authority_public_key_x963) = 65);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN protocol_major INTEGER
+                        CHECK (protocol_major IS NULL
+                            OR protocol_major BETWEEN 0 AND 65535);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN protocol_minor INTEGER
+                        CHECK (protocol_minor IS NULL
+                            OR protocol_minor BETWEEN 0 AND 65535);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN proof_signature_raw BLOB
+                        CHECK (proof_signature_raw IS NULL
+                            OR length(proof_signature_raw) = 64);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN sas_digest BLOB
+                        CHECK (sas_digest IS NULL OR length(sas_digest) = 32);
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN sas_word_indexes_json BLOB;
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN sas_words_json BLOB;
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN proof_verified_at REAL;
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN exact_grant_bytes BLOB;
+                ALTER TABLE pairing_attempts
+                    ADD COLUMN terminal_at REAL;
+
+                CREATE UNIQUE INDEX pairing_attempts_one_v1_claim_per_ticket
+                    ON pairing_attempts(ticket_id)
+                    WHERE protocol_state_version = 1;
+                CREATE INDEX pairing_attempts_state_expiry
+                    ON pairing_attempts(state, expires_at, claim_id);
+
+                CREATE TRIGGER pairing_attempts_v1_validate_insert
+                BEFORE INSERT ON pairing_attempts
+                FOR EACH ROW
+                WHEN NEW.protocol_state_version = 1 AND (
+                    NEW.claimant_token_binding_sha256 IS NULL
+                    OR NEW.requested_scopes_json IS NULL
+                    OR NEW.device_public_key_x963 IS NULL
+                    OR NEW.device_label IS NULL
+                    OR length(CAST(NEW.device_label AS BLOB)) NOT BETWEEN 1 AND 256
+                    OR NEW.client_nonce IS NULL
+                    OR NEW.host_nonce IS NULL
+                    OR NEW.tls_spki_sha256 IS NULL
+                    OR NEW.host_authority_public_key_x963 IS NULL
+                    OR NEW.protocol_major != 1
+                    OR NEW.protocol_minor IS NULL
+                    OR (
+                        NEW.state IN ('proofVerified', 'awaitingApproval', 'approved')
+                        AND (
+                            NEW.proof_signature_raw IS NULL
+                            OR NEW.sas_digest IS NULL
+                            OR NEW.sas_word_indexes_json IS NULL
+                            OR NEW.sas_words_json IS NULL
+                            OR NEW.proof_verified_at IS NULL
+                        )
+                    )
+                    OR (NEW.state = 'approved' AND NEW.exact_grant_bytes IS NULL)
+                    OR (NEW.state = 'approved' AND length(NEW.exact_grant_bytes) = 0)
+                    OR (
+                        NEW.state IN ('reserved', 'proofVerified', 'awaitingApproval')
+                        AND NEW.terminal_at IS NOT NULL
+                    )
+                    OR (
+                        NEW.state IN ('approved', 'denied', 'expired', 'cancelled')
+                        AND NEW.terminal_at IS NULL
+                    )
+                    OR (
+                        NEW.state = 'reserved'
+                        AND (
+                            NEW.proof_signature_raw IS NOT NULL
+                            OR NEW.sas_digest IS NOT NULL
+                            OR NEW.sas_word_indexes_json IS NOT NULL
+                            OR NEW.sas_words_json IS NOT NULL
+                            OR NEW.proof_verified_at IS NOT NULL
+                        )
+                    )
+                    OR (NEW.state != 'approved' AND NEW.exact_grant_bytes IS NOT NULL)
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid v1 pairing attempt');
+                END;
+
+                CREATE TRIGGER pairing_attempts_v1_validate_update
+                BEFORE UPDATE ON pairing_attempts
+                FOR EACH ROW
+                WHEN (OLD.protocol_state_version = 1
+                      OR NEW.protocol_state_version = 1) AND (
+                    NEW.claimant_token_binding_sha256 IS NULL
+                    OR NEW.requested_scopes_json IS NULL
+                    OR NEW.device_public_key_x963 IS NULL
+                    OR NEW.device_label IS NULL
+                    OR length(CAST(NEW.device_label AS BLOB)) NOT BETWEEN 1 AND 256
+                    OR NEW.client_nonce IS NULL
+                    OR NEW.host_nonce IS NULL
+                    OR NEW.tls_spki_sha256 IS NULL
+                    OR NEW.host_authority_public_key_x963 IS NULL
+                    OR NEW.protocol_major != 1
+                    OR NEW.protocol_minor IS NULL
+                    OR NEW.device_id IS NOT OLD.device_id
+                    OR NEW.device_public_key_x963 IS NOT OLD.device_public_key_x963
+                    OR NEW.device_label IS NOT OLD.device_label
+                    OR NEW.requested_scopes_json IS NOT OLD.requested_scopes_json
+                    OR NEW.client_nonce IS NOT OLD.client_nonce
+                    OR NEW.host_nonce IS NOT OLD.host_nonce
+                    OR NEW.tls_spki_sha256 IS NOT OLD.tls_spki_sha256
+                    OR NEW.host_authority_public_key_x963
+                        IS NOT OLD.host_authority_public_key_x963
+                    OR NEW.protocol_major IS NOT OLD.protocol_major
+                    OR NEW.protocol_minor IS NOT OLD.protocol_minor
+                    OR NEW.claimant_token_binding_sha256
+                        IS NOT OLD.claimant_token_binding_sha256
+                    OR NEW.claim_id IS NOT OLD.claim_id
+                    OR NEW.ticket_id IS NOT OLD.ticket_id
+                    OR NEW.protocol_state_version IS NOT OLD.protocol_state_version
+                    OR NEW.created_at IS NOT OLD.created_at
+                    OR NEW.expires_at IS NOT OLD.expires_at
+                    OR (
+                        OLD.proof_signature_raw IS NOT NULL
+                        AND NEW.proof_signature_raw IS NOT OLD.proof_signature_raw
+                    )
+                    OR (
+                        OLD.sas_digest IS NOT NULL
+                        AND NEW.sas_digest IS NOT OLD.sas_digest
+                    )
+                    OR (
+                        OLD.sas_word_indexes_json IS NOT NULL
+                        AND NEW.sas_word_indexes_json IS NOT OLD.sas_word_indexes_json
+                    )
+                    OR (
+                        OLD.sas_words_json IS NOT NULL
+                        AND NEW.sas_words_json IS NOT OLD.sas_words_json
+                    )
+                    OR (
+                        OLD.proof_verified_at IS NOT NULL
+                        AND NEW.proof_verified_at IS NOT OLD.proof_verified_at
+                    )
+                    OR (
+                        OLD.exact_grant_bytes IS NOT NULL
+                        AND NEW.exact_grant_bytes IS NOT OLD.exact_grant_bytes
+                    )
+                    OR (
+                        OLD.terminal_at IS NOT NULL
+                        AND NEW.terminal_at IS NOT OLD.terminal_at
+                    )
+                    OR NOT (
+                        NEW.state = OLD.state
+                        OR (
+                            OLD.state = 'reserved'
+                            AND NEW.state IN (
+                                'proofVerified', 'awaitingApproval',
+                                'expired', 'cancelled'
+                            )
+                        )
+                        OR (
+                            OLD.state = 'proofVerified'
+                            AND NEW.state IN (
+                                'awaitingApproval', 'expired', 'cancelled'
+                            )
+                        )
+                        OR (
+                            OLD.state = 'awaitingApproval'
+                            AND NEW.state IN (
+                                'approved', 'denied', 'expired', 'cancelled'
+                            )
+                        )
+                    )
+                    OR (
+                        NEW.state IN ('proofVerified', 'awaitingApproval', 'approved')
+                        AND (
+                            NEW.proof_signature_raw IS NULL
+                            OR NEW.sas_digest IS NULL
+                            OR NEW.sas_word_indexes_json IS NULL
+                            OR NEW.sas_words_json IS NULL
+                            OR NEW.proof_verified_at IS NULL
+                        )
+                    )
+                    OR (NEW.state = 'approved' AND NEW.exact_grant_bytes IS NULL)
+                    OR (NEW.state = 'approved' AND length(NEW.exact_grant_bytes) = 0)
+                    OR (
+                        NEW.state IN ('reserved', 'proofVerified', 'awaitingApproval')
+                        AND NEW.terminal_at IS NOT NULL
+                    )
+                    OR (
+                        NEW.state IN ('approved', 'denied', 'expired', 'cancelled')
+                        AND NEW.terminal_at IS NULL
+                    )
+                    OR (
+                        NEW.state = 'reserved'
+                        AND (
+                            NEW.proof_signature_raw IS NOT NULL
+                            OR NEW.sas_digest IS NOT NULL
+                            OR NEW.sas_word_indexes_json IS NOT NULL
+                            OR NEW.sas_words_json IS NOT NULL
+                            OR NEW.proof_verified_at IS NOT NULL
+                        )
+                    )
+                    OR (NEW.state != 'approved' AND NEW.exact_grant_bytes IS NOT NULL)
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid v1 pairing attempt');
+                END;
+
+                CREATE TABLE preauth_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation TEXT NOT NULL
+                        CHECK (operation IN ('pairingBegin', 'sessionBegin')),
+                    source_binding_sha256 BLOB NOT NULL
+                        CHECK (length(source_binding_sha256) = 32),
+                    subject_binding_sha256 BLOB NOT NULL
+                        CHECK (length(subject_binding_sha256) = 32),
+                    occurred_at REAL NOT NULL
+                );
+                CREATE INDEX preauth_attempts_window
+                    ON preauth_attempts(operation, source_binding_sha256,
+                        subject_binding_sha256, occurred_at);
+                CREATE TRIGGER preauth_attempts_immutable_update
+                BEFORE UPDATE ON preauth_attempts
+                BEGIN
+                    SELECT RAISE(ABORT, 'pre-auth attempt rows are immutable');
+                END;
+
+                CREATE TABLE session_challenges (
+                    challenge_id TEXT PRIMARY KEY,
+                    source_binding_sha256 BLOB NOT NULL
+                        CHECK (length(source_binding_sha256) = 32),
+                    subject_binding_sha256 BLOB NOT NULL
+                        CHECK (length(subject_binding_sha256) = 32),
+                    is_admitted INTEGER NOT NULL CHECK (is_admitted IN (0, 1)),
+                    device_id BLOB CHECK (device_id IS NULL OR length(device_id) = 32),
+                    grant_id TEXT,
+                    grant_epoch INTEGER CHECK (grant_epoch IS NULL OR grant_epoch > 0),
+                    device_public_key_x963 BLOB
+                        CHECK (device_public_key_x963 IS NULL
+                            OR length(device_public_key_x963) = 65),
+                    exact_grant_bytes BLOB NOT NULL CHECK (length(exact_grant_bytes) > 0),
+                    server_nonce BLOB NOT NULL CHECK (length(server_nonce) = 32),
+                    tls_spki_sha256 BLOB NOT NULL CHECK (length(tls_spki_sha256) = 32),
+                    exact_capabilities_bytes BLOB NOT NULL
+                        CHECK (length(exact_capabilities_bytes) BETWEEN 1 AND 65536),
+                    capabilities_sha256 BLOB NOT NULL
+                        CHECK (length(capabilities_sha256) = 32),
+                    protocol_major INTEGER NOT NULL CHECK (protocol_major = 1),
+                    protocol_minor INTEGER NOT NULL
+                        CHECK (protocol_minor BETWEEN 0 AND 65535),
+                    selected_codec TEXT NOT NULL
+                        CHECK (length(selected_codec) BETWEEN 1 AND 64),
+                    selected_container TEXT NOT NULL
+                        CHECK (length(selected_container) BETWEEN 1 AND 64),
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    CHECK (expires_at > created_at AND expires_at <= created_at + 30),
+                    CHECK (
+                        (is_admitted = 0 AND device_id IS NULL
+                            AND grant_id IS NULL AND grant_epoch IS NULL
+                            AND device_public_key_x963 IS NULL)
+                        OR
+                        (is_admitted = 1 AND device_id IS NOT NULL
+                            AND grant_id IS NOT NULL AND grant_epoch IS NOT NULL
+                            AND device_public_key_x963 IS NOT NULL)
+                    )
+                );
+                CREATE INDEX session_challenges_outstanding
+                    ON session_challenges(source_binding_sha256,
+                        subject_binding_sha256, expires_at);
+                CREATE TRIGGER session_challenges_immutable_update
+                BEFORE UPDATE ON session_challenges
+                BEGIN
+                    SELECT RAISE(ABORT, 'session challenge rows are immutable');
+                END;
+
+                CREATE TABLE session_tokens (
+                    token_id TEXT PRIMARY KEY,
+                    token_binding_sha256 BLOB NOT NULL
+                        CHECK (length(token_binding_sha256) = 32),
+                    device_id BLOB NOT NULL REFERENCES devices(device_id),
+                    grant_id TEXT NOT NULL,
+                    grant_epoch INTEGER NOT NULL CHECK (grant_epoch > 0),
+                    tls_spki_sha256 BLOB NOT NULL CHECK (length(tls_spki_sha256) = 32),
+                    exact_capabilities_bytes BLOB NOT NULL
+                        CHECK (length(exact_capabilities_bytes) BETWEEN 1 AND 65536),
+                    capabilities_sha256 BLOB NOT NULL
+                        CHECK (length(capabilities_sha256) = 32),
+                    protocol_major INTEGER NOT NULL CHECK (protocol_major = 1),
+                    protocol_minor INTEGER NOT NULL
+                        CHECK (protocol_minor BETWEEN 0 AND 65535),
+                    selected_codec TEXT NOT NULL
+                        CHECK (length(selected_codec) BETWEEN 1 AND 64),
+                    selected_container TEXT NOT NULL
+                        CHECK (length(selected_container) BETWEEN 1 AND 64),
+                    issued_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    invalidated_at REAL,
+                    invalidation_reason TEXT,
+                    CHECK (expires_at > issued_at AND expires_at <= issued_at + 1800),
+                    CHECK (
+                        (invalidated_at IS NULL AND invalidation_reason IS NULL)
+                        OR (invalidated_at IS NOT NULL
+                            AND invalidated_at >= issued_at
+                            AND length(invalidation_reason) > 0)
+                    )
+                );
+                CREATE INDEX session_tokens_device_grant
+                    ON session_tokens(device_id, grant_id, grant_epoch, expires_at);
+                CREATE INDEX session_tokens_expiry
+                    ON session_tokens(expires_at, invalidated_at);
+                CREATE TRIGGER session_tokens_validate_update
+                BEFORE UPDATE ON session_tokens
+                FOR EACH ROW
+                WHEN NEW.token_id IS NOT OLD.token_id
+                    OR NEW.token_binding_sha256 IS NOT OLD.token_binding_sha256
+                    OR NEW.device_id IS NOT OLD.device_id
+                    OR NEW.grant_id IS NOT OLD.grant_id
+                    OR NEW.grant_epoch IS NOT OLD.grant_epoch
+                    OR NEW.tls_spki_sha256 IS NOT OLD.tls_spki_sha256
+                    OR NEW.exact_capabilities_bytes
+                        IS NOT OLD.exact_capabilities_bytes
+                    OR NEW.capabilities_sha256 IS NOT OLD.capabilities_sha256
+                    OR NEW.protocol_major IS NOT OLD.protocol_major
+                    OR NEW.protocol_minor IS NOT OLD.protocol_minor
+                    OR NEW.selected_codec IS NOT OLD.selected_codec
+                    OR NEW.selected_container IS NOT OLD.selected_container
+                    OR NEW.issued_at IS NOT OLD.issued_at
+                    OR NEW.expires_at IS NOT OLD.expires_at
+                    OR (
+                        OLD.invalidated_at IS NOT NULL
+                        AND (
+                            NEW.invalidated_at IS NOT OLD.invalidated_at
+                            OR NEW.invalidation_reason IS NOT OLD.invalidation_reason
+                        )
+                    )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid session token update');
+                END;
+                """)
+        }
+
         return migrator
     }
 }

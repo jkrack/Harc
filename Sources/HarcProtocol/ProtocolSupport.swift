@@ -85,6 +85,7 @@ public enum HarcProtocolLimits {
     public static let pairingTransportObjectBytes = 768
     public static let pairingEndpoints = 4
     public static let pairingRequestedScopes = 8
+    public static let pairingDeviceLabelBytes = 256
     public static let pairingTranscriptBytes = 4 * 1_024
     public static let sessionTranscriptBytes = 265
     public static let transportEntries = 2

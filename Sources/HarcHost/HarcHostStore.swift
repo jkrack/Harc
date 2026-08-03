@@ -211,6 +211,7 @@ public actor HarcHostStore {
         try Self.ensureSafeStagingRoot(stagingRoot)
         try await initializeOrValidateMetadata()
         try await repairSecurityRegistryOnReopen()
+        try await pruneAuthenticationJournalOnReopen()
         try await validateUploadPersistenceOnReopen()
         try await reconcileStagingJournalOnReopen()
         try await pruneAuditEvents()
