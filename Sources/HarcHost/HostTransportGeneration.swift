@@ -92,6 +92,27 @@ package final class HostTransportListenerLease: @unchecked Sendable {
 
 /// The two listeners form one exposure unit. A generation boundary receives
 /// both one-shot leases and must either start both or expose neither.
+package struct HostTransportGenerationTerminationReporter: Sendable {
+    package let generationID: UUID
+
+    private let report: @Sendable () async -> Void
+
+    package init(
+        generationID: UUID,
+        report: @escaping @Sendable () async -> Void
+    ) {
+        self.generationID = generationID
+        self.report = report
+    }
+
+    /// Reports failure of this exact generation. The callback itself carries
+    /// the generation identity, so a transport cannot relabel a terminal event
+    /// with another generation's identifier.
+    package func reportUnexpectedTermination() async {
+        await report()
+    }
+}
+
 package struct HostTransportServingGeneration: Sendable {
     package let generationID: UUID
     package let transportEpoch: UInt64
@@ -100,6 +121,7 @@ package struct HostTransportServingGeneration: Sendable {
     package let hardStopAt: Date
     package let grpcControl: HostTransportListenerLease
     package let backgroundUpload: HostTransportListenerLease
+    package let terminationReporter: HostTransportGenerationTerminationReporter
 }
 
 package struct HostTransportGenerationStatus: Equatable, Sendable {

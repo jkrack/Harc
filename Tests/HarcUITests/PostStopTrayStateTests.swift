@@ -2,6 +2,27 @@ import Testing
 import Foundation
 @testable import HarcUI
 
+private actor ControlledPostStopSleep {
+    private var requested: Duration?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func sleep(for duration: Duration) async throws {
+        requested = duration
+        guard !isReleased else { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+        try Task.checkCancellation()
+    }
+
+    func requestedDuration() -> Duration? { requested }
+
+    func release() {
+        isReleased = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 @Suite("PostStopTrayState")
 @MainActor
 struct PostStopTrayStateTests {
@@ -60,12 +81,29 @@ struct PostStopTrayStateTests {
 
     @Test("auto-fades after the configured TTL")
     func autoFade() async throws {
-        let s = PostStopTrayState(visibleDuration: .milliseconds(50))
+        let controlledSleep = ControlledPostStopSleep()
+        let expectedDuration = Duration.milliseconds(50)
+        let s = PostStopTrayState(
+            visibleDuration: expectedDuration,
+            sleep: { duration in try await controlledSleep.sleep(for: duration) }
+        )
         s.show(title: "T", transcript: "t")
         #expect(s.isVisible == true)
 
-        let deadline = Date().addingTimeInterval(2)
-        while s.isVisible && Date() < deadline {
+        let deadline = ContinuousClock.now + .seconds(180)
+        var requestedDuration: Duration?
+        while requestedDuration == nil, ContinuousClock.now < deadline {
+            requestedDuration = await controlledSleep.requestedDuration()
+            if requestedDuration == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        #expect(requestedDuration == expectedDuration)
+        #expect(s.isVisible == true, "the tray must remain visible until the configured sleep completes")
+
+        await controlledSleep.release()
+        while s.isVisible {
+            guard ContinuousClock.now < deadline else { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(s.isVisible == false)

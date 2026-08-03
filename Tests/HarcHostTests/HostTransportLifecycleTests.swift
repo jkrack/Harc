@@ -3,7 +3,6 @@ import GRDB
 import HarcDomain
 @testable import HarcIdentity
 import HarcProtocol
-import Security
 import Testing
 @testable import HarcHost
 
@@ -510,6 +509,112 @@ struct HostTransportLifecycleTests {
         deleteCertificate(recovered.serverIdentity.certificate.certificateDER)
     }
 
+    @Test("unexpected termination invalidates only the exact reported generation")
+    func unexpectedTerminationIsGenerationScoped() async throws {
+        let fixture = try await makePermanentFixture()
+        defer {
+            fixture.keys.deleteAllBestEffort()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        let initialReady = try await fixture.lifecycle.prepareForServing()
+        let initialGeneration = try #require(
+            await fixture.boundary.generations.first
+        )
+        await initialGeneration.terminationReporter
+            .reportUnexpectedTermination()
+
+        #expect(await fixture.lifecycle.generationStatus() == nil)
+        await #expect(throws:
+            HostTransportGenerationError.generationNotPrepared
+        ) {
+            try await fixture.lifecycle.reserveTransportForCapability(
+                expiringAt: fixture.clock.now.addingTimeInterval(60)
+            )
+        }
+
+        let recoveredReady = try await fixture.lifecycle.prepareForServing()
+        let recoveredGeneration = try #require(
+            await fixture.boundary.generations.last
+        )
+        #expect(
+            recoveredGeneration.generationID
+                != initialGeneration.generationID
+        )
+
+        // A duplicate delayed report from the old transport cannot clear the
+        // replacement generation.
+        await initialGeneration.terminationReporter
+            .reportUnexpectedTermination()
+        #expect(
+            await fixture.lifecycle.generationStatus()?.generationID
+                == recoveredGeneration.generationID
+        )
+
+        await recoveredGeneration.terminationReporter
+            .reportUnexpectedTermination()
+        #expect(await fixture.lifecycle.generationStatus() == nil)
+
+        for certificateDER in await fixture.boundary.boundCertificateDERs() {
+            deleteCertificate(certificateDER)
+        }
+        deleteCertificate(
+            initialReady.serverIdentity.certificate.certificateDER
+        )
+        deleteCertificate(
+            recoveredReady.serverIdentity.certificate.certificateDER
+        )
+    }
+
+    @Test("resident scheduler wakes and recovers after terminal generation report")
+    func residentSchedulerRecoversUnexpectedTermination() async throws {
+        let fixture = try await makePermanentFixture()
+        defer {
+            fixture.keys.deleteAllBestEffort()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        let runtime = try await HostTransportResidentRuntime.start(
+            store: fixture.store,
+            cryptographicStateStore: fixture.crypto,
+            transportSetProtocol: TestHostTransportSetProtocolBoundaryV1(),
+            generationBoundary: fixture.boundary,
+            canonicalTuple: fixture.state.tuple,
+            now: { fixture.clock.now }
+        )
+        do {
+            await fixture.boundary.waitForGenerationCount(1)
+            let initialGeneration = try #require(
+                await fixture.boundary.generations.first
+            )
+
+            await initialGeneration.terminationReporter
+                .reportUnexpectedTermination()
+            await fixture.boundary.waitForGenerationCount(2)
+            await runtime.handleSystemWake()
+
+            let recoveredGeneration = try #require(
+                await fixture.boundary.generations.last
+            )
+            #expect(
+                recoveredGeneration.generationID
+                    != initialGeneration.generationID
+            )
+            #expect(
+                await runtime.generationStatus()?.generationID
+                    == recoveredGeneration.generationID
+            )
+            await runtime.shutdown()
+        } catch {
+            await runtime.shutdown()
+            throw error
+        }
+
+        for certificateDER in await fixture.boundary.boundCertificateDERs() {
+            deleteCertificate(certificateDER)
+        }
+    }
+
     @Test("validity hard stop takes the host offline once and clears generation state")
     func renewalHardStopFailsClosed() async throws {
         let fixture = try await makePermanentFixture()
@@ -730,13 +835,9 @@ struct HostTransportLifecycleTests {
     }
 
     private func deleteCertificate(_ der: Data) {
-        guard let certificate = SecCertificateCreateWithData(nil, der as CFData) else {
-            return
-        }
-        _ = SecItemDelete([
-            kSecClass as String: kSecClassCertificate,
-            kSecValueRef as String: certificate,
-        ] as CFDictionary)
+        HostTLSSigningIdentity.deleteInstalledServerCertificateBestEffort(
+            certificateDER: der
+        )
     }
 }
 
@@ -771,6 +872,10 @@ private actor RecordingGenerationBoundary: HostTransportGenerationBoundary {
     private(set) var events: [RecordingGenerationEvent] = []
     private(set) var generations: [HostTransportServingGeneration] = []
     private(set) var observedLeaseErrors: [HostTransportGenerationError] = []
+    private var generationCountWaiters: [(
+        count: Int,
+        continuation: CheckedContinuation<Void, Never>
+    )] = []
 
     init(
         activationMode: RecordingGenerationActivationMode = .consumeBoth
@@ -780,6 +885,13 @@ private actor RecordingGenerationBoundary: HostTransportGenerationBoundary {
 
     func setActivationMode(_ activationMode: RecordingGenerationActivationMode) {
         self.activationMode = activationMode
+    }
+
+    func waitForGenerationCount(_ count: Int) async {
+        guard generations.count < count else { return }
+        await withCheckedContinuation { continuation in
+            generationCountWaiters.append((count, continuation))
+        }
     }
 
     func withdrawAdvertisementAndDrainGeneration() async throws {
@@ -792,6 +904,15 @@ private actor RecordingGenerationBoundary: HostTransportGenerationBoundary {
     ) async throws {
         events.append(.activateStarted(epoch: generation.transportEpoch))
         generations.append(generation)
+        let readyWaiters = generationCountWaiters.filter {
+            generations.count >= $0.count
+        }
+        generationCountWaiters.removeAll {
+            generations.count >= $0.count
+        }
+        for waiter in readyWaiters {
+            waiter.continuation.resume()
+        }
 
         switch activationMode {
         case .consumeBoth:

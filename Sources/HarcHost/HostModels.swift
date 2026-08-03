@@ -775,6 +775,8 @@ public enum HarcHostError: Error, Equatable, Sendable {
     case invalidOperationID
     case invalidOperationSigner
     case invalidPairingTransition
+    case invalidHostInfoInput(String)
+    case publicHostInfoRateLimited
     case invalidAuthenticationInput(String)
     case pairingClaimRejected
     case pairingProofRejected
@@ -864,6 +866,8 @@ extension HarcHostError: LocalizedError {
         case .invalidOperationID: "Operation IDs must be nonzero UUIDs."
         case .invalidOperationSigner: "A host operation signer must match the key's host authority."
         case .invalidPairingTransition: "The pairing placeholder transition is invalid."
+        case .invalidHostInfoInput(let field): "Invalid public host information: \(field)."
+        case .publicHostInfoRateLimited: "Public host information requests are rate limited."
         case .invalidAuthenticationInput(let field): "Invalid authentication input: \(field)."
         case .pairingClaimRejected: "The pairing claim could not be accepted."
         case .pairingProofRejected: "The pairing proof could not be verified."

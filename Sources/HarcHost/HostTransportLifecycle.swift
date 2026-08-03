@@ -612,6 +612,8 @@ package actor HostTransportLifecycle {
     private var preparedGeneration: PreparedGeneration?
     private var currentReadyState: HostTransportReadyState?
     private var currentGenerationStatus: HostTransportGenerationStatus?
+    private var generationUnavailableHandler: (@Sendable () async -> Void)?
+    private var generationUnavailableNotificationPending = false
 
     private struct PreparedGeneration: Sendable {
         let id: UUID
@@ -1051,6 +1053,23 @@ package actor HostTransportLifecycle {
         currentGenerationStatus
     }
 
+    /// The resident runtime installs one recovery wake after constructing its
+    /// scheduler. A termination racing that installation is remembered and
+    /// delivered once; lifecycle invalidation itself never nests activation in
+    /// the transport-exit callback.
+    package func installGenerationUnavailableHandler(
+        _ handler: @escaping @Sendable () async -> Void
+    ) async {
+        precondition(
+            generationUnavailableHandler == nil,
+            "The host generation recovery handler may only be installed once"
+        )
+        generationUnavailableHandler = handler
+        guard generationUnavailableNotificationPending else { return }
+        generationUnavailableNotificationPending = false
+        await handler()
+    }
+
     /// Timer and wake handlers call this same serialized path. Renewal is a
     /// complete two-listener generation swap; identities are never changed in
     /// place beneath an existing listener.
@@ -1245,7 +1264,14 @@ package actor HostTransportLifecycle {
                 generationID: generationID,
                 role: .backgroundUpload,
                 leaseID: uploadLease.id
-            )
+            ),
+            terminationReporter: HostTransportGenerationTerminationReporter(
+                generationID: generationID
+            ) { [weak self] in
+                await self?.invalidateUnexpectedlyTerminatedGeneration(
+                    generationID
+                )
+            }
         )
 
         do {
@@ -1294,6 +1320,29 @@ package actor HostTransportLifecycle {
         preparedGeneration = nil
         currentReadyState = nil
         currentGenerationStatus = nil
+    }
+
+    /// Called only after the concrete transport has withdrawn discovery and
+    /// completed teardown. Exact matching makes delayed or duplicate reports
+    /// harmless and prevents an old listener from clearing its replacement.
+    private func invalidateUnexpectedlyTerminatedGeneration(
+        _ generationID: UUID
+    ) async {
+        await acquireOperationGate()
+        guard currentGenerationStatus?.generationID == generationID
+                || preparedGeneration?.id == generationID else {
+            releaseOperationGate()
+            return
+        }
+        invalidateGenerationState()
+        let recovery = generationUnavailableHandler
+        if recovery == nil {
+            generationUnavailableNotificationPending = true
+        }
+        releaseOperationGate()
+        if let recovery {
+            await recovery()
+        }
     }
 
     private var cryptographicTuple: HostCryptographicStateTuple {

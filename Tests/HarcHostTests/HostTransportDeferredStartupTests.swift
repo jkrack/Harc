@@ -3,7 +3,6 @@ import GRDB
 import HarcDomain
 @testable import HarcIdentity
 import HarcProtocol
-import Security
 import Testing
 @testable import HarcHost
 
@@ -800,13 +799,9 @@ private actor DeferredStartupRecordingBoundary: HostTransportGenerationBoundary 
     private func deleteCertificates() {
         var seen = Set<Data>()
         for der in certificateDERs where seen.insert(der).inserted {
-            guard let certificate = SecCertificateCreateWithData(nil, der as CFData) else {
-                continue
-            }
-            _ = SecItemDelete([
-                kSecClass as String: kSecClassCertificate,
-                kSecValueRef as String: certificate,
-            ] as CFDictionary)
+            HostTLSSigningIdentity.deleteInstalledServerCertificateBestEffort(
+                certificateDER: der
+            )
         }
         certificateDERs.removeAll()
     }

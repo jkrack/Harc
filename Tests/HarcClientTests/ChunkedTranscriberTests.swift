@@ -706,24 +706,28 @@ struct ChunkedTranscriberLivePreviewTests {
             pollIntervalSeconds: 0.05,
             livePreviewIntervalSeconds: 0.1
         )
-        let firstUpdate = Task { () -> TranscriptUpdate? in
-            for await update in await transcriber.updates { return update }
-            return nil
-        }
         await transcriber.start(audioURL: url)
-        // Poll rather than a fixed sleep: under parallel test load a 1s
-        // window can starve the preview tick entirely.
-        var callsBeforeStop = 0
-        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
-        while callsBeforeStop == 0, ContinuousClock.now < deadline {
-            try await Task.sleep(nanoseconds: 100_000_000)
-            callsBeforeStop = await fake.calls.count
+        // The update itself is the synchronization point. Keep a generous
+        // monotonic backstop so a preview regression fails instead of hanging
+        // the entire test process when the stream stays open without values.
+        let update = await withTaskGroup(of: TranscriptUpdate?.self) { group in
+            group.addTask {
+                for await update in await transcriber.updates { return update }
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(180))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
         }
+        let callsBeforeStop = await fake.calls.count
         _ = try await transcriber.finalize(startedAt: Date(), endedAt: Date())
 
         #expect(callsBeforeStop >= 1, "expected at least one preview pass while recording")
         #expect(await fake.calls.prefix(callsBeforeStop).allSatisfy { $0.vad == false })
-        let update = await firstUpdate.value
         #expect(update?.joinedTextSoFar == "live preview")
     }
 }

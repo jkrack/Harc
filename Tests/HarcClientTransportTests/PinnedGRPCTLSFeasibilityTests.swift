@@ -1,9 +1,9 @@
 #if canImport(Network)
-import HarcClientTransport
 import NIOCore
 import NIOEmbedded
 import NIOSSL
 import Testing
+@testable import HarcClientTransport
 
 @Suite("Client pinned gRPC TLS feasibility")
 struct PinnedGRPCTLSFeasibilityTests {
@@ -18,6 +18,7 @@ struct PinnedGRPCTLSFeasibilityTests {
         #expect(policy.tlsConfiguration.maximumTLSVersion == .tlsv13)
         #expect(policy.tlsConfiguration.applicationProtocols == ["h2"])
         #expect(policy.transportConfig.channelDebuggingCallbacks.onCreateTCPConnection != nil)
+        #expect(policy.transportConfig.channelDebuggingCallbacks.onCreateHTTP2Stream != nil)
     }
 
     @Test("The customSecure callback installs the pinning TLS handler")
@@ -33,6 +34,9 @@ struct PinnedGRPCTLSFeasibilityTests {
 
         try callback(channel).wait()
         _ = try channel.pipeline.syncOperations.handler(type: NIOSSLHandler.self)
+        _ = try channel.pipeline.syncOperations.handler(
+            type: HarcGRPCConnectionTrustHandler.self
+        )
 
         try channel.close().wait()
     }
@@ -47,6 +51,8 @@ struct PinnedGRPCTLSFeasibilityTests {
     private struct RejectingVerifier: HarcPeerCertificateVerifier {
         func verify(
             peerCertificateChain _: [NIOSSLCertificate],
+            recordAcceptedTrust _: @escaping @Sendable
+                (HarcAcceptedServerTrust) throws -> Void,
             promise: EventLoopPromise<NIOSSLVerificationResult>
         ) {
             promise.succeed(.failed)

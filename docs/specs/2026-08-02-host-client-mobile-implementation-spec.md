@@ -4,6 +4,8 @@
 
 **Date:** 2026-08-02
 
+**Security clarification:** 2026-08-03
+
 **Audience:** Harc maintainers and coding agents
 
 **Architecture:** [Host/client architecture](../architecture/host-client-architecture.md)
@@ -206,7 +208,7 @@ Dependency direction is fixed (right side means “depends on”):
 | `HarcProtocol` | `HarcProtocolWire`, `HarcDomain`, `HarcIdentity`, `HarcTransfer` |
 | `HarcClientStore` | `HarcDomain`, `HarcTransfer`, existing GRDB product |
 | `HarcHost` | `HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcStore`, existing daemon client adapter |
-| `HarcHostTransport` | `HarcHost`, `HarcProtocol` plus transport runtimes |
+| `HarcHostTransport` | `HarcHost`, `HarcIdentity`, `HarcProtocol` plus transport runtimes |
 | `HarcClientTransport` | `HarcProtocol`, `HarcIdentity`, `HarcTransfer` plus transport runtimes |
 | `HarcAudioMobile` | `HarcDomain`, AVFAudio/Foundation |
 
@@ -459,6 +461,25 @@ the connection. The observed SPKI must appear in that resulting highest set with
 a currently valid interval, and the extension/certificate validity and key usage
 must pass. A missing, duplicate, oversized, malformed, wrongly signed, or
 equivocating extension fails closed.
+
+For gRPC, accepted trust is attached to the physical TCP/TLS channel before the
+certificate-verification promise succeeds. Each HTTP/2 stream copies trust only
+from its exact parent connection. A client pipeline handler strips all
+peer-supplied copies of a reserved binary response-binding header and injects a
+fresh client-owned trust envelope on initial response headers. The envelope has
+a 256-bit nonce and is authenticated with HMAC-SHA256 under a 256-bit key owned
+only by that `HarcPinnedGRPCConnection`. The generated-client adapter verifies
+the HMAC, reparses the exact leaf certificate, re-verifies its embedded
+authority-signed transport set, requires SPKI/validity coverage, and reconstructs
+the accepted trust before returning a successful bootstrap response. Missing,
+duplicate, malformed, unauthenticated, or semantically inconsistent bindings
+fail closed. Trailers-only failures receive no binding, and there is no global
+or "latest handshake" fallback. The envelope codec is stateless: abandoned,
+cancelled, or retried streams consume no registry capacity or cleanup state.
+Fresh nonces make envelopes distinct but do not claim local replay prevention.
+The construction preserves each stream's parent-connection association during
+DNS replacement or TLS rotation; physical overlapping A/B validation remains a
+release gate for future multi-address connection racing.
 
 DNS name, IP SAN, system-root trust, or a user-added
 root never substitutes for the pin. Because addresses are reachability hints,
@@ -874,13 +895,19 @@ deployment floor remains unchanged. Harc uses the gRPC Swift 2 package family:
   `HarcProtocolWire`; generated `.pb.swift` files import it directly even though
   the generator also depends on it.
 - `NIOCore`, `NIOHTTP1`, and `NIOFoundationCompat` from `swift-nio`, plus
-  `NIOTransportServices` from `swift-nio-transport-services`, as direct
-  dependencies of the narrow HTTPS upload adapter.
+  `NIOTransportServices` from `swift-nio-transport-services`. `NIOCore` and
+  `NIOTransportServices` support the gRPC listener/source bridge as well as the
+  narrow HTTPS adapter; `NIOHTTP1` and `NIOFoundationCompat` remain specific to
+  the HTTPS body edge; and
+- `NIOHTTP2` and `NIOHPACK` from `swift-nio-http2` as direct dependencies of
+  the server source-policy bridge and client response-to-TLS binding bridge.
 
 The implementation PR MUST pin compatible released versions in
-`Package.resolved`; branch dependencies are prohibited. Audio messages disable
-gRPC message compression. Text-heavy library responses MAY enable it after a
-measurement proves a benefit.
+`Package.resolved`; branch dependencies are prohibited. The active bootstrap
+edge disables gRPC message compression. Future audio methods also disable gRPC
+message compression and carry independently decodable application-level
+lossless chunks. Text-heavy library responses MAY enable gRPC compression after
+a measurement proves a benefit.
 
 `Protos/` is the source of truth. A generated-only `HarcProtocolWire` target
 uses `GRPCProtobufGenerator` against that directory. `HarcProtocol` depends on
@@ -967,8 +994,35 @@ The method-level authentication matrix is exhaustive:
 | Background batch `PUT` | Pinned TLS plus the exact Section 13.4 capability | One bound immutable batch and its signed ACK |
 
 No other pre-session method exists. Bootstrap requests never return library
-metadata, device lists, ticket existence beyond the presented claim, or a
-distinguishable response useful for enumerating registered devices.
+metadata, device lists, or ticket existence beyond the presented claim.
+`BeginSession` has the one deliberate exception described below: a caller that
+already possesses a candidate 256-bit device ID and 128-bit grant ID can
+distinguish an active current grant because the host must return that exact
+verifiable grant for offline scope and epoch repair.
+
+The custom `NWListener` integration may expose `"<unknown>"` through gRPC
+Swift's generic `ServerContext` peer strings. Harc never treats that placeholder
+as a source identity and never falls back to one global anonymous bucket. The
+HTTP/2 stream initializer instead reads the accepted `NWConnection` endpoint,
+normalizes the numeric IP or canonical Unix-domain path with the ephemeral port
+removed, derives an opaque host-scoped source HMAC, and replaces any
+client-supplied reserved metadata with one separately authenticated internal
+token before protobuf metadata decoding. Every bootstrap adapter requires and
+verifies that token when generic peer strings are unavailable. Failure to
+derive, inject, or authenticate it rejects the request before application
+validation.
+
+One `HarcBootstrapGRPCServiceFactoryV1` owns the host-scoped source-binding
+provider and malformed-preauthentication gate for the runtime lifetime. It
+constructs HostInfo, Pairing, and Session adapters for each served-certificate
+generation, passing the same provider and gate to every adapter and the same
+provider to the HTTP/2 source bridge. Concrete adapter construction and the raw
+runtime service-array seam are internal test seams. The current production call
+graph enters the runtime only through this factory and therefore cannot split
+source identity or cooldown state. Because Swift `internal` access is target
+wide, this is a reviewed composition invariant rather than a compiler-enforced
+one; transport contract tests and source review must reject any new production
+caller of those seams.
 
 Post-session methods enforce this minimum scope/ownership matrix:
 
@@ -1000,8 +1054,20 @@ expiry.
 Its response also carries the current exact signed `DeviceGrantV1`, allowing an
 offline client to learn a locally approved epoch/scope change. The client
 verifies that host signature before constructing the transcript but receives no
-authority until `OpenSession` proves its device key. Invalid/revoked lookup hints
-receive an indistinguishable dummy-shaped response and can never open a session.
+authority until `OpenSession` proves its device key. Invalid or revoked lookup
+hints receive the same status, response shape, nonce/challenge entropy, expiry,
+and pre-proof work path, with a non-verifying dummy grant, and can never open a
+session.
+
+The exact current grant is necessarily distinguishable from dummy bytes to a
+caller that already knows the host authority and both lookup hints. V1 accepts
+that narrow validity signal because signing synthetic grants would create an
+unsafe authority oracle, while omitting the real grant would prevent offline
+scope and epoch repair. The lookup tuple's entropy, the per-device/source
+challenge limit, the malformed-preauthentication cooldown, generic errors, and
+aggregated audit events are the enumeration controls. Harc MUST NOT describe
+this as cryptographic indistinguishability or broaden the response with any
+other device state.
 
 `SessionTranscriptV1` is encoded independently of protobuf:
 
@@ -1136,6 +1202,13 @@ Initial hard limits are part of the tested protocol contract:
 | Default staging quota per device | 20 GiB |
 | Default global staging quota | 100 GiB |
 | Minimum free host volume | Greater of 10 GiB or 10 percent |
+
+While the gRPC edge contains bootstrap and session-establishment methods only,
+its transport decoder enforces the 1 MiB control ceiling before protobuf
+decoding. Activating `RecordingTransferService` MUST NOT simply widen that
+control edge to 5 MiB: the shared listener must add method-aware predecode
+enforcement which retains 1 MiB for control messages and permits the frozen
+5 MiB ceiling only for the audio-chunk methods.
 
 The host MUST validate declared lengths before allocation, decode with bounded
 streaming buffers, reject unsupported codec parameters, generate all staging

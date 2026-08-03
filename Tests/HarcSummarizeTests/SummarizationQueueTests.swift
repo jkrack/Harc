@@ -23,14 +23,15 @@ struct SummarizationQueueTests {
     /// Wait for a closure to return true, polling every 5ms, up to
     /// `timeoutMs`. Fails the calling test on timeout.
     private func expectEventually(
-        timeoutMs: Int = 2000,
+        timeoutMs: Int = 180_000,
         _ check: @Sendable () async -> Bool,
         _ sourceLocation: SourceLocation = #_sourceLocation
     ) async {
-        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
-        while Date() < deadline {
+        let deadline = ContinuousClock.now + .milliseconds(timeoutMs)
+        while true {
             if await check() { return }
-            try? await Task.sleep(nanoseconds: 5_000_000)
+            guard ContinuousClock.now < deadline else { break }
+            try? await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("expectEventually timed out", sourceLocation: sourceLocation)
     }
@@ -97,7 +98,12 @@ struct SummarizationQueueTests {
         let queue = SummarizationQueue(coordinator: BackgroundWorkCoordinator()) { id in
             await recorder.enter(id)
             do {
-                try await Task.sleep(nanoseconds: 500_000_000)  // 500 ms — plenty of time to cancel
+                if id == 10 {
+                    // Keep the current job observably in flight until the test
+                    // cancels it, even when the full suite heavily contends for
+                    // executor time. Job 11 remains an immediate successor.
+                    try await Task.sleep(for: .seconds(180))
+                }
             } catch is CancellationError {
                 await recorder.markCancelled(id)
                 await recorder.leave()

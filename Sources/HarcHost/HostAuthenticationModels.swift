@@ -182,6 +182,26 @@ public struct HostPairingProofResult: Equatable, Sendable {
     }
 }
 
+/// Result of durably moving a ticket-bound claim into local approval.
+/// Transcript/SAS validation stays in the injected protocol boundary, while
+/// HarcHost attaches the authoritative expiry loaded from its durable claim.
+public struct HostPairingClaimProofResponse: Equatable, Sendable {
+    public let proof: HostPairingProofResult
+    public let expiresAt: Date
+
+    public init(proof: HostPairingProofResult, expiresAt: Date) throws {
+        guard expiresAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw HarcHostError.invalidAuthenticationInput("pairing expiry")
+        }
+        self.proof = proof
+        self.expiresAt = expiresAt
+    }
+
+    public var sasDigest: Data { proof.sasDigest }
+    public var sasWordIndexes: [UInt16] { proof.sasWordIndexes }
+    public var sasWords: [String] { proof.sasWords }
+}
+
 public enum HostPairingClaimStatus: Equatable, Sendable {
     case pending
     case approved(exactGrantBytes: Data)
@@ -322,9 +342,10 @@ public struct BeginHostSessionRequest: Sendable {
 ///
 /// Frozen V1 has no padding/cover field. Matching the response structure,
 /// entropy path, and pre-proof work therefore cannot make a real host-signed
-/// grant cryptographically indistinguishable from random dummy bytes. Closing
-/// that residual enumeration signal requires a reviewed protocol amendment;
-/// this core does not invent non-schema bytes or claim byte indistinguishability.
+/// grant cryptographically indistinguishable from random dummy bytes. The
+/// normative security clarification accepts only that high-entropy targeted
+/// validity signal; this core does not invent synthetic signed grants,
+/// non-schema bytes, or a stronger indistinguishability claim.
 public struct BeginHostSessionResponse: Equatable, Sendable {
     public let challengeID: UUID
     public let serverNonce: Data

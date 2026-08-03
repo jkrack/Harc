@@ -23,16 +23,23 @@ struct HarcSTTClientTests {
 
         let expected = DaemonStatus(version: "0.1.0", modelLoaded: true, uptimeSeconds: 42)
 
-        let fakeTask = Task.detached { [serverFd] in
-            let req: IPCRequest = try await HarcSTTClientTests.readOnly(fd: serverFd)
-            #expect(req == .status)
-            try HarcSTTClientTests.writeOnly(IPCResponse.status(expected), to: serverFd)
+        // Use a dedicated OS thread so the fake daemon preserves the real
+        // request-then-response ordering even while unrelated Core ML work
+        // saturates Swift's cooperative executor.
+        let fakeDaemon = Thread {
+            do {
+                let request: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
+                #expect(request == .status)
+                try HarcSTTClientTests.writeOnly(IPCResponse.status(expected), to: serverFd)
+            } catch {
+                Issue.record("fake status daemon failed: \(error)")
+            }
         }
+        fakeDaemon.start()
 
         let client = HarcSTTClient(connectedFd: clientFd)
         let status = try await client.status()
         #expect(status == expected)
-        try await fakeTask.value
     }
 
     /// Regression: the old racing-task-group "timeout" could never actually
@@ -110,6 +117,10 @@ struct HarcSTTClientTests {
 
     // Helpers reachable from the detached fake tasks.
     static func readOnly<T: Decodable>(fd: Int32) async throws -> T {
+        try readOnlyBlocking(fd: fd)
+    }
+
+    static func readOnlyBlocking<T: Decodable>(fd: Int32) throws -> T {
         var buf = Data()
         let scratch = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
         defer { scratch.deallocate() }

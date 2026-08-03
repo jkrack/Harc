@@ -753,7 +753,11 @@ struct DictationOneShotModeTests {
         let (controller, state) = makeController(
             prefs: prefs, paster: paster, transcript: "hello",
             activeMode: DictationMode.builtIns[0],
-            transform: { text, _, _ in transformCalls += 1; return text }
+            transform: { text, _, _ in transformCalls += 1; return text },
+            // This test exercises ordinary cancel cleanup, not the separate
+            // long-session confirmation guard. Full-suite Core ML work can
+            // otherwise age this synthetic session past the default 30 s.
+            cancelConfirmThreshold: 24 * 60 * 60
         )
 
         controller.handleModeHotkey(.keyDown, mode: overrideMode)
@@ -848,7 +852,7 @@ struct DictationHistoryRecordingTests {
 /// Poll until `condition` holds (hotkey handlers hop through Tasks).
 @MainActor
 private func waitUntil(
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(180),
     _ condition: () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now + timeout

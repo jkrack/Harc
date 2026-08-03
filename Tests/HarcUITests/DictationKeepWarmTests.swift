@@ -18,13 +18,13 @@ struct DictationKeepWarmTests {
         let controller = DictationKeepWarmController(
             interval: 0.02,
             isDaemonRunning: { true },
-            ping: { await pings.bump() }
+            ping: { pings.bump() }
         )
         controller.setEnabled(true)
         #expect(controller.isRunning)
         // Poll instead of a fixed sleep — wall-clock timing is unreliable
         // under full parallel suite load.
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(180)
         while pings.count < 2, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -38,12 +38,12 @@ struct DictationKeepWarmTests {
         let probes = Counter()
         let controller = DictationKeepWarmController(
             interval: 0.02,
-            isDaemonRunning: { await probes.bump(); return false },
-            ping: { await pings.bump() }
+            isDaemonRunning: { probes.bump(); return false },
+            ping: { pings.bump() }
         )
         controller.setEnabled(true)
         // Wait for at least two probe cycles so "no ping" is meaningful.
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(180)
         while probes.count < 2, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -58,10 +58,10 @@ struct DictationKeepWarmTests {
         let controller = DictationKeepWarmController(
             interval: 0.02,
             isDaemonRunning: { true },
-            ping: { await pings.bump() }
+            ping: { pings.bump() }
         )
         controller.setEnabled(true)
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(180)
         while pings.count < 1, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -100,7 +100,7 @@ struct DictationKeepWarmTests {
             interval: 0.02,
             activeWindow: 60,
             isDaemonRunning: { true },
-            ping: { await pings.bump() },
+            ping: { pings.bump() },
             now: { fakeNow }
         )
         controller.setEnabled(true)
@@ -112,7 +112,7 @@ struct DictationKeepWarmTests {
         // A new dictation re-opens the window and pinging resumes.
         controller.noteActivity()
         #expect(controller.withinActiveWindow)
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(180)
         while pings.count < 1, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }

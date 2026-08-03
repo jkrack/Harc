@@ -4,7 +4,19 @@ import LocalAuthentication
 @preconcurrency import Security
 
 final class HostSecurityP256SigningKey: @unchecked Sendable {
-    private static let lifecycleLock = NSLock()
+    // Security.framework's key and identity item operations share process-global
+    // state. A recursive lock permits the load-or-create helpers to call the
+    // same guarded primitives without allowing unrelated certificate cleanup
+    // to invalidate an in-flight identity resolution.
+    private static let lifecycleLock = NSRecursiveLock()
+
+    static func withKeychainLifecycle<T>(
+        _ operation: () throws -> T
+    ) rethrows -> T {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return try operation()
+    }
 
     private enum KeychainDomain: Sendable {
         case dataProtection
@@ -44,40 +56,42 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     }
 
     static func createPreferred(applicationTag: Data) throws -> Self {
-        if SecureEnclaveP256SigningKey.isAvailable {
+        try withKeychainLifecycle {
+            if SecureEnclaveP256SigningKey.isAvailable {
+                do {
+                    return try create(
+                        applicationTag: applicationTag,
+                        protection: .secureEnclave,
+                        keychainDomain: .dataProtection
+                    )
+                } catch {
+                    // A capability can be reported present while unavailable
+                    // to the current process. A duplicate may also mean
+                    // another process recovered the same durable intent first;
+                    // never delete that winner.
+                    if let existing = try loadIfPresent(
+                        applicationTag: applicationTag,
+                        keychainDomain: .dataProtection
+                    ) {
+                        return existing
+                    }
+                }
+            }
             do {
                 return try create(
                     applicationTag: applicationTag,
-                    protection: .secureEnclave,
+                    protection: .keychainSoftware,
                     keychainDomain: .dataProtection
                 )
             } catch {
-                // A capability can be reported present while unavailable to
-                // the current process. A duplicate may also mean another
-                // process recovered the same durable intent first; never
-                // delete that winner.
                 if let existing = try loadIfPresent(
                     applicationTag: applicationTag,
                     keychainDomain: .dataProtection
                 ) {
                     return existing
                 }
+                throw error
             }
-        }
-        do {
-            return try create(
-                applicationTag: applicationTag,
-                protection: .keychainSoftware,
-                keychainDomain: .dataProtection
-            )
-        } catch {
-            if let existing = try loadIfPresent(
-                applicationTag: applicationTag,
-                keychainDomain: .dataProtection
-            ) {
-                return existing
-            }
-            throw error
         }
     }
 
@@ -94,18 +108,22 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     }
 
     static func loadIfPresent(applicationTag: Data) throws -> Self? {
-        try loadIfPresent(
-            applicationTag: applicationTag,
-            keychainDomain: .dataProtection
-        )
+        try withKeychainLifecycle {
+            try loadIfPresent(
+                applicationTag: applicationTag,
+                keychainDomain: .dataProtection
+            )
+        }
     }
 
     static func createSoftware(applicationTag: Data) throws -> Self {
-        try create(
-            applicationTag: applicationTag,
-            protection: .keychainSoftware,
-            keychainDomain: .dataProtection
-        )
+        try withKeychainLifecycle {
+            try create(
+                applicationTag: applicationTag,
+                protection: .keychainSoftware,
+                keychainDomain: .dataProtection
+            )
+        }
     }
 
     /// A package-internal fixture for unit tests hosted outside an entitled
@@ -114,11 +132,13 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     /// legacy macOS Keychain because the SwiftPM runner cannot access the Data
     /// Protection Keychain.
     static func createLegacyKeychainTestFixture(applicationTag: Data) throws -> Self {
-        try create(
-            applicationTag: applicationTag,
-            protection: .keychainSoftware,
-            keychainDomain: .legacyTestFixture
-        )
+        try withKeychainLifecycle {
+            try create(
+                applicationTag: applicationTag,
+                protection: .keychainSoftware,
+                keychainDomain: .legacyTestFixture
+            )
+        }
     }
 
     static func loadOrCreateLegacyKeychainTestFixture(
@@ -152,32 +172,38 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     static func loadLegacyKeychainTestFixtureIfPresent(
         applicationTag: Data
     ) throws -> Self? {
-        try loadIfPresent(
-            applicationTag: applicationTag,
-            keychainDomain: .legacyTestFixture
-        )
+        try withKeychainLifecycle {
+            try loadIfPresent(
+                applicationTag: applicationTag,
+                keychainDomain: .legacyTestFixture
+            )
+        }
     }
 
     static func load(
         applicationTag: Data,
         protection: InstallationKeyProtection
     ) throws -> Self {
-        try load(
-            applicationTag: applicationTag,
-            protection: protection,
-            keychainDomain: .dataProtection
-        )
+        try withKeychainLifecycle {
+            try load(
+                applicationTag: applicationTag,
+                protection: protection,
+                keychainDomain: .dataProtection
+            )
+        }
     }
 
     static func loadLegacyKeychainTestFixture(
         applicationTag: Data,
         protection: InstallationKeyProtection
     ) throws -> Self {
-        try load(
-            applicationTag: applicationTag,
-            protection: protection,
-            keychainDomain: .legacyTestFixture
-        )
+        try withKeychainLifecycle {
+            try load(
+                applicationTag: applicationTag,
+                protection: protection,
+                keychainDomain: .legacyTestFixture
+            )
+        }
     }
 
     private static func load(
@@ -274,12 +300,14 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     }
 
     func deletePersistentKeyBestEffort() {
-        _ = SecItemDelete(
-            Self.keyQuery(
-                applicationTag: applicationTag,
-                keychainDomain: keychainDomain
-            ) as CFDictionary
-        )
+        Self.withKeychainLifecycle {
+            _ = SecItemDelete(
+                Self.keyQuery(
+                    applicationTag: applicationTag,
+                    keychainDomain: keychainDomain
+                ) as CFDictionary
+            )
+        }
     }
 
     static func deleteAndConfirmAbsent(

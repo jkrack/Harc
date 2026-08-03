@@ -15,7 +15,8 @@ package protocol HarcTransportGenerationDriver: Sendable {
     func activateGeneration(
         id: UUID,
         grpcFactory: HarcGRPCNWListenerFactory,
-        uploadListener: NWListener
+        uploadListener: NWListener,
+        terminationReporter: HostTransportGenerationTerminationReporter
     ) async throws
 
     func stopGenerationImmediately() async
@@ -50,25 +51,43 @@ package actor HarcTransportGenerationController: HostTransportGenerationBoundary
     package func activateGeneration(
         _ generation: HostTransportServingGeneration
     ) async throws {
+        let servedIdentityBinding = HarcGRPCServedIdentityBinding(
+            generationID: generation.generationID
+        )
         let grpcFactory = HarcGRPCNWListenerFactory(
             lease: generation.grpcControl,
             port: controlPort,
+            servedIdentityBinding: servedIdentityBinding,
             eventLoopGroup: eventLoopGroup
         )
         let uploadListener = try await HarcHTTP11UploadTransportAPI.makeListener(
             lease: generation.backgroundUpload,
             port: uploadPort
         )
-        do {
-            try await driver.activateGeneration(
-                id: generation.generationID,
-                grpcFactory: grpcFactory,
-                uploadListener: uploadListener
-            )
-        } catch {
-            await driver.stopGenerationImmediately()
-            throw error
-        }
+        try await activateConstructedGeneration(
+            id: generation.generationID,
+            grpcFactory: grpcFactory,
+            uploadListener: uploadListener,
+            terminationReporter: generation.terminationReporter
+        )
+    }
+
+    /// Testable post-construction seam. Activation rollback belongs to the
+    /// driver and is generation-scoped. The controller must never issue an
+    /// unqualified stop after a rejected overlapping activation because that
+    /// could tear down an unrelated valid generation.
+    package func activateConstructedGeneration(
+        id: UUID,
+        grpcFactory: HarcGRPCNWListenerFactory,
+        uploadListener: NWListener,
+        terminationReporter: HostTransportGenerationTerminationReporter
+    ) async throws {
+        try await driver.activateGeneration(
+            id: id,
+            grpcFactory: grpcFactory,
+            uploadListener: uploadListener,
+            terminationReporter: terminationReporter
+        )
     }
 
     package func stopGenerationImmediately() async {

@@ -1,4 +1,5 @@
 #if canImport(Network)
+import Foundation
 import GRPCNIOTransportHTTP2TransportServices
 import HarcHost
 import HarcHostTransport
@@ -13,7 +14,9 @@ struct HostTransportAPIFeasibilityTests {
         _ = HarcTransportGenerationController.init(
             controlPort:uploadPort:eventLoopGroup:driver:
         )
-        _ = HarcGRPCNWListenerFactory.init(lease:port:eventLoopGroup:)
+        _ = HarcGRPCNWListenerFactory.init(
+            lease:port:servedIdentityBinding:eventLoopGroup:bindingTimeout:
+        )
         _ = HarcHTTP11UploadTransportAPI.makeListener(lease:port:)
     }
 
@@ -43,6 +46,37 @@ struct HostTransportAPIFeasibilityTests {
         let data = HarcHTTP11UploadTransportAPI.data(copyingReadableBytes: buffer)
 
         #expect(Array(data) == Array("harc".utf8))
+    }
+
+    @Test("The bootstrap gRPC decoder enforces the one MiB raw request ceiling")
+    func grpcRuntimeBoundary() throws {
+        let sourceBindingProvider = try HarcHostRPCSourceBindingProvider(
+            hostScopedSecret: Data(repeating: 0xA1, count: 32)
+        )
+        let configuration = HarcGRPCServerRuntime
+            .bootstrapTransportConfiguration(
+                sourceBindingProvider: sourceBindingProvider
+            )
+        #expect(
+            HarcGRPCServerRuntime.maximumRequestPayloadBytes
+                == 1 * 1_024 * 1_024
+        )
+        #expect(
+            configuration.rpc.maxRequestPayloadSize
+                == HarcGRPCServerRuntime.maximumRequestPayloadBytes
+        )
+        #expect(
+            configuration.channelDebuggingCallbacks.onAcceptHTTP2Stream != nil
+        )
+        _ = HarcBootstrapGRPCServiceFactoryV1.init(
+            hostInfoService:pairingService:sessionService:
+                hostAuthorityPublicKey:capabilityPolicy:
+                hostScopedSourceSecret:
+        )
+        _ = HarcGRPCServerRuntime.init(
+            bootstrapServiceFactory:bindTimeout:gracefulDrainTimeout:
+                hardStopTimeout:
+        )
     }
 }
 #endif

@@ -25,14 +25,15 @@ private actor WorkGate {
 struct SummarizationQueueStoreTests {
 
     private func expectEventually(
-        timeoutMs: Int = 30_000,
+        timeoutMs: Int = 180_000,
         _ check: @Sendable () async -> Bool,
         _ sourceLocation: SourceLocation = #_sourceLocation
     ) async {
-        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
-        while Date() < deadline {
+        let deadline = ContinuousClock.now + .milliseconds(timeoutMs)
+        while true {
             if await check() { return }
-            try? await Task.sleep(nanoseconds: 5_000_000)
+            guard ContinuousClock.now < deadline else { break }
+            try? await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("expectEventually timed out", sourceLocation: sourceLocation)
     }

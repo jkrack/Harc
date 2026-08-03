@@ -188,6 +188,45 @@ struct HostTLSServerIdentityTests {
         }
     }
 
+    @Test("serial canonicalization retains only a required positive sign octet")
+    func serialCanonicalizationRetainsRequiredSignOctet() throws {
+        var signOctetRequired = [UInt8](repeating: 0x22, count: 20)
+        signOctetRequired[0] = 0x80
+        signOctetRequired[1] = 0x80
+        let retained = try HostTLSCertificateSerialNumber.canonicalize(
+            signOctetRequired
+        )
+        #expect(retained.count == 20)
+        #expect(retained.prefix(2) == Data([0x00, 0x80]))
+
+        var signOctetRedundant = signOctetRequired
+        signOctetRedundant[1] = 0x7f
+        let trimmed = try HostTLSCertificateSerialNumber.canonicalize(
+            signOctetRedundant
+        )
+        #expect(trimmed.count == 19)
+        #expect(trimmed.first == 0x7f)
+
+        let key = try HostSecurityP256SigningKey
+            .createLegacyKeychainTestFixture(
+                applicationTag: Data("com.harc.tests.tls.\(UUID())".utf8)
+            )
+        defer { key.deletePersistentKeyBestEffort() }
+        let tlsIdentity = HostTLSSigningIdentity(
+            key: .securityFramework(key)
+        )
+        let certificate = try tlsIdentity.issueServerCertificate(
+            request: request(for: tlsIdentity),
+            serialNumber: retained
+        )
+
+        #expect(certificate.serialNumber == retained)
+        #expect(certificate.serialNumber.first == 0x00)
+        #expect(certificate.serialNumber[certificate.serialNumber.index(
+            after: certificate.serialNumber.startIndex
+        )] & 0x80 != 0)
+    }
+
     @Test("concurrent load-or-create persists intent before creating one permanent TLS key")
     func concurrentCreationUsesOnlyWinningIntent() async throws {
         let backend = ForcedConcurrentHostRecordBackend()
@@ -465,14 +504,9 @@ struct HostTLSServerIdentityTests {
     }
 
     private func deleteCertificate(_ der: Data) {
-        guard let certificate = SecCertificateCreateWithData(nil, der as CFData) else {
-            return
-        }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassCertificate,
-            kSecValueRef as String: certificate,
-        ]
-        _ = SecItemDelete(query as CFDictionary)
+        HostTLSSigningIdentity.deleteInstalledServerCertificateBestEffort(
+            certificateDER: der
+        )
     }
 }
 

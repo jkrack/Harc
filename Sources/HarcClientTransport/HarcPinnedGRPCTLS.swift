@@ -7,9 +7,11 @@ import NIOSSL
 /// The application trust verifier for Harc's authority-signed TLS transport
 /// set. It receives the untrusted peer chain and must complete exactly once.
 /// No system-trust or insecure fallback is applied around this decision.
-public protocol HarcPeerCertificateVerifier: Sendable {
+protocol HarcPeerCertificateVerifier: Sendable {
     func verify(
         peerCertificateChain: [NIOSSLCertificate],
+        recordAcceptedTrust: @escaping @Sendable
+            (HarcAcceptedServerTrust) throws -> Void,
         promise: EventLoopPromise<NIOSSLVerificationResult>
     )
 }
@@ -23,15 +25,17 @@ public enum HarcPinnedGRPCTLSError: Error, Equatable {
 /// certificate. That certificate is exported to raw DER immediately; no NIOSSL
 /// certificate fields or chain-building result participates in the Harc
 /// identity decision.
-public struct HarcNIOSSLPeerCertificateVerifier: HarcPeerCertificateVerifier {
-    public let trustCoordinator: HarcTransportTrustCoordinator
+struct HarcNIOSSLPeerCertificateVerifier: HarcPeerCertificateVerifier {
+    let trustCoordinator: HarcTransportTrustCoordinator
 
-    public init(trustCoordinator: HarcTransportTrustCoordinator) {
+    init(trustCoordinator: HarcTransportTrustCoordinator) {
         self.trustCoordinator = trustCoordinator
     }
 
-    public func verify(
+    func verify(
         peerCertificateChain: [NIOSSLCertificate],
+        recordAcceptedTrust: @escaping @Sendable
+            (HarcAcceptedServerTrust) throws -> Void,
         promise: EventLoopPromise<NIOSSLVerificationResult>
     ) {
         let leafDER: Data
@@ -49,9 +53,10 @@ public struct HarcNIOSSLPeerCertificateVerifier: HarcPeerCertificateVerifier {
 
         promise.completeWithTask { [trustCoordinator] in
             do {
-                try await trustCoordinator.validateServerLeaf(
+                let accepted = try await trustCoordinator.validateServerLeaf(
                     certificateDER: leafDER
                 )
+                try recordAcceptedTrust(accepted)
                 return .certificateVerified
             } catch {
                 return .failed
@@ -71,8 +76,9 @@ public struct HarcPinnedGRPCTLS: Sendable {
     public let tlsConfiguration: TLSConfiguration
     public let transportSecurity: HTTP2ClientTransport.TransportServices.TransportSecurity
     public let transportConfig: HTTP2ClientTransport.TransportServices.Config
+    let responseTrustCodec: HarcGRPCResponseTrustCodec
 
-    public init(
+    init(
         serverHostname: String,
         verifier: any HarcPeerCertificateVerifier
     ) throws {
@@ -87,9 +93,11 @@ public struct HarcPinnedGRPCTLS: Sendable {
         tlsConfiguration.applicationProtocols = Self.applicationProtocols
 
         let tlsContext = try NIOSSLContext(configuration: tlsConfiguration)
+        let responseTrustCodec = HarcGRPCResponseTrustCodec()
         var transportConfig = HTTP2ClientTransport.TransportServices.Config.defaults
         transportConfig.channelDebuggingCallbacks.onCreateTCPConnection = { channel in
             channel.eventLoop.makeCompletedFuture {
+                let connectionTrust = HarcGRPCConnectionTrustBinding()
                 let tlsHandler = try NIOSSLClientHandler(
                     context: tlsContext,
                     serverHostname: serverHostname,
@@ -100,9 +108,19 @@ public struct HarcPinnedGRPCTLS: Sendable {
                         }
                         verifier.verify(
                             peerCertificateChain: certificateChain,
+                            recordAcceptedTrust: { accepted in
+                                try connectionTrust.record(accepted)
+                            },
                             promise: promise
                         )
                     }
+                )
+                try channel.pipeline.syncOperations.addHandler(
+                    HarcGRPCConnectionTrustHandler(
+                        binding: connectionTrust
+                    ),
+                    name: "harc-connection-trust",
+                    position: .first
                 )
                 try channel.pipeline.syncOperations.addHandler(
                     tlsHandler,
@@ -111,14 +129,22 @@ public struct HarcPinnedGRPCTLS: Sendable {
                 )
             }
         }
+        transportConfig.channelDebuggingCallbacks.onCreateHTTP2Stream = {
+            channel in
+            HarcGRPCResponseTrustBridge.initializeStream(
+                channel: channel,
+                codec: responseTrustCodec
+            )
+        }
 
         self.serverHostname = serverHostname
         self.tlsConfiguration = tlsConfiguration
         self.transportSecurity = .customSecure
         self.transportConfig = transportConfig
+        self.responseTrustCodec = responseTrustCodec
     }
 
-    public init(
+    init(
         serverHostname: String,
         trustCoordinator: HarcTransportTrustCoordinator
     ) throws {
@@ -130,7 +156,7 @@ public struct HarcPinnedGRPCTLS: Sendable {
         )
     }
 
-    public func makeTransport(
+    func makeTransport(
         target: any ResolvableTarget
     ) throws -> HTTP2ClientTransport.TransportServices {
         try HTTP2ClientTransport.TransportServices(

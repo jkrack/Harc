@@ -229,7 +229,7 @@ public actor HarcPairingClaimService {
 
     public func provePairingClaim(
         _ request: ProveHostPairingClaimRequest
-    ) async throws -> HostPairingProofResult {
+    ) async throws -> HostPairingClaimProofResponse {
         let checkedAt = store.now()
         guard checkedAt.timeIntervalSinceReferenceDate.isFinite else {
             throw HarcHostError.pairingProofRejected
@@ -344,7 +344,10 @@ public actor HarcPairingClaimService {
             )
             throw HarcHostError.pairingProofRejected
         }
-        return proof
+        return try HostPairingClaimProofResponse(
+            proof: proof,
+            expiresAt: record.expiresAt
+        )
     }
 
     public func pairingStatus(

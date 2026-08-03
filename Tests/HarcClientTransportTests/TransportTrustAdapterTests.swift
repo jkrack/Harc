@@ -34,10 +34,14 @@ struct TransportTrustAdapterTests {
 
         let eventLoop = NIOAsyncTestingEventLoop()
         let promise = eventLoop.makePromise(of: NIOSSLVerificationResult.self)
+        let connectionTrust = HarcGRPCConnectionTrustBinding()
         HarcNIOSSLPeerCertificateVerifier(
             trustCoordinator: coordinator
         ).verify(
             peerCertificateChain: [certificate],
+            recordAcceptedTrust: { accepted in
+                try connectionTrust.record(accepted)
+            },
             promise: promise
         )
 
@@ -53,6 +57,7 @@ struct TransportTrustAdapterTests {
             Issue.record("NIOSSL adapter rejected an admitted Harc leaf")
             return
         }
+        #expect(try connectionTrust.authenticatedTrust().transportSetEpoch == 1)
     }
 
     @Test("the NIOSSL verifier rejects an empty peer chain")
@@ -70,10 +75,17 @@ struct TransportTrustAdapterTests {
         )
         let eventLoop = NIOAsyncTestingEventLoop()
         let promise = eventLoop.makePromise(of: NIOSSLVerificationResult.self)
+        let connectionTrust = HarcGRPCConnectionTrustBinding()
 
         HarcNIOSSLPeerCertificateVerifier(
             trustCoordinator: coordinator
-        ).verify(peerCertificateChain: [], promise: promise)
+        ).verify(
+            peerCertificateChain: [],
+            recordAcceptedTrust: { accepted in
+                try connectionTrust.record(accepted)
+            },
+            promise: promise
+        )
 
         let result: NIOSSLVerificationResult
         do {
@@ -86,6 +98,10 @@ struct TransportTrustAdapterTests {
         guard case .failed = result else {
             Issue.record("NIOSSL adapter accepted an empty peer chain")
             return
+        }
+        #expect(throws: HarcGRPCResponseTrustBindingError
+            .noAuthenticatedHandshake) {
+            try connectionTrust.authenticatedTrust()
         }
     }
 
@@ -114,11 +130,15 @@ struct TransportTrustAdapterTests {
         let certificate = try NIOSSLCertificate.fromDERFile(temporaryURL.path)
         let eventLoop = NIOAsyncTestingEventLoop()
         let promise = eventLoop.makePromise(of: NIOSSLVerificationResult.self)
+        let connectionTrust = HarcGRPCConnectionTrustBinding()
 
         HarcNIOSSLPeerCertificateVerifier(
             trustCoordinator: coordinator
         ).verify(
             peerCertificateChain: [certificate, certificate],
+            recordAcceptedTrust: { accepted in
+                try connectionTrust.record(accepted)
+            },
             promise: promise
         )
 
@@ -133,6 +153,10 @@ struct TransportTrustAdapterTests {
         guard case .failed = result else {
             Issue.record("NIOSSL adapter accepted an extra peer certificate")
             return
+        }
+        #expect(throws: HarcGRPCResponseTrustBindingError
+            .noAuthenticatedHandshake) {
+            try connectionTrust.authenticatedTrust()
         }
     }
 

@@ -43,10 +43,22 @@ public final class PostStopTrayState: ObservableObject {
     @Published public private(set) var lastOutcome: StopOutcome? = nil
 
     private let visibleDuration: Duration
+    private let sleep: @Sendable (Duration) async throws -> Void
     private var fadeTask: Task<Void, Never>? = nil
 
-    public init(visibleDuration: Duration = .seconds(30)) {
+    public convenience init(visibleDuration: Duration = .seconds(30)) {
+        self.init(
+            visibleDuration: visibleDuration,
+            sleep: { duration in try await Task.sleep(for: duration) }
+        )
+    }
+
+    init(
+        visibleDuration: Duration,
+        sleep: @escaping @Sendable (Duration) async throws -> Void
+    ) {
         self.visibleDuration = visibleDuration
+        self.sleep = sleep
     }
 
     public func show(
@@ -63,8 +75,8 @@ public final class PostStopTrayState: ObservableObject {
         lastWavPath = wavPath
         lastOutcome = outcome ?? .savedSafely(title: title, wavPath: wavPath)
         isVisible = true
-        fadeTask = Task { [weak self, visibleDuration] in
-            try? await Task.sleep(for: visibleDuration)
+        fadeTask = Task { [weak self, visibleDuration, sleep] in
+            try? await sleep(visibleDuration)
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.isVisible = false }
         }

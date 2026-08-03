@@ -93,6 +93,31 @@ public struct HostTLSServerIdentity: @unchecked Sendable {
     }
 }
 
+enum HostTLSCertificateSerialNumber {
+    static let maximumOctets = 20
+
+    /// Converts exactly 20 random octets into one canonical positive DER
+    /// INTEGER content value without ever exceeding X.509's 20-octet limit.
+    static func canonicalize(_ randomBytes: [UInt8]) throws -> Data {
+        guard randomBytes.count == maximumOctets else {
+            throw HostCryptographicStateError.certificateProfileMismatch(
+                field: "serialNumber"
+            )
+        }
+        var bytes = randomBytes
+        bytes[0] &= 0x7f
+        if !bytes.contains(where: { $0 != 0 }) {
+            bytes[bytes.count - 1] = 1
+        }
+        while bytes.count > 1,
+              bytes[0] == 0,
+              bytes[1] & 0x80 == 0 {
+            bytes.removeFirst()
+        }
+        return Data(bytes)
+    }
+}
+
 extension HostTLSSigningIdentity {
     /// SHA-256 of the complete DER SubjectPublicKeyInfo for the TLS P-256 key.
     package var tlsSPKISHA256: Data {
@@ -190,6 +215,16 @@ extension HostTLSSigningIdentity {
             request: request
         )
     }
+
+    /// Removes a test/runtime-installed leaf without racing another identity
+    /// resolution in this process.
+    package static func deleteInstalledServerCertificateBestEffort(
+        certificateDER: Data
+    ) {
+        HostTLSCertificateDER.deleteInstalledCertificateBestEffort(
+            certificateDER: certificateDER
+        )
+    }
 }
 
 extension P256X963PublicKey {
@@ -239,7 +274,10 @@ private enum HostTLSCertificateDER {
     }
 
     static func randomSerialNumber() throws -> Data {
-        var bytes = [UInt8](repeating: 0, count: 20)
+        var bytes = [UInt8](
+            repeating: 0,
+            count: HostTLSCertificateSerialNumber.maximumOctets
+        )
         let status = bytes.withUnsafeMutableBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return errSecParam }
             return SecRandomCopyBytes(kSecRandomDefault, buffer.count, baseAddress)
@@ -247,15 +285,7 @@ private enum HostTLSCertificateDER {
         guard status == errSecSuccess else {
             throw HostCryptographicStateError.secureRandomFailure(status)
         }
-        // A certificate serial is a positive DER INTEGER of at most 20 octets.
-        bytes[0] &= 0x7f
-        if !bytes.contains(where: { $0 != 0 }) {
-            bytes[bytes.count - 1] = 1
-        }
-        while bytes.count > 1, bytes[0] == 0 {
-            bytes.removeFirst()
-        }
-        return Data(bytes)
+        return try HostTLSCertificateSerialNumber.canonicalize(bytes)
     }
 
     static func issue(
@@ -401,6 +431,20 @@ private enum HostTLSCertificateDER {
         expectedPublicKey: P256X963PublicKey,
         useDataProtectionKeychain: Bool
     ) throws -> SecIdentity {
+        try HostSecurityP256SigningKey.withKeychainLifecycle {
+            try installAndResolveIdentityLocked(
+                certificateDER: certificateDER,
+                expectedPublicKey: expectedPublicKey,
+                useDataProtectionKeychain: useDataProtectionKeychain
+            )
+        }
+    }
+
+    private static func installAndResolveIdentityLocked(
+        certificateDER: Data,
+        expectedPublicKey: P256X963PublicKey,
+        useDataProtectionKeychain: Bool
+    ) throws -> SecIdentity {
         guard let certificate = SecCertificateCreateWithData(
             nil,
             certificateDER as CFData
@@ -439,6 +483,21 @@ private enum HostTLSCertificateDER {
             throw HostCryptographicStateError.serverIdentityUnavailable
         }
         return identity
+    }
+
+    static func deleteInstalledCertificateBestEffort(certificateDER: Data) {
+        HostSecurityP256SigningKey.withKeychainLifecycle {
+            guard let certificate = SecCertificateCreateWithData(
+                nil,
+                certificateDER as CFData
+            ) else {
+                return
+            }
+            _ = SecItemDelete([
+                kSecClass as String: kSecClassCertificate,
+                kSecValueRef as String: certificate,
+            ] as CFDictionary)
+        }
     }
 
     private static func certificateExtensions(

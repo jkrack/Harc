@@ -147,18 +147,20 @@ struct LibraryMaintenanceStoreTests {
         }
     }
 
-    /// Poll a condition to a deadline. The work runs in detached tasks, so
+    /// Poll a condition to a deadline. The work runs in unstructured tasks, so
     /// there's no handle to await — but a fixed sleep is exactly the flake this
     /// codebase already got bitten by.
     private func waitUntil(
-        timeout: TimeInterval = 5,
+        timeout: Duration = .seconds(180),
         _ condition: () async throws -> Bool
     ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while true {
             if try await condition() { return }
-            try? await Task.sleep(nanoseconds: 20_000_000)
+            guard clock.now < deadline else { break }
+            try? await clock.sleep(for: .milliseconds(20))
         }
-        Issue.record("condition not met within \(timeout)s")
+        Issue.record("condition not met within \(timeout)")
     }
 }

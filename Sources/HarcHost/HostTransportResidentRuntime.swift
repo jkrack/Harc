@@ -65,6 +65,10 @@ package actor HostTransportResidentRuntime {
                 lifecycle: lifecycle,
                 now: now
             )
+            await lifecycle.installGenerationUnavailableHandler {
+                [weak scheduler] in
+                await scheduler?.generationBecameUnavailable()
+            }
             let runtime = HostTransportResidentRuntime(
                 store: store,
                 lifecycle: lifecycle,
@@ -152,14 +156,35 @@ private actor HostTransportRenewalScheduler {
     }
 
     func stop() async {
-        task?.cancel()
+        let stopping = task
         task = nil
+        stopping?.cancel()
+        await stopping?.value
+    }
+
+    /// Interrupts a potentially days-long renewal sleep. The replacement loop
+    /// follows the ordinary nil-generation retry path, including its bounded
+    /// five-minute backoff on repeated bind failures.
+    func generationBecameUnavailable() {
+        guard task != nil else { return }
+        task?.cancel()
+        task = Task { [weak self] in
+            await self?.runLoop()
+        }
     }
 
     func handleWake() async {
         if await lifecycle.enforceRenewalHardStopIfNeeded() { return }
-        guard let status = await lifecycle.generationStatus(),
-              now() >= status.renewAt else { return }
+        guard let status = await lifecycle.generationStatus() else {
+            do {
+                _ = try await lifecycle.prepareForServing()
+                lastErrorDescription = nil
+            } catch {
+                lastErrorDescription = String(describing: error)
+            }
+            return
+        }
+        guard now() >= status.renewAt else { return }
         do {
             _ = try await lifecycle.renewServingGenerationIfNeeded()
             lastErrorDescription = nil
