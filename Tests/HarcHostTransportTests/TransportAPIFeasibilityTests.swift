@@ -18,7 +18,9 @@ struct HostTransportAPIFeasibilityTests {
             lease:port:bonjourHints:servedIdentityBinding:eventLoopGroup:
                 bindingTimeout:
         )
-        _ = HarcHTTP11UploadTransportAPI.makeListener(lease:port:)
+        _ = HarcHTTP11UploadTransportAPI.makeListener(
+            lease:port:servingGeneration:
+        )
     }
 
     @Test("The two listeners have disjoint ALPN profiles")

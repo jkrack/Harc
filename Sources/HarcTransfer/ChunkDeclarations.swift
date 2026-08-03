@@ -64,6 +64,7 @@ public enum ChunkDeclarationDisposition: Equatable, Hashable, Sendable {
     case appended(firstIndex: UInt32, count: Int)
     case exactReplay
     case closed
+    case conflictBlocked(ChunkDeclarationConflict)
 }
 
 /// Ordered, transaction-friendly declaration state. A conflicting reuse

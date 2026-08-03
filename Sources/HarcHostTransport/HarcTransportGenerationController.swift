@@ -17,6 +17,8 @@ package protocol HarcTransportGenerationDriver: Sendable {
         id: UUID,
         grpcFactory: HarcGRPCNWListenerFactory,
         uploadListener: NWListener,
+        uploadServingGeneration:
+            HarcBackgroundUploadServingGenerationBinding,
         terminationReporter: HostTransportGenerationTerminationReporter
     ) async throws
 
@@ -74,14 +76,21 @@ package actor HarcTransportGenerationController: HostTransportGenerationBoundary
             servedIdentityBinding: servedIdentityBinding,
             eventLoopGroup: eventLoopGroup
         )
+        let uploadServingGeneration = try
+            HarcBackgroundUploadServingGenerationBinding(
+                generationID: generation.generationID,
+                transportSetEpoch: generation.transportEpoch
+            )
         let uploadListener = try await HarcHTTP11UploadTransportAPI.makeListener(
             lease: generation.backgroundUpload,
-            port: uploadPort
+            port: uploadPort,
+            servingGeneration: uploadServingGeneration
         )
         try await activateConstructedGeneration(
             id: generation.generationID,
             grpcFactory: grpcFactory,
             uploadListener: uploadListener,
+            uploadServingGeneration: uploadServingGeneration,
             terminationReporter: generation.terminationReporter
         )
     }
@@ -94,12 +103,16 @@ package actor HarcTransportGenerationController: HostTransportGenerationBoundary
         id: UUID,
         grpcFactory: HarcGRPCNWListenerFactory,
         uploadListener: NWListener,
+        uploadServingGeneration:
+            HarcBackgroundUploadServingGenerationBinding,
         terminationReporter: HostTransportGenerationTerminationReporter
     ) async throws {
+        try uploadServingGeneration.requireGeneration(id)
         try await driver.activateGeneration(
             id: id,
             grpcFactory: grpcFactory,
             uploadListener: uploadListener,
+            uploadServingGeneration: uploadServingGeneration,
             terminationReporter: terminationReporter
         )
     }

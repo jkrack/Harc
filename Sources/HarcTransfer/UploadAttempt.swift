@@ -81,6 +81,60 @@ public struct UploadAttempt: Codable, Equatable, Hashable, Sendable {
         self.terminalAt = nil
     }
 
+    /// Reconstructs an active attempt from host-authoritative reconciliation.
+    /// This is required when the host accepted `BeginUpload` but the response
+    /// did not cross the client's durable boundary. Unlike deriving a start
+    /// time from expiry, it remains exact when grant expiry shortens a lease.
+    public static func recoverActive(
+        uploadID: UploadID,
+        ownerDeviceID: DeviceID,
+        originRecordingID: OriginRecordingID,
+        frozenProfile: FrozenUploadProfile,
+        firstBeganAt: Date,
+        generation: UploadGeneration,
+        generationBeganAt: Date,
+        generationExpiresAt: Date
+    ) throws -> Self {
+        try TransferValidation.requireFinite(
+            firstBeganAt,
+            field: "UploadAttempt.recovery.firstBeganAt"
+        )
+        try TransferValidation.requireFinite(
+            generationBeganAt,
+            field: "UploadAttempt.recovery.generationBeganAt"
+        )
+        try TransferValidation.requireFinite(
+            generationExpiresAt,
+            field: "UploadAttempt.recovery.generationExpiresAt"
+        )
+        guard firstBeganAt <= generationBeganAt,
+              generationBeganAt < generationExpiresAt,
+              generationExpiresAt <= generationBeganAt.addingTimeInterval(
+                TransferLimits.uploadGenerationLifetime
+              ) else {
+            throw TransferValidationError.invalidOrdering(
+                field: "UploadAttempt.recovery.generationLifetime"
+            )
+        }
+        if generation == .initial, firstBeganAt != generationBeganAt {
+            throw TransferValidationError.invalidUploadAttempt(
+                reason: "The initial generation must begin with the upload."
+            )
+        }
+
+        var recovered = try Self(
+            uploadID: uploadID,
+            ownerDeviceID: ownerDeviceID,
+            originRecordingID: originRecordingID,
+            frozenProfile: frozenProfile,
+            beganAt: firstBeganAt
+        )
+        recovered.generation = generation
+        recovered.generationBeganAt = generationBeganAt
+        recovered.generationExpiresAt = generationExpiresAt
+        return recovered
+    }
+
     public func leaseState(at date: Date) throws -> UploadLeaseState {
         try TransferValidation.requireFinite(date, field: "UploadAttempt.leaseState.at")
         switch status {

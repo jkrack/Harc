@@ -3,6 +3,62 @@ import GRDB
 import HarcDomain
 
 public extension RecordingStore {
+    /// Reads canonical-library identity and writer state without opening a
+    /// mutable store. This path never creates a database, runs migrations,
+    /// acquires a writer lease, or changes SQLite journal mode.
+    ///
+    /// Host startup uses this inspection before it decides whether the
+    /// existing database must be recovered under its exact lifetime lease.
+    static func inspectLibraryMetadata(
+        onDiskAt url: URL
+    ) throws -> HarcDomain.LibraryMetadata {
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(
+            atPath: url.path,
+            isDirectory: &isDirectory
+        ), !isDirectory.boolValue else {
+            throw StoreError.databaseOpenFailed(
+                "Canonical library metadata inspection requires an existing database file"
+            )
+        }
+
+        var configuration = Configuration()
+        configuration.readonly = true
+        configuration.foreignKeysEnabled = false
+        configuration.busyMode = .timeout(5)
+
+        let readOnlyDatabase: DatabaseQueue
+        do {
+            readOnlyDatabase = try DatabaseQueue(
+                path: url.path,
+                configuration: configuration
+            )
+        } catch {
+            throw StoreError.readFailed(
+                "Canonical library metadata inspection could not open the database: "
+                    + error.localizedDescription
+            )
+        }
+
+        do {
+            return try readOnlyDatabase.unsafeRead { database in
+                guard try database.tableExists("library_metadata") else {
+                    throw StoreError.invalidData(
+                        "Canonical library metadata table is missing"
+                    )
+                }
+                return try Self.readLibraryMetadata(in: database)
+            }
+        } catch let error as StoreError {
+            throw error
+        } catch {
+            throw StoreError.readFailed(
+                "Canonical library metadata inspection failed: "
+                    + error.localizedDescription
+            )
+        }
+    }
+
     /// Stable identity and writer state for this canonical library.
     func libraryMetadata() async throws -> HarcDomain.LibraryMetadata {
         try await db.read { database in

@@ -52,6 +52,7 @@ struct MigrationAndProtectionTests {
         #expect(transferTables.contains("background_task_mappings"))
         #expect(transferTables.contains("upload_attempt_supersessions"))
         #expect(transferTables.contains("verified_recording_receipts"))
+        #expect(transferTables.contains("upload_begin_intents"))
         #expect(transferTables.contains("cleanup_intents"))
         #expect(!transferTables.contains("cached_recordings"))
         #expect(!transferTables.contains("offline_metadata_mutations"))
@@ -141,7 +142,7 @@ struct MigrationAndProtectionTests {
             let migrationCount = try db.read { db in
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM grdb_migrations")
             }
-            #expect(migrationCount == (url == locations.transferDatabase ? 3 : 1))
+            #expect(migrationCount == (url == locations.transferDatabase ? 4 : 1))
         }
     }
 

@@ -819,6 +819,8 @@ struct OutboxPersistenceTests {
                 originRecordingID: origin,
                 uploadProfileSHA256: attempt.frozenProfile.profileSHA256,
                 generation: attempt.generation,
+                firstBeganAt: attempt.firstBeganAt,
+                generationBeganAt: attempt.generationBeganAt,
                 generationExpiresAt: attempt.generationExpiresAt,
                 declarations: [chunk],
                 boundManifestObjectSHA256: manifest.objectSHA256,
@@ -1090,6 +1092,16 @@ struct OutboxPersistenceTests {
                 expiresAt: ClientStoreFixtures.baseDate.addingTimeInterval(300)
             )
         )
+        let taskIdentity = try SystemBackgroundTaskIdentity(
+            taskIdentifier: 50
+        )
+        try store.persistTaskMappingBeforeResume(
+            taskIdentity,
+            batchID: batch.batchID
+        )
+        #expect(
+            try store.backgroundBatch(id: batch.batchID)?.state == .scheduled
+        )
         let ack = ClientStoreFixtures.exactObject(kind: .audioBatchAckV1, byte: 50)
         let durable = [
             DurableChunkStatus(
@@ -1103,9 +1115,127 @@ struct OutboxPersistenceTests {
 
         #expect(try store.backgroundBatch(id: batch.batchID)?.durableACK == ack)
         #expect(try store.backgroundBatch(id: batch.batchID)?.state == .completed)
+        #expect(try store.taskMappings().map(\.state) == [.completed])
+        try store.persistTaskMappingBeforeResume(
+            taskIdentity,
+            batchID: batch.batchID
+        )
+        #expect(try store.taskMappings().map(\.state) == [.completed])
+        #expect(throws: ClientStoreError.self) {
+            try store.persistTaskMappingBeforeResume(
+                SystemBackgroundTaskIdentity(taskIdentifier: 51),
+                batchID: batch.batchID
+            )
+        }
         #expect(try store.chunks(uploadID: attempt.uploadID)[0].durableACK == ack)
         #expect(try store.chunks(uploadID: attempt.uploadID)[0].stateMachine.state == .durableAtHost)
         #expect(try store.recordingOutbox(for: origin)?.stateMachine.state == .localOnly)
         #expect(try store.cleanupIntent(for: origin) == nil)
+    }
+
+    @Test("background task failures are durable and security-monotonic")
+    func backgroundTaskFailurePersistence() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let origin = ClientStoreFixtures.origin()
+        let tuple = ClientStoreFixtures.tuple(library: 1, authorityByte: 1)
+        let attempt = ClientStoreFixtures.attempt(origin: origin)
+        let batch = ClientStoreFixtures.batch(
+            origin: origin,
+            uploadID: attempt.uploadID
+        )
+        let store = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: origin.deviceID,
+            storageAttributes: RecordingStorageAttributes()
+        )
+        _ = try store.adopt(
+            ClientStoreFixtures.adoption(
+                tuple: tuple,
+                keyByte: 1,
+                transportEpoch: 1,
+                transportByte: 1,
+                grantEpoch: 1,
+                grantByte: 1
+            )
+        )
+        _ = try store.persistFinalizedCapture(
+            ClientStoreFixtures.capture(origin: origin),
+            masterFileURL: root.appendingPathComponent("master.wav")
+        )
+        try store.persistUploadAttempt(attempt, for: tuple)
+        try store.persistBackgroundBatch(
+            batch,
+            bodyFileURL: root.appendingPathComponent("batch.harcab1"),
+            capability: OpaqueBackgroundCapability(
+                credential: Data([1]),
+                capabilityBindings: Data([2]),
+                expiresAt: ClientStoreFixtures.baseDate
+                    .addingTimeInterval(300)
+            )
+        )
+        let identity = try SystemBackgroundTaskIdentity(taskIdentifier: 71)
+        try store.persistTaskMappingBeforeResume(
+            identity,
+            batchID: batch.batchID
+        )
+
+        try store.persistBackgroundTaskFailure(
+            identity,
+            batchID: batch.batchID,
+            disposition: .failedRecoverable
+        )
+        #expect(
+            try store.backgroundBatch(id: batch.batchID)?.state
+                == .failedRecoverable
+        )
+        #expect(try store.taskMappings().map(\.state) == [
+            .failedRecoverable,
+        ])
+
+        try store.persistBackgroundTaskFailure(
+            identity,
+            batchID: batch.batchID,
+            disposition: .securityBlocked
+        )
+        try store.persistBackgroundTaskFailure(
+            identity,
+            batchID: batch.batchID,
+            disposition: .failedRecoverable
+        )
+        #expect(
+            try store.backgroundBatch(id: batch.batchID)?.state
+                == .securityBlocked
+        )
+        #expect(try store.taskMappings().map(\.state) == [
+            .securityBlocked,
+        ])
+        let blockedReconciliation = try store.reconcileBackgroundTasks(
+            observedSystemTasks: []
+        )
+        #expect(blockedReconciliation.batchesToReschedule.isEmpty)
+        #expect(try store.taskMappings().map(\.state) == [
+            .securityBlocked,
+        ])
+        #expect(throws: ClientStoreError.self) {
+            try store.persistBackgroundTaskFailure(
+                identity,
+                batchID: AudioBatchID.random(),
+                disposition: .failedRecoverable
+            )
+        }
+
+        let reopened = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: origin.deviceID,
+            storageAttributes: RecordingStorageAttributes()
+        )
+        #expect(
+            try reopened.backgroundBatch(id: batch.batchID)?.state
+                == .securityBlocked
+        )
+        #expect(try reopened.taskMappings().map(\.state) == [
+            .securityBlocked,
+        ])
     }
 }

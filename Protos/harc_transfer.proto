@@ -330,6 +330,10 @@ message ReconcileUploadResponseV1 {
   repeated RejectedChunkV1 rejected_chunks = 11;
   UploadTerminalReasonV1 terminal_reason = 12;
   optional ExactSignedObjectV1 exact_existing_receipt = 13;
+  // Host-authoritative lease boundaries. Expiry alone cannot recover either
+  // value because a device-grant expiry may shorten the generation lifetime.
+  uint64 first_began_at_unix_ms = 14;
+  uint64 generation_began_at_unix_ms = 15;
 }
 
 message CommitUploadRequestV1 {

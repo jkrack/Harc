@@ -20,23 +20,17 @@ public struct HostBackgroundCapabilityAdmissionRequest: Equatable, Sendable {
     public let httpMethod: String
     public let httpPath: String
     public let contentLength: UInt64
-    public let claimedExactBodySHA256: ImmutableBatchSHA256
-    public let servedTransportSetEpoch: UInt64
 
     public init(
         opaqueCapabilityCredential: Data,
         httpMethod: String,
         httpPath: String,
-        contentLength: UInt64,
-        claimedExactBodySHA256: ImmutableBatchSHA256,
-        servedTransportSetEpoch: UInt64
+        contentLength: UInt64
     ) {
         self.opaqueCapabilityCredential = opaqueCapabilityCredential
         self.httpMethod = httpMethod
         self.httpPath = httpPath
         self.contentLength = contentLength
-        self.claimedExactBodySHA256 = claimedExactBodySHA256
-        self.servedTransportSetEpoch = servedTransportSetEpoch
     }
 }
 
@@ -51,12 +45,14 @@ public struct HostBackgroundBatchAdmission: Equatable, Sendable {
     public let exactBodySHA256: ImmutableBatchSHA256
     public let byteCeiling: UInt64
     public let minimumTransportSetEpoch: UInt64
-    public let servedTransportSetEpoch: UInt64
     public let capabilityExpiresAt: Date
     public let admittedAt: Date
 
     fileprivate let capabilityID: UUID
     fileprivate let credentialBindingSHA256: Data
+    fileprivate let authenticatedContext: AuthenticatedDeviceContext
+    fileprivate let servedTransportSetEpoch: UInt64
+    fileprivate let priorExactAcknowledgementBytes: Data?
 }
 
 public struct HostBackgroundBatchReplay: Equatable, Sendable {
@@ -64,14 +60,19 @@ public struct HostBackgroundBatchReplay: Equatable, Sendable {
     public let exactAcknowledgementBytes: Data
 }
 
-public enum HostBackgroundCapabilityAdmissionDisposition: Equatable, Sendable {
-    case receiveBody(HostBackgroundBatchAdmission)
+public enum HostBackgroundCapabilityVerifiedBodyDisposition: Equatable, Sendable {
+    case stagingRequired
     case exactReplay(HostBackgroundBatchReplay)
 }
 
 public enum HostBackgroundCapabilityFinalizationDisposition: Equatable, Sendable {
     case accepted(HostBackgroundBatchReplay)
     case exactReplay(HostBackgroundBatchReplay)
+}
+
+public enum HostBackgroundCapabilityChunkStagingDisposition: Equatable, Sendable {
+    case staged(StagedChunkDisposition)
+    case batchAlreadyAccepted
 }
 
 private struct ParsedBackgroundCapabilityCredential: Sendable {
@@ -110,21 +111,30 @@ private struct LoadedBackgroundCapability: Sendable {
     let minimumTransportSetEpoch: UInt64
     let expiresAt: Date
     let exactAcknowledgementBytes: Data?
+    let authenticatedContext: AuthenticatedDeviceContext
 }
 
 extension HarcHostStore {
-    public func admitBackgroundCapability(
-        _ request: HostBackgroundCapabilityAdmissionRequest
-    ) async throws -> HostBackgroundCapabilityAdmissionDisposition {
-        try await admitBackgroundCapability(request, at: now())
+    /// Package-only because the raw epoch must come from the active transport
+    /// generation binding, never from caller-controlled request metadata.
+    package func admitBackgroundCapability(
+        _ request: HostBackgroundCapabilityAdmissionRequest,
+        servedTransportSetEpoch: UInt64
+    ) async throws -> HostBackgroundBatchAdmission {
+        try await admitBackgroundCapability(
+            request,
+            servedTransportSetEpoch: servedTransportSetEpoch,
+            at: Self.backgroundWireDate(now())
+        )
     }
 
     /// Deterministic `@testable` seam. Production admission always uses Host
     /// time and rechecks the same facts again in finalization.
     func admitBackgroundCapability(
         _ request: HostBackgroundCapabilityAdmissionRequest,
+        servedTransportSetEpoch: UInt64,
         at admittedAt: Date
-    ) async throws -> HostBackgroundCapabilityAdmissionDisposition {
+    ) async throws -> HostBackgroundBatchAdmission {
         let credential = try ParsedBackgroundCapabilityCredential(
             exactBytes: request.opaqueCapabilityCredential
         )
@@ -138,18 +148,12 @@ extension HarcHostStore {
                 httpMethod: request.httpMethod,
                 httpPath: request.httpPath,
                 contentLength: request.contentLength,
-                exactBodySHA256: request.claimedExactBodySHA256,
-                servedTransportSetEpoch: request.servedTransportSetEpoch,
+                expectedExactBodySHA256: nil,
+                servedTransportSetEpoch: servedTransportSetEpoch,
                 at: admittedAt
             )
         }
-        if let exactAcknowledgementBytes = loaded.exactAcknowledgementBytes {
-            return .exactReplay(HostBackgroundBatchReplay(
-                batch: loaded.descriptor,
-                exactAcknowledgementBytes: exactAcknowledgementBytes
-            ))
-        }
-        return .receiveBody(HostBackgroundBatchAdmission(
+        return HostBackgroundBatchAdmission(
             batch: loaded.descriptor,
             httpMethod: loaded.httpMethod,
             httpPath: loaded.httpPath,
@@ -157,11 +161,124 @@ extension HarcHostStore {
             exactBodySHA256: loaded.descriptor.exactBodySHA256,
             byteCeiling: loaded.byteCeiling,
             minimumTransportSetEpoch: loaded.minimumTransportSetEpoch,
-            servedTransportSetEpoch: request.servedTransportSetEpoch,
             capabilityExpiresAt: loaded.expiresAt,
             admittedAt: admittedAt,
             capabilityID: loaded.capabilityID,
-            credentialBindingSHA256: loaded.credentialBindingSHA256
+            credentialBindingSHA256: loaded.credentialBindingSHA256,
+            authenticatedContext: loaded.authenticatedContext,
+            servedTransportSetEpoch: servedTransportSetEpoch,
+            priorExactAcknowledgementBytes:
+                loaded.exactAcknowledgementBytes
+        )
+    }
+
+    /// Reauthorizes a fully verified body. A completed replay is released only
+    /// here, after the caller has consumed exactly Content-Length bytes and
+    /// proven the DB-bound whole-body hash. New bodies proceed to staging.
+    public func finalizeBackgroundCapabilityVerifiedBody(
+        _ admission: HostBackgroundBatchAdmission,
+        observedBodyLength: UInt64,
+        observedBodySHA256: ImmutableBatchSHA256
+    ) async throws -> HostBackgroundCapabilityVerifiedBodyDisposition {
+        try await finalizeBackgroundCapabilityVerifiedBody(
+            admission,
+            observedBodyLength: observedBodyLength,
+            observedBodySHA256: observedBodySHA256,
+            at: Self.backgroundWireDate(now())
+        )
+    }
+
+    /// Deterministic `@testable` seam. Production verification uses Host time.
+    func finalizeBackgroundCapabilityVerifiedBody(
+        _ admission: HostBackgroundBatchAdmission,
+        observedBodyLength: UInt64,
+        observedBodySHA256: ImmutableBatchSHA256,
+        at checkedAt: Date
+    ) async throws -> HostBackgroundCapabilityVerifiedBodyDisposition {
+        try validateBackgroundCapabilityObservedBody(
+            admission,
+            observedBodyLength: observedBodyLength,
+            observedBodySHA256: observedBodySHA256,
+            checkedAt: checkedAt
+        )
+        try await repairSecurityRegistryOnReopen()
+        return try await dbQueue.read { db in
+            let loaded = try self.loadAndValidateBackgroundCapability(
+                in: db,
+                capabilityID: admission.capabilityID,
+                expectedCredentialBindingSHA256:
+                    admission.credentialBindingSHA256,
+                rejectCredentialMismatchAsAuthenticationFailure: false,
+                httpMethod: admission.httpMethod,
+                httpPath: admission.httpPath,
+                contentLength: admission.contentLength,
+                expectedExactBodySHA256: admission.exactBodySHA256,
+                servedTransportSetEpoch: admission.servedTransportSetEpoch,
+                at: checkedAt
+            )
+            try self.requireBackgroundAdmissionStillMatches(
+                admission,
+                loaded: loaded
+            )
+            guard let exactAcknowledgementBytes =
+                    loaded.exactAcknowledgementBytes else {
+                return .stagingRequired
+            }
+            return .exactReplay(HostBackgroundBatchReplay(
+                batch: loaded.descriptor,
+                exactAcknowledgementBytes: exactAcknowledgementBytes
+            ))
+        }
+    }
+
+    /// Revalidates the capability immediately before delegating one exact
+    /// immutable chunk to the ordinary idempotent staging path. The staging
+    /// path independently repeats live grant, generation, profile, descriptor,
+    /// length, and encoded-hash authorization through durable acknowledgement.
+    public func stageBackgroundCapabilityChunk(
+        _ admission: HostBackgroundBatchAdmission,
+        descriptor: LogicalChunkDescriptor,
+        body: HostChunkBody
+    ) async throws -> HostBackgroundCapabilityChunkStagingDisposition {
+        guard admission.batch.chunks.contains(descriptor) else {
+            throw HostBackgroundCapabilityAdmissionError
+                .requestBindingMismatch(field: "chunkDescriptor")
+        }
+        let checkedAt = Self.backgroundWireDate(now())
+        try await repairSecurityRegistryOnReopen()
+        let loaded = try await dbQueue.read { db in
+            try self.loadAndValidateBackgroundCapability(
+                in: db,
+                capabilityID: admission.capabilityID,
+                expectedCredentialBindingSHA256:
+                    admission.credentialBindingSHA256,
+                rejectCredentialMismatchAsAuthenticationFailure: false,
+                httpMethod: admission.httpMethod,
+                httpPath: admission.httpPath,
+                contentLength: admission.contentLength,
+                expectedExactBodySHA256: admission.exactBodySHA256,
+                servedTransportSetEpoch: admission.servedTransportSetEpoch,
+                at: checkedAt
+            )
+        }
+        try requireBackgroundAdmissionStillMatches(
+            admission,
+            loaded: loaded
+        )
+        if loaded.exactAcknowledgementBytes != nil {
+            return .batchAlreadyAccepted
+        }
+        return .staged(try await stageChunk(
+            context: loaded.authenticatedContext,
+            uploadID: loaded.descriptor.uploadID,
+            generation: loaded.descriptor.generation,
+            expectedUploadProfileSHA256:
+                loaded.descriptor.uploadProfileSHA256,
+            chunkIndex: descriptor.chunkIndex,
+            claimedChunkID: descriptor.chunkID,
+            declaredEncodedLength: descriptor.encodedByteLength,
+            claimedEncodedSHA256: descriptor.encodedSHA256,
+            body: body
         ))
     }
 
@@ -179,7 +296,7 @@ extension HarcHostStore {
             observedBodyLength: observedBodyLength,
             observedBodySHA256: observedBodySHA256,
             acknowledgement: acknowledgement,
-            at: now()
+            at: Self.backgroundWireDate(now())
         )
     }
 
@@ -191,21 +308,12 @@ extension HarcHostStore {
         acknowledgement: ValidatedBatchAcknowledgementEvidence,
         at checkedAt: Date
     ) async throws -> HostBackgroundCapabilityFinalizationDisposition {
-        guard observedBodyLength == admission.contentLength,
-              observedBodyLength == admission.batch.exactBodyByteLength,
-              observedBodyLength <= admission.byteCeiling else {
-            throw HostBackgroundCapabilityAdmissionError
-                .requestBindingMismatch(field: "contentLength")
-        }
-        guard observedBodySHA256 == admission.exactBodySHA256,
-              observedBodySHA256 == admission.batch.exactBodySHA256 else {
-            throw HostBackgroundCapabilityAdmissionError
-                .requestBindingMismatch(field: "exactBodySHA256")
-        }
-        guard checkedAt.timeIntervalSinceReferenceDate.isFinite,
-              checkedAt >= admission.admittedAt else {
-            throw HostBackgroundCapabilityAdmissionError.capabilityUnavailable
-        }
+        try validateBackgroundCapabilityObservedBody(
+            admission,
+            observedBodyLength: observedBodyLength,
+            observedBodySHA256: observedBodySHA256,
+            checkedAt: checkedAt
+        )
 
         try await repairSecurityRegistryOnReopen()
         return try await dbQueue.write { db in
@@ -218,18 +326,14 @@ extension HarcHostStore {
                 httpMethod: admission.httpMethod,
                 httpPath: admission.httpPath,
                 contentLength: admission.contentLength,
-                exactBodySHA256: admission.exactBodySHA256,
+                expectedExactBodySHA256: admission.exactBodySHA256,
                 servedTransportSetEpoch: admission.servedTransportSetEpoch,
                 at: checkedAt
             )
-            guard loaded.descriptor == admission.batch,
-                  loaded.byteCeiling == admission.byteCeiling,
-                  loaded.minimumTransportSetEpoch
-                    == admission.minimumTransportSetEpoch,
-                  loaded.expiresAt == admission.capabilityExpiresAt else {
-                throw HostBackgroundCapabilityAdmissionError
-                    .capabilityUnavailable
-            }
+            try self.requireBackgroundAdmissionStillMatches(
+                admission,
+                loaded: loaded
+            )
             if let exactAcknowledgementBytes = loaded.exactAcknowledgementBytes {
                 return .exactReplay(HostBackgroundBatchReplay(
                     batch: loaded.descriptor,
@@ -237,6 +341,10 @@ extension HarcHostStore {
                 ))
             }
 
+            try self.requireDurableBackgroundBatchChunks(
+                loaded.descriptor,
+                in: db
+            )
             try self.validateBackgroundAcknowledgement(
                 acknowledgement,
                 for: loaded.descriptor,
@@ -295,7 +403,7 @@ extension HarcHostStore {
         httpMethod: String,
         httpPath: String,
         contentLength: UInt64,
-        exactBodySHA256: ImmutableBatchSHA256,
+        expectedExactBodySHA256: ImmutableBatchSHA256?,
         servedTransportSetEpoch: UInt64,
         at checkedAt: Date
     ) throws -> LoadedBackgroundCapability {
@@ -497,7 +605,8 @@ extension HarcHostStore {
             throw HostBackgroundCapabilityAdmissionError
                 .requestBindingMismatch(field: "contentLength")
         }
-        guard exactBodySHA256 == boundBodySHA256 else {
+        if let expectedExactBodySHA256,
+           expectedExactBodySHA256 != boundBodySHA256 {
             throw HostBackgroundCapabilityAdmissionError
                 .requestBindingMismatch(field: "exactBodySHA256")
         }
@@ -534,15 +643,16 @@ extension HarcHostStore {
             descriptor.uploadProfileSHA256,
             for: attempt
         )
+        let authenticatedContext = AuthenticatedDeviceContext(
+            libraryID: libraryID,
+            hostAuthorityID: authorityID,
+            authenticatedDeviceID: ownerDeviceID,
+            grantID: grantID,
+            grantEpoch: grantEpoch
+        )
         _ = try authorizeInDatabase(
             db,
-            context: AuthenticatedDeviceContext(
-                libraryID: libraryID,
-                hostAuthorityID: authorityID,
-                authenticatedDeviceID: ownerDeviceID,
-                grantID: grantID,
-                grantEpoch: grantEpoch
-            ),
+            context: authenticatedContext,
             requiredScope: .recordingUploadOwn,
             objectOwner: attempt.ownerDeviceID,
             at: checkedAt
@@ -571,8 +681,49 @@ extension HarcHostStore {
             byteCeiling: byteCeiling,
             minimumTransportSetEpoch: minimumEpoch,
             expiresAt: capabilityExpiresAt,
-            exactAcknowledgementBytes: exactAcknowledgementBytes
+            exactAcknowledgementBytes: exactAcknowledgementBytes,
+            authenticatedContext: authenticatedContext
         )
+    }
+
+    private nonisolated func validateBackgroundCapabilityObservedBody(
+        _ admission: HostBackgroundBatchAdmission,
+        observedBodyLength: UInt64,
+        observedBodySHA256: ImmutableBatchSHA256,
+        checkedAt: Date
+    ) throws {
+        guard observedBodyLength == admission.contentLength,
+              observedBodyLength == admission.batch.exactBodyByteLength,
+              observedBodyLength <= admission.byteCeiling else {
+            throw HostBackgroundCapabilityAdmissionError
+                .requestBindingMismatch(field: "contentLength")
+        }
+        guard observedBodySHA256 == admission.exactBodySHA256,
+              observedBodySHA256 == admission.batch.exactBodySHA256 else {
+            throw HostBackgroundCapabilityAdmissionError
+                .requestBindingMismatch(field: "exactBodySHA256")
+        }
+        guard checkedAt.timeIntervalSinceReferenceDate.isFinite,
+              checkedAt >= admission.admittedAt else {
+            throw HostBackgroundCapabilityAdmissionError.capabilityUnavailable
+        }
+    }
+
+    private nonisolated func requireBackgroundAdmissionStillMatches(
+        _ admission: HostBackgroundBatchAdmission,
+        loaded: LoadedBackgroundCapability
+    ) throws {
+        guard loaded.descriptor == admission.batch,
+              loaded.byteCeiling == admission.byteCeiling,
+              loaded.minimumTransportSetEpoch
+                == admission.minimumTransportSetEpoch,
+              loaded.expiresAt == admission.capabilityExpiresAt,
+              loaded.authenticatedContext == admission.authenticatedContext,
+              (loaded.exactAcknowledgementBytes
+                == admission.priorExactAcknowledgementBytes
+                || admission.priorExactAcknowledgementBytes == nil) else {
+            throw HostBackgroundCapabilityAdmissionError.capabilityUnavailable
+        }
     }
 
     private nonisolated func validateBackgroundAcknowledgement(
@@ -608,5 +759,72 @@ extension HarcHostStore {
             throw HostBackgroundCapabilityAdmissionError
                 .acknowledgementMismatch(field: "batchAcknowledgement")
         }
+    }
+
+    private nonisolated func requireDurableBackgroundBatchChunks(
+        _ descriptor: ImmutableAudioBatchDescriptor,
+        in db: Database
+    ) throws {
+        let generation = try Self.sqliteInteger(
+            descriptor.generation.rawValue,
+            field: "backgroundBatch.generation"
+        )
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT chunk_index, chunk_id, generation,
+                       expected_encoded_length, expected_encoded_sha256,
+                       persisted_encoded_length, persisted_encoded_sha256,
+                       status, file_synchronized_at,
+                       durable_acknowledged_at, object_deleted_at
+                  FROM staged_chunks
+                 WHERE upload_id = ? AND generation = ?
+                """,
+            arguments: [descriptor.uploadID.description, generation]
+        )
+        let rowsByIndex = Dictionary(
+            uniqueKeysWithValues: rows.compactMap { row -> (UInt32, Row)? in
+                guard let value = row["chunk_index"] as Int64?,
+                      value >= 0,
+                      let index = UInt32(exactly: value) else { return nil }
+                return (index, row)
+            }
+        )
+        for chunk in descriptor.chunks {
+            let encodedLength = try Self.sqliteInteger(
+                chunk.encodedByteLength,
+                field: "backgroundBatch.encodedByteLength"
+            )
+            guard let row = rowsByIndex[chunk.chunkIndex],
+                  row["chunk_id"] as String? == chunk.chunkID.description,
+                  row["generation"] as Int64? == generation,
+                  row["expected_encoded_length"] as Int64?
+                    == encodedLength,
+                  row["expected_encoded_sha256"] as Data?
+                    == chunk.encodedSHA256.rawBytes,
+                  row["persisted_encoded_length"] as Int64?
+                    == encodedLength,
+                  row["persisted_encoded_sha256"] as Data?
+                    == chunk.encodedSHA256.rawBytes,
+                  row["status"] as String? == "durable",
+                  row["file_synchronized_at"] as Double? != nil,
+                  row["durable_acknowledged_at"] as Double? != nil,
+                  row["object_deleted_at"] as Double? == nil else {
+                throw HostBackgroundCapabilityAdmissionError
+                    .acknowledgementMismatch(field: "durableChunks")
+            }
+        }
+    }
+
+    /// Signed V1 evidence carries integer Unix milliseconds. Flooring at each
+    /// ordered host boundary preserves `admitted <= durable <= finalized`
+    /// while preventing ordinary sub-millisecond `Date()` values from making
+    /// an otherwise valid acknowledgement unencodable.
+    private nonisolated static func backgroundWireDate(_ date: Date) -> Date {
+        let milliseconds = date.timeIntervalSince1970 * 1_000
+        guard milliseconds.isFinite else { return date }
+        return Date(
+            timeIntervalSince1970: milliseconds.rounded(.down) / 1_000
+        )
     }
 }

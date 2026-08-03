@@ -49,6 +49,8 @@ public struct UploadReconciliation: Codable, Equatable, Hashable, Sendable {
     public let originRecordingID: OriginRecordingID
     public let uploadProfileSHA256: UploadProfileSHA256
     public let generation: UploadGeneration
+    public let firstBeganAt: Date
+    public let generationBeganAt: Date
     public let generationExpiresAt: Date
     public let declarations: [LogicalChunkDescriptor]
     public let boundManifestObjectSHA256: ExactObjectSHA256?
@@ -63,6 +65,8 @@ public struct UploadReconciliation: Codable, Equatable, Hashable, Sendable {
         originRecordingID: OriginRecordingID,
         uploadProfileSHA256: UploadProfileSHA256,
         generation: UploadGeneration,
+        firstBeganAt: Date,
+        generationBeganAt: Date,
         generationExpiresAt: Date,
         declarations: [LogicalChunkDescriptor],
         boundManifestObjectSHA256: ExactObjectSHA256?,
@@ -74,7 +78,30 @@ public struct UploadReconciliation: Codable, Equatable, Hashable, Sendable {
         guard originRecordingID.deviceID == ownerDeviceID else {
             throw TransferValidationError.originDeviceMismatch
         }
+        try TransferValidation.requireFinite(
+            firstBeganAt,
+            field: "UploadReconciliation.firstBeganAt"
+        )
+        try TransferValidation.requireFinite(
+            generationBeganAt,
+            field: "UploadReconciliation.generationBeganAt"
+        )
         try TransferValidation.requireFinite(generationExpiresAt, field: "UploadReconciliation.generationExpiresAt")
+        guard firstBeganAt <= generationBeganAt,
+              generationBeganAt < generationExpiresAt,
+              generationExpiresAt <= generationBeganAt.addingTimeInterval(
+                TransferLimits.uploadGenerationLifetime
+              ) else {
+            throw TransferValidationError.invalidOrdering(
+                field: "UploadReconciliation.generationLifetime"
+            )
+        }
+        if generation == .initial,
+           firstBeganAt != generationBeganAt {
+            throw TransferValidationError.reconciliationMismatch(
+                reason: "The initial generation must begin with the upload."
+            )
+        }
 
         var descriptorByIndex: [UInt32: LogicalChunkDescriptor] = [:]
         var expectedIndex: UInt32 = 0
@@ -157,6 +184,8 @@ public struct UploadReconciliation: Codable, Equatable, Hashable, Sendable {
         self.originRecordingID = originRecordingID
         self.uploadProfileSHA256 = uploadProfileSHA256
         self.generation = generation
+        self.firstBeganAt = firstBeganAt
+        self.generationBeganAt = generationBeganAt
         self.generationExpiresAt = generationExpiresAt
         self.declarations = declarations
         self.boundManifestObjectSHA256 = boundManifestObjectSHA256
@@ -172,6 +201,8 @@ public struct UploadReconciliation: Codable, Equatable, Hashable, Sendable {
         case originRecordingID
         case uploadProfileSHA256
         case generation
+        case firstBeganAt
+        case generationBeganAt
         case generationExpiresAt
         case declarations
         case boundManifestObjectSHA256
@@ -184,13 +215,33 @@ public struct UploadReconciliation: Codable, Equatable, Hashable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         do {
+            let generationExpiresAt = try container.decode(
+                Date.self,
+                forKey: .generationExpiresAt
+            )
+            // v1-v3 client stores predate host-authoritative begin timestamps.
+            // This fallback is decoding-only; every new caller must supply the
+            // exact host values explicitly.
+            let legacyGenerationBeganAt = generationExpiresAt.addingTimeInterval(
+                -TransferLimits.uploadGenerationLifetime
+            )
+            let generationBeganAt = try container.decodeIfPresent(
+                Date.self,
+                forKey: .generationBeganAt
+            ) ?? legacyGenerationBeganAt
+            let firstBeganAt = try container.decodeIfPresent(
+                Date.self,
+                forKey: .firstBeganAt
+            ) ?? generationBeganAt
             try self.init(
                 uploadID: container.decode(UploadID.self, forKey: .uploadID),
                 ownerDeviceID: container.decode(DeviceID.self, forKey: .ownerDeviceID),
                 originRecordingID: container.decode(OriginRecordingID.self, forKey: .originRecordingID),
                 uploadProfileSHA256: container.decode(UploadProfileSHA256.self, forKey: .uploadProfileSHA256),
                 generation: container.decode(UploadGeneration.self, forKey: .generation),
-                generationExpiresAt: container.decode(Date.self, forKey: .generationExpiresAt),
+                firstBeganAt: firstBeganAt,
+                generationBeganAt: generationBeganAt,
+                generationExpiresAt: generationExpiresAt,
                 declarations: container.decode([LogicalChunkDescriptor].self, forKey: .declarations),
                 boundManifestObjectSHA256: container.decodeIfPresent(ExactObjectSHA256.self, forKey: .boundManifestObjectSHA256),
                 durableChunks: container.decode([DurableChunkStatus].self, forKey: .durableChunks),

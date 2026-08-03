@@ -229,6 +229,8 @@ public struct HarcValidatedBeginUploadResponseV1: Sendable {
     public let disposition: HarcBeginUploadResponseDispositionV1
     public let uploadID: UploadID
     public let generation: UploadGeneration?
+    public let firstBeganAt: Date?
+    public let generationBeganAt: Date?
     public let generationExpiresAt: Date?
     public let uploadProfileSHA256: UploadProfileSHA256
     public let existingCanonicalRecordingID: CanonicalRecordingID?
@@ -288,6 +290,8 @@ public struct HarcValidatedBeginUploadResponseV1: Sendable {
 
         let disposition: HarcBeginUploadResponseDispositionV1
         let generation: UploadGeneration?
+        let firstBeganAt: Date?
+        let generationBeganAt: Date?
         let expiresAt: Date?
         let reconciliation: HarcValidatedReconcileUploadResponseV1?
         switch value.disposition {
@@ -324,6 +328,8 @@ public struct HarcValidatedBeginUploadResponseV1: Sendable {
                 )
             }
             reconciliation = nested
+            firstBeganAt = nested.firstBeganAt
+            generationBeganAt = nested.generationBeganAt
             switch value.disposition {
             case .beginUploadDispositionCreated: disposition = .created
             case .beginUploadDispositionExactReplay: disposition = .exactReplay
@@ -340,23 +346,29 @@ public struct HarcValidatedBeginUploadResponseV1: Sendable {
                     "beginUploadResponse.alreadyCommittedEvidence"
                 )
             }
-            guard existingReceipt.uploadID == uploadID,
-                  existingCanonicalID == nil
+            guard existingCanonicalID == nil
                     || existingCanonicalID == existingReceipt.canonicalRecordingID else {
                 throw HarcProtobufConversionError.inconsistentField(
                     "beginUploadResponse.existingReceipt"
                 )
             }
             if let expectedRequest {
-                guard existingReceipt.originRecordingID
+                guard existingReceipt.libraryID == expectedRequest.libraryID,
+                      existingReceipt.hostAuthorityID
+                        == expectedRequest.hostAuthorityID,
+                      existingReceipt.producingDeviceID
+                        == expectedRequest.producingDeviceID,
+                      existingReceipt.originRecordingID
                         == expectedRequest.originRecordingID else {
                     throw HarcProtobufConversionError.inconsistentField(
-                        "beginUploadResponse.existingReceipt.originRecordingID"
+                        "beginUploadResponse.existingReceipt.requestBinding"
                     )
                 }
             }
             disposition = .alreadyCommitted
             generation = nil
+            firstBeganAt = nil
+            generationBeganAt = nil
             expiresAt = nil
             reconciliation = nil
 
@@ -376,6 +388,8 @@ public struct HarcValidatedBeginUploadResponseV1: Sendable {
         self.disposition = disposition
         self.uploadID = uploadID
         self.generation = generation
+        self.firstBeganAt = firstBeganAt
+        self.generationBeganAt = generationBeganAt
         self.generationExpiresAt = expiresAt
         self.uploadProfileSHA256 = profileSHA256
         self.existingCanonicalRecordingID = existingCanonicalID
@@ -476,10 +490,11 @@ public struct HarcValidatedDeclareChunksResponseV1: Sendable {
             }
             let conflict = try responseDeclarationConflict(value.conflict)
             if let expectedRequest {
-                guard expectedRequest.descriptors.contains(conflict.attempted)
-                else {
+                guard expectedRequest.descriptors.allSatisfy({
+                    $0.originRecordingID == conflict.attempted.originRecordingID
+                }) else {
                     throw HarcProtobufConversionError.inconsistentField(
-                        "declareChunksResponse.conflict.attempted"
+                        "declareChunksResponse.conflict.originRecordingID"
                     )
                 }
             }
@@ -626,6 +641,8 @@ public struct HarcValidatedReconcileUploadResponseV1: Sendable {
     public let originRecordingID: OriginRecordingID
     public let uploadProfileSHA256: UploadProfileSHA256
     public let generation: UploadGeneration
+    public let firstBeganAt: Date
+    public let generationBeganAt: Date
     public let generationExpiresAt: Date
     public let declarations: [LogicalChunkDescriptor]
     public let boundManifestObjectSHA256: ExactObjectSHA256?
@@ -643,7 +660,7 @@ public struct HarcValidatedReconcileUploadResponseV1: Sendable {
         let protocolVersion = try responseProtocol(
             value.hasProtocol ? value.protocol : nil,
             compatibility: compatibility,
-            knownCriticalFieldNumbers: Set(1 ... 13),
+            knownCriticalFieldNumbers: Set(1 ... 15),
             field: "reconcileUploadResponse.protocol",
             expected: expectedRequest?.protocolVersion
         )
@@ -686,6 +703,14 @@ public struct HarcValidatedReconcileUploadResponseV1: Sendable {
         let generation = try responseGeneration(
             value.uploadGeneration,
             field: "reconcileUploadResponse.uploadGeneration"
+        )
+        let firstBeganAt = try responseDate(
+            value.firstBeganAtUnixMs,
+            field: "reconcileUploadResponse.firstBeganAt"
+        )
+        let generationBeganAt = try responseDate(
+            value.generationBeganAtUnixMs,
+            field: "reconcileUploadResponse.generationBeganAt"
         )
         let expiresAt = try responseDate(
             value.generationExpiresAtUnixMs,
@@ -745,6 +770,8 @@ public struct HarcValidatedReconcileUploadResponseV1: Sendable {
                 originRecordingID: originRecordingID,
                 uploadProfileSHA256: profile,
                 generation: generation,
+                firstBeganAt: firstBeganAt,
+                generationBeganAt: generationBeganAt,
                 generationExpiresAt: expiresAt,
                 declarations: declarations,
                 boundManifestObjectSHA256: manifestSHA256,
@@ -765,6 +792,8 @@ public struct HarcValidatedReconcileUploadResponseV1: Sendable {
         self.originRecordingID = originRecordingID
         self.uploadProfileSHA256 = profile
         self.generation = generation
+        self.firstBeganAt = firstBeganAt
+        self.generationBeganAt = generationBeganAt
         self.generationExpiresAt = expiresAt
         self.declarations = declarations
         self.boundManifestObjectSHA256 = manifestSHA256

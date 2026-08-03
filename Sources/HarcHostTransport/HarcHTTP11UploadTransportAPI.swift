@@ -20,8 +20,11 @@ public enum HarcHTTP11UploadTransportAPI {
     /// resident generation's upload-role lease at bind time.
     package static func makeListener(
         lease: HostTransportListenerLease,
-        port: NWEndpoint.Port
+        port: NWEndpoint.Port,
+        servingGeneration:
+            HarcBackgroundUploadServingGenerationBinding
     ) async throws -> NWListener {
+        try servingGeneration.requireGeneration(lease.generationID)
         let material = try await lease.consume(for: .backgroundUpload)
         let parameters = try await HarcNetworkTLS13Policy.serverParameters(
             material: material,

@@ -195,19 +195,14 @@ struct BackgroundCapabilityAdmissionTests {
         credential: Data? = nil,
         method: String? = nil,
         path: String? = nil,
-        contentLength: UInt64? = nil,
-        bodySHA256: ImmutableBatchSHA256? = nil,
-        servedEpoch: UInt64 = 1
+        contentLength: UInt64? = nil
     ) -> HostBackgroundCapabilityAdmissionRequest {
         HostBackgroundCapabilityAdmissionRequest(
             opaqueCapabilityCredential: credential
                 ?? fixture.mintResult.opaqueCapabilityCredential,
             httpMethod: method ?? fixture.mintResult.httpMethod,
             httpPath: path ?? fixture.mintResult.httpPath,
-            contentLength: contentLength ?? fixture.mintResult.byteCeiling,
-            claimedExactBodySHA256: bodySHA256
-                ?? fixture.mintResult.exactBatchBodySHA256,
-            servedTransportSetEpoch: servedEpoch
+            contentLength: contentLength ?? fixture.mintResult.byteCeiling
         )
     }
 
@@ -244,32 +239,34 @@ struct BackgroundCapabilityAdmissionTests {
         )
     }
 
-    private func requireAdmission(
-        _ disposition: HostBackgroundCapabilityAdmissionDisposition
-    ) throws -> HostBackgroundBatchAdmission {
-        guard case .receiveBody(let admission) = disposition else {
-            Issue.record("Expected body admission, received exact replay")
+    private func stageFixtureChunk(
+        _ admission: HostBackgroundBatchAdmission,
+        fixture: AdmissionFixture
+    ) async throws {
+        let staged = try await fixture.store.stageBackgroundCapabilityChunk(
+            admission,
+            descriptor: fixture.descriptor,
+            body: .fragments([Data([0, 1, 2, 3, 4, 5, 6, 7])])
+        )
+        guard case .staged = staged else {
             throw HostBackgroundCapabilityAdmissionError.capabilityUnavailable
         }
-        return admission
     }
 
-    @Test("valid redemption finalizes once and every completed replay returns the first exact ACK")
+    @Test("valid redemption finalizes once and releases the first exact ACK only after replay body verification")
     func acceptanceAndExactReplay() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let admission = try requireAdmission(
-            try await fixture.store.admitBackgroundCapability(
-                request(for: fixture),
-                at: fixture.issuedAt.addingTimeInterval(1)
-            )
+        let admission = try await fixture.store.admitBackgroundCapability(
+            request(for: fixture),
+            servedTransportSetEpoch: 1,
+            at: fixture.issuedAt.addingTimeInterval(1)
         )
         #expect(admission.batch.batchID == fixture.mintRequest.batchID)
         #expect(admission.batch.chunks == [fixture.descriptor])
         #expect(admission.contentLength == 64)
         #expect(admission.byteCeiling == 64)
         #expect(admission.minimumTransportSetEpoch == 1)
-        #expect(admission.servedTransportSetEpoch == 1)
 
         let firstACK = Data("exact-signed-batch-ack-one".utf8)
         let firstEvidence = try acknowledgement(
@@ -278,6 +275,18 @@ struct BackgroundCapabilityAdmissionTests {
             exactBytes: firstACK,
             durableAt: fixture.issuedAt.addingTimeInterval(2)
         )
+        await #expect(throws: HostBackgroundCapabilityAdmissionError
+            .acknowledgementMismatch(field: "durableChunks")) {
+            _ = try await fixture.store
+                .finalizeBackgroundCapabilityAcceptance(
+                    admission,
+                    observedBodyLength: 64,
+                    observedBodySHA256: admission.exactBodySHA256,
+                    acknowledgement: firstEvidence,
+                    at: fixture.issuedAt.addingTimeInterval(3)
+                )
+        }
+        try await stageFixtureChunk(admission, fixture: fixture)
         let finalized = try await fixture.store
             .finalizeBackgroundCapabilityAcceptance(
                 admission,
@@ -292,12 +301,20 @@ struct BackgroundCapabilityAdmissionTests {
         }
         #expect(accepted.exactAcknowledgementBytes == firstACK)
 
-        let replay = try await fixture.store.admitBackgroundCapability(
+        let replayAdmission = try await fixture.store.admitBackgroundCapability(
             request(for: fixture),
+            servedTransportSetEpoch: 1,
             at: fixture.issuedAt.addingTimeInterval(4)
         )
+        let replay = try await fixture.store
+            .finalizeBackgroundCapabilityVerifiedBody(
+                replayAdmission,
+                observedBodyLength: 64,
+                observedBodySHA256: replayAdmission.exactBodySHA256,
+                at: fixture.issuedAt.addingTimeInterval(4)
+            )
         guard case .exactReplay(let completed) = replay else {
-            Issue.record("Completed batch should bypass body restaging")
+            Issue.record("Completed batch should release its ACK after body verification")
             return
         }
         #expect(completed.batch == admission.batch)
@@ -342,10 +359,19 @@ struct BackgroundCapabilityAdmissionTests {
                     for: fixture,
                     credential: secondCapability.opaqueCapabilityCredential
                 ),
+                servedTransportSetEpoch: 1,
                 at: fixture.issuedAt.addingTimeInterval(6)
             )
-        guard case .exactReplay(let freshReplay) = secondCapabilityReplay else {
-            Issue.record("A fresh narrow capability should replay a completed batch")
+        let freshReplayDisposition = try await fixture.store
+            .finalizeBackgroundCapabilityVerifiedBody(
+                secondCapabilityReplay,
+                observedBodyLength: 64,
+                observedBodySHA256:
+                    secondCapabilityReplay.exactBodySHA256,
+                at: fixture.issuedAt.addingTimeInterval(6)
+            )
+        guard case .exactReplay(let freshReplay) = freshReplayDisposition else {
+            Issue.record("A fresh narrow capability should release the completed batch ACK after body verification")
             return
         }
         #expect(freshReplay.exactAcknowledgementBytes == firstACK)
@@ -371,7 +397,7 @@ struct BackgroundCapabilityAdmissionTests {
         #expect(persisted?["exact_ack_bytes"] as Data? == firstACK)
     }
 
-    @Test("credential method path length body and served epoch mismatches fail without mutation")
+    @Test("credential method path length and served epoch mismatches fail without mutation")
     func requestBindingRejections() async throws {
         let fixture = try await makeFixture(
             capabilityID: UUID(
@@ -390,6 +416,7 @@ struct BackgroundCapabilityAdmissionTests {
                         fixture.mintResult.opaqueCapabilityCredential.dropLast()
                     )
                 ),
+                servedTransportSetEpoch: 1,
                 at: checkedAt
             )
         }
@@ -399,6 +426,7 @@ struct BackgroundCapabilityAdmissionTests {
             .credentialRejected) {
             _ = try await fixture.store.admitBackgroundCapability(
                 self.request(for: fixture, credential: wrongSecret),
+                servedTransportSetEpoch: 1,
                 at: checkedAt
             )
         }
@@ -408,43 +436,39 @@ struct BackgroundCapabilityAdmissionTests {
             .credentialRejected) {
             _ = try await fixture.store.admitBackgroundCapability(
                 self.request(for: fixture, credential: wrongID),
+                servedTransportSetEpoch: 1,
                 at: checkedAt
             )
         }
 
-        for (candidate, expected) in [
+        for (candidate, servedEpoch, expected) in [
             (
                 request(for: fixture, method: "POST"),
+                UInt64(1),
                 HostBackgroundCapabilityAdmissionError
                     .requestBindingMismatch(field: "httpMethod")
             ),
             (
                 request(for: fixture, path: fixture.mintResult.httpPath + "/"),
+                UInt64(1),
                 HostBackgroundCapabilityAdmissionError
                     .requestBindingMismatch(field: "httpPath")
             ),
             (
                 request(for: fixture, contentLength: 63),
+                UInt64(1),
                 HostBackgroundCapabilityAdmissionError
                     .requestBindingMismatch(field: "contentLength")
             ),
             (
-                request(
-                    for: fixture,
-                    bodySHA256: try ImmutableBatchSHA256(
-                        Data(repeating: 0xD2, count: 32)
-                    )
-                ),
-                HostBackgroundCapabilityAdmissionError
-                    .requestBindingMismatch(field: "exactBodySHA256")
-            ),
-            (
-                request(for: fixture, servedEpoch: 0),
+                request(for: fixture),
+                UInt64(0),
                 HostBackgroundCapabilityAdmissionError
                     .transportSetEpochRejected(minimum: 1, served: 0)
             ),
             (
-                request(for: fixture, servedEpoch: 2),
+                request(for: fixture),
+                UInt64(2),
                 HostBackgroundCapabilityAdmissionError
                     .transportSetEpochRejected(minimum: 1, served: 2)
             ),
@@ -452,6 +476,7 @@ struct BackgroundCapabilityAdmissionTests {
             await #expect(throws: expected) {
                 _ = try await fixture.store.admitBackgroundCapability(
                     candidate,
+                    servedTransportSetEpoch: servedEpoch,
                     at: checkedAt
                 )
             }
@@ -489,6 +514,7 @@ struct BackgroundCapabilityAdmissionTests {
             .capabilityUnavailable) {
             _ = try await fixture.store.admitBackgroundCapability(
                 self.request(for: fixture),
+                servedTransportSetEpoch: 1,
                 at: checkedAt
             )
         }
@@ -502,12 +528,12 @@ struct BackgroundCapabilityAdmissionTests {
             )!
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let admission = try requireAdmission(
-            try await fixture.store.admitBackgroundCapability(
-                request(for: fixture),
-                at: fixture.issuedAt.addingTimeInterval(1)
-            )
+        let admission = try await fixture.store.admitBackgroundCapability(
+            request(for: fixture),
+            servedTransportSetEpoch: 1,
+            at: fixture.issuedAt.addingTimeInterval(1)
         )
+        try await stageFixtureChunk(admission, fixture: fixture)
         let evidence = try acknowledgement(
             fixture: fixture,
             batch: admission.batch,
@@ -610,11 +636,10 @@ struct BackgroundCapabilityAdmissionTests {
             )!
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let admission = try requireAdmission(
-            try await fixture.store.admitBackgroundCapability(
-                request(for: fixture),
-                at: fixture.issuedAt.addingTimeInterval(1)
-            )
+        let admission = try await fixture.store.admitBackgroundCapability(
+            request(for: fixture),
+            servedTransportSetEpoch: 1,
+            at: fixture.issuedAt.addingTimeInterval(1)
         )
         let evidence = try acknowledgement(
             fixture: fixture,

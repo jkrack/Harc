@@ -381,6 +381,37 @@ enum ClientStoreMigrators {
             try db.execute(sql: "DROP TABLE cleanup_intents")
             try db.execute(sql: "ALTER TABLE cleanup_intents_v3 RENAME TO cleanup_intents")
         }
+        migrator.registerMigration("v4_upload_begin_intents") { db in
+            // `recording_outbox.upload_id` cannot be populated until its
+            // upload_attempts row exists. A BeginUpload response can be lost
+            // before that row is constructed, so preserve the exact pre-RPC
+            // identity and immutable local plan in a narrow table without an
+            // upload_attempts foreign key. The origin primary key is also the
+            // durable compare-and-set that prevents two coordinators from
+            // assigning different upload IDs to one capture.
+            try db.execute(sql: """
+                CREATE TABLE upload_begin_intents (
+                    origin_device_id BLOB NOT NULL
+                        CHECK(length(origin_device_id) = 32),
+                    origin_recording_uuid TEXT NOT NULL,
+                    upload_id TEXT NOT NULL UNIQUE,
+                    library_id TEXT NOT NULL,
+                    host_authority_id BLOB NOT NULL
+                        CHECK(length(host_authority_id) = 32),
+                    intent_json BLOB NOT NULL CHECK(length(intent_json) > 0),
+                    prepared_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (origin_device_id, origin_recording_uuid),
+                    FOREIGN KEY (origin_device_id, origin_recording_uuid)
+                        REFERENCES finalized_captures(
+                            origin_device_id, origin_recording_uuid
+                        ) ON DELETE RESTRICT,
+                    FOREIGN KEY (library_id, host_authority_id)
+                        REFERENCES trust_namespaces(
+                            library_id, host_authority_id
+                        ) ON DELETE RESTRICT
+                )
+                """)
+        }
         return migrator
     }
 

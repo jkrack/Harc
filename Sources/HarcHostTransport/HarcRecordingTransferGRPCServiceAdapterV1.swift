@@ -211,7 +211,7 @@ public struct HarcRecordingTransferGRPCServiceAdapterV1:
                     uploadID: validated.uploadID,
                     originRecordingID: validated.originRecordingID,
                     frozenProfile: validated.frozenProfile,
-                    beganAt: now()
+                    beganAt: Self.transferWireDate(now())
                 )
             )
             return ServerResponse(
@@ -223,6 +223,14 @@ public struct HarcRecordingTransferGRPCServiceAdapterV1:
         } catch {
             throw HarcPostSessionGRPCErrorMapper.map(error)
         }
+    }
+
+    private static func transferWireDate(_ date: Date) -> Date {
+        let milliseconds = date.timeIntervalSince1970 * 1_000
+        guard milliseconds.isFinite else { return date }
+        return Date(
+            timeIntervalSince1970: milliseconds.rounded(.down) / 1_000
+        )
     }
 
     func declareChunks(
@@ -658,6 +666,11 @@ enum HarcRecordingTransferGRPCProjectionV1 {
             response.disposition = .chunkDeclarationDispositionExactReplay
         case .closed:
             response.disposition = .chunkDeclarationDispositionClosed
+        case .conflictBlocked(let conflict):
+            response.disposition = .chunkDeclarationDispositionConflictBlocked
+            response.conflict = try Harc_V1_ChunkDeclarationConflictV1(
+                conflict
+            )
         }
         return response
     }

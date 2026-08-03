@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import HarcDomain
+import HarcProtocol
 import HarcTransfer
 
 /// Durable, locally cross-checked commit evidence. This read model is
@@ -33,9 +34,10 @@ extension HarcTransferStore {
     /// state before either outbox state or cleanup eligibility changes.
     @discardableResult
     public func persistVerifiedRecordingReceipt(
-        _ evidence: ValidatedRecordingReceiptEvidence,
+        _ authenticatedReceipt: HarcAuthenticatedRecordingReceiptV1,
         verifiedAt: Date? = nil
     ) throws -> StoredVerifiedRecordingReceipt {
+        let evidence = authenticatedReceipt.evidence
         let timestamp = verifiedAt ?? now()
         let verifiedAtMS = try ClientStoreCoding.milliseconds(timestamp)
         let tuple = AdoptedTrustTuple(

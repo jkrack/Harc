@@ -77,6 +77,96 @@ struct RecordingTransferResponseV1Tests {
         }
     }
 
+    @Test("reconciliation requires authoritative ordered Begin timestamps")
+    func authoritativeBeginTimestamps() throws {
+        let fixture = try ResponseFixture()
+        var response = try fixture.reconciliationResponse()
+        response.firstBeganAtUnixMs = 0
+        #expect(throws: HarcProtobufConversionError.integerOutOfRange(
+            field: "reconcileUploadResponse.firstBeganAt"
+        )) {
+            try HarcValidatedReconcileUploadResponseV1(response)
+        }
+
+        response = try fixture.reconciliationResponse()
+        response.generationBeganAtUnixMs = response.generationExpiresAtUnixMs
+        #expect(throws: HarcProtobufConversionError.inconsistentField(
+            "reconcileUploadResponse.state"
+        )) {
+            try HarcValidatedReconcileUploadResponseV1(response)
+        }
+    }
+
+    @Test("already committed replay preserves the original upload receipt")
+    func alreadyCommittedReplayBinding() throws {
+        let fixture = try ResponseFixture()
+        let request = try fixture.validatedBeginRequest()
+        let priorReceipt = try fixture.receiptObject(
+            uploadID: fixture.otherUploadID,
+            originRecordingID: fixture.originRecordingID,
+            manifestObjectSHA256: fixture.manifestObject.objectID
+        )
+        var response = try fixture.beginResponse()
+        response.disposition = .beginUploadDispositionAlreadyCommitted
+        response.uploadGeneration = 0
+        response.generationExpiresAtUnixMs = 0
+        response.clearReconciliation()
+        response.existingCanonicalRecordingID =
+            Harc_V1_CanonicalRecordingIDV1(fixture.canonicalRecordingID)
+        response.exactExistingReceipt = exactCarrier(
+            priorReceipt.exactFramedBytes
+        )
+
+        let validated = try HarcValidatedBeginUploadResponseV1(
+            response,
+            expectedRequest: request
+        )
+        #expect(validated.uploadID == fixture.uploadID)
+        #expect(validated.existingReceipt?.uploadID == fixture.otherUploadID)
+
+        let wrongLibrary = LibraryID(
+            UUID(uuidString: "20000000-0000-4000-8000-000000000099")!
+        )
+        let mismatchedReceipt = try fixture.receiptObject(
+            uploadID: fixture.otherUploadID,
+            originRecordingID: fixture.originRecordingID,
+            manifestObjectSHA256: fixture.manifestObject.objectID,
+            libraryID: wrongLibrary
+        )
+        response.exactExistingReceipt = exactCarrier(
+            mismatchedReceipt.exactFramedBytes
+        )
+        #expect(throws: HarcProtobufConversionError.inconsistentField(
+            "beginUploadResponse.existingReceipt.requestBinding"
+        )) {
+            try HarcValidatedBeginUploadResponseV1(
+                response,
+                expectedRequest: request
+            )
+        }
+    }
+
+    @Test("blocked declaration replay binds the durable conflict to the origin")
+    func conflictReplayBinding() throws {
+        let fixture = try ResponseFixture()
+        let request = try fixture.validatedDeclareRequest()
+        let conflict = try ChunkDeclarationConflict(
+            existing: fixture.descriptor,
+            attempted: fixture.conflictingDescriptor
+        )
+        var response = fixture.declareResponse()
+        response.disposition = .chunkDeclarationDispositionConflictBlocked
+        response.clearFirstAppendedIndex()
+        response.clearAppendedCount()
+        response.conflict = try Harc_V1_ChunkDeclarationConflictV1(conflict)
+
+        let validated = try HarcValidatedDeclareChunksResponseV1(
+            response,
+            expectedRequest: request
+        )
+        #expect(validated.disposition == .conflictBlocked(conflict))
+    }
+
     @Test("chunk acknowledgements bind every immutable request field")
     func chunkAcknowledgementBinding() throws {
         let fixture = try ResponseFixture()
@@ -426,6 +516,7 @@ private struct ResponseFixture {
     )
     let originRecordingID: OriginRecordingID
     let descriptor: LogicalChunkDescriptor
+    let conflictingDescriptor: LogicalChunkDescriptor
     let twoDescriptors: [LogicalChunkDescriptor]
     let exactProfile: Data
     let profileSHA256: UploadProfileSHA256
@@ -447,6 +538,12 @@ private struct ResponseFixture {
             index: 0,
             startFrame: 0,
             byte: 0x51
+        )
+        conflictingDescriptor = try Self.makeDescriptor(
+            origin: originRecordingID,
+            index: 0,
+            startFrame: 0,
+            byte: 0x54
         )
         let second = try Self.makeDescriptor(
             origin: originRecordingID,
@@ -652,6 +749,8 @@ private struct ResponseFixture {
             exactBytes: profileSHA256.rawBytes
         )
         value.uploadGeneration = 2
+        value.firstBeganAtUnixMs = Self.issuedAt - 60_000
+        value.generationBeganAtUnixMs = Self.issuedAt
         value.generationExpiresAtUnixMs = Self.expiresAt
         value.declarations = try (declarations ?? [descriptor]).map(
             Harc_V1_ChunkDescriptorV1.init
@@ -721,11 +820,13 @@ private struct ResponseFixture {
     func receiptObject(
         uploadID: UploadID,
         originRecordingID: OriginRecordingID,
-        manifestObjectSHA256: ExactObjectSHA256
+        manifestObjectSHA256: ExactObjectSHA256,
+        libraryID selectedLibraryID: LibraryID? = nil
     ) throws -> HarcSignedObjectV1 {
+        let receiptLibraryID = selectedLibraryID ?? libraryID
         var receipt = Harc_V1_RecordingReceiptV1()
         receipt.protocol = HarcProtocolVersion.v1.protobufV1()
-        receipt.libraryID = Harc_V1_LibraryIDV1(libraryID)
+        receipt.libraryID = Harc_V1_LibraryIDV1(receiptLibraryID)
         receipt.hostAuthorityID = Harc_V1_HostAuthorityIDV1(hostAuthorityID)
         receipt.producingDeviceID = Harc_V1_DeviceIDV1(
             originRecordingID.deviceID
@@ -759,7 +860,7 @@ private struct ResponseFixture {
         ).exactBytes
         let header = try HarcSignedEnvelopeV1(
             messageType: .recordingReceipt,
-            libraryID: libraryID,
+            libraryID: receiptLibraryID,
             hostAuthorityID: hostAuthorityID,
             signerDeviceID: nil,
             grantID: nil,

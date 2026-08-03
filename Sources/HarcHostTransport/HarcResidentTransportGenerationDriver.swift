@@ -18,7 +18,12 @@ package protocol HarcGRPCServerRuntimeBoundary: Sendable {
 extension HarcGRPCServerRuntime: HarcGRPCServerRuntimeBoundary {}
 
 package protocol HarcBackgroundUploadListenerRuntimeBoundary: Sendable {
-    func start(listener: NWListener) async throws
+    func start(
+        listener: NWListener,
+        servingGeneration: HarcBackgroundUploadServingGenerationBinding,
+        unexpectedExitHandler:
+            @escaping @Sendable (UUID) async -> Void
+    ) async throws
     func stopAcceptingNewConnections() async
     func finishGracefulShutdown() async
     func stopImmediately() async
@@ -104,12 +109,15 @@ package actor HarcResidentTransportGenerationDriver:
         id: UUID,
         grpcFactory: HarcGRPCNWListenerFactory,
         uploadListener: NWListener,
+        uploadServingGeneration:
+            HarcBackgroundUploadServingGenerationBinding,
         terminationReporter: HostTransportGenerationTerminationReporter
     ) async throws {
         guard terminationReporter.generationID == id else {
             throw HarcResidentTransportGenerationDriverError
                 .terminationReporterGenerationMismatch
         }
+        try uploadServingGeneration.requireGeneration(id)
         guard current == nil else {
             throw HarcResidentTransportGenerationDriverError
                 .generationAlreadyActive
@@ -128,13 +136,22 @@ package actor HarcResidentTransportGenerationDriver:
                 listenerFactory: grpcFactory
             )
             try requireActivation(id)
-            try await uploadRuntime.start(listener: uploadListener)
+            try await uploadRuntime.start(
+                listener: uploadListener,
+                servingGeneration: uploadServingGeneration
+            ) { [weak self] failedID in
+                await self?.generationComponentExitedUnexpectedly(
+                    generationID: failedID
+                )
+            }
             try requireActivation(id)
             try await grpcRuntime.start(
                 generationID: id,
                 listenerFactory: grpcFactory
             ) { [weak self] failedID in
-                await self?.grpcExitedUnexpectedly(generationID: failedID)
+                await self?.generationComponentExitedUnexpectedly(
+                    generationID: failedID
+                )
             }
             try requireActivation(id)
 
@@ -219,7 +236,9 @@ package actor HarcResidentTransportGenerationDriver:
         }
     }
 
-    private func grpcExitedUnexpectedly(generationID: UUID) async {
+    private func generationComponentExitedUnexpectedly(
+        generationID: UUID
+    ) async {
         guard var generation = current,
               generation.id == generationID else { return }
         switch generation.phase {

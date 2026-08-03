@@ -37,6 +37,160 @@ public struct StoredRecordingOutbox: Equatable, Sendable {
     public let updatedAt: Date
 }
 
+/// One immutable local chunk binding captured before BeginUpload is allowed to
+/// cross the network. Paths remain client-local and are never sent to the host.
+public struct UploadBeginChunkIntent: Codable, Equatable, Sendable {
+    public let descriptor: LogicalChunkDescriptor
+    public let encodedFileURL: URL
+
+    public init(
+        descriptor: LogicalChunkDescriptor,
+        encodedFileURL: URL
+    ) throws {
+        guard encodedFileURL.isFileURL else {
+            throw ClientStoreError.invalidLocalArtifactURL(
+                encodedFileURL.absoluteString
+            )
+        }
+        self.descriptor = descriptor
+        self.encodedFileURL = encodedFileURL.standardizedFileURL
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case descriptor
+        case encodedFileURL
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            descriptor: container.decode(
+                LogicalChunkDescriptor.self,
+                forKey: .descriptor
+            ),
+            encodedFileURL: container.decode(
+                URL.self,
+                forKey: .encodedFileURL
+            )
+        )
+    }
+}
+
+/// Durable origin-to-upload identity and immutable foreground upload plan.
+/// The exact serialized BeginUpload request makes a retry after an ambiguous
+/// transport failure an exact replay rather than a newly derived request.
+public struct UploadBeginIntent: Codable, Equatable, Sendable {
+    public let libraryID: LibraryID
+    public let hostAuthorityID: HostAuthorityID
+    public let uploadID: UploadID
+    public let originRecordingID: OriginRecordingID
+    public let frozenProfile: FrozenUploadProfile
+    public let chunks: [UploadBeginChunkIntent]
+    public let exactBeginRequest: Data
+
+    public var trustTuple: AdoptedTrustTuple {
+        AdoptedTrustTuple(
+            libraryID: libraryID,
+            hostAuthorityID: hostAuthorityID
+        )
+    }
+
+    public init(
+        trustTuple: AdoptedTrustTuple,
+        uploadID: UploadID,
+        originRecordingID: OriginRecordingID,
+        frozenProfile: FrozenUploadProfile,
+        chunks: [UploadBeginChunkIntent],
+        exactBeginRequest: Data
+    ) throws {
+        guard !chunks.isEmpty,
+              chunks.count <= TransferLimits.declaredChunksPerUpload else {
+            throw ClientStoreError.corruptStoredValue(
+                field: "uploadBeginIntent.chunks"
+            )
+        }
+        let descriptors = chunks.map(\.descriptor)
+        guard descriptors.allSatisfy({
+            $0.originRecordingID == originRecordingID
+        }), descriptors.map(\.chunkIndex)
+            == Array(0 ..< UInt32(descriptors.count)) else {
+            throw ClientStoreError.corruptStoredValue(
+                field: "uploadBeginIntent.chunkOrder"
+            )
+        }
+        guard !exactBeginRequest.isEmpty else {
+            throw ClientStoreError.emptyOpaqueBytes(
+                field: "uploadBeginIntent.exactBeginRequest"
+            )
+        }
+        self.libraryID = trustTuple.libraryID
+        self.hostAuthorityID = trustTuple.hostAuthorityID
+        self.uploadID = uploadID
+        self.originRecordingID = originRecordingID
+        self.frozenProfile = frozenProfile
+        self.chunks = chunks
+        self.exactBeginRequest = exactBeginRequest
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case libraryID
+        case hostAuthorityID
+        case uploadID
+        case originRecordingID
+        case frozenProfile
+        case chunks
+        case exactBeginRequest
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            trustTuple: AdoptedTrustTuple(
+                libraryID: container.decode(
+                    LibraryID.self,
+                    forKey: .libraryID
+                ),
+                hostAuthorityID: container.decode(
+                    HostAuthorityID.self,
+                    forKey: .hostAuthorityID
+                )
+            ),
+            uploadID: container.decode(UploadID.self, forKey: .uploadID),
+            originRecordingID: container.decode(
+                OriginRecordingID.self,
+                forKey: .originRecordingID
+            ),
+            frozenProfile: container.decode(
+                FrozenUploadProfile.self,
+                forKey: .frozenProfile
+            ),
+            chunks: container.decode(
+                [UploadBeginChunkIntent].self,
+                forKey: .chunks
+            ),
+            exactBeginRequest: container.decode(
+                Data.self,
+                forKey: .exactBeginRequest
+            )
+        )
+    }
+}
+
+public struct StoredUploadBeginIntent: Equatable, Sendable {
+    public let intent: UploadBeginIntent
+    public let preparedAt: Date
+}
+
+public enum UploadBeginIntentPreparationDisposition: Equatable, Sendable {
+    case created
+    case exactReplay
+}
+
+public struct UploadBeginIntentPreparation: Equatable, Sendable {
+    public let stored: StoredUploadBeginIntent
+    public let disposition: UploadBeginIntentPreparationDisposition
+}
+
 public struct StoredUploadAttempt: Equatable, Sendable {
     public let trustTuple: AdoptedTrustTuple
     public let attempt: UploadAttempt
@@ -60,6 +214,7 @@ public enum BackgroundBatchState: String, CaseIterable, Sendable {
     case completed
     case needsReschedule
     case failedRecoverable
+    case securityBlocked
     case expired
 }
 
@@ -119,7 +274,14 @@ public enum BackgroundTaskMappingState: String, CaseIterable, Sendable {
     case persistedBeforeResume
     case observedBySystem
     case missingFromSystem
+    case failedRecoverable
+    case securityBlocked
     case completed
+}
+
+public enum BackgroundTaskFailureDisposition: String, Equatable, Sendable {
+    case failedRecoverable
+    case securityBlocked
 }
 
 public struct StoredBackgroundTaskMapping: Equatable, Sendable {
@@ -340,6 +502,131 @@ extension HarcTransferStore {
         for origin: OriginRecordingID
     ) throws -> StoredRecordingOutbox? {
         try database.read { db in try recordingOutbox(origin, in: db) }
+    }
+
+    /// Atomically freezes the exact BeginUpload replay facts and advances the
+    /// recording into authorization. An existing row is accepted only as an
+    /// exact replay; the origin primary key rejects a competing upload ID even
+    /// when separate coordinator actors or processes race.
+    @discardableResult
+    public func prepareUploadBeginIntent(
+        _ intent: UploadBeginIntent,
+        preparedAt: Date? = nil
+    ) throws -> UploadBeginIntentPreparation {
+        try requireCurrentInstallationOwner(intent.originRecordingID.deviceID)
+        let timestamp = preparedAt ?? now()
+        return try database.write { db in
+            try requireActive(
+                intent.trustTuple,
+                requiredScope: .recordingUploadOwn,
+                in: db
+            )
+            guard let outbox = try recordingOutbox(
+                intent.originRecordingID,
+                in: db
+            ) else {
+                throw ClientStoreError.missingRow(entity: "recording outbox")
+            }
+            try requireCurrentInstallationOwner(
+                outbox.finalizedCapture.capture.producingDeviceID
+            )
+            guard outbox.finalizedCapture.capture.producingDeviceID
+                    == intent.originRecordingID.deviceID else {
+                throw ClientStoreError.captureDeviceMismatch(
+                    expected: intent.originRecordingID.deviceID,
+                    presented: outbox.finalizedCapture.capture.producingDeviceID
+                )
+            }
+            guard outbox.integrityBlock == nil else {
+                throw ClientStoreError.localArtifactIntegrityBlocked(
+                    origin: intent.originRecordingID
+                )
+            }
+            guard outbox.uploadID == nil || outbox.uploadID == intent.uploadID else {
+                throw ClientStoreError.uploadAlreadyExistsWithDifferentFacts
+            }
+
+            let chunkedCapture = try ChunkedFinalizedCapture(
+                capture: outbox.finalizedCapture.capture,
+                chunks: intent.chunks.map(\.descriptor)
+            )
+            try chunkedCapture.validate(against: intent.frozenProfile)
+
+            let disposition: UploadBeginIntentPreparationDisposition
+            let stored: StoredUploadBeginIntent
+            if let existing = try uploadBeginIntent(
+                intent.originRecordingID,
+                in: db
+            ) {
+                guard existing.intent == intent else {
+                    throw ClientStoreError.uploadAlreadyExistsWithDifferentFacts
+                }
+                disposition = .exactReplay
+                stored = existing
+            } else {
+                let timestampMS = try ClientStoreCoding.milliseconds(timestamp)
+                try db.execute(
+                    sql: """
+                        INSERT INTO upload_begin_intents (
+                            origin_device_id, origin_recording_uuid,
+                            upload_id, library_id, host_authority_id,
+                            intent_json, prepared_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        intent.originRecordingID.deviceID.rawBytes,
+                        intent.originRecordingID.recordingUUID.uuidString.lowercased(),
+                        intent.uploadID.description,
+                        intent.libraryID.description,
+                        intent.hostAuthorityID.rawBytes,
+                        try ClientStoreCoding.encode(intent),
+                        timestampMS,
+                    ]
+                )
+                disposition = .created
+                stored = StoredUploadBeginIntent(
+                    intent: intent,
+                    preparedAt: timestamp
+                )
+            }
+
+            var machine = outbox.stateMachine
+            switch machine.state {
+            case .localOnly:
+                try machine.queue()
+                try machine.beginAuthorization()
+            case .queued:
+                try machine.beginAuthorization()
+            case .failedRecoverable:
+                try machine.retryRecoverable()
+                try machine.beginAuthorization()
+            case .authorizing, .activeUpload, .backgroundScheduled,
+                 .hostCommitPending:
+                break
+            case .committed:
+                throw ClientStoreError
+                    .cleanupRequiresFutureVerifiedReceiptTransaction
+            case .securityBlocked:
+                throw ClientStoreError.localArtifactIntegrityBlocked(
+                    origin: intent.originRecordingID
+                )
+            }
+            try persistRecordingMachine(
+                machine,
+                origin: intent.originRecordingID,
+                in: db
+            )
+            return UploadBeginIntentPreparation(
+                stored: stored,
+                disposition: disposition
+            )
+        }
+    }
+
+    public func uploadBeginIntent(
+        for origin: OriginRecordingID
+    ) throws -> StoredUploadBeginIntent? {
+        try database.read { db in try uploadBeginIntent(origin, in: db) }
     }
 
     @discardableResult
@@ -745,6 +1032,8 @@ extension HarcTransferStore {
                   reconciliation.originRecordingID == attempt.originRecordingID,
                   reconciliation.uploadProfileSHA256 == attempt.frozenProfile.profileSHA256,
                   reconciliation.generation == attempt.generation,
+                  reconciliation.firstBeganAt == attempt.firstBeganAt,
+                  reconciliation.generationBeganAt == attempt.generationBeganAt,
                   reconciliation.generationExpiresAt == attempt.generationExpiresAt,
                   reconciliation.declarations == attempt.declarations.descriptors,
                   reconciliation.boundManifestObjectSHA256 == attempt.boundManifest?.objectSHA256 else {
@@ -995,52 +1284,53 @@ extension HarcTransferStore {
                     throw ClientStoreError.chunkAlreadyExistsWithDifferentFacts
                 }
             }
-            if let existing = batch.durableACK {
-                guard existing == ack else { throw ClientStoreError.exactObjectEquivocation }
-                return
-            }
-
             let timestamp = persistedAt ?? now()
             let timestampMS = try ClientStoreCoding.milliseconds(timestamp)
-            try persistExactObject(ack, persistedAt: timestamp, in: db)
-            for durable in durableChunks {
-                guard let row = try Row.fetchOne(
-                    db,
-                    sql: """
-                        SELECT state_machine_json FROM upload_chunks
-                        WHERE upload_id = ? AND chunk_index = ?
-                        """,
-                    arguments: [
-                        batch.descriptor.uploadID.description,
-                        Int64(durable.chunkIndex),
-                    ]
-                ) else {
-                    throw ClientStoreError.missingRow(entity: "upload chunk")
+            if let existing = batch.durableACK {
+                guard existing == ack else {
+                    throw ClientStoreError.exactObjectEquivocation
                 }
-                var machine: ChunkOutboxStateMachine = try ClientStoreCoding.decode(
-                    ChunkOutboxStateMachine.self,
-                    from: row["state_machine_json"],
-                    field: "chunkOutbox"
-                )
-                if machine.state != .durableAtHost {
-                    try machine.markDurableAtHost()
+            } else {
+                try persistExactObject(ack, persistedAt: timestamp, in: db)
+                for durable in durableChunks {
+                    guard let row = try Row.fetchOne(
+                        db,
+                        sql: """
+                            SELECT state_machine_json FROM upload_chunks
+                            WHERE upload_id = ? AND chunk_index = ?
+                            """,
+                        arguments: [
+                            batch.descriptor.uploadID.description,
+                            Int64(durable.chunkIndex),
+                        ]
+                    ) else {
+                        throw ClientStoreError.missingRow(entity: "upload chunk")
+                    }
+                    var machine: ChunkOutboxStateMachine = try ClientStoreCoding.decode(
+                        ChunkOutboxStateMachine.self,
+                        from: row["state_machine_json"],
+                        field: "chunkOutbox"
+                    )
+                    if machine.state != .durableAtHost {
+                        try machine.markDurableAtHost()
+                    }
+                    try db.execute(
+                        sql: """
+                            UPDATE upload_chunks
+                            SET outbox_state = ?, state_machine_json = ?,
+                                durable_ack_sha256 = ?, updated_at_ms = ?
+                            WHERE upload_id = ? AND chunk_index = ?
+                            """,
+                        arguments: [
+                            machine.state.rawValue,
+                            try ClientStoreCoding.encode(machine),
+                            ack.objectSHA256.rawBytes,
+                            timestampMS,
+                            batch.descriptor.uploadID.description,
+                            Int64(durable.chunkIndex),
+                        ]
+                    )
                 }
-                try db.execute(
-                    sql: """
-                        UPDATE upload_chunks
-                        SET outbox_state = ?, state_machine_json = ?,
-                            durable_ack_sha256 = ?, updated_at_ms = ?
-                        WHERE upload_id = ? AND chunk_index = ?
-                        """,
-                    arguments: [
-                        machine.state.rawValue,
-                        try ClientStoreCoding.encode(machine),
-                        ack.objectSHA256.rawBytes,
-                        timestampMS,
-                        batch.descriptor.uploadID.description,
-                        Int64(durable.chunkIndex),
-                    ]
-                )
             }
             try db.execute(
                 sql: """
@@ -1053,6 +1343,14 @@ extension HarcTransferStore {
                     timestampMS,
                     batchID.description,
                 ]
+            )
+            try db.execute(
+                sql: """
+                    UPDATE background_task_mappings
+                    SET state = 'completed', updated_at_ms = ?
+                    WHERE batch_id = ? AND state != 'completed'
+                    """,
+                arguments: [timestampMS, batchID.description]
             )
         }
     }
@@ -1086,6 +1384,9 @@ extension HarcTransferStore {
                 }
                 return
             }
+            guard batch.state != .completed, batch.durableACK == nil else {
+                throw ClientStoreError.exactObjectEquivocation
+            }
             try db.execute(
                 sql: """
                     INSERT INTO background_task_mappings (
@@ -1106,6 +1407,93 @@ extension HarcTransferStore {
         }
     }
 
+    /// Records the terminal result of one system task without discarding its
+    /// immutable batch, capability, or body. A verified ACK always wins over a
+    /// late failure callback, and a security block cannot be downgraded by a
+    /// later ordinary transport failure.
+    public func persistBackgroundTaskFailure(
+        _ identity: SystemBackgroundTaskIdentity,
+        batchID: AudioBatchID,
+        disposition: BackgroundTaskFailureDisposition,
+        failedAt: Date? = nil
+    ) throws {
+        try database.write { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT batch_id, state FROM background_task_mappings
+                    WHERE session_identifier = ? AND task_identifier = ?
+                    """,
+                arguments: [
+                    identity.sessionIdentifier,
+                    identity.taskIdentifier,
+                ]
+            ) else {
+                throw ClientStoreError.missingRow(
+                    entity: "background task mapping"
+                )
+            }
+            guard (row["batch_id"] as String) == batchID.description,
+                  let mappingState = BackgroundTaskMappingState(
+                      rawValue: row["state"]
+                  ) else {
+                throw ClientStoreError.exactObjectEquivocation
+            }
+            guard let batch = try backgroundBatch(id: batchID, in: db) else {
+                throw ClientStoreError.missingRow(entity: "background batch")
+            }
+            let timestampMS = try ClientStoreCoding.milliseconds(
+                failedAt ?? now()
+            )
+
+            if batch.state == .completed || batch.durableACK != nil {
+                try db.execute(
+                    sql: """
+                        UPDATE background_task_mappings
+                        SET state = 'completed', updated_at_ms = ?
+                        WHERE session_identifier = ? AND task_identifier = ?
+                        """,
+                    arguments: [
+                        timestampMS,
+                        identity.sessionIdentifier,
+                        identity.taskIdentifier,
+                    ]
+                )
+                return
+            }
+            guard mappingState != .completed else { return }
+
+            let securityBlocked =
+                disposition == .securityBlocked
+                || mappingState == .securityBlocked
+                || batch.state == .securityBlocked
+            let targetState = securityBlocked
+                ? BackgroundTaskFailureDisposition.securityBlocked.rawValue
+                : BackgroundTaskFailureDisposition.failedRecoverable.rawValue
+            try db.execute(
+                sql: """
+                    UPDATE background_task_mappings
+                    SET state = ?, updated_at_ms = ?
+                    WHERE session_identifier = ? AND task_identifier = ?
+                    """,
+                arguments: [
+                    targetState,
+                    timestampMS,
+                    identity.sessionIdentifier,
+                    identity.taskIdentifier,
+                ]
+            )
+            try db.execute(
+                sql: """
+                    UPDATE upload_batches
+                    SET state = ?, updated_at_ms = ?
+                    WHERE batch_id = ? AND state != 'completed'
+                    """,
+                arguments: [targetState, timestampMS, batchID.description]
+            )
+        }
+    }
+
     public func taskMappings() throws -> [StoredBackgroundTaskMapping] {
         try database.read { db in try taskMappings(in: db) }
     }
@@ -1118,7 +1506,9 @@ extension HarcTransferStore {
     ) throws -> BackgroundTaskReconciliation {
         try database.write { db in
             let persisted = try taskMappings(in: db)
-            for mapping in persisted where mapping.state != .completed {
+            for mapping in persisted
+            where mapping.state != .completed
+                && mapping.state != .securityBlocked {
                 guard let batch = try backgroundBatch(id: mapping.batchID, in: db) else {
                     throw ClientStoreError.missingRow(entity: "background batch")
                 }
@@ -1134,24 +1524,24 @@ extension HarcTransferStore {
             let timestampMS = try ClientStoreCoding.milliseconds(reconciledAt ?? now())
 
             for mapping in persisted {
-                if observedSystemTasks.contains(mapping.identity) {
+                let mayRun = mapping.state != .completed
+                    && mapping.state != .securityBlocked
+                if observedSystemTasks.contains(mapping.identity), mayRun {
                     matched.append(mapping.identity)
                     observedBatchIDs.insert(mapping.batchID)
-                    if mapping.state != .completed {
-                        try db.execute(
-                            sql: """
-                                UPDATE background_task_mappings
-                                SET state = 'observedBySystem', updated_at_ms = ?
-                                WHERE session_identifier = ? AND task_identifier = ?
-                                """,
-                            arguments: [
-                                timestampMS,
-                                mapping.identity.sessionIdentifier,
-                                mapping.identity.taskIdentifier,
-                            ]
-                        )
-                    }
-                } else if mapping.state != .completed {
+                    try db.execute(
+                        sql: """
+                            UPDATE background_task_mappings
+                            SET state = 'observedBySystem', updated_at_ms = ?
+                            WHERE session_identifier = ? AND task_identifier = ?
+                            """,
+                        arguments: [
+                            timestampMS,
+                            mapping.identity.sessionIdentifier,
+                            mapping.identity.taskIdentifier,
+                        ]
+                    )
+                } else if mayRun {
                     missingBatchCandidates.insert(mapping.batchID)
                     try db.execute(
                         sql: """
@@ -1174,7 +1564,8 @@ extension HarcTransferStore {
                     sql: """
                         UPDATE upload_batches
                         SET state = 'needsReschedule', updated_at_ms = ?
-                        WHERE batch_id = ? AND state != 'completed'
+                        WHERE batch_id = ?
+                          AND state NOT IN ('completed', 'securityBlocked')
                         """,
                     arguments: [timestampMS, batchID.description]
                 )
@@ -1616,6 +2007,40 @@ extension HarcTransferStore {
             ),
             integrityBlock: try decodeIntegrityBlock(row),
             updatedAt: ClientStoreCoding.date(milliseconds: row["updated_at_ms"])
+        )
+    }
+
+    private func uploadBeginIntent(
+        _ origin: OriginRecordingID,
+        in db: Database
+    ) throws -> StoredUploadBeginIntent? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+                SELECT * FROM upload_begin_intents
+                WHERE origin_device_id = ? AND origin_recording_uuid = ?
+                """,
+            arguments: originArguments(origin)
+        ) else { return nil }
+        let intent: UploadBeginIntent = try ClientStoreCoding.decode(
+            UploadBeginIntent.self,
+            from: row["intent_json"],
+            field: "uploadBeginIntent"
+        )
+        guard intent.originRecordingID == origin,
+              (row["upload_id"] as String) == intent.uploadID.description,
+              (row["library_id"] as String) == intent.libraryID.description,
+              (row["host_authority_id"] as Data)
+                == intent.hostAuthorityID.rawBytes else {
+            throw ClientStoreError.corruptStoredValue(
+                field: "uploadBeginIntent.bindings"
+            )
+        }
+        return StoredUploadBeginIntent(
+            intent: intent,
+            preparedAt: ClientStoreCoding.date(
+                milliseconds: row["prepared_at_ms"] as Int64
+            )
         )
     }
 

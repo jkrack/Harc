@@ -58,6 +58,11 @@ struct TransportGenerationControllerTests {
                 id: generationID,
                 grpcFactory: factory,
                 uploadListener: try NWListener(using: .tcp),
+                uploadServingGeneration: try
+                    HarcBackgroundUploadServingGenerationBinding(
+                        generationID: generationID,
+                        transportSetEpoch: 1
+                    ),
                 terminationReporter:
                     HostTransportGenerationTerminationReporter(
                         generationID: generationID,
@@ -87,6 +92,8 @@ private actor RejectingControllerDriver: HarcTransportGenerationDriver {
         id _: UUID,
         grpcFactory _: HarcGRPCNWListenerFactory,
         uploadListener _: NWListener,
+        uploadServingGeneration _:
+            HarcBackgroundUploadServingGenerationBinding,
         terminationReporter _: HostTransportGenerationTerminationReporter
     ) async throws {
         throw ControllerTestError.activationRejected

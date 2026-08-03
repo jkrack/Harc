@@ -31,6 +31,7 @@ struct ResidentTransportGenerationDriverTests {
             id: generationID,
             grpcFactory: try grpcFactory(generationID: generationID),
             uploadListener: try uploadListener(),
+            uploadServingGeneration: try uploadServingGeneration(generationID),
             terminationReporter: reporter(generationID)
         )
 
@@ -91,6 +92,9 @@ struct ResidentTransportGenerationDriverTests {
                 id: generationID,
                 grpcFactory: try grpcFactory(generationID: generationID),
                 uploadListener: try uploadListener(),
+                uploadServingGeneration: try uploadServingGeneration(
+                    generationID
+                ),
                 terminationReporter: reporter(generationID)
             )
         }
@@ -126,6 +130,9 @@ struct ResidentTransportGenerationDriverTests {
                 id: generationID,
                 grpcFactory: try grpcFactory(generationID: generationID),
                 uploadListener: try uploadListener(),
+                uploadServingGeneration: try uploadServingGeneration(
+                    generationID
+                ),
                 terminationReporter: reporter(UUID())
             )
         }
@@ -152,6 +159,9 @@ struct ResidentTransportGenerationDriverTests {
                 id: generationID,
                 grpcFactory: try grpcFactory(generationID: generationID),
                 uploadListener: try uploadListener(),
+                uploadServingGeneration: try uploadServingGeneration(
+                    generationID
+                ),
                 terminationReporter: reporter(generationID)
             )
         }
@@ -174,6 +184,9 @@ struct ResidentTransportGenerationDriverTests {
                 id: replacementID,
                 grpcFactory: try grpcFactory(generationID: replacementID),
                 uploadListener: try uploadListener(),
+                uploadServingGeneration: try uploadServingGeneration(
+                    replacementID
+                ),
                 terminationReporter: reporter(replacementID)
             )
         }
@@ -210,6 +223,9 @@ struct ResidentTransportGenerationDriverTests {
                 id: generationID,
                 grpcFactory: try grpcFactory(generationID: generationID),
                 uploadListener: try uploadListener(),
+                uploadServingGeneration: try uploadServingGeneration(
+                    generationID
+                ),
                 terminationReporter: reporter(generationID)
             )
         }
@@ -226,6 +242,9 @@ struct ResidentTransportGenerationDriverTests {
                 id: replacementID,
                 grpcFactory: try grpcFactory(generationID: replacementID),
                 uploadListener: try uploadListener(),
+                uploadServingGeneration: try uploadServingGeneration(
+                    replacementID
+                ),
                 terminationReporter: reporter(replacementID)
             )
         }
@@ -260,11 +279,52 @@ struct ResidentTransportGenerationDriverTests {
             id: generationID,
             grpcFactory: try grpcFactory(generationID: generationID),
             uploadListener: try uploadListener(),
+            uploadServingGeneration: try uploadServingGeneration(generationID),
             terminationReporter: reporter(generationID) {
                 await reports.record(generationID)
             }
         )
         await grpc.triggerUnexpectedExit(generationID: generationID)
+
+        #expect(await driver.activeGenerationID == nil)
+        #expect(await publisher.advertisedGenerationID == nil)
+        #expect(await reports.values == [generationID])
+        let values = await events.values
+        #expect(values.contains("bonjour.withdraw"))
+        #expect(values.contains("upload.stop"))
+        #expect(values.contains("grpc.stop"))
+    }
+
+    @Test("unexpected upload exit is generation-scoped and reports once")
+    func unexpectedUploadExitFailsClosed() async throws {
+        let events = GenerationEventLog()
+        let grpc = TestGRPCRuntime(events: events)
+        let upload = TestUploadRuntime(events: events)
+        let publisher = TestGenerationPublisher(events: events)
+        let reports = TerminationReportRecorder()
+        let driver = HarcResidentTransportGenerationDriver(
+            grpcRuntime: grpc,
+            uploadRuntime: upload,
+            publisher: publisher
+        )
+        let generationID = UUID()
+
+        try await driver.activateGeneration(
+            id: generationID,
+            grpcFactory: try grpcFactory(generationID: generationID),
+            uploadListener: try uploadListener(),
+            uploadServingGeneration: try uploadServingGeneration(generationID),
+            terminationReporter: reporter(generationID) {
+                await reports.record(generationID)
+            }
+        )
+
+        await upload.triggerUnexpectedExit(generationID: UUID())
+        #expect(await driver.activeGenerationID == generationID)
+        #expect(await reports.values.isEmpty)
+
+        await upload.triggerUnexpectedExit(generationID: generationID)
+        await upload.triggerUnexpectedExit(generationID: generationID)
 
         #expect(await driver.activeGenerationID == nil)
         #expect(await publisher.advertisedGenerationID == nil)
@@ -296,6 +356,9 @@ struct ResidentTransportGenerationDriverTests {
                 id: generationID,
                 grpcFactory: try grpcFactory(generationID: generationID),
                 uploadListener: try uploadListener(),
+                uploadServingGeneration: try uploadServingGeneration(
+                    generationID
+                ),
                 terminationReporter: reporter(generationID)
             )
         }
@@ -339,6 +402,7 @@ struct ResidentTransportGenerationDriverTests {
             id: generationID,
             grpcFactory: try grpcFactory(generationID: generationID),
             uploadListener: try uploadListener(),
+            uploadServingGeneration: try uploadServingGeneration(generationID),
             terminationReporter: reporter(generationID) {
                 await sinkGate.enterAndWait()
             }
@@ -374,6 +438,15 @@ struct ResidentTransportGenerationDriverTests {
 
     private func uploadListener() throws -> NWListener {
         try NWListener(using: .tcp)
+    }
+
+    private func uploadServingGeneration(
+        _ generationID: UUID
+    ) throws -> HarcBackgroundUploadServingGenerationBinding {
+        try HarcBackgroundUploadServingGenerationBinding(
+            generationID: generationID,
+            transportSetEpoch: 1
+        )
     }
 
     private func reporter(
@@ -451,6 +524,8 @@ private actor TestUploadRuntime: HarcBackgroundUploadListenerRuntimeBoundary {
     let admissionBarrier: TwoPartyBarrier?
     let startGate: AsyncGate?
     let immediateStopGate: AsyncGate?
+    private var unexpectedExitHandler:
+        (@Sendable (UUID) async -> Void)?
 
     init(
         events: GenerationEventLog,
@@ -466,7 +541,14 @@ private actor TestUploadRuntime: HarcBackgroundUploadListenerRuntimeBoundary {
         self.immediateStopGate = immediateStopGate
     }
 
-    func start(listener _: NWListener) async throws {
+    func start(
+        listener _: NWListener,
+        servingGeneration _:
+            HarcBackgroundUploadServingGenerationBinding,
+        unexpectedExitHandler:
+            @escaping @Sendable (UUID) async -> Void
+    ) async throws {
+        self.unexpectedExitHandler = unexpectedExitHandler
         await events.append("upload.start")
         if let startGate { await startGate.enterAndWait() }
         if failStart { throw GenerationTestError.startRejected }
@@ -485,6 +567,12 @@ private actor TestUploadRuntime: HarcBackgroundUploadListenerRuntimeBoundary {
         await events.append("upload.stop")
         if let immediateStopGate {
             await immediateStopGate.enterAndWait()
+        }
+    }
+
+    func triggerUnexpectedExit(generationID: UUID) async {
+        if let unexpectedExitHandler {
+            await unexpectedExitHandler(generationID)
         }
     }
 }

@@ -4,6 +4,7 @@ import HarcIdentity
 import HarcTransfer
 import Testing
 @testable import HarcClientStore
+@testable import HarcProtocol
 
 @Suite("HarcTransferStore verified receipt deletion gate")
 struct VerifiedReceiptPersistenceTests {
@@ -30,7 +31,7 @@ struct VerifiedReceiptPersistenceTests {
         #expect(!pendingCleanup.isEligible)
 
         let first = try store.persistVerifiedRecordingReceipt(
-            evidence.receiptEvidence,
+            authenticated(evidence.receiptEvidence),
             verifiedAt: ClientStoreFixtures.baseDate.addingTimeInterval(20)
         )
         #expect(first.hostTrust == evidence.receiptEvidence.hostTrust)
@@ -70,7 +71,7 @@ struct VerifiedReceiptPersistenceTests {
         // A later delivery of the identical validated receipt is a read-only
         // replay: the first verification time and exact bytes remain stable.
         let replay = try store.persistVerifiedRecordingReceipt(
-            evidence.receiptEvidence,
+            authenticated(evidence.receiptEvidence),
             verifiedAt: ClientStoreFixtures.baseDate.addingTimeInterval(30)
         )
         #expect(replay == first)
@@ -92,7 +93,9 @@ struct VerifiedReceiptPersistenceTests {
         let evidence = try ClientStoreValidatedEvidenceFixture()
         let store = try preparedReceiptStore(root: root, evidence: evidence)
 
-        _ = try store.persistVerifiedRecordingReceipt(evidence.receiptEvidence)
+        _ = try store.persistVerifiedRecordingReceipt(
+            authenticated(evidence.receiptEvidence)
+        )
         #expect(try store.cleanupIntent(for: evidence.origin) == nil)
 
         let cleanup = try store.requestCleanup(for: evidence.origin)
@@ -121,7 +124,7 @@ struct VerifiedReceiptPersistenceTests {
         )
         _ = try store.requestCleanup(for: evidence.origin)
         let accepted = try store.persistVerifiedRecordingReceipt(
-            evidence.receiptEvidence
+            authenticated(evidence.receiptEvidence)
         )
         let conflict = try ValidatedRecordingReceiptEvidence(
             hostTrust: evidence.receiptEvidence.hostTrust,
@@ -150,7 +153,7 @@ struct VerifiedReceiptPersistenceTests {
         #expect(throws: ClientStoreError.conflictingVerifiedReceipt(
             origin: evidence.origin
         )) {
-            try store.persistVerifiedRecordingReceipt(conflict)
+            try store.persistVerifiedRecordingReceipt(authenticated(conflict))
         }
         #expect(try store.verifiedRecordingReceipt(for: evidence.origin) == accepted)
         #expect(
@@ -206,7 +209,9 @@ struct VerifiedReceiptPersistenceTests {
         #expect(throws: ClientStoreError.verifiedReceiptBindingMismatch(
             field: "canonical audio"
         )) {
-            try store.persistVerifiedRecordingReceipt(evidence.receiptEvidence)
+            try store.persistVerifiedRecordingReceipt(
+                authenticated(evidence.receiptEvidence)
+            )
         }
         #expect(try store.verifiedRecordingReceipt(for: evidence.origin) == nil)
         #expect(
@@ -244,9 +249,26 @@ struct VerifiedReceiptPersistenceTests {
         )
 
         #expect(throws: ClientStoreError.nonauthorizingGrantStatus("revoked")) {
-            try store.persistVerifiedRecordingReceipt(evidence.receiptEvidence)
+            try store.persistVerifiedRecordingReceipt(
+                authenticated(evidence.receiptEvidence)
+            )
         }
         #expect(try store.verifiedRecordingReceipt(for: evidence.origin) == nil)
+    }
+
+    @Test("cleanup persistence API accepts only sealed protocol evidence")
+    func persistenceAPISignatureIsSealed() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidence = try ClientStoreValidatedEvidenceFixture()
+        let store = try preparedReceiptStore(root: root, evidence: evidence)
+
+        let persistence: (
+            HarcAuthenticatedRecordingReceiptV1,
+            Date?
+        ) throws -> StoredVerifiedRecordingReceipt =
+            store.persistVerifiedRecordingReceipt
+        _ = persistence
     }
 
     private func preparedReceiptStore(
@@ -278,5 +300,13 @@ struct VerifiedReceiptPersistenceTests {
         )
         try store.persistUploadAttempt(attempt, for: evidence.tuple)
         return store
+    }
+
+    /// Test-only construction is available through `@testable HarcProtocol`;
+    /// the initializer is inaccessible to every other production module.
+    private func authenticated(
+        _ evidence: ValidatedRecordingReceiptEvidence
+    ) -> HarcAuthenticatedRecordingReceiptV1 {
+        HarcAuthenticatedRecordingReceiptV1(evidence: evidence)
     }
 }

@@ -45,8 +45,82 @@ struct RecordingTransferGRPCServiceAdapterTests {
         #expect(wire.disposition == .beginUploadDispositionCreated)
         #expect(try wire.uploadID.domainValue() == fixture.uploadID)
         #expect(wire.uploadGeneration == UploadGeneration.initial.rawValue)
+        #expect(wire.reconciliation.firstBeganAtUnixMs == 2_000_000_000_000)
+        #expect(wire.reconciliation.generationBeganAtUnixMs == 2_000_000_000_000)
         #expect(wire.generationExpiresAtUnixMs == 2_000_000_060_000)
         #expect(wire.hasReconciliation)
+    }
+
+    @Test("BeginUpload canonicalizes a sub-millisecond host clock")
+    func beginUploadCanonicalizesHostClock() async throws {
+        let fixture = try RecordingTransferAdapterFixture()
+        let application = try fixture.application()
+        let adapter = fixture.adapter(
+            application: application,
+            authenticator: RecordingTransferSessionAuthenticatorFake(
+                session: fixture.session
+            ),
+            now: {
+                Date(timeIntervalSince1970: 2_000_000_000.123_789)
+            }
+        )
+
+        _ = try await adapter.beginUpload(
+            request: ServerRequest(
+                metadata: fixture.metadata,
+                message: fixture.beginUploadRequest()
+            )
+        )
+        let captured = try #require(await application.capturedBegin())
+
+        #expect(
+            captured.request.beganAt
+                == Date(timeIntervalSince1970: 2_000_000_000.123)
+        )
+    }
+
+    @Test("DeclareChunks projects the durable typed conflict")
+    func declarationConflict() async throws {
+        let fixture = try RecordingTransferAdapterFixture()
+        let existing = try fixture.declarationDescriptor(hashByte: 0x41)
+        let attempted = try fixture.declarationDescriptor(hashByte: 0x42)
+        let conflict = try ChunkDeclarationConflict(
+            existing: existing,
+            attempted: attempted
+        )
+        let application = try fixture.application(
+            declarationDisposition: .conflictBlocked(conflict)
+        )
+        let adapter = fixture.adapter(
+            application: application,
+            authenticator: RecordingTransferSessionAuthenticatorFake(
+                session: fixture.session
+            )
+        )
+
+        var request = Harc_V1_DeclareChunksRequestV1()
+        request.protocol = HarcProtocolVersion.v1.protobufV1()
+        request.uploadID = Harc_V1_UploadIDV1(fixture.uploadID)
+        request.uploadGeneration = UploadGeneration.initial.rawValue
+        request.uploadProfileSha256 = try Harc_V1_SHA256DigestV1(
+            exactBytes: fixture.profileSHA256.rawBytes
+        )
+        request.descriptors = [try Harc_V1_ChunkDescriptorV1(attempted)]
+
+        let wire = try await adapter.declareChunks(request: ServerRequest(
+            metadata: fixture.metadata,
+            message: request
+        )).message
+        #expect(
+            wire.disposition
+                == .chunkDeclarationDispositionConflictBlocked
+        )
+        #expect(wire.hasConflict)
+        let validated = try HarcValidatedDeclareChunksResponseV1(
+            wire,
+            expectedRequest: HarcValidatedDeclareChunksRequestV1(request)
+        )
+        #expect(validated.disposition == .conflictBlocked(conflict))
     }
 
     @Test("GetRecordingStatus resolves an owner-scoped key and projects state")
@@ -329,28 +403,55 @@ private struct RecordingTransferAdapterFixture {
 
     func adapter(
         application: RecordingTransferRPCApplicationFake,
-        authenticator: RecordingTransferSessionAuthenticatorFake
+        authenticator: RecordingTransferSessionAuthenticatorFake,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) -> HarcRecordingTransferGRPCServiceAdapterV1 {
         HarcRecordingTransferGRPCServiceAdapterV1(
             application: application,
             sessionAuthenticator: authenticator,
             capabilityPolicy: policy,
             servedIdentityBinding: servedIdentityBinding,
-            compatibility: policy.compatibility
+            compatibility: policy.compatibility,
+            now: now
         )
     }
 
     func application(
-        mintResult: HostBackgroundCapabilityMintResult? = nil
+        mintResult: HostBackgroundCapabilityMintResult? = nil,
+        declarationDisposition: ChunkDeclarationDisposition? = nil
     ) throws -> RecordingTransferRPCApplicationFake {
         RecordingTransferRPCApplicationFake(
             beginDisposition: .created(try reconciliation()),
+            declarationDisposition: declarationDisposition,
             recordingStatus: try HostRecordingStatusResult(
                 uploadID: uploadID,
                 originRecordingID: originRecordingID,
                 ingestState: .receiving
             ),
             mintResult: mintResult
+        )
+    }
+
+    func declarationDescriptor(
+        hashByte: UInt8
+    ) throws -> LogicalChunkDescriptor {
+        try LogicalChunkDescriptor(
+            originRecordingID: originRecordingID,
+            chunkID: ChunkID(
+                UUID(uuidString: "20000000-0000-4000-8000-000000000004")!
+            ),
+            chunkIndex: 0,
+            canonicalStartFrame: 0,
+            canonicalFrameCount: 1,
+            encoding: .cafALAC,
+            encodedByteLength: 1,
+            encodedSHA256: EncodedChunkSHA256(
+                Data(repeating: hashByte, count: 32)
+            ),
+            canonicalDecodedByteLength: 2,
+            canonicalDecodedSHA256: CanonicalPCMHash(
+                Data(repeating: 0x43, count: 32)
+            )
         )
     }
 
@@ -447,6 +548,8 @@ private struct RecordingTransferAdapterFixture {
             originRecordingID: originRecordingID,
             uploadProfileSHA256: profileSHA256,
             generation: .initial,
+            firstBeganAt: Date(timeIntervalSince1970: 2_000_000_000),
+            generationBeganAt: Date(timeIntervalSince1970: 2_000_000_000),
             generationExpiresAt: Date(timeIntervalSince1970: 2_000_000_060),
             declarations: [],
             boundManifestObjectSHA256: nil,
@@ -475,6 +578,7 @@ private actor RecordingTransferRPCApplicationFake:
     }
 
     private let beginDisposition: BeginHostUploadDisposition
+    private let declarationDisposition: ChunkDeclarationDisposition?
     private let recordingStatus: HostRecordingStatusResult
     private let mintResult: HostBackgroundCapabilityMintResult?
     private var beginInvocation: BeginInvocation?
@@ -484,10 +588,12 @@ private actor RecordingTransferRPCApplicationFake:
 
     init(
         beginDisposition: BeginHostUploadDisposition,
+        declarationDisposition: ChunkDeclarationDisposition? = nil,
         recordingStatus: HostRecordingStatusResult,
         mintResult: HostBackgroundCapabilityMintResult? = nil
     ) {
         self.beginDisposition = beginDisposition
+        self.declarationDisposition = declarationDisposition
         self.recordingStatus = recordingStatus
         self.mintResult = mintResult
     }
@@ -513,7 +619,10 @@ private actor RecordingTransferRPCApplicationFake:
         expectedUploadProfileSHA256: UploadProfileSHA256,
         descriptors: [LogicalChunkDescriptor]
     ) async throws -> ChunkDeclarationDisposition {
-        throw RecordingTransferApplicationFakeError.unexpectedCall
+        guard let declarationDisposition else {
+            throw RecordingTransferApplicationFakeError.unexpectedCall
+        }
+        return declarationDisposition
     }
 
     func uploadChunk(

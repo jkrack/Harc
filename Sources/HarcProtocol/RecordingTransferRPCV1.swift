@@ -719,6 +719,14 @@ public extension Harc_V1_ReconcileUploadResponseV1 {
             exactBytes: value.uploadProfileSHA256.rawBytes
         )
         uploadGeneration = value.generation.rawValue
+        firstBeganAtUnixMs = try transferUnixMilliseconds(
+            value.firstBeganAt,
+            field: "reconcileUpload.firstBeganAt"
+        )
+        generationBeganAtUnixMs = try transferUnixMilliseconds(
+            value.generationBeganAt,
+            field: "reconcileUpload.generationBeganAt"
+        )
         generationExpiresAtUnixMs = try transferUnixMilliseconds(
             value.generationExpiresAt,
             field: "reconcileUpload.generationExpiresAt"

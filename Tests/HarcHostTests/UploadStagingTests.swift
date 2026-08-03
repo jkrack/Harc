@@ -183,24 +183,41 @@ struct UploadStagingTests {
             startFrame: 0,
             bytes: Data([8, 9, 10, 11, 12, 13, 14, 15])
         )
-        await #expect(throws: TransferValidationError.self) {
+        let expectedConflict = try ChunkDeclarationConflict(
+            existing: upload.descriptor,
+            attempted: conflicting
+        )
+        let conflict = try await upload.store.declareChunks(
+            context: upload.context,
+            uploadID: upload.uploadID,
+            generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
+            descriptors: [conflicting],
+            at: fixture.beganAt.addingTimeInterval(4)
+        )
+        #expect(conflict == .conflictBlocked(expectedConflict))
+
+        let blockedReplay = try await upload.store.declareChunks(
+            context: upload.context,
+            uploadID: upload.uploadID,
+            generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
+            descriptors: [upload.descriptor],
+            at: fixture.beganAt.addingTimeInterval(5)
+        )
+        #expect(blockedReplay == .conflictBlocked(expectedConflict))
+
+        await #expect(throws: TransferValidationError.staleUploadGeneration(
+            expected: UploadGeneration.initial.rawValue,
+            actual: 2
+        )) {
             _ = try await upload.store.declareChunks(
                 context: upload.context,
                 uploadID: upload.uploadID,
-                generation: .initial,
-                expectedUploadProfileSHA256: upload.profile.profileSHA256,
-                descriptors: [conflicting],
-                at: fixture.beganAt.addingTimeInterval(4)
-            )
-        }
-        await #expect(throws: TransferValidationError.declarationBlocked) {
-            _ = try await upload.store.declareChunks(
-                context: upload.context,
-                uploadID: upload.uploadID,
-                generation: .initial,
+                generation: UploadGeneration(2),
                 expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 descriptors: [upload.descriptor],
-                at: fixture.beganAt.addingTimeInterval(5)
+                at: fixture.beganAt.addingTimeInterval(6)
             )
         }
     }

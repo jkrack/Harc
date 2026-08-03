@@ -272,6 +272,23 @@ extension HarcHostStore {
                 objectOwner: attempt.ownerDeviceID,
                 at: declaredAt
             )
+            if attempt.status == .conflictBlocked,
+               let conflict = attempt.declarations.conflict {
+                guard generation == attempt.generation else {
+                    throw TransferValidationError.staleUploadGeneration(
+                        expected: attempt.generation.rawValue,
+                        actual: generation.rawValue
+                    )
+                }
+                guard descriptors.allSatisfy({
+                    $0.originRecordingID == attempt.originRecordingID
+                }) else {
+                    throw TransferValidationError.invalidUploadAttempt(
+                        reason: "Chunk declaration origin does not match the upload."
+                    )
+                }
+                return .success(.conflictBlocked(conflict))
+            }
             do {
                 let disposition = try attempt.declare(
                     descriptors,
@@ -293,6 +310,9 @@ extension HarcHostStore {
                         deviceID: context.authenticatedDeviceID
                     )
                     try self.pruneAuditEvents(in: db, at: declaredAt)
+                    if let conflict = attempt.declarations.conflict {
+                        return .success(.conflictBlocked(conflict))
+                    }
                 }
                 return .conflict(error)
             }
@@ -1107,6 +1127,8 @@ extension HarcHostStore {
             originRecordingID: attempt.originRecordingID,
             uploadProfileSHA256: attempt.frozenProfile.profileSHA256,
             generation: attempt.generation,
+            firstBeganAt: attempt.firstBeganAt,
+            generationBeganAt: attempt.generationBeganAt,
             generationExpiresAt: attempt.generationExpiresAt,
             declarations: attempt.declarations.descriptors,
             boundManifestObjectSHA256: attempt.boundManifest?.objectSHA256,

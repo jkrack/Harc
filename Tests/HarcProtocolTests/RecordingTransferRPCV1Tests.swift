@@ -370,6 +370,8 @@ struct RecordingTransferRPCV1Tests {
             originRecordingID: fixture.originRecordingID,
             uploadProfileSHA256: fixture.profileSHA256,
             generation: try UploadGeneration(4),
+            firstBeganAt: Date(timeIntervalSince1970: 1_999_999_000),
+            generationBeganAt: Date(timeIntervalSince1970: 1_999_999_940),
             generationExpiresAt: Date(timeIntervalSince1970: 2_000_000_000),
             declarations: [descriptor],
             boundManifestObjectSHA256: ExactObjectSHA256(
@@ -389,6 +391,8 @@ struct RecordingTransferRPCV1Tests {
 
         let wire = try Harc_V1_ReconcileUploadResponseV1(reconciliation)
         #expect(wire.uploadGeneration == 4)
+        #expect(wire.firstBeganAtUnixMs == 1_999_999_000_000)
+        #expect(wire.generationBeganAtUnixMs == 1_999_999_940_000)
         #expect(wire.generationExpiresAtUnixMs == 2_000_000_000_000)
         #expect(wire.terminalReason == .uploadTerminalReasonCommitted)
         #expect(wire.durableChunks.count == 1)

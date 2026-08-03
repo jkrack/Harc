@@ -4,6 +4,20 @@ import HarcIdentity
 import HarcProtocolWire
 import HarcTransfer
 
+/// Receipt evidence whose construction is sealed to HarcProtocol's concrete
+/// signature-and-binding validator. Other production modules can carry this
+/// value, but cannot manufacture one from package-constructible domain
+/// evidence and thereby reach the client deletion gate.
+public struct HarcAuthenticatedRecordingReceiptV1: Equatable, Sendable {
+    package let evidence: ValidatedRecordingReceiptEvidence
+
+    /// `internal` is intentional: package access would allow any production
+    /// target in this Swift package to fabricate a cleanup-authorizing value.
+    init(evidence: ValidatedRecordingReceiptEvidence) {
+        self.evidence = evidence
+    }
+}
+
 /// Exact V1 manifest/receipt codec injected through HarcTransfer-owned
 /// interfaces. It has no persistence or transport behavior.
 public struct HarcRecordingEvidenceCodecV1: Sendable,
@@ -294,6 +308,23 @@ public struct HarcRecordingEvidenceCodecV1: Sendable,
             receiptID: receiptUUID,
             durableCommitTime: durableCommitTime,
             processingState: .pending
+        )
+    }
+
+    /// Performs full receipt framing, registered-payload, host-signature,
+    /// manifest, trust, and canonical-audio validation, then seals the result
+    /// for persistence APIs that can authorize local cleanup.
+    public func authenticateRecordingReceipt(
+        exactSignedReceiptBytes: Data,
+        validatedManifest: ValidatedRecordingManifestEvidence,
+        hostTrust: RecordingHostTrustBinding
+    ) throws -> HarcAuthenticatedRecordingReceiptV1 {
+        HarcAuthenticatedRecordingReceiptV1(
+            evidence: try validateRecordingReceipt(
+                exactSignedReceiptBytes: exactSignedReceiptBytes,
+                validatedManifest: validatedManifest,
+                hostTrust: hostTrust
+            )
         )
     }
 }
