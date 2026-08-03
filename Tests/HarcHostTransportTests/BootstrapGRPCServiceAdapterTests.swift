@@ -344,6 +344,10 @@ struct BootstrapGRPCServiceAdapterTests {
             hostInfoApplication: UnavailableHostInfoRPCApplication(),
             pairingApplication: pairingApplication,
             sessionApplication: sessionApplication,
+            recordingApplication:
+                UnavailableRecordingTransferFactoryApplication(),
+            recordingSessionAuthenticator:
+                UnavailableRecordingTransferFactoryAuthenticator(),
             hostAuthorityPublicKey: SoftwareP256SigningKey().publicKey,
             capabilityPolicy: try capabilityPolicy(),
             sourceBindingProvider: sourceProvider,
@@ -352,7 +356,9 @@ struct BootstrapGRPCServiceAdapterTests {
         let services = factory.makeServices(
             servedIdentityBinding: try servedIdentity(bytes(0x94))
         )
-        #expect(services.registrableServices.count == 3)
+        #expect(services.registrableServices.count == 4)
+        let _: any Harc_V1_RecordingTransferService.ServiceProtocol =
+            services.recording
         let pairing = services.pairing
         let session = services.session
 

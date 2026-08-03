@@ -70,6 +70,26 @@ struct HostTestFixture {
         )
     }
 
+    func sessionCapabilities(
+        for profile: FrozenUploadProfile,
+        exactCapabilitiesSHA256: NegotiatedCapabilitiesSHA256? = nil,
+        protocolVersion: TransferProtocolVersion? = nil,
+        selectedFeatureIDs: [TransferCapabilityID]? = nil,
+        descriptorSchema: ChunkDescriptorSchema? = nil,
+        encoding: LosslessEncodingConfiguration? = nil,
+        canonicalFormat: CanonicalPCMFormat? = nil
+    ) throws -> HostTransferSessionCapabilities {
+        try HostTransferSessionCapabilities(
+            exactCapabilitiesSHA256:
+                exactCapabilitiesSHA256 ?? profile.negotiatedCapabilitiesSHA256,
+            protocolVersion: protocolVersion ?? profile.protocolVersion,
+            selectedFeatureIDs: selectedFeatureIDs ?? profile.requiredCapabilities,
+            descriptorSchema: descriptorSchema ?? profile.descriptorSchema,
+            encoding: encoding ?? profile.encoding,
+            canonicalFormat: canonicalFormat ?? profile.canonicalFormat
+        )
+    }
+
     func descriptor(
         origin: OriginRecordingID,
         chunkIndex: UInt32 = 0,

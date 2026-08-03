@@ -1014,15 +1014,17 @@ validation.
 
 One `HarcBootstrapGRPCServiceFactoryV1` owns the host-scoped source-binding
 provider and malformed-preauthentication gate for the runtime lifetime. It
-constructs HostInfo, Pairing, and Session adapters for each served-certificate
-generation, passing the same provider and gate to every adapter and the same
-provider to the HTTP/2 source bridge. Concrete adapter construction and the raw
-runtime service-array seam are internal test seams. The current production call
-graph enters the runtime only through this factory and therefore cannot split
-source identity or cooldown state. Because Swift `internal` access is target
-wide, this is a reviewed composition invariant rather than a compiler-enforced
-one; transport contract tests and source review must reject any new production
-caller of those seams.
+constructs HostInfo, Pairing, Session, and RecordingTransfer adapters for each
+served-certificate generation. Bootstrap adapters receive the same provider and
+gate, the HTTP/2 source bridge receives the same provider, and the transfer
+adapter receives the concrete session authenticator plus that generation's
+served-identity binding. Concrete adapter construction and the raw runtime
+service-array seam are internal test seams. The current production call graph
+enters the runtime only through this factory and therefore cannot split source
+identity, cooldown state, session authentication, or TLS generation binding.
+Because Swift `internal` access is target wide, this is a reviewed composition
+invariant rather than a compiler-enforced one; transport contract tests and
+source review must reject any new production caller of those seams.
 
 Post-session methods enforce this minimum scope/ownership matrix:
 
@@ -1119,6 +1121,14 @@ protocol major/minor, and capability bitset. Service names, addresses, TXT
 records, DNS names, VPN names, and ports are untrusted until the pinned host
 handshake succeeds.
 
+The canonical V1 TXT keys are `dn`, `pmaj`, `pmin`, `caps`, and optional
+`uport`. Protocol and port values use shortest-form unsigned decimal; `caps`
+is exactly 16 lowercase hexadecimal digits. V1 readers reject missing required
+keys, unknown keys, noncanonical integers, and invalid display text. The
+service is attached through `NWListener.Service` to the exact gRPC listener;
+the upload listener is ready before that listener begins advertising, and
+generation withdrawal clears the service through a tombstoned owner.
+
 Discovery uses `NWListener` and `NWBrowser`, never custom multicast. The first
 permission-triggering mobile browse starts only after a foreground **Connect to
 a Host** action and pre-permission explanation. After adoption and granted local
@@ -1195,6 +1205,8 @@ Initial hard limits are part of the tested protocol contract:
 | Ordinary logical chunk duration | 60 seconds |
 | Ordinary logical chunk decoded frames | 960,000 mono frames at 16 kHz |
 | Encoded logical chunk | 4 MiB |
+| Chunk declarations per `DeclareChunks` call | 1,024 |
+| Chunk declarations per upload attempt | 4,096 |
 | Background batch | 64 MiB hard maximum |
 | Edge-processing bundle | 32 MiB total; 1 MiB stream frames; 16 MiB per entry |
 | Concurrent upload streams per device | 2 |
@@ -1484,8 +1496,12 @@ one final signed manifest, so a Mac may upload while it is still recording:
    abandon/restart; the host never silently replaces a declaration. The host
    persists the validated typed value. Unknown descriptor fields are rejected
    in V1 unless a negotiated required capability defines and includes them in
-   equality. Protobuf wire spelling is not an identity and is never compared;
-   generated gRPC decoding may normalize it.
+   equality. V1 therefore rejects unknown fields anywhere inside a chunk
+   descriptor instead of normalizing them away. One call carries at most 1,024
+   descriptors and one upload attempt carries at most 4,096, keeping durable
+   ledgers and reconciliation responses within the control-plane ceiling.
+   Protobuf wire spelling is not an identity and is never compared; generated
+   gRPC decoding may normalize known fields.
 3. `UploadChunks` sends bytes only for previously declared descriptors. Active
    gRPC and the background batch path use the same declaration records and
    staging service. `MintBackgroundCapability` covers only an exact set of

@@ -132,6 +132,10 @@ struct PinnedGRPCLoopbackIntegrationTests {
             hostInfoApplication: application,
             pairingApplication: LoopbackUnavailablePairingApplication(),
             sessionApplication: LoopbackUnavailableSessionApplication(),
+            recordingApplication:
+                UnavailableRecordingTransferFactoryApplication(),
+            recordingSessionAuthenticator:
+                UnavailableRecordingTransferFactoryAuthenticator(),
             hostAuthorityPublicKey: authority.publicKey,
             capabilityPolicy: capabilityPolicy,
             sourceBindingProvider: sourceBindingProvider

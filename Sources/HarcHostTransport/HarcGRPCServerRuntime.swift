@@ -77,14 +77,11 @@ private actor HarcRuntimeCompletionRace {
 /// that generation's one-shot served-identity binding; no adapter or binding
 /// survives certificate rotation.
 package actor HarcGRPCServerRuntime {
-    /// This server is the public bootstrap/session-establishment edge only. The
-    /// transport decoder currently enforces the control-message ceiling on the
-    /// raw, uncompressed gRPC payload before protobuf decoding. When recording
-    /// transfer activates on this shared listener, it must add method-aware
-    /// predecode limits: 1 MiB for control methods and the frozen 5 MiB ceiling
-    /// for audio messages. It must not globally widen this bootstrap edge.
+    /// The transport decoder accepts at most the frozen audio-message ceiling.
+    /// `HarcGRPCRequestPayloadGateHandler`, installed ahead of the gRPC stream
+    /// decoder, retains the 1 MiB ceiling for every non-audio method.
     package static let maximumRequestPayloadBytes =
-        HarcHostBootstrapGRPCServiceSupport.maximumControlRequestBytes
+        HarcGRPCRequestPayloadGate.maximumAudioPayloadBytes
 
     package static func bootstrapTransportConfiguration(
         sourceBindingProvider: HarcHostRPCSourceBindingProvider

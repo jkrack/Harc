@@ -4,6 +4,7 @@ import HarcDomain
 @testable import HarcProtocol
 import HarcProtocolWire
 @testable import HarcTransfer
+import SwiftProtobuf
 import Testing
 
 @Suite("Exact recording manifest and receipt evidence")
@@ -50,6 +51,27 @@ struct RecordingEvidenceCodecTests {
         #expect(throws: Error.self) {
             try fixture.codec.validateRecordingManifest(
                 exactSignedManifestBytes: tampered,
+                hostTrust: fixture.hostTrust,
+                producingDevicePublicKey: fixture.deviceKey.publicKey
+            )
+        }
+    }
+
+    @Test("recording manifests reject unknown descriptor semantics")
+    func manifestRejectsUnknownDescriptorFields() throws {
+        let fixture = try Fixture()
+        let object = try fixture.signedManifest { manifest in
+            let exact = try manifest.chunks[0].serializedData()
+                + Data([0xa0, 0x06, 0x01])
+            manifest.chunks[0] = try Harc_V1_ChunkDescriptorV1(
+                serializedBytes: exact
+            )
+        }
+        #expect(throws: HarcProtobufConversionError.invalidValue(
+            field: "chunkDescriptor.unknownFields"
+        )) {
+            try fixture.codec.validateRecordingManifest(
+                exactSignedManifestBytes: object.exactFramedBytes,
                 hostTrust: fixture.hostTrust,
                 producingDevicePublicKey: fixture.deviceKey.publicKey
             )
@@ -404,6 +426,19 @@ struct RecordingEvidenceCodecTests {
                 header: header,
                 exactPayloadBytes: payload,
                 using: signingKey ?? hostKey
+            )
+        }
+
+        func signedManifest(
+            mutate: (inout Harc_V1_RecordingManifestV1) throws -> Void
+        ) throws -> HarcSignedObjectV1 {
+            var value = manifest
+            try mutate(&value)
+            return try Self.signManifest(
+                value,
+                libraryID: libraryID,
+                authorityID: hostKey.publicKey.hostAuthorityID,
+                deviceKey: deviceKey
             )
         }
 

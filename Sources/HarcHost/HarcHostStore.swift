@@ -554,7 +554,7 @@ extension HarcHostStore {
             try db.execute(
                 sql: """
                     UPDATE session_tokens
-                       SET invalidated_at = ?,
+                       SET invalidated_at = MAX(?, issued_at),
                            invalidation_reason = 'emergencyTransportRotation'
                      WHERE invalidated_at IS NULL
                     """,

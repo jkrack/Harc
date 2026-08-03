@@ -2,6 +2,7 @@
 import Foundation
 import GRPCNIOTransportHTTP2TransportServices
 import HarcHost
+import HarcProtocol
 import NIOCore
 import NIOTransportServices
 import Network
@@ -25,21 +26,33 @@ package protocol HarcTransportGenerationDriver: Sendable {
 /// Bridges the authority-owned generation state machine to the two concrete
 /// Network.framework listeners. It never exposes a raw identity or reusable
 /// readiness snapshot.
+package enum HarcTransportGenerationControllerError: Error, Equatable, Sendable {
+    case bonjourUploadPortMismatch
+}
+
 package actor HarcTransportGenerationController: HostTransportGenerationBoundary {
     private let controlPort: NWEndpoint.Port
     private let uploadPort: NWEndpoint.Port
+    private let bonjourHints: HarcBonjourServiceHintsV1
     private let eventLoopGroup: any EventLoopGroup
     private let driver: any HarcTransportGenerationDriver
 
     package init(
         controlPort: NWEndpoint.Port,
         uploadPort: NWEndpoint.Port,
+        bonjourHints: HarcBonjourServiceHintsV1,
         eventLoopGroup: any EventLoopGroup =
             NIOTSEventLoopGroup.singletonNIOTSEventLoopGroup,
         driver: any HarcTransportGenerationDriver
-    ) {
+    ) throws {
+        if let uploadPortHint = bonjourHints.uploadPortHint,
+           uploadPortHint != uploadPort.rawValue {
+            throw HarcTransportGenerationControllerError
+                .bonjourUploadPortMismatch
+        }
         self.controlPort = controlPort
         self.uploadPort = uploadPort
+        self.bonjourHints = bonjourHints
         self.eventLoopGroup = eventLoopGroup
         self.driver = driver
     }
@@ -57,6 +70,7 @@ package actor HarcTransportGenerationController: HostTransportGenerationBoundary
         let grpcFactory = HarcGRPCNWListenerFactory(
             lease: generation.grpcControl,
             port: controlPort,
+            bonjourHints: bonjourHints,
             servedIdentityBinding: servedIdentityBinding,
             eventLoopGroup: eventLoopGroup
         )

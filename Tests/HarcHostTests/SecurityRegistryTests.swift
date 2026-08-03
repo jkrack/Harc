@@ -72,6 +72,106 @@ struct SecurityRegistryTests {
         }
     }
 
+    @Test("clock rollback clamps session invalidation for scope replacement and revocation")
+    func clockRollbackClampsGrantMutationSessionInvalidation() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory(
+            "security-session-clock-rollback-\(UUID())"
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mutationDate = fixture.beganAt.addingTimeInterval(10)
+        let highWater = InMemorySecurityRegistryHighWaterMarkStore()
+        let store = try await HarcHostStore.inMemory(
+            stagingRoot: directory,
+            metadata: fixture.metadata,
+            highWaterMarkStore: highWater,
+            localOSAuthenticationBoundary:
+                FixedHostLocalOSAuthenticationBoundary(authorized: true),
+            capacityProvider: FixedHostVolumeCapacityProvider(),
+            now: { mutationDate }
+        )
+        let initial = try fixture.grant()
+        try await store.seedDeviceGrantForTesting(
+            initial,
+            exactGrantBytes: Data("initial-grant".utf8)
+        )
+
+        let replacementTokenID = UUID()
+        let replacementTokenIssuedAt = mutationDate.addingTimeInterval(60)
+        try await insertSessionToken(
+            replacementTokenID,
+            grant: initial,
+            issuedAt: replacementTokenIssuedAt,
+            store: store
+        )
+        let current = try #require(
+            try await store.deviceRegistryEntry(deviceID: fixture.deviceID)
+        )
+        let replacement = try current.replacingScopesAfterLocalAuthorization(
+            [.recordingUploadOwn, .recordingReadOwn, .libraryMetadataRead],
+            issuedAt: mutationDate
+        ).grant
+        try await store.replaceDeviceGrant(
+            replacement,
+            exactGrantBytes: Data("replacement-grant".utf8)
+        )
+
+        let replacementInvalidation = try await store.dbQueue.read { db in
+            try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT invalidated_at, invalidation_reason
+                    FROM session_tokens WHERE token_id = ?
+                    """,
+                arguments: [replacementTokenID.uuidString.lowercased()]
+            )
+        }
+        #expect(
+            replacementInvalidation?["invalidated_at"] as Double?
+                == HarcHostStore.unixTime(replacementTokenIssuedAt)
+        )
+        #expect(
+            replacementInvalidation?["invalidation_reason"] as String?
+                == "grant-replaced"
+        )
+
+        let revocationTokenID = UUID()
+        let revocationTokenIssuedAt = mutationDate.addingTimeInterval(120)
+        try await insertSessionToken(
+            revocationTokenID,
+            grant: replacement,
+            issuedAt: revocationTokenIssuedAt,
+            store: store
+        )
+        try await store.revokeDevice(
+            fixture.deviceID,
+            revocationID: UUID(),
+            reasonCode: "test.clock-rollback",
+            exactRevocationBytes: Data("revocation".utf8)
+        )
+
+        let revocationInvalidation = try await store.dbQueue.read { db in
+            try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT invalidated_at, invalidation_reason
+                    FROM session_tokens WHERE token_id = ?
+                    """,
+                arguments: [revocationTokenID.uuidString.lowercased()]
+            )
+        }
+        #expect(
+            revocationInvalidation?["invalidated_at"] as Double?
+                == HarcHostStore.unixTime(revocationTokenIssuedAt)
+        )
+        #expect(
+            revocationInvalidation?["invalidation_reason"] as String?
+                == "revoked"
+        )
+        #expect(try await store.registryRevision() == 3)
+        #expect(await highWater.loadRegistryRevision() == 3)
+    }
+
     @Test("initial expanded grants require local OS authentication")
     func initialExpandedGrantRequiresLocalOSAuthentication() async throws {
         let fixture = HostTestFixture()
@@ -224,6 +324,7 @@ struct SecurityRegistryTests {
         )
         _ = try await store.beginUpload(
             context: fixture.context(for: initial),
+            sessionCapabilities: try fixture.sessionCapabilities(for: fixture.profile()),
             request: BeginHostUploadRequest(
                 uploadID: uploadID,
                 originRecordingID: origin,
@@ -676,6 +777,7 @@ struct SecurityRegistryTests {
         )
         _ = try await store.beginUpload(
             context: fixture.context(for: initial),
+            sessionCapabilities: try fixture.sessionCapabilities(for: fixture.profile()),
             request: BeginHostUploadRequest(
                 uploadID: uploadID,
                 originRecordingID: origin,
@@ -1333,6 +1435,40 @@ struct SecurityRegistryTests {
                 sql: "SELECT state FROM pairing_tickets WHERE ticket_id = ?",
                 arguments: [ticketID.uuidString.lowercased()]
             ).flatMap(PairingTicketState.init(rawValue:))
+        }
+    }
+
+    private func insertSessionToken(
+        _ tokenID: UUID,
+        grant: DeviceGrantClaims,
+        issuedAt: Date,
+        store: HarcHostStore
+    ) async throws {
+        try await store.dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO session_tokens (
+                        token_id, token_binding_sha256, device_id, grant_id,
+                        grant_epoch, tls_spki_sha256, exact_capabilities_bytes,
+                        capabilities_sha256, protocol_major, protocol_minor,
+                        selected_codec, selected_container, issued_at, expires_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'opus', 'ogg', ?, ?)
+                    """,
+                arguments: [
+                    tokenID.uuidString.lowercased(),
+                    Data(repeating: 0xA1, count: 32),
+                    grant.deviceID.rawBytes,
+                    grant.grantID.description,
+                    Int64(grant.grantEpoch.rawValue),
+                    Data(repeating: 0xA2, count: 32),
+                    Data([0x01]),
+                    Data(repeating: 0xA3, count: 32),
+                    HarcHostStore.unixTime(issuedAt),
+                    HarcHostStore.unixTime(
+                        issuedAt.addingTimeInterval(10 * 60)
+                    ),
+                ]
+            )
         }
     }
 }

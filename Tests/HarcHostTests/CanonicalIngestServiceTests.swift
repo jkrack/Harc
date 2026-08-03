@@ -247,6 +247,104 @@ private struct PreparedCanonicalIngest {
 
 @Suite("Canonical ingest saga and receipt recovery", .serialized)
 struct CanonicalIngestServiceTests {
+    @Test("commit disposition distinguishes first publication from exact receipt replay")
+    func commitDispositionDistinguishesReplay() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+
+        var alteredManifest = fixture.codec.manifest.exactManifestObject.exactBytes
+        alteredManifest[alteredManifest.startIndex] ^= 0x01
+        await #expect(throws: HarcHostError.manifestEvidenceRequired) {
+            _ = try await service.validateAndBindFinalManifestForPrecommit(
+                context: fixture.context,
+                uploadID: fixture.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256:
+                    fixture.codec.manifest.uploadProfileSHA256,
+                exactSignedManifestBytes: alteredManifest
+            )
+        }
+
+        let activeManifestReplay = try await service
+            .validateAndBindFinalManifestForPrecommit(
+                context: fixture.context,
+                uploadID: fixture.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256:
+                    fixture.codec.manifest.uploadProfileSHA256,
+                exactSignedManifestBytes:
+                    fixture.codec.manifest.exactManifestObject.exactBytes
+            )
+        #expect(activeManifestReplay == .exactReplay(missingChunkIndexes: []))
+
+        let first = try await service.commitUploadWithDisposition(
+            context: fixture.context,
+            uploadID: fixture.uploadID,
+            generation: .initial,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
+        )
+        guard case .committed(let receipt) = first else {
+            Issue.record("Expected the first successful publication to report committed.")
+            return
+        }
+
+        let replay = try await service.commitUploadWithDisposition(
+            context: fixture.context,
+            uploadID: fixture.uploadID,
+            generation: .initial,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
+        )
+        guard case .exactReplay(let replayedReceipt) = replay else {
+            Issue.record("Expected a durable receipt retry to report exact replay.")
+            return
+        }
+        #expect(replayedReceipt == receipt)
+
+        let committedManifestReplay = try await service
+            .validateAndBindFinalManifestForPrecommit(
+                context: fixture.context,
+                uploadID: fixture.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256:
+                    fixture.codec.manifest.uploadProfileSHA256,
+                exactSignedManifestBytes:
+                    fixture.codec.manifest.exactManifestObject.exactBytes
+            )
+        #expect(committedManifestReplay == .exactReplay(missingChunkIndexes: []))
+        try await fixture.recordingStore.disableHostMode(fixture.lease)
+    }
+
+    @Test("commit rejects an upload-profile mismatch before accepting publication")
+    func commitRejectsUploadProfileMismatch() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        let wrongProfileSHA256 = try UploadProfileSHA256(
+            Data(repeating: 0xFF, count: 32)
+        )
+
+        await #expect(throws: TransferValidationError.profileMismatch(
+            field: "uploadProfileSHA256"
+        )) {
+            _ = try await service.commitUpload(
+                context: fixture.context,
+                uploadID: fixture.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: wrongProfileSHA256
+            )
+        }
+        let publicationCount = try await fixture.hostStore.dbReader.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM publication_journal WHERE upload_id = ?",
+                arguments: [fixture.uploadID.description]
+            ) ?? 0
+        }
+        #expect(publicationCount == 0)
+        try await fixture.recordingStore.disableHostMode(fixture.lease)
+    }
+
     @Test(
         "every publication kill point recovers one row, one WAV, and the exact receipt",
         arguments: HostPublicationFailurePoint.allCases
@@ -269,7 +367,8 @@ struct CanonicalIngestServiceTests {
                 responseBeforeRestart = try await service.commitUpload(
                     context: fixture.context,
                     uploadID: fixture.uploadID,
-                    generation: .initial
+                    generation: .initial,
+                    expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
                 )
                 try await waitUntilTriggered(injector)
             } else {
@@ -277,7 +376,8 @@ struct CanonicalIngestServiceTests {
                     _ = try await service.commitUpload(
                         context: fixture.context,
                         uploadID: fixture.uploadID,
-                        generation: .initial
+                        generation: .initial,
+                        expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
                     )
                     Issue.record("Expected injected crash at \(point.rawValue)")
                 } catch let crash as InjectedPublicationCrash {
@@ -314,7 +414,8 @@ struct CanonicalIngestServiceTests {
             let replay = try await reopened.service.commitUpload(
                 context: fixture.context,
                 uploadID: fixture.uploadID,
-                generation: .initial
+                generation: .initial,
+                expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
             )
             #expect(replay == recoveredReceipt)
             #expect(try await reopened.recordingStore.fetchAll().count == 1)
@@ -343,7 +444,8 @@ struct CanonicalIngestServiceTests {
             _ = try await service.commitUpload(
                 context: fixture.context,
                 uploadID: fixture.uploadID,
-                generation: .initial
+                generation: .initial,
+                expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
             )
         }
         let durableBytes = try #require(
@@ -362,12 +464,14 @@ struct CanonicalIngestServiceTests {
         let replay = try await reopened.service.commitUpload(
             context: fixture.context,
             uploadID: fixture.uploadID,
-            generation: .initial
+            generation: .initial,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
         )
         #expect(replay == recovered)
 
         let duplicateBegin = try await reopened.service.beginUpload(
             context: fixture.context,
+            sessionCapabilities: try fixtureSessionCapabilities(),
             request: BeginHostUploadRequest(
                 uploadID: .random(),
                 originRecordingID: fixture.origin,
@@ -399,7 +503,8 @@ struct CanonicalIngestServiceTests {
                 _ = try await service.commitUpload(
                     context: fixture.context,
                     uploadID: fixture.uploadID,
-                    generation: .initial
+                    generation: .initial,
+                    expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
                 )
             }
             let durableReceiptBytes = try #require(
@@ -434,6 +539,7 @@ struct CanonicalIngestServiceTests {
             await #expect(throws: (any Error).self) {
                 _ = try await reopened.service.beginUpload(
                     context: fixture.context,
+                    sessionCapabilities: try fixtureSessionCapabilities(),
                     request: BeginHostUploadRequest(
                         uploadID: .random(),
                         originRecordingID: fixture.origin,
@@ -445,6 +551,7 @@ struct CanonicalIngestServiceTests {
             await #expect(throws: (any Error).self) {
                 _ = try await reopened.service.reconcileUpload(
                     for: fixture.uploadID,
+                    expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256,
                     context: fixture.context
                 )
             }
@@ -471,7 +578,8 @@ struct CanonicalIngestServiceTests {
         let receipt = try await service.commitUpload(
             context: fixture.context,
             uploadID: fixture.uploadID,
-            generation: .initial
+            generation: .initial,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
         )
         try await waitForSchedulerAttempt(scheduler)
 
@@ -501,7 +609,8 @@ struct CanonicalIngestServiceTests {
             _ = try await service.commitUpload(
                 context: fixture.context,
                 uploadID: fixture.uploadID,
-                generation: .initial
+                generation: .initial,
+                expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
             )
         }
 
@@ -540,7 +649,8 @@ struct CanonicalIngestServiceTests {
             _ = try await service.commitUpload(
                 context: fixture.context,
                 uploadID: fixture.uploadID,
-                generation: .initial
+                generation: .initial,
+                expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
             )
         }
 
@@ -613,7 +723,8 @@ struct CanonicalIngestServiceTests {
             _ = try await service.commitUpload(
                 context: fixture.context,
                 uploadID: fixture.uploadID,
-                generation: .initial
+                generation: .initial,
+                expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
             )
         }
         _ = try await publicationWork(for: fixture)
@@ -657,7 +768,8 @@ struct CanonicalIngestServiceTests {
                 _ = try await service.commitUpload(
                     context: fixture.context,
                     uploadID: fixture.uploadID,
-                    generation: .initial
+                    generation: .initial,
+                    expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
                 )
             }
             let work = try await publicationWork(for: fixture)
@@ -706,7 +818,8 @@ struct CanonicalIngestServiceTests {
         let originalReceipt = try await service.commitUpload(
             context: fixture.context,
             uploadID: fixture.uploadID,
-            generation: .initial
+            generation: .initial,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
         )
         try await waitUntilTriggered(injector)
         let processing = try #require(
@@ -737,6 +850,7 @@ struct CanonicalIngestServiceTests {
         await #expect(throws: (any Error).self) {
             _ = try await reopened.service.beginUpload(
                 context: fixture.context,
+                sessionCapabilities: try fixtureSessionCapabilities(),
                 request: BeginHostUploadRequest(
                     uploadID: .random(),
                     originRecordingID: fixture.origin,
@@ -763,7 +877,8 @@ struct CanonicalIngestServiceTests {
             _ = try await service.commitUpload(
                 context: fixture.context,
                 uploadID: fixture.uploadID,
-                generation: .initial
+                generation: .initial,
+                expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
             )
             try await waitUntilTriggered(injector)
             let processing = try #require(
@@ -787,6 +902,7 @@ struct CanonicalIngestServiceTests {
             await #expect(throws: (any Error).self) {
                 _ = try await service.reconcileUpload(
                     for: fixture.uploadID,
+                    expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256,
                     context: fixture.context
                 )
             }
@@ -880,6 +996,7 @@ private extension CanonicalIngestServiceTests {
 
         _ = try await hostStore.beginUpload(
             context: context,
+            sessionCapabilities: try fixtureSessionCapabilities(),
             request: BeginHostUploadRequest(
                 uploadID: uploadID,
                 originRecordingID: origin,
@@ -892,6 +1009,7 @@ private extension CanonicalIngestServiceTests {
             context: context,
             uploadID: uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: profile.profileSHA256,
             descriptors: [descriptor]
         )
         clock.set(base.addingTimeInterval(2))
@@ -899,8 +1017,11 @@ private extension CanonicalIngestServiceTests {
             context: context,
             uploadID: uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: descriptor.chunkID,
             declaredEncodedLength: UInt64(bytes.count),
+            claimedEncodedSHA256: descriptor.encodedSHA256,
             bodyFragments: [bytes]
         )
         let capture = try FinalizedCapture(
@@ -945,6 +1066,7 @@ private extension CanonicalIngestServiceTests {
             context: context,
             uploadID: uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: profile.profileSHA256,
             evidence: manifestEvidence
         )
         clock.set(base.addingTimeInterval(4))
@@ -1124,6 +1246,18 @@ private extension CanonicalIngestServiceTests {
             ),
             profileSHA256: UploadProfileSHA256(Data(repeating: 0x62, count: 32)),
             purpose: .fixtureLoopback
+        )
+    }
+
+    func fixtureSessionCapabilities() throws -> HostTransferSessionCapabilities {
+        let profile = try fixtureProfile()
+        return try HostTransferSessionCapabilities(
+            exactCapabilitiesSHA256: profile.negotiatedCapabilitiesSHA256,
+            protocolVersion: profile.protocolVersion,
+            selectedFeatureIDs: profile.requiredCapabilities,
+            descriptorSchema: profile.descriptorSchema,
+            encoding: profile.encoding,
+            canonicalFormat: profile.canonicalFormat
         )
     }
 

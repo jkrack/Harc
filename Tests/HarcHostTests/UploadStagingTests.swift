@@ -31,6 +31,7 @@ struct UploadStagingTests {
         let context: AuthenticatedDeviceContext
         let uploadID: UploadID
         let origin: OriginRecordingID
+        let profile: FrozenUploadProfile
         let descriptor: LogicalChunkDescriptor
         let bytes: Data
     }
@@ -93,13 +94,15 @@ struct UploadStagingTests {
         let context = fixture.context(for: grant)
         let uploadID = UploadID.random()
         let origin = OriginRecordingID(deviceID: fixture.deviceID, recordingUUID: UUID())
+        let profile = try fixture.profile()
         let descriptor = try fixture.descriptor(origin: origin, bytes: bytes)
         let begin = try await store.beginUpload(
             context: context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: profile),
             request: BeginHostUploadRequest(
                 uploadID: uploadID,
                 originRecordingID: origin,
-                frozenProfile: try fixture.profile(),
+                frozenProfile: profile,
                 beganAt: fixture.beganAt.addingTimeInterval(1)
             ),
             at: fixture.beganAt.addingTimeInterval(1)
@@ -112,6 +115,7 @@ struct UploadStagingTests {
             context: context,
             uploadID: uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: profile.profileSHA256,
             descriptors: [descriptor],
             at: fixture.beganAt.addingTimeInterval(2)
         )
@@ -121,6 +125,7 @@ struct UploadStagingTests {
             context: context,
             uploadID: uploadID,
             origin: origin,
+            profile: profile,
             descriptor: descriptor,
             bytes: bytes
         )
@@ -133,10 +138,24 @@ struct UploadStagingTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let upload = try await startUpload(fixture: fixture, directory: directory)
 
+        let wrongProfileSHA256 = try UploadProfileSHA256(Data(repeating: 0xFF, count: 32))
+        await #expect(throws: TransferValidationError.profileMismatch(
+            field: "uploadProfileSHA256"
+        )) {
+            _ = try await upload.store.declareChunks(
+                context: upload.context,
+                uploadID: upload.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: wrongProfileSHA256,
+                descriptors: [upload.descriptor],
+                at: fixture.beganAt.addingTimeInterval(3)
+            )
+        }
         let replay = try await upload.store.declareChunks(
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             descriptors: [upload.descriptor],
             at: fixture.beganAt.addingTimeInterval(3)
         )
@@ -144,6 +163,7 @@ struct UploadStagingTests {
 
         let beginReplay = try await upload.store.beginUpload(
             context: upload.context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
             request: BeginHostUploadRequest(
                 uploadID: upload.uploadID,
                 originRecordingID: upload.origin,
@@ -168,6 +188,7 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 descriptors: [conflicting],
                 at: fixture.beganAt.addingTimeInterval(4)
             )
@@ -177,6 +198,7 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 descriptors: [upload.descriptor],
                 at: fixture.beganAt.addingTimeInterval(5)
             )
@@ -192,6 +214,7 @@ struct UploadStagingTests {
         let reopenedAt = fixture.beganAt.addingTimeInterval(TransferLimits.uploadGenerationLifetime + 2)
         let reopened = try await upload.store.beginUpload(
             context: upload.context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
             request: BeginHostUploadRequest(
                 uploadID: upload.uploadID,
                 originRecordingID: upload.origin,
@@ -207,15 +230,54 @@ struct UploadStagingTests {
         #expect(state.generation.rawValue == 2)
         #expect(state.declarations == [upload.descriptor])
 
-        try await upload.store.abandonUpload(
+        let wrongProfileSHA256 = try UploadProfileSHA256(Data(repeating: 0xFF, count: 32))
+        await #expect(throws: TransferValidationError.profileMismatch(
+            field: "uploadProfileSHA256"
+        )) {
+            _ = try await upload.store.abandonUpload(
+                context: upload.context,
+                uploadID: upload.uploadID,
+                generation: state.generation,
+                expectedUploadProfileSHA256: wrongProfileSHA256,
+                at: reopenedAt.addingTimeInterval(0.5)
+            )
+        }
+        await #expect(throws: HarcHostError.staleUploadGeneration(
+            expected: state.generation.rawValue,
+            actual: UploadGeneration.initial.rawValue
+        )) {
+            _ = try await upload.store.abandonUpload(
+                context: upload.context,
+                uploadID: upload.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
+                at: reopenedAt.addingTimeInterval(0.5)
+            )
+        }
+        let originalTerminalAt = reopenedAt.addingTimeInterval(1)
+        let abandonment = try await upload.store.abandonUpload(
             context: upload.context,
             uploadID: upload.uploadID,
-            at: reopenedAt.addingTimeInterval(1)
+            generation: state.generation,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
+            at: originalTerminalAt
         )
+        #expect(abandonment.uploadID == upload.uploadID)
+        #expect(abandonment.terminalReason == .abandoned)
+        #expect(abandonment.terminalAt == originalTerminalAt)
+        let replay = try await upload.store.abandonUpload(
+            context: upload.context,
+            uploadID: upload.uploadID,
+            generation: state.generation,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
+            at: reopenedAt.addingTimeInterval(2)
+        )
+        #expect(replay == abandonment)
         #expect(try await upload.store.incompleteRemoteUploads(at: reopenedAt.addingTimeInterval(2)).isEmpty)
         await #expect(throws: HarcHostError.self) {
             _ = try await upload.store.beginUpload(
                 context: upload.context,
+                sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
                 request: BeginHostUploadRequest(
                     uploadID: upload.uploadID,
                     originRecordingID: upload.origin,
@@ -239,6 +301,7 @@ struct UploadStagingTests {
         )
         let replacement = try await original.store.beginUpload(
             context: original.context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: original.profile),
             request: BeginHostUploadRequest(
                 uploadID: replacementID,
                 originRecordingID: original.origin,
@@ -257,6 +320,7 @@ struct UploadStagingTests {
         )) {
             _ = try await original.store.beginUpload(
                 context: original.context,
+                sessionCapabilities: try fixture.sessionCapabilities(for: original.profile),
                 request: BeginHostUploadRequest(
                     uploadID: original.uploadID,
                     originRecordingID: original.origin,
@@ -279,29 +343,55 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [Data(upload.bytes.prefix(3)), Data(upload.bytes.dropFirst(3))],
             at: fixture.beganAt.addingTimeInterval(3)
         )
-        guard case .durablyAccepted(let status) = accepted else {
+        guard case .durablyAccepted(let acknowledgement) = accepted else {
             Issue.record("Expected durable ACK")
             return
         }
-        #expect(status.chunkID == upload.descriptor.chunkID)
+        #expect(acknowledgement.uploadID == upload.uploadID)
+        #expect(acknowledgement.generation == .initial)
+        #expect(acknowledgement.uploadProfileSHA256 == upload.profile.profileSHA256)
+        #expect(acknowledgement.durableChunk.chunkID == upload.descriptor.chunkID)
+        #expect(acknowledgement.durableAt == fixture.beganAt.addingTimeInterval(3))
 
         let replay = try await upload.store.stageChunk(
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(4)
         )
-        guard case .exactReplay = replay else { Issue.record("Expected exact staging replay"); return }
+        guard case .exactReplay(let replayAcknowledgement) = replay else {
+            Issue.record("Expected exact staging replay")
+            return
+        }
+        #expect(replayAcknowledgement == acknowledgement)
+        let wrongProfileSHA256 = try UploadProfileSHA256(Data(repeating: 0xFF, count: 32))
+        await #expect(throws: TransferValidationError.profileMismatch(
+            field: "uploadProfileSHA256"
+        )) {
+            _ = try await upload.store.reconciliation(
+                for: upload.uploadID,
+                expectedUploadProfileSHA256: wrongProfileSHA256,
+                context: upload.context,
+                at: fixture.beganAt.addingTimeInterval(5)
+            )
+        }
         let reconciliation = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: fixture.beganAt.addingTimeInterval(5)
         )
@@ -316,13 +406,62 @@ struct UploadStagingTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let upload = try await startUpload(fixture: fixture, directory: directory)
 
+        let wrongProfileSHA256 = try UploadProfileSHA256(Data(repeating: 0xFF, count: 32))
+        await #expect(throws: TransferValidationError.profileMismatch(
+            field: "uploadProfileSHA256"
+        )) {
+            _ = try await upload.store.stageChunk(
+                context: upload.context,
+                uploadID: upload.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: wrongProfileSHA256,
+                chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
+                declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
+                bodyFragments: [upload.bytes],
+                at: fixture.beganAt.addingTimeInterval(2.5)
+            )
+        }
+        await #expect(throws: TransferValidationError.profileMismatch(field: "chunkID")) {
+            _ = try await upload.store.stageChunk(
+                context: upload.context,
+                uploadID: upload.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
+                chunkIndex: 0,
+                claimedChunkID: .random(),
+                declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
+                bodyFragments: [upload.bytes],
+                at: fixture.beganAt.addingTimeInterval(2.5)
+            )
+        }
+        let wrongEncodedSHA256 = try EncodedChunkSHA256(Data(repeating: 0xFF, count: 32))
+        await #expect(throws: TransferValidationError.profileMismatch(field: "encodedSHA256")) {
+            _ = try await upload.store.stageChunk(
+                context: upload.context,
+                uploadID: upload.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
+                chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
+                declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: wrongEncodedSHA256,
+                bodyFragments: [upload.bytes],
+                at: fixture.beganAt.addingTimeInterval(2.5)
+            )
+        }
         await #expect(throws: HarcHostError.incompleteBody) {
             _ = try await upload.store.stageChunk(
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [Data(upload.bytes.prefix(2))],
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -335,8 +474,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [upload.bytes + Data([99])],
                 at: fixture.beganAt.addingTimeInterval(4)
             )
@@ -346,8 +488,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [Data(repeating: 0xEE, count: upload.bytes.count)],
                 at: fixture.beganAt.addingTimeInterval(5)
             )
@@ -374,8 +519,11 @@ struct UploadStagingTests {
                 context: quotaUpload.context,
                 uploadID: quotaUpload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: quotaUpload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: quotaUpload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(quotaUpload.bytes.count),
+                claimedEncodedSHA256: quotaUpload.descriptor.encodedSHA256,
                 bodyFragments: [quotaUpload.bytes],
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -399,6 +547,8 @@ struct UploadStagingTests {
         var uploadID: UploadID?
         var context: AuthenticatedDeviceContext?
         var bytes: Data?
+        var profile: FrozenUploadProfile?
+        var descriptor: LogicalChunkDescriptor?
         var rejectedRelativePath: String?
         do {
             let upload = try await startUpload(
@@ -412,13 +562,18 @@ struct UploadStagingTests {
             uploadID = upload.uploadID
             context = upload.context
             bytes = upload.bytes
+            profile = upload.profile
+            descriptor = upload.descriptor
             await #expect(throws: InjectedHostCrash.staging(.afterDatabaseAcknowledgement)) {
                 _ = try await upload.store.stageChunk(
                     context: upload.context,
                     uploadID: upload.uploadID,
                     generation: .initial,
+                    expectedUploadProfileSHA256: upload.profile.profileSHA256,
                     chunkIndex: 0,
+                    claimedChunkID: upload.descriptor.chunkID,
                     declaredEncodedLength: UInt64(upload.bytes.count),
+                    claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                     bodyFragments: [Data(repeating: 0xEE, count: upload.bytes.count)],
                     at: fixture.beganAt.addingTimeInterval(3)
                 )
@@ -441,6 +596,8 @@ struct UploadStagingTests {
         let recoveredUploadID = try #require(uploadID)
         let recoveredContext = try #require(context)
         let recoveredBytes = try #require(bytes)
+        let recoveredProfile = try #require(profile)
+        let recoveredDescriptor = try #require(descriptor)
         let rejectedPath = try #require(rejectedRelativePath)
         #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent(rejectedPath).path))
 
@@ -459,8 +616,11 @@ struct UploadStagingTests {
             context: recoveredContext,
             uploadID: recoveredUploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: recoveredProfile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: recoveredDescriptor.chunkID,
             declaredEncodedLength: UInt64(recoveredBytes.count),
+            claimedEncodedSHA256: recoveredDescriptor.encodedSHA256,
             bodyFragments: [recoveredBytes],
             at: fixture.beganAt.addingTimeInterval(4)
         ) else {
@@ -500,6 +660,7 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             descriptors: [secondDescriptor],
             at: fixture.beganAt.addingTimeInterval(2.5)
         )
@@ -509,8 +670,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [Data(repeating: 0xEE, count: upload.bytes.count)],
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -539,8 +703,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 1,
+                claimedChunkID: secondDescriptor.chunkID,
                 declaredEncodedLength: UInt64(secondBytes.count),
+                claimedEncodedSHA256: secondDescriptor.encodedSHA256,
                 bodyFragments: [secondBytes],
                 at: fixture.beganAt.addingTimeInterval(3.5)
             )
@@ -564,8 +731,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 1,
+            claimedChunkID: secondDescriptor.chunkID,
             declaredEncodedLength: UInt64(secondBytes.count),
+            claimedEncodedSHA256: secondDescriptor.encodedSHA256,
             bodyFragments: [secondBytes],
             at: fixture.beganAt.addingTimeInterval(4)
         ) else {
@@ -596,6 +766,8 @@ struct UploadStagingTests {
         var uploadID: UploadID?
         var context: AuthenticatedDeviceContext?
         var bytes: Data?
+        var profile: FrozenUploadProfile?
+        var descriptor: LogicalChunkDescriptor?
         var obsoleteRelativePath: String?
         var replacementRelativePath: String?
         do {
@@ -610,13 +782,18 @@ struct UploadStagingTests {
             uploadID = upload.uploadID
             context = upload.context
             bytes = upload.bytes
+            profile = upload.profile
+            descriptor = upload.descriptor
             await #expect(throws: InjectedHostCrash.staging(.afterDatabaseAcknowledgement)) {
                 _ = try await upload.store.stageChunk(
                     context: upload.context,
                     uploadID: upload.uploadID,
                     generation: .initial,
+                    expectedUploadProfileSHA256: upload.profile.profileSHA256,
                     chunkIndex: 0,
+                    claimedChunkID: upload.descriptor.chunkID,
                     declaredEncodedLength: UInt64(upload.bytes.count),
+                    claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                     bodyFragments: [Data(repeating: 0xEE, count: upload.bytes.count)],
                     at: fixture.beganAt.addingTimeInterval(3)
                 )
@@ -631,8 +808,11 @@ struct UploadStagingTests {
                     context: upload.context,
                     uploadID: upload.uploadID,
                     generation: .initial,
+                    expectedUploadProfileSHA256: upload.profile.profileSHA256,
                     chunkIndex: 0,
+                    claimedChunkID: upload.descriptor.chunkID,
                     declaredEncodedLength: UInt64(upload.bytes.count),
+                    claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                     bodyFragments: [upload.bytes],
                     at: fixture.beganAt.addingTimeInterval(4)
                 )
@@ -646,6 +826,8 @@ struct UploadStagingTests {
         let recoveredUploadID = try #require(uploadID)
         let recoveredContext = try #require(context)
         let recoveredBytes = try #require(bytes)
+        let recoveredProfile = try #require(profile)
+        let recoveredDescriptor = try #require(descriptor)
         let obsoletePath = try #require(obsoleteRelativePath)
         let replacementPath = try #require(replacementRelativePath)
         #expect(obsoletePath != replacementPath)
@@ -668,8 +850,11 @@ struct UploadStagingTests {
             context: recoveredContext,
             uploadID: recoveredUploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: recoveredProfile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: recoveredDescriptor.chunkID,
             declaredEncodedLength: UInt64(recoveredBytes.count),
+            claimedEncodedSHA256: recoveredDescriptor.encodedSHA256,
             bodyFragments: [recoveredBytes],
             at: fixture.beganAt.addingTimeInterval(5)
         ) else {
@@ -702,6 +887,7 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             descriptors: [secondDescriptor],
             at: fixture.beganAt.addingTimeInterval(2.5)
         )
@@ -716,8 +902,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(firstBytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 body: HostChunkBody(stream: firstStream),
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -727,8 +916,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 1,
+                claimedChunkID: secondDescriptor.chunkID,
                 declaredEncodedLength: UInt64(secondBytes.count),
+                claimedEncodedSHA256: secondDescriptor.encodedSHA256,
                 body: HostChunkBody(stream: secondStream),
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -772,6 +964,7 @@ struct UploadStagingTests {
 
         let state = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: fixture.beganAt.addingTimeInterval(4)
         )
@@ -808,6 +1001,7 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             descriptors: [secondDescriptor, thirdDescriptor],
             at: fixture.beganAt.addingTimeInterval(2.5)
         )
@@ -821,8 +1015,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(firstBytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 body: HostChunkBody(stream: firstStream),
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -832,8 +1029,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 1,
+                claimedChunkID: secondDescriptor.chunkID,
                 declaredEncodedLength: UInt64(secondBytes.count),
+                claimedEncodedSHA256: secondDescriptor.encodedSHA256,
                 body: HostChunkBody(stream: secondStream),
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -865,8 +1065,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 2,
+                claimedChunkID: thirdDescriptor.chunkID,
                 declaredEncodedLength: UInt64(thirdBytes.count),
+                claimedEncodedSHA256: thirdDescriptor.encodedSHA256,
                 bodyFragments: [thirdBytes],
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -882,8 +1085,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 2,
+            claimedChunkID: thirdDescriptor.chunkID,
             declaredEncodedLength: UInt64(thirdBytes.count),
+            claimedEncodedSHA256: thirdDescriptor.encodedSHA256,
             bodyFragments: [thirdBytes],
             at: fixture.beganAt.addingTimeInterval(3)
         ) else {
@@ -928,8 +1134,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 body: HostChunkBody(stream: stream)
             )
         }
@@ -996,8 +1205,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 body: HostChunkBody(stream: stream)
             )
         }
@@ -1074,8 +1286,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 body: HostChunkBody(stream: stream)
             )
         }
@@ -1157,8 +1372,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 body: HostChunkBody(stream: stream)
             )
         }
@@ -1186,7 +1404,9 @@ struct UploadStagingTests {
         clock.set(fixture.beganAt.addingTimeInterval(4))
         try await upload.store.abandonUpload(
             context: upload.context,
-            uploadID: upload.uploadID
+            uploadID: upload.uploadID,
+            generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256
         )
         let terminationStarted = ContinuousClock.now
         await #expect(throws: TransferValidationError.uploadTerminal) {
@@ -1238,8 +1458,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [upload.bytes]
             )
         }
@@ -1286,8 +1509,11 @@ struct UploadStagingTests {
                     context: upload.context,
                     uploadID: upload.uploadID,
                     generation: .initial,
+                    expectedUploadProfileSHA256: upload.profile.profileSHA256,
                     chunkIndex: 0,
+                    claimedChunkID: upload.descriptor.chunkID,
                     declaredEncodedLength: UInt64(upload.bytes.count),
+                    claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                     bodyFragments: [upload.bytes]
                 )
             }
@@ -1361,8 +1587,11 @@ struct UploadStagingTests {
                     context: upload.context,
                     uploadID: upload.uploadID,
                     generation: .initial,
+                    expectedUploadProfileSHA256: upload.profile.profileSHA256,
                     chunkIndex: 0,
+                    claimedChunkID: upload.descriptor.chunkID,
                     declaredEncodedLength: UInt64(upload.bytes.count),
+                    claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                     bodyFragments: [upload.bytes]
                 )
             }
@@ -1424,8 +1653,11 @@ struct UploadStagingTests {
                     context: upload.context,
                     uploadID: upload.uploadID,
                     generation: .initial,
+                    expectedUploadProfileSHA256: upload.profile.profileSHA256,
                     chunkIndex: 0,
+                    claimedChunkID: upload.descriptor.chunkID,
                     declaredEncodedLength: UInt64(upload.bytes.count),
+                    claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                     bodyFragments: [upload.bytes]
                 )
             }
@@ -1496,8 +1728,11 @@ struct UploadStagingTests {
                     context: upload.context,
                     uploadID: upload.uploadID,
                     generation: .initial,
+                    expectedUploadProfileSHA256: upload.profile.profileSHA256,
                     chunkIndex: 0,
+                    claimedChunkID: upload.descriptor.chunkID,
                     declaredEncodedLength: UInt64(upload.bytes.count),
+                    claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                     bodyFragments: [upload.bytes]
                 )
             }
@@ -1512,6 +1747,7 @@ struct UploadStagingTests {
             )
             let state = try await reopened.reconciliation(
                 for: upload.uploadID,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 context: upload.context,
                 at: fixture.beganAt.addingTimeInterval(4)
             )
@@ -1545,8 +1781,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [upload.bytes],
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -1574,6 +1813,7 @@ struct UploadStagingTests {
         #expect(try Data(contentsOf: victim) == Data("do-not-touch".utf8))
         let state = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: fixture.beganAt.addingTimeInterval(4)
         )
@@ -1606,8 +1846,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [upload.bytes],
                 at: fixture.beganAt.addingTimeInterval(3)
             )
@@ -1640,8 +1883,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(3)
         ) else {
@@ -1682,8 +1928,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(3)
         ) else {
@@ -1723,8 +1972,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(3)
         )
@@ -1766,6 +2018,7 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             evidence: evidence,
             at: fixture.beganAt.addingTimeInterval(4)
         )
@@ -1774,6 +2027,7 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             evidence: evidence,
             at: fixture.beganAt.addingTimeInterval(5)
         )
@@ -1799,8 +2053,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(3)
         )
@@ -1808,6 +2065,8 @@ struct UploadStagingTests {
         try await upload.store.abandonUpload(
             context: upload.context,
             uploadID: upload.uploadID,
+            generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             at: abandonedAt
         )
         #expect(try await upload.store.reapEligibleStaging(
@@ -1819,6 +2078,7 @@ struct UploadStagingTests {
         await #expect(throws: HarcHostError.self) {
             _ = try await upload.store.beginUpload(
                 context: upload.context,
+                sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
                 request: BeginHostUploadRequest(
                     uploadID: upload.uploadID,
                     originRecordingID: upload.origin,
@@ -1848,8 +2108,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(3)
         ) else {
@@ -1858,6 +2121,7 @@ struct UploadStagingTests {
         }
         let initialState = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: fixture.beganAt.addingTimeInterval(4)
         )
@@ -1881,6 +2145,7 @@ struct UploadStagingTests {
         let reopenedAt = initialState.generationExpiresAt.addingTimeInterval(1)
         let reopened = try await upload.store.beginUpload(
             context: upload.context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
             request: BeginHostUploadRequest(
                 uploadID: upload.uploadID,
                 originRecordingID: upload.origin,
@@ -1934,8 +2199,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(3)
         ) else {
@@ -1944,6 +2212,7 @@ struct UploadStagingTests {
         }
         let initialState = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: fixture.beganAt.addingTimeInterval(4)
         )
@@ -1967,6 +2236,7 @@ struct UploadStagingTests {
         let reopenedAt = initialState.generationExpiresAt.addingTimeInterval(1)
         let reopened = try await upload.store.beginUpload(
             context: upload.context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
             request: BeginHostUploadRequest(
                 uploadID: upload.uploadID,
                 originRecordingID: upload.origin,
@@ -1997,8 +2267,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: reopenedState.generation,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [Data(repeating: 0xEE, count: upload.bytes.count)],
                 at: reopenedAt.addingTimeInterval(1)
             )
@@ -2013,7 +2286,7 @@ struct UploadStagingTests {
             _ = try await reaperTask.value
             return
         }
-        #expect(replay.chunkIndex == 0)
+        #expect(replay.durableChunk.chunkIndex == 0)
         #expect(try await upload.store.stagingRelativePathForTesting(
             uploadID: upload.uploadID,
             chunkIndex: 0
@@ -2052,8 +2325,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: .initial,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: fixture.beganAt.addingTimeInterval(3)
         ) else {
@@ -2062,6 +2338,7 @@ struct UploadStagingTests {
         }
         let initialState = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: fixture.beganAt.addingTimeInterval(4)
         )
@@ -2086,6 +2363,7 @@ struct UploadStagingTests {
         let reopenedAt = initialState.generationExpiresAt.addingTimeInterval(1)
         let reopened = try await upload.store.beginUpload(
             context: upload.context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
             request: BeginHostUploadRequest(
                 uploadID: upload.uploadID,
                 originRecordingID: upload.origin,
@@ -2108,6 +2386,7 @@ struct UploadStagingTests {
         ) == 1)
         let stateAfterNestedReap = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: reopenedAt
         )
@@ -2116,8 +2395,11 @@ struct UploadStagingTests {
             context: upload.context,
             uploadID: upload.uploadID,
             generation: reopenedState.generation,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             chunkIndex: 0,
+            claimedChunkID: upload.descriptor.chunkID,
             declaredEncodedLength: UInt64(upload.bytes.count),
+            claimedEncodedSHA256: upload.descriptor.encodedSHA256,
             bodyFragments: [upload.bytes],
             at: reopenedAt.addingTimeInterval(1)
         ) else {
@@ -2172,8 +2454,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [upload.bytes],
                 at: fixture.beganAt.addingTimeInterval(3)
             ) else {
@@ -2182,6 +2467,7 @@ struct UploadStagingTests {
             }
             let initialState = try await upload.store.reconciliation(
                 for: upload.uploadID,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 context: upload.context,
                 at: fixture.beganAt.addingTimeInterval(4)
             )
@@ -2234,6 +2520,7 @@ struct UploadStagingTests {
             ))
             let repairedState = try await reopened.reconciliation(
                 for: upload.uploadID,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 context: upload.context,
                 at: reapedAt
             )
@@ -2260,20 +2547,25 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: .initial,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 bodyFragments: [Data(repeating: 0xEE, count: upload.bytes.count)],
                 at: fixture.beganAt.addingTimeInterval(3)
             )
         }
         let initialState = try await upload.store.reconciliation(
             for: upload.uploadID,
+            expectedUploadProfileSHA256: upload.profile.profileSHA256,
             context: upload.context,
             at: fixture.beganAt.addingTimeInterval(4)
         )
         let reopenedAt = initialState.generationExpiresAt.addingTimeInterval(1)
         let reopened = try await upload.store.beginUpload(
             context: upload.context,
+            sessionCapabilities: try fixture.sessionCapabilities(for: upload.profile),
             request: BeginHostUploadRequest(
                 uploadID: upload.uploadID,
                 originRecordingID: upload.origin,
@@ -2304,8 +2596,11 @@ struct UploadStagingTests {
                 context: upload.context,
                 uploadID: upload.uploadID,
                 generation: reopenedState.generation,
+                expectedUploadProfileSHA256: upload.profile.profileSHA256,
                 chunkIndex: 0,
+                claimedChunkID: upload.descriptor.chunkID,
                 declaredEncodedLength: UInt64(upload.bytes.count),
+                claimedEncodedSHA256: upload.descriptor.encodedSHA256,
                 body: HostChunkBody(stream: stream),
                 at: reopenedAt.addingTimeInterval(1)
             )

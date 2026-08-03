@@ -138,34 +138,48 @@ private typealias HarcGRPCTransport = HTTP2ClientTransport.TransportServices
 private typealias HarcHostInfoGRPCClient = Harc_V1_HostInfoService.Client<HarcGRPCTransport>
 private typealias HarcPairingGRPCClient = Harc_V1_PairingService.Client<HarcGRPCTransport>
 private typealias HarcSessionGRPCClient = Harc_V1_SessionService.Client<HarcGRPCTransport>
+private typealias HarcRecordingTransferGRPCClient = Harc_V1_RecordingTransferService.Client<
+    HarcGRPCTransport
+>
 private typealias HarcBootstrapGRPCAdapter = HarcGeneratedBootstrapRPCAdapter<
     HarcHostInfoGRPCClient,
     HarcPairingGRPCClient,
     HarcSessionGRPCClient
 >
+private typealias HarcRecordingTransferGRPCAdapter = HarcGeneratedRecordingTransferRPCAdapter<
+    HarcRecordingTransferGRPCClient
+>
 
-/// The sole production owner for Harc's pinned bootstrap gRPC channel.
+/// The sole production owner for Harc's pinned foreground gRPC channel.
 ///
 /// One factory invocation creates one TLS verifier, one stateless response
 /// trust codec, one transport, and one `GRPCClient`. All generated bootstrap
-/// stubs wrap that exact client. Each response receives a client-authenticated
-/// trust envelope injected from its stream's physical parent TLS connection,
+/// and recording-transfer stubs wrap that exact client. Each bootstrap response
+/// receives a client-authenticated trust envelope injected from its stream's
+/// physical parent TLS connection,
 /// so DNS failover or transport rotation cannot cross-label it. Pass this owner
 /// itself to `HarcBootstrapClient`; its protocol conformance keeps the channel
 /// lifecycle attached to every RPC use.
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
-public final class HarcPinnedGRPCConnection: HarcBootstrapRPCTransport, Sendable {
+public final class HarcPinnedGRPCConnection:
+    HarcBootstrapRPCTransport,
+    HarcRecordingTransferRPCTransport,
+    Sendable
+{
     private let grpcClient: GRPCClient<HarcGRPCTransport>
-    private let rpcAdapter: HarcBootstrapGRPCAdapter
+    private let bootstrapRPCAdapter: HarcBootstrapGRPCAdapter
+    private let recordingTransferRPCAdapter: HarcRecordingTransferGRPCAdapter
     private let taskOwner: HarcClientConnectionTaskOwner
 
     private init(
         grpcClient: GRPCClient<HarcGRPCTransport>,
-        rpcAdapter: HarcBootstrapGRPCAdapter,
+        bootstrapRPCAdapter: HarcBootstrapGRPCAdapter,
+        recordingTransferRPCAdapter: HarcRecordingTransferGRPCAdapter,
         taskOwner: HarcClientConnectionTaskOwner
     ) {
         self.grpcClient = grpcClient
-        self.rpcAdapter = rpcAdapter
+        self.bootstrapRPCAdapter = bootstrapRPCAdapter
+        self.recordingTransferRPCAdapter = recordingTransferRPCAdapter
         self.taskOwner = taskOwner
     }
 
@@ -202,26 +216,26 @@ public final class HarcPinnedGRPCConnection: HarcBootstrapRPCTransport, Sendable
     public func getHostInfo(
         _ request: Harc_V1_GetHostInfoRequestV1
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_GetHostInfoResponseV1> {
-        try await rpcAdapter.getHostInfo(request)
+        try await bootstrapRPCAdapter.getHostInfo(request)
     }
 
     public func negotiateCapabilities(
         _ request: Harc_V1_NegotiateCapabilitiesRequestV1
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_NegotiateCapabilitiesResponseV1> {
-        try await rpcAdapter.negotiateCapabilities(request)
+        try await bootstrapRPCAdapter.negotiateCapabilities(request)
     }
 
     public func beginPairingClaim(
         _ request: Harc_V1_BeginPairingClaimRequestV1
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_BeginPairingClaimResponseV1> {
-        try await rpcAdapter.beginPairingClaim(request)
+        try await bootstrapRPCAdapter.beginPairingClaim(request)
     }
 
     public func provePairingClaim(
         _ request: Harc_V1_ProvePairingClaimRequestV1,
         claimantToken: Data
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_ProvePairingClaimResponseV1> {
-        try await rpcAdapter.provePairingClaim(
+        try await bootstrapRPCAdapter.provePairingClaim(
             request,
             claimantToken: claimantToken
         )
@@ -231,7 +245,7 @@ public final class HarcPinnedGRPCConnection: HarcBootstrapRPCTransport, Sendable
         _ request: Harc_V1_GetPairingStatusRequestV1,
         claimantToken: Data
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_GetPairingStatusResponseV1> {
-        try await rpcAdapter.getPairingStatus(
+        try await bootstrapRPCAdapter.getPairingStatus(
             request,
             claimantToken: claimantToken
         )
@@ -240,13 +254,96 @@ public final class HarcPinnedGRPCConnection: HarcBootstrapRPCTransport, Sendable
     public func beginSession(
         _ request: Harc_V1_BeginSessionRequestV1
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_BeginSessionResponseV1> {
-        try await rpcAdapter.beginSession(request)
+        try await bootstrapRPCAdapter.beginSession(request)
     }
 
     public func openSession(
         _ request: Harc_V1_OpenSessionRequestV1
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_OpenSessionResponseV1> {
-        try await rpcAdapter.openSession(request)
+        try await bootstrapRPCAdapter.openSession(request)
+    }
+
+    public func beginUpload(
+        _ request: Harc_V1_BeginUploadRequestV1,
+        authorization: HarcRecordingTransferAuthorization
+    ) async throws -> Harc_V1_BeginUploadResponseV1 {
+        try await recordingTransferRPCAdapter.beginUpload(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func declareChunks(
+        _ request: Harc_V1_DeclareChunksRequestV1,
+        authorization: HarcRecordingTransferAuthorization
+    ) async throws -> Harc_V1_DeclareChunksResponseV1 {
+        try await recordingTransferRPCAdapter.declareChunks(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func uploadChunks(
+        authorization: HarcRecordingTransferAuthorization,
+        requestProducer: @escaping HarcUploadChunkRequestProducer,
+        responseConsumer: @escaping HarcUploadChunkResponseConsumer
+    ) async throws {
+        try await recordingTransferRPCAdapter.uploadChunks(
+            authorization: authorization,
+            requestProducer: requestProducer,
+            responseConsumer: responseConsumer
+        )
+    }
+
+    public func reconcileUpload(
+        _ request: Harc_V1_ReconcileUploadRequestV1,
+        authorization: HarcRecordingTransferAuthorization
+    ) async throws -> Harc_V1_ReconcileUploadResponseV1 {
+        try await recordingTransferRPCAdapter.reconcileUpload(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func commitUpload(
+        _ request: Harc_V1_CommitUploadRequestV1,
+        authorization: HarcRecordingTransferAuthorization
+    ) async throws -> Harc_V1_CommitUploadResponseV1 {
+        try await recordingTransferRPCAdapter.commitUpload(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func abandonUpload(
+        _ request: Harc_V1_AbandonUploadRequestV1,
+        authorization: HarcRecordingTransferAuthorization
+    ) async throws -> Harc_V1_AbandonUploadResponseV1 {
+        try await recordingTransferRPCAdapter.abandonUpload(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func getRecordingStatus(
+        _ request: Harc_V1_GetRecordingStatusRequestV1,
+        authorization: HarcRecordingTransferAuthorization
+    ) async throws -> Harc_V1_GetRecordingStatusResponseV1 {
+        try await recordingTransferRPCAdapter.getRecordingStatus(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func mintBackgroundUploadAuthorization(
+        _ request: Harc_V1_MintBackgroundCapabilityRequestV1,
+        authorization: HarcRecordingTransferAuthorization
+    ) async throws -> Harc_V1_MintBackgroundCapabilityResponseV1 {
+        try await recordingTransferRPCAdapter
+            .mintBackgroundUploadAuthorization(
+                request,
+                authorization: authorization
+            )
     }
 
     public func status() async -> HarcPinnedGRPCConnectionStatus {
@@ -288,11 +385,14 @@ public final class HarcPinnedGRPCConnection: HarcBootstrapRPCTransport, Sendable
         let transport = try tls.makeTransport(target: target)
         let grpcClient = GRPCClient(transport: transport)
 
-        let rpcAdapter = HarcBootstrapGRPCAdapter(
+        let bootstrapRPCAdapter = HarcBootstrapGRPCAdapter(
             hostInfoClient: HarcHostInfoGRPCClient(wrapping: grpcClient),
             pairingClient: HarcPairingGRPCClient(wrapping: grpcClient),
             sessionClient: HarcSessionGRPCClient(wrapping: grpcClient),
             responseTrustCodec: tls.responseTrustCodec
+        )
+        let recordingTransferRPCAdapter = HarcRecordingTransferGRPCAdapter(
+            client: HarcRecordingTransferGRPCClient(wrapping: grpcClient)
         )
         let taskOwner = HarcClientConnectionTaskOwner(
             beginGracefulShutdown: {
@@ -301,7 +401,8 @@ public final class HarcPinnedGRPCConnection: HarcBootstrapRPCTransport, Sendable
         )
         let connection = HarcPinnedGRPCConnection(
             grpcClient: grpcClient,
-            rpcAdapter: rpcAdapter,
+            bootstrapRPCAdapter: bootstrapRPCAdapter,
+            recordingTransferRPCAdapter: recordingTransferRPCAdapter,
             taskOwner: taskOwner
         )
         await taskOwner.start {

@@ -9,6 +9,12 @@ public enum TransferLimits {
     public static let encodedChunkBytes: UInt64 = 4 * 1_024 * 1_024
     public static let backgroundBatchBytes: UInt64 = 64 * 1_024 * 1_024
     public static let backgroundBatchEntries = 64
+    /// Keeps one declaration RPC and the lifetime reconciliation response
+    /// comfortably inside the frozen 1 MiB control-message edge. A client may
+    /// append in multiple calls, but one upload can never grow an unbounded
+    /// in-memory or durable declaration ledger.
+    public static let declaredChunksPerCall = 1_024
+    public static let declaredChunksPerUpload = 4_096
     public static let activeUploadAttemptsPerDevice = 4
     public static let activeStagingStreamsPerDevice = 2
 

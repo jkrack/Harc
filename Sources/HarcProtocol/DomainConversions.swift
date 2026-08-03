@@ -873,6 +873,24 @@ public extension Harc_V1_ChunkDescriptorV1 {
     }
 
     func domainValue() throws -> LogicalChunkDescriptor {
+        let containsUnknownFields = !unknownFields.data.isEmpty
+            || (hasOriginRecordingID
+                && (!originRecordingID.unknownFields.data.isEmpty
+                    || (originRecordingID.hasDeviceID
+                        && !originRecordingID.deviceID.unknownFields.data.isEmpty)))
+            || (hasChunkID && !chunkID.unknownFields.data.isEmpty)
+            || (hasCanonicalFormat
+                && !canonicalFormat.unknownFields.data.isEmpty)
+            || (hasEncoding && !encoding.unknownFields.data.isEmpty)
+            || (hasEncodedSha256
+                && !encodedSha256.unknownFields.data.isEmpty)
+            || (hasCanonicalDecodedSha256
+                && !canonicalDecodedSha256.unknownFields.data.isEmpty)
+        guard !containsUnknownFields else {
+            throw HarcProtobufConversionError.invalidValue(
+                field: "chunkDescriptor.unknownFields"
+            )
+        }
         guard hasOriginRecordingID else {
             throw HarcProtobufConversionError.missingField("chunk.originRecordingID")
         }

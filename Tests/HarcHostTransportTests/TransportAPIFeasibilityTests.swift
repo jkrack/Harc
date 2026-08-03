@@ -12,10 +12,11 @@ struct HostTransportAPIFeasibilityTests {
     @Test("A resident generation controller owns both one-shot listener factories")
     func generationControllerBoundary() {
         _ = HarcTransportGenerationController.init(
-            controlPort:uploadPort:eventLoopGroup:driver:
+            controlPort:uploadPort:bonjourHints:eventLoopGroup:driver:
         )
         _ = HarcGRPCNWListenerFactory.init(
-            lease:port:servedIdentityBinding:eventLoopGroup:bindingTimeout:
+            lease:port:bonjourHints:servedIdentityBinding:eventLoopGroup:
+                bindingTimeout:
         )
         _ = HarcHTTP11UploadTransportAPI.makeListener(lease:port:)
     }
@@ -48,7 +49,7 @@ struct HostTransportAPIFeasibilityTests {
         #expect(Array(data) == Array("harc".utf8))
     }
 
-    @Test("The bootstrap gRPC decoder enforces the one MiB raw request ceiling")
+    @Test("The gRPC decoder and predecode gate enforce method-aware ceilings")
     func grpcRuntimeBoundary() throws {
         let sourceBindingProvider = try HarcHostRPCSourceBindingProvider(
             hostScopedSecret: Data(repeating: 0xA1, count: 32)
@@ -59,17 +60,27 @@ struct HostTransportAPIFeasibilityTests {
             )
         #expect(
             HarcGRPCServerRuntime.maximumRequestPayloadBytes
-                == 1 * 1_024 * 1_024
+                == 5 * 1_024 * 1_024
         )
         #expect(
             configuration.rpc.maxRequestPayloadSize
                 == HarcGRPCServerRuntime.maximumRequestPayloadBytes
         )
         #expect(
+            HarcGRPCRequestPayloadGate.maximumPayloadBytes(
+                for: "/harc.v1.HostInfoService/GetHostInfo"
+            ) == 1 * 1_024 * 1_024
+        )
+        #expect(
+            HarcGRPCRequestPayloadGate.maximumPayloadBytes(
+                for: "/harc.v1.RecordingTransferService/UploadChunks"
+            ) == HarcGRPCServerRuntime.maximumRequestPayloadBytes
+        )
+        #expect(
             configuration.channelDebuggingCallbacks.onAcceptHTTP2Stream != nil
         )
         _ = HarcBootstrapGRPCServiceFactoryV1.init(
-            hostInfoService:pairingService:sessionService:
+            hostInfoService:pairingService:sessionService:recordingService:
                 hostAuthorityPublicKey:capabilityPolicy:
                 hostScopedSourceSecret:
         )

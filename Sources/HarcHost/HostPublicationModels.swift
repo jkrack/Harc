@@ -35,6 +35,21 @@ enum HostCanonicalPublicationPreparation: Sendable {
     case work(HostCanonicalPublicationWork)
 }
 
+/// Distinguishes the first successful canonical publication from a durable
+/// receipt replay. The exact receipt bytes are identical in both cases; the
+/// disposition lets the transport report idempotency without guessing from
+/// manifest-binding state.
+public enum HostCanonicalCommitDisposition: Equatable, Sendable {
+    case committed(OpaqueExactObjectSlot)
+    case exactReplay(OpaqueExactObjectSlot)
+
+    public var exactReceipt: OpaqueExactObjectSlot {
+        switch self {
+        case .committed(let receipt), .exactReplay(let receipt): receipt
+        }
+    }
+}
+
 public enum HostPublicationFailurePoint: String, Codable, CaseIterable, Sendable {
     case afterPublicationPlan
     case afterTemporaryFileCreation

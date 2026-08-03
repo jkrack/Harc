@@ -89,6 +89,9 @@ struct AuthorizationReplayTests {
         await #expect(throws: HarcHostError.grantExpired) {
             _ = try await store.beginUpload(
                 context: context,
+                sessionCapabilities: try fixture.sessionCapabilities(
+                    for: fixture.profile()
+                ),
                 request: BeginHostUploadRequest(
                     uploadID: .random(),
                     originRecordingID: OriginRecordingID(

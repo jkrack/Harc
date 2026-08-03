@@ -237,13 +237,23 @@ public struct TransferConflictRecord: Equatable, Sendable {
     }
 }
 
+public enum CleanupIntentState: String, CaseIterable, Sendable {
+    case awaitingVerifiedReceipt
+    case eligible
+}
+
 public struct CleanupIntent: Equatable, Sendable {
     public let originRecordingID: OriginRecordingID
     public let requestedAt: Date
+    public let state: CleanupIntentState
+    public let verifiedReceiptSHA256: ExactObjectSHA256?
 
-    /// PR 3 has no receipt validator, so this is structurally false. PR 5 must
-    /// migrate the schema and introduce one atomic verified-receipt API.
-    public var isEligible: Bool { false }
+    /// Eligibility is a durable storage fact backed by the composite foreign
+    /// key to this origin's verified receipt, never by receipt-shaped bytes
+    /// alone.
+    public var isEligible: Bool {
+        state == .eligible && verifiedReceiptSHA256 != nil
+    }
 }
 
 extension HarcTransferStore {
@@ -1434,59 +1444,107 @@ extension HarcTransferStore {
             guard try finalizedCaptureExists(origin, in: db) else {
                 throw ClientStoreError.missingRow(entity: "finalized capture")
             }
+            let verifiedReceiptSHA256 = try Data.fetchOne(
+                db,
+                sql: """
+                    SELECT receipt_object_sha256
+                    FROM verified_recording_receipts
+                    WHERE origin_device_id = ? AND origin_recording_uuid = ?
+                    """,
+                arguments: originArguments(origin)
+            )
+            let state: CleanupIntentState = verifiedReceiptSHA256 == nil
+                ? .awaitingVerifiedReceipt
+                : .eligible
             try db.execute(
                 sql: """
                     INSERT INTO cleanup_intents (
                         origin_device_id, origin_recording_uuid,
                         requested_at_ms, state, verified_receipt_sha256
-                    ) VALUES (?, ?, ?, 'awaitingVerifiedReceipt', NULL)
+                    ) VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(origin_device_id, origin_recording_uuid) DO NOTHING
                     """,
                 arguments: [
                     origin.deviceID.rawBytes,
                     origin.recordingUUID.uuidString.lowercased(),
                     try ClientStoreCoding.milliseconds(timestamp),
+                    state.rawValue,
+                    verifiedReceiptSHA256,
                 ]
             )
-            let persistedMS = try Int64.fetchOne(
+            if let verifiedReceiptSHA256 {
+                try db.execute(
+                    sql: """
+                        UPDATE cleanup_intents
+                        SET state = 'eligible', verified_receipt_sha256 = ?
+                        WHERE origin_device_id = ? AND origin_recording_uuid = ?
+                          AND state = 'awaitingVerifiedReceipt'
+                          AND verified_receipt_sha256 IS NULL
+                        """,
+                    arguments: [
+                        verifiedReceiptSHA256,
+                        origin.deviceID.rawBytes,
+                        origin.recordingUUID.uuidString.lowercased(),
+                    ]
+                )
+            }
+            guard let row = try Row.fetchOne(
                 db,
                 sql: """
-                    SELECT requested_at_ms FROM cleanup_intents
+                    SELECT requested_at_ms, state, verified_receipt_sha256
+                    FROM cleanup_intents
                     WHERE origin_device_id = ? AND origin_recording_uuid = ?
                     """,
                 arguments: originArguments(origin)
-            )
-            guard let persistedMS else {
+            ) else {
                 throw ClientStoreError.missingRow(entity: "cleanup intent")
             }
-            return CleanupIntent(
-                originRecordingID: origin,
-                requestedAt: ClientStoreCoding.date(milliseconds: persistedMS)
-            )
+            return try decodeCleanupIntent(row, origin: origin)
         }
     }
 
     public func cleanupIntent(for origin: OriginRecordingID) throws -> CleanupIntent? {
         try database.read { db in
-            guard let timestamp = try Int64.fetchOne(
+            guard let row = try Row.fetchOne(
                 db,
                 sql: """
-                    SELECT requested_at_ms FROM cleanup_intents
+                    SELECT requested_at_ms, state, verified_receipt_sha256
+                    FROM cleanup_intents
                     WHERE origin_device_id = ? AND origin_recording_uuid = ?
                     """,
                 arguments: originArguments(origin)
             ) else { return nil }
-            return CleanupIntent(
-                originRecordingID: origin,
-                requestedAt: ClientStoreCoding.date(milliseconds: timestamp)
-            )
+            return try decodeCleanupIntent(row, origin: origin)
         }
     }
 
-    /// Deliberately unavailable until PR 5 can supply validated receipt
-    /// evidence and perform receipt/outbox/cleanup changes in one transaction.
+    /// Deliberately unavailable: only `persistVerifiedRecordingReceipt` may
+    /// change this gate, because it performs all receipt/outbox/cleanup writes
+    /// in one transaction.
     public func makeCleanupEligible(for _: OriginRecordingID) throws -> Never {
         throw ClientStoreError.cleanupRequiresFutureVerifiedReceiptTransaction
+    }
+
+    private func decodeCleanupIntent(
+        _ row: Row,
+        origin: OriginRecordingID
+    ) throws -> CleanupIntent {
+        guard let state = CleanupIntentState(rawValue: row["state"] as String) else {
+            throw ClientStoreError.corruptStoredValue(field: "cleanupIntentState")
+        }
+        let receiptSHA256 = try (row["verified_receipt_sha256"] as Data?)
+            .map(ExactObjectSHA256.init)
+        guard (state == .eligible) == (receiptSHA256 != nil) else {
+            throw ClientStoreError.corruptStoredValue(field: "cleanupIntent")
+        }
+        return CleanupIntent(
+            originRecordingID: origin,
+            requestedAt: ClientStoreCoding.date(
+                milliseconds: row["requested_at_ms"] as Int64
+            ),
+            state: state,
+            verifiedReceiptSHA256: receiptSHA256
+        )
     }
 
     private func localFileURL(_ url: URL) throws -> URL {

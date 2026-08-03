@@ -162,12 +162,13 @@ struct HostAuthorityMutationTests {
         }
     }
 
-    @Test("emergency intent atomically gates devices and invalidates live credentials")
+    @Test("emergency intent atomically gates devices and clamps invalidation across clock rollback")
     func emergencyIntentAppliesSecurityConsequencesAtomically() async throws {
         let fixture = HostTestFixture()
         let directory = try fixture.temporaryDirectory("authority-emergency-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
         let rotationDate = fixture.beganAt.addingTimeInterval(10)
+        let sessionIssuedAt = rotationDate.addingTimeInterval(30)
         let store = try await HarcHostStore.inMemory(
             stagingRoot: directory,
             metadata: fixture.metadata,
@@ -189,6 +190,7 @@ struct HostAuthorityMutationTests {
         )
         _ = try await store.beginUpload(
             context: fixture.context(for: grant),
+            sessionCapabilities: try fixture.sessionCapabilities(for: fixture.profile()),
             request: BeginHostUploadRequest(
                 uploadID: uploadID,
                 originRecordingID: origin,
@@ -235,8 +237,10 @@ struct HostAuthorityMutationTests {
                     Data(repeating: 0x45, count: 32),
                     Data([0x01]),
                     Data(repeating: 0x46, count: 32),
-                    HarcHostStore.unixTime(fixture.beganAt.addingTimeInterval(3)),
-                    HarcHostStore.unixTime(fixture.beganAt.addingTimeInterval(100)),
+                    HarcHostStore.unixTime(sessionIssuedAt),
+                    HarcHostStore.unixTime(
+                        sessionIssuedAt.addingTimeInterval(10 * 60)
+                    ),
                 ]
             )
         }
@@ -276,7 +280,7 @@ struct HostAuthorityMutationTests {
         #expect(consequences.1?["invalidation_reason"] as String?
             == "emergencyTransportRotation")
         #expect(consequences.1?["invalidated_at"] as Double?
-            == HarcHostStore.unixTime(rotationDate))
+            == HarcHostStore.unixTime(sessionIssuedAt))
         #expect(consequences.2?["state"] as String? == "invalidated")
         #expect(consequences.2?["invalidated_at"] as Double?
             == HarcHostStore.unixTime(rotationDate))

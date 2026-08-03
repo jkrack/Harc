@@ -56,6 +56,9 @@ targets:
         NSHumanReadableCopyright: "Copyright © 2026 CloudArchitech LLC. All rights reserved."
         NSMicrophoneUsageDescription: "Harc uses the microphone to record meetings for transcription."
         NSScreenCaptureUsageDescription: "Harc captures system audio so remote participants appear in transcriptions."
+        NSLocalNetworkUsageDescription: "Harc discovers and securely connects to paired Harc hosts on your local network."
+        NSBonjourServices:
+          - _harc._tcp
         CFBundleURLTypes:
           - CFBundleURLName: com.harc.Harc.deeplink
             CFBundleURLSchemes:

@@ -51,6 +51,7 @@ struct MigrationAndProtectionTests {
         #expect(transferTables.contains("finalized_captures"))
         #expect(transferTables.contains("background_task_mappings"))
         #expect(transferTables.contains("upload_attempt_supersessions"))
+        #expect(transferTables.contains("verified_recording_receipts"))
         #expect(transferTables.contains("cleanup_intents"))
         #expect(!transferTables.contains("cached_recordings"))
         #expect(!transferTables.contains("offline_metadata_mutations"))
@@ -140,8 +141,93 @@ struct MigrationAndProtectionTests {
             let migrationCount = try db.read { db in
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM grdb_migrations")
             }
-            #expect(migrationCount == (url == locations.transferDatabase ? 2 : 1))
+            #expect(migrationCount == (url == locations.transferDatabase ? 3 : 1))
         }
+    }
+
+    @Test("v2 cleanup intents migrate without becoming deletion eligible")
+    func v2CleanupIntentMigration() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let locations = try ClientStoreLocations(rootDirectory: root)
+        try FileManager.default.createDirectory(
+            at: locations.transferDirectory,
+            withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: locations.transferDatabase.path)
+        try ClientStoreMigrators.transfer().migrate(
+            queue,
+            upTo: "v2_upload_attempt_supersession_proof"
+        )
+        let origin = ClientStoreFixtures.origin()
+        let requestedAtMS = try ClientStoreCoding.milliseconds(
+            ClientStoreFixtures.baseDate
+        )
+        try queue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO finalized_captures (
+                        origin_device_id, origin_recording_uuid,
+                        finalized_capture_json, master_path,
+                        master_file_state, persisted_at_ms
+                    ) VALUES (?, ?, ?, ?, 'present', ?)
+                    """,
+                arguments: [
+                    origin.deviceID.rawBytes,
+                    origin.recordingUUID.uuidString.lowercased(),
+                    try ClientStoreCoding.encode(
+                        ClientStoreFixtures.capture(origin: origin)
+                    ),
+                    root.appendingPathComponent("master.wav").path,
+                    requestedAtMS,
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO cleanup_intents (
+                        origin_device_id, origin_recording_uuid,
+                        requested_at_ms, state, verified_receipt_sha256
+                    ) VALUES (?, ?, ?, 'awaitingVerifiedReceipt', NULL)
+                    """,
+                arguments: [
+                    origin.deviceID.rawBytes,
+                    origin.recordingUUID.uuidString.lowercased(),
+                    requestedAtMS,
+                ]
+            )
+        }
+
+        let upgraded = try HarcTransferStore(
+            databaseURL: locations.transferDatabase,
+            installationDeviceID: origin.deviceID,
+            storageAttributes: RecordingStorageAttributes()
+        )
+        let intent = try #require(try upgraded.cleanupIntent(for: origin))
+        #expect(intent.requestedAt == ClientStoreFixtures.baseDate)
+        #expect(intent.state == .awaitingVerifiedReceipt)
+        #expect(!intent.isEligible)
+        #expect(try tableNames(at: locations.transferDatabase).contains(
+            "verified_recording_receipts"
+        ))
+
+        // A receipt-shaped digest alone still cannot cross the migrated gate.
+        #expect(throws: DatabaseError.self) {
+            try upgraded.database.queue.write { db in
+                try db.execute(
+                    sql: """
+                        UPDATE cleanup_intents
+                        SET state = 'eligible', verified_receipt_sha256 = ?
+                        WHERE origin_device_id = ? AND origin_recording_uuid = ?
+                        """,
+                    arguments: [
+                        ClientStoreFixtures.bytes(0xCC),
+                        origin.deviceID.rawBytes,
+                        origin.recordingUUID.uuidString.lowercased(),
+                    ]
+                )
+            }
+        }
+        #expect(try upgraded.cleanupIntent(for: origin)?.isEligible == false)
     }
 
     @Test("WAL stores retain FULL synchronous durability across reopen")

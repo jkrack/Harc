@@ -1290,6 +1290,129 @@ public extension DatabaseMigrator {
                 """)
         }
 
+        // A background capability's random credential is only an authenticator.
+        // Every authority-bearing redemption fact lives in an immutable row
+        // joined to the immutable batch descriptor. Legacy capability rows are
+        // intentionally not backfilled: without this binding they are unusable.
+        migrator.registerMigration("v6_background_capability_bindings") { db in
+            try db.execute(sql: """
+                CREATE TABLE background_capability_bindings (
+                    capability_id TEXT PRIMARY KEY
+                        REFERENCES background_capabilities(capability_id)
+                        ON DELETE CASCADE,
+                    binding_version INTEGER NOT NULL CHECK (binding_version = 1),
+                    library_id TEXT NOT NULL CHECK (length(library_id) = 36),
+                    host_authority_id BLOB NOT NULL
+                        CHECK (length(host_authority_id) = 32),
+                    minimum_transport_set_epoch INTEGER NOT NULL
+                        CHECK (minimum_transport_set_epoch > 0),
+                    http_method TEXT NOT NULL CHECK (http_method = 'PUT'),
+                    http_path TEXT NOT NULL
+                        CHECK (length(http_path) BETWEEN 1 AND 2048)
+                        CHECK (substr(http_path, 1, 1) = '/')
+                        CHECK (instr(http_path, '?') = 0)
+                        CHECK (instr(http_path, '#') = 0)
+                        CHECK (instr(http_path, char(92)) = 0),
+                    exact_body_sha256 BLOB NOT NULL
+                        CHECK (length(exact_body_sha256) = 32),
+                    exact_body_length INTEGER NOT NULL
+                        CHECK (exact_body_length BETWEEN 1 AND 67108864),
+                    byte_ceiling INTEGER NOT NULL
+                        CHECK (byte_ceiling = exact_body_length),
+                    issued_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    CHECK (expires_at > issued_at),
+                    CHECK (expires_at <= issued_at + 2592000)
+                );
+
+                CREATE TRIGGER background_capability_bindings_validate_insert
+                BEFORE INSERT ON background_capability_bindings
+                FOR EACH ROW
+                WHEN NOT EXISTS (
+                    SELECT 1
+                      FROM background_capabilities AS capability
+                      JOIN upload_batches AS batch
+                        ON batch.batch_id = capability.batch_id
+                      JOIN host_metadata AS metadata
+                        ON metadata.singleton = 1
+                     WHERE capability.capability_id = NEW.capability_id
+                       AND capability.upload_id = batch.upload_id
+                       AND capability.owner_device_id = batch.owner_device_id
+                       AND capability.generation = batch.generation
+                       AND capability.created_at = NEW.issued_at
+                       AND capability.expires_at = NEW.expires_at
+                       AND batch.body_sha256 = NEW.exact_body_sha256
+                       AND batch.body_length = NEW.exact_body_length
+                       AND metadata.library_id = NEW.library_id
+                       AND metadata.host_authority_id = NEW.host_authority_id
+                       AND metadata.highest_transport_set_epoch
+                            = NEW.minimum_transport_set_epoch
+                       AND NEW.http_path = '/v1/uploads/'
+                            || capability.upload_id || '/batches/' || batch.batch_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT,
+                        'background capability binding is inconsistent');
+                END;
+
+                CREATE TRIGGER background_capability_bindings_immutable_update
+                BEFORE UPDATE ON background_capability_bindings
+                BEGIN
+                    SELECT RAISE(ABORT,
+                        'background capability binding rows are immutable');
+                END;
+
+                -- The descriptor and exact body columns are the canonical batch
+                -- binding. ACK/state fields may advance, but those facts may not
+                -- be retargeted after the batch is first named by a capability.
+                CREATE TRIGGER upload_batches_immutable_binding_update
+                BEFORE UPDATE ON upload_batches
+                FOR EACH ROW
+                WHEN NEW.batch_id IS NOT OLD.batch_id
+                    OR NEW.upload_id IS NOT OLD.upload_id
+                    OR NEW.owner_device_id IS NOT OLD.owner_device_id
+                    OR NEW.generation IS NOT OLD.generation
+                    OR NEW.descriptor_json IS NOT OLD.descriptor_json
+                    OR NEW.body_sha256 IS NOT OLD.body_sha256
+                    OR NEW.body_length IS NOT OLD.body_length
+                    OR NEW.created_at IS NOT OLD.created_at
+                    OR (
+                        OLD.exact_ack_bytes IS NOT NULL
+                        AND NEW.exact_ack_bytes IS NOT OLD.exact_ack_bytes
+                    )
+                BEGIN
+                    SELECT RAISE(ABORT,
+                        'background batch binding columns are immutable');
+                END;
+
+                -- Security mutations continue to own state and first
+                -- invalidation. All authentication and authority bindings stay
+                -- fixed, and an invalidation can never be cleared or rewritten.
+                CREATE TRIGGER background_capabilities_immutable_binding_update
+                BEFORE UPDATE ON background_capabilities
+                FOR EACH ROW
+                WHEN NEW.capability_id IS NOT OLD.capability_id
+                    OR NEW.upload_id IS NOT OLD.upload_id
+                    OR NEW.batch_id IS NOT OLD.batch_id
+                    OR NEW.owner_device_id IS NOT OLD.owner_device_id
+                    OR NEW.grant_id IS NOT OLD.grant_id
+                    OR NEW.grant_epoch IS NOT OLD.grant_epoch
+                    OR NEW.generation IS NOT OLD.generation
+                    OR NEW.capability_binding_sha256
+                        IS NOT OLD.capability_binding_sha256
+                    OR NEW.expires_at IS NOT OLD.expires_at
+                    OR NEW.created_at IS NOT OLD.created_at
+                    OR (
+                        OLD.invalidated_at IS NOT NULL
+                        AND NEW.invalidated_at IS NOT OLD.invalidated_at
+                    )
+                BEGIN
+                    SELECT RAISE(ABORT,
+                        'background capability binding columns are immutable');
+                END;
+                """)
+        }
+
         return migrator
     }
 }

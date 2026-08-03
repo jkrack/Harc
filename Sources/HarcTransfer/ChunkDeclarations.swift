@@ -145,6 +145,13 @@ public struct ChunkDeclarationLedger: Codable, Equatable, Hashable, Sendable {
         }
 
         guard let firstAppended else { return .exactReplay }
+        guard candidate.count <= TransferLimits.declaredChunksPerUpload else {
+            throw TransferValidationError.exceedsLimit(
+                field: "ChunkDeclarationLedger.descriptors",
+                limit: UInt64(TransferLimits.declaredChunksPerUpload),
+                actual: UInt64(candidate.count)
+            )
+        }
         let appendedCount = candidate.count - descriptors.count
         descriptors = candidate
         return .appended(firstIndex: firstAppended, count: appendedCount)

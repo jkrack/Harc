@@ -269,4 +269,41 @@ struct ChunkAndDeclarationTests {
         let encoded = try JSONEncoder().encode(ledger)
         #expect(try JSONDecoder().decode(ChunkDeclarationLedger.self, from: encoded) == ledger)
     }
+
+    @Test("A declaration ledger has a hard lifetime chunk ceiling")
+    func declarationLedgerCeiling() throws {
+        let origin = TransferFixtures.origin()
+        var ledger = ChunkDeclarationLedger(
+            originRecordingID: origin,
+            frozenProfile: TransferFixtures.profile()
+        )
+        let accepted = (0..<TransferLimits.declaredChunksPerUpload).map {
+            index in
+            TransferFixtures.chunk(
+                origin: origin,
+                index: UInt32(index),
+                startFrame: UInt64(index),
+                frameCount: 1
+            )
+        }
+        _ = try ledger.declare(accepted)
+        #expect(ledger.descriptors.count
+            == TransferLimits.declaredChunksPerUpload)
+
+        let overflow = TransferFixtures.chunk(
+            origin: origin,
+            index: UInt32(TransferLimits.declaredChunksPerUpload),
+            startFrame: UInt64(TransferLimits.declaredChunksPerUpload),
+            frameCount: 1
+        )
+        #expect(throws: TransferValidationError.exceedsLimit(
+            field: "ChunkDeclarationLedger.descriptors",
+            limit: UInt64(TransferLimits.declaredChunksPerUpload),
+            actual: UInt64(TransferLimits.declaredChunksPerUpload + 1)
+        )) {
+            try ledger.declare([overflow])
+        }
+        #expect(ledger.descriptors.count
+            == TransferLimits.declaredChunksPerUpload)
+    }
 }

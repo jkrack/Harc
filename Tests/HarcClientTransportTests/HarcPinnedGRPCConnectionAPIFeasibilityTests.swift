@@ -16,6 +16,11 @@ struct HarcPinnedGRPCConnectionAPIFeasibilityTests {
 
         func requireBootstrapTransport<T: HarcBootstrapRPCTransport>(_: T.Type) {}
         requireBootstrapTransport(HarcPinnedGRPCConnection.self)
+
+        func requireRecordingTransferTransport<
+            T: HarcRecordingTransferRPCTransport
+        >(_: T.Type) {}
+        requireRecordingTransferTransport(HarcPinnedGRPCConnection.self)
     }
 }
 #endif

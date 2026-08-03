@@ -24,13 +24,6 @@ package protocol HarcBackgroundUploadListenerRuntimeBoundary: Sendable {
     func stopImmediately() async
 }
 
-package protocol HarcBonjourGenerationPublisherBoundary: Sendable {
-    /// Implementations must tombstone `id` before suspension can allow a late
-    /// publish completion. A withdrawn generation can never advertise again.
-    func publishGeneration(id: UUID) async throws
-    func withdrawAdvertisement(forGenerationID id: UUID) async
-}
-
 package enum HarcResidentTransportGenerationDriverError:
     Error, Equatable, Sendable
 {
@@ -71,8 +64,9 @@ private actor HarcGenerationLifetime {
 }
 
 /// Coordinates readiness and teardown of the three resident pieces that make
-/// one advertised generation. Publication happens only after both TLS
-/// listeners are live; withdrawal always precedes concurrent admission stop.
+/// one advertised generation. Bonjour is armed first, the upload listener is
+/// made ready, and then the real gRPC listener is started with its service
+/// attached. Withdrawal always precedes concurrent admission stop.
 package actor HarcResidentTransportGenerationDriver:
     HarcTransportGenerationDriver
 {
@@ -98,7 +92,8 @@ package actor HarcResidentTransportGenerationDriver:
     package init(
         grpcRuntime: any HarcGRPCServerRuntimeBoundary,
         uploadRuntime: any HarcBackgroundUploadListenerRuntimeBoundary,
-        publisher: any HarcBonjourGenerationPublisherBoundary
+        publisher: any HarcBonjourGenerationPublisherBoundary =
+            HarcNWListenerBonjourGenerationPublisher()
     ) {
         self.grpcRuntime = grpcRuntime
         self.uploadRuntime = uploadRuntime
@@ -128,16 +123,19 @@ package actor HarcResidentTransportGenerationDriver:
         )
 
         do {
+            try await publisher.prepareAdvertisement(
+                forGenerationID: id,
+                listenerFactory: grpcFactory
+            )
+            try requireActivation(id)
+            try await uploadRuntime.start(listener: uploadListener)
+            try requireActivation(id)
             try await grpcRuntime.start(
                 generationID: id,
                 listenerFactory: grpcFactory
             ) { [weak self] failedID in
                 await self?.grpcExitedUnexpectedly(generationID: failedID)
             }
-            try requireActivation(id)
-            try await uploadRuntime.start(listener: uploadListener)
-            try requireActivation(id)
-            try await publisher.publishGeneration(id: id)
             try requireActivation(id)
 
             await lifetime.finishActivation()

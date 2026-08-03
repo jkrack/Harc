@@ -2,6 +2,7 @@
 import Foundation
 import GRPCNIOTransportHTTP2TransportServices
 import HarcHost
+import HarcProtocol
 import NIOCore
 import NIOTransportServices
 import Network
@@ -90,6 +91,8 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
     package let readiness: HarcGRPCListenerReadinessSignal
 
     private let listenerProvider: @Sendable () async throws -> NWListener
+    private let bonjourAdvertisement:
+        (any HarcBonjourListenerAdvertisementBoundary)?
     private let bindingControl: HarcGRPCListenerBindingControl
     private let bindingTimeout: Duration
     private let nioBindingTimeout: TimeAmount
@@ -101,6 +104,7 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
     package init(
         lease: HostTransportListenerLease,
         port: NWEndpoint.Port,
+        bonjourHints: HarcBonjourServiceHintsV1,
         servedIdentityBinding: HarcGRPCServedIdentityBinding,
         eventLoopGroup: any EventLoopGroup = NIOTSEventLoopGroup.singletonNIOTSEventLoopGroup,
         bindingTimeout: Duration = .seconds(10)
@@ -109,6 +113,11 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
         self.servedIdentityBinding = servedIdentityBinding
         self.readiness = HarcGRPCListenerReadinessSignal()
         self.bindingControl = HarcGRPCListenerBindingControl()
+        let advertisement = HarcBonjourListenerAdvertisement(
+            generationID: lease.generationID,
+            hints: bonjourHints
+        )
+        self.bonjourAdvertisement = advertisement
         self.bindingTimeout = bindingTimeout
         self.nioBindingTimeout = Self.nioTimeAmount(bindingTimeout)
         self.sleep = { duration in
@@ -129,7 +138,12 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
                 )
                 return NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
             }
-            return try NWListener(using: parameters, on: port)
+            let listener = try NWListener(using: parameters, on: port)
+            try await advertisement.attach(
+                to: listener,
+                generationID: lease.generationID
+            )
+            return listener
         }
     }
 
@@ -145,16 +159,28 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
         sleep: @escaping @Sendable (Duration) async throws -> Void = { duration in
             try await Task.sleep(for: duration)
         },
+        bonjourAdvertisement:
+            (any HarcBonjourListenerAdvertisementBoundary)? = nil,
         unreadyListenerProvider: @Sendable @escaping () throws -> NWListener
     ) {
         self.eventLoopGroup = eventLoopGroup
         self.servedIdentityBinding = servedIdentityBinding
         self.readiness = readiness
         self.bindingControl = HarcGRPCListenerBindingControl()
+        self.bonjourAdvertisement = bonjourAdvertisement
         self.bindingTimeout = bindingTimeout
         self.nioBindingTimeout = Self.nioTimeAmount(bindingTimeout)
         self.sleep = sleep
-        self.listenerProvider = { try unreadyListenerProvider() }
+        self.listenerProvider = {
+            let listener = try unreadyListenerProvider()
+            if let bonjourAdvertisement {
+                try await bonjourAdvertisement.attach(
+                    to: listener,
+                    generationID: servedIdentityBinding.generationID
+                )
+            }
+            return listener
+        }
     }
 
     public func makeListeningChannel(
@@ -192,6 +218,9 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
             }
             guard !Task.isCancelled else { return }
             _ = try? binding.invalidate(generationID: generationID)
+            await bonjourAdvertisement?.failRegistration(
+                generationID: generationID
+            )
             await bindingControl.cancel()
             await readiness.markFailed(
                 HarcGRPCListenerReadinessError.bindingTimedOut
@@ -213,6 +242,12 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
                     )
                 }
 
+            if let bonjourAdvertisement {
+                try await bonjourAdvertisement.waitUntilRegistered(
+                    generationID: generationID
+                )
+            }
+
             guard await readiness.markBound() else {
                 try? await channel.channel.close()
                 try await readiness.waitUntilBound()
@@ -221,6 +256,9 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
             return channel
         } catch {
             invalidateServedIdentity()
+            await bonjourAdvertisement?.failRegistration(
+                generationID: generationID
+            )
             await bindingControl.cancel()
             await readiness.markFailed(error)
             throw error
@@ -250,6 +288,9 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
         reason: HarcGRPCListenerReadinessError
     ) async {
         invalidateServedIdentity()
+        await bonjourAdvertisement?.failRegistration(
+            generationID: servedIdentityBinding.generationID
+        )
         await bindingControl.cancel()
         await readiness.markFailed(reason)
     }
@@ -258,6 +299,14 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
         _ = try? servedIdentityBinding.invalidate(
             generationID: servedIdentityBinding.generationID
         )
+    }
+
+    package func armBonjourAdvertisement(generationID: UUID) async throws {
+        try await bonjourAdvertisement?.arm(forGenerationID: generationID)
+    }
+
+    package func withdrawBonjourAdvertisement(generationID: UUID) async {
+        await bonjourAdvertisement?.withdraw(generationID: generationID)
     }
 
     private static func nioTimeAmount(_ duration: Duration) -> TimeAmount {

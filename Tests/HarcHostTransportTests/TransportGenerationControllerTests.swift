@@ -1,6 +1,7 @@
 #if canImport(Network)
 import Foundation
 import HarcHost
+import HarcProtocol
 @testable import HarcHostTransport
 import NIOTransportServices
 import Network
@@ -8,12 +9,39 @@ import Testing
 
 @Suite("Transport generation controller")
 struct TransportGenerationControllerTests {
+    @Test("advertised upload port must match the bound upload listener port")
+    func uploadPortHintMustMatch() throws {
+        #expect(throws:
+            HarcTransportGenerationControllerError.bonjourUploadPortMismatch
+        ) {
+            try HarcTransportGenerationController(
+                controlPort: 8_443,
+                uploadPort: 8_444,
+                bonjourHints: HarcBonjourServiceHintsV1(
+                    displayName: "Test Harc",
+                    protocolMajor: 1,
+                    protocolMinor: 0,
+                    capabilityBits: 0,
+                    uploadPortHint: 9_999
+                ),
+                driver: RejectingControllerDriver()
+            )
+        }
+    }
+
     @Test("rejected activation never issues an unqualified stop")
     func rejectedActivationDoesNotStopUnrelatedGeneration() async throws {
         let driver = RejectingControllerDriver()
-        let controller = HarcTransportGenerationController(
+        let controller = try HarcTransportGenerationController(
             controlPort: 8_443,
             uploadPort: 8_444,
+            bonjourHints: try HarcBonjourServiceHintsV1(
+                displayName: "Test Harc",
+                protocolMajor: 1,
+                protocolMinor: 0,
+                capabilityBits: 0,
+                uploadPortHint: 8_444
+            ),
             eventLoopGroup: NIOTSEventLoopGroup.singletonNIOTSEventLoopGroup,
             driver: driver
         )

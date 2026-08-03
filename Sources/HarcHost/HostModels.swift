@@ -607,9 +607,52 @@ public enum HostManifestPrecommitDisposition: Equatable, Sendable {
     case exactReplay(missingChunkIndexes: [UInt32])
 }
 
+/// Transport-neutral evidence for one positive `UploadChunks` response.
+/// `durableAt` is the timestamp of the original HostDB durability transition;
+/// exact replays must return that value rather than the retry time.
+public struct HostDurableChunkAcknowledgement: Equatable, Sendable {
+    public let uploadID: UploadID
+    public let generation: UploadGeneration
+    public let uploadProfileSHA256: UploadProfileSHA256
+    public let durableChunk: DurableChunkStatus
+    public let durableAt: Date
+
+    public init(
+        uploadID: UploadID,
+        generation: UploadGeneration,
+        uploadProfileSHA256: UploadProfileSHA256,
+        durableChunk: DurableChunkStatus,
+        durableAt: Date
+    ) {
+        self.uploadID = uploadID
+        self.generation = generation
+        self.uploadProfileSHA256 = uploadProfileSHA256
+        self.durableChunk = durableChunk
+        self.durableAt = durableAt
+    }
+}
+
 public enum StagedChunkDisposition: Equatable, Sendable {
-    case durablyAccepted(DurableChunkStatus)
-    case exactReplay(DurableChunkStatus)
+    case durablyAccepted(HostDurableChunkAcknowledgement)
+    case exactReplay(HostDurableChunkAcknowledgement)
+}
+
+/// Stable result of an idempotent owner-authorized abandonment. The timestamp
+/// is the original terminal boundary and is never replaced by a retry time.
+public struct HostAbandonUploadResult: Equatable, Sendable {
+    public let uploadID: UploadID
+    public let terminalReason: UploadReconciliationTerminalReason
+    public let terminalAt: Date
+
+    public init(
+        uploadID: UploadID,
+        terminalReason: UploadReconciliationTerminalReason,
+        terminalAt: Date
+    ) {
+        self.uploadID = uploadID
+        self.terminalReason = terminalReason
+        self.terminalAt = terminalAt
+    }
 }
 
 /// Bounded streaming source used identically by future gRPC and HTTPS

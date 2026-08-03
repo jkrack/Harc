@@ -158,6 +158,7 @@ let package = Package(
                 "HarcHost",
                 "HarcIdentity",
                 "HarcProtocol",
+                "HarcTransfer",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
                 .product(
                     name: "GRPCNIOTransportHTTP2TransportServices",
@@ -296,6 +297,7 @@ let package = Package(
                 "HarcDomain",
                 "HarcIdentity",
                 "HarcTransfer",
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ]
         ),
         .testTarget(

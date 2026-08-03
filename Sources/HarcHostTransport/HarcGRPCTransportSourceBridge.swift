@@ -50,6 +50,10 @@ package enum HarcGRPCTransportSourceBridge {
                         for: connection.endpoint
                     )
                 try channel.pipeline.syncOperations.addHandler(
+                    HarcGRPCRequestPayloadGateHandler(),
+                    position: .first
+                )
+                try channel.pipeline.syncOperations.addHandler(
                     HarcGRPCTransportSourceMetadataHandler(token: token),
                     position: .first
                 )

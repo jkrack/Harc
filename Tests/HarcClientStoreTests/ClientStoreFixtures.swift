@@ -279,6 +279,7 @@ struct ClientStoreValidatedEvidenceFixture {
     let tuple: AdoptedTrustTuple
     let adoption: ValidatedClientAdoptionEvidence
     let origin: OriginRecordingID
+    let producingDevicePublicKey: P256X963PublicKey
     let capture: FinalizedCapture
     let chunk: LogicalChunkDescriptor
     let finalizedCapture: ChunkedFinalizedCapture
@@ -375,6 +376,7 @@ struct ClientStoreValidatedEvidenceFixture {
         self.tuple = tuple
         self.adoption = adoption
         self.origin = origin
+        self.producingDevicePublicKey = devicePublicKey
         self.capture = capture
         self.chunk = chunk
         self.finalizedCapture = finalizedCapture

@@ -920,7 +920,8 @@ extension HarcHostStore {
                 try db.execute(
                     sql: """
                         UPDATE session_tokens
-                        SET invalidated_at = ?, invalidation_reason = 'grant-replaced'
+                        SET invalidated_at = MAX(?, issued_at),
+                            invalidation_reason = 'grant-replaced'
                         WHERE device_id = ? AND invalidated_at IS NULL
                         """,
                     arguments: [appliedTime, grant.deviceID.rawBytes]
@@ -968,7 +969,8 @@ extension HarcHostStore {
                 try db.execute(
                     sql: """
                         UPDATE session_tokens
-                        SET invalidated_at = ?, invalidation_reason = 'readopted'
+                        SET invalidated_at = MAX(?, issued_at),
+                            invalidation_reason = 'readopted'
                         WHERE device_id = ? AND invalidated_at IS NULL
                         """,
                     arguments: [appliedTime, grant.deviceID.rawBytes]
@@ -1006,7 +1008,8 @@ extension HarcHostStore {
                 try db.execute(
                     sql: """
                         UPDATE session_tokens
-                        SET invalidated_at = ?, invalidation_reason = 'revoked'
+                        SET invalidated_at = MAX(?, issued_at),
+                            invalidation_reason = 'revoked'
                         WHERE device_id = ? AND invalidated_at IS NULL
                         """,
                     arguments: [appliedTime, revocation.deviceID.rawBytes]

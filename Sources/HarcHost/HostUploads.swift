@@ -10,17 +10,60 @@ private enum ManifestBindingDatabaseResult {
 }
 
 extension HarcHostStore {
+    /// Proves that a continuation request's authenticated session preserves
+    /// the immutable transfer semantics of the named upload. The profile is
+    /// immutable, and every subsequent mutation independently repeats owner,
+    /// scope, generation, and profile-hash authorization.
+    public func validateTransferContinuation(
+        context: AuthenticatedDeviceContext,
+        sessionCapabilities: HostTransferSessionCapabilities,
+        uploadID: UploadID,
+        expectedUploadProfileSHA256: UploadProfileSHA256
+    ) async throws {
+        try await repairSecurityRegistryOnReopen()
+        let validatedAt = now()
+        try await dbQueue.read { db in
+            guard let attempt = try self.fetchUploadAttempt(
+                in: db,
+                uploadID: uploadID
+            ) else {
+                throw HarcHostError.uploadNotFound
+            }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
+            _ = try self.authorizeInDatabase(
+                db,
+                context: context,
+                requiredScope: .recordingUploadOwn,
+                objectOwner: attempt.ownerDeviceID,
+                at: validatedAt
+            )
+            try sessionCapabilities.validateCompatibleAdmission(
+                against: attempt.frozenProfile
+            )
+        }
+    }
+
     func beginUpload(
         context: AuthenticatedDeviceContext,
+        sessionCapabilities: HostTransferSessionCapabilities,
         request: BeginHostUploadRequest
     ) async throws -> BeginHostUploadDisposition {
-        try await beginUpload(context: context, request: request, at: now())
+        try await beginUpload(
+            context: context,
+            sessionCapabilities: sessionCapabilities,
+            request: request,
+            at: now()
+        )
     }
 
     /// Deterministic `@testable` seam. Production upload admission always
     /// derives its acceptance time from the store's injected clock.
     func beginUpload(
         context: AuthenticatedDeviceContext,
+        sessionCapabilities: HostTransferSessionCapabilities,
         request: BeginHostUploadRequest,
         at date: Date
     ) async throws -> BeginHostUploadDisposition {
@@ -55,6 +98,38 @@ extension HarcHostStore {
                 existingAttempts: existing,
                 at: acceptedAt
             )
+
+            // Capability binding belongs inside the same transaction as the
+            // create-vs-replay admission decision. A rejected first admission
+            // cannot leave a row behind, and a rejected reopen cannot advance
+            // its durable generation.
+            switch decision {
+            case .create:
+                try sessionCapabilities.validateInitialAdmission(
+                    against: request.frozenProfile
+                )
+
+            case .exactReplay(let uploadID), .reopenRequired(let uploadID),
+                    .conflictBlocked(let uploadID, _), .abandoned(let uploadID):
+                guard let attempt = existing.first(where: { $0.uploadID == uploadID }) else {
+                    throw HarcHostError.uploadNotFound
+                }
+                try sessionCapabilities.validateCompatibleAdmission(
+                    against: attempt.frozenProfile
+                )
+
+            case .alreadyCommitted(let receipt):
+                guard let attempt = existing.first(where: {
+                    $0.originRecordingID == request.originRecordingID
+                        && $0.status == .committed
+                        && $0.exactReceipt == receipt
+                }) else {
+                    throw HarcHostError.uploadNotFound
+                }
+                try sessionCapabilities.validateCompatibleAdmission(
+                    against: attempt.frozenProfile
+                )
+            }
             let grantExpiry = try self.currentGrantExpiry(
                 in: db,
                 deviceID: context.authenticatedDeviceID
@@ -122,11 +197,26 @@ extension HarcHostStore {
 
         switch result {
         case .created(let attempt):
-            return .created(try await reconciliation(for: attempt.uploadID, context: context, at: acceptedAt))
+            return .created(try await reconciliation(
+                for: attempt.uploadID,
+                expectedUploadProfileSHA256: attempt.frozenProfile.profileSHA256,
+                context: context,
+                at: acceptedAt
+            ))
         case .replay(let attempt):
-            return .exactReplay(try await reconciliation(for: attempt.uploadID, context: context, at: acceptedAt))
+            return .exactReplay(try await reconciliation(
+                for: attempt.uploadID,
+                expectedUploadProfileSHA256: attempt.frozenProfile.profileSHA256,
+                context: context,
+                at: acceptedAt
+            ))
         case .reopened(let attempt):
-            return .reopened(try await reconciliation(for: attempt.uploadID, context: context, at: acceptedAt))
+            return .reopened(try await reconciliation(
+                for: attempt.uploadID,
+                expectedUploadProfileSHA256: attempt.frozenProfile.profileSHA256,
+                context: context,
+                at: acceptedAt
+            ))
         case .committed(let receipt):
             return .alreadyCommitted(receipt)
         }
@@ -137,12 +227,14 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         descriptors: [LogicalChunkDescriptor]
     ) async throws -> ChunkDeclarationDisposition {
         try await declareChunks(
             context: context,
             uploadID: uploadID,
             generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
             descriptors: descriptors,
             at: now()
         )
@@ -155,6 +247,7 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         descriptors: [LogicalChunkDescriptor],
         at date: Date
     ) async throws -> ChunkDeclarationDisposition {
@@ -168,6 +261,10 @@ extension HarcHostStore {
             guard var attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
             }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
             _ = try self.authorizeInDatabase(
                 db,
                 context: context,
@@ -210,15 +307,194 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         evidence: ValidatedRecordingManifestEvidence
     ) async throws -> HostManifestPrecommitDisposition {
         try await bindFinalManifestForPrecommit(
             context: context,
             uploadID: uploadID,
             generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
             evidence: evidence,
             at: now()
         )
+    }
+
+    /// Loads the producing device's registered key, authenticates the exact
+    /// manifest bytes, and binds the resulting evidence while the upload row is
+    /// held in the same database transaction. This is the production commit
+    /// boundary; callers never receive a general-purpose device-key lookup and
+    /// a key change cannot race manifest admission.
+    public func validateAndBindFinalManifestForPrecommit(
+        context: AuthenticatedDeviceContext,
+        uploadID: UploadID,
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
+        exactSignedManifestBytes: Data,
+        hostTrust: RecordingHostTrustBinding,
+        validator: any RecordingManifestEvidenceValidating
+    ) async throws -> HostManifestPrecommitDisposition {
+        try await repairSecurityRegistryOnReopen()
+        let boundAt = now()
+        guard !exactSignedManifestBytes.isEmpty,
+              hostTrust.libraryID == expectedMetadata.libraryID,
+              hostTrust.hostAuthorityID == expectedMetadata.hostAuthorityID else {
+            throw HarcHostError.manifestEvidenceRequired
+        }
+
+        let result: ManifestBindingDatabaseResult = try await dbQueue.write { db in
+            guard var attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
+                throw HarcHostError.uploadNotFound
+            }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
+            _ = try self.authorizeInDatabase(
+                db,
+                context: context,
+                requiredScope: .recordingUploadOwn,
+                objectOwner: attempt.ownerDeviceID,
+                at: boundAt
+            )
+            guard let publicKeyBytes = try Data.fetchOne(
+                db,
+                sql: "SELECT public_key_x963 FROM devices WHERE device_id = ?",
+                arguments: [attempt.ownerDeviceID.rawBytes]
+            ) else {
+                throw HarcHostError.manifestEvidenceRequired
+            }
+            let publicKey = try P256X963PublicKey(publicKeyBytes)
+            guard publicKey.deviceID == attempt.ownerDeviceID,
+                  publicKey.deviceID == context.authenticatedDeviceID else {
+                throw HarcHostError.manifestEvidenceRequired
+            }
+
+            let evidence = try validator.validateRecordingManifest(
+                exactSignedManifestBytes: exactSignedManifestBytes,
+                hostTrust: hostTrust,
+                producingDevicePublicKey: publicKey
+            )
+            let exactManifest = evidence.exactManifestObject
+            guard exactManifest.kind == .recordingManifestV1,
+                  exactManifest.exactBytes == exactSignedManifestBytes,
+                  evidence.hostTrust == hostTrust,
+                  evidence.uploadID == uploadID,
+                  evidence.producingDeviceID == attempt.ownerDeviceID,
+                  evidence.originRecordingID == attempt.originRecordingID,
+                  evidence.uploadProfileSHA256 == attempt.frozenProfile.profileSHA256,
+                  evidence.finalizedCapture.capture.originRecordingID
+                    == attempt.originRecordingID,
+                  evidence.producingDevicePublicKey == publicKey else {
+                throw HarcHostError.manifestEvidenceRequired
+            }
+
+            if attempt.status == .committed {
+                guard attempt.generation == generation else {
+                    throw HarcHostError.staleUploadGeneration(
+                        expected: attempt.generation.rawValue,
+                        actual: generation.rawValue
+                    )
+                }
+                guard attempt.boundHostTrust == evidence.hostTrust,
+                      attempt.boundManifest == exactManifest,
+                      attempt.boundFinalizedCapture == evidence.finalizedCapture,
+                      attempt.exactReceipt != nil,
+                      let row = try Row.fetchOne(
+                        db,
+                        sql: """
+                            SELECT object_sha256, exact_bytes
+                            FROM bound_exact_objects
+                            WHERE upload_id = ? AND object_kind = ?
+                            """,
+                        arguments: [
+                            uploadID.description,
+                            ExactObjectKind.recordingManifestV1.rawValue,
+                        ]
+                      ),
+                      row["object_sha256"] as Data? == exactManifest.objectSHA256.rawBytes,
+                      row["exact_bytes"] as Data? == exactManifest.exactBytes else {
+                    throw HarcHostError.manifestEvidenceRequired
+                }
+                return .success(.exactReplay, [])
+            }
+
+            do {
+                let disposition = try attempt.bindFinalManifest(
+                    using: evidence,
+                    generation: generation,
+                    at: boundAt
+                )
+                try self.updateUploadAttempt(attempt, in: db, at: boundAt)
+                try db.execute(
+                    sql: """
+                        INSERT INTO bound_exact_objects (
+                            object_sha256, upload_id, object_kind, exact_bytes, bound_at
+                        ) VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(upload_id, object_kind) DO NOTHING
+                        """,
+                    arguments: [
+                        exactManifest.objectSHA256.rawBytes,
+                        uploadID.description,
+                        ExactObjectKind.recordingManifestV1.rawValue,
+                        exactManifest.exactBytes,
+                        Self.unixTime(boundAt),
+                    ]
+                )
+                guard let persisted = try Row.fetchOne(
+                    db,
+                    sql: """
+                        SELECT object_sha256, exact_bytes
+                        FROM bound_exact_objects
+                        WHERE upload_id = ? AND object_kind = ?
+                        """,
+                    arguments: [
+                        uploadID.description,
+                        ExactObjectKind.recordingManifestV1.rawValue,
+                    ]
+                ),
+                      persisted["object_sha256"] as Data?
+                        == exactManifest.objectSHA256.rawBytes,
+                      persisted["exact_bytes"] as Data?
+                        == exactManifest.exactBytes else {
+                    throw HarcHostError.databaseFailure(
+                        "The durable manifest binding conflicts with the admitted object."
+                    )
+                }
+                let durableIndexes = Set(try UInt32.fetchAll(
+                    db,
+                    sql: "SELECT chunk_index FROM staged_chunks WHERE upload_id = ? AND status = 'durable'",
+                    arguments: [uploadID.description]
+                ))
+                let missing = attempt.declarations.descriptors
+                    .map(\.chunkIndex)
+                    .filter { !durableIndexes.contains($0) }
+                return .success(disposition, missing)
+            } catch let error as TransferValidationError {
+                if attempt.status == .conflictBlocked {
+                    try self.updateUploadAttempt(attempt, in: db, at: boundAt)
+                    try self.insertAuditEvent(
+                        in: db,
+                        occurredAt: boundAt,
+                        severity: .security,
+                        category: "upload-manifest",
+                        code: "bound-object-conflict",
+                        deviceID: context.authenticatedDeviceID
+                    )
+                    try self.pruneAuditEvents(in: db, at: boundAt)
+                }
+                return .conflict(error)
+            }
+        }
+
+        switch result {
+        case .success(.bound, let missing):
+            return .bound(missingChunkIndexes: missing)
+        case .success(.exactReplay, let missing):
+            return .exactReplay(missingChunkIndexes: missing)
+        case .conflict(let error):
+            throw error
+        }
     }
 
     /// Deterministic `@testable` seam. Production precommit authorization
@@ -227,6 +503,7 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         evidence: ValidatedRecordingManifestEvidence,
         at date: Date
     ) async throws -> HostManifestPrecommitDisposition {
@@ -244,6 +521,10 @@ extension HarcHostStore {
             guard var attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
             }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
             _ = try self.authorizeInDatabase(
                 db,
                 context: context,
@@ -324,9 +605,17 @@ extension HarcHostStore {
 
     public func abandonUpload(
         context: AuthenticatedDeviceContext,
-        uploadID: UploadID
-    ) async throws {
-        try await abandonUpload(context: context, uploadID: uploadID, at: now())
+        uploadID: UploadID,
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256
+    ) async throws -> HostAbandonUploadResult {
+        try await abandonUpload(
+            context: context,
+            uploadID: uploadID,
+            generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
+            at: now()
+        )
     }
 
     /// Deterministic `@testable` seam. Production abandonment authorization
@@ -334,14 +623,20 @@ extension HarcHostStore {
     func abandonUpload(
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         at date: Date
-    ) async throws {
+    ) async throws -> HostAbandonUploadResult {
         try await repairSecurityRegistryOnReopen()
         let abandonedAt = date
-        try await dbQueue.write { db in
+        return try await dbQueue.write { db in
             guard var attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
             }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
             _ = try self.authorizeInDatabase(
                 db,
                 context: context,
@@ -358,42 +653,84 @@ extension HarcHostStore {
                     "an accepted canonical publication cannot be abandoned"
                 )
             }
+            guard generation == attempt.generation else {
+                throw HarcHostError.staleUploadGeneration(
+                    expected: attempt.generation.rawValue,
+                    actual: generation.rawValue
+                )
+            }
+            if attempt.status == .abandoned {
+                guard let originalTerminalAt = attempt.terminalAt else {
+                    throw HarcHostError.databaseFailure(
+                        "An abandoned upload is missing its terminal boundary."
+                    )
+                }
+                return HostAbandonUploadResult(
+                    uploadID: uploadID,
+                    terminalReason: .abandoned,
+                    terminalAt: originalTerminalAt
+                )
+            }
             try attempt.abandon(at: abandonedAt)
+            guard let originalTerminalAt = attempt.terminalAt else {
+                throw HarcHostError.databaseFailure(
+                    "An abandoned upload is missing its terminal boundary."
+                )
+            }
             try self.updateUploadAttempt(attempt, in: db, at: abandonedAt)
             try db.execute(
                 sql: """
                     UPDATE upload_generations
-                    SET terminal_reason = 'abandoned', terminal_at = ?
+                    SET terminal_reason = COALESCE(terminal_reason, 'abandoned'),
+                        terminal_at = COALESCE(terminal_at, ?)
                     WHERE upload_id = ? AND generation = ?
                     """,
                 arguments: [
-                    Self.unixTime(abandonedAt),
+                    Self.unixTime(originalTerminalAt),
                     uploadID.description,
                     try Self.sqliteInteger(attempt.generation.rawValue, field: "uploadGeneration"),
                 ]
             )
+            guard db.changesCount == 1 else {
+                throw HarcHostError.databaseFailure(
+                    "The abandoned upload generation is missing."
+                )
+            }
             try db.execute(
                 sql: """
                     UPDATE background_capabilities
-                    SET state = 'abandoned', invalidated_at = ?
+                    SET state = 'abandoned',
+                        invalidated_at = COALESCE(invalidated_at, ?)
                     WHERE upload_id = ? AND invalidated_at IS NULL
                     """,
-                arguments: [Self.unixTime(abandonedAt), uploadID.description]
+                arguments: [Self.unixTime(originalTerminalAt), uploadID.description]
+            )
+            return HostAbandonUploadResult(
+                uploadID: uploadID,
+                terminalReason: .abandoned,
+                terminalAt: originalTerminalAt
             )
         }
     }
 
     func reconciliation(
         for uploadID: UploadID,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         context: AuthenticatedDeviceContext
     ) async throws -> UploadReconciliation {
-        try await reconciliation(for: uploadID, context: context, at: now())
+        try await reconciliation(
+            for: uploadID,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
+            context: context,
+            at: now()
+        )
     }
 
     /// Deterministic `@testable` seam. Production reconciliation authorization
     /// always derives its time from the store's injected clock.
     func reconciliation(
         for uploadID: UploadID,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         context: AuthenticatedDeviceContext,
         at date: Date
     ) async throws -> UploadReconciliation {
@@ -403,6 +740,10 @@ extension HarcHostStore {
             guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
             }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
             _ = try self.authorizeInDatabase(
                 db,
                 context: context,
@@ -478,6 +819,19 @@ extension HarcHostStore {
 // MARK: - Persistence helpers
 
 extension HarcHostStore {
+    /// Compares the request's immutable profile binding while the upload row is
+    /// held in the same database transaction as authorization and any effect.
+    nonisolated func requireUploadProfile(
+        _ expectedUploadProfileSHA256: UploadProfileSHA256,
+        for attempt: UploadAttempt
+    ) throws {
+        guard expectedUploadProfileSHA256 == attempt.frozenProfile.profileSHA256 else {
+            throw TransferValidationError.profileMismatch(
+                field: "uploadProfileSHA256"
+            )
+        }
+    }
+
     /// Reopen refuses semantic drift between the authoritative attempt blob and
     /// the typed declaration/profile columns used for quota and staging checks.
     /// A restored or manually edited HostDB must not reinterpret bound bytes.

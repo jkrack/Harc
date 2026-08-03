@@ -51,6 +51,7 @@ public actor HarcCanonicalIngestService {
     private let canonicalRootAnchor: HostCanonicalRootAnchor
     private let decoder: any HostChunkDecoding
     private let manifestValidator: any RecordingManifestEvidenceValidating
+    private let hostTrust: RecordingHostTrustBinding
     private let receiptIssuer: any RecordingReceiptIssuing
     private let receiptValidator: any RecordingReceiptEvidenceValidating
     private let hostAuthoritySigner: any P256DigestSigner
@@ -92,6 +93,11 @@ public actor HarcCanonicalIngestService {
         canonicalRootAnchor = try HostCanonicalRootAnchor(root: canonicalRoot)
         self.decoder = decoder
         self.manifestValidator = manifestValidator
+        self.hostTrust = try RecordingHostTrustBinding(
+            libraryID: hostStore.expectedMetadata.libraryID,
+            hostAuthorityID: hostStore.expectedMetadata.hostAuthorityID,
+            hostAuthorityPublicKey: hostAuthoritySigner.publicKey
+        )
         self.receiptIssuer = receiptIssuer
         self.receiptValidator = receiptValidator
         self.hostAuthoritySigner = hostAuthoritySigner
@@ -100,15 +106,38 @@ public actor HarcCanonicalIngestService {
         self.now = now
     }
 
+    /// Authenticates and binds a device-signed final manifest using the same
+    /// validator and authority identity that canonical publication will later
+    /// use. Key lookup and binding remain atomic inside HarcHostStore.
+    public func validateAndBindFinalManifestForPrecommit(
+        context: AuthenticatedDeviceContext,
+        uploadID: UploadID,
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
+        exactSignedManifestBytes: Data
+    ) async throws -> HostManifestPrecommitDisposition {
+        try await hostStore.validateAndBindFinalManifestForPrecommit(
+            context: context,
+            uploadID: uploadID,
+            generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
+            exactSignedManifestBytes: exactSignedManifestBytes,
+            hostTrust: hostTrust,
+            validator: manifestValidator
+        )
+    }
+
     /// Starts or resumes one already-manifest-bound upload. Current device and
     /// grant authorization occurs only while the immutable publication plan is
     /// first accepted. Later crash recovery uses that durable acceptance fact.
     public func beginUpload(
         context: AuthenticatedDeviceContext,
+        sessionCapabilities: HostTransferSessionCapabilities,
         request: BeginHostUploadRequest
     ) async throws -> BeginHostUploadDisposition {
         let disposition = try await hostStore.beginUpload(
             context: context,
+            sessionCapabilities: sessionCapabilities,
             request: request
         )
         guard case .alreadyCommitted(let receipt) = disposition else {
@@ -137,10 +166,12 @@ public actor HarcCanonicalIngestService {
     /// revalidated against its persisted artifact identity and PCM claims.
     public func reconcileUpload(
         for uploadID: UploadID,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         context: AuthenticatedDeviceContext
     ) async throws -> UploadReconciliation {
         let reconciliation = try await hostStore.reconciliation(
             for: uploadID,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
             context: context
         )
         guard let receipt = reconciliation.existingReceipt else {
@@ -163,20 +194,46 @@ public actor HarcCanonicalIngestService {
     public func commitUpload(
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
-        generation: UploadGeneration
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256
     ) async throws -> OpaqueExactObjectSlot {
+        try await commitUploadWithDisposition(
+            context: context,
+            uploadID: uploadID,
+            generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256
+        ).exactReceipt
+    }
+
+    /// Commits one upload while preserving whether this invocation drove the
+    /// first successful publication or replayed an already durable receipt.
+    /// A recovered in-progress publication is still the first commit response;
+    /// only a receipt present at admission is an exact replay.
+    public func commitUploadWithDisposition(
+        context: AuthenticatedDeviceContext,
+        uploadID: UploadID,
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256
+    ) async throws -> HostCanonicalCommitDisposition {
         try activityGate.claim(uploadID)
         defer { activityGate.release(uploadID) }
         let preparation = try await hostStore.prepareCanonicalPublication(
             context: context,
             uploadID: uploadID,
-            generation: generation
+            generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256
         )
-        return try await drive(
+        let receipt = try await drive(
             preparation,
             uploadID: uploadID,
             processingHandoff: .asynchronous
         )
+        switch preparation {
+        case .alreadyReceipted:
+            return .exactReplay(receipt)
+        case .work:
+            return .committed(receipt)
+        }
     }
 
     /// Completes one plan without a live client or current grant. This is the

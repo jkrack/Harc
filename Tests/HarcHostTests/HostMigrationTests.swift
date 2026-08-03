@@ -30,6 +30,7 @@ struct HostMigrationTests {
             "staged_chunks",
             "upload_batches",
             "background_capabilities",
+            "background_capability_bindings",
             "bound_exact_objects",
             "publication_journal",
             "audit_events",

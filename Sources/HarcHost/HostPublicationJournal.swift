@@ -43,7 +43,8 @@ extension HarcHostStore {
     func prepareCanonicalPublication(
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
-        generation: UploadGeneration
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256
     ) async throws -> HostCanonicalPublicationPreparation {
         try await repairSecurityRegistryOnReopen()
         let acceptedAt = now()
@@ -52,6 +53,10 @@ extension HarcHostStore {
             guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
             }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
             let authorized = try self.authorizeInDatabase(
                 db,
                 context: context,

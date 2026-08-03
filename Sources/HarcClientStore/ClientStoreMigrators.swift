@@ -270,6 +270,117 @@ enum ClientStoreMigrators {
                 )
                 """)
         }
+        migrator.registerMigration("v3_verified_recording_receipts") { db in
+            // This table is the durable client-side deletion gate. Rows can be
+            // created only by the typed receipt-evidence API; the redundant
+            // binding columns make a later cleanup decision independently
+            // auditable without decoding mutable outbox JSON.
+            try db.execute(sql: """
+                CREATE TABLE verified_recording_receipts (
+                    origin_device_id BLOB NOT NULL CHECK(length(origin_device_id) = 32),
+                    origin_recording_uuid TEXT NOT NULL,
+                    upload_id TEXT NOT NULL UNIQUE,
+                    library_id TEXT NOT NULL,
+                    host_authority_id BLOB NOT NULL CHECK(length(host_authority_id) = 32),
+                    authority_public_key_x963 BLOB NOT NULL
+                        CHECK(length(authority_public_key_x963) = 65),
+                    producing_device_id BLOB NOT NULL
+                        CHECK(length(producing_device_id) = 32),
+                    receipt_object_sha256 BLOB NOT NULL UNIQUE
+                        CHECK(length(receipt_object_sha256) = 32),
+                    exact_receipt_bytes BLOB NOT NULL
+                        CHECK(length(exact_receipt_bytes) > 0),
+                    manifest_object_sha256 BLOB NOT NULL
+                        CHECK(length(manifest_object_sha256) = 32),
+                    upload_profile_sha256 BLOB NOT NULL
+                        CHECK(length(upload_profile_sha256) = 32),
+                    canonical_pcm_sha256 BLOB NOT NULL
+                        CHECK(length(canonical_pcm_sha256) = 32),
+                    total_canonical_frames INTEGER NOT NULL
+                        CHECK(total_canonical_frames > 0),
+                    canonical_sample_rate_hz INTEGER NOT NULL
+                        CHECK(canonical_sample_rate_hz > 0),
+                    canonical_channel_count INTEGER NOT NULL
+                        CHECK(canonical_channel_count > 0),
+                    canonical_pcm_encoding TEXT NOT NULL,
+                    canonical_recording_id TEXT NOT NULL,
+                    canonical_revision INTEGER NOT NULL
+                        CHECK(canonical_revision > 0),
+                    change_cursor INTEGER NOT NULL CHECK(change_cursor > 0),
+                    receipt_id TEXT NOT NULL UNIQUE,
+                    durable_commit_time_ms INTEGER NOT NULL
+                        CHECK(durable_commit_time_ms > 0),
+                    processing_state TEXT NOT NULL CHECK(processing_state = 'pending'),
+                    verified_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (origin_device_id, origin_recording_uuid),
+                    UNIQUE (
+                        origin_device_id, origin_recording_uuid,
+                        receipt_object_sha256
+                    ),
+                    CHECK(producing_device_id = origin_device_id),
+                    FOREIGN KEY (origin_device_id, origin_recording_uuid)
+                        REFERENCES finalized_captures(
+                            origin_device_id, origin_recording_uuid
+                        ) ON DELETE RESTRICT,
+                    FOREIGN KEY (upload_id)
+                        REFERENCES upload_attempts(upload_id) ON DELETE RESTRICT,
+                    FOREIGN KEY (library_id, host_authority_id)
+                        REFERENCES trust_namespaces(
+                            library_id, host_authority_id
+                        ) ON DELETE RESTRICT,
+                    FOREIGN KEY (receipt_object_sha256)
+                        REFERENCES exact_objects(object_sha256) ON DELETE RESTRICT,
+                    FOREIGN KEY (manifest_object_sha256)
+                        REFERENCES exact_objects(object_sha256) ON DELETE RESTRICT
+                )
+                """)
+
+            // SQLite cannot widen the v1 cleanup CHECK in place. Rebuild it
+            // while preserving every pre-receipt intent. The composite FK
+            // means an `eligible` row cannot point merely at arbitrary receipt-
+            // shaped bytes in exact_objects; it must point at the verified row
+            // for this exact origin recording.
+            try db.execute(sql: """
+                CREATE TABLE cleanup_intents_v3 (
+                    origin_device_id BLOB NOT NULL,
+                    origin_recording_uuid TEXT NOT NULL,
+                    requested_at_ms INTEGER NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'awaitingVerifiedReceipt',
+                    verified_receipt_sha256 BLOB,
+                    PRIMARY KEY (origin_device_id, origin_recording_uuid),
+                    CHECK(
+                        (state = 'awaitingVerifiedReceipt'
+                            AND verified_receipt_sha256 IS NULL)
+                        OR
+                        (state = 'eligible'
+                            AND verified_receipt_sha256 IS NOT NULL
+                            AND length(verified_receipt_sha256) = 32)
+                    ),
+                    FOREIGN KEY (origin_device_id, origin_recording_uuid)
+                        REFERENCES finalized_captures(
+                            origin_device_id, origin_recording_uuid
+                        ) ON DELETE RESTRICT,
+                    FOREIGN KEY (
+                        origin_device_id, origin_recording_uuid,
+                        verified_receipt_sha256
+                    ) REFERENCES verified_recording_receipts (
+                        origin_device_id, origin_recording_uuid,
+                        receipt_object_sha256
+                    ) ON DELETE RESTRICT
+                )
+                """)
+            try db.execute(sql: """
+                INSERT INTO cleanup_intents_v3 (
+                    origin_device_id, origin_recording_uuid,
+                    requested_at_ms, state, verified_receipt_sha256
+                )
+                SELECT origin_device_id, origin_recording_uuid,
+                       requested_at_ms, state, verified_receipt_sha256
+                FROM cleanup_intents
+                """)
+            try db.execute(sql: "DROP TABLE cleanup_intents")
+            try db.execute(sql: "ALTER TABLE cleanup_intents_v3 RENAME TO cleanup_intents")
+        }
         return migrator
     }
 

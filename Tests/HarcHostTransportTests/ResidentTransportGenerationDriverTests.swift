@@ -40,6 +40,15 @@ struct ResidentTransportGenerationDriverTests {
         await admissionBarrier.waitUntilBothArrived()
 
         let beforeRelease = await events.values
+        let prepareIndex = try #require(
+            beforeRelease.firstIndex(of: "bonjour.prepare")
+        )
+        let uploadStartIndex = try #require(
+            beforeRelease.firstIndex(of: "upload.start")
+        )
+        let grpcStartIndex = try #require(
+            beforeRelease.firstIndex(of: "grpc.start")
+        )
         let withdrawIndex = try #require(
             beforeRelease.firstIndex(of: "bonjour.withdraw")
         )
@@ -49,6 +58,8 @@ struct ResidentTransportGenerationDriverTests {
         let uploadAdmissionIndex = try #require(
             beforeRelease.firstIndex(of: "upload.admission.stop")
         )
+        #expect(prepareIndex < uploadStartIndex)
+        #expect(uploadStartIndex < grpcStartIndex)
         #expect(withdrawIndex < grpcAdmissionIndex)
         #expect(withdrawIndex < uploadAdmissionIndex)
         #expect(!beforeRelease.contains("grpc.drain"))
@@ -86,7 +97,12 @@ struct ResidentTransportGenerationDriverTests {
 
         #expect(await driver.activeGenerationID == nil)
         let values = await events.values
-        #expect(values.starts(with: ["grpc.start", "upload.start"]))
+        #expect(values.starts(with: [
+            "bonjour.prepare.begin",
+            "bonjour.prepare",
+            "upload.start",
+        ]))
+        #expect(!values.contains("grpc.start"))
         #expect(values.contains("bonjour.withdraw"))
         #expect(values.contains("upload.stop"))
         #expect(values.contains("grpc.stop"))
@@ -485,15 +501,18 @@ private actor TestGenerationPublisher: HarcBonjourGenerationPublisherBoundary {
         self.publishGate = publishGate
     }
 
-    func publishGeneration(id: UUID) async throws {
-        await events.append("bonjour.publish.begin")
+    func prepareAdvertisement(
+        forGenerationID id: UUID,
+        listenerFactory _: HarcGRPCNWListenerFactory
+    ) async throws {
+        await events.append("bonjour.prepare.begin")
         if let publishGate { await publishGate.enterAndWait() }
         guard !withdrawn.contains(id) else {
-            await events.append("bonjour.publish.tombstoned")
+            await events.append("bonjour.prepare.tombstoned")
             return
         }
         advertisedGenerationID = id
-        await events.append("bonjour.publish")
+        await events.append("bonjour.prepare")
     }
 
     func withdrawAdvertisement(forGenerationID id: UUID) async {

@@ -48,7 +48,7 @@ struct HostActiveStagingWrite: Hashable, Sendable {
 }
 
 private enum FinalStagingAcknowledgement {
-    case acknowledged
+    case acknowledged(Date)
     case rejectedByHost(HarcHostError, Date)
     case rejectedByTransfer(TransferValidationError, Date)
 }
@@ -89,16 +89,22 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         chunkIndex: UInt32,
+        claimedChunkID: ChunkID,
         declaredEncodedLength: UInt64,
+        claimedEncodedSHA256: EncodedChunkSHA256,
         bodyFragments: [Data]
     ) async throws -> StagedChunkDisposition {
         try await stageChunk(
             context: context,
             uploadID: uploadID,
             generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
             chunkIndex: chunkIndex,
+            claimedChunkID: claimedChunkID,
             declaredEncodedLength: declaredEncodedLength,
+            claimedEncodedSHA256: claimedEncodedSHA256,
             body: .fragments(bodyFragments)
         )
     }
@@ -109,8 +115,11 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         chunkIndex: UInt32,
+        claimedChunkID: ChunkID,
         declaredEncodedLength: UInt64,
+        claimedEncodedSHA256: EncodedChunkSHA256,
         bodyFragments: [Data],
         at date: Date
     ) async throws -> StagedChunkDisposition {
@@ -118,8 +127,11 @@ extension HarcHostStore {
             context: context,
             uploadID: uploadID,
             generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
             chunkIndex: chunkIndex,
+            claimedChunkID: claimedChunkID,
             declaredEncodedLength: declaredEncodedLength,
+            claimedEncodedSHA256: claimedEncodedSHA256,
             body: .fragments(bodyFragments),
             at: date
         )
@@ -133,16 +145,22 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         chunkIndex: UInt32,
+        claimedChunkID: ChunkID,
         declaredEncodedLength: UInt64,
+        claimedEncodedSHA256: EncodedChunkSHA256,
         body: HostChunkBody
     ) async throws -> StagedChunkDisposition {
         try await stageChunk(
             context: context,
             uploadID: uploadID,
             generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
             chunkIndex: chunkIndex,
+            claimedChunkID: claimedChunkID,
             declaredEncodedLength: declaredEncodedLength,
+            claimedEncodedSHA256: claimedEncodedSHA256,
             body: body,
             at: now()
         )
@@ -154,8 +172,11 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         chunkIndex: UInt32,
+        claimedChunkID: ChunkID,
         declaredEncodedLength: UInt64,
+        claimedEncodedSHA256: EncodedChunkSHA256,
         body: HostChunkBody,
         at date: Date
     ) async throws -> StagedChunkDisposition {
@@ -180,6 +201,17 @@ extension HarcHostStore {
         activeStagingWrites.insert(activeWrite)
         defer { activeStagingWrites.remove(activeWrite) }
         let stagedAt = try freshStagingAuthorizationTime(notBefore: date)
+        try await validateStagingRequestBeforeMaintenance(
+            context: context,
+            uploadID: uploadID,
+            generation: generation,
+            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
+            chunkIndex: chunkIndex,
+            claimedChunkID: claimedChunkID,
+            declaredEncodedLength: declaredEncodedLength,
+            claimedEncodedSHA256: claimedEncodedSHA256,
+            at: stagedAt
+        )
         try await reconcileStagedChunkBeforeWrite(uploadID: uploadID, chunkIndex: chunkIndex)
         _ = try await reapEligibleStaging(at: stagedAt)
 
@@ -187,7 +219,7 @@ extension HarcHostStore {
             let descriptor: LogicalChunkDescriptor
             let relativePath: String
             let oldRelativePath: String?
-            let replay: DurableChunkStatus?
+            let replay: HostDurableChunkAcknowledgement?
             let grantExpiresAt: Date?
             let generationExpiresAt: Date
         }
@@ -196,6 +228,10 @@ extension HarcHostStore {
             guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
             }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
             _ = try self.authorizeInDatabase(
                 db,
                 context: context,
@@ -214,6 +250,12 @@ extension HarcHostStore {
             }
             guard let descriptor = attempt.declarations.descriptors.first(where: { $0.chunkIndex == chunkIndex }) else {
                 throw HarcHostError.uploadConflict("Chunk bytes arrived before an immutable declaration.")
+            }
+            guard descriptor.chunkID == claimedChunkID else {
+                throw TransferValidationError.profileMismatch(field: "chunkID")
+            }
+            guard descriptor.encodedSHA256 == claimedEncodedSHA256 else {
+                throw TransferValidationError.profileMismatch(field: "encodedSHA256")
             }
             guard descriptor.encodedByteLength == declaredEncodedLength else {
                 throw HarcHostError.encodedLengthMismatch(
@@ -248,14 +290,25 @@ extension HarcHostStore {
                     at: stagedAt
                 )
                 if existingStatus == "durable" || restoredDurableReap {
+                    guard let rawDurableAt = existing["durable_acknowledged_at"] as Double? else {
+                        throw HarcHostError.databaseFailure(
+                            "A durable staged chunk is missing its original acknowledgement time."
+                        )
+                    }
                     return Reservation(
                         descriptor: descriptor,
                         relativePath: existing["generated_relative_path"],
                         oldRelativePath: nil,
-                        replay: DurableChunkStatus(
-                            chunkIndex: descriptor.chunkIndex,
-                            chunkID: descriptor.chunkID,
-                            encodedSHA256: descriptor.encodedSHA256
+                        replay: HostDurableChunkAcknowledgement(
+                            uploadID: uploadID,
+                            generation: generation,
+                            uploadProfileSHA256: expectedUploadProfileSHA256,
+                            durableChunk: DurableChunkStatus(
+                                chunkIndex: descriptor.chunkIndex,
+                                chunkID: descriptor.chunkID,
+                                encodedSHA256: descriptor.encodedSHA256
+                            ),
+                            durableAt: Self.date(rawDurableAt)
                         ),
                         grantExpiresAt: grantExpiresAt,
                         generationExpiresAt: attempt.generationExpiresAt
@@ -432,6 +485,7 @@ extension HarcHostStore {
                     context: context,
                     uploadID: uploadID,
                     generation: generation,
+                    expectedUploadProfileSHA256: expectedUploadProfileSHA256,
                     chunkIndex: chunkIndex,
                     relativePath: reservation.relativePath,
                     timeFloor: authorizationTimeFloor
@@ -443,6 +497,7 @@ extension HarcHostStore {
                         context: context,
                         uploadID: uploadID,
                         generation: generation,
+                        expectedUploadProfileSHA256: expectedUploadProfileSHA256,
                         chunkIndex: chunkIndex,
                         relativePath: reservation.relativePath,
                         timeFloor: authorizationTimeFloor
@@ -551,6 +606,14 @@ extension HarcHostStore {
                 throw HarcHostError.uploadNotFound
             }
             do {
+                try self.requireUploadProfile(
+                    expectedUploadProfileSHA256,
+                    for: attempt
+                )
+            } catch let error as TransferValidationError {
+                return .rejectedByTransfer(error, acknowledgedAt)
+            }
+            do {
                 _ = try self.authorizeInDatabase(
                     db,
                     context: context,
@@ -593,11 +656,24 @@ extension HarcHostStore {
             guard db.changesCount == 1 else {
                 throw HarcHostError.stagingIO("The durable staging acknowledgement lost its journal reservation.")
             }
-            return .acknowledged
+            return .acknowledged(acknowledgedAt)
         }
         switch acknowledgement {
-        case .acknowledged:
-            break
+        case .acknowledged(let acknowledgedAt):
+            try await stagingFailureInjector.hit(.afterDatabaseAcknowledgement)
+            return .durablyAccepted(
+                HostDurableChunkAcknowledgement(
+                    uploadID: uploadID,
+                    generation: generation,
+                    uploadProfileSHA256: expectedUploadProfileSHA256,
+                    durableChunk: DurableChunkStatus(
+                        chunkIndex: descriptor.chunkIndex,
+                        chunkID: descriptor.chunkID,
+                        encodedSHA256: descriptor.encodedSHA256
+                    ),
+                    durableAt: acknowledgedAt
+                )
+            )
         case .rejectedByHost(let error, let rejectedAt):
             try await rejectStagingReservation(
                 uploadID: uploadID,
@@ -620,14 +696,6 @@ extension HarcHostStore {
             }
             throw error
         }
-        try await stagingFailureInjector.hit(.afterDatabaseAcknowledgement)
-        return .durablyAccepted(
-            DurableChunkStatus(
-                chunkIndex: descriptor.chunkIndex,
-                chunkID: descriptor.chunkID,
-                encodedSHA256: descriptor.encodedSHA256
-            )
-        )
     }
 }
 
@@ -1071,6 +1139,7 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         chunkIndex: UInt32,
         relativePath: String,
         timeFloor: StagingAuthorizationTimeFloor
@@ -1090,6 +1159,7 @@ extension HarcHostStore {
                             context: context,
                             uploadID: uploadID,
                             generation: generation,
+                            expectedUploadProfileSHA256: expectedUploadProfileSHA256,
                             chunkIndex: chunkIndex,
                             relativePath: relativePath,
                             timeFloor: timeFloor
@@ -1120,6 +1190,7 @@ extension HarcHostStore {
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,
         generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
         chunkIndex: UInt32,
         relativePath: String,
         timeFloor: StagingAuthorizationTimeFloor
@@ -1130,6 +1201,10 @@ extension HarcHostStore {
             guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
             }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
             _ = try self.authorizeInDatabase(
                 db,
                 context: context,
@@ -1169,6 +1244,62 @@ extension HarcHostStore {
                 )
             }
             return checkedAt
+        }
+    }
+
+    /// Fail request-binding mismatches before request-triggered staging repair
+    /// or quota reaping. The reservation transaction repeats every check so
+    /// the eventual journal effect never relies on this preflight snapshot.
+    private func validateStagingRequestBeforeMaintenance(
+        context: AuthenticatedDeviceContext,
+        uploadID: UploadID,
+        generation: UploadGeneration,
+        expectedUploadProfileSHA256: UploadProfileSHA256,
+        chunkIndex: UInt32,
+        claimedChunkID: ChunkID,
+        declaredEncodedLength: UInt64,
+        claimedEncodedSHA256: EncodedChunkSHA256,
+        at checkedAt: Date
+    ) async throws {
+        try await dbQueue.read { db in
+            guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
+                throw HarcHostError.uploadNotFound
+            }
+            try self.requireUploadProfile(
+                expectedUploadProfileSHA256,
+                for: attempt
+            )
+            _ = try self.authorizeInDatabase(
+                db,
+                context: context,
+                requiredScope: .recordingUploadOwn,
+                objectOwner: attempt.ownerDeviceID,
+                at: checkedAt
+            )
+            do {
+                try attempt.requireActive(generation: generation, at: checkedAt)
+            } catch TransferValidationError.staleUploadGeneration(let expected, let actual) {
+                throw HarcHostError.staleUploadGeneration(expected: expected, actual: actual)
+            }
+            guard let descriptor = attempt.declarations.descriptors.first(where: {
+                $0.chunkIndex == chunkIndex
+            }) else {
+                throw HarcHostError.uploadConflict(
+                    "Chunk bytes arrived before an immutable declaration."
+                )
+            }
+            guard descriptor.chunkID == claimedChunkID else {
+                throw TransferValidationError.profileMismatch(field: "chunkID")
+            }
+            guard descriptor.encodedSHA256 == claimedEncodedSHA256 else {
+                throw TransferValidationError.profileMismatch(field: "encodedSHA256")
+            }
+            guard descriptor.encodedByteLength == declaredEncodedLength else {
+                throw HarcHostError.encodedLengthMismatch(
+                    expected: descriptor.encodedByteLength,
+                    actual: declaredEncodedLength
+                )
+            }
         }
     }
 

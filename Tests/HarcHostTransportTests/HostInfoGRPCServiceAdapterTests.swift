@@ -229,7 +229,11 @@ struct HostInfoGRPCServiceAdapterTests {
 
         #expect(duplicateKnownFields.count > limit)
         #expect(try decoded.serializedData().count <= limit)
-        #expect(HarcGRPCServerRuntime.maximumRequestPayloadBytes == limit)
+        #expect(
+            HarcGRPCRequestPayloadGate.maximumPayloadBytes(
+                for: "/harc.v1.HostInfoService/GetHostInfo"
+            ) == limit
+        )
         let sourceBindingProvider = try HarcHostRPCSourceBindingProvider(
             hostScopedSecret: Data(repeating: 0xA2, count: 32)
         )
@@ -237,7 +241,8 @@ struct HostInfoGRPCServiceAdapterTests {
             HarcGRPCServerRuntime.bootstrapTransportConfiguration(
                 sourceBindingProvider: sourceBindingProvider
             ).rpc
-                .maxRequestPayloadSize == limit
+                .maxRequestPayloadSize
+                == HarcGRPCRequestPayloadGate.maximumAudioPayloadBytes
         )
     }
 

@@ -287,6 +287,8 @@ public enum ClientStoreError: Error, Equatable, Sendable {
     case missingRow(entity: String)
     case invalidLocalArtifactURL(String)
     case localArtifactIntegrityBlocked(origin: OriginRecordingID)
+    case verifiedReceiptBindingMismatch(field: String)
+    case conflictingVerifiedReceipt(origin: OriginRecordingID)
     case cleanupRequiresFutureVerifiedReceiptTransaction
 }
 
@@ -383,8 +385,12 @@ extension ClientStoreError: LocalizedError {
             "Transfer artifacts require a local file URL: \(value)"
         case .localArtifactIntegrityBlocked:
             "Immutable local upload bytes are missing or changed; restore them exactly or abandon the attempt."
+        case .verifiedReceiptBindingMismatch(let field):
+            "Validated recording receipt does not match the durable local \(field)."
+        case .conflictingVerifiedReceipt(let origin):
+            "Recording \(origin.recordingUUID.uuidString.lowercased()) already has conflicting verified receipt evidence."
         case .cleanupRequiresFutureVerifiedReceiptTransaction:
-            "Cleanup cannot become eligible before the future verified-receipt transaction."
+            "Cleanup eligibility can be granted only by the atomic verified-receipt transaction."
         }
     }
 }
