@@ -399,15 +399,14 @@ extension HarcHostStore {
             try removeGeneratedStagingObjectIfSafe(relativePath: oldRelativePath)
         }
 
-        let destination = try generatedStagingURL(relativePath: reservation.relativePath)
         let descriptor = reservation.descriptor
-        let fileDescriptor = open(
-            destination.path,
-            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-            S_IRUSR | S_IWUSR
+        let objectName = try HostStagingDirectory.objectName(
+            forGeneratedRelativePath: reservation.relativePath
         )
-        guard fileDescriptor >= 0 else {
-            let openError = String(cString: strerror(errno))
+        let fileDescriptor: Int32
+        do {
+            fileDescriptor = try stagingDirectory.createExclusiveObject(named: objectName)
+        } catch {
             try await rejectStagingReservation(
                 uploadID: uploadID,
                 chunkIndex: chunkIndex,
@@ -415,7 +414,7 @@ extension HarcHostStore {
                 reason: .missingBytes,
                 at: stagedAt
             )
-            throw HarcHostError.stagingIO(openError)
+            throw error
         }
         defer { close(fileDescriptor) }
         try await stagingFailureInjector.hit(.afterFileCreation)
@@ -516,11 +515,13 @@ extension HarcHostStore {
             )
             throw HarcHostError.encodedHashMismatch
         }
+        try stagingDirectory.validateOpenObject(fileDescriptor, named: objectName)
         guard fsync(fileDescriptor) == 0 else {
             throw HarcHostError.stagingIO(String(cString: strerror(errno)))
         }
         try await stagingFailureInjector.hit(.afterFileSynchronization)
         try synchronizeStagingObjectsDirectory()
+        try stagingDirectory.validateOpenObject(fileDescriptor, named: objectName)
         try await stagingFailureInjector.hit(.afterDirectorySynchronization)
 
         let postSynchronizationCheckAt = try await authorizationTimeFloor.advance(to: now())
@@ -634,9 +635,9 @@ extension HarcHostStore {
 
 extension HarcHostStore {
     func reconcileStagingJournalOnReopen() async throws {
-        try Self.ensureSafeStagingRoot(stagingRoot)
-        try Self.ensureHostGeneratedDirectory(stagingRoot.appendingPathComponent("objects", isDirectory: true))
-        try synchronizeDirectory(stagingRoot)
+        try stagingDirectory.validate()
+        try stagingDirectory.synchronizeRoot()
+        try stagingDirectory.synchronizeObjects()
         // Capture the namespace before awaiting the database snapshot. A new
         // writer that reserves and creates a path while the read is suspended
         // is not in this enumeration and cannot be mistaken for an orphan.
@@ -876,21 +877,12 @@ extension HarcHostStore {
     /// are outside the protocol-owned object namespace; valid UUID chunk names
     /// (including symlinks or non-regular entries) are always reconciled.
     private func generatedStagingRelativePathsOnDisk() throws -> Set<String> {
-        let objects = stagingRoot.appendingPathComponent("objects", isDirectory: true)
-        let entries: [URL]
-        do {
-            entries = try FileManager.default.contentsOfDirectory(
-                at: objects,
-                includingPropertiesForKeys: nil,
-                options: []
-            )
-        } catch {
-            throw HarcHostError.stagingIO(error.localizedDescription)
-        }
         var paths: Set<String> = []
-        for entry in entries {
-            let relativePath = "objects/\(entry.lastPathComponent)"
-            guard (try? generatedStagingURL(relativePath: relativePath)) != nil else {
+        for name in try stagingDirectory.generatedObjectNames() {
+            let relativePath = "objects/\(name)"
+            guard (try? HostStagingDirectory.objectName(
+                forGeneratedRelativePath: relativePath
+            )) != nil else {
                 continue
             }
             paths.insert(relativePath)
@@ -905,9 +897,9 @@ extension HarcHostStore {
         uploadID: UploadID,
         chunkIndex: UInt32
     ) async throws {
-        try Self.ensureSafeStagingRoot(stagingRoot)
-        try Self.ensureHostGeneratedDirectory(stagingRoot.appendingPathComponent("objects", isDirectory: true))
-        try synchronizeDirectory(stagingRoot)
+        try stagingDirectory.validate()
+        try stagingDirectory.synchronizeRoot()
+        try stagingDirectory.synchronizeObjects()
         guard let row = try await dbQueue.read({ db in
             try Row.fetchOne(
                 db,
@@ -979,23 +971,18 @@ extension HarcHostStore {
         expectedLength: UInt64,
         expectedDigest: Data
     ) throws -> StagingInspection {
-        let url: URL
-        do {
-            url = try generatedStagingURL(relativePath: relativePath)
-        } catch {
-            return .rejected(.missingBytes)
-        }
-
-        var statBuffer = stat()
-        guard lstat(url.path, &statBuffer) == 0 else { return .rejected(.missingBytes) }
-        guard (statBuffer.st_mode & S_IFMT) == S_IFREG else {
+        guard let objectName = try? HostStagingDirectory.objectName(
+            forGeneratedRelativePath: relativePath
+        ) else {
             return .rejected(.missingBytes)
         }
         // Reopen recovery must be able to make a pre-ACK file durable before
         // changing its journal row to durable. O_RDWR is intentional: fsync on
         // a read-only descriptor is not a portable durability contract.
-        let descriptor = open(url.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
-        guard descriptor >= 0 else { return .rejected(.missingBytes) }
+        guard let descriptor = try? stagingDirectory.openExistingObject(
+            named: objectName,
+            writable: true
+        ) else { return .rejected(.missingBytes) }
         defer { close(descriptor) }
 
         var hasher = SHA256()
@@ -1018,6 +1005,7 @@ extension HarcHostStore {
         guard fsync(descriptor) == 0 else {
             throw HarcHostError.stagingIO(String(cString: strerror(errno)))
         }
+        try stagingDirectory.validateOpenObject(descriptor, named: objectName)
         try synchronizeStagingObjectsDirectory()
         return .durable(length: length, digest: digest)
     }
@@ -1072,19 +1060,7 @@ extension HarcHostStore {
     }
 
     nonisolated private func synchronizeStagingObjectsDirectory() throws {
-        let objects = stagingRoot.appendingPathComponent("objects", isDirectory: true)
-        try synchronizeDirectory(objects)
-    }
-
-    nonisolated private func synchronizeDirectory(_ directory: URL) throws {
-        let descriptor = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard descriptor >= 0 else {
-            throw HarcHostError.stagingIO(String(cString: strerror(errno)))
-        }
-        defer { close(descriptor) }
-        guard fsync(descriptor) == 0 else {
-            throw HarcHostError.stagingIO(String(cString: strerror(errno)))
-        }
+        try stagingDirectory.synchronizeObjects()
     }
 
     /// Races the next transport fragment against a bounded authorization
@@ -1426,9 +1402,10 @@ extension HarcHostStore {
         )
     }
 
-    /// Deletes only staging bytes whose abandoned/expired retention window has
-    /// elapsed. Upload identity, declarations, generation history, and bound
-    /// object identity remain in HostDB for deterministic replay decisions.
+    /// Deletes staging bytes only after a durable receipt, or after an
+    /// abandoned/expired attempt's retention window has elapsed. Upload
+    /// identity, declarations, generation history, and bound object identity
+    /// remain in HostDB for deterministic replay decisions.
     @discardableResult
     public func reapEligibleStaging() async throws -> Int {
         try await reapEligibleStaging(at: now())
@@ -1454,6 +1431,13 @@ extension HarcHostStore {
             )
             return try rows.compactMap { row in
                 let attempt = try Self.decode(UploadAttempt.self, from: row["attempt_json"] as Data)
+                guard try Self.publicationAllowsStagingReap(
+                    attempt,
+                    uploadID: row["upload_id"] as String,
+                    in: db
+                ) else {
+                    return nil
+                }
                 // An interrupted claim must remain discoverable even if its
                 // upload was reopened after the claim transaction committed.
                 // The exact-claim transaction below either restores or finishes it.
@@ -1549,7 +1533,12 @@ extension HarcHostStore {
             eligibilityDate = attempt.terminalAt
         case .active:
             eligibilityDate = attempt.generationExpiresAt
-        case .conflictBlocked, .committed:
+        case .committed:
+            // UploadAttempt can enter this state only after exact validated
+            // receipt evidence is durably stored. Canonical publication no
+            // longer depends on the encoded staging objects at that point.
+            return true
+        case .conflictBlocked:
             eligibilityDate = nil
         }
         guard let eligibilityDate else { return false }
@@ -1584,6 +1573,29 @@ extension HarcHostStore {
                 UploadAttempt.self,
                 from: row["attempt_json"] as Data
             )
+            guard try Self.publicationAllowsStagingReap(
+                attempt,
+                uploadID: candidate.uploadID,
+                in: db
+            ) else {
+                if row["status"] as String == "reaping",
+                   let claimID = row["reap_claim_id"] as String?,
+                   let priorStatus = row["reap_prior_status"] as String? {
+                    try self.restoreStagingReapClaim(
+                        StagingReapClaim(
+                            uploadID: candidate.uploadID,
+                            chunkIndex: candidate.chunkIndex,
+                            generation: candidate.generation,
+                            relativePath: candidate.relativePath,
+                            claimID: claimID,
+                            priorStatus: priorStatus
+                        ),
+                        in: db,
+                        at: reapedAt
+                    )
+                }
+                return nil
+            }
             guard candidate.generation <= attempt.generation.rawValue else {
                 throw HarcHostError.databaseFailure(
                     "A staged chunk belongs to a future upload generation."
@@ -1735,7 +1747,11 @@ extension HarcHostStore {
             if (row["object_deleted_at"] as Double?) != nil {
                 return true
             }
-            guard Self.stagingRetentionIsEligible(
+            guard try Self.publicationAllowsStagingReap(
+                attempt,
+                uploadID: claim.uploadID,
+                in: db
+            ), Self.stagingRetentionIsEligible(
                 attempt,
                 at: reapedAt,
                 retention: retention
@@ -1784,15 +1800,12 @@ extension HarcHostStore {
     ) async throws {
         let objectStillExists: Bool
         do {
-            let url = try generatedStagingURL(relativePath: claim.relativePath)
-            var statBuffer = stat()
-            if lstat(url.path, &statBuffer) == 0 {
-                objectStillExists = true
-            } else if errno == ENOENT {
-                objectStillExists = false
-            } else {
-                throw HarcHostError.stagingIO(String(cString: strerror(errno)))
-            }
+            let objectName = try HostStagingDirectory.objectName(
+                forGeneratedRelativePath: claim.relativePath
+            )
+            objectStillExists = try stagingDirectory.objectEntryIsPresent(
+                named: objectName
+            )
         } catch HarcHostError.unsafeStagingPath {
             // A corrupted path is never dereferenced. Keep the claim fail-closed
             // and let bootstrap's exact repair discard its journal row.
@@ -1845,7 +1858,11 @@ extension HarcHostStore {
                 UploadAttempt.self,
                 from: row["attempt_json"] as Data
             )
-            if !Self.stagingRetentionIsEligible(
+            if try !Self.publicationAllowsStagingReap(
+                attempt,
+                uploadID: claim.uploadID,
+                in: db
+            ) || !Self.stagingRetentionIsEligible(
                 attempt,
                 at: checkedAt,
                 retention: retention
@@ -1878,57 +1895,37 @@ extension HarcHostStore {
         }
     }
 
-    nonisolated private func generatedStagingURL(relativePath: String) throws -> URL {
-        guard !relativePath.hasPrefix("/"),
-              !relativePath.contains("\\"),
-              !relativePath.contains("\0") else {
-            throw HarcHostError.unsafeStagingPath
-        }
-        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
-        guard components.count == 2,
-              components[0] == "objects",
-              components[1].hasSuffix(".chunk"),
-              !components.contains(".."),
-              !components.contains(".") else {
-            throw HarcHostError.unsafeStagingPath
-        }
-        let stem = components[1].dropLast(".chunk".count)
-        guard UUID(uuidString: String(stem)) != nil else {
-            throw HarcHostError.unsafeStagingPath
-        }
-        try Self.ensureSafeStagingRoot(stagingRoot)
-        let objects = stagingRoot.appendingPathComponent("objects", isDirectory: true)
-        do {
-            try Self.ensureSafeStagingRoot(objects)
-        } catch {
-            throw HarcHostError.unsafeStagingPath
-        }
-        let candidate = objects.appendingPathComponent(String(components[1]), isDirectory: false)
-            .standardizedFileURL
-        guard candidate.deletingLastPathComponent() == objects.standardizedFileURL else {
-            throw HarcHostError.unsafeStagingPath
-        }
-        return candidate
+    /// An accepted publication plan owns its staged inputs until its exact
+    /// receipt becomes durable. This closes the race where an old upload lease
+    /// expires while crash recovery is still between canonical checkpoints.
+    nonisolated private static func publicationAllowsStagingReap(
+        _ attempt: UploadAttempt,
+        uploadID: String,
+        in db: Database
+    ) throws -> Bool {
+        if attempt.status == .committed { return true }
+        return try Int.fetchOne(
+            db,
+            sql: "SELECT 1 FROM publication_journal WHERE upload_id = ? LIMIT 1",
+            arguments: [uploadID]
+        ) == nil
     }
 
     nonisolated private func removeGeneratedStagingObject(relativePath: String) throws {
-        let url = try generatedStagingURL(relativePath: relativePath)
-        if unlink(url.path) == 0 {
-            try synchronizeStagingObjectsDirectory()
-        } else if errno != ENOENT {
-            throw HarcHostError.stagingIO(String(cString: strerror(errno)))
-        }
+        let objectName = try HostStagingDirectory.objectName(
+            forGeneratedRelativePath: relativePath
+        )
+        try stagingDirectory.removeGeneratedEntryIfPresent(named: objectName)
     }
 
     /// A corrupted journal path must never become an arbitrary unlink. Valid
     /// generated paths still propagate unlink/fsync failures so the database
     /// cannot forget bytes whose directory removal is not durable.
     private func removeGeneratedStagingObjectIfSafe(relativePath: String) throws {
-        do {
-            try removeGeneratedStagingObject(relativePath: relativePath)
-        } catch HarcHostError.unsafeStagingPath {
-            return
-        }
+        guard let objectName = try? HostStagingDirectory.objectName(
+            forGeneratedRelativePath: relativePath
+        ) else { return }
+        try stagingDirectory.removeGeneratedEntryIfPresent(named: objectName)
     }
 
     nonisolated private static func stagingChunkIndex(_ value: Int64) throws -> UInt32 {

@@ -179,7 +179,8 @@ enum TransferFixtures {
             canonicalRevision: .initial,
             changeCursor: ChangeCursor(1),
             receiptID: uuid(801),
-            durableCommitTime: baseDate.addingTimeInterval(10)
+            durableCommitTime: baseDate.addingTimeInterval(10),
+            processingState: .pending
         )
     }
 }

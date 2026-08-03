@@ -102,10 +102,24 @@ fi
 
 HARC_HOST_BOUNDARY_OUTPUT=$(<"$HARC_HOST_BOUNDARY_DIAGNOSTICS")
 HARC_HOST_TESTING_SEAM_ERROR="'replaceForTesting' is inaccessible due to 'internal' protection level"
+HARC_HOST_BEGIN_UPLOAD_ERROR="'beginUpload' is inaccessible due to 'internal' protection level"
+HARC_HOST_RECONCILIATION_ERROR="'reconciliation' is inaccessible due to 'internal' protection level"
 if [[ "$HARC_HOST_BOUNDARY_OUTPUT" != *"$HARC_HOST_TESTING_SEAM_ERROR"* ]]; then
     echo "error: missing external-access failure for host testing seam" >&2
     echo "$HARC_HOST_BOUNDARY_OUTPUT" >&2
     exit 1
 fi
 
-echo "External trust-evidence, live-grant, and host testing-seam boundaries passed."
+if [[ "$HARC_HOST_BOUNDARY_OUTPUT" != *"$HARC_HOST_BEGIN_UPLOAD_ERROR"* ]]; then
+    echo "error: missing external-access failure for raw host upload admission" >&2
+    echo "$HARC_HOST_BOUNDARY_OUTPUT" >&2
+    exit 1
+fi
+
+if [[ "$HARC_HOST_BOUNDARY_OUTPUT" != *"$HARC_HOST_RECONCILIATION_ERROR"* ]]; then
+    echo "error: missing external-access failure for raw host reconciliation" >&2
+    echo "$HARC_HOST_BOUNDARY_OUTPUT" >&2
+    exit 1
+fi
+
+echo "External trust-evidence, live-grant, host testing-seam, and receipt-facade boundaries passed."

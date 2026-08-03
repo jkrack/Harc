@@ -115,73 +115,6 @@ public extension RecordingStore {
         }
     }
 
-    /// Insert a host-owned row using immutable producing-device identity.
-    /// Replaying the same origin and canonical audio returns the existing row;
-    /// binding the origin to different audio is an integrity conflict.
-    @discardableResult
-    func insertFromOrigin(
-        _ recording: Recording,
-        originID: OriginRecordingID,
-        canonicalPCMHash: CanonicalPCMHash,
-        canonicalPCMFrames: UInt64
-    ) async throws -> Recording {
-        guard canonicalPCMFrames > 0,
-              let storedFrames = Int64(exactly: canonicalPCMFrames)
-        else {
-            throw StoreError.invalidData("Canonical PCM frame count must fit SQLite and be positive")
-        }
-
-        do {
-            return try await db.write { database in
-                if let existing = try Recording
-                    .filter(Recording.Columns.originDeviceID == originID.deviceID.rawBytes)
-                    .filter(
-                        Recording.Columns.originRecordingUUID
-                            == originID.recordingUUID.uuidString.lowercased()
-                    )
-                    .fetchOne(database)
-                {
-                    guard existing.canonicalPCMHash == canonicalPCMHash,
-                          existing.canonicalPCMFrames == canonicalPCMFrames
-                    else { throw StoreError.originIdentityConflict }
-                    return existing
-                }
-
-                var inserted = recording
-                let now = Date()
-                inserted.id = nil
-                // Canonical identity is minted by the authoritative library,
-                // never accepted from the producing client or its manifest.
-                inserted.canonicalID = .random()
-                inserted.originID = originID
-                inserted.canonicalPCMHash = canonicalPCMHash
-                inserted.canonicalPCMFrames = UInt64(storedFrames)
-                inserted.revision = .initial
-                // Receipt durability precedes all derived work. A producing
-                // client cannot claim that the host has already transcribed,
-                // projected, or deleted the recording it is adopting.
-                inserted.processing = .pending
-                inserted.projection = .pending
-                inserted.deletedAt = nil
-                inserted.createdAt = now
-                inserted.updatedAt = now
-                try inserted.insert(database)
-                inserted.id = database.lastInsertedRowID
-                try Self.appendLibraryChange(
-                    in: database,
-                    recordingID: inserted.id!,
-                    operation: inserted.deletedAt == nil ? .upsert : .tombstone,
-                    changedAt: now
-                )
-                return inserted
-            }
-        } catch let error as StoreError {
-            throw error
-        } catch {
-            throw StoreError.writeFailed(error.localizedDescription)
-        }
-    }
-
     /// Bind a legacy/local row to the hash of its canonical PCM exactly once.
     /// A repeated identical result is idempotent; a different result is never
     /// allowed to rewrite provenance.
@@ -297,7 +230,7 @@ public extension RecordingStore {
     }
 }
 
-private extension RecordingStore {
+extension RecordingStore {
     static func readLibraryMetadata(in database: Database) throws -> HarcDomain.LibraryMetadata {
         guard let row = try Row.fetchOne(
             database,

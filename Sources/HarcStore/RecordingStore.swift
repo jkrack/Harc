@@ -6,6 +6,7 @@ import GRDB
 /// but we funnel through the actor for cleaner Swift-6 concurrency semantics).
 public actor RecordingStore {
     private let dbQueue: DatabaseQueue
+    let writerCoordinator: StoreWriterCoordinator
 
     /// Distributed-notification name harc-mcp posts after a successful write.
     /// GRDB's ValueObservation only sees this process's commits, so the app
@@ -20,8 +21,19 @@ public actor RecordingStore {
 
     /// Factory — opens (or creates) a file-backed DB, runs migrations.
     public static func onDisk(url: URL = defaultURL()) async throws -> RecordingStore {
+        try openOnDisk(url: url, migrator: DatabaseMigrator.harcMigrator())
+    }
+
+    /// Synchronous implementation keeps GRDB's non-Sendable migrator wholly
+    /// inside one call and avoids selecting async DatabaseQueue overloads while
+    /// the store is not yet published to another task.
+    private static func openOnDisk(
+        url: URL,
+        migrator: DatabaseMigrator
+    ) throws -> RecordingStore {
         let parent = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let writerCoordinator = try StoreWriterCoordinator(databaseURL: url)
         let dbq: DatabaseQueue
         do {
             // Busy timeout because the DB is no longer single-process: the
@@ -30,16 +42,59 @@ public actor RecordingStore {
             // fails immediately with SQLITE_BUSY instead of waiting its turn.
             var config = Configuration()
             config.busyMode = .timeout(5)
-            dbq = try DatabaseQueue(path: url.path, configuration: config)
+            guard let resolvedDatabaseURL = writerCoordinator.databaseURL else {
+                throw StoreError.databaseOpenFailed("Resolved database path is unavailable")
+            }
+            dbq = try DatabaseQueue(path: resolvedDatabaseURL.path, configuration: config)
         } catch {
             throw StoreError.databaseOpenFailed(error.localizedDescription)
         }
         do {
-            try DatabaseMigrator.harcMigrator().migrate(dbq)
+            let needsMigration = try dbq.unsafeRead { database in
+                try !migrator.hasCompletedMigrations(database)
+            }
+            if needsMigration {
+                // Schema upgrades are writes and therefore use the same
+                // cross-process lock/mode gate as ordinary mutations. A fully
+                // migrated Host-owned database remains readable by another
+                // process without waiting on the resident lifetime lease.
+                let migrationAccess = try writerCoordinator.beginWriteAccess(
+                    waitForLock: false
+                )
+                let hasWriterMarker = try dbq.unsafeRead { database in
+                    guard try database.tableExists("library_metadata") else {
+                        return false
+                    }
+                    return try database
+                        .columns(in: "library_metadata")
+                        .contains { $0.name == "writer_mode" }
+                }
+                if hasWriterMarker {
+                    try dbq.unsafeRead { database in
+                        try migrationAccess.validate(in: database)
+                    }
+                }
+                try migrator.migrate(dbq)
+                try dbq.unsafeRead { database in
+                    try migrationAccess.validate(in: database)
+                }
+                withExtendedLifetime(migrationAccess) {}
+            }
+        } catch let error as StoreError {
+            throw error
         } catch {
             throw StoreError.migrationFailed(error.localizedDescription)
         }
-        return RecordingStore(dbQueue: dbq)
+        return RecordingStore(dbQueue: dbq, writerCoordinator: writerCoordinator)
+    }
+
+    /// `@testable` seam for proving a future migration can be applied while a
+    /// recovered Host lease is already installed.
+    static func onDiskForTesting(
+        url: URL,
+        migrator: DatabaseMigrator
+    ) throws -> RecordingStore {
+        try openOnDisk(url: url, migrator: migrator)
     }
 
     /// Factory — in-memory DB for tests.
@@ -55,15 +110,26 @@ public actor RecordingStore {
         } catch {
             throw StoreError.migrationFailed(error.localizedDescription)
         }
-        return RecordingStore(dbQueue: dbq)
+        return RecordingStore(
+            dbQueue: dbq,
+            writerCoordinator: StoreWriterCoordinator(inMemoryIdentifier: UUID())
+        )
     }
 
-    private init(dbQueue: DatabaseQueue) {
+    init(
+        dbQueue: DatabaseQueue,
+        writerCoordinator: StoreWriterCoordinator
+    ) {
         self.dbQueue = dbQueue
+        self.writerCoordinator = writerCoordinator
     }
 
     /// Internal accessor for same-module extensions that live in separate files.
-    var db: DatabaseQueue { dbQueue }
+    var db: StoreDatabaseAccess {
+        StoreDatabaseAccess(queue: dbQueue, writerCoordinator: writerCoordinator)
+    }
+
+    var uncoordinatedDB: DatabaseQueue { dbQueue }
 
     /// Public read-only handle for GRDB ValueObservation publishers.
     /// Nonisolated so callers on other actors can set up observation publishers
@@ -76,7 +142,7 @@ public actor RecordingStore {
     @discardableResult
     public func upsert(_ recording: Recording) async throws -> Recording {
         do {
-            return try await dbQueue.write { db in
+            return try await db.write { db in
                 var rec = recording
                 let now = Date()
                 rec.updatedAt = now
@@ -93,6 +159,15 @@ public actor RecordingStore {
                     rec.revision = existing.revision
                     rec.processing = existing.processing
                     rec.projection = existing.projection
+                    if existing.originID != nil {
+                        // The producing-device manifest binds capture time in
+                        // addition to origin, PCM hash, and frame count. Generic
+                        // local edits may enrich a remote recording, but cannot
+                        // rewrite any signed capture-provenance fact that exact
+                        // commit replay and durable receipts depend on.
+                        rec.startedAt = existing.startedAt
+                        rec.endedAt = existing.endedAt
+                    }
                     rec.deletedAt = existing.deletedAt
                     rec.chunksIndexedAt = existing.transcriptText == rec.transcriptText
                         ? existing.chunksIndexedAt
@@ -172,7 +247,7 @@ public actor RecordingStore {
     }
 
     public func rename(id: Int64, title: String?) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id) else {
                 throw StoreError.notFound
             }
@@ -212,7 +287,7 @@ public actor RecordingStore {
     /// throw — the post-process task fires detached and a late update on a
     /// soft-deleted row is benign (store just no-ops).
     public func updateSuggestedTitle(id: Int64, title: String?) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id),
                   existing.deletedAt == nil,
                   existing.suggestedTitle != title
@@ -243,7 +318,7 @@ public actor RecordingStore {
         } else {
             json = nil
         }
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id),
                   existing.deletedAt == nil,
                   existing.tags != tags
@@ -289,7 +364,7 @@ public actor RecordingStore {
                 json = nil
             }
         }
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id),
                   existing.deletedAt == nil,
                   existing.speakerNames != stableNames
@@ -315,7 +390,7 @@ public actor RecordingStore {
     public func updateNotes(id: Int64, markdown: String?) async throws {
         let trimmed = markdown?.trimmingCharacters(in: .whitespacesAndNewlines)
         let value = (trimmed?.isEmpty == false) ? markdown : nil
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id) else {
                 throw StoreError.notFound
             }
@@ -344,7 +419,7 @@ public actor RecordingStore {
     public func appendNote(id: Int64, block: String) async throws {
         let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        try await dbQueue.write { db in
+        try await db.write { db in
             let now = Date()
             guard let row = try Row.fetchOne(
                 db,
@@ -386,7 +461,7 @@ public actor RecordingStore {
         sourceWordCount: Int
     ) async throws {
         let ms = Int64(generatedAt.timeIntervalSince1970 * 1000)
-        try await dbQueue.write { db in
+        try await db.write { db in
             let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
@@ -414,7 +489,7 @@ public actor RecordingStore {
 
     /// Null all five summary columns for a recording.
     public func clearSummary(id: Int64) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
@@ -450,7 +525,7 @@ public actor RecordingStore {
         updatedAt: Date = Date()
     ) async throws {
         let ms = Int64(updatedAt.timeIntervalSince1970 * 1000)
-        try await dbQueue.write { db in
+        try await db.write { db in
             let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
@@ -471,7 +546,7 @@ public actor RecordingStore {
     }
 
     public func clearSummaryStatus(id: Int64) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
@@ -553,7 +628,7 @@ public actor RecordingStore {
         recordingID: Int64,
         rows: [SpeakerEmbeddingRow]
     ) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             try db.execute(
                 sql: "DELETE FROM speaker_embeddings WHERE recording_id = ?",
                 arguments: [recordingID]
@@ -654,7 +729,7 @@ public actor RecordingStore {
     /// returns passages (and seek offsets) from the pre-edit transcript
     /// forever, including text the user deliberately deleted.
     public func updateTranscriptText(id: Int64, text: String) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             let now = Date()
             let count = try Recording.filter(key: id).updateAll(
                 db,
@@ -681,7 +756,7 @@ public actor RecordingStore {
     }
 
     public func setPinned(id: Int64, pinned: Bool) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id) else {
                 throw StoreError.notFound
             }
@@ -704,7 +779,7 @@ public actor RecordingStore {
     }
 
     public func softDelete(id: Int64) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id) else {
                 throw StoreError.notFound
             }
@@ -728,7 +803,7 @@ public actor RecordingStore {
     }
 
     public func restore(id: Int64) async throws {
-        try await dbQueue.write { db in
+        try await db.write { db in
             guard let existing = try Recording.fetchOne(db, key: id) else {
                 throw StoreError.notFound
             }

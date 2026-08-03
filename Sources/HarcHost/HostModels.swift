@@ -454,8 +454,11 @@ public enum HostUploadJournalState: String, Codable, CaseIterable, Sendable {
     case receiving
     case manifestVerified
     case assembling
+    case temporarySynchronized
+    case audioRenamed
     case audioPublished
     case recordingCommitted
+    case receiptPrepared
     case receipted
     case processing
     case complete
@@ -699,6 +702,24 @@ public enum HarcHostError: Error, Equatable, Sendable {
     case incompleteBody
     case manifestEvidenceRequired
     case canonicalCommitUnavailableUntilPR5
+    case incompleteCanonicalUpload
+    case publicationRecoveryRequired(String)
+    case publicationCheckpointConflict(expected: [String], actual: String)
+    case canonicalPublicationAlreadyInProgress(UploadID)
+    case qualifiedDecoderUnavailable(codec: String, container: String)
+    case fixtureDecoderForbidden
+    case invalidCanonicalFrameCount(UInt64)
+    case decodedLengthMismatch(expected: UInt64, actual: UInt64)
+    case canonicalHashMismatch
+    case canonicalArtifactIdentityMismatch
+    case classicRIFFSizeExceeded(maximumPCMBytes: UInt64, requestedPCMBytes: UInt64)
+    case unsafePublicationRoot
+    case unsafePublicationPath
+    case canonicalDestinationExists
+    case invalidCanonicalWAV
+    case provenanceSidecarConflict
+    case publicationIO(String)
+    case processingSchedulerUnavailable
 }
 
 extension HarcHostError: LocalizedError {
@@ -749,6 +770,32 @@ extension HarcHostError: LocalizedError {
         case .incompleteBody: "The encoded chunk body ended before the declared byte length."
         case .manifestEvidenceRequired: "A PR 4 validated exact manifest is required."
         case .canonicalCommitUnavailableUntilPR5: "Canonical publication and durable receipts are not implemented before PR 5."
+        case .incompleteCanonicalUpload:
+            "Every declared upload chunk must be durably staged before canonical publication."
+        case .publicationRecoveryRequired(let detail):
+            "Canonical publication requires recovery: \(detail)"
+        case .publicationCheckpointConflict(let expected, let actual):
+            "Canonical publication checkpoint \(actual) conflicts with expected state(s): \(expected.joined(separator: ", "))."
+        case .canonicalPublicationAlreadyInProgress(let uploadID):
+            "Canonical publication is already in progress for upload \(uploadID.description)."
+        case .qualifiedDecoderUnavailable(let codec, let container):
+            "The production decoder for \(codec) in \(container) is unavailable until its physical-device qualification gate passes."
+        case .fixtureDecoderForbidden: "Raw canonical PCM decode is permitted only in an explicit fixture loopback upload."
+        case .invalidCanonicalFrameCount(let count): "Canonical frame count must be positive; received \(count)."
+        case .decodedLengthMismatch(let expected, let actual):
+            "Decoded canonical PCM length mismatch: expected \(expected) bytes, received \(actual)."
+        case .canonicalHashMismatch: "Decoded canonical PCM does not match the signed manifest SHA-256."
+        case .canonicalArtifactIdentityMismatch:
+            "The canonical WAV no longer matches its durable filesystem identity."
+        case .classicRIFFSizeExceeded(let maximum, let requested):
+            "Canonical PCM requires \(requested) bytes, beyond the classic RIFF ceiling of \(maximum); RF64 is not a V1 format."
+        case .unsafePublicationRoot: "The canonical publication root is missing, a symlink, not owned by this user, or writable by another user."
+        case .unsafePublicationPath: "A canonical publication path is unsafe or escaped its host-generated directory."
+        case .canonicalDestinationExists: "The host-generated canonical destination already exists and was not overwritten."
+        case .invalidCanonicalWAV: "The published WAV header does not match Harc's canonical V1 PCM format."
+        case .provenanceSidecarConflict: "An existing manifest or receipt sidecar has different exact bytes."
+        case .publicationIO(let detail): "Canonical publication failed: \(detail)"
+        case .processingSchedulerUnavailable: "The durable host processing scheduler is not configured."
         }
     }
 }

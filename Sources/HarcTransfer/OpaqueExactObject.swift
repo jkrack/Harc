@@ -107,7 +107,7 @@ public struct RecordingHostTrustBinding: Codable, Equatable, Hashable, Sendable 
     }
 }
 
-/// Evidence emitted only by the future PR 4 exact-object validator after it
+/// Evidence emitted only by the HarcProtocol exact-object validator after it
 /// has parsed without reserialization, verified the producing-device
 /// signature, and mirrored every manifest field represented here. This type
 /// deliberately performs no signature verification itself.
@@ -165,7 +165,7 @@ public struct ValidatedRecordingManifestEvidence: Equatable, Hashable, Sendable 
     }
 }
 
-/// Evidence emitted only by the future PR 5 receipt validator after it has
+/// Evidence emitted only by the HarcProtocol receipt validator after it has
 /// verified the host signature and matched the exact receipt payload to a
 /// locally validated manifest and adopted authority. Its package initializer
 /// makes that validator the construction boundary without pretending that
@@ -187,6 +187,7 @@ public struct ValidatedRecordingReceiptEvidence: Equatable, Hashable, Sendable {
     public let changeCursor: ChangeCursor
     public let receiptID: UUID
     public let durableCommitTime: Date
+    public let processingState: RecordingProcessingState
 
     /// Package access is the explicit PR 5 validator construction seam. Every
     /// argument before the canonical result fields is mirrored against the
@@ -206,7 +207,8 @@ public struct ValidatedRecordingReceiptEvidence: Equatable, Hashable, Sendable {
         canonicalRevision: EntityRevision,
         changeCursor: ChangeCursor,
         receiptID: UUID,
-        durableCommitTime: Date
+        durableCommitTime: Date,
+        processingState: RecordingProcessingState
     ) throws {
         guard exactReceiptObject.kind == .recordingReceiptV1 else {
             throw TransferValidationError.wrongExactObjectKind(
@@ -248,6 +250,12 @@ public struct ValidatedRecordingReceiptEvidence: Equatable, Hashable, Sendable {
             durableCommitTime,
             field: "ValidatedRecordingReceiptEvidence.durableCommitTime"
         )
+        guard durableCommitTime.timeIntervalSince1970 > 0 else {
+            throw TransferValidationError.evidenceBindingMismatch(field: "durableCommitTime")
+        }
+        guard processingState == .pending else {
+            throw TransferValidationError.evidenceBindingMismatch(field: "processingState")
+        }
 
         self.hostTrust = hostTrust
         self.exactReceiptObject = exactReceiptObject
@@ -265,6 +273,7 @@ public struct ValidatedRecordingReceiptEvidence: Equatable, Hashable, Sendable {
         self.changeCursor = changeCursor
         self.receiptID = receiptID
         self.durableCommitTime = durableCommitTime
+        self.processingState = processingState
     }
 
     private static let zeroUUID = UUID(uuid: (

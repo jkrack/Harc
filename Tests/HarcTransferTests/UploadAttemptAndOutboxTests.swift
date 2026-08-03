@@ -204,6 +204,43 @@ struct UploadAttemptAndOutboxTests {
         }
     }
 
+    @Test("A durably accepted publication can finish after its upload lease expires")
+    func acceptedPublicationSurvivesLeaseExpiry() throws {
+        let origin = TransferFixtures.origin()
+        let began = TransferFixtures.baseDate
+        let finalized = TransferFixtures.chunkedCapture(origin: origin)
+        var attempt = try UploadAttempt(
+            uploadID: .random(),
+            ownerDeviceID: origin.deviceID,
+            originRecordingID: origin,
+            frozenProfile: TransferFixtures.profile(),
+            beganAt: began
+        )
+        let manifest = TransferFixtures.manifestEvidence(
+            uploadID: attempt.uploadID,
+            finalizedCapture: finalized,
+            manifestByte: 61
+        )
+        _ = try attempt.declare(finalized.chunks, generation: .initial, at: began)
+        _ = try attempt.bindFinalManifest(
+            using: manifest,
+            generation: .initial,
+            at: began
+        )
+
+        let acceptedAt = began.addingTimeInterval(1)
+        let recoveredAt = attempt.generationExpiresAt.addingTimeInterval(30)
+        try attempt.markCommittedFromAcceptedPublication(
+            using: TransferFixtures.receiptEvidence(manifest: manifest, receiptByte: 62),
+            generation: .initial,
+            authorizationAcceptedAt: acceptedAt,
+            committedAt: recoveredAt
+        )
+
+        #expect(attempt.status == .committed)
+        #expect(attempt.terminalAt == recoveredAt)
+    }
+
     @Test("validated manifest and receipt evidence bind host, upload, origin, manifest, audio, and profile")
     func validatedEvidenceBindings() throws {
         let began = TransferFixtures.baseDate

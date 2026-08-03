@@ -298,6 +298,295 @@ public extension DatabaseMigrator {
                 """)
         }
 
+        // PR 5 turns the placeholder publication row into a restart journal.
+        // Every value needed to resume after client/session loss is durable in
+        // HostDB; paths remain host-generated and relative to the configured
+        // canonical root.
+        migrator.registerMigration("v2_canonical_publication") { db in
+            try db.execute(sql: """
+                ALTER TABLE publication_journal
+                    ADD COLUMN publication_relative_path TEXT;
+                ALTER TABLE publication_journal
+                    ADD COLUMN resume_state TEXT;
+                ALTER TABLE publication_journal
+                    ADD COLUMN authorized_device_id BLOB
+                        CHECK (authorized_device_id IS NULL OR length(authorized_device_id) = 32);
+                ALTER TABLE publication_journal
+                    ADD COLUMN authorized_grant_id TEXT;
+                ALTER TABLE publication_journal
+                    ADD COLUMN authorized_grant_epoch INTEGER
+                        CHECK (authorized_grant_epoch IS NULL OR authorized_grant_epoch > 0);
+                ALTER TABLE publication_journal
+                    ADD COLUMN accepted_upload_generation INTEGER
+                        CHECK (accepted_upload_generation IS NULL OR accepted_upload_generation > 0);
+                ALTER TABLE publication_journal
+                    ADD COLUMN authorized_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN signed_manifest_object_sha256 BLOB
+                        CHECK (signed_manifest_object_sha256 IS NULL OR length(signed_manifest_object_sha256) = 32);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_wav_byte_length INTEGER
+                        CHECK (canonical_wav_byte_length IS NULL OR canonical_wav_byte_length > 44);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_revision INTEGER
+                        CHECK (canonical_revision IS NULL OR canonical_revision > 0);
+                ALTER TABLE publication_journal
+                    ADD COLUMN change_cursor INTEGER
+                        CHECK (change_cursor IS NULL OR change_cursor > 0);
+                ALTER TABLE publication_journal
+                    ADD COLUMN durable_commit_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN receipt_id TEXT;
+                ALTER TABLE publication_journal
+                    ADD COLUMN manifest_sidecar_synchronized_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN receipt_sidecar_synchronized_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN temporary_synchronized_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN audio_renamed_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN audio_directory_synchronized_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN processing_scheduled_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0
+                        CHECK (retry_count >= 0);
+                ALTER TABLE publication_journal
+                    ADD COLUMN created_at REAL;
+                ALTER TABLE publication_journal
+                    ADD COLUMN legacy_quarantined INTEGER NOT NULL DEFAULT 0
+                        CHECK (legacy_quarantined IN (0, 1));
+
+                UPDATE publication_journal SET created_at = updated_at
+                    WHERE created_at IS NULL;
+
+                -- V1 never recorded the instant or grant that authorized
+                -- canonical publication. Current upload/device/staging rows
+                -- cannot retroactively prove that historical decision, even
+                -- when their values happen to agree. Preserve every pre-v2
+                -- row, but quarantine all of them instead of manufacturing a
+                -- trusted recovery plan from later mutable state.
+                UPDATE publication_journal
+                SET resume_state = state,
+                    state = 'failedRecoverable',
+                    last_error_code = 'legacy-publication-requires-operator-recovery',
+                    legacy_quarantined = 1;
+
+                CREATE INDEX publication_journal_state_updated
+                    ON publication_journal(state, updated_at, upload_id);
+
+                CREATE TRIGGER publication_journal_v2_validate_insert
+                BEFORE INSERT ON publication_journal
+                FOR EACH ROW
+                WHEN NEW.legacy_quarantined NOT IN (0, 1)
+                OR (NEW.legacy_quarantined = 1 AND NEW.state != 'failedRecoverable')
+                OR (NEW.legacy_quarantined = 0 AND (
+                NEW.state NOT IN (
+                    'assembling', 'temporarySynchronized', 'audioRenamed',
+                    'audioPublished', 'recordingCommitted', 'receiptPrepared',
+                    'receipted', 'processing', 'complete', 'failedRecoverable'
+                )
+                OR NEW.created_at IS NULL
+                OR NEW.authorized_device_id IS NULL
+                OR NEW.authorized_grant_id IS NULL
+                OR NEW.authorized_grant_epoch IS NULL
+                OR NEW.accepted_upload_generation IS NULL
+                OR NEW.authorized_at IS NULL
+                OR NEW.signed_manifest_object_sha256 IS NULL
+                ))
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid canonical publication journal');
+                END;
+
+                CREATE TRIGGER publication_journal_v2_validate_update
+                BEFORE UPDATE ON publication_journal
+                FOR EACH ROW
+                WHEN NEW.legacy_quarantined NOT IN (0, 1)
+                OR (NEW.legacy_quarantined = 1 AND NEW.state != 'failedRecoverable')
+                OR (NEW.legacy_quarantined = 0 AND (
+                NEW.state NOT IN (
+                    'assembling', 'temporarySynchronized', 'audioRenamed',
+                    'audioPublished', 'recordingCommitted', 'receiptPrepared',
+                    'receipted', 'processing', 'complete', 'failedRecoverable'
+                )
+                OR NEW.created_at IS NULL
+                OR NEW.authorized_device_id IS NULL
+                OR NEW.authorized_grant_id IS NULL
+                OR NEW.authorized_grant_epoch IS NULL
+                OR NEW.accepted_upload_generation IS NULL
+                OR NEW.authorized_at IS NULL
+                OR NEW.signed_manifest_object_sha256 IS NULL
+                ))
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid canonical publication journal');
+                END;
+                """)
+        }
+
+        // Artifact identity is first captured from the descriptor-bound WAV
+        // in the same transaction that advances audioRenamed ->
+        // audioPublished. Pre-v3 rows already at or beyond publication cannot
+        // prove which inode was committed, so they are preserved but
+        // quarantined instead of manufacturing identity from a mutable path.
+        migrator.registerMigration("v3_canonical_artifact_identity") { db in
+            try db.execute(sql: """
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_device_number BLOB
+                        CHECK (canonical_artifact_device_number IS NULL
+                            OR length(canonical_artifact_device_number) = 8);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_inode_number BLOB
+                        CHECK (canonical_artifact_inode_number IS NULL
+                            OR length(canonical_artifact_inode_number) = 8);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_owner_user_id INTEGER
+                        CHECK (canonical_artifact_owner_user_id IS NULL
+                            OR canonical_artifact_owner_user_id BETWEEN 0 AND 4294967295);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_posix_mode INTEGER
+                        CHECK (canonical_artifact_posix_mode IS NULL
+                            OR canonical_artifact_posix_mode BETWEEN 0 AND 4294967295);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_link_count BLOB
+                        CHECK (canonical_artifact_link_count IS NULL
+                            OR length(canonical_artifact_link_count) = 8);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_file_byte_count BLOB
+                        CHECK (canonical_artifact_file_byte_count IS NULL
+                            OR length(canonical_artifact_file_byte_count) = 8);
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_change_time_seconds INTEGER;
+                ALTER TABLE publication_journal
+                    ADD COLUMN canonical_artifact_change_time_nanoseconds INTEGER
+                        CHECK (canonical_artifact_change_time_nanoseconds IS NULL
+                            OR canonical_artifact_change_time_nanoseconds
+                                BETWEEN 0 AND 999999999);
+
+                UPDATE publication_journal
+                SET resume_state = CASE
+                        WHEN state = 'failedRecoverable' THEN resume_state
+                        ELSE state
+                    END,
+                    state = 'failedRecoverable',
+                    last_error_code =
+                        'legacy-publication-artifact-identity-unavailable',
+                    legacy_quarantined = 1,
+                    updated_at = updated_at
+                WHERE legacy_quarantined = 0
+                  AND (
+                    state IN (
+                        'audioPublished', 'recordingCommitted',
+                        'receiptPrepared', 'receipted', 'processing', 'complete'
+                    )
+                    OR (
+                        state = 'failedRecoverable'
+                        AND resume_state IN (
+                            'audioPublished', 'recordingCommitted',
+                            'receiptPrepared', 'receipted', 'processing', 'complete'
+                        )
+                    )
+                  );
+
+                CREATE TRIGGER publication_journal_v3_artifact_identity_insert
+                BEFORE INSERT ON publication_journal
+                FOR EACH ROW
+                WHEN NEW.legacy_quarantined = 0 AND (
+                    (
+                        (NEW.canonical_artifact_device_number IS NULL)
+                        + (NEW.canonical_artifact_inode_number IS NULL)
+                        + (NEW.canonical_artifact_owner_user_id IS NULL)
+                        + (NEW.canonical_artifact_posix_mode IS NULL)
+                        + (NEW.canonical_artifact_link_count IS NULL)
+                        + (NEW.canonical_artifact_file_byte_count IS NULL)
+                        + (NEW.canonical_artifact_change_time_seconds IS NULL)
+                        + (NEW.canonical_artifact_change_time_nanoseconds IS NULL)
+                    ) NOT IN (0, 8)
+                    OR (
+                        NEW.state IN (
+                            'audioPublished', 'recordingCommitted',
+                            'receiptPrepared', 'receipted', 'processing', 'complete'
+                        )
+                        AND NEW.canonical_artifact_device_number IS NULL
+                    )
+                    OR (
+                        NEW.state = 'failedRecoverable'
+                        AND NEW.resume_state IN (
+                            'audioPublished', 'recordingCommitted',
+                            'receiptPrepared', 'receipted', 'processing', 'complete'
+                        )
+                        AND NEW.canonical_artifact_device_number IS NULL
+                    )
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid canonical artifact identity');
+                END;
+
+                CREATE TRIGGER publication_journal_v3_artifact_identity_update
+                BEFORE UPDATE ON publication_journal
+                FOR EACH ROW
+                WHEN NEW.legacy_quarantined = 0 AND (
+                    (
+                        (NEW.canonical_artifact_device_number IS NULL)
+                        + (NEW.canonical_artifact_inode_number IS NULL)
+                        + (NEW.canonical_artifact_owner_user_id IS NULL)
+                        + (NEW.canonical_artifact_posix_mode IS NULL)
+                        + (NEW.canonical_artifact_link_count IS NULL)
+                        + (NEW.canonical_artifact_file_byte_count IS NULL)
+                        + (NEW.canonical_artifact_change_time_seconds IS NULL)
+                        + (NEW.canonical_artifact_change_time_nanoseconds IS NULL)
+                    ) NOT IN (0, 8)
+                    OR (
+                        NEW.state IN (
+                            'audioPublished', 'recordingCommitted',
+                            'receiptPrepared', 'receipted', 'processing', 'complete'
+                        )
+                        AND NEW.canonical_artifact_device_number IS NULL
+                    )
+                    OR (
+                        NEW.state = 'failedRecoverable'
+                        AND NEW.resume_state IN (
+                            'audioPublished', 'recordingCommitted',
+                            'receiptPrepared', 'receipted', 'processing', 'complete'
+                        )
+                        AND NEW.canonical_artifact_device_number IS NULL
+                    )
+                    OR (
+                        OLD.canonical_artifact_device_number IS NULL
+                        AND NEW.canonical_artifact_device_number IS NOT NULL
+                        AND NOT (
+                            OLD.state = 'audioRenamed'
+                            AND NEW.state = 'audioPublished'
+                        )
+                    )
+                    OR (
+                        OLD.canonical_artifact_device_number IS NOT NULL
+                        AND (
+                            NEW.canonical_artifact_device_number
+                                IS NOT OLD.canonical_artifact_device_number
+                            OR NEW.canonical_artifact_inode_number
+                                IS NOT OLD.canonical_artifact_inode_number
+                            OR NEW.canonical_artifact_owner_user_id
+                                IS NOT OLD.canonical_artifact_owner_user_id
+                            OR NEW.canonical_artifact_posix_mode
+                                IS NOT OLD.canonical_artifact_posix_mode
+                            OR NEW.canonical_artifact_link_count
+                                IS NOT OLD.canonical_artifact_link_count
+                            OR NEW.canonical_artifact_file_byte_count
+                                IS NOT OLD.canonical_artifact_file_byte_count
+                            OR NEW.canonical_artifact_change_time_seconds
+                                IS NOT OLD.canonical_artifact_change_time_seconds
+                            OR NEW.canonical_artifact_change_time_nanoseconds
+                                IS NOT OLD.canonical_artifact_change_time_nanoseconds
+                        )
+                    )
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid canonical artifact identity');
+                END;
+                """)
+        }
+
         return migrator
     }
 }

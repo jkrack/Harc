@@ -57,6 +57,29 @@ struct RecordingIngestorTests {
         #expect(all[0].wavPath == wav.path)
     }
 
+    @Test("legacy ingest leaves Host-reserved UUID WAVs for journal recovery")
+    func skipsHostCanonicalNamespace() async throws {
+        let base = try tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let canonicalID = "00000000-0000-0000-0000-000000000901"
+        let wav = try fakeRecording(
+            base: base,
+            year: "2026",
+            day: "2026-04-17",
+            time: canonicalID
+        )
+
+        let store = try await RecordingStore.inMemory()
+        let inserted = try await RecordingIngestor(
+            baseDirectory: base,
+            store: store
+        ).ingestAll()
+
+        #expect(inserted == 0)
+        #expect(try await store.fetchByWavPath(wav.path) == nil)
+        #expect(FileManager.default.fileExists(atPath: wav.path))
+    }
+
     @Test("ingested rows pick up transcript text from the .txt sibling")
     func ingestCapturesTranscript() async throws {
         let base = try tempBase()

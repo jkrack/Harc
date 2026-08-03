@@ -36,9 +36,15 @@ public struct RecordingIngestor: Sendable {
                 ) else { continue }
 
                 for wav in files where wav.pathExtension.lowercased() == "wav" {
+                    let stem = wav.deletingPathExtension().lastPathComponent
+                    // UUID stems are reserved for Host canonical publication.
+                    // A crash can leave the exclusively renamed WAV visible
+                    // before its Harc.db row is committed; legacy startup
+                    // ingest must never adopt that file with a random local
+                    // canonical identity and block journal recovery.
+                    if UUID(uuidString: stem) != nil { continue }
                     if try await store.fetchByWavPath(wav.path) != nil { continue }
 
-                    let stem = wav.deletingPathExtension().lastPathComponent
                     let parent = wav.deletingLastPathComponent()
                     let md = parent.appendingPathComponent("\(stem).md")
                     let txt = parent.appendingPathComponent("\(stem).txt")

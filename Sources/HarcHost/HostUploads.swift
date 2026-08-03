@@ -10,7 +10,7 @@ private enum ManifestBindingDatabaseResult {
 }
 
 extension HarcHostStore {
-    public func beginUpload(
+    func beginUpload(
         context: AuthenticatedDeviceContext,
         request: BeginHostUploadRequest
     ) async throws -> BeginHostUploadDisposition {
@@ -82,6 +82,15 @@ extension HarcHostStore {
             case .reopenRequired(let uploadID):
                 guard var attempt = existing.first(where: { $0.uploadID == uploadID }) else {
                     throw HarcHostError.uploadNotFound
+                }
+                if try Int.fetchOne(
+                    db,
+                    sql: "SELECT 1 FROM publication_journal WHERE upload_id = ? LIMIT 1",
+                    arguments: [uploadID.description]
+                ) != nil {
+                    throw HarcHostError.publicationRecoveryRequired(
+                        "an accepted canonical publication must finish before this upload can reopen"
+                    )
                 }
                 try attempt.reopen(at: acceptedAt, grantExpiresAt: grantExpiry)
                 try self.updateUploadAttempt(attempt, in: db, at: acceptedAt)
@@ -340,6 +349,15 @@ extension HarcHostStore {
                 objectOwner: attempt.ownerDeviceID,
                 at: abandonedAt
             )
+            if try Int.fetchOne(
+                db,
+                sql: "SELECT 1 FROM publication_journal WHERE upload_id = ? LIMIT 1",
+                arguments: [uploadID.description]
+            ) != nil {
+                throw HarcHostError.publicationRecoveryRequired(
+                    "an accepted canonical publication cannot be abandoned"
+                )
+            }
             try attempt.abandon(at: abandonedAt)
             try self.updateUploadAttempt(attempt, in: db, at: abandonedAt)
             try db.execute(
@@ -365,7 +383,7 @@ extension HarcHostStore {
         }
     }
 
-    public func reconciliation(
+    func reconciliation(
         for uploadID: UploadID,
         context: AuthenticatedDeviceContext
     ) async throws -> UploadReconciliation {
@@ -584,7 +602,14 @@ extension HarcHostStore {
         try db.execute(
             sql: """
                 UPDATE uploads SET
-                    attempt_json = ?, attempt_status = ?, journal_state = ?,
+                    attempt_json = ?, attempt_status = ?,
+                    journal_state = CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM publication_journal
+                            WHERE publication_journal.upload_id = uploads.upload_id
+                        ) THEN journal_state
+                        ELSE ?
+                    END,
                     current_generation = ?, generation_expires_at = ?,
                     block_reason = ?, bound_manifest_object_sha256 = ?,
                     exact_manifest_bytes = ?, terminal_reason = ?, terminal_at = ?,

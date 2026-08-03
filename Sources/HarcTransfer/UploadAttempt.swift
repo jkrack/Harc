@@ -245,8 +245,38 @@ public struct UploadAttempt: Codable, Equatable, Hashable, Sendable {
         generation requestedGeneration: UploadGeneration,
         at date: Date
     ) throws {
-        try requireActive(generation: requestedGeneration, at: date)
-        try TransferValidation.requireFinite(date, field: "UploadAttempt.markCommitted.at")
+        try markCommittedFromAcceptedPublication(
+            using: evidence,
+            generation: requestedGeneration,
+            authorizationAcceptedAt: date,
+            committedAt: date
+        )
+    }
+
+    /// Completes a publication whose authorization and immutable plan were
+    /// durably accepted while this upload generation was active. Recovery may
+    /// call this after the generation or grant has subsequently expired; it
+    /// must present the original acceptance instant and generation instead of
+    /// manufacturing a new authorization decision.
+    package mutating func markCommittedFromAcceptedPublication(
+        using evidence: ValidatedRecordingReceiptEvidence,
+        generation requestedGeneration: UploadGeneration,
+        authorizationAcceptedAt: Date,
+        committedAt: Date
+    ) throws {
+        try requireActive(
+            generation: requestedGeneration,
+            at: authorizationAcceptedAt
+        )
+        try TransferValidation.requireFinite(
+            committedAt,
+            field: "UploadAttempt.markCommittedFromAcceptedPublication.committedAt"
+        )
+        guard committedAt >= authorizationAcceptedAt else {
+            throw TransferValidationError.invalidOrdering(
+                field: "UploadAttempt publication commit time"
+            )
+        }
         guard let boundHostTrust, let boundManifest, let boundFinalizedCapture else {
             throw TransferValidationError.invalidUploadAttempt(reason: "Commit requires a bound final manifest.")
         }
@@ -288,7 +318,7 @@ public struct UploadAttempt: Codable, Equatable, Hashable, Sendable {
         status = .committed
         blockReason = nil
         exactReceipt = receipt
-        terminalAt = date
+        terminalAt = committedAt
     }
 
     private static func expiry(beginningAt date: Date, grantExpiresAt: Date?) throws -> Date {

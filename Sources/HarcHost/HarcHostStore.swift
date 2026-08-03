@@ -11,6 +11,7 @@ import HarcTransfer
 public actor HarcHostStore {
     nonisolated let dbQueue: DatabaseQueue
     nonisolated let stagingRoot: URL
+    nonisolated let stagingDirectory: HostStagingDirectory
     nonisolated let expectedMetadata: HarcHostMetadata
     nonisolated let highWaterMarkStore: any SecurityRegistryHighWaterMarkStore
     nonisolated let localOSAuthenticationBoundary: any HostLocalOSAuthenticationBoundary
@@ -151,9 +152,17 @@ public actor HarcHostStore {
         } catch {
             throw HarcHostError.migrationFailed(error.localizedDescription)
         }
+        let trustedStagingDirectory: HostStagingDirectory
+        do {
+            trustedStagingDirectory = try HostStagingDirectory(root: stagingRoot)
+        } catch let error as HarcHostError {
+            throw error
+        } catch {
+            throw HarcHostError.unsafeStagingRoot
+        }
         let store = HarcHostStore(
             dbQueue: queue,
-            stagingRoot: stagingRoot,
+            stagingDirectory: trustedStagingDirectory,
             metadata: metadata,
             highWaterMarkStore: highWaterMarkStore,
             localOSAuthenticationBoundary: localOSAuthenticationBoundary,
@@ -171,7 +180,7 @@ public actor HarcHostStore {
 
     private init(
         dbQueue: DatabaseQueue,
-        stagingRoot: URL,
+        stagingDirectory: HostStagingDirectory,
         metadata: HarcHostMetadata,
         highWaterMarkStore: any SecurityRegistryHighWaterMarkStore,
         localOSAuthenticationBoundary: any HostLocalOSAuthenticationBoundary,
@@ -184,7 +193,8 @@ public actor HarcHostStore {
         now: @escaping @Sendable () -> Date
     ) {
         self.dbQueue = dbQueue
-        self.stagingRoot = stagingRoot.standardizedFileURL
+        self.stagingDirectory = stagingDirectory
+        self.stagingRoot = stagingDirectory.rootURL
         self.expectedMetadata = metadata
         self.highWaterMarkStore = highWaterMarkStore
         self.localOSAuthenticationBoundary = localOSAuthenticationBoundary

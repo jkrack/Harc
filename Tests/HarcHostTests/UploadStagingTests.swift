@@ -1580,6 +1580,139 @@ struct UploadStagingTests {
         #expect(state.rejectedChunks.count == 1)
     }
 
+    @Test("ancestor replacement cannot redirect a suspended staging write")
+    func ancestorReplacementFailsClosed() async throws {
+        let fixture = HostTestFixture()
+        let container = try fixture.temporaryDirectory(
+            "staging-ancestor-swap-\(UUID())"
+        )
+        defer { try? FileManager.default.removeItem(at: container) }
+        let stagingRoot = container.appendingPathComponent("staging", isDirectory: true)
+        let retainedRoot = container.appendingPathComponent("retained", isDirectory: true)
+        let victimRoot = container.appendingPathComponent("victim", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: victimRoot,
+            withIntermediateDirectories: false
+        )
+
+        let injector = SuspendingStagingFailureInjector(.afterJournalReservation)
+        let upload = try await startUpload(
+            fixture: fixture,
+            directory: stagingRoot,
+            stagingInjector: injector
+        )
+        let stagingTask = Task {
+            try await upload.store.stageChunk(
+                context: upload.context,
+                uploadID: upload.uploadID,
+                generation: .initial,
+                chunkIndex: 0,
+                declaredEncodedLength: UInt64(upload.bytes.count),
+                bodyFragments: [upload.bytes],
+                at: fixture.beganAt.addingTimeInterval(3)
+            )
+        }
+        await injector.waitUntilSuspended()
+
+        try FileManager.default.moveItem(at: stagingRoot, to: retainedRoot)
+        try FileManager.default.createSymbolicLink(
+            at: stagingRoot,
+            withDestinationURL: victimRoot
+        )
+        await injector.release()
+
+        await #expect(throws: HarcHostError.unsafeStagingRoot) {
+            _ = try await stagingTask.value
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: victimRoot.path).isEmpty)
+        #expect(try generatedObjectURLs(in: retainedRoot).isEmpty)
+    }
+
+    @Test("hard-linked staging objects are rejected without mutating either link")
+    func hardLinkedObjectFailsClosed() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory(
+            "staging-hardlink-\(UUID())"
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let upload = try await startUpload(fixture: fixture, directory: directory)
+        guard case .durablyAccepted = try await upload.store.stageChunk(
+            context: upload.context,
+            uploadID: upload.uploadID,
+            generation: .initial,
+            chunkIndex: 0,
+            declaredEncodedLength: UInt64(upload.bytes.count),
+            bodyFragments: [upload.bytes],
+            at: fixture.beganAt.addingTimeInterval(3)
+        ) else {
+            Issue.record("Expected durable staging before the hard-link attack")
+            return
+        }
+
+        let relativePath = try #require(
+            try await upload.store.stagingRelativePathForTesting(
+                uploadID: upload.uploadID,
+                chunkIndex: 0
+            )
+        )
+        let stagedURL = directory.appendingPathComponent(relativePath)
+        let externalURL = directory.appendingPathComponent("outside-generated-namespace")
+        try FileManager.default.linkItem(at: stagedURL, to: externalURL)
+
+        await #expect(throws: HarcHostError.unsafeStagingPath) {
+            try await upload.store.reconcileStagingJournalOnReopen()
+        }
+        #expect(try Data(contentsOf: stagedURL) == upload.bytes)
+        #expect(try Data(contentsOf: externalURL) == upload.bytes)
+
+        try FileManager.default.removeItem(at: externalURL)
+        try await upload.store.reconcileStagingJournalOnReopen()
+        #expect(try Data(contentsOf: stagedURL) == upload.bytes)
+    }
+
+    @Test("generated staging enumeration starts at zero on every reconciliation")
+    func repeatedGeneratedObjectEnumeration() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory(
+            "staging-repeat-enumeration-\(UUID())"
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let upload = try await startUpload(fixture: fixture, directory: directory)
+        guard case .durablyAccepted = try await upload.store.stageChunk(
+            context: upload.context,
+            uploadID: upload.uploadID,
+            generation: .initial,
+            chunkIndex: 0,
+            declaredEncodedLength: UInt64(upload.bytes.count),
+            bodyFragments: [upload.bytes],
+            at: fixture.beganAt.addingTimeInterval(3)
+        ) else {
+            Issue.record("Expected durable staging before repeated enumeration")
+            return
+        }
+        let relativePath = try #require(
+            try await upload.store.stagingRelativePathForTesting(
+                uploadID: upload.uploadID,
+                chunkIndex: 0
+            )
+        )
+        let expectedName = try HostStagingDirectory.objectName(
+            forGeneratedRelativePath: relativePath
+        )
+
+        let firstNames = try upload.store.stagingDirectory.generatedObjectNames()
+        let secondNames = try upload.store.stagingDirectory.generatedObjectNames()
+        #expect(Set(firstNames) == [expectedName])
+        #expect(Set(secondNames) == [expectedName])
+
+        try await upload.store.reconcileStagingJournalOnReopen()
+        try await upload.store.reconcileStagingJournalOnReopen()
+        #expect(
+            try upload.store.stagingDirectory.generatedObjectNames()
+                .contains(expectedName)
+        )
+    }
+
     @Test("manifest binding stops at the PR5 precommit boundary and recovery is separate")
     func manifestPrecommitBoundary() async throws {
         let fixture = HostTestFixture()

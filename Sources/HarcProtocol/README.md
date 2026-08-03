@@ -28,6 +28,10 @@ generated-only `HarcProtocolWire` target. Its current responsibilities are:
 - binding authenticated `ProcessingArtifactV1` metadata to one exact
   `HARCPB1` body by byte length, SHA-256, artifact ID, origin recording ID,
   canonical-audio digest, protocol version, and coverage; and
+- validating exact device-signed recording manifests into transfer-owned
+  evidence, issuing exact host-signed pending-processing receipts, and
+  validating those receipts against the pinned host plus every manifest/audio
+  binding before producing cleanup-authorizing evidence; and
 - loading the frozen pairing SAS dictionary from the SwiftPM resource bundle
   and verifying its exact protocol hash before use.
 

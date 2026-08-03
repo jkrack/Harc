@@ -342,7 +342,8 @@ struct ClientStoreValidatedEvidenceFixture {
             canonicalRevision: .initial,
             changeCursor: ChangeCursor(1),
             receiptID: ClientStoreFixtures.uuid(703),
-            durableCommitTime: ClientStoreFixtures.baseDate.addingTimeInterval(10)
+            durableCommitTime: ClientStoreFixtures.baseDate.addingTimeInterval(10),
+            processingState: .pending
         )
         let grantClaims = try DeviceGrantClaims(
             libraryID: tuple.libraryID,

@@ -124,6 +124,7 @@ let package = Package(
             dependencies: [
                 "HarcDomain",
                 "HarcIdentity",
+                "HarcStore",
                 "HarcTransfer",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ],
@@ -246,6 +247,7 @@ let package = Package(
                 "HarcHost",
                 "HarcDomain",
                 "HarcIdentity",
+                "HarcStore",
                 "HarcTransfer",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
