@@ -3,10 +3,14 @@ import PackageDescription
 
 let package = Package(
     name: "Harc",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v18)],
     products: [
         .library(name: "HarcCore", targets: ["HarcCore"]),
         .library(name: "HarcDomain", targets: ["HarcDomain"]),
+        .library(name: "HarcIdentity", targets: ["HarcIdentity"]),
+        .library(name: "HarcTransfer", targets: ["HarcTransfer"]),
+        .library(name: "HarcClientStore", targets: ["HarcClientStore"]),
+        .library(name: "HarcHost", targets: ["HarcHost"]),
         .library(name: "HarcAudio", targets: ["HarcAudio"]),
         .library(name: "HarcClient", targets: ["HarcClient"]),
         .library(name: "HarcStore", targets: ["HarcStore"]),
@@ -52,6 +56,35 @@ let package = Package(
     targets: [
         .target(name: "HarcCore"),
         .target(name: "HarcDomain", exclude: ["README.md"]),
+        .target(
+            name: "HarcIdentity",
+            dependencies: ["HarcDomain"],
+            exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcTransfer",
+            dependencies: ["HarcDomain", "HarcIdentity"],
+            exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcClientStore",
+            dependencies: [
+                "HarcDomain",
+                "HarcTransfer",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
+            exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcHost",
+            dependencies: [
+                "HarcDomain",
+                "HarcIdentity",
+                "HarcTransfer",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
+            exclude: ["README.md"]
+        ),
         .target(
             name: "HarcAudio",
             dependencies: ["HarcCore", "HarcDomain", "HarcClient", "HarcAudioObjC"]
@@ -135,6 +168,34 @@ let package = Package(
         ),
         .testTarget(name: "HarcCoreTests", dependencies: ["HarcCore"]),
         .testTarget(name: "HarcDomainTests", dependencies: ["HarcDomain"]),
+        .testTarget(
+            name: "HarcIdentityTests",
+            dependencies: ["HarcIdentity", "HarcDomain"]
+        ),
+        .testTarget(
+            name: "HarcTransferTests",
+            dependencies: ["HarcTransfer", "HarcIdentity", "HarcDomain"]
+        ),
+        .testTarget(
+            name: "HarcClientStoreTests",
+            dependencies: [
+                "HarcClientStore",
+                "HarcDomain",
+                "HarcIdentity",
+                "HarcTransfer",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .testTarget(
+            name: "HarcHostTests",
+            dependencies: [
+                "HarcHost",
+                "HarcDomain",
+                "HarcIdentity",
+                "HarcTransfer",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
         .testTarget(
             name: "HarcModelsTests",
             dependencies: ["HarcModels", "HarcCore"]

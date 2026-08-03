@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.harc
   deploymentTarget:
     macOS: "26.0"
+    iOS: "18.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 settings:
@@ -12,8 +13,6 @@ settings:
     CURRENT_PROJECT_VERSION: "42"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
-    ENABLE_HARDENED_RUNTIME: YES
-    ARCHS: arm64
     ONLY_ACTIVE_ARCH: NO
 packages:
   HarcCore:
@@ -81,6 +80,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.harc.Harc
         CODE_SIGN_ENTITLEMENTS: HarcApp/Harc.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        ARCHS: arm64
     postCompileScripts:
       - name: Embed harc-stt daemon
         script: |
@@ -104,3 +105,64 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcAppUITests
         GENERATE_INFOPLIST_FILE: YES
         ENABLE_HARDENED_RUNTIME: NO
+        ARCHS: arm64
+
+  HarcMobileSpikes:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: HarcMobileSpikes
+        excludes:
+          - README.md
+    dependencies:
+      - package: HarcCore
+        product: HarcDomain
+    info:
+      path: HarcMobileSpikes/Info.plist
+      properties:
+        CFBundleName: HarcMobileSpikes
+        CFBundleDisplayName: Harc Codec Spikes
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        HarcBuildSHA: "$(HARC_BUILD_SHA)"
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobileSpikes
+        TARGETED_DEVICE_FAMILY: 1
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SKIP_INSTALL: YES
+        ENABLE_HARDENED_RUNTIME: NO
+        HARC_BUILD_SHA: unrecorded
+
+  HarcMobileSpikesTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: HarcMobileSpikesTests
+    dependencies:
+      - target: HarcMobileSpikes
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobileSpikesTests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: 1
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+
+schemes:
+  HarcMobileSpikes:
+    build:
+      targets:
+        HarcMobileSpikes: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - HarcMobileSpikesTests

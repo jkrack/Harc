@@ -69,17 +69,17 @@ mode is `docs/specs/2026-08-02-host-client-mobile-implementation-spec.md`. The
 short architecture and ordered PR plan live beside it under `docs/architecture/`
 and `docs/plans/`. The spec wins if planning prose drifts.
 
-`HarcDomain` is active as the Foundation-only public identity/value layer. The
-remaining new `HarcIdentity`, `HarcTransfer`, `HarcProtocol`, `HarcHost`,
-`HarcHostTransport`, `HarcClientTransport`, `HarcClientStore`,
-`HarcAudioMobile`, `HarcAudioMac`, and `HarcInference` directories remain
-documentation-only boundaries until their ordered vertical slice has
-implementation and focused tests. Do not add a placeholder module to
-`Package.swift` or `project.yml`. Keep the V1 host in the resident Mac app, keep
-the existing daemon, issue the audio-safety receipt before derived processing,
-and do not expose local paths or GRDB records as network DTOs. In Host mode,
-`harc-mcp` must route through authenticated local IPC and must never fall back to
-direct database writes when the resident host is unavailable.
+`HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcClientStore`, and the
+transport-free `HarcHost` core are active, focused-tested modules.
+`HarcProtocol`, `HarcHostTransport`, `HarcClientTransport`, `HarcAudioMobile`,
+`HarcAudioMac`, and `HarcInference` remain documentation-only boundaries until
+their ordered vertical slice has implementation and focused tests. Do not add a
+placeholder module to `Package.swift` or `project.yml`. Keep the V1 host in the
+resident Mac app, keep the existing daemon, issue the audio-safety receipt
+before derived processing, and do not expose local paths or GRDB records as
+network DTOs. In Host mode, `harc-mcp` must route through authenticated local
+IPC and must never fall back to direct database writes when the resident host is
+unavailable.
 
 ## Reliability Rules
 
@@ -115,17 +115,20 @@ requires.
     swift test
 
 **Known flaky suites — all timing-based, all load-induced.** Under the full
-parallel suite these intermittently fail, and take 15–30 s for work that runs
-in ~0.1 s alone; that time ratio is the tell. Observed together on 2026-07-25:
+parallel suite these intermittently fail while Core ML models compile, then pass
+immediately in isolation; that load/no-load contrast is the tell. Observed again
+on 2026-08-02:
 
 - `SummarizationQueue` / `SummarizationQueueStore`
 - `PostStopTrayState` (TTL auto-fade)
 - `DictationKeepWarmController` (ping counts)
 - `LibraryMaintenanceStore` ("indexing clears the index backlog")
+- `DictationController` (async cancellation/override timing)
+- `ChunkedTranscriber` (live-preview scheduling)
 
 Re-run the named suite alone before treating one as a regression:
 
-    swift test --filter "SummarizationQueue|PostStopTrayState|DictationKeepWarm"
+    swift test --filter "SummarizationQueue|SummarizationQueueStore|PostStopTrayState|DictationKeepWarm|LibraryMaintenanceStore|DictationController|ChunkedTranscriber"
 
 **`swift test` does not cover `HarcApp/`.** AppDelegate, the window
 controllers and the NSPanel HUD compile only in the Xcode app target, so a

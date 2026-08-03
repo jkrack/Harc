@@ -808,6 +808,10 @@ golden fixture, and protocol-minor capability before release.
 - The host rejects a client `issued_at` more than five minutes in its future,
   an expiry at or before issue, and every command past expiry. Authenticated host
   time returned at session setup lets a skewed client repair its clock model.
+- Authorization, lease, ticket, initial-command, and retention decisions use
+  only the host's trusted clock. Transport and application-service callers have
+  no timestamp override for those decisions; request timestamps remain signed
+  data that is validated against host time.
 - Mutations include `expected_revision` and fail with a typed conflict.
 - TLS 1.3 0-RTT MUST be disabled for pairing, upload, mutation, administration,
   and every other side-effecting operation.
@@ -1157,12 +1161,14 @@ Rate-limit rejection responses MUST NOT reveal whether a device, ticket, or
 record exists. Repeated identical low-severity rejection events are aggregated
 instead of creating one audit row per packet.
 
-Accepted operation records are retained through their command expiry plus 30
-days. Once the signed command is expired, its row may be compacted because every
-replay is rejected by expiry; unexpired records MUST NOT be removed. Each device
-is capped at 100,000 retained operation rows. If no safely expired rows can be
-compacted at that limit, new side-effecting commands fail visibly with
-`resourceExhausted`.
+Accepted nonzero replay identities are permanent. Command expiry limits only
+first acceptance: an exact replay after expiry still returns the original
+durable result, while a different request under the same replay key remains an
+audited conflict. V1 therefore retains the exact request fingerprint and
+original result rather than deleting an identity after a time horizon. Each
+device is capped at 100,000 retained operation rows; at that limit, new
+side-effecting commands fail visibly with `resourceExhausted` instead of making
+an old `OperationID` reusable.
 
 Expired pairing/challenge/session rows are deleted after seven days. Expired
 background-capability records are deleted 30 days after expiry. The library
@@ -1300,6 +1306,9 @@ spike. Both MUST decode bit-exactly. On the oldest supported iPhone, p95 encodin
 of a 60-second chunk must finish within ten seconds, encoder queue depth must
 remain at most two during a three-hour run, incremental peak memory must remain
 below 100 MiB, and encoding must not cause serious or critical thermal state.
+Simulator, Catalyst, and iOS-app-on-Mac reports are diagnostic only and MUST
+fail qualification. A qualifying report records a physical iPhone hardware
+identifier and phone interface idiom in addition to the signed build identity.
 Until that decision lands, raw canonical PCM is permitted only for fixtures and
 loopback tests; the TestFlight path requires lossless compression.
 
@@ -1450,12 +1459,14 @@ only to the owning device. It invalidates capabilities and permits a fresh
 upload ID and newly signed manifest for the same origin; it never deletes the
 client master or a committed recording. Host staging for an expired or
 abandoned attempt is eligible for deletion after seven days. The minimal
-identity, descriptor hashes, bound-manifest object ID, generation history, and
-terminal reason remain for 30 days after the last expiry/abandon event so replay
-and conflict decisions stay deterministic. Reaping immediately frees the
-attempt from the four-active-session quota. Quota exhaustion first reaps
-eligible terminal/expired rows and otherwise returns a visible recoverable
-error.
+attempt identity and every supersession edge are permanent: once a newer upload
+ID has been accepted for an origin, an older ID can never become eligible again
+because the newer attempt later expires or is abandoned. Descriptor hashes,
+bound-manifest identity, generation history, and terminal reason remain durable
+for deterministic replay and provenance; a future compaction may remove bulky
+detail only if it preserves those identities and decisions. Reaping immediately
+frees the attempt from the four-active-session quota. Quota exhaustion first
+reaps eligible staging bytes and otherwise returns a visible recoverable error.
 
 ### 16.2 Client outbox
 
