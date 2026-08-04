@@ -1,6 +1,6 @@
 # Host, Client, and Mobile Implementation Status
 
-**Date:** 2026-08-03
+**Date:** 2026-08-04
 
 **Branch:** `codex/host-client-mobile`
 
@@ -13,7 +13,9 @@ remains intentionally deferred because the specification makes its inference
 extraction, agent, VPN, iPad, and migration work optional after the vertical
 slice is stable.
 
-This is not yet a release-complete or TestFlight-complete claim. Physical iPhone
+The local implementation, standalone regression, iOS Simulator build, and
+unsigned macOS application build gates are green. This is not yet a
+release-complete or TestFlight-complete claim: physical iPhone
 capture/background-transfer gates and the real secondary-Mac acceptance run
 require hardware outside this coding session.
 
@@ -42,16 +44,32 @@ require hardware outside this coding session.
   focused macOS Swift 6 typecheck.
 - The generated `HarcMobile` scheme completed an unsigned arm64 iOS Simulator
   build with architecture and Xcode target concurrency explicitly bounded.
+- The complete standalone SwiftPM regression passed 1,488 Swift Testing cases
+  in 252 suites plus 121 XCTest cases. Nine real-model/daemon Swift Testing
+  cases and four model-quality XCTest cases remain explicitly opt-in through
+  `HARC_INTEGRATION_TESTS=1`; the Unified Parakeet fixture gate also passed in
+  isolation on the installed model.
+- The complete unsigned arm64 macOS `Harc` application build completed with
+  `** BUILD SUCCEEDED **`, including the embedded `harc-stt` and `harc-mcp`
+  helpers.
 - A testable `Harc` policy module emitted successfully, and all committed source
   diffs passed `git diff --check`.
 - Earlier slice-specific evidence remains in this directory for PRs 3 through 6.
+
+The full regression exposed and resolved four integration defects: a stale
+bootstrap factory API feasibility reference, a stale reviewed protobuf source
+checksum, a trapping signed Darwin device identifier conversion in the
+file-backed HARCAB1 scanner, and two assertions that checked a legacy JSON
+sidecar instead of the canonical OKF Markdown projection. Real-model tests are
+now consistently opt-in so ordinary CI and local regression runs do not start
+several CoreML stacks concurrently.
 
 ## Gates still open
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Clean full SwiftPM tests | Open | Run `swift test --jobs 2` after all iCloud-backed package artifacts are materialized. |
-| Unsigned macOS app build | Open | Run the plan's bounded Harc `xcodebuild` command and the standalone regression matrix. |
+| Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,488 Swift Testing cases in 252 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
+| Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | Unsigned arm64 Debug build completed with `** BUILD SUCCEEDED **` on 2026-08-03. |
 | iOS Simulator test execution | Environment-blocked | `CoreSimulatorService` is unavailable after the machine crash; rerun `HarcMobileAppTests` after the service or Mac is restarted. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
@@ -76,7 +94,10 @@ xcodebuild \
   -configuration Debug \
   -destination 'platform=macOS,arch=arm64' \
   -jobs 2 \
+  ARCHS=arm64 \
+  EXCLUDED_ARCHS=x86_64 \
   ONLY_ACTIVE_ARCH=YES \
+  SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
   CODE_SIGNING_ALLOWED=NO \
   -skipPackagePluginValidation \
   build

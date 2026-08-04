@@ -6,7 +6,13 @@ import FluidAudio
 
 @Suite("Diarizer", .tags(.slow))
 struct DiarizerTests {
-    @Test("diarizing short-speech.wav returns at least one speaker segment")
+    @Test(
+        "diarizing short-speech.wav returns at least one speaker segment",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["HARC_INTEGRATION_TESTS"] == "1",
+            "Set HARC_INTEGRATION_TESTS=1 to run real diarizer model tests."
+        )
+    )
     func diarizeShortSpeech() async throws {
         let url = try #require(
             Bundle.module.url(forResource: "short-speech", withExtension: "wav", subdirectory: "Fixtures")
@@ -30,7 +36,13 @@ struct DiarizerTests {
         }
     }
 
-    @Test("diarizeWithEmbeddings returns 256-dim L2-normalized speaker embeddings")
+    @Test(
+        "diarizeWithEmbeddings returns 256-dim L2-normalized speaker embeddings",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["HARC_INTEGRATION_TESTS"] == "1",
+            "Set HARC_INTEGRATION_TESTS=1 to run real diarizer model tests."
+        )
+    )
     func diarizeWithEmbeddingsReturnsVectors() async throws {
         let diarizer = Diarizer()
         try await diarizer.loadModels()

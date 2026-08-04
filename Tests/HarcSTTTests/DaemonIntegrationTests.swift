@@ -4,7 +4,14 @@ import Darwin
 import HarcCore
 @testable import HarcSTT
 
-@Suite("Daemon end-to-end", .tags(.slow))
+@Suite(
+    "Daemon end-to-end",
+    .tags(.slow),
+    .enabled(
+        if: ProcessInfo.processInfo.environment["HARC_INTEGRATION_TESTS"] == "1",
+        "Set HARC_INTEGRATION_TESTS=1 to run the real-model daemon integration test."
+    )
+)
 struct DaemonIntegrationTests {
     @Test("dispatching a transcribe request over the socket returns a result")
     func transcribeOverSocket() async throws {

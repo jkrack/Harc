@@ -37,7 +37,13 @@ struct TranscriberVADPolicyTests {
 
 @Suite("Transcriber", .tags(.slow))
 struct TranscriberTests {
-    @Test("transcribing short-speech.wav with vad: false produces non-empty text and word timings")
+    @Test(
+        "transcribing short-speech.wav with vad: false produces non-empty text and word timings",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["HARC_INTEGRATION_TESTS"] == "1",
+            "Set HARC_INTEGRATION_TESTS=1 to run real transcription model tests."
+        )
+    )
     func transcribeShortSpeechVADOff() async throws {
         let url = try #require(
             Bundle.module.url(forResource: "short-speech", withExtension: "wav", subdirectory: "Fixtures")
@@ -54,7 +60,13 @@ struct TranscriberTests {
         #expect(result.text.lowercased().contains("test"), "expected 'test' in transcription; got: \(result.text)")
     }
 
-    @Test("transcribing short-speech.wav with vad: true keeps transcript similar and timestamps in range")
+    @Test(
+        "transcribing short-speech.wav with vad: true keeps transcript similar and timestamps in range",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["HARC_INTEGRATION_TESTS"] == "1",
+            "Set HARC_INTEGRATION_TESTS=1 to run real transcription model tests."
+        )
+    )
     func transcribeShortSpeechVADOn() async throws {
         let url = try #require(
             Bundle.module.url(forResource: "short-speech", withExtension: "wav", subdirectory: "Fixtures")

@@ -17,7 +17,15 @@ import FluidAudio
 ///
 /// First run downloads the Unified model (~500 MB) via FluidAudio's
 /// ModelHub into ~/Library/Application Support/FluidAudio/Models.
-@Suite("Parakeet Unified spike", .tags(.slow))
+@Suite(
+    "Parakeet Unified spike",
+    .tags(.slow),
+    .serialized,
+    .enabled(
+        if: ProcessInfo.processInfo.environment["HARC_INTEGRATION_TESTS"] == "1",
+        "Set HARC_INTEGRATION_TESTS=1 to run real Parakeet model tests."
+    )
+)
 struct ParakeetUnifiedSpikeTests {
     @Test("unified streaming path yields text, punctuation, and monotonic word timings on the fixture")
     func unifiedFixtureGate() async throws {

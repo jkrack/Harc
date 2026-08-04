@@ -83,7 +83,8 @@ struct HostTransportAPIFeasibilityTests {
         )
         _ = HarcBootstrapGRPCServiceFactoryV1.init(
             hostInfoService:pairingService:sessionService:recordingService:
-                hostAuthorityPublicKey:capabilityPolicy:
+                libraryService:processingService:hostAuthorityPublicKey:
+                capabilityPolicy:
                 hostScopedSourceSecret:
         )
         _ = HarcGRPCServerRuntime.init(

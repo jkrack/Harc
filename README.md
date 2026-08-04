@@ -263,6 +263,11 @@ Requires Xcode / Swift 6.2 and Homebrew.
 before calling the tree green. See `AGENTS.md` for known-flaky suites and the
 full validation workflow.
 
+Real-model speech, daemon, and quality gates are intentionally opt-in so the
+standalone suite does not start several CoreML stacks at once. Run them on a
+qualified machine with `HARC_INTEGRATION_TESTS=1 swift test`, preferably one
+filtered model suite at a time.
+
 ## Uninstall
 
 Quit Harc, delete `Harc.app`, then remove what you don't want to keep

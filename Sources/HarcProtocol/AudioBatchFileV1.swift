@@ -264,7 +264,7 @@ public enum HarcAudioBatchFileV1 {
             throw HarcProtocolCodecError.numericOverflow(field: "audioBatch.fileSize")
         }
         return FileIdentity(
-            device: UInt64(status.st_dev),
+            device: UInt64(UInt32(bitPattern: status.st_dev)),
             inode: UInt64(status.st_ino),
             byteCount: UInt64(status.st_size),
             modifiedSeconds: Int64(status.st_mtimespec.tv_sec),

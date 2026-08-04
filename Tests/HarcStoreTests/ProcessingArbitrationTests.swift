@@ -39,7 +39,9 @@ struct ProcessingArbitrationTests {
         #expect(stored.sttModelID == "harc-stt.edge")
         #expect(stored.processing == .ready)
         #expect(stored.projection == .readyV1)
-        #expect(FileManager.default.fileExists(atPath: stored.jsonPath!))
+        #expect(FileManager.default.fileExists(
+            atPath: OKFProjection.markdownURL(for: stored).path
+        ))
     }
 
     @Test("edge result supersedes staged Host transcript before publication")
@@ -96,7 +98,9 @@ struct ProcessingArbitrationTests {
         #expect(stored.sttModelID == "harc-stt.host")
         #expect(stored.processing == .ready)
         #expect(stored.projection == .readyV1)
-        #expect(FileManager.default.fileExists(atPath: stored.jsonPath!))
+        #expect(FileManager.default.fileExists(
+            atPath: OKFProjection.markdownURL(for: stored).path
+        ))
     }
 
     private func makeFixture() async throws -> Fixture {

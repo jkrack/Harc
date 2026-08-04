@@ -3,7 +3,14 @@ import Foundation
 import HarcCore
 @testable import HarcClient
 
-@Suite("HarcClient end-to-end", .tags(.slow))
+@Suite(
+    "HarcClient end-to-end",
+    .tags(.slow),
+    .enabled(
+        if: ProcessInfo.processInfo.environment["HARC_INTEGRATION_TESTS"] == "1",
+        "Set HARC_INTEGRATION_TESTS=1 to run the real-model client integration test."
+    )
+)
 struct EndToEndTests {
     /// Copy the HarcSTTTests fixture into /tmp so the daemon test socket doesn't care about bundle paths.
     private func stageFixture() throws -> URL {
