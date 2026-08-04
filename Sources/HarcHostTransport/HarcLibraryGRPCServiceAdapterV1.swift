@@ -262,22 +262,92 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         request: ServerRequest<Harc_V1_SearchMetadataRequestV1>,
         context: ServerContext
     ) async throws -> ServerResponse<Harc_V1_SearchMetadataResponseV1> {
-        _ = try await authorize(
-            request.metadata,
-            requiredScope: .libraryMetadataRead
-        )
-        throw RPCError(code: .unimplemented, message: "Metadata search is not available in this build.")
+        do {
+            let session = try await authorize(
+                request.metadata,
+                requiredScope: .libraryMetadataRead
+            )
+            let version = try validateProtocol(
+                request.message.hasProtocol,
+                request.message.protocol,
+                knownFields: [1, 2, 3, 4, 5],
+                session: session
+            )
+            let filter = try Self.metadataFilter(
+                request.message.hasFilter ? request.message.filter : nil
+            )
+            let sort = try Self.metadataSort(request.message.sort)
+            let limit = Int(request.message.limit)
+            let pageToken = try Self.searchPageToken(
+                request.message.hasPageToken,
+                request.message.pageToken
+            )
+            let page = try await service.searchMetadata(
+                session: session,
+                filter: filter,
+                sort: sort,
+                limit: limit,
+                pageToken: pageToken
+            )
+            var response = Harc_V1_SearchMetadataResponseV1()
+            response.protocol = version.protobufV1()
+            response.recordings = try page.recordings.map(
+                Harc_V1_LibraryRecordingSummaryV1.init
+            )
+            if let next = page.nextPageToken { response.nextPageToken = next }
+            guard try response.serializedData().count
+                <= Self.maximumDecodedPageBytes else {
+                throw HarcHostLibraryError.snapshotCapacityExceeded
+            }
+            return ServerResponse(message: response)
+        } catch {
+            throw HarcPostSessionGRPCErrorMapper.map(error)
+        }
     }
 
     public func searchTranscripts(
         request: ServerRequest<Harc_V1_SearchTranscriptsRequestV1>,
         context: ServerContext
     ) async throws -> ServerResponse<Harc_V1_SearchTranscriptsResponseV1> {
-        _ = try await authorize(
-            request.metadata,
-            requiredScope: .libraryTranscriptRead
-        )
-        throw RPCError(code: .unimplemented, message: "Transcript search is not available in this build.")
+        do {
+            let session = try await authorize(
+                request.metadata,
+                requiredScope: .libraryTranscriptRead
+            )
+            let version = try validateProtocol(
+                request.message.hasProtocol,
+                request.message.protocol,
+                knownFields: [1, 2, 3, 4, 5, 6],
+                session: session
+            )
+            let mode = try Self.transcriptMode(request.message.mode)
+            let filter = try Self.transcriptFilter(
+                request.message.hasFilter ? request.message.filter : nil
+            )
+            let pageToken = try Self.searchPageToken(
+                request.message.hasPageToken,
+                request.message.pageToken
+            )
+            let page = try await service.searchTranscripts(
+                session: session,
+                query: request.message.query,
+                mode: mode,
+                filter: filter,
+                limit: Int(request.message.limit),
+                pageToken: pageToken
+            )
+            var response = Harc_V1_SearchTranscriptsResponseV1()
+            response.protocol = version.protobufV1()
+            response.hits = try page.hits.map(Self.protobufTranscriptHit)
+            if let next = page.nextPageToken { response.nextPageToken = next }
+            guard try response.serializedData().count
+                <= Self.maximumDecodedPageBytes else {
+                throw HarcHostLibraryError.snapshotCapacityExceeded
+            }
+            return ServerResponse(message: response)
+        } catch {
+            throw HarcPostSessionGRPCErrorMapper.map(error)
+        }
     }
 
     public func applyMetadataMutation(
@@ -401,6 +471,252 @@ public struct HarcLibraryGRPCServiceAdapterV1:
             }
         }
         return result
+    }
+
+    private static func metadataFilter(
+        _ wire: Harc_V1_MetadataSearchFilterV1?
+    ) throws -> HarcHostMetadataSearchFilter {
+        guard let wire else { return HarcHostMetadataSearchFilter() }
+        let title = try wire.hasTitleContains
+            ? validatedSearchString(
+                wire.titleContains,
+                field: "searchMetadata.filter.titleContains",
+                maximumBytes: 512
+            )
+            : nil
+        let tagsAll = try validatedUniqueStrings(
+            wire.tagsAll,
+            field: "searchMetadata.filter.tagsAll",
+            maximumCount: 128,
+            maximumBytes: 128
+        )
+        let tagsAny = try validatedUniqueStrings(
+            wire.tagsAny,
+            field: "searchMetadata.filter.tagsAny",
+            maximumCount: 128,
+            maximumBytes: 128
+        )
+        let speakers = try validatedUniqueStrings(
+            wire.speakerDisplayNames,
+            field: "searchMetadata.filter.speakerDisplayNames",
+            maximumCount: 128,
+            maximumBytes: 256
+        )
+        let range = try unixRange(
+            wire.hasStartedAt ? wire.startedAt : nil,
+            field: "searchMetadata.filter.startedAt"
+        )
+        var processing: [RecordingProcessingState] = []
+        for state in wire.processingStates {
+            let decoded = try processingState(state)
+            guard !processing.contains(decoded) else {
+                throw HarcProtobufConversionError.duplicateValue(
+                    field: "searchMetadata.filter.processingStates"
+                )
+            }
+            processing.append(decoded)
+        }
+        return HarcHostMetadataSearchFilter(
+            titleContains: title,
+            tagsAll: Set(tagsAll),
+            tagsAny: Set(tagsAny),
+            startedAtStart: range.start,
+            startedAtEnd: range.end,
+            speakerDisplayNames: Set(speakers),
+            pinned: wire.hasPinned ? wire.pinned : nil,
+            processingStates: processing
+        )
+    }
+
+    private static func metadataSort(
+        _ wire: Harc_V1_MetadataSearchSortV1
+    ) throws -> HarcHostMetadataSearchSort {
+        switch wire {
+        case .metadataSearchSortStartedAtDescending:
+            return .startedAtDescending
+        case .metadataSearchSortStartedAtAscending:
+            return .startedAtAscending
+        case .metadataSearchSortTitleAscending:
+            return .titleAscending
+        case .metadataSearchSortUnspecified:
+            throw HarcProtobufConversionError.unsupportedEnum(
+                field: "searchMetadata.sort",
+                rawValue: wire.rawValue
+            )
+        case .UNRECOGNIZED(let value):
+            throw HarcProtobufConversionError.unsupportedEnum(
+                field: "searchMetadata.sort",
+                rawValue: value
+            )
+        }
+    }
+
+    private static func transcriptFilter(
+        _ wire: Harc_V1_TranscriptSearchFilterV1?
+    ) throws -> HarcHostTranscriptSearchFilter {
+        guard let wire else { return HarcHostTranscriptSearchFilter() }
+        let ids = try wire.canonicalRecordingIds.map { try $0.domainValue() }
+        guard Set(ids).count == ids.count else {
+            throw HarcProtobufConversionError.duplicateValue(
+                field: "searchTranscripts.filter.canonicalRecordingIDs"
+            )
+        }
+        let tags = try validatedUniqueStrings(
+            wire.tags,
+            field: "searchTranscripts.filter.tags",
+            maximumCount: 128,
+            maximumBytes: 128
+        )
+        guard Set(wire.speakerIndices).count == wire.speakerIndices.count else {
+            throw HarcProtobufConversionError.duplicateValue(
+                field: "searchTranscripts.filter.speakerIndices"
+            )
+        }
+        let range = try unixRange(
+            wire.hasStartedAt ? wire.startedAt : nil,
+            field: "searchTranscripts.filter.startedAt"
+        )
+        return HarcHostTranscriptSearchFilter(
+            canonicalRecordingIDs: Set(ids),
+            tags: Set(tags),
+            startedAtStart: range.start,
+            startedAtEnd: range.end,
+            speakerIndices: Set(wire.speakerIndices)
+        )
+    }
+
+    private static func transcriptMode(
+        _ wire: Harc_V1_TranscriptSearchModeV1
+    ) throws -> HarcHostTranscriptSearchMode {
+        switch wire {
+        case .transcriptSearchModeLexical: return .lexical
+        case .transcriptSearchModeSemantic: return .semantic
+        case .transcriptSearchModeHybrid: return .hybrid
+        case .transcriptSearchModeUnspecified:
+            throw HarcProtobufConversionError.unsupportedEnum(
+                field: "searchTranscripts.mode",
+                rawValue: wire.rawValue
+            )
+        case .UNRECOGNIZED(let value):
+            throw HarcProtobufConversionError.unsupportedEnum(
+                field: "searchTranscripts.mode",
+                rawValue: value
+            )
+        }
+    }
+
+    private static func protobufTranscriptHit(
+        _ value: HarcHostTranscriptSearchHit
+    ) throws -> Harc_V1_TranscriptSearchHitV1 {
+        guard value.score.isFinite else {
+            throw HarcProtobufConversionError.invalidValue(
+                field: "searchTranscripts.hit.score"
+            )
+        }
+        var wire = Harc_V1_TranscriptSearchHitV1()
+        wire.recording = try Harc_V1_LibraryRecordingSummaryV1(value.recording)
+        wire.score = value.score
+        wire.snippets = value.snippets.map { snippet in
+            var result = Harc_V1_TranscriptSearchSnippetV1()
+            result.text = snippet.text
+            result.frames = Harc_V1_CanonicalFrameRangeV1(snippet.frames)
+            if let speaker = snippet.speakerIndex {
+                result.speakerIndex = speaker
+            }
+            return result
+        }
+        return wire
+    }
+
+    private static func searchPageToken(
+        _ isPresent: Bool,
+        _ value: Data
+    ) throws -> Data? {
+        guard isPresent else { return nil }
+        guard value.count == 24 else {
+            throw HarcProtobufConversionError.invalidLength(
+                field: "library.search.pageToken",
+                expected: 24,
+                actual: value.count
+            )
+        }
+        return value
+    }
+
+    private static func validatedUniqueStrings(
+        _ values: [String],
+        field: String,
+        maximumCount: Int,
+        maximumBytes: Int
+    ) throws -> [String] {
+        guard values.count <= maximumCount else {
+            throw HarcProtobufConversionError.invalidValue(field: field)
+        }
+        let normalized = try values.map {
+            try validatedSearchString(
+                $0,
+                field: field,
+                maximumBytes: maximumBytes
+            )
+        }
+        guard Set(normalized).count == normalized.count else {
+            throw HarcProtobufConversionError.duplicateValue(field: field)
+        }
+        return normalized
+    }
+
+    private static func validatedSearchString(
+        _ value: String,
+        field: String,
+        maximumBytes: Int
+    ) throws -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              normalized.utf8.count <= maximumBytes else {
+            throw HarcProtobufConversionError.invalidValue(field: field)
+        }
+        return normalized
+    }
+
+    private static func unixRange(
+        _ wire: Harc_V1_UnixTimeRangeV1?,
+        field: String
+    ) throws -> (start: Date?, end: Date?) {
+        guard let wire else { return (nil, nil) }
+        let start = wire.hasStartUnixMs
+            ? Date(timeIntervalSince1970: Double(wire.startUnixMs) / 1_000)
+            : nil
+        let end = wire.hasEndUnixMs
+            ? Date(timeIntervalSince1970: Double(wire.endUnixMs) / 1_000)
+            : nil
+        guard start == nil || end == nil || start! <= end! else {
+            throw HarcProtobufConversionError.invalidValue(field: field)
+        }
+        return (start, end)
+    }
+
+    private static func processingState(
+        _ wire: Harc_V1_RecordingProcessingStateV1
+    ) throws -> RecordingProcessingState {
+        switch wire {
+        case .recordingProcessingStatePending: return .pending
+        case .recordingProcessingStateTranscribing: return .transcribing
+        case .recordingProcessingStateProjecting: return .projecting
+        case .recordingProcessingStateReady: return .ready
+        case .recordingProcessingStateDegraded: return .degraded
+        case .recordingProcessingStateFailedRecoverable:
+            return .failedRecoverable
+        case .recordingProcessingStateUnspecified:
+            throw HarcProtobufConversionError.unsupportedEnum(
+                field: "searchMetadata.filter.processingStates",
+                rawValue: wire.rawValue
+            )
+        case .UNRECOGNIZED(let value):
+            throw HarcProtobufConversionError.unsupportedEnum(
+                field: "searchMetadata.filter.processingStates",
+                rawValue: value
+            )
+        }
     }
 
     private static func isTranscriptProtected(

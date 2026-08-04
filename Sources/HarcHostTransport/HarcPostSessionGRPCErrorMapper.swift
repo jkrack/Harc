@@ -261,7 +261,7 @@ enum HarcPostSessionGRPCErrorMapper {
             .permissionDenied
         case .snapshotExpired, .invalidPageToken, .cursorAheadOfHost:
             .failedPrecondition
-        case .invalidPageLimit:
+        case .invalidPageLimit, .invalidSearchQuery:
             .invalidArgument
         case .snapshotCapacityExceeded:
             .resourceExhausted

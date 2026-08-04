@@ -396,6 +396,26 @@ public final class HarcPinnedGRPCConnection:
         )
     }
 
+    public func searchLibraryMetadata(
+        _ request: Harc_V1_SearchMetadataRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SearchMetadataResponseV1 {
+        try await libraryRPCAdapter.searchLibraryMetadata(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func searchLibraryTranscripts(
+        _ request: Harc_V1_SearchTranscriptsRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SearchTranscriptsResponseV1 {
+        try await libraryRPCAdapter.searchLibraryTranscripts(
+            request,
+            authorization: authorization
+        )
+    }
+
     public func status() async -> HarcPinnedGRPCConnectionStatus {
         await taskOwner.status()
     }

@@ -47,6 +47,16 @@ public protocol HarcLibraryRPCTransport: Sendable {
         _ request: Harc_V1_GetRecordingRequestV1,
         authorization: HarcLibraryAuthorization
     ) async throws -> Harc_V1_GetRecordingResponseV1
+
+    func searchLibraryMetadata(
+        _ request: Harc_V1_SearchMetadataRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SearchMetadataResponseV1
+
+    func searchLibraryTranscripts(
+        _ request: Harc_V1_SearchTranscriptsRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SearchTranscriptsResponseV1
 }
 
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
@@ -94,6 +104,26 @@ public struct HarcGeneratedLibraryRPCAdapter<
         authorization: HarcLibraryAuthorization
     ) async throws -> Harc_V1_GetRecordingResponseV1 {
         try await client.getRecording(
+            request,
+            metadata: authorization.metadata
+        )
+    }
+
+    public func searchLibraryMetadata(
+        _ request: Harc_V1_SearchMetadataRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SearchMetadataResponseV1 {
+        try await client.searchMetadata(
+            request,
+            metadata: authorization.metadata
+        )
+    }
+
+    public func searchLibraryTranscripts(
+        _ request: Harc_V1_SearchTranscriptsRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SearchTranscriptsResponseV1 {
+        try await client.searchTranscripts(
             request,
             metadata: authorization.metadata
         )

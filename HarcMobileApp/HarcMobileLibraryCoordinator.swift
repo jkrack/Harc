@@ -10,6 +10,14 @@ import Observation
 @MainActor
 @Observable
 final class HarcMobileLibraryCoordinator {
+    struct SearchResult: Identifiable, Equatable {
+        let recording: LibraryRecordingSummary
+        let score: Double?
+        let snippets: [String]
+
+        var id: CanonicalRecordingID { recording.canonicalID }
+    }
+
     enum State: Equatable {
         case loadingCache
         case unpaired
@@ -23,12 +31,16 @@ final class HarcMobileLibraryCoordinator {
     private(set) var state: State = .loadingCache
     private(set) var recordings: [LibraryRecordingSummary] = []
     private(set) var isRefreshing = false
+    private(set) var searchResults: [SearchResult] = []
+    private(set) var isSearching = false
+    private(set) var searchMessage: String?
 
     private let identity: InstallationSigningIdentity
     private let transferStore: HarcTransferStore
     private let cache: HarcLibraryCache
     private let routeURL: URL
     private var refreshTask: Task<Void, Never>?
+    private var activeSearchID: UUID?
 
     init(
         identity: InstallationSigningIdentity,
@@ -101,6 +113,87 @@ final class HarcMobileLibraryCoordinator {
         }
     }
 
+    func search(_ rawQuery: String) async {
+        let searchID = UUID()
+        activeSearchID = searchID
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            searchResults = []
+            searchMessage = nil
+            isSearching = false
+            activeSearchID = nil
+            return
+        }
+        guard query.utf8.count <= 1_024 else {
+            searchResults = []
+            searchMessage = "Search is limited to 1,024 UTF-8 bytes."
+            isSearching = false
+            activeSearchID = nil
+            return
+        }
+        isSearching = true
+        searchMessage = nil
+        defer {
+            if activeSearchID == searchID {
+                isSearching = false
+                activeSearchID = nil
+            }
+        }
+        do {
+            let opened = try await HarcMobileHostSessionConnector.open(
+                identity: identity,
+                store: transferStore,
+                routeURL: routeURL
+            )
+            do {
+                guard opened.adoption.grant.scopes.contains(
+                    .libraryMetadataRead
+                ) else {
+                    throw HarcMobileLibraryError.accessNotGranted
+                }
+                let authorization = try HarcLibraryAuthorization(
+                    openedSession: opened.session
+                )
+                let metadata = try await searchMetadata(
+                    query: query,
+                    transport: opened.connection,
+                    authorization: authorization
+                )
+                let transcripts: [SearchResult]
+                if opened.adoption.grant.scopes.contains(
+                    .libraryTranscriptRead
+                ) {
+                    transcripts = try await searchTranscripts(
+                        query: query,
+                        transport: opened.connection,
+                        authorization: authorization
+                    )
+                } else {
+                    transcripts = []
+                }
+                try await opened.connection.shutdownGracefully()
+                guard !Task.isCancelled,
+                      activeSearchID == searchID else { return }
+                var seen = Set<CanonicalRecordingID>()
+                searchResults = (transcripts + metadata).filter {
+                    seen.insert($0.id).inserted
+                }
+            } catch {
+                await opened.connection.shutdownImmediately()
+                throw error
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled,
+                  activeSearchID == searchID else { return }
+            searchResults = localMetadataSearch(query)
+            searchMessage = searchResults.isEmpty
+                ? error.localizedDescription
+                : "Host search is offline; showing cached title and tag matches."
+        }
+    }
+
     private func performRefresh() async {
         defer {
             isRefreshing = false
@@ -144,6 +237,106 @@ final class HarcMobileLibraryCoordinator {
             state = recordings.isEmpty
                 ? .failed(error.localizedDescription)
                 : .offline(message: error.localizedDescription)
+        }
+    }
+
+    private func searchMetadata(
+        query: String,
+        transport: HarcPinnedGRPCConnection,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> [SearchResult] {
+        var results: [SearchResult] = []
+        var pageToken: Data?
+        var seenTokens = Set<Data>()
+        for _ in 0 ..< 20 {
+            var filter = Harc_V1_MetadataSearchFilterV1()
+            filter.titleContains = query
+            var request = Harc_V1_SearchMetadataRequestV1()
+            request.protocol = HarcProtocolVersion.v1.protobufV1()
+            request.filter = filter
+            request.sort = .metadataSearchSortStartedAtDescending
+            request.limit = 50
+            if let pageToken { request.pageToken = pageToken }
+            let response = try await transport.searchLibraryMetadata(
+                request,
+                authorization: authorization
+            )
+            try Self.validateProtocol(response.hasProtocol, response.protocol)
+            results.append(contentsOf: try response.recordings.map {
+                SearchResult(
+                    recording: try $0.domainValue(),
+                    score: nil,
+                    snippets: []
+                )
+            })
+            guard response.hasNextPageToken else { return results }
+            guard response.nextPageToken.count == 24,
+                  seenTokens.insert(response.nextPageToken).inserted else {
+                throw HarcMobileLibraryError.malformedResponse
+            }
+            pageToken = response.nextPageToken
+        }
+        throw HarcMobileLibraryError.malformedResponse
+    }
+
+    private func searchTranscripts(
+        query: String,
+        transport: HarcPinnedGRPCConnection,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> [SearchResult] {
+        var results: [SearchResult] = []
+        var pageToken: Data?
+        var seenTokens = Set<Data>()
+        for _ in 0 ..< 20 {
+            var request = Harc_V1_SearchTranscriptsRequestV1()
+            request.protocol = HarcProtocolVersion.v1.protobufV1()
+            request.query = query
+            request.mode = .transcriptSearchModeHybrid
+            request.filter = Harc_V1_TranscriptSearchFilterV1()
+            request.limit = 50
+            if let pageToken { request.pageToken = pageToken }
+            let response = try await transport.searchLibraryTranscripts(
+                request,
+                authorization: authorization
+            )
+            try Self.validateProtocol(response.hasProtocol, response.protocol)
+            for hit in response.hits {
+                guard hit.hasRecording, hit.score.isFinite else {
+                    throw HarcMobileLibraryError.malformedResponse
+                }
+                for snippet in hit.snippets {
+                    guard snippet.hasFrames else {
+                        throw HarcMobileLibraryError.malformedResponse
+                    }
+                    _ = try snippet.frames.domainValue()
+                }
+                results.append(
+                    SearchResult(
+                        recording: try hit.recording.domainValue(),
+                        score: hit.score,
+                        snippets: hit.snippets.map(\.text)
+                    )
+                )
+            }
+            guard response.hasNextPageToken else { return results }
+            guard response.nextPageToken.count == 24,
+                  seenTokens.insert(response.nextPageToken).inserted else {
+                throw HarcMobileLibraryError.malformedResponse
+            }
+            pageToken = response.nextPageToken
+        }
+        throw HarcMobileLibraryError.malformedResponse
+    }
+
+    private func localMetadataSearch(_ query: String) -> [SearchResult] {
+        recordings.filter { recording in
+            (recording.title ?? recording.suggestedTitle ?? "")
+                .localizedCaseInsensitiveContains(query)
+                || recording.tags.contains(where: {
+                    $0.localizedCaseInsensitiveContains(query)
+                })
+        }.map {
+            SearchResult(recording: $0, score: nil, snippets: [])
         }
     }
 

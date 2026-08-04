@@ -12,6 +12,7 @@ public enum HarcHostLibraryError: Error, Equatable, Sendable {
     case snapshotCapacityExceeded
     case cursorAheadOfHost
     case recordingNotFound
+    case invalidSearchQuery
 }
 
 public enum HarcHostLibrarySnapshotItem: Equatable, Sendable {
@@ -49,6 +50,113 @@ public enum HarcHostLibraryChangesResult: Equatable, Sendable {
     case fullResyncRequired(currentCursor: ChangeCursor)
 }
 
+public struct HarcHostMetadataSearchFilter: Equatable, Sendable {
+    public let titleContains: String?
+    public let tagsAll: Set<String>
+    public let tagsAny: Set<String>
+    public let startedAtStart: Date?
+    public let startedAtEnd: Date?
+    public let speakerDisplayNames: Set<String>
+    public let pinned: Bool?
+    public let processingStates: [RecordingProcessingState]
+
+    public init(
+        titleContains: String? = nil,
+        tagsAll: Set<String> = [],
+        tagsAny: Set<String> = [],
+        startedAtStart: Date? = nil,
+        startedAtEnd: Date? = nil,
+        speakerDisplayNames: Set<String> = [],
+        pinned: Bool? = nil,
+        processingStates: [RecordingProcessingState] = []
+    ) {
+        self.titleContains = titleContains
+        self.tagsAll = tagsAll
+        self.tagsAny = tagsAny
+        self.startedAtStart = startedAtStart
+        self.startedAtEnd = startedAtEnd
+        self.speakerDisplayNames = speakerDisplayNames
+        self.pinned = pinned
+        self.processingStates = processingStates
+    }
+}
+
+public enum HarcHostMetadataSearchSort: Equatable, Sendable {
+    case startedAtDescending
+    case startedAtAscending
+    case titleAscending
+}
+
+public struct HarcHostTranscriptSearchFilter: Equatable, Sendable {
+    public let canonicalRecordingIDs: Set<CanonicalRecordingID>
+    public let tags: Set<String>
+    public let startedAtStart: Date?
+    public let startedAtEnd: Date?
+    public let speakerIndices: Set<UInt32>
+
+    public init(
+        canonicalRecordingIDs: Set<CanonicalRecordingID> = [],
+        tags: Set<String> = [],
+        startedAtStart: Date? = nil,
+        startedAtEnd: Date? = nil,
+        speakerIndices: Set<UInt32> = []
+    ) {
+        self.canonicalRecordingIDs = canonicalRecordingIDs
+        self.tags = tags
+        self.startedAtStart = startedAtStart
+        self.startedAtEnd = startedAtEnd
+        self.speakerIndices = speakerIndices
+    }
+}
+
+public enum HarcHostTranscriptSearchMode: Equatable, Sendable {
+    case lexical
+    case semantic
+    case hybrid
+}
+
+public struct HarcHostMetadataSearchPage: Equatable, Sendable {
+    public let recordings: [LibraryRecordingSummary]
+    public let nextPageToken: Data?
+}
+
+public struct HarcHostTranscriptSearchSnippet: Equatable, Sendable {
+    public let text: String
+    public let frames: CanonicalFrameRange
+    public let speakerIndex: UInt32?
+
+    public init(
+        text: String,
+        frames: CanonicalFrameRange,
+        speakerIndex: UInt32?
+    ) {
+        self.text = text
+        self.frames = frames
+        self.speakerIndex = speakerIndex
+    }
+}
+
+public struct HarcHostTranscriptSearchHit: Equatable, Sendable {
+    public let recording: LibraryRecordingSummary
+    public let score: Double
+    public let snippets: [HarcHostTranscriptSearchSnippet]
+
+    public init(
+        recording: LibraryRecordingSummary,
+        score: Double,
+        snippets: [HarcHostTranscriptSearchSnippet]
+    ) {
+        self.recording = recording
+        self.score = score
+        self.snippets = snippets
+    }
+}
+
+public struct HarcHostTranscriptSearchPage: Equatable, Sendable {
+    public let hits: [HarcHostTranscriptSearchHit]
+    public let nextPageToken: Data?
+}
+
 /// Canonical library read application for authenticated host clients.
 ///
 /// Snapshot materialization is held only in this resident process, is bound to
@@ -58,8 +166,11 @@ public enum HarcHostLibraryChangesResult: Equatable, Sendable {
 /// enforce its exact decoded protobuf byte ceiling.
 public actor HarcHostLibraryService {
     public static let snapshotLifetime: TimeInterval = 30 * 60
+    public static let searchLifetime: TimeInterval = 5 * 60
     public static let maximumSnapshotItems = 100_000
     public static let maximumPageItems = 1_000
+    public static let maximumSearchPageItems = 200
+    public static let maximumSearchContinuations = 128
 
     private struct SnapshotBinding: Equatable, Sendable {
         let context: AuthenticatedDeviceContext
@@ -79,19 +190,54 @@ public actor HarcHostLibraryService {
         var offsetsByPageToken: [Data: Int]
     }
 
+    private struct MetadataSearchRequest: Equatable, Sendable {
+        let filter: HarcHostMetadataSearchFilter
+        let sort: HarcHostMetadataSearchSort
+        let limit: Int
+    }
+
+    private struct TranscriptSearchRequest: Equatable, Sendable {
+        let query: String
+        let mode: HarcHostTranscriptSearchMode
+        let filter: HarcHostTranscriptSearchFilter
+        let limit: Int
+    }
+
+    private enum SearchResultSet: Sendable {
+        case metadata([LibraryRecordingSummary])
+        case transcripts([HarcHostTranscriptSearchHit])
+    }
+
+    private enum SearchRequest: Equatable, Sendable {
+        case metadata(MetadataSearchRequest)
+        case transcripts(TranscriptSearchRequest)
+    }
+
+    private struct SearchContinuation: Sendable {
+        let binding: SnapshotBinding
+        let request: SearchRequest
+        let results: SearchResultSet
+        let offset: Int
+        let expiresAt: Date
+    }
+
     private let store: RecordingStore
     private let randomness: any HostAuthenticationRandomness
     private let now: @Sendable () -> Date
+    private let searchEmbedder: any TextEmbedder
     private var snapshotsByDevice: [DeviceID: Snapshot] = [:]
+    private var searchContinuations: [Data: SearchContinuation] = [:]
 
     public init(
         store: RecordingStore,
         randomness: any HostAuthenticationRandomness =
             SystemHostAuthenticationRandomness(),
+        searchEmbedder: any TextEmbedder = HashedLexicalEmbedder(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.store = store
         self.randomness = randomness
+        self.searchEmbedder = searchEmbedder
         self.now = now
     }
 
@@ -261,12 +407,140 @@ public actor HarcHostLibraryService {
         return detail
     }
 
+    public func searchMetadata(
+        session: HostAuthenticatedSession,
+        filter: HarcHostMetadataSearchFilter,
+        sort: HarcHostMetadataSearchSort,
+        limit: Int,
+        pageToken: Data?
+    ) async throws -> HarcHostMetadataSearchPage {
+        try validateSearchLimit(limit)
+        try validateDateRange(
+            start: filter.startedAtStart,
+            end: filter.startedAtEnd
+        )
+        let request = MetadataSearchRequest(
+            filter: filter,
+            sort: sort,
+            limit: limit
+        )
+        if let pageToken {
+            let (results, next) = try consumeMetadataContinuation(
+                token: pageToken,
+                session: session,
+                request: request
+            )
+            return HarcHostMetadataSearchPage(
+                recordings: results,
+                nextPageToken: next
+            )
+        }
+
+        let rows = try await store.libraryMetadataSearchRecords()
+        var matches = rows.filter { Self.matches($0, filter: filter) }
+        matches.sort { Self.metadataOrder($0, $1, sort: sort) }
+        let values = matches.map(\.summary)
+        let (page, next) = try firstSearchPage(
+            values,
+            limit: limit,
+            session: session,
+            request: .metadata(request),
+            wrap: SearchResultSet.metadata
+        )
+        return HarcHostMetadataSearchPage(
+            recordings: page,
+            nextPageToken: next
+        )
+    }
+
+    public func searchTranscripts(
+        session: HostAuthenticatedSession,
+        query: String,
+        mode: HarcHostTranscriptSearchMode,
+        filter: HarcHostTranscriptSearchFilter,
+        limit: Int,
+        pageToken: Data?
+    ) async throws -> HarcHostTranscriptSearchPage {
+        try validateSearchLimit(limit)
+        try validateDateRange(
+            start: filter.startedAtStart,
+            end: filter.startedAtEnd
+        )
+        let normalizedQuery = query.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !normalizedQuery.isEmpty,
+              normalizedQuery.utf8.count <= 1_024 else {
+            throw HarcHostLibraryError.invalidSearchQuery
+        }
+        let request = TranscriptSearchRequest(
+            query: normalizedQuery,
+            mode: mode,
+            filter: filter,
+            limit: limit
+        )
+        if let pageToken {
+            let (results, next) = try consumeTranscriptContinuation(
+                token: pageToken,
+                session: session,
+                request: request
+            )
+            return HarcHostTranscriptSearchPage(
+                hits: results,
+                nextPageToken: next
+            )
+        }
+
+        let candidates: [LibraryTranscriptSearchRecord]
+        switch mode {
+        case .lexical:
+            candidates = try await store.libraryLexicalTranscriptSearch(
+                query: normalizedQuery
+            )
+        case .semantic:
+            candidates = try await store.librarySemanticTranscriptSearch(
+                query: normalizedQuery,
+                embedder: searchEmbedder
+            )
+        case .hybrid:
+            async let lexical = store.libraryLexicalTranscriptSearch(
+                query: normalizedQuery
+            )
+            async let semantic = store.librarySemanticTranscriptSearch(
+                query: normalizedQuery,
+                embedder: searchEmbedder
+            )
+            candidates = Self.fuse(
+                lexical: try await lexical,
+                semantic: try await semantic
+            )
+        }
+        let matches = candidates.filter {
+            Self.matches($0, filter: filter)
+        }
+        let projected = matches.map(Self.hostTranscriptHit)
+        let (page, next) = try firstSearchPage(
+            projected,
+            limit: limit,
+            session: session,
+            request: .transcripts(request),
+            wrap: SearchResultSet.transcripts
+        )
+        return HarcHostTranscriptSearchPage(
+            hits: page,
+            nextPageToken: next
+        )
+    }
+
     private func pruneExpiredSnapshots() throws {
         let current = now()
         guard current.timeIntervalSinceReferenceDate.isFinite else {
             throw HarcHostLibraryError.snapshotExpired
         }
         snapshotsByDevice = snapshotsByDevice.filter {
+            current < $0.value.expiresAt
+        }
+        searchContinuations = searchContinuations.filter {
             current < $0.value.expiresAt
         }
     }
@@ -287,6 +561,270 @@ public actor HarcHostLibraryService {
             let candidate = try randomness.randomBytes(count: 24)
             guard snapshot.offsetsByPageToken[candidate] == nil else { continue }
             return candidate
+        }
+        throw HarcHostLibraryError.snapshotCapacityExceeded
+    }
+
+    private func validateSearchLimit(_ limit: Int) throws {
+        guard (1 ... Self.maximumSearchPageItems).contains(limit) else {
+            throw HarcHostLibraryError.invalidPageLimit
+        }
+    }
+
+    private func validateDateRange(start: Date?, end: Date?) throws {
+        guard start.map({ $0.timeIntervalSince1970.isFinite }) ?? true,
+              end.map({ $0.timeIntervalSince1970.isFinite }) ?? true,
+              start == nil || end == nil || start! <= end! else {
+            throw HarcHostLibraryError.invalidSearchQuery
+        }
+    }
+
+    private static func matches(
+        _ row: LibraryMetadataSearchRecord,
+        filter: HarcHostMetadataSearchFilter
+    ) -> Bool {
+        let summary = row.summary
+        if let title = filter.titleContains,
+           !(summary.title ?? summary.suggestedTitle ?? "")
+            .localizedCaseInsensitiveContains(title) { return false }
+        let tags = Set(summary.tags.map { $0.lowercased() })
+        if !Set(filter.tagsAll.map({ $0.lowercased() })).isSubset(of: tags) {
+            return false
+        }
+        let any = Set(filter.tagsAny.map { $0.lowercased() })
+        if !any.isEmpty, tags.isDisjoint(with: any) { return false }
+        if let start = filter.startedAtStart, summary.startedAt < start {
+            return false
+        }
+        if let end = filter.startedAtEnd, summary.startedAt >= end {
+            return false
+        }
+        if let pinned = filter.pinned, summary.pinned != pinned { return false }
+        if !filter.processingStates.isEmpty,
+           !filter.processingStates.contains(summary.processing.state) {
+            return false
+        }
+        let labels = Set(row.speakerLabels.map {
+            $0.displayName.lowercased()
+        })
+        return Set(filter.speakerDisplayNames.map { $0.lowercased() })
+            .isSubset(of: labels)
+    }
+
+    private static func matches(
+        _ row: LibraryTranscriptSearchRecord,
+        filter: HarcHostTranscriptSearchFilter
+    ) -> Bool {
+        let summary = row.summary
+        if !filter.canonicalRecordingIDs.isEmpty,
+           !filter.canonicalRecordingIDs.contains(summary.canonicalID) {
+            return false
+        }
+        let tags = Set(summary.tags.map { $0.lowercased() })
+        if !Set(filter.tags.map({ $0.lowercased() })).isSubset(of: tags) {
+            return false
+        }
+        if let start = filter.startedAtStart, summary.startedAt < start {
+            return false
+        }
+        if let end = filter.startedAtEnd, summary.startedAt >= end {
+            return false
+        }
+        return filter.speakerIndices.isSubset(of: row.speakerIndices)
+    }
+
+    private static func metadataOrder(
+        _ lhs: LibraryMetadataSearchRecord,
+        _ rhs: LibraryMetadataSearchRecord,
+        sort: HarcHostMetadataSearchSort
+    ) -> Bool {
+        switch sort {
+        case .startedAtDescending:
+            if lhs.summary.startedAt != rhs.summary.startedAt {
+                return lhs.summary.startedAt > rhs.summary.startedAt
+            }
+        case .startedAtAscending:
+            if lhs.summary.startedAt != rhs.summary.startedAt {
+                return lhs.summary.startedAt < rhs.summary.startedAt
+            }
+        case .titleAscending:
+            let left = (lhs.summary.title ?? lhs.summary.suggestedTitle ?? "")
+                .lowercased()
+            let right = (rhs.summary.title ?? rhs.summary.suggestedTitle ?? "")
+                .lowercased()
+            if left != right { return left < right }
+        }
+        return lhs.summary.canonicalID < rhs.summary.canonicalID
+    }
+
+    private static func fuse(
+        lexical: [LibraryTranscriptSearchRecord],
+        semantic: [LibraryTranscriptSearchRecord],
+        rrfK: Double = 60
+    ) -> [LibraryTranscriptSearchRecord] {
+        var scoreByID: [CanonicalRecordingID: Double] = [:]
+        var resultByID: [CanonicalRecordingID: LibraryTranscriptSearchRecord]
+            = [:]
+        for (rank, result) in lexical.enumerated() {
+            let id = result.summary.canonicalID
+            scoreByID[id, default: 0] += 1 / (rrfK + Double(rank + 1))
+            resultByID[id] = result
+        }
+        for (rank, result) in semantic.enumerated() {
+            let id = result.summary.canonicalID
+            scoreByID[id, default: 0] += 1 / (rrfK + Double(rank + 1))
+            if resultByID[id] == nil { resultByID[id] = result }
+        }
+        return scoreByID.compactMap { id, score in
+            guard let result = resultByID[id] else { return nil }
+            return LibraryTranscriptSearchRecord(
+                summary: result.summary,
+                speakerIndices: result.speakerIndices,
+                score: score,
+                snippets: result.snippets
+            )
+        }.sorted {
+            if $0.score != $1.score { return $0.score > $1.score }
+            return $0.summary.canonicalID < $1.summary.canonicalID
+        }
+    }
+
+    private static func hostTranscriptHit(
+        _ value: LibraryTranscriptSearchRecord
+    ) -> HarcHostTranscriptSearchHit {
+        HarcHostTranscriptSearchHit(
+            recording: value.summary,
+            score: value.score,
+            snippets: value.snippets.map {
+                HarcHostTranscriptSearchSnippet(
+                    text: $0.text,
+                    frames: $0.frames,
+                    speakerIndex: $0.speakerIndex
+                )
+            }
+        )
+    }
+
+    private func firstSearchPage<Value: Sendable>(
+        _ values: [Value],
+        limit: Int,
+        session: HostAuthenticatedSession,
+        request: SearchRequest,
+        wrap: ([Value]) -> SearchResultSet
+    ) throws -> ([Value], Data?) {
+        try pruneExpiredSnapshots()
+        let end = min(limit, values.count)
+        guard end < values.count else {
+            return (Array(values[..<end]), nil)
+        }
+        let token = try storeSearchContinuation(
+            binding: SnapshotBinding(
+                context: session.context,
+                scopes: session.scopes
+            ),
+            request: request,
+            results: wrap(values),
+            offset: end
+        )
+        return (Array(values[..<end]), token)
+    }
+
+    private func consumeMetadataContinuation(
+        token: Data,
+        session: HostAuthenticatedSession,
+        request: MetadataSearchRequest
+    ) throws -> ([LibraryRecordingSummary], Data?) {
+        let continuation = try consumeSearchContinuation(
+            token: token,
+            session: session,
+            request: .metadata(request)
+        )
+        guard case .metadata(let values) = continuation.results else {
+            throw HarcHostLibraryError.invalidPageToken
+        }
+        let end = min(continuation.offset + request.limit, values.count)
+        let next = try nextSearchToken(
+            after: end,
+            continuation: continuation,
+            count: values.count
+        )
+        return (Array(values[continuation.offset ..< end]), next)
+    }
+
+    private func consumeTranscriptContinuation(
+        token: Data,
+        session: HostAuthenticatedSession,
+        request: TranscriptSearchRequest
+    ) throws -> ([HarcHostTranscriptSearchHit], Data?) {
+        let continuation = try consumeSearchContinuation(
+            token: token,
+            session: session,
+            request: .transcripts(request)
+        )
+        guard case .transcripts(let values) = continuation.results else {
+            throw HarcHostLibraryError.invalidPageToken
+        }
+        let end = min(continuation.offset + request.limit, values.count)
+        let next = try nextSearchToken(
+            after: end,
+            continuation: continuation,
+            count: values.count
+        )
+        return (Array(values[continuation.offset ..< end]), next)
+    }
+
+    private func consumeSearchContinuation(
+        token: Data,
+        session: HostAuthenticatedSession,
+        request: SearchRequest
+    ) throws -> SearchContinuation {
+        try pruneExpiredSnapshots()
+        guard token.count == 24,
+              let continuation = searchContinuations.removeValue(forKey: token),
+              continuation.binding == SnapshotBinding(
+                context: session.context,
+                scopes: session.scopes
+              ),
+              continuation.request == request else {
+            throw HarcHostLibraryError.invalidPageToken
+        }
+        return continuation
+    }
+
+    private func nextSearchToken(
+        after offset: Int,
+        continuation: SearchContinuation,
+        count: Int
+    ) throws -> Data? {
+        guard offset < count else { return nil }
+        return try storeSearchContinuation(
+            binding: continuation.binding,
+            request: continuation.request,
+            results: continuation.results,
+            offset: offset
+        )
+    }
+
+    private func storeSearchContinuation(
+        binding: SnapshotBinding,
+        request: SearchRequest,
+        results: SearchResultSet,
+        offset: Int
+    ) throws -> Data {
+        guard searchContinuations.count < Self.maximumSearchContinuations else {
+            throw HarcHostLibraryError.snapshotCapacityExceeded
+        }
+        for _ in 0 ..< 8 {
+            let token = try randomness.randomBytes(count: 24)
+            guard searchContinuations[token] == nil else { continue }
+            searchContinuations[token] = SearchContinuation(
+                binding: binding,
+                request: request,
+                results: results,
+                offset: offset,
+                expiresAt: now().addingTimeInterval(Self.searchLifetime)
+            )
+            return token
         }
         throw HarcHostLibraryError.snapshotCapacityExceeded
     }

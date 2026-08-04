@@ -60,6 +60,81 @@ struct HarcHostLibraryServiceTests {
         #expect(nextCursor.rawValue == started.anchor.rawValue + 1)
     }
 
+    @Test("metadata search pagination is stable and bound to its query")
+    func metadataSearchPagination() async throws {
+        let store = try await RecordingStore.inMemory()
+        _ = try await store.upsert(recording(title: "Alpha", offset: 0))
+        _ = try await store.upsert(recording(title: "Beta", offset: 1))
+        _ = try await store.upsert(recording(title: "Gamma", offset: 2))
+        let metadata = try await store.libraryMetadata()
+        let session = try authenticatedSession(libraryID: metadata.libraryID)
+        let service = HarcHostLibraryService(
+            store: store,
+            randomness: FixedLibraryRandomness()
+        )
+        let filter = HarcHostMetadataSearchFilter()
+
+        let first = try await service.searchMetadata(
+            session: session,
+            filter: filter,
+            sort: .startedAtAscending,
+            limit: 1,
+            pageToken: nil
+        )
+        #expect(first.recordings.map(\.title) == ["Alpha"])
+        let token = try #require(first.nextPageToken)
+
+        await #expect(throws: HarcHostLibraryError.invalidPageToken) {
+            _ = try await service.searchMetadata(
+                session: session,
+                filter: filter,
+                sort: .startedAtDescending,
+                limit: 1,
+                pageToken: token
+            )
+        }
+    }
+
+    @Test("lexical and hybrid transcript search return path-free hits")
+    func transcriptSearch() async throws {
+        let store = try await RecordingStore.inMemory()
+        var launch = recording(title: "Launch", offset: 0)
+        launch.transcriptText = "The launch checklist is ready for review."
+        let stored = try await store.upsert(launch)
+        _ = try await store.indexTranscript(
+            recordingID: try #require(stored.id),
+            text: try #require(stored.transcriptText),
+            durationMs: 30_000,
+            embedder: HashedLexicalEmbedder()
+        )
+        var unrelated = recording(title: "Lunch", offset: 1)
+        unrelated.transcriptText = "We ordered sandwiches."
+        _ = try await store.upsert(unrelated)
+
+        let metadata = try await store.libraryMetadata()
+        let session = try authenticatedSession(libraryID: metadata.libraryID)
+        let service = HarcHostLibraryService(
+            store: store,
+            randomness: FixedLibraryRandomness()
+        )
+        for mode in [
+            HarcHostTranscriptSearchMode.lexical,
+            .semantic,
+            .hybrid,
+        ] {
+            let page = try await service.searchTranscripts(
+                session: session,
+                query: "launch checklist",
+                mode: mode,
+                filter: HarcHostTranscriptSearchFilter(),
+                limit: 10,
+                pageToken: nil
+            )
+            #expect(page.hits.first?.recording.canonicalID == stored.canonicalID)
+            #expect(page.hits.first?.snippets.isEmpty == false)
+        }
+    }
+
     private func recording(title: String, offset: TimeInterval) -> Recording {
         let started = Date(timeIntervalSince1970: 1_800_000_000 + offset)
         return Recording(
@@ -83,7 +158,7 @@ struct HarcHostLibraryServiceTests {
                     Data(repeating: 0x32, count: 32)
                 ),
                 grantID: GrantID(UUID()),
-                grantEpoch: GrantEpoch(1)
+                grantEpoch: try GrantEpoch(1)
             ),
             scopes: [.libraryMetadataRead],
             exactCapabilitiesBytes: Data([0x01]),

@@ -5,6 +5,7 @@ import UIKit
 struct HarcMobileRootView: View {
     @Environment(HarcMobileAppModel.self) private var model
     @State private var showsPairingScanner = false
+    @State private var libraryQuery = ""
 
     var body: some View {
         TabView {
@@ -76,7 +77,11 @@ struct HarcMobileRootView: View {
     private var libraryView: some View {
         if let coordinator = model.libraryCoordinator {
             Group {
-                if coordinator.recordings.isEmpty {
+                if !libraryQuery.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty {
+                    librarySearchView(coordinator)
+                } else if coordinator.recordings.isEmpty {
                     emptyLibraryView(coordinator)
                 } else {
                     List {
@@ -95,6 +100,17 @@ struct HarcMobileRootView: View {
                     .refreshable { coordinator.refresh() }
                 }
             }
+            .searchable(
+                text: $libraryQuery,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Titles, tags, and transcripts"
+            )
+            .task(id: libraryQuery) {
+                do {
+                    try await Task.sleep(for: .milliseconds(300))
+                    await coordinator.search(libraryQuery)
+                } catch {}
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Refresh Library", systemImage: "arrow.clockwise") {
@@ -105,6 +121,35 @@ struct HarcMobileRootView: View {
             }
         } else {
             ProgressView("Opening protected Library cache…")
+        }
+    }
+
+    @ViewBuilder
+    private func librarySearchView(
+        _ coordinator: HarcMobileLibraryCoordinator
+    ) -> some View {
+        if coordinator.isSearching, coordinator.searchResults.isEmpty {
+            ProgressView("Searching Host…")
+        } else if coordinator.searchResults.isEmpty {
+            ContentUnavailableView.search(text: libraryQuery)
+        } else {
+            List {
+                if let message = coordinator.searchMessage {
+                    Label(message, systemImage: "wifi.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(coordinator.searchResults) { result in
+                    NavigationLink {
+                        HarcMobileRecordingDetailView(
+                            coordinator: coordinator,
+                            summary: result.recording
+                        )
+                    } label: {
+                        HarcMobileLibrarySearchRow(result: result)
+                    }
+                }
+            }
         }
     }
 
@@ -543,6 +588,23 @@ private struct HarcMobileRecordingRow: View {
         case .ready: "checkmark.circle"
         case .failedRecoverable, .degraded: "exclamationmark.triangle"
         case .pending, .transcribing, .projecting: "clock"
+        }
+    }
+}
+
+private struct HarcMobileLibrarySearchRow: View {
+    let result: HarcMobileLibraryCoordinator.SearchResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HarcMobileRecordingRow(recording: result.recording)
+            if let snippet = result.snippets.first, !snippet.isEmpty {
+                Text(snippet.replacingOccurrences(of: "<mark>", with: "")
+                    .replacingOccurrences(of: "</mark>", with: ""))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
         }
     }
 }
