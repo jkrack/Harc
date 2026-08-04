@@ -806,6 +806,7 @@ private struct HarcMobileRecordingDetailView: View {
         .task(id: summary.canonicalID) {
             await loadDetail()
         }
+        .onDisappear { audioController.stopAndRelease() }
     }
 
     private func submitMetadata(_ mutation: HarcMobileMetadataMutation) {

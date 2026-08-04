@@ -7,6 +7,21 @@ import HarcProtocol
 import HarcTransfer
 import Observation
 
+struct HarcLibraryAudioPolicy: Equatable, Sendable {
+    let allowsDownload: Bool
+    let retainsAfterPlayback: Bool
+
+    init(allowsDownload: Bool, retainsAfterPlayback: Bool) {
+        self.allowsDownload = allowsDownload
+        self.retainsAfterPlayback = allowsDownload && retainsAfterPlayback
+    }
+
+    static let retainedDownloads = HarcLibraryAudioPolicy(
+        allowsDownload: true,
+        retainsAfterPlayback: true
+    )
+}
+
 @MainActor
 @Observable
 final class HarcMobileLibraryCoordinator {
@@ -42,6 +57,7 @@ final class HarcMobileLibraryCoordinator {
     private(set) var searchMessage: String?
     private(set) var pendingMutationCount = 0
     private(set) var conflicts: [VisibleLibraryConflict] = []
+    private(set) var audioPolicy: HarcLibraryAudioPolicy
 
     private let identity: InstallationSigningIdentity
     private let transferStore: HarcTransferStore
@@ -54,13 +70,22 @@ final class HarcMobileLibraryCoordinator {
         identity: InstallationSigningIdentity,
         transferStore: HarcTransferStore,
         cache: HarcLibraryCache,
-        routeURL: URL
+        routeURL: URL,
+        audioPolicy: HarcLibraryAudioPolicy = .retainedDownloads
     ) {
         self.identity = identity
         self.transferStore = transferStore
         self.cache = cache
         self.routeURL = routeURL
+        self.audioPolicy = audioPolicy
         loadCachedView()
+    }
+
+    func applyAudioPolicy(_ policy: HarcLibraryAudioPolicy) throws {
+        audioPolicy = policy
+        if !policy.allowsDownload || !policy.retainsAfterPlayback {
+            try clearDownloadedAudio()
+        }
     }
 
     func refresh() {
@@ -240,6 +265,9 @@ final class HarcMobileLibraryCoordinator {
     func downloadCanonicalAudio(
         summary: LibraryRecordingSummary
     ) async throws -> URL {
+        guard audioPolicy.allowsDownload else {
+            throw HarcMobileLibraryAudioError.downloadsDisabled
+        }
         guard summary.canonicalAudio.availability == .available else {
             throw HarcMobileLibraryAudioError.malformedStream
         }
@@ -295,6 +323,20 @@ final class HarcMobileLibraryCoordinator {
             }
             throw error
         }
+    }
+
+    func releaseDownloadedAudio(
+        summary: LibraryRecordingSummary
+    ) async throws {
+        guard !audioPolicy.retainsAfterPlayback else { return }
+        let localCache = cache
+        try await Task.detached(priority: .utility) {
+            let paths = try HarcMobileAudioCachePaths(
+                cache: localCache,
+                summary: summary
+            )
+            try paths.removeCachedFiles()
+        }.value
     }
 
     func search(_ rawQuery: String) async {

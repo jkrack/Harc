@@ -316,6 +316,7 @@ private struct HarcDesktopHostRecordingDetailView: View {
         }
         .navigationTitle(summary.title ?? summary.suggestedTitle ?? "Recording")
         .task(id: summary.canonicalID) { await loadDetail() }
+        .onDisappear { audioController.stopAndRelease() }
     }
 
     private func header(_ detail: LibraryRecordingDetail) -> some View {
@@ -470,6 +471,7 @@ private struct HarcDesktopHostRecordingDetailView: View {
             tagsDraft = loaded.summary.tags.joined(separator: ", ")
             notesDraft = loaded.notesMarkdown ?? ""
             if loaded.summary.revision != summary.revision {
+                audioController.stopAndRelease()
                 audioController = HarcMobileRecordingAudioController(
                     coordinator: coordinator,
                     summary: loaded.summary

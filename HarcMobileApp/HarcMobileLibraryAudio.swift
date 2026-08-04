@@ -86,6 +86,14 @@ struct HarcMobileAudioCachePaths: Sendable {
         return current
     }
 
+    func removeCachedFiles() throws {
+        let manager = FileManager.default
+        for url in [partial, final, manifest]
+        where manager.fileExists(atPath: url.path) {
+            try manager.removeItem(at: url)
+        }
+    }
+
     private static func fileByteCount(_ url: URL) throws -> UInt64 {
         let attributes = try FileManager.default.attributesOfItem(
             atPath: url.path
@@ -273,8 +281,8 @@ actor HarcMobileAudioDownloadSink {
     }
 }
 
-@MainActor
 @Observable
+@MainActor
 final class HarcMobileRecordingAudioController: NSObject {
     enum State: Equatable {
         case idle
@@ -327,13 +335,21 @@ final class HarcMobileRecordingAudioController: NSObject {
             self.player = player
             state = .playing
         } catch {
+            try? await coordinator.releaseDownloadedAudio(summary: summary)
             state = .failed(error.localizedDescription)
         }
     }
 
+    func stopAndRelease() {
+        player?.stop()
+        player = nil
+        state = .idle
+        Task {
+            try? await coordinator.releaseDownloadedAudio(summary: summary)
+        }
+    }
 }
 
-@MainActor
 extension HarcMobileRecordingAudioController: @preconcurrency AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(
         _ player: AVAudioPlayer,
@@ -341,10 +357,14 @@ extension HarcMobileRecordingAudioController: @preconcurrency AVAudioPlayerDeleg
     ) {
         self.player = nil
         state = flag ? .idle : .failed("Playback ended unexpectedly.")
+        Task {
+            try? await coordinator.releaseDownloadedAudio(summary: summary)
+        }
     }
 }
 
 enum HarcMobileLibraryAudioError: LocalizedError {
+    case downloadsDisabled
     case invalidCachedAudio
     case cacheWriteFailed
     case malformedStream
@@ -352,6 +372,8 @@ enum HarcMobileLibraryAudioError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .downloadsDisabled:
+            "Host audio download is disabled for this Mac."
         case .invalidCachedAudio:
             "The protected audio cache is invalid."
         case .cacheWriteFailed:

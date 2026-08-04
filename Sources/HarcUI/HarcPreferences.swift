@@ -47,6 +47,10 @@ public final class HarcPreferences: ObservableObject {
         static let preRollMinutes = "harc.preRollMinutes"
         static let semanticSearchEnabled = "harc.semanticSearchEnabled"
         static let runtimeRole = "harc.runtimeRole"
+        static let clientHostAudioDownloadEnabled =
+            "harc.client.hostAudioDownloadEnabled"
+        static let clientHostAudioRetentionEnabled =
+            "harc.client.hostAudioRetentionEnabled"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -174,6 +178,43 @@ public final class HarcPreferences: ObservableObject {
 
     @Published public var runtimeRole: RuntimeRole {
         didSet { UserDefaults.standard.set(runtimeRole.rawValue, forKey: Key.runtimeRole) }
+    }
+
+    /// Whether Client mode may fetch canonical audio from the paired Host.
+    /// Administrators can force this key through managed preferences.
+    @Published public var clientHostAudioDownloadEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                clientHostAudioDownloadEnabled,
+                forKey: Key.clientHostAudioDownloadEnabled
+            )
+            if !clientHostAudioDownloadEnabled {
+                clientHostAudioRetentionEnabled = false
+            }
+        }
+    }
+
+    /// Whether verified Host audio remains cached after playback. Privacy-first
+    /// Client mode defaults this off, independently of download permission.
+    @Published public var clientHostAudioRetentionEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                clientHostAudioRetentionEnabled,
+                forKey: Key.clientHostAudioRetentionEnabled
+            )
+        }
+    }
+
+    public var clientHostAudioDownloadIsManaged: Bool {
+        UserDefaults.standard.objectIsForced(
+            forKey: Key.clientHostAudioDownloadEnabled
+        )
+    }
+
+    public var clientHostAudioRetentionIsManaged: Bool {
+        UserDefaults.standard.objectIsForced(
+            forKey: Key.clientHostAudioRetentionEnabled
+        )
     }
 
     @Published public var destinationPath: String {
@@ -458,6 +499,15 @@ public final class HarcPreferences: ObservableObject {
         let rawRuntimeRole = defaults.string(forKey: Key.runtimeRole)
             ?? RuntimeRole.standalone.rawValue
         self.runtimeRole = RuntimeRole(rawValue: rawRuntimeRole) ?? .standalone
+        self.clientHostAudioDownloadEnabled = defaults.object(
+            forKey: Key.clientHostAudioDownloadEnabled
+        ) as? Bool ?? true
+        self.clientHostAudioRetentionEnabled = defaults.object(
+            forKey: Key.clientHostAudioRetentionEnabled
+        ) as? Bool ?? false
+        if !clientHostAudioDownloadEnabled {
+            clientHostAudioRetentionEnabled = false
+        }
         if shouldPersistPasteDenyList {
             persistPasteDenyListBundleIDs()
         }

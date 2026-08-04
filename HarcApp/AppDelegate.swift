@@ -3576,8 +3576,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         case .standalone:
             return try await RecordingStore.onDisk(url: databaseURL)
         case .client:
-            let runtime = try await HarcDesktopClientRuntime.start()
+            let runtime = try await HarcDesktopClientRuntime.start(
+                audioPolicy: HarcLibraryAudioPolicy(
+                    allowsDownload: prefs.clientHostAudioDownloadEnabled,
+                    retainsAfterPlayback:
+                        prefs.clientHostAudioRetentionEnabled
+                )
+            )
             desktopClientRuntime = runtime
+            prefs.$clientHostAudioDownloadEnabled
+                .combineLatest(prefs.$clientHostAudioRetentionEnabled)
+                .sink { [weak runtime] allowsDownload, retainsAfterPlayback in
+                    runtime?.applyAudioPolicy(HarcLibraryAudioPolicy(
+                        allowsDownload: allowsDownload,
+                        retainsAfterPlayback: retainsAfterPlayback
+                    ))
+                }
+                .store(in: &cancellables)
             // The pre-existing local Library remains a distinct, fully local
             // On This Mac source. Client captures never enter this store.
             return try await RecordingStore.onDisk(url: databaseURL)

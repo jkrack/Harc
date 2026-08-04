@@ -11,42 +11,69 @@ public struct GeneralSettingsView: View {
     public init() {}
 
     public var body: some View {
-        Section {
-            Picker("Appearance", selection: $prefs.appearance) {
-                ForEach(HarcPreferences.Appearance.allCases) { option in
-                    Text(option.displayName).tag(option)
-                }
-            }
-            .pickerStyle(.segmented)
-            Toggle("Launch at login", isOn: $launchAtLogin)
-                .onChange(of: launchAtLogin) { _, enabled in
-                    setLaunchAtLogin(enabled)
-                }
-                .onAppear {
-                    launchAtLogin = SMAppService.mainApp.status == .enabled
-                }
-            Picker(
-                "This Mac",
-                selection: Binding(
-                    get: { prefs.runtimeRole },
-                    set: { role in
-                        guard role != prefs.runtimeRole else { return }
-                        proposedRole = role
+        Group {
+            Section {
+                Picker("Appearance", selection: $prefs.appearance) {
+                    ForEach(HarcPreferences.Appearance.allCases) { option in
+                        Text(option.displayName).tag(option)
                     }
+                }
+                .pickerStyle(.segmented)
+                Toggle("Launch at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, enabled in
+                        setLaunchAtLogin(enabled)
+                    }
+                    .onAppear {
+                        launchAtLogin = SMAppService.mainApp.status == .enabled
+                    }
+                Picker(
+                    "This Mac",
+                    selection: Binding(
+                        get: { prefs.runtimeRole },
+                        set: { role in
+                            guard role != prefs.runtimeRole else { return }
+                            proposedRole = role
+                        }
+                    )
+                ) {
+                    ForEach(HarcPreferences.RuntimeRole.allCases) { role in
+                        Text(role.displayName).tag(role)
+                    }
+                }
+            } header: {
+                Text("General")
+            } footer: {
+                Text(
+                    "Role changes take effect after restarting Harc. Client keeps the existing local library as On This Mac and sends only new Client-mode captures to the paired Host. Nothing is merged or uploaded implicitly."
                 )
-            ) {
-                ForEach(HarcPreferences.RuntimeRole.allCases) { role in
-                    Text(role.displayName).tag(role)
+                    .font(.harcLabel)
+                    .foregroundStyle(Color.secondary)
+            }
+            if prefs.runtimeRole == .client {
+                Section {
+                    Toggle(
+                        "Allow Host audio downloads",
+                        isOn: $prefs.clientHostAudioDownloadEnabled
+                    )
+                    .disabled(prefs.clientHostAudioDownloadIsManaged)
+                    Toggle(
+                        "Keep downloaded Host audio",
+                        isOn: $prefs.clientHostAudioRetentionEnabled
+                    )
+                    .disabled(
+                        !prefs.clientHostAudioDownloadEnabled
+                            || prefs.clientHostAudioRetentionIsManaged
+                    )
+                } header: {
+                    Text("Client Privacy")
+                } footer: {
+                    Text(
+                        "Playback downloads verified audio only when allowed. By default, a work Mac removes that audio when playback ends. Managed preferences can lock either setting. Local capture and transcription remain available."
+                    )
+                        .font(.harcLabel)
+                        .foregroundStyle(Color.secondary)
                 }
             }
-        } header: {
-            Text("General")
-        } footer: {
-            Text(
-                "Role changes take effect after restarting Harc. Client keeps the existing local library as On This Mac and sends only new Client-mode captures to the paired Host. Nothing is merged or uploaded implicitly."
-            )
-                .font(.harcLabel)
-                .foregroundStyle(Color.secondary)
         }
         .confirmationDialog(
             "Change this Mac’s role?",

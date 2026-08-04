@@ -29,7 +29,8 @@ final class HarcDesktopClientRuntime: ObservableObject {
         identity: InstallationSigningIdentity,
         transferStore: HarcTransferStore,
         libraryCache: HarcLibraryCache,
-        root: URL
+        root: URL,
+        audioPolicy: HarcLibraryAudioPolicy
     ) throws {
         self.identity = identity
         self.transferStore = transferStore
@@ -48,7 +49,8 @@ final class HarcDesktopClientRuntime: ObservableObject {
             identity: identity,
             transferStore: transferStore,
             cache: libraryCache,
-            routeURL: routeURL
+            routeURL: routeURL,
+            audioPolicy: audioPolicy
         )
         self.libraryCoordinator = libraryCoordinator
         pairingCoordinator = HarcDesktopClientPairingCoordinator(
@@ -68,7 +70,9 @@ final class HarcDesktopClientRuntime: ObservableObject {
         refreshStatus()
     }
 
-    static func start() async throws -> HarcDesktopClientRuntime {
+    static func start(
+        audioPolicy: HarcLibraryAudioPolicy
+    ) async throws -> HarcDesktopClientRuntime {
         let root = try clientRoot()
         let locations = try ClientStoreLocations(rootDirectory: root)
         let routeURL = root.appendingPathComponent("host-route.json")
@@ -104,8 +108,10 @@ final class HarcDesktopClientRuntime: ObservableObject {
             identity: identity,
             transferStore: transferStore,
             libraryCache: libraryCache,
-            root: root
+            root: root,
+            audioPolicy: audioPolicy
         )
+        try runtime.libraryCoordinator.applyAudioPolicy(audioPolicy)
         runtime.transferCoordinator.retryPending()
         runtime.libraryCoordinator.refresh()
         return runtime
@@ -132,6 +138,16 @@ final class HarcDesktopClientRuntime: ObservableObject {
             statusMessage = transferCoordinator.statusMessage
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    func applyAudioPolicy(_ policy: HarcLibraryAudioPolicy) {
+        do {
+            try libraryCoordinator.applyAudioPolicy(policy)
+        } catch {
+            statusMessage =
+                "Client audio policy could not clear retained Host audio: "
+                + error.localizedDescription
         }
     }
 
