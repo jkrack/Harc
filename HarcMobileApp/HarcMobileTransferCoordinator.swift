@@ -9,6 +9,27 @@ import HarcProtocol
 import HarcTransfer
 import Observation
 
+struct HarcMobileLocalRecording: Identifiable, Equatable {
+    enum TransferState: Equatable {
+        case localOnly
+        case transferring
+        case retryNeeded
+        case securityBlocked
+        case committed
+    }
+
+    static let exportDisclosure =
+        "Exporting hands this audio to the destination you choose. "
+        + "That destination is outside your adopted Harc Host trust boundary. "
+        + "Harc does not treat this export as synchronization."
+
+    let id: UUID
+    let startedAt: Date
+    let duration: TimeInterval
+    let masterFileURL: URL
+    let transferState: TransferState
+}
+
 @MainActor
 @Observable
 final class HarcMobileTransferCoordinator {
@@ -18,6 +39,7 @@ final class HarcMobileTransferCoordinator {
         case waitingForPairing(pending: Int)
         case connecting(recordingUUID: UUID)
         case uploading(recordingUUID: UUID)
+        case backgroundScheduled(recordingUUID: UUID, taskCount: Int)
         case uploaded(recordingUUID: UUID)
         case codecQualificationRequired(recordingUUID: UUID)
         case retryNeeded(recordingUUID: UUID, message: String)
@@ -26,28 +48,36 @@ final class HarcMobileTransferCoordinator {
 
     private(set) var state: State = .idle
     private(set) var pendingCount = 0
+    private(set) var localRecordings: [HarcMobileLocalRecording] = []
+    private(set) var localRecordingsError: String?
 
     private let identity: InstallationSigningIdentity
     private let store: HarcTransferStore
     private let locations: HarcMobileCaptureLocations
     private let routeURL: URL
+    private let backgroundUploadClient: HarcBackgroundURLSessionUploadClientV1
     private var queue: [HarcMobileFinalizedMaster] = []
     private var queuedOrigins = Set<OriginRecordingID>()
     private var worker: Task<Void, Never>?
+    private var backgroundReconciliationTask: Task<Void, Never>?
 
     init(
         identity: InstallationSigningIdentity,
         store: HarcTransferStore,
         locations: HarcMobileCaptureLocations,
-        routeURL: URL
+        routeURL: URL,
+        backgroundUploadClient: HarcBackgroundURLSessionUploadClientV1
     ) {
         self.identity = identity
         self.store = store
         self.locations = locations
         self.routeURL = routeURL
+        self.backgroundUploadClient = backgroundUploadClient
+        refreshLocalRecordings()
     }
 
     func enqueue(_ master: HarcMobileFinalizedMaster) {
+        refreshLocalRecordings()
         guard queuedOrigins.insert(master.originRecordingID).inserted else {
             return
         }
@@ -58,11 +88,16 @@ final class HarcMobileTransferCoordinator {
 
     func retryPending() {
         do {
+            refreshLocalRecordings()
+            let backgroundManagedUploadIDs = try activeBackgroundUploadIDs()
             let pending = try store.recordingOutboxes().filter {
                 $0.stateMachine.state != .committed
                     && $0.stateMachine.state != .securityBlocked
                     && $0.integrityBlock == nil
                     && $0.finalizedCapture.masterFileState == .present
+                    && ($0.uploadID.map {
+                        !backgroundManagedUploadIDs.contains($0)
+                    } ?? true)
             }
             pendingCount = pending.count
             for outbox in pending {
@@ -80,6 +115,77 @@ final class HarcMobileTransferCoordinator {
         }
     }
 
+    func refreshLocalRecordings() {
+        do {
+            localRecordings = try store.recordingOutboxes()
+                .compactMap { outbox in
+                    guard outbox.finalizedCapture.masterFileState == .present,
+                          FileManager.default.fileExists(
+                            atPath: outbox.finalizedCapture.masterFileURL.path
+                          ) else {
+                        return nil
+                    }
+                    let capture = outbox.finalizedCapture.capture
+                    let transferState: HarcMobileLocalRecording.TransferState =
+                        switch outbox.stateMachine.state {
+                        case .localOnly:
+                            .localOnly
+                        case .failedRecoverable:
+                            .retryNeeded
+                        case .securityBlocked:
+                            .securityBlocked
+                        case .committed:
+                            .committed
+                        default:
+                            .transferring
+                        }
+                    return HarcMobileLocalRecording(
+                        id: capture.originRecordingID.recordingUUID,
+                        startedAt: capture.captureStartedAt,
+                        duration: capture.captureEndedAt.timeIntervalSince(
+                            capture.captureStartedAt
+                        ),
+                        masterFileURL:
+                            outbox.finalizedCapture.masterFileURL,
+                        transferState: transferState
+                    )
+                }
+                .sorted { $0.startedAt > $1.startedAt }
+            localRecordingsError = nil
+        } catch {
+            localRecordingsError = error.localizedDescription
+        }
+    }
+
+    func reconcileBackgroundUploads() {
+        guard backgroundReconciliationTask == nil else { return }
+        backgroundReconciliationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { backgroundReconciliationTask = nil }
+            do {
+                _ = try await backgroundUploadClient.reconcileAfterRelaunch()
+                retryPending()
+            } catch {
+                state = .retryNeeded(
+                    recordingUUID: UUID(),
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func activeBackgroundUploadIDs() throws -> Set<UploadID> {
+        var uploadIDs = Set<UploadID>()
+        for mapping in try store.taskMappings() {
+            guard mapping.state == .persistedBeforeResume
+                    || mapping.state == .observedBySystem,
+                  let batch = try store.backgroundBatch(id: mapping.batchID)
+            else { continue }
+            uploadIDs.insert(batch.descriptor.uploadID)
+        }
+        return uploadIDs
+    }
+
     private func startWorkerIfNeeded() {
         guard worker == nil, !queue.isEmpty else { return }
         worker = Task { [weak self] in
@@ -92,16 +198,26 @@ final class HarcMobileTransferCoordinator {
         while !queue.isEmpty {
             let master = queue.removeFirst()
             do {
-                try await transfer(master)
+                let outcome = try await transfer(master)
                 queuedOrigins.remove(master.originRecordingID)
-                pendingCount = max(0, pendingCount - 1)
-                state = .uploaded(
-                    recordingUUID: master.originRecordingID.recordingUUID
-                )
+                switch outcome {
+                case .committed:
+                    pendingCount = max(0, pendingCount - 1)
+                    state = .uploaded(
+                        recordingUUID: master.originRecordingID.recordingUUID
+                    )
+                case .backgroundScheduled(let taskCount):
+                    state = .backgroundScheduled(
+                        recordingUUID: master.originRecordingID.recordingUUID,
+                        taskCount: taskCount
+                    )
+                }
+                refreshLocalRecordings()
             } catch HarcMobileTransferError.notPaired {
                 queuedOrigins.remove(master.originRecordingID)
                 pendingCount = max(pendingCount, queue.count + 1)
                 state = .waitingForPairing(pending: pendingCount)
+                refreshLocalRecordings()
                 return
             } catch HarcMobileTransferError.codecNotQualified {
                 queuedOrigins.remove(master.originRecordingID)
@@ -109,6 +225,7 @@ final class HarcMobileTransferCoordinator {
                 state = .codecQualificationRequired(
                     recordingUUID: master.originRecordingID.recordingUUID
                 )
+                refreshLocalRecordings()
                 return
             } catch let error as HarcMobileALACEncodingError {
                 queuedOrigins.remove(master.originRecordingID)
@@ -118,12 +235,14 @@ final class HarcMobileTransferCoordinator {
                         recordingUUID:
                             master.originRecordingID.recordingUUID
                     )
+                    refreshLocalRecordings()
                     return
                 }
                 state = .retryNeeded(
                     recordingUUID: master.originRecordingID.recordingUUID,
                     message: String(describing: error)
                 )
+                refreshLocalRecordings()
                 return
             } catch {
                 queuedOrigins.remove(master.originRecordingID)
@@ -143,12 +262,20 @@ final class HarcMobileTransferCoordinator {
                         message: error.localizedDescription
                     )
                 }
+                refreshLocalRecordings()
                 return
             }
         }
     }
 
-    private func transfer(_ master: HarcMobileFinalizedMaster) async throws {
+    private enum TransferOutcome {
+        case committed
+        case backgroundScheduled(taskCount: Int)
+    }
+
+    private func transfer(
+        _ master: HarcMobileFinalizedMaster
+    ) async throws -> TransferOutcome {
         state = .encoding(
             recordingUUID: master.originRecordingID.recordingUUID
         )
@@ -234,12 +361,22 @@ final class HarcMobileTransferCoordinator {
                 store: store,
                 transport: connection
             )
-            _ = try await uploader.drive(
+            let result = try await uploader.scheduleInBackground(
                 plan,
                 openedSession: opened.session,
-                deviceSigner: identity
+                deviceSigner: identity,
+                batchPreparer: HarcMobileBackgroundBatchPreparer(
+                    locations: locations
+                ),
+                scheduler: backgroundUploadClient
             )
             try await connection.shutdownGracefully()
+            switch result {
+            case .committed:
+                return .committed
+            case .scheduled(let identities):
+                return .backgroundScheduled(taskCount: identities.count)
+            }
         } catch {
             await connection.shutdownImmediately()
             throw error

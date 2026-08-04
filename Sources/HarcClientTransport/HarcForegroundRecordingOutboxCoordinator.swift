@@ -64,6 +64,49 @@ public struct HarcForegroundRecordingUploadPlan: Equatable, Sendable {
     }
 }
 
+/// One immutable HARCAB1 file prepared by the application composition layer
+/// after the host has assigned the upload generation.
+public struct HarcPreparedBackgroundAudioBatchV1: Sendable {
+    public let descriptor: ImmutableAudioBatchDescriptor
+    public let bodyFileURL: URL
+
+    public init(
+        descriptor: ImmutableAudioBatchDescriptor,
+        bodyFileURL: URL
+    ) throws {
+        guard bodyFileURL.isFileURL,
+              bodyFileURL.standardizedFileURL.path == bodyFileURL.path else {
+            throw HarcForegroundRecordingOutboxError.invalidPlan(
+                field: "backgroundBatch.bodyFileURL"
+            )
+        }
+        self.descriptor = descriptor
+        self.bodyFileURL = bodyFileURL
+    }
+}
+
+/// Builds immutable background bodies without placing file/protection policy in
+/// the transport target. Production HarcMobile applies its class-C and backup
+/// exclusion policy before returning each batch.
+public protocol HarcBackgroundAudioBatchPreparingV1: Sendable {
+    func prepareBatches(
+        plan: HarcForegroundRecordingUploadPlan,
+        generation: UploadGeneration,
+        chunks: [HarcForegroundEncodedChunk]
+    ) async throws -> [HarcPreparedBackgroundAudioBatchV1]
+}
+
+public protocol HarcBackgroundUploadSchedulingV1: Sendable {
+    func schedule(
+        _ plan: HarcBackgroundUploadSchedulingPlanV1
+    ) async throws -> SystemBackgroundTaskIdentity
+}
+
+public enum HarcBackgroundRecordingScheduleResultV1: Sendable {
+    case committed(StoredVerifiedRecordingReceipt)
+    case scheduled([SystemBackgroundTaskIdentity])
+}
+
 public enum HarcForegroundRecordingOutboxError: Error, Equatable, Sendable {
     case invalidPlan(field: String)
     case uploadAlreadyRunning(UploadID)
@@ -176,6 +219,382 @@ public actor HarcForegroundRecordingOutboxCoordinator {
             )
             throw error
         }
+    }
+
+    /// Authorizes and declares a finalized capture, then hands exact immutable
+    /// HARCAB1 bodies to the system-managed background URLSession path. A later
+    /// foreground/relaunch drive reconciles durable ACKs and performs the final
+    /// manifest commit; scheduling alone never opens the cleanup gate.
+    public func scheduleInBackground(
+        _ plan: HarcForegroundRecordingUploadPlan,
+        openedSession: HarcOpenedClientSession,
+        deviceSigner: any P256DigestSigner,
+        batchPreparer: any HarcBackgroundAudioBatchPreparingV1,
+        scheduler: any HarcBackgroundUploadSchedulingV1
+    ) async throws -> HarcBackgroundRecordingScheduleResultV1 {
+        guard !runningUploads.contains(plan.uploadID),
+              !runningOrigins.contains(plan.originRecordingID) else {
+            throw HarcForegroundRecordingOutboxError.uploadAlreadyRunning(
+                plan.uploadID
+            )
+        }
+        runningUploads.insert(plan.uploadID)
+        runningOrigins.insert(plan.originRecordingID)
+        defer {
+            runningUploads.remove(plan.uploadID)
+            runningOrigins.remove(plan.originRecordingID)
+        }
+
+        do {
+            return try await scheduleInBackgroundOnce(
+                plan,
+                openedSession: openedSession,
+                deviceSigner: deviceSigner,
+                batchPreparer: batchPreparer,
+                scheduler: scheduler
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as HarcForegroundRecordingOutboxError {
+            if error.isSecurityFailure {
+                blockForSecurityIfPossible(origin: plan.originRecordingID)
+            } else {
+                failRecoverablyIfPossible(
+                    origin: plan.originRecordingID,
+                    error: error
+                )
+            }
+            throw error
+        } catch let error as HarcProtobufConversionError {
+            blockForSecurityIfPossible(origin: plan.originRecordingID)
+            throw HarcForegroundRecordingOutboxError
+                .responseValidationFailed(String(reflecting: error))
+        } catch let error as HarcProtocolCodecError {
+            blockForSecurityIfPossible(origin: plan.originRecordingID)
+            throw HarcForegroundRecordingOutboxError
+                .responseValidationFailed(String(reflecting: error))
+        } catch let error as HarcValidatedRecordingTransferRPCError {
+            blockForSecurityIfPossible(origin: plan.originRecordingID)
+            throw HarcForegroundRecordingOutboxError
+                .responseValidationFailed(String(reflecting: error))
+        } catch {
+            failRecoverablyIfPossible(
+                origin: plan.originRecordingID,
+                error: error
+            )
+            throw error
+        }
+    }
+
+    private func scheduleInBackgroundOnce(
+        _ plan: HarcForegroundRecordingUploadPlan,
+        openedSession: HarcOpenedClientSession,
+        deviceSigner: any P256DigestSigner,
+        batchPreparer: any HarcBackgroundAudioBatchPreparingV1,
+        scheduler: any HarcBackgroundUploadSchedulingV1
+    ) async throws -> HarcBackgroundRecordingScheduleResultV1 {
+        guard let storedOutbox = try store.recordingOutbox(
+            for: plan.originRecordingID
+        ) else {
+            throw HarcForegroundRecordingOutboxError.missingFinalizedCapture(
+                plan.originRecordingID
+            )
+        }
+        guard storedOutbox.finalizedCapture.masterFileState == .present,
+              storedOutbox.integrityBlock == nil else {
+            throw HarcForegroundRecordingOutboxError.invalidPlan(
+                field: "finalizedCaptureIntegrity"
+            )
+        }
+        if let boundUploadID = storedOutbox.uploadID,
+           boundUploadID != plan.uploadID {
+            throw HarcForegroundRecordingOutboxError.uploadIdentityMismatch
+        }
+        if storedOutbox.stateMachine.state == .committed {
+            guard let stored = try store.verifiedRecordingReceipt(
+                for: plan.originRecordingID
+            ), stored.uploadID == plan.uploadID,
+               AdoptedTrustTuple(
+                   libraryID: stored.hostTrust.libraryID,
+                   hostAuthorityID: stored.hostTrust.hostAuthorityID
+               ) == plan.trustTuple else {
+                throw HarcForegroundRecordingOutboxError
+                    .securityBindingMismatch(field: "committedReceipt")
+            }
+            return .committed(stored)
+        }
+        guard storedOutbox.stateMachine.state != .securityBlocked else {
+            throw HarcForegroundRecordingOutboxError.securityBlocked
+        }
+
+        let capture = storedOutbox.finalizedCapture.capture
+        let chunkedCapture = try ChunkedFinalizedCapture(
+            capture: capture,
+            chunks: plan.chunks.map(\.descriptor)
+        )
+        try chunkedCapture.validate(against: plan.frozenProfile)
+        guard capture.originRecordingID == plan.originRecordingID,
+              capture.producingDeviceID == store.installationDeviceID,
+              deviceSigner.publicKey.deviceID == store.installationDeviceID
+        else {
+            throw HarcForegroundRecordingOutboxError
+                .securityBindingMismatch(field: "installationDevice")
+        }
+
+        let adoption = try store.authorizingAdoption(
+            for: plan.trustTuple,
+            requiredScope: .recordingUploadOwn
+        )
+        let hostTrust = try RecordingHostTrustBinding(
+            libraryID: adoption.tuple.libraryID,
+            hostAuthorityID: adoption.tuple.hostAuthorityID,
+            hostAuthorityPublicKeyX963: adoption.authorityPublicKeyX963
+        )
+        try validateSession(
+            openedSession,
+            adoption: adoption,
+            hostTrust: hostTrust,
+            deviceSigner: deviceSigner
+        )
+
+        let profilePayload = try HarcValidatedUploadProfilePayload(
+            serializing: plan.frozenProfile
+        )
+        let protocolVersion = HarcProtocolVersion(
+            major: plan.frozenProfile.protocolVersion.major,
+            minor: plan.frozenProfile.protocolVersion.minor
+        )
+        let authorization = try HarcRecordingTransferAuthorization(
+            openedSession: openedSession
+        )
+        let rpc = HarcValidatedRecordingTransferRPCClientV1(
+            transport: transport,
+            authorization: authorization,
+            compatibility: compatibility
+        )
+
+        let beginRequest = try makeBeginRequest(
+            plan: plan,
+            capture: capture,
+            profilePayload: profilePayload,
+            protocolVersion: protocolVersion
+        )
+        let exactBeginRequest = try HarcExactProtobufPayload(
+            serializingOnce: beginRequest
+        ).exactBytes
+        let intent = try UploadBeginIntent(
+            trustTuple: plan.trustTuple,
+            uploadID: plan.uploadID,
+            originRecordingID: plan.originRecordingID,
+            frozenProfile: plan.frozenProfile,
+            chunks: try plan.chunks.map {
+                try UploadBeginChunkIntent(
+                    descriptor: $0.descriptor,
+                    encodedFileURL: $0.encodedFileURL
+                )
+            },
+            exactBeginRequest: exactBeginRequest
+        )
+        let preparation = try store.prepareUploadBeginIntent(intent)
+        let durableBeginRequest = try HarcExactProtobufPayload(
+            decoding: preparation.stored.intent.exactBeginRequest,
+            as: Harc_V1_BeginUploadRequestV1.self
+        ).message
+        let priorStoredAttempt = try store.uploadAttempt(id: plan.uploadID)
+        let validatedBeginRequest = try HarcValidatedBeginUploadRequestV1(
+            durableBeginRequest,
+            compatibility: compatibility
+        )
+        switch (preparation.disposition, priorStoredAttempt) {
+        case (.created, nil):
+            try validatedBeginRequest.validateInitialSessionCapabilities(
+                openedSession.negotiatedCapabilities
+            )
+        case (.created, .some(_)), (.exactReplay, _):
+            try validatedBeginRequest.validateCompatibleSessionCapabilities(
+                openedSession.negotiatedCapabilities
+            )
+        }
+
+        let beginResponse = try await rpc.beginUpload(durableBeginRequest)
+        switch beginResponse.disposition {
+        case .created:
+            try validatedBeginRequest.validateInitialSessionCapabilities(
+                openedSession.negotiatedCapabilities
+            )
+        case .exactReplay, .reopened, .alreadyCommitted:
+            try validatedBeginRequest.validateCompatibleSessionCapabilities(
+                openedSession.negotiatedCapabilities
+            )
+        }
+        let attempt = try applyBeginResponse(
+            beginResponse,
+            plan: plan,
+            existing: priorStoredAttempt?.attempt
+        )
+
+        if beginResponse.disposition == .alreadyCommitted {
+            guard let receipt = beginResponse.existingReceipt,
+                  let existingAttempt = attempt,
+                  let manifest = try validatedManifest(
+                    for: existingAttempt,
+                    plan: plan,
+                    capture: chunkedCapture,
+                    hostTrust: hostTrust,
+                    producingDevicePublicKey: deviceSigner.publicKey
+                  ) else {
+                throw HarcForegroundRecordingOutboxError
+                    .remoteStateMismatch(field: "alreadyCommittedManifest")
+            }
+            try prepareHostCommitPending(origin: plan.originRecordingID)
+            return .committed(try validateAndPersistReceipt(
+                receipt.exactBytes,
+                manifest: manifest,
+                hostTrust: hostTrust
+            ))
+        }
+
+        guard var activeAttempt = attempt,
+              let beginReconciliation = beginResponse.reconciliation else {
+            throw HarcForegroundRecordingOutboxError
+                .remoteStateMismatch(field: "activeBegin")
+        }
+        activeAttempt = try synchronize(
+            beginReconciliation,
+            attempt: activeAttempt,
+            plan: plan
+        )
+        try beginActiveUploadIfNeeded(origin: plan.originRecordingID)
+        activeAttempt = try await declareRemainingChunks(
+            attempt: activeAttempt,
+            plan: plan,
+            protocolVersion: protocolVersion,
+            rpc: rpc
+        )
+
+        let reconciled = try await reconcile(
+            attempt: activeAttempt,
+            plan: plan,
+            protocolVersion: protocolVersion,
+            rpc: rpc
+        )
+        activeAttempt = reconciled.attempt
+        if let exactReceipt = reconciled.exactReceipt {
+            guard let manifest = try validatedManifest(
+                for: activeAttempt,
+                plan: plan,
+                capture: chunkedCapture,
+                hostTrust: hostTrust,
+                producingDevicePublicKey: deviceSigner.publicKey
+            ) else {
+                throw HarcForegroundRecordingOutboxError
+                    .remoteStateMismatch(field: "reconciledReceiptManifest")
+            }
+            try prepareHostCommitPending(origin: plan.originRecordingID)
+            return .committed(try validateAndPersistReceipt(
+                exactReceipt,
+                manifest: manifest,
+                hostTrust: hostTrust
+            ))
+        }
+        guard reconciled.rejectedChunks.isEmpty else {
+            throw HarcForegroundRecordingOutboxError
+                .remoteStateMismatch(field: "backgroundRejectedChunks")
+        }
+
+        let durableIndexes = Set(reconciled.durableChunks.map(\.chunkIndex))
+        let missing = plan.chunks.filter {
+            !durableIndexes.contains($0.descriptor.chunkIndex)
+        }
+        guard !missing.isEmpty else {
+            return .committed(try await driveOnce(
+                plan,
+                openedSession: openedSession,
+                deviceSigner: deviceSigner
+            ))
+        }
+        let existingSystemTasks = try activeBackgroundTaskIdentities(
+            uploadID: activeAttempt.uploadID
+        )
+        if !existingSystemTasks.isEmpty {
+            return .scheduled(existingSystemTasks)
+        }
+        let batches = try await batchPreparer.prepareBatches(
+            plan: plan,
+            generation: activeAttempt.generation,
+            chunks: missing
+        )
+        try validatePreparedBackgroundBatches(
+            batches,
+            missingChunks: missing,
+            attempt: activeAttempt,
+            plan: plan
+        )
+
+        for chunk in missing {
+            _ = try store.updateChunkOutbox(
+                uploadID: activeAttempt.uploadID,
+                chunkIndex: chunk.descriptor.chunkIndex
+            ) { machine in
+                if machine.state == .ready { try machine.schedule() }
+            }
+        }
+        _ = try store.updateRecordingOutbox(
+            for: plan.originRecordingID
+        ) { machine in
+            if machine.state == .authorizing {
+                try machine.beginActiveUpload()
+            }
+            if machine.state == .activeUpload {
+                try machine.scheduleBackgroundUpload()
+            }
+        }
+
+        let requestedExpiry = try flooredWireDate(
+            now().addingTimeInterval(7 * 24 * 60 * 60),
+            field: "backgroundCapabilityExpiry"
+        )
+        var scheduled: [SystemBackgroundTaskIdentity] = []
+        scheduled.reserveCapacity(batches.count)
+        for batch in batches {
+            var request = Harc_V1_MintBackgroundCapabilityRequestV1()
+            request.protocol = protocolVersion.protobufV1()
+            request.uploadID = Harc_V1_UploadIDV1(activeAttempt.uploadID)
+            request.uploadGeneration = activeAttempt.generation.rawValue
+            request.uploadProfileSha256 = try Harc_V1_SHA256DigestV1(
+                exactBytes: activeAttempt.frozenProfile.profileSHA256.rawBytes
+            )
+            request.batchID = Harc_V1_AudioBatchIDV1(
+                batch.descriptor.batchID
+            )
+            request.chunks = try batch.descriptor.chunks.map { descriptor in
+                var binding = Harc_V1_BackgroundChunkBindingV1()
+                binding.chunkIndex = descriptor.chunkIndex
+                binding.encodedSha256 = try Harc_V1_SHA256DigestV1(
+                    exactBytes: descriptor.encodedSHA256.rawBytes
+                )
+                return binding
+            }
+            request.exactBatchBodySha256 = try Harc_V1_SHA256DigestV1(
+                exactBytes: batch.descriptor.exactBodySHA256.rawBytes
+            )
+            request.exactBatchBodyLength =
+                batch.descriptor.exactBodyByteLength
+            request.requestedExpiresAtUnixMs = try exactUnixMilliseconds(
+                requestedExpiry,
+                field: "backgroundCapabilityExpiry"
+            )
+            let capability = try await rpc
+                .mintBackgroundUploadAuthorization(request)
+            let schedulingPlan = try HarcBackgroundUploadSchedulingPlanV1(
+                descriptor: batch.descriptor,
+                bodyFileURL: batch.bodyFileURL,
+                capabilityResponse: capability,
+                hostTrust: hostTrust
+            )
+            scheduled.append(try await scheduler.schedule(schedulingPlan))
+        }
+        return .scheduled(scheduled)
     }
 
     private func driveOnce(
@@ -1239,6 +1658,55 @@ public actor HarcForegroundRecordingOutboxCoordinator {
             if machine.state == .authorizing {
                 try machine.beginActiveUpload()
             }
+        }
+    }
+
+    private func validatePreparedBackgroundBatches(
+        _ batches: [HarcPreparedBackgroundAudioBatchV1],
+        missingChunks: [HarcForegroundEncodedChunk],
+        attempt: UploadAttempt,
+        plan: HarcForegroundRecordingUploadPlan
+    ) throws {
+        guard !batches.isEmpty,
+              batches.count <= missingChunks.count,
+              Set(batches.map(\.descriptor.batchID)).count == batches.count,
+              Set(batches.map { $0.bodyFileURL.path }).count == batches.count,
+              batches.flatMap(\.descriptor.chunks)
+                == missingChunks.map(\.descriptor) else {
+            throw HarcForegroundRecordingOutboxError.invalidPlan(
+                field: "backgroundBatches.coverage"
+            )
+        }
+        for batch in batches {
+            guard batch.descriptor.uploadID == attempt.uploadID,
+                  batch.descriptor.generation == attempt.generation,
+                  batch.descriptor.uploadProfileSHA256
+                    == attempt.frozenProfile.profileSHA256,
+                  batch.descriptor.originRecordingID
+                    == attempt.originRecordingID,
+                  batch.descriptor.ownerDeviceID == attempt.ownerDeviceID,
+                  batch.descriptor.originRecordingID
+                    == plan.originRecordingID else {
+                throw HarcForegroundRecordingOutboxError.invalidPlan(
+                    field: "backgroundBatches.identity"
+                )
+            }
+        }
+    }
+
+    private func activeBackgroundTaskIdentities(
+        uploadID: UploadID
+    ) throws -> [SystemBackgroundTaskIdentity] {
+        var identities: [SystemBackgroundTaskIdentity] = []
+        for mapping in try store.taskMappings() {
+            guard mapping.state == .persistedBeforeResume
+                    || mapping.state == .observedBySystem,
+                  let batch = try store.backgroundBatch(id: mapping.batchID),
+                  batch.descriptor.uploadID == uploadID else { continue }
+            identities.append(mapping.identity)
+        }
+        return identities.sorted {
+            $0.taskIdentifier < $1.taskIdentifier
         }
     }
 

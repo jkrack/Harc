@@ -82,6 +82,63 @@ struct HarcMobileDurableMasterWriterTests {
             attributes: NoopStorageAttributes()
         ).isEmpty)
     }
+
+    @Test("immutable transfer artifacts replay exactly and never overwrite")
+    func immutableTransferArtifactPublication() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("batch.harcab1")
+        let attributes = RecordingTransferAttributes()
+        let exact = Data("HARCAB1-test-body".utf8)
+
+        try HarcMobileTransferArtifactPublisher.publishImmutable(
+            exact,
+            to: destination,
+            attributes: attributes
+        )
+        try HarcMobileTransferArtifactPublisher.publishImmutable(
+            exact,
+            to: destination,
+            attributes: attributes
+        )
+
+        #expect(try Data(contentsOf: destination) == exact)
+        #expect(attributes.policies == [
+            .transferArtifact,
+            .transferArtifact,
+        ])
+        #expect(throws: HarcMobileCaptureStorageError.self) {
+            try HarcMobileTransferArtifactPublisher.publishImmutable(
+                Data("different-body".utf8),
+                to: destination,
+                attributes: attributes
+            )
+        }
+        #expect(try Data(contentsOf: destination) == exact)
+    }
+}
+
+private final class RecordingTransferAttributes:
+    HarcMobileCaptureStorageAttributeApplying, @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var recorded: [HarcMobileCaptureStoragePolicy] = []
+
+    var policies: [HarcMobileCaptureStoragePolicy] {
+        lock.withLock { recorded }
+    }
+
+    func applyAndVerify(
+        _ policy: HarcMobileCaptureStoragePolicy,
+        to _: URL
+    ) throws {
+        lock.withLock { recorded.append(policy) }
+    }
 }
 
 private struct NoopStorageAttributes:

@@ -462,7 +462,7 @@ final class HarcTransferStoreBackgroundUploadPersistenceV1:
     }
 
     func persistJob(_ job: HarcBackgroundUploadJobV1) throws {
-        try store.persistBackgroundBatch(
+        try store.persistBackgroundBatchForScheduling(
             job.descriptor,
             bodyFileURL: job.bodyFileURL,
             capability: job.capability
@@ -915,7 +915,8 @@ actor HarcBackgroundUploadCoordinatorV1 {
                 task.cancel()
                 continue
             }
-            guard let mapping = mappingsByIdentity[identity],
+            guard task.state == .running || task.state == .suspended,
+                  let mapping = mappingsByIdentity[identity],
                   mapping.state != .completed,
                   mapping.state != .securityBlocked,
                   let job = try persistence.job(
@@ -971,9 +972,10 @@ actor HarcBackgroundUploadCoordinatorV1 {
         )
     }
 
+    @discardableResult
     func handleCompletion(
         _ event: HarcBackgroundUploadCompletionEventV1
-    ) throws {
+    ) throws -> AudioBatchID {
         let identity = try SystemBackgroundTaskIdentity(
             taskIdentifier: event.taskIdentifier
         )
@@ -1031,6 +1033,7 @@ actor HarcBackgroundUploadCoordinatorV1 {
             // There is deliberately no cancellation point between validation
             // and this synchronous durable ACK + task-mapping boundary.
             try persistence.persistAcknowledgement(evidence)
+            return mapping.batchID
         } catch {
             try persistence.persistTaskFailure(
                 identity,
@@ -1437,8 +1440,9 @@ public enum HarcBackgroundURLSessionConfigurationV1 {
 /// callbacks and drain the application completion handler after durable ACK
 /// processing finishes.
 public final class HarcBackgroundURLSessionUploadClientV1:
-    @unchecked Sendable
+    HarcBackgroundUploadSchedulingV1, @unchecked Sendable
 {
+    public typealias CompletionReporter = @Sendable (AudioBatchID) async -> Void
     public typealias FailureReporter = @Sendable (
         HarcBackgroundUploadDelegateFailureV1
     ) async -> Void
@@ -1459,6 +1463,7 @@ public final class HarcBackgroundURLSessionUploadClientV1:
 
     public static func makeProduction(
         store: HarcTransferStore,
+        completionReporter: @escaping CompletionReporter = { _ in },
         failureReporter: @escaping FailureReporter = { _ in }
     ) -> HarcBackgroundURLSessionUploadClientV1 {
         make(
@@ -1466,6 +1471,7 @@ public final class HarcBackgroundURLSessionUploadClientV1:
             configuration:
                 HarcBackgroundURLSessionConfigurationV1.makeProduction(),
             now: Date.init,
+            completionReporter: completionReporter,
             failureReporter: failureReporter
         )
     }
@@ -1474,6 +1480,7 @@ public final class HarcBackgroundURLSessionUploadClientV1:
         store: HarcTransferStore,
         configuration: URLSessionConfiguration,
         now: @escaping @Sendable () -> Date,
+        completionReporter: @escaping CompletionReporter = { _ in },
         failureReporter: @escaping FailureReporter = { _ in }
     ) -> HarcBackgroundURLSessionUploadClientV1 {
         let persistence = HarcTransferStoreBackgroundUploadPersistenceV1(
@@ -1496,9 +1503,10 @@ public final class HarcBackgroundURLSessionUploadClientV1:
         let delegate = HarcBackgroundURLSessionDelegateV1(
             pinnedTrustDelegate: pinnedTrust,
             completionGate: completionGate
-        ) { [coordinator, failureReporter] event in
+        ) { [coordinator, completionReporter, failureReporter] event in
             do {
-                try await coordinator.handleCompletion(event)
+                let batchID = try await coordinator.handleCompletion(event)
+                await completionReporter(batchID)
             } catch {
                 await failureReporter(
                     HarcBackgroundUploadDelegateFailureV1(

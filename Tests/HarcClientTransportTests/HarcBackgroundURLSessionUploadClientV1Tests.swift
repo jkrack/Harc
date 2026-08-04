@@ -238,6 +238,47 @@ struct HarcBackgroundURLSessionUploadClientV1Tests {
         #expect(result.batchesRequiringCapabilityRefresh.isEmpty)
     }
 
+    @Test("completed system task is not mistaken for an active upload")
+    func relaunchReplacesCompletedTask() async throws {
+        let fixture = try BackgroundUploadFixture(seed: 12)
+        let events = BackgroundUploadEventLog()
+        let persistence = BackgroundUploadPersistenceFake(
+            hostTrust: fixture.hostTrust,
+            events: events
+        )
+        let identity = fixture.identity(121)
+        persistence.seed(job: fixture.job, mappingIdentity: identity)
+        let completed = BackgroundUploadTaskFake(
+            identifier: 121,
+            request: try HarcBackgroundUploadHTTPRequestV1.makeRequest(
+                for: fixture.job
+            ),
+            bodyFileURL: fixture.bodyFileURL,
+            state: .completed,
+            events: events
+        )
+        completed.taskDescription = HarcBackgroundUploadHTTPRequestV1
+            .taskDescription(batchID: fixture.descriptor.batchID)
+        let session = BackgroundUploadSessionFake(
+            nextTaskIdentifier: 122,
+            existingTasks: [completed],
+            events: events
+        )
+        let coordinator = HarcBackgroundUploadCoordinatorV1(
+            persistence: persistence,
+            session: session,
+            verifyBody: { _ in },
+            now: { fixture.now }
+        )
+
+        let result = try await coordinator.reconcileAfterRelaunch()
+
+        #expect(completed.state == .canceling)
+        #expect(persistence.lastObservedTasks.isEmpty)
+        #expect(result.newlyScheduledTasks == [fixture.identity(122)])
+        #expect(session.createdTasks.first?.state == .running)
+    }
+
     @Test("final response URL must remain the capability-bound endpoint")
     func rejectsFinalURLMismatch() async throws {
         let fixture = try BackgroundUploadFixture(seed: 5)
@@ -908,9 +949,9 @@ private func yieldSeveralTimes() async {
 }
 
 private func waitForDelivery(_ probe: BackgroundCompletionProbe) async {
-    for _ in 0..<200 {
+    for _ in 0..<1_000 {
         if await probe.count > 0 { return }
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(1))
     }
 }
 #endif

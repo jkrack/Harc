@@ -62,6 +62,48 @@ public struct FoundationHarcMobileCaptureStorageAttributes:
     }
 }
 
+/// Publishes one immutable transfer body through the same synchronized,
+/// backup-excluded class-C storage path used by masters and encoded chunks.
+/// An exact replay reuses the existing bytes; different bytes never overwrite
+/// a previously published immutable artifact.
+public enum HarcMobileTransferArtifactPublisher {
+    public static func publishImmutable(
+        _ data: Data,
+        to destination: URL,
+        attributes: any HarcMobileCaptureStorageAttributeApplying =
+            FoundationHarcMobileCaptureStorageAttributes()
+    ) throws {
+        guard destination.isFileURL, !data.isEmpty else {
+            throw HarcMobileCaptureStorageError.unsafeArtifact(
+                destination.absoluteString
+            )
+        }
+        let parent = destination.deletingLastPathComponent()
+        try HarcMobileCaptureFileSystem.requireSafeDirectory(parent)
+
+        if FileManager.default.fileExists(atPath: destination.path) {
+            let existing = try Data(
+                contentsOf: destination,
+                options: .mappedIfSafe
+            )
+            guard existing == data else {
+                throw HarcMobileCaptureStorageError.destinationExists(
+                    destination.path
+                )
+            }
+            try attributes.applyAndVerify(
+                .transferArtifact,
+                to: destination
+            )
+            return
+        }
+
+        try HarcMobileCaptureFileSystem.atomicWrite(data, to: destination)
+        try attributes.applyAndVerify(.transferArtifact, to: destination)
+        try HarcMobileCaptureFileSystem.synchronizeDirectory(parent)
+    }
+}
+
 public struct HarcMobileCaptureLocations: Equatable, Sendable {
     public let root: URL
     public let active: URL

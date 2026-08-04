@@ -1201,9 +1201,10 @@ struct OutboxPersistenceTests {
             masterFileURL: root.appendingPathComponent("master.wav")
         )
         try store.persistUploadAttempt(attempt, for: tuple)
+        let batchURL = root.appendingPathComponent("batch.harcab1")
         try store.persistBackgroundBatch(
             batch,
-            bodyFileURL: root.appendingPathComponent("batch.harcab1"),
+            bodyFileURL: batchURL,
             capability: OpaqueBackgroundCapability(
                 credential: Data([1]),
                 capabilityBindings: Data([2]),
@@ -1217,6 +1218,19 @@ struct OutboxPersistenceTests {
             batchID: batch.batchID
         )
 
+        let replacementCapability = try OpaqueBackgroundCapability(
+            credential: Data([3]),
+            capabilityBindings: Data([4]),
+            expiresAt: ClientStoreFixtures.baseDate.addingTimeInterval(600)
+        )
+        #expect(throws: ClientStoreError.self) {
+            try store.persistBackgroundBatchForScheduling(
+                batch,
+                bodyFileURL: batchURL,
+                capability: replacementCapability
+            )
+        }
+
         try store.persistBackgroundTaskFailure(
             identity,
             batchID: batch.batchID,
@@ -1229,6 +1243,16 @@ struct OutboxPersistenceTests {
         #expect(try store.taskMappings().map(\.state) == [
             .failedRecoverable,
         ])
+
+        try store.persistBackgroundBatchForScheduling(
+            batch,
+            bodyFileURL: batchURL,
+            capability: replacementCapability
+        )
+        #expect(try store.backgroundBatch(id: batch.batchID)?.capability
+            == replacementCapability)
+        #expect(try store.backgroundBatch(id: batch.batchID)?.state
+            == .readyToSchedule)
 
         try store.persistBackgroundTaskFailure(
             identity,

@@ -85,9 +85,17 @@ final class HarcMobileAppModel {
                 locations: clientLocations
             )
             transferStore = store
+            let backgroundEventRelay =
+                HarcMobileBackgroundTransferEventRelay()
             let backgroundClient =
                 HarcBackgroundURLSessionUploadClientV1.makeProduction(
-                    store: store
+                    store: store,
+                    completionReporter: { _ in
+                        await backgroundEventRelay.didFinish()
+                    },
+                    failureReporter: { _ in
+                        await backgroundEventRelay.didFinish()
+                    }
                 )
             backgroundUploadClient = backgroundClient
             HarcMobileBackgroundSessionBridge.shared.attach(backgroundClient)
@@ -95,9 +103,11 @@ final class HarcMobileAppModel {
                 identity: identity,
                 store: store,
                 locations: captureLocations,
-                routeURL: routeURL
+                routeURL: routeURL,
+                backgroundUploadClient: backgroundClient
             )
             transferCoordinator = transfer
+            await backgroundEventRelay.attach(transfer)
             let library = HarcMobileLibraryCoordinator(
                 identity: identity,
                 transferStore: store,
@@ -131,11 +141,8 @@ final class HarcMobileAppModel {
                 deviceID: identity.deviceID,
                 recoveredRecordings: recovered.count
             )
-            transfer.retryPending()
+            transfer.reconcileBackgroundUploads()
             library.refresh()
-            Task {
-                _ = try? await backgroundClient.reconcileAfterRelaunch()
-            }
         } catch {
             readiness = .failed(error.localizedDescription)
         }
@@ -220,5 +227,17 @@ final class HarcMobileAppModel {
             canonicalPCMSHA256: master.canonicalPCMSHA256,
             discontinuities: master.discontinuities
         )
+    }
+}
+
+private actor HarcMobileBackgroundTransferEventRelay {
+    private weak var coordinator: HarcMobileTransferCoordinator?
+
+    func attach(_ coordinator: HarcMobileTransferCoordinator) {
+        self.coordinator = coordinator
+    }
+
+    func didFinish() async {
+        await coordinator?.reconcileBackgroundUploads()
     }
 }

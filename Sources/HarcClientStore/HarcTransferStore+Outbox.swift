@@ -1202,6 +1202,45 @@ extension HarcTransferStore {
         state: BackgroundBatchState = .readyToSchedule,
         updatedAt: Date? = nil
     ) throws {
+        try persistBackgroundBatch(
+            descriptor,
+            bodyFileURL: bodyFileURL,
+            capability: capability,
+            state: state,
+            updatedAt: updatedAt,
+            allowRecoverableCapabilityReplacement: false
+        )
+    }
+
+    /// Transport-only scheduling entry point. A completed system task can
+    /// leave an immutable batch in a recoverable state with an expired or
+    /// otherwise unusable bearer credential. Once reconciliation proves that
+    /// no system task can still use the old secret, this permits replacing only
+    /// the capability fields while preserving the exact descriptor and body.
+    package func persistBackgroundBatchForScheduling(
+        _ descriptor: ImmutableAudioBatchDescriptor,
+        bodyFileURL: URL,
+        capability: OpaqueBackgroundCapability,
+        updatedAt: Date? = nil
+    ) throws {
+        try persistBackgroundBatch(
+            descriptor,
+            bodyFileURL: bodyFileURL,
+            capability: capability,
+            state: .readyToSchedule,
+            updatedAt: updatedAt,
+            allowRecoverableCapabilityReplacement: true
+        )
+    }
+
+    private func persistBackgroundBatch(
+        _ descriptor: ImmutableAudioBatchDescriptor,
+        bodyFileURL: URL,
+        capability: OpaqueBackgroundCapability,
+        state: BackgroundBatchState,
+        updatedAt: Date?,
+        allowRecoverableCapabilityReplacement: Bool
+    ) throws {
         let fileURL = try localFileURL(bodyFileURL)
         try database.write { db in
             try requireCurrentUploadWithoutIntegrityBlock(descriptor.uploadID, in: db)
@@ -1225,15 +1264,60 @@ extension HarcTransferStore {
                 let capabilityExpiryMS = try ClientStoreCoding.milliseconds(
                     capability.expiresAt
                 )
-                let exactReplay =
+                let immutableReplay =
                     (row["descriptor_json"] as Data) == descriptorJSON &&
                     (row["body_path"] as String) == fileURL.path &&
+                    (row["body_sha256"] as Data)
+                        == descriptor.exactBodySHA256.rawBytes &&
+                    (row["body_byte_count"] as Int64)
+                        == Int64(descriptor.exactBodyByteLength)
+                let exactReplay = immutableReplay &&
                     (row["opaque_capability_credential"] as Data) == capability.credential &&
                     (row["capability_bindings"] as Data) == capability.capabilityBindings &&
                     (row["capability_expires_at_ms"] as Int64) == capabilityExpiryMS
-                guard exactReplay else {
+                if exactReplay { return }
+
+                guard allowRecoverableCapabilityReplacement,
+                      immutableReplay,
+                      let existingState = BackgroundBatchState(
+                          rawValue: row["state"]
+                      ),
+                      existingState == .readyToSchedule
+                        || existingState == .needsReschedule
+                        || existingState == .failedRecoverable else {
                     throw ClientStoreError.exactObjectEquivocation
                 }
+                let activeTaskCount = try Int.fetchOne(
+                    db,
+                    sql: """
+                        SELECT COUNT(*)
+                        FROM background_task_mappings
+                        WHERE batch_id = ?
+                          AND state IN ('persistedBeforeResume', 'observedBySystem')
+                        """,
+                    arguments: [descriptor.batchID.description]
+                ) ?? 0
+                guard activeTaskCount == 0 else {
+                    throw ClientStoreError.exactObjectEquivocation
+                }
+                try db.execute(
+                    sql: """
+                        UPDATE upload_batches
+                        SET opaque_capability_credential = ?,
+                            capability_bindings = ?,
+                            capability_expires_at_ms = ?,
+                            state = 'readyToSchedule',
+                            updated_at_ms = ?
+                        WHERE batch_id = ?
+                        """,
+                    arguments: [
+                        capability.credential,
+                        capability.capabilityBindings,
+                        capabilityExpiryMS,
+                        timestampMS,
+                        descriptor.batchID.description,
+                    ]
+                )
                 return
             }
             try db.execute(

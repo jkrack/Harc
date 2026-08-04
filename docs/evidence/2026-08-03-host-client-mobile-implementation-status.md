@@ -27,7 +27,7 @@ require hardware outside this coding session.
 | PR 3-4 | Device identity, transfer/client/host stores, protobuf and exact signed wire contracts | `a403275`, `117050e` |
 | PR 5 | Canonical ingest, durable signed receipts, processing publication | `0151fc6` |
 | PR 6 | Pairing/TLS, pinned gRPC, narrow HTTPS upload, discovery, resident Host lifecycle, local MCP authority, UI and CLI | `77f0556` through `06c7ff7` |
-| PR 7 | iPhone durable capture, QR adoption, lossless chunks, persistent outbox, foreground/background transfer and receipt flow | `2e0c58b` through `ce82a30` |
+| PR 7 | iPhone durable capture, QR adoption, lossless chunks, persistent outbox, production background transfer/relaunch reconciliation, receipt flow, and standalone local playback/export | `2e0c58b` through current branch |
 | PR 8 | Host Library snapshot/delta sync, search, detail, verified audio playback, signed metadata mutations and conflicts | `4aa7858` through `8c5e3bd` |
 | PR 9 | Mac Client pairing/outbox, Host Library, signed edge artifacts, Host arbitration, managed audio cache policy | `33e0b2e` through `c5bba8c` |
 
@@ -44,10 +44,21 @@ require hardware outside this coding session.
   focused macOS Swift 6 typecheck.
 - The generated `HarcMobile` scheme completed an unsigned arm64 iOS Simulator
   build with architecture and Xcode target concurrency explicitly bounded.
-- The application-hosted `HarcMobileAppTests` target completed 2/2 tests on an
-  arm64 iPhone 17 Pro simulator after correcting its generated test-host path
-  and preserving `HarcMobile` as the Swift module name while the displayed app
-  product remains `Harc`.
+- The application-hosted `HarcMobileAppTests` target completed 4/4 tests on an
+  arm64 iPhone 17 Pro simulator. These cover the generated privacy/background
+  configuration, deterministic bounded HARCAB1 construction and exact replay,
+  and the required disclosure before a local master is handed to the system
+  export destination.
+- The production iPhone composition now mints request-bound background upload
+  capabilities, builds immutable file-backed HARCAB1 batches, persists the
+  batch-to-URLSession-task mapping before resume, reconciles task state after
+  relaunch, retries recoverable terminal tasks without duplicating active
+  tasks, and reports durable completion back into the outbox.
+- The Record screen now exposes protected masters under **On This iPhone** for
+  playback and explicit foreground export without a Host. The share sheet is
+  reachable only after disclosing that the selected destination is outside the
+  adopted-Host trust boundary; export neither changes receipt state nor deletes
+  the local master.
 - The non-shipping `HarcMobileSpikesTests` target completed 11/11 qualification-
   logic tests on the same simulator, including the fail-closed rule that
   simulator, iOS-app-on-Mac, incomplete, or non-phone evidence cannot satisfy
@@ -76,10 +87,10 @@ several CoreML stacks concurrently.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,488 Swift Testing cases in 252 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
+| Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,497 Swift Testing cases in 253 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
-| iOS Simulator build | Green | Unsigned arm64 Debug build completed with `** BUILD SUCCEEDED **` on 2026-08-03. |
-| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 2/2 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
+| iOS Simulator build | Green | The unsigned arm64 Debug build and application-hosted tests completed successfully on 2026-08-04. |
+| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 4/4 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Confirm the selected CAF/ALAC implementation and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |

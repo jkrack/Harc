@@ -373,6 +373,133 @@ struct HarcForegroundRecordingOutboxCoordinatorTests {
         #expect(payload.issuedAtUnixMs
             == ForegroundCoordinatorFixture.nowMilliseconds)
     }
+
+    @Test("background scheduling mints exact batch capability and preserves local files")
+    func backgroundScheduling() async throws {
+        let fixture = try ForegroundCoordinatorFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let rpc = ForegroundRecordingRPCFake(fixture: fixture, mode: .normal)
+        let scheduler = ForegroundBackgroundSchedulerFake()
+        let coordinator = HarcForegroundRecordingOutboxCoordinator(
+            store: fixture.store,
+            transport: rpc,
+            now: { fixture.now }
+        )
+
+        let result = try await coordinator.scheduleInBackground(
+            fixture.plan,
+            openedSession: fixture.session,
+            deviceSigner: fixture.deviceKey,
+            batchPreparer: ForegroundBackgroundBatchPreparerFake(
+                root: fixture.root
+            ),
+            scheduler: scheduler
+        )
+
+        guard case .scheduled(let identities) = result else {
+            Issue.record("expected system background scheduling")
+            return
+        }
+        #expect(identities.map(\.taskIdentifier) == [700])
+        #expect(await rpc.mintCallCount() == 1)
+        #expect(await rpc.uploadCallCount() == 0)
+        let plans = await scheduler.plans()
+        #expect(plans.count == 1)
+        #expect(plans.first?.descriptor.chunks
+            == fixture.plan.chunks.map(\.descriptor))
+        #expect(try fixture.store.recordingOutbox(
+            for: fixture.plan.originRecordingID
+        )?.stateMachine.state == .backgroundScheduled)
+        #expect(try fixture.store.chunks(
+            uploadID: fixture.plan.uploadID
+        ).map(\.stateMachine.state) == [.scheduled, .scheduled])
+        let scheduledPlan = try #require(plans.first)
+        try fixture.store.persistBackgroundBatch(
+            scheduledPlan.descriptor,
+            bodyFileURL: scheduledPlan.bodyFileURL,
+            capability: scheduledPlan.capability
+        )
+        try fixture.store.persistTaskMappingBeforeResume(
+            identities[0],
+            batchID: scheduledPlan.descriptor.batchID
+        )
+        let replay = try await coordinator.scheduleInBackground(
+            fixture.plan,
+            openedSession: fixture.session,
+            deviceSigner: fixture.deviceKey,
+            batchPreparer: ForegroundBackgroundBatchPreparerFake(
+                root: fixture.root
+            ),
+            scheduler: scheduler
+        )
+        guard case .scheduled(let replayIdentities) = replay else {
+            Issue.record("expected active system task replay")
+            return
+        }
+        #expect(replayIdentities == identities)
+        #expect(await rpc.mintCallCount() == 1)
+        #expect(await scheduler.plans().count == 1)
+        #expect(FileManager.default.fileExists(atPath: fixture.masterURL.path))
+        for chunk in fixture.plan.chunks {
+            #expect(FileManager.default.fileExists(
+                atPath: chunk.encodedFileURL.path
+            ))
+        }
+    }
+}
+
+private struct ForegroundBackgroundBatchPreparerFake:
+    HarcBackgroundAudioBatchPreparingV1, Sendable
+{
+    let root: URL
+
+    func prepareBatches(
+        plan: HarcForegroundRecordingUploadPlan,
+        generation: UploadGeneration,
+        chunks: [HarcForegroundEncodedChunk]
+    ) async throws -> [HarcPreparedBackgroundAudioBatchV1] {
+        var body = Data("HARCAB1-fixture".utf8)
+        body.append(Data(repeating: 0x41, count: 64 - body.count))
+        let bodyURL = root.appendingPathComponent("fixture.harcab1")
+            .standardizedFileURL
+        try body.write(to: bodyURL)
+        let descriptor = try ImmutableAudioBatchDescriptor(
+            batchID: AudioBatchID(
+                UUID(uuidString: "ab111111-2222-3333-4444-555555555555")!
+            ),
+            uploadID: plan.uploadID,
+            generation: generation,
+            uploadProfileSHA256: plan.frozenProfile.profileSHA256,
+            originRecordingID: plan.originRecordingID,
+            ownerDeviceID: plan.originRecordingID.deviceID,
+            chunks: chunks.map(\.descriptor),
+            exactBodyByteLength: UInt64(body.count),
+            exactBodySHA256: try ImmutableBatchSHA256(
+                Data(SHA256.hash(data: body))
+            )
+        )
+        return [try HarcPreparedBackgroundAudioBatchV1(
+            descriptor: descriptor,
+            bodyFileURL: bodyURL
+        )]
+    }
+}
+
+private actor ForegroundBackgroundSchedulerFake:
+    HarcBackgroundUploadSchedulingV1
+{
+    private var captured: [HarcBackgroundUploadSchedulingPlanV1] = []
+
+    func schedule(
+        _ plan: HarcBackgroundUploadSchedulingPlanV1
+    ) async throws -> SystemBackgroundTaskIdentity {
+        captured.append(plan)
+        return try SystemBackgroundTaskIdentity(
+            taskIdentifier: 700 + captured.count - 1
+        )
+    }
+
+    func plans() -> [HarcBackgroundUploadSchedulingPlanV1] { captured }
 }
 
 private final class ForegroundCoordinatorStorageAttributes:
@@ -686,6 +813,7 @@ private actor ForegroundRecordingRPCFake:
     private var reconcileCalls = 0
     private var commitCalls = 0
     private var statusCalls = 0
+    private var mintCalls = 0
     private var uploadOrder: [UInt32] = []
     private var maximumChunkBytes = 0
     private var heldBeginContinuation: CheckedContinuation<Void, Never>?
@@ -969,10 +1097,53 @@ private actor ForegroundRecordingRPCFake:
     }
 
     func mintBackgroundUploadAuthorization(
-        _: Harc_V1_MintBackgroundCapabilityRequestV1,
+        _ request: Harc_V1_MintBackgroundCapabilityRequestV1,
         authorization _: HarcRecordingTransferAuthorization
     ) async throws -> Harc_V1_MintBackgroundCapabilityResponseV1 {
-        throw ForegroundRecordingRPCFakeError.unsupported
+        mintCalls += 1
+        let validated = try HarcValidatedMintBackgroundCapabilityRequestV1(
+            request
+        )
+        let issuedAt = ForegroundCoordinatorFixture.nowMilliseconds
+        let transportSet = try VerifiedHostTransportSetV1.issue(
+            libraryID: fixture.hostTrust.libraryID,
+            hostAuthorityID: fixture.hostTrust.hostAuthorityID,
+            setEpoch: 1,
+            issuedAtUnixMilliseconds: issuedAt,
+            entries: [
+                try HostTransportEntryV1(
+                    tlsSPKISHA256: fixture.session.tlsSPKISHA256,
+                    notBeforeUnixMilliseconds: issuedAt - 1_000,
+                    notAfterUnixMilliseconds: issuedAt + 86_400_000
+                ),
+            ],
+            using: fixture.hostKey
+        )
+        let path = "/v1/uploads/\(validated.uploadID)/batches/\(validated.batchID)"
+        var exactTransportSet = Harc_V1_ExactSignedObjectV1()
+        exactTransportSet.framedBytes = transportSet.exactSignedBytes
+        var response = Harc_V1_MintBackgroundCapabilityResponseV1()
+        response.protocol = validated.protocolVersion.protobufV1()
+        response.absoluteUploadURL = "https://harc-test.local:7443\(path)"
+        response.opaqueCapabilityCredential = Data(
+            repeating: 0x73,
+            count: 48
+        )
+        response.issuedAtUnixMs = issuedAt
+        response.expiresAtUnixMs = request.requestedExpiresAtUnixMs
+        response.byteCeiling = validated.exactBatchBodyLength
+        response.minimumTransportSetEpoch = 1
+        response.exactSignedTransportSet = exactTransportSet
+        response.uploadID = Harc_V1_UploadIDV1(validated.uploadID)
+        response.uploadGeneration = validated.generation.rawValue
+        response.batchID = Harc_V1_AudioBatchIDV1(validated.batchID)
+        response.exactBatchBodySha256 = try Harc_V1_SHA256DigestV1(
+            exactBytes: validated.exactBatchBodySHA256.rawBytes
+        )
+        response.httpMethod = "PUT"
+        response.httpPath = path
+        response.expiryWasClamped = false
+        return response
     }
 
     private func reconciliation() throws -> UploadReconciliation {
@@ -1033,6 +1204,7 @@ private actor ForegroundRecordingRPCFake:
     func commitCallCount() -> Int { commitCalls }
     func beginCallCount() -> Int { beginCalls }
     func uploadCallCount() -> Int { uploadCalls }
+    func mintCallCount() -> Int { mintCalls }
 
     func waitUntilBeginIsHeld() async {
         while heldBeginContinuation == nil {

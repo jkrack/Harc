@@ -157,6 +157,27 @@ struct HarcValidatedRecordingTransferRPCClientV1: Sendable {
             )
         }
     }
+
+    func mintBackgroundUploadAuthorization(
+        _ request: Harc_V1_MintBackgroundCapabilityRequestV1
+    ) async throws -> HarcValidatedMintBackgroundCapabilityResponseV1 {
+        let expected = try HarcValidatedMintBackgroundCapabilityRequestV1(
+            request,
+            compatibility: compatibility
+        )
+        try Task.checkCancellation()
+        let response = try await transport.mintBackgroundUploadAuthorization(
+            request,
+            authorization: authorization
+        )
+        return try validateRecordingTransferResponse {
+            try HarcValidatedMintBackgroundCapabilityResponseV1(
+                response,
+                expectedRequest: expected,
+                compatibility: compatibility
+            )
+        }
+    }
 }
 
 enum HarcValidatedRecordingTransferRPCError: Error, Equatable, Sendable {

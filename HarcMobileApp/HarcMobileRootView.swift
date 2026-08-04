@@ -1,4 +1,6 @@
+import AVFAudio
 import HarcDomain
+import Observation
 import SwiftUI
 import UIKit
 
@@ -42,7 +44,7 @@ struct HarcMobileRootView: View {
                 for: UIApplication.didBecomeActiveNotification
             )
         ) { _ in
-            model.transferCoordinator?.retryPending()
+            model.transferCoordinator?.reconcileBackgroundUploads()
             model.libraryCoordinator?.refresh()
         }
         .sheet(isPresented: $showsPairingScanner) {
@@ -270,26 +272,67 @@ struct HarcMobileRootView: View {
     @ViewBuilder
     private func readyRecordingView(recovered: Int) -> some View {
         if let coordinator = model.captureCoordinator {
-            VStack(spacing: 24) {
-                Image(systemName: "mic.circle.fill")
-                    .font(.system(size: 82))
-                    .foregroundStyle(.tint)
-                captureStatus(coordinator)
-                if recovered > 0 {
-                    Label(
-                        "Recovered \(recovered) durable recording\(recovered == 1 ? "" : "s")",
-                        systemImage: "checkmark.shield"
-                    )
-                    .foregroundStyle(.green)
+            ScrollView {
+                VStack(spacing: 24) {
+                    Image(systemName: "mic.circle.fill")
+                        .font(.system(size: 82))
+                        .foregroundStyle(.tint)
+                    captureStatus(coordinator)
+                    if recovered > 0 {
+                        Label(
+                            "Recovered \(recovered) durable recording\(recovered == 1 ? "" : "s")",
+                            systemImage: "checkmark.shield"
+                        )
+                        .foregroundStyle(.green)
+                    }
+                    captureControl(coordinator)
+                    if let transfer = model.transferCoordinator {
+                        transferStatus(transfer)
+                        localRecordingsSection(
+                            transfer,
+                            captureIsActive: coordinator.isRecording
+                        )
+                    }
                 }
-                captureControl(coordinator)
-                if let transfer = model.transferCoordinator {
-                    transferStatus(transfer)
-                }
+                .padding()
             }
-            .padding()
+            .refreshable {
+                model.transferCoordinator?.refreshLocalRecordings()
+            }
         } else {
             ProgressView("Preparing recorder…")
+        }
+    }
+
+    @ViewBuilder
+    private func localRecordingsSection(
+        _ coordinator: HarcMobileTransferCoordinator,
+        captureIsActive: Bool
+    ) -> some View {
+        if !coordinator.localRecordings.isEmpty
+            || coordinator.localRecordingsError != nil {
+            VStack(alignment: .leading, spacing: 12) {
+                Divider()
+                Text("On This iPhone")
+                    .font(.title3.weight(.semibold))
+                Text(
+                    "Protected masters remain available here while Host transfer is unavailable."
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                if let error = coordinator.localRecordingsError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+                ForEach(coordinator.localRecordings) { recording in
+                    HarcMobileLocalRecordingRow(
+                        recording: recording,
+                        captureIsActive: captureIsActive
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -318,6 +361,12 @@ struct HarcMobileRootView: View {
             ProgressView("Connecting securely to Host…")
         case .uploading:
             ProgressView("Uploading lossless audio to Host…")
+        case .backgroundScheduled(_, let taskCount):
+            Label(
+                "Host transfer scheduled in background (\(taskCount) batch(es))",
+                systemImage: "arrow.up.circle"
+            )
+            .foregroundStyle(.secondary)
         case .uploaded:
             Label(
                 "Verified by Host and saved locally",
@@ -570,6 +619,219 @@ struct HarcMobileRootView: View {
                 }
             }
         }
+    }
+}
+
+private struct HarcMobileLocalRecordingRow: View {
+    let recording: HarcMobileLocalRecording
+    let captureIsActive: Bool
+
+    @State private var audio: HarcMobileLocalRecordingAudioController
+    @State private var showsExport = false
+
+    init(
+        recording: HarcMobileLocalRecording,
+        captureIsActive: Bool
+    ) {
+        self.recording = recording
+        self.captureIsActive = captureIsActive
+        _audio = State(
+            initialValue: HarcMobileLocalRecordingAudioController(
+                url: recording.masterFileURL
+            )
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(recording.startedAt, format: .dateTime
+                        .month(.abbreviated).day().hour().minute())
+                        .font(.headline)
+                    Text(Self.duration(recording.duration))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                transferLabel
+            }
+            HStack {
+                Button {
+                    Task { await audio.playOrPause() }
+                } label: {
+                    switch audio.state {
+                    case .loading:
+                        ProgressView()
+                    case .playing:
+                        Label("Pause", systemImage: "pause.fill")
+                    default:
+                        Label("Play", systemImage: "play.fill")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(captureIsActive)
+
+                Button("Export…", systemImage: "square.and.arrow.up") {
+                    audio.stop()
+                    showsExport = true
+                }
+                .buttonStyle(.bordered)
+                .disabled(captureIsActive)
+            }
+            if captureIsActive {
+                Text("Playback and export are paused while recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if case .failed(let message) = audio.state {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding()
+        .background(.secondary.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+        .sheet(isPresented: $showsExport) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 20) {
+                    Label("Export outside Harc", systemImage: "shield.lefthalf.filled")
+                        .font(.title2.weight(.semibold))
+                    Text(HarcMobileLocalRecording.exportDisclosure)
+                    ShareLink(item: recording.masterFileURL) {
+                        Label("Choose Export Destination", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Spacer()
+                }
+                .padding()
+                .navigationTitle("Export Recording")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showsExport = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+        .onDisappear { audio.stop() }
+    }
+
+    @ViewBuilder
+    private var transferLabel: some View {
+        switch recording.transferState {
+        case .localOnly:
+            Label("Local", systemImage: "iphone")
+                .foregroundStyle(.secondary)
+        case .transferring:
+            Label("Transferring", systemImage: "arrow.up.circle")
+                .foregroundStyle(.secondary)
+        case .retryNeeded:
+            Label("Retry", systemImage: "arrow.clockwise")
+                .foregroundStyle(.orange)
+        case .securityBlocked:
+            Label("Blocked", systemImage: "lock.trianglebadge.exclamationmark")
+                .foregroundStyle(.red)
+        case .committed:
+            Label("On Host", systemImage: "checkmark.shield")
+                .foregroundStyle(.green)
+        }
+    }
+
+    private static func duration(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval.rounded()))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+@MainActor
+@Observable
+private final class HarcMobileLocalRecordingAudioController: NSObject {
+    enum State: Equatable {
+        case idle
+        case loading
+        case playing
+        case paused
+        case failed(String)
+    }
+
+    private(set) var state: State = .idle
+    private let url: URL
+    private var player: AVAudioPlayer?
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func playOrPause() async {
+        if let player {
+            if player.isPlaying {
+                player.pause()
+                state = .paused
+            } else if player.play() {
+                state = .playing
+            } else {
+                state = .failed("Harc could not resume local playback.")
+            }
+            return
+        }
+        state = .loading
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .spokenAudio)
+            try session.setActive(true)
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.delegate = self
+            player.prepareToPlay()
+            guard player.play() else {
+                throw HarcMobileLocalPlaybackError.startFailed
+            }
+            self.player = player
+            state = .playing
+        } catch {
+            player = nil
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+        if state != .idle {
+            state = .idle
+        }
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: .notifyOthersOnDeactivation
+        )
+    }
+}
+
+extension HarcMobileLocalRecordingAudioController:
+    @preconcurrency AVAudioPlayerDelegate
+{
+    func audioPlayerDidFinishPlaying(
+        _ player: AVAudioPlayer,
+        successfully flag: Bool
+    ) {
+        self.player = nil
+        state = flag
+            ? .idle
+            : .failed("Local playback ended unexpectedly.")
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: .notifyOthersOnDeactivation
+        )
+    }
+}
+
+private enum HarcMobileLocalPlaybackError: LocalizedError {
+    case startFailed
+
+    var errorDescription: String? {
+        "Harc could not start local playback."
     }
 }
 
