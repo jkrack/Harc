@@ -25,12 +25,50 @@ enum HarcMobileHostSessionConnector {
             snapshot,
             devicePublicKey: identity.publicKey
         )
-        let route: HarcMobileHostRoute
+        let persistedRoute: HarcMobileHostRoute
         do {
-            route = try HarcMobileHostRouteStore.load(from: routeURL)
+            persistedRoute = try HarcMobileHostRouteStore.load(from: routeURL)
         } catch {
             throw HarcMobileHostSessionConnectorError.notPaired
         }
+
+        do {
+            return try await open(
+                route: persistedRoute,
+                adoption: adoption,
+                identity: identity,
+                store: store
+            )
+        } catch {
+            let persistedRouteError = error
+            let recoveredRoutes = await HarcMobileBonjourHostRouteResolver
+                .discover()
+            for route in recoveredRoutes where route != persistedRoute {
+                do {
+                    let opened = try await open(
+                        route: route,
+                        adoption: adoption,
+                        identity: identity,
+                        store: store
+                    )
+                    do {
+                        try HarcMobileHostRouteStore.save(route, to: routeURL)
+                        return opened
+                    } catch {
+                        await opened.connection.shutdownImmediately()
+                    }
+                } catch {}
+            }
+            throw persistedRouteError
+        }
+    }
+
+    private static func open(
+        route: HarcMobileHostRoute,
+        adoption: ValidatedClientAdoptionEvidence,
+        identity: InstallationSigningIdentity,
+        store: HarcTransferStore
+    ) async throws -> HarcMobileOpenedHostConnection {
         let trust = HarcTransportTrustCoordinator(
             adoptedPersistence:
                 HarcTransferStoreTransportTrustPersistenceV1(store: store)

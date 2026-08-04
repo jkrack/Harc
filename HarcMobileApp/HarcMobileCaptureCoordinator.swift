@@ -24,6 +24,7 @@ final class HarcMobileCaptureCoordinator {
     private let onFinalized: @MainActor (HarcMobileFinalizedMaster) throws -> Void
     private var engine: AVAudioEngine?
     private var pipeline: HarcMobileCapturePipeline?
+    private var activeRoute: CaptureRouteDescriptor?
     private var observers: [NSObjectProtocol] = []
 
     init(
@@ -104,6 +105,11 @@ final class HarcMobileCaptureCoordinator {
             try engine.start()
             self.engine = engine
             self.pipeline = pipeline
+            activeRoute = Self.routeDescriptor(
+                session.currentRoute,
+                sampleRate: format.sampleRate,
+                channelCount: UInt32(format.channelCount)
+            )
             pipeline.start()
             installObservers()
             state = .recording(startedAt: startedAt)
@@ -136,11 +142,12 @@ final class HarcMobileCaptureCoordinator {
 
     private func finishCapture(
         reason: HarcMobileCaptureFinalizationReason,
-        discontinuity: CaptureDiscontinuityReason?
+        discontinuity: HarcMobileTerminalCaptureDiscontinuity?
     ) {
         guard case .recording = state, let pipeline else { return }
         state = .stopping
         teardownEngine()
+        activeRoute = nil
         pipeline.requestFinish(reason: reason, discontinuity: discontinuity)
     }
 
@@ -192,7 +199,10 @@ final class HarcMobileCaptureCoordinator {
                 Task { @MainActor [weak self] in
                     self?.finishCapture(
                         reason: .systemEnded,
-                        discontinuity: .interruptionBegan
+                        discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                            reason: .interruptionBegan,
+                            oldRoute: self?.activeRoute
+                        )
                     )
                 }
             },
@@ -200,11 +210,27 @@ final class HarcMobileCaptureCoordinator {
                 forName: AVAudioSession.routeChangeNotification,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
+                let previousRoute = (
+                    notification.userInfo?[
+                        AVAudioSessionRouteChangePreviousRouteKey
+                    ] as? AVAudioSessionRouteDescription
+                ).flatMap { Self.routeDescriptor($0) }
                 Task { @MainActor [weak self] in
+                    let current = AVAudioSession.sharedInstance()
                     self?.finishCapture(
                         reason: .systemEnded,
-                        discontinuity: .routeChanged
+                        discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                            reason: .routeChanged,
+                            oldRoute: previousRoute ?? self?.activeRoute,
+                            newRoute: Self.routeDescriptor(
+                                current.currentRoute,
+                                sampleRate: current.sampleRate,
+                                channelCount: UInt32(
+                                    current.inputNumberOfChannels
+                                )
+                            )
+                        )
                     )
                 }
             },
@@ -216,11 +242,66 @@ final class HarcMobileCaptureCoordinator {
                 Task { @MainActor [weak self] in
                     self?.finishCapture(
                         reason: .systemEnded,
-                        discontinuity: .mediaServicesLost
+                        discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                            reason: .mediaServicesLost,
+                            oldRoute: self?.activeRoute
+                        )
+                    )
+                }
+            },
+            center.addObserver(
+                forName: AVAudioSession.mediaServicesWereResetNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    let session = AVAudioSession.sharedInstance()
+                    self?.finishCapture(
+                        reason: .systemEnded,
+                        discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                            reason: .mediaServicesReset,
+                            oldRoute: self?.activeRoute,
+                            newRoute: Self.routeDescriptor(
+                                session.currentRoute,
+                                sampleRate: session.sampleRate,
+                                channelCount: UInt32(
+                                    session.inputNumberOfChannels
+                                )
+                            )
+                        )
+                    )
+                }
+            },
+            center.addObserver(
+                forName: .AVAudioEngineConfigurationChange,
+                object: engine,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.finishCapture(
+                        reason: .systemEnded,
+                        discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                            reason: .engineConfigurationChanged,
+                            oldRoute: self?.activeRoute
+                        )
                     )
                 }
             },
         ]
+    }
+
+    nonisolated private static func routeDescriptor(
+        _ route: AVAudioSessionRouteDescription,
+        sampleRate: Double? = nil,
+        channelCount: UInt32? = nil
+    ) -> CaptureRouteDescriptor? {
+        let input = route.inputs.first
+        return try? CaptureRouteDescriptor(
+            identifier: input?.uid,
+            name: input?.portName,
+            sampleRateHz: sampleRate.flatMap { $0 > 0 ? $0 : nil },
+            channelCount: channelCount.flatMap { $0 > 0 ? $0 : nil }
+        )
     }
 
     private func removeObservers() {

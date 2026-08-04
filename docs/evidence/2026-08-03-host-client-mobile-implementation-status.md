@@ -13,9 +13,9 @@ remains intentionally deferred because the specification makes its inference
 extraction, agent, VPN, iPad, and migration work optional after the vertical
 slice is stable.
 
-The local implementation, standalone regression, iOS Simulator build, and
-unsigned macOS application build gates are green. This is not yet a
-release-complete or TestFlight-complete claim: physical iPhone
+The local implementation, standalone regression, iOS Simulator build/tests,
+and unsigned macOS application build gates are green. This is not yet a
+mobile-release-complete or TestFlight-complete claim: physical iPhone
 capture/background-transfer gates and the real secondary-Mac acceptance run
 require hardware outside this coding session.
 
@@ -44,27 +44,39 @@ require hardware outside this coding session.
   focused macOS Swift 6 typecheck.
 - The generated `HarcMobile` scheme completed an unsigned arm64 iOS Simulator
   build with architecture and Xcode target concurrency explicitly bounded.
-- The application-hosted `HarcMobileAppTests` target completed 4/4 tests on an
+- The application-hosted `HarcMobileAppTests` target completed 5/5 tests on an
   arm64 iPhone 17 Pro simulator. These cover the generated privacy/background
   configuration, deterministic bounded HARCAB1 construction and exact replay,
-  and the required disclosure before a local master is handed to the system
-  export destination.
+  the required disclosure before a local master is handed to the system
+  export destination, and rejection of unresolved Bonjour service endpoints
+  until Network.framework supplies a concrete host and port.
 - The production iPhone composition now mints request-bound background upload
   capabilities, builds immutable file-backed HARCAB1 batches, persists the
   batch-to-URLSession-task mapping before resume, reconciles task state after
   relaunch, retries recoverable terminal tasks without duplicating active
   tasks, and reports durable completion back into the outbox.
+- A failed persisted Host route now triggers bounded Bonjour rediscovery. A
+  recovered route is persisted only after pinned TLS, adopted-Host validation,
+  capability negotiation, and authenticated session opening all succeed.
+- iPhone capture now records old/new input-route descriptors for terminal
+  route changes and covers media reset and engine-configuration changes. A
+  writer or storage failure publishes only the last synchronized durable
+  prefix, with explicit failure and recovery discontinuities, rather than
+  returning a false whole-file success.
 - The Record screen now exposes protected masters under **On This iPhone** for
   playback and explicit foreground export without a Host. The share sheet is
   reachable only after disclosing that the selected destination is outside the
   adopted-Host trust boundary; export neither changes receipt state nor deletes
   the local master.
+- Mobile recording and Host-library detail now surface capture interruptions,
+  route changes, canonical-audio availability, and signed speaker-label edit,
+  add, and remove controls.
 - The non-shipping `HarcMobileSpikesTests` target completed 11/11 qualification-
   logic tests on the same simulator, including the fail-closed rule that
   simulator, iOS-app-on-Mac, incomplete, or non-phone evidence cannot satisfy
   the physical codec gate.
-- The complete standalone SwiftPM regression passed 1,488 Swift Testing cases
-  in 252 suites plus 121 XCTest cases. Nine real-model/daemon Swift Testing
+- The complete standalone SwiftPM regression passed 1,498 Swift Testing cases
+  in 253 suites plus 121 XCTest cases. Nine real-model/daemon Swift Testing
   cases and four model-quality XCTest cases remain explicitly opt-in through
   `HARC_INTEGRATION_TESTS=1`; the Unified Parakeet fixture gate also passed in
   isolation on the installed model.
@@ -87,14 +99,17 @@ several CoreML stacks concurrently.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,497 Swift Testing cases in 253 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
+| Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,498 Swift Testing cases in 253 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | The unsigned arm64 Debug build and application-hosted tests completed successfully on 2026-08-04. |
-| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 4/4 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
+| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 5/5 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Confirm the selected CAF/ALAC implementation and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
 | External TestFlight hardening | Deferred | Consent/indicator verification, privacy and export metadata, reviewer-accessible demo/sample flow, accessibility, upgrade/recovery, and Beta Review notes. |
+
+`xcrun devicectl list devices` reported no attached physical devices on
+2026-08-04, so no physical-gate result is inferred from the Simulator runs.
 
 An initial generic Simulator invocation attempted both arm64 and x86_64 despite
 `ONLY_ACTIVE_ARCH`; it was stopped to protect the machine. The successful run

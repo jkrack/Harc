@@ -71,6 +71,43 @@ struct HarcMobileDurableMasterWriterTests {
         #expect(try Data(contentsOf: result.masterFileURL).dropFirst(44) == durable)
     }
 
+    @Test("writer failure publishes only the last durable checkpoint")
+    func writerFailureRecovery() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let durable = Data(
+            repeating: 0x31,
+            count: Int(HarcMobileDurableMasterWriter.checkpointFrames * 2)
+        )
+        let unsynchronizedTail = Data(repeating: 0x72, count: 128)
+        let writer = try fixture.writer()
+        try writer.appendCanonicalPCM(
+            durable,
+            endedAt: fixture.started.addingTimeInterval(5),
+            endedMonotonicNanoseconds: 6_000_000_000
+        )
+        try writer.appendCanonicalPCM(
+            unsynchronizedTail,
+            endedAt: fixture.started.addingTimeInterval(5.004),
+            endedMonotonicNanoseconds: 6_004_000_000
+        )
+
+        let recovered = try writer.recoverDurablePrefixAfterFailure(
+            reason: .writerFailure
+        )
+        let result = try #require(recovered)
+
+        #expect(result.totalCanonicalFrames
+            == HarcMobileDurableMasterWriter.checkpointFrames)
+        #expect(result.finalizationReason == .writerFailure)
+        #expect(result.discontinuities.map(\.reason).suffix(2) == [
+            .writerFailure,
+            .recovery,
+        ])
+        #expect(try Data(contentsOf: result.masterFileURL).dropFirst(44)
+            == durable)
+    }
+
     @Test("a process death before the first frame never publishes zero-byte success")
     func emptyRecovery() throws {
         let fixture = try Fixture()

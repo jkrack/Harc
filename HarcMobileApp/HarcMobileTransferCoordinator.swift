@@ -28,6 +28,7 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
     let duration: TimeInterval
     let masterFileURL: URL
     let transferState: TransferState
+    let discontinuities: [CaptureDiscontinuity]
 }
 
 @MainActor
@@ -147,7 +148,8 @@ final class HarcMobileTransferCoordinator {
                         ),
                         masterFileURL:
                             outbox.finalizedCapture.masterFileURL,
-                        transferState: transferState
+                        transferState: transferState,
+                        discontinuities: capture.discontinuities
                     )
                 }
                 .sorted { $0.startedAt > $1.startedAt }

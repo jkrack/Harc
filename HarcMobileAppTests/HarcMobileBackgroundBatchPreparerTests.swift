@@ -6,10 +6,34 @@ import HarcClientTransport
 import HarcDomain
 import HarcProtocol
 import HarcTransfer
+import Network
 import XCTest
 @testable import HarcMobile
 
 final class HarcMobileBackgroundBatchPreparerTests: XCTestCase {
+    func testResolvedBonjourRouteRequiresConcreteHostAndPort() throws {
+        let route = try HarcMobileBonjourHostRouteResolver.route(
+            fromResolvedEndpoint: .hostPort(
+                host: "harc-host.local",
+                port: 7_443
+            )
+        )
+
+        XCTAssertEqual(route.host, "harc-host.local")
+        XCTAssertEqual(route.port, 7_443)
+        XCTAssertEqual(route.serverHostname, "harc-host.local")
+        XCTAssertThrowsError(
+            try HarcMobileBonjourHostRouteResolver.route(
+                fromResolvedEndpoint: .service(
+                    name: "Harc",
+                    type: "_harc._tcp",
+                    domain: "local.",
+                    interface: nil
+                )
+            )
+        )
+    }
+
     func testLocalExportDisclosureNamesTrustBoundaryAndSynchronization() {
         XCTAssertTrue(
             HarcMobileLocalRecording.exportDisclosure.contains(

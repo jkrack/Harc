@@ -425,7 +425,9 @@ struct HarcMobileRootView: View {
         case .idle:
             Text("Ready to record locally")
                 .font(.title2.weight(.semibold))
-            Text("Recording never waits for a host or network connection.")
+            Text(
+                "When you tap Start Recording, Harc records your microphone and keeps a protected copy on this iPhone. It automatically sends audio only to the Host you adopt; recording never waits for a Host or network."
+            )
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         case .requestingPermission:
@@ -563,7 +565,9 @@ struct HarcMobileRootView: View {
                     showsPairingScanner = true
                 }
             } footer: {
-                Text("The short-lived code pins the Host identity and local TLS route. No cloud account is used.")
+                Text(
+                    "Scanning uses the camera, then connects over your local network. iOS may ask for both permissions. The short-lived code pins the Host identity and TLS route; no cloud account is used."
+                )
             }
         case .connecting:
             Section {
@@ -684,6 +688,14 @@ private struct HarcMobileLocalRecordingRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let discontinuity = recording.discontinuities.last {
+                Label(
+                    Self.discontinuityText(discontinuity.reason),
+                    systemImage: "waveform.badge.exclamationmark"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
             if case .failed(let message) = audio.state {
                 Text(message)
                     .font(.caption)
@@ -743,6 +755,31 @@ private struct HarcMobileLocalRecordingRow: View {
     private static func duration(_ interval: TimeInterval) -> String {
         let seconds = max(0, Int(interval.rounded()))
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private static func discontinuityText(
+        _ reason: CaptureDiscontinuityReason
+    ) -> String {
+        switch reason {
+        case .interruptionBegan:
+            "Recording ended after an audio interruption"
+        case .interruptionEnded:
+            "Recording contains an interruption boundary"
+        case .routeChanged:
+            "Recording ended after the microphone route changed"
+        case .engineConfigurationChanged:
+            "Recording ended after the audio configuration changed"
+        case .mediaServicesLost:
+            "Recording ended when iOS audio services became unavailable"
+        case .mediaServicesReset:
+            "Recording ended after iOS reset audio services"
+        case .writerFailure:
+            "Recording ended after a local writer failure"
+        case .bufferOverrun:
+            "Recording contains a visible audio gap"
+        case .recovery:
+            "Recording was recovered through its last durable frame"
+        }
     }
 }
 
@@ -904,6 +941,8 @@ private struct HarcMobileRecordingDetailView: View {
     @State private var titleDraft = ""
     @State private var tagsDraft = ""
     @State private var notesDraft = ""
+    @State private var newSpeakerIndex = ""
+    @State private var newSpeakerName = ""
     @State private var mutationMessage: String?
     @State private var isSavingMetadata = false
     @State private var audioController: HarcMobileRecordingAudioController
@@ -944,7 +983,105 @@ private struct HarcMobileRecordingDetailView: View {
                     Section("Status") {
                         LabeledContent("Processing", value: detail.summary.processing.state.rawValue)
                         LabeledContent("Projection", value: detail.summary.projection.state.rawValue)
+                        LabeledContent(
+                            "Host audio",
+                            value: detail.summary.canonicalAudio.availability
+                                == .available
+                                ? "Durable and verified"
+                                : "Pending canonical audio"
+                        )
                         LabeledContent("Revision", value: String(detail.summary.revision.rawValue))
+                    }
+                    if !detail.discontinuities.isEmpty {
+                        Section("Capture interruptions") {
+                            ForEach(
+                                Array(detail.discontinuities.enumerated()),
+                                id: \.offset
+                            ) { _, discontinuity in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label(
+                                        Self.discontinuityText(
+                                            discontinuity.reason
+                                        ),
+                                        systemImage:
+                                            "waveform.badge.exclamationmark"
+                                    )
+                                    Text(
+                                        discontinuity.wallTime,
+                                        format: .dateTime
+                                            .month().day().hour().minute()
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    if let routeChange = Self.routeChangeText(
+                                        discontinuity
+                                    ) {
+                                        Text(routeChange)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Section("Speakers") {
+                        if detail.speakerLabels.isEmpty {
+                            Text("No speaker labels are available yet.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(
+                                detail.speakerLabels,
+                                id: \.speakerIndex
+                            ) { label in
+                                HarcMobileSpeakerLabelEditor(
+                                    label: label,
+                                    isSaving: isSavingMetadata
+                                ) { displayName in
+                                    submitMetadata(
+                                        .setSpeakerLabel(
+                                            index: label.speakerIndex,
+                                            displayName: displayName
+                                        )
+                                    )
+                                }
+                                .id(
+                                    "\(label.speakerIndex)-\(label.displayName)"
+                                )
+                            }
+                        }
+                        TextField(
+                            "Speaker index",
+                            text: $newSpeakerIndex
+                        )
+                        .keyboardType(.numberPad)
+                        TextField(
+                            "Speaker display name",
+                            text: $newSpeakerName
+                        )
+                        Button("Add speaker label") {
+                            guard let index = UInt32(newSpeakerIndex) else {
+                                return
+                            }
+                            let displayName = newSpeakerName
+                                .trimmingCharacters(
+                                    in: .whitespacesAndNewlines
+                                )
+                            submitMetadata(
+                                .setSpeakerLabel(
+                                    index: index,
+                                    displayName: displayName
+                                )
+                            )
+                            newSpeakerIndex = ""
+                            newSpeakerName = ""
+                        }
+                        .disabled(
+                            UInt32(newSpeakerIndex) == nil
+                                || newSpeakerName.trimmingCharacters(
+                                    in: .whitespacesAndNewlines
+                                ).isEmpty
+                                || isSavingMetadata
+                        )
                     }
                     Section("Edit on Host") {
                         TextField("Title", text: $titleDraft)
@@ -1115,6 +1252,41 @@ private struct HarcMobileRecordingDetailView: View {
         }
     }
 
+    private static func discontinuityText(
+        _ reason: CaptureDiscontinuityReason
+    ) -> String {
+        switch reason {
+        case .interruptionBegan: "Audio interruption began"
+        case .interruptionEnded: "Audio interruption ended"
+        case .routeChanged: "Microphone route changed"
+        case .engineConfigurationChanged: "Audio configuration changed"
+        case .mediaServicesLost: "iOS audio services were lost"
+        case .mediaServicesReset: "iOS audio services reset"
+        case .writerFailure: "Local audio writer failed"
+        case .bufferOverrun: "Audio buffer overrun"
+        case .recovery: "Durable recording recovery"
+        }
+    }
+
+    private static func routeChangeText(
+        _ discontinuity: CaptureDiscontinuity
+    ) -> String? {
+        let oldName = discontinuity.oldRoute?.name
+            ?? discontinuity.oldRoute?.identifier
+        let newName = discontinuity.newRoute?.name
+            ?? discontinuity.newRoute?.identifier
+        return switch (oldName, newName) {
+        case (.some(let old), .some(let new)):
+            "\(old) → \(new)"
+        case (.some(let old), .none):
+            "Previous route: \(old)"
+        case (.none, .some(let new)):
+            "New route: \(new)"
+        case (.none, .none):
+            nil
+        }
+    }
+
     @ViewBuilder
     private var audioPlaybackLabel: some View {
         switch audioController.state {
@@ -1131,6 +1303,46 @@ private struct HarcMobileRecordingDetailView: View {
             Label("Resume", systemImage: "play.fill")
         case .failed:
             Label("Try audio again", systemImage: "arrow.clockwise")
+        }
+    }
+}
+
+private struct HarcMobileSpeakerLabelEditor: View {
+    let label: SpeakerLabel
+    let isSaving: Bool
+    let onSave: (String?) -> Void
+
+    @State private var displayName: String
+
+    init(
+        label: SpeakerLabel,
+        isSaving: Bool,
+        onSave: @escaping (String?) -> Void
+    ) {
+        self.label = label
+        self.isSaving = isSaving
+        self.onSave = onSave
+        _displayName = State(initialValue: label.displayName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Speaker \(label.speakerIndex)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Display name", text: $displayName)
+            HStack {
+                Button("Save") {
+                    let trimmed = displayName.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
+                    onSave(trimmed.isEmpty ? nil : trimmed)
+                }
+                Button("Remove", role: .destructive) {
+                    onSave(nil)
+                }
+            }
+            .disabled(isSaving)
         }
     }
 }

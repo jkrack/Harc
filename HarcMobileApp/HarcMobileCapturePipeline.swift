@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import HarcAudioMobile
 import HarcDomain
@@ -11,6 +12,22 @@ enum HarcMobileCapturePipelineError: LocalizedError {
         case .noAudioCaptured:
             "The recording ended before the microphone produced audio."
         }
+    }
+}
+
+struct HarcMobileTerminalCaptureDiscontinuity: Sendable {
+    let reason: CaptureDiscontinuityReason
+    let oldRoute: CaptureRouteDescriptor?
+    let newRoute: CaptureRouteDescriptor?
+
+    init(
+        reason: CaptureDiscontinuityReason,
+        oldRoute: CaptureRouteDescriptor? = nil,
+        newRoute: CaptureRouteDescriptor? = nil
+    ) {
+        self.reason = reason
+        self.oldRoute = oldRoute
+        self.newRoute = newRoute
     }
 }
 
@@ -36,7 +53,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
     private let stateLock = NSLock()
     private var finishRequest: (
         HarcMobileCaptureFinalizationReason,
-        CaptureDiscontinuityReason?
+        HarcMobileTerminalCaptureDiscontinuity?
     )?
     private var canonicalFrames: UInt64 = 0
     private var lastInputHostTime: UInt64?
@@ -85,7 +102,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
 
     func requestFinish(
         reason: HarcMobileCaptureFinalizationReason,
-        discontinuity: CaptureDiscontinuityReason? = nil
+        discontinuity: HarcMobileTerminalCaptureDiscontinuity? = nil
     ) {
         stateLock.lock()
         if finishRequest == nil { finishRequest = (reason, discontinuity) }
@@ -126,7 +143,17 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
                 }
             }
         } catch {
-            completion(.failure(error))
+            let reason = Self.failureFinalizationReason(error)
+            do {
+                if let recovered = try writer
+                    .recoverDurablePrefixAfterFailure(reason: reason) {
+                    completion(.success(recovered))
+                } else {
+                    completion(.failure(error))
+                }
+            } catch {
+                completion(.failure(error))
+            }
         }
     }
 
@@ -149,7 +176,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
     private func finish(
         _ request: (
             HarcMobileCaptureFinalizationReason,
-            CaptureDiscontinuityReason?
+            HarcMobileTerminalCaptureDiscontinuity?
         )
     ) throws {
         let tail = try converter.finish()
@@ -177,9 +204,11 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         }
         if let discontinuity = request.1 {
             try recordDiscontinuity(
-                discontinuity,
+                discontinuity.reason,
                 at: Date(),
-                monotonic: DispatchTime.now().uptimeNanoseconds
+                monotonic: DispatchTime.now().uptimeNanoseconds,
+                oldRoute: discontinuity.oldRoute,
+                newRoute: discontinuity.newRoute
             )
         }
         completion(.success(try writer.finalize(reason: request.0)))
@@ -187,7 +216,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
 
     private func requestedFinish() -> (
         HarcMobileCaptureFinalizationReason,
-        CaptureDiscontinuityReason?
+        HarcMobileTerminalCaptureDiscontinuity?
     )? {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -197,18 +226,34 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
     private func recordDiscontinuity(
         _ reason: CaptureDiscontinuityReason,
         at wallTime: Date,
-        monotonic: UInt64
+        monotonic: UInt64,
+        oldRoute: CaptureRouteDescriptor? = nil,
+        newRoute: CaptureRouteDescriptor? = nil
     ) throws {
         try writer.recordDiscontinuity(CaptureDiscontinuity(
             recordingID: writer.originRecordingID,
             monotonicTimeNanoseconds: monotonic,
             wallTime: wallTime,
             reason: reason,
+            oldRoute: oldRoute,
+            newRoute: newRoute,
             affectedFrames: CanonicalFrameRange(
                 startFrame: canonicalFrames,
                 endFrameExclusive: canonicalFrames
             ),
             canonicalizationPolicy: .annotateGapWithoutInsertedSilence
         ))
+    }
+
+    private static func failureFinalizationReason(
+        _ error: any Error
+    ) -> HarcMobileCaptureFinalizationReason {
+        guard case .posix(_, let code) = error as?
+            HarcMobileCaptureStorageError else {
+            return .writerFailure
+        }
+        return code == ENOSPC || code == EDQUOT
+            ? .storageExhausted
+            : .writerFailure
     }
 }

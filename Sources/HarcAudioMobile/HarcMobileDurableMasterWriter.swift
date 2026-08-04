@@ -376,6 +376,28 @@ public final class HarcMobileDurableMasterWriter {
         }
         closed = true
     }
+
+    /// Closes a failed live writer and publishes only the last synchronized
+    /// checkpoint. Bytes accepted after that checkpoint are truncated by the
+    /// same repair path used after jetsam or process termination, so a partial
+    /// write can never become an apparently valid tail.
+    public func recoverDurablePrefixAfterFailure(
+        reason: HarcMobileCaptureFinalizationReason
+    ) throws -> HarcMobileFinalizedMaster? {
+        if !closed {
+            guard Darwin.close(descriptor) == 0 else {
+                throw HarcMobileCaptureFileSystem.posix("close", errno)
+            }
+            closed = true
+        }
+        return try HarcMobileCaptureRecovery.recover(
+            checkpointURL: checkpointURL,
+            locations: locations,
+            attributes: attributes,
+            finalizationReason: reason,
+            precedingDiscontinuityReason: .writerFailure
+        )
+    }
 }
 
 public enum HarcMobileCaptureRecovery {
@@ -400,10 +422,13 @@ public enum HarcMobileCaptureRecovery {
         }
     }
 
-    private static func recover(
+    fileprivate static func recover(
         checkpointURL: URL,
         locations: HarcMobileCaptureLocations,
-        attributes: any HarcMobileCaptureStorageAttributeApplying
+        attributes: any HarcMobileCaptureStorageAttributeApplying,
+        finalizationReason: HarcMobileCaptureFinalizationReason =
+            .recoveredDurablePrefix,
+        precedingDiscontinuityReason: CaptureDiscontinuityReason? = nil
     ) throws -> HarcMobileFinalizedMaster? {
         let data = try Data(contentsOf: checkpointURL)
         guard data.count <= 1_048_576 else {
@@ -477,6 +502,22 @@ public enum HarcMobileCaptureRecovery {
             expectedLength: expectedLength
         )
         try attributes.applyAndVerify(.transferArtifact, to: final)
+        var repairedDiscontinuities = checkpoint.discontinuities
+        if let precedingDiscontinuityReason {
+            repairedDiscontinuities.append(try CaptureDiscontinuity(
+                recordingID: checkpoint.originRecordingID,
+                monotonicTimeNanoseconds:
+                    checkpoint.durableEndedMonotonicNanoseconds,
+                wallTime: checkpoint.durableEndedAt,
+                reason: precedingDiscontinuityReason,
+                affectedFrames: CanonicalFrameRange(
+                    startFrame: checkpoint.durableCanonicalFrames,
+                    endFrameExclusive: checkpoint.durableCanonicalFrames
+                ),
+                canonicalizationPolicy:
+                    .annotateGapWithoutInsertedSilence
+            ))
+        }
         let recovery = try CaptureDiscontinuity(
             recordingID: checkpoint.originRecordingID,
             monotonicTimeNanoseconds:
@@ -499,10 +540,10 @@ public enum HarcMobileCaptureRecovery {
                 checkpoint.captureStartedMonotonicNanoseconds,
             captureEndedMonotonicNanoseconds:
                 checkpoint.durableEndedMonotonicNanoseconds,
-            finalizationReason: .recoveredDurablePrefix,
+            finalizationReason: finalizationReason,
             totalCanonicalFrames: checkpoint.durableCanonicalFrames,
             canonicalPCMSHA256: hash,
-            discontinuities: checkpoint.discontinuities + [recovery]
+            discontinuities: repairedDiscontinuities + [recovery]
         )
         try HarcMobileDurableMasterWriter.persistFinalizedMetadata(
             result,
