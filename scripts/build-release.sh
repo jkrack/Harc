@@ -31,7 +31,12 @@ fi
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-echo "==> Building $SCHEME $VERSION ($CONFIG, Developer ID)"
+# Build package products without Xcode's intermediate signing. File-provider
+# metadata can be attached to generated SwiftPM resource bundles between their
+# copy and CodeSign phases, which makes Xcode reject otherwise valid build
+# output. The authoritative release signature is applied below, inside-out,
+# with hardened runtime and secure timestamps before the DMG is created.
+echo "==> Building $SCHEME $VERSION ($CONFIG, unsigned intermediates)"
 xcodebuild \
   -jobs "$BUILD_JOBS" \
   -skipMacroValidation \
@@ -44,8 +49,8 @@ xcodebuild \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$IDENTITY" \
   DEVELOPMENT_TEAM="$TEAM_ID" \
-  CODE_SIGNING_REQUIRED=YES \
-  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGNING_ALLOWED=NO \
   ARCHS=arm64 \
   SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS="$BUILD_JOBS" \
   ONLY_ACTIVE_ARCH=NO \
