@@ -504,6 +504,39 @@ extension HarcTransferStore {
         try database.read { db in try recordingOutbox(origin, in: db) }
     }
 
+    /// Enumerates this installation's recording outboxes in durable capture
+    /// order so a client can resume encoding or transfer after relaunch.
+    public func recordingOutboxes() throws -> [StoredRecordingOutbox] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT finalized_capture_json
+                    FROM finalized_captures
+                    WHERE origin_device_id = ?
+                    ORDER BY persisted_at_ms, origin_recording_uuid
+                    """,
+                arguments: [installationDeviceID.rawBytes]
+            )
+            return try rows.map { row in
+                let capture: FinalizedCapture = try ClientStoreCoding.decode(
+                    FinalizedCapture.self,
+                    from: row["finalized_capture_json"],
+                    field: "finalizedCapture"
+                )
+                guard let outbox = try recordingOutbox(
+                    capture.originRecordingID,
+                    in: db
+                ) else {
+                    throw ClientStoreError.missingRow(
+                        entity: "recording outbox"
+                    )
+                }
+                return outbox
+            }
+        }
+    }
+
     /// Atomically freezes the exact BeginUpload replay facts and advances the
     /// recording into authorization. An existing row is accepted only as an
     /// exact replay; the origin primary key rejects a competing upload ID even

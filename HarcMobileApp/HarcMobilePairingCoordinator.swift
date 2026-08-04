@@ -33,17 +33,20 @@ final class HarcMobilePairingCoordinator {
     private let identity: InstallationSigningIdentity
     private let store: HarcTransferStore
     private let routeURL: URL
+    private let onAdopted: @MainActor () -> Void
     private var attempt: ActiveAttempt?
 
     init(
         identity: InstallationSigningIdentity,
         store: HarcTransferStore,
         routeURL: URL,
-        hasActiveAdoption: Bool
+        hasActiveAdoption: Bool,
+        onAdopted: @escaping @MainActor () -> Void = {}
     ) {
         self.identity = identity
         self.store = store
         self.routeURL = routeURL
+        self.onAdopted = onAdopted
         state = hasActiveAdoption ? .paired(host: "Adopted Host") : .unpaired
     }
 
@@ -118,6 +121,7 @@ final class HarcMobilePairingCoordinator {
                     try await attempt.connection.shutdownGracefully()
                     self.attempt = nil
                     state = .paired(host: attempt.presentation.hostDisplayName)
+                    onAdopted()
                     return
                 case .denied:
                     throw HarcMobilePairingError.ended("denied")

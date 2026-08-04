@@ -1,6 +1,7 @@
 import Foundation
 import HarcAudioMobile
 import HarcClientStore
+import HarcClientTransport
 import HarcDomain
 import HarcIdentity
 import HarcTransfer
@@ -22,7 +23,10 @@ final class HarcMobileAppModel {
     private(set) var bootstrapCompleted = false
     private(set) var captureCoordinator: HarcMobileCaptureCoordinator?
     private(set) var pairingCoordinator: HarcMobilePairingCoordinator?
+    private(set) var transferCoordinator: HarcMobileTransferCoordinator?
     private var transferStore: HarcTransferStore?
+    private var backgroundUploadClient:
+        HarcBackgroundURLSessionUploadClientV1?
 
     func bootstrap() async {
         guard !bootstrapCompleted else { return }
@@ -79,6 +83,19 @@ final class HarcMobileAppModel {
                 locations: clientLocations
             )
             transferStore = store
+            let backgroundClient =
+                HarcBackgroundURLSessionUploadClientV1.makeProduction(
+                    store: store
+                )
+            backgroundUploadClient = backgroundClient
+            HarcMobileBackgroundSessionBridge.shared.attach(backgroundClient)
+            let transfer = HarcMobileTransferCoordinator(
+                identity: identity,
+                store: store,
+                locations: captureLocations,
+                routeURL: routeURL
+            )
+            transferCoordinator = transfer
             captureCoordinator = HarcMobileCaptureCoordinator(
                 producingDeviceID: identity.deviceID,
                 locations: captureLocations
@@ -90,17 +107,24 @@ final class HarcMobileAppModel {
                     try Self.finalizedCapture(master),
                     masterFileURL: master.masterFileURL
                 )
+                self.transferCoordinator?.enqueue(master)
             }
             pairingCoordinator = HarcMobilePairingCoordinator(
                 identity: identity,
                 store: store,
                 routeURL: routeURL,
                 hasActiveAdoption: try store.activeAdoption() != nil
-            )
+            ) { [weak self] in
+                self?.transferCoordinator?.retryPending()
+            }
             readiness = .ready(
                 deviceID: identity.deviceID,
                 recoveredRecordings: recovered.count
             )
+            transfer.retryPending()
+            Task {
+                _ = try? await backgroundClient.reconcileAfterRelaunch()
+            }
         } catch {
             readiness = .failed(error.localizedDescription)
         }

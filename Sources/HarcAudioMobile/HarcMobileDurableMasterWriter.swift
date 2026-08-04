@@ -25,6 +25,48 @@ public struct HarcMobileFinalizedMaster: Codable, Equatable, Sendable {
     public let discontinuities: [CaptureDiscontinuity]
 
     public var totalCanonicalBytes: UInt64 { totalCanonicalFrames * 2 }
+
+    public init(
+        producingDeviceID: DeviceID,
+        originRecordingID: OriginRecordingID,
+        masterFileURL: URL,
+        captureStartedAt: Date,
+        captureEndedAt: Date,
+        captureStartedMonotonicNanoseconds: UInt64,
+        captureEndedMonotonicNanoseconds: UInt64,
+        finalizationReason: HarcMobileCaptureFinalizationReason,
+        totalCanonicalFrames: UInt64,
+        canonicalPCMSHA256: CanonicalPCMHash,
+        discontinuities: [CaptureDiscontinuity]
+    ) throws {
+        guard producingDeviceID == originRecordingID.deviceID,
+              masterFileURL.isFileURL,
+              captureEndedAt >= captureStartedAt,
+              captureEndedMonotonicNanoseconds
+                >= captureStartedMonotonicNanoseconds,
+              totalCanonicalFrames > 0,
+              totalCanonicalFrames <= UInt64(UInt32.max / 2),
+              discontinuities.allSatisfy({
+                  $0.recordingID == originRecordingID
+                    && $0.affectedFrames.endFrameExclusive
+                        <= totalCanonicalFrames
+              }) else {
+            throw HarcMobileCaptureStorageError.invalidCanonicalBytes
+        }
+        self.producingDeviceID = producingDeviceID
+        self.originRecordingID = originRecordingID
+        self.masterFileURL = masterFileURL.standardizedFileURL
+        self.captureStartedAt = captureStartedAt
+        self.captureEndedAt = captureEndedAt
+        self.captureStartedMonotonicNanoseconds =
+            captureStartedMonotonicNanoseconds
+        self.captureEndedMonotonicNanoseconds =
+            captureEndedMonotonicNanoseconds
+        self.finalizationReason = finalizationReason
+        self.totalCanonicalFrames = totalCanonicalFrames
+        self.canonicalPCMSHA256 = canonicalPCMSHA256
+        self.discontinuities = discontinuities
+    }
 }
 
 private struct HarcMobileCaptureCheckpoint: Codable, Equatable, Sendable {
@@ -223,7 +265,7 @@ public final class HarcMobileDurableMasterWriter {
             to: finalURL
         )
         try attributes.applyAndVerify(.transferArtifact, to: finalURL)
-        let result = HarcMobileFinalizedMaster(
+        let result = try HarcMobileFinalizedMaster(
             producingDeviceID: producingDeviceID,
             originRecordingID: originRecordingID,
             masterFileURL: finalURL,
@@ -447,7 +489,7 @@ public enum HarcMobileCaptureRecovery {
             ),
             canonicalizationPolicy: .annotateGapWithoutInsertedSilence
         )
-        let result = HarcMobileFinalizedMaster(
+        let result = try HarcMobileFinalizedMaster(
             producingDeviceID: checkpoint.producingDeviceID,
             originRecordingID: checkpoint.originRecordingID,
             masterFileURL: final,

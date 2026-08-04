@@ -7,6 +7,43 @@ import Testing
 
 @Suite("HarcTransferStore durable outbox")
 struct OutboxPersistenceTests {
+    @Test("recording outbox enumeration survives relaunch in capture order")
+    func durableRecordingEnumeration() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attributes = RecordingStorageAttributes()
+        let first = ClientStoreFixtures.origin(recording: 41)
+        let second = ClientStoreFixtures.origin(recording: 42)
+        do {
+            let store = try HarcTransferStore(
+                rootDirectory: root,
+                installationDeviceID: first.deviceID,
+                storageAttributes: attributes
+            )
+            _ = try store.persistFinalizedCapture(
+                ClientStoreFixtures.capture(origin: second),
+                masterFileURL: root.appendingPathComponent("second.wav"),
+                persistedAt: ClientStoreFixtures.baseDate
+                    .addingTimeInterval(2)
+            )
+            _ = try store.persistFinalizedCapture(
+                ClientStoreFixtures.capture(origin: first),
+                masterFileURL: root.appendingPathComponent("first.wav"),
+                persistedAt: ClientStoreFixtures.baseDate
+                    .addingTimeInterval(1)
+            )
+        }
+
+        let reopened = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: first.deviceID,
+            storageAttributes: attributes
+        )
+        #expect(try reopened.recordingOutboxes().map {
+            $0.finalizedCapture.capture.originRecordingID
+        } == [first, second])
+    }
+
     @Test("capture, upload, chunk, credential, and task state survive reopen")
     func durableReopenAndReconciliation() throws {
         let root = temporaryClientStoreDirectory()

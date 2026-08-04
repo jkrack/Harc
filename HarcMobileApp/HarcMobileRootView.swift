@@ -42,6 +42,13 @@ struct HarcMobileRootView: View {
         ) { _ in
             Task { await model.retryAfterProtectedDataBecomesAvailable() }
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            model.transferCoordinator?.retryPending()
+        }
         .sheet(isPresented: $showsPairingScanner) {
             NavigationStack {
                 HarcPairingScannerView(
@@ -114,10 +121,88 @@ struct HarcMobileRootView: View {
                     .foregroundStyle(.green)
                 }
                 captureControl(coordinator)
+                if let transfer = model.transferCoordinator {
+                    transferStatus(transfer)
+                }
             }
             .padding()
         } else {
             ProgressView("Preparing recorder…")
+        }
+    }
+
+    @ViewBuilder
+    private func transferStatus(
+        _ coordinator: HarcMobileTransferCoordinator
+    ) -> some View {
+        switch coordinator.state {
+        case .idle:
+            if coordinator.pendingCount > 0 {
+                Label(
+                    "\(coordinator.pendingCount) recording(s) retained locally",
+                    systemImage: "externaldrive"
+                )
+                .foregroundStyle(.secondary)
+            }
+        case .encoding:
+            ProgressView("Preparing lossless transfer chunks…")
+        case .waitingForPairing(let pending):
+            Label(
+                "\(pending) recording(s) waiting for a Host",
+                systemImage: "macmini"
+            )
+            .foregroundStyle(.secondary)
+        case .connecting:
+            ProgressView("Connecting securely to Host…")
+        case .uploading:
+            ProgressView("Uploading lossless audio to Host…")
+        case .uploaded:
+            Label(
+                "Verified by Host and saved locally",
+                systemImage: "checkmark.icloud"
+            )
+            .foregroundStyle(.green)
+        case .codecQualificationRequired:
+            VStack(spacing: 8) {
+                Label(
+                    "Lossless codec qualification required",
+                    systemImage: "iphone.gen3.radiowaves.left.and.right"
+                )
+                .foregroundStyle(.orange)
+                Text(
+                    "This build will not upload raw audio. CAF+ALAC versus FLAC must pass the physical-iPhone release gate."
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            }
+        case .retryNeeded(_, let message):
+            VStack(spacing: 8) {
+                Label(
+                    "Saved locally; Host transfer will retry",
+                    systemImage: "arrow.clockwise.icloud"
+                )
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry Host Transfer") {
+                    coordinator.retryPending()
+                }
+                .buttonStyle(.bordered)
+            }
+        case .securityBlocked(_, let message):
+            VStack(spacing: 8) {
+                Label(
+                    "Transfer blocked for security",
+                    systemImage: "lock.trianglebadge.exclamationmark"
+                )
+                .foregroundStyle(.red)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
     }
 
