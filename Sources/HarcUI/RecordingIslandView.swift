@@ -66,7 +66,7 @@ public struct RecordingIslandView: View {
 
     private var micIsSilent: Bool {
         // 24 amplitude frames at 100ms each ≈ 2.4s of near-zero input.
-        let history = bridge.amplitudeHistory
+        let history = bridge.microphoneAmplitudeHistory
         guard history.count >= 24 else { return false }
         return history.suffix(24).allSatisfy { $0 < 0.02 }
     }
@@ -84,7 +84,7 @@ public struct RecordingIslandView: View {
                     .foregroundStyle(Color.harc(.attention))
             } else {
                 LiveWaveformView(
-                    history: bridge.amplitudeHistory,
+                    history: bridge.microphoneAmplitudeHistory,
                     size: .pill,
                     isActive: true,
                     tint: HarcBrand.live
@@ -104,13 +104,31 @@ public struct RecordingIslandView: View {
                 .fill(HarcBrand.live)
                 .frame(width: 8, height: 8)
             elapsedText(font: .system(size: 15, weight: .semibold))
+            Text(bridge.activeMicrophoneName ?? bridge.selectedMicrophoneName)
+                .font(.harcCaption)
+                .foregroundStyle(micIsSilent ? Color.harc(.attention) : .white.opacity(0.72))
+                .lineLimit(1)
+                .frame(maxWidth: 150)
             LiveWaveformView(
-                history: bridge.amplitudeHistory,
+                history: bridge.microphoneAmplitudeHistory,
                 size: .pill,
                 isActive: true,
-                tint: HarcBrand.live
+                tint: micIsSilent ? Color.harc(.attention) : HarcBrand.live
             )
             .frame(width: 96, height: 22)
+            if micIsSilent {
+                islandButton(
+                    background: Color.harc(.attention),
+                    help: "Save and choose another microphone"
+                ) {
+                    bridge.onStopAndChooseMicrophone()
+                } label: {
+                    Image(systemName: "mic.badge.xmark")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .accessibilityLabel("Save and change microphone")
+            }
             Rectangle()
                 .fill(Color.white.opacity(0.14))
                 .frame(width: 1, height: 24)

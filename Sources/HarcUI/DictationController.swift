@@ -55,7 +55,7 @@ public final class DictationController {
     /// requesting it (system prompt) when undetermined. Runs BEFORE capture so
     /// the prompt never races the push-to-talk key-hold.
     private let micPermission: () async -> MicPermission
-    private let hasInputDevice: @Sendable () -> Bool
+    private let hasInputDevice: () -> Bool
     /// Daemon readiness seam. Awaited before transcription; calls the given
     /// closure first when the daemon is cold so the UI can show a loading
     /// state. Also fired (result ignored) at dictation start to pre-warm.
@@ -123,7 +123,7 @@ public final class DictationController {
         /// because it is a global hardware fact: called directly it made every
         /// dictation test short-circuit on any machine without a microphone,
         /// which includes the one this is developed on.
-        hasInputDevice: @escaping @Sendable () -> Bool = { AudioInputAvailability.hasInputDevice },
+        hasInputDevice: @escaping () -> Bool = { AudioInputAvailability.hasInputDevice },
         ensureDaemonReady: ((@escaping @MainActor () -> Void) async throws -> Void)? = nil,
         cancelConfirmThreshold: TimeInterval = 30,
         harcBundleID: String = Bundle.main.bundleIdentifier ?? "com.harc.app"

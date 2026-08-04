@@ -97,6 +97,9 @@ public final class AutoStopController: ObservableObject {
     /// entry per `amplitudeInterval` (~10 Hz). Frozen in place on `.stoppedBanner`.
     /// In-view low-pass interpolation in LiveWaveformView smooths the visual.
     @Published public private(set) var amplitudeHistory: [Float] = Array(repeating: 0, count: 96)
+    /// Mic-only companion to `amplitudeHistory`. A live system-audio stream
+    /// must never hide a dead or wrongly selected microphone in the UI.
+    @Published public private(set) var microphoneAmplitudeHistory: [Float] = []
 
     public var config: Config
 
@@ -120,6 +123,7 @@ public final class AutoStopController: ObservableObject {
     private var tickTimer: Timer?
 
     private var amplitudeWindowMax: Float = 0
+    private var microphoneAmplitudeWindowMax: Float = 0
     private var amplitudeWindowStartedAt: Date?
 
     public init(config: Config = .defaults) {
@@ -155,7 +159,12 @@ public final class AutoStopController: ObservableObject {
         self.lastLevelTickAt = startedAt
         phase = .watching
         amplitudeHistory = Array(repeating: 0, count: Self.amplitudeCapacity)
+        // Unlike the decorative combined scope, do not prefill the mic-only
+        // history. Its count is the evidence behind the 2.4-second no-signal
+        // warning; synthetic leading zeros would warn the instant capture began.
+        microphoneAmplitudeHistory = []
         amplitudeWindowMax = 0
+        microphoneAmplitudeWindowMax = 0
         amplitudeWindowStartedAt = startedAt
         smoothedDb = Self.dbFloor
         fftBins = Array(repeating: 0, count: 5)
@@ -228,14 +237,25 @@ public final class AutoStopController: ObservableObject {
         // transients still register at the display cadence.
         if amplitudeWindowStartedAt == nil { amplitudeWindowStartedAt = now }
         let normalized = max(0, min(1, (level.smoothedDb - Self.dbFloor) / abs(Self.dbFloor)))
+        let microphoneNormalized = level.micDb.isFinite
+            ? max(0, min(1, (level.micDb - Self.dbFloor) / abs(Self.dbFloor)))
+            : 0
         amplitudeWindowMax = max(amplitudeWindowMax, normalized)
+        microphoneAmplitudeWindowMax = max(microphoneAmplitudeWindowMax, microphoneNormalized)
         if let windowStart = amplitudeWindowStartedAt,
            now.timeIntervalSince(windowStart) >= Self.amplitudeInterval {
             amplitudeHistory.append(amplitudeWindowMax)
+            microphoneAmplitudeHistory.append(microphoneAmplitudeWindowMax)
             if amplitudeHistory.count > Self.amplitudeCapacity {
                 amplitudeHistory.removeFirst(amplitudeHistory.count - Self.amplitudeCapacity)
             }
+            if microphoneAmplitudeHistory.count > Self.amplitudeCapacity {
+                microphoneAmplitudeHistory.removeFirst(
+                    microphoneAmplitudeHistory.count - Self.amplitudeCapacity
+                )
+            }
             amplitudeWindowMax = 0
+            microphoneAmplitudeWindowMax = 0
             amplitudeWindowStartedAt = now
         }
     }

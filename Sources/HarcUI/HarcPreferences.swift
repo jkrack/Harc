@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 import HarcCore
+import HarcAudio
 import HarcMeetingDetect
 
 /// App-wide preferences backed by UserDefaults. SwiftUI views observe.
@@ -44,6 +45,7 @@ public final class HarcPreferences: ObservableObject {
         static let updateChecksEnabled = "harc.updateChecksEnabled"
         static let preRollEnabled = "harc.preRollEnabled"
         static let systemAudioEnabled = "harc.systemAudioEnabled"
+        static let microphoneSelection = "harc.microphoneSelection"
         static let preRollMinutes = "harc.preRollMinutes"
         static let semanticSearchEnabled = "harc.semanticSearchEnabled"
         static let runtimeRole = "harc.runtimeRole"
@@ -270,6 +272,16 @@ public final class HarcPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(systemAudioEnabled, forKey: Key.systemAudioEnabled) }
     }
 
+    /// One app-wide microphone route for meetings, dictation, and pre-roll.
+    /// Explicit devices are persisted by Core Audio UID, never transient ID.
+    @Published public var microphoneSelection: MicrophoneSelection {
+        didSet {
+            if let data = try? JSONEncoder().encode(microphoneSelection) {
+                UserDefaults.standard.set(data, forKey: Key.microphoneSelection)
+            }
+        }
+    }
+
     @Published public var preRollEnabled: Bool {
         didSet { UserDefaults.standard.set(preRollEnabled, forKey: Key.preRollEnabled) }
     }
@@ -461,6 +473,12 @@ public final class HarcPreferences: ObservableObject {
         self.pasteDenyListBundleIDs = normalizedPasteDenyList
         let shouldPersistPasteDenyList = Set(storedPasteDenyList ?? []) != normalizedPasteDenyList
         self.systemAudioEnabled = defaults.object(forKey: Key.systemAudioEnabled) as? Bool ?? true
+        if let data = defaults.data(forKey: Key.microphoneSelection),
+           let decoded = try? JSONDecoder().decode(MicrophoneSelection.self, from: data) {
+            self.microphoneSelection = decoded
+        } else {
+            self.microphoneSelection = .systemDefault
+        }
         self.preRollEnabled = defaults.object(forKey: Key.preRollEnabled) as? Bool ?? false
         let rawPreRoll = defaults.object(forKey: Key.preRollMinutes) as? Int ?? 2
         self.preRollMinutes = [1, 2, 5, 10].contains(rawPreRoll) ? rawPreRoll : 2

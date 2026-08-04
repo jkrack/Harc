@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcAudio
 import HarcStore
 
 /// Glue between AppDelegate (which owns the recording lifecycle, daemon
@@ -23,6 +24,9 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var frontmostAppName: String? = nil
     @Published public var frontmostPasteDenied: Bool = false
     @Published public var amplitudeHistory: [Float] = []
+    /// Mic-only amplitude. The combined history can move from system audio
+    /// while the selected microphone is dead, so capture safety must not use it.
+    @Published public var microphoneAmplitudeHistory: [Float] = []
     @Published public var autoStopPhase: AutoStopController.Phase = .idle
     @Published public var autoStopWarningSeconds: Int = AutoStopController.Config.defaults.warningSeconds
     @Published public var autoStopThresholdMinutes: Int = 5
@@ -42,6 +46,14 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var destinationPath: String = ""
     @Published public var captureReadinessText: String = "Mic + system audio"
     @Published public var captureReadinessWarning: Bool = false
+    @Published public var availableMicrophones: [AudioInputDevice] = []
+    @Published public var microphoneSelection: MicrophoneSelection = .systemDefault
+    @Published public var selectedMicrophoneName: String = "System Default"
+    @Published public var selectedMicrophoneAvailable: Bool = false
+    @Published public var systemDefaultMicrophoneName: String? = nil
+    /// Frozen when capture begins so a later system-default change cannot make
+    /// the UI name a device different from the one the live engine opened.
+    @Published public var activeMicrophoneName: String? = nil
     @Published public var sttReadinessText: String = "Local STT"
     /// Honest speech-model readiness from the AppDelegate poller
     /// (`STTReadiness`). Optimistic default so the panel doesn't flash
@@ -81,6 +93,13 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var availableUpdate: AvailableUpdate? = nil
 
     public var onStartStop: () -> Void = {}
+    /// Preserve the current recording, then open the chooser. V1 does not
+    /// hot-swap the engine inside one file because that needs a durable
+    /// discontinuity boundary and rollback path.
+    public var onStopAndChooseMicrophone: () -> Void = {}
+    /// nil selects the live macOS system default; a UID selects one explicit
+    /// input device. Device changes are accepted only while capture is idle.
+    public var onSelectMicrophone: (String?) -> Void = { _ in }
     /// Trigger Sparkle's check-for-updates UI. nil in previews/tests and
     /// under UI testing, where the updater isn't started.
     public var onCheckForUpdates: (() -> Void)?

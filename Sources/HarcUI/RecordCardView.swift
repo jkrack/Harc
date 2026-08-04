@@ -38,50 +38,75 @@ struct RecordCardView: View {
     // MARK: - Idle (+ retroactive armed)
 
     private var idleCard: some View {
-        Button {
-            bridge.onStartStop()
-        } label: {
-            HStack(spacing: HarcSpacing.sm) {
-                Image(systemName: "record.circle")
-                    .font(.system(size: 16))
-                    .foregroundStyle(HarcBrand.live)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Record")
-                        .font(.harcBody.weight(.semibold))
+        VStack(spacing: HarcSpacing.xs) {
+            Button {
+                bridge.onStartStop()
+            } label: {
+                HStack(spacing: HarcSpacing.sm) {
+                    Image(systemName: "record.circle")
+                        .font(.system(size: 16))
                         .foregroundStyle(HarcBrand.live)
-                    if let banked = bankedText {
-                        HStack(spacing: 4) {
-                            Text("\(banked) banked")
-                                .font(.harcCaption)
-                                .foregroundStyle(.secondary)
-                            Text("·")
-                                .font(.harcCaption)
-                                .foregroundStyle(.tertiary)
-                            Text("Clear")
-                                .font(.harcCaption)
-                                .foregroundStyle(.secondary)
-                                .underline()
-                                .onTapGesture { bridge.onClearPreRoll() }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Record")
+                            .font(.harcBody.weight(.semibold))
+                            .foregroundStyle(HarcBrand.live)
+                        if let banked = bankedText {
+                            HStack(spacing: 4) {
+                                Text("\(banked) banked")
+                                    .font(.harcCaption)
+                                    .foregroundStyle(.secondary)
+                                Text("·")
+                                    .font(.harcCaption)
+                                    .foregroundStyle(.tertiary)
+                                Text("Clear")
+                                    .font(.harcCaption)
+                                    .foregroundStyle(.secondary)
+                                    .underline()
+                                    .onTapGesture { bridge.onClearPreRoll() }
+                            }
                         }
                     }
+                    Spacer(minLength: 0)
+                    if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
+                        Text(String(describing: shortcut))
+                            .font(.harcMono)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
-                Spacer(minLength: 0)
-                if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
-                    Text(String(describing: shortcut))
-                        .font(.harcMono)
-                        .foregroundStyle(.tertiary)
+                .padding(HarcSpacing.md)
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .disabled(!bridge.selectedMicrophoneAvailable)
+            .accessibilityIdentifier("harc.library.capture.recordButton")
+            .help(recordHelp)
+
+            HStack(spacing: HarcSpacing.sm) {
+                Image(systemName: bridge.selectedMicrophoneAvailable
+                      ? "mic.fill" : "mic.slash.fill")
+                    .font(.harcCaption)
+                    .foregroundStyle(bridge.selectedMicrophoneAvailable
+                                     ? Color.secondary : Color.harc(.attention))
+                MicrophonePickerControl(bridge: bridge)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !bridge.selectedMicrophoneAvailable {
+                    Text("Disconnected")
+                        .font(.harcCaption)
+                        .foregroundStyle(Color.harc(.attention))
                 }
             }
-            .padding(HarcSpacing.md)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, HarcSpacing.sm)
+            .padding(.vertical, HarcSpacing.xs)
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("harc.library.capture.recordButton")
-        .help(recordHelp)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    bridge.selectedMicrophoneAvailable
+                        ? Color.primary.opacity(0.14)
+                        : Color.harc(.attention).opacity(0.65),
+                    lineWidth: 1
+                )
+        )
     }
 
     private var bankedText: String? {
@@ -116,11 +141,30 @@ struct RecordCardView: View {
                     }
                 }
             }
+            HStack(spacing: HarcSpacing.xs) {
+                Image(systemName: "mic.fill")
+                    .font(.harcCaption)
+                    .foregroundStyle(microphoneIsSilent ? Color.harc(.attention) : .secondary)
+                Text(bridge.activeMicrophoneName ?? bridge.selectedMicrophoneName)
+                    .font(.harcCaption)
+                    .foregroundStyle(microphoneIsSilent ? Color.harc(.attention) : .secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if microphoneIsSilent {
+                    Button("Change…") {
+                        bridge.onStopAndChooseMicrophone()
+                    }
+                    .font(.harcCaption.weight(.semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.harc(.attention))
+                    .help("Save this recording, then choose another microphone")
+                }
+            }
             LiveWaveformView(
-                history: bridge.amplitudeHistory,
+                history: bridge.microphoneAmplitudeHistory,
                 size: .pill,
                 isActive: true,
-                tint: HarcBrand.live
+                tint: microphoneIsSilent ? Color.harc(.attention) : HarcBrand.live
             )
             .frame(height: 24)
             .frame(maxWidth: .infinity)
@@ -160,6 +204,12 @@ struct RecordCardView: View {
                         .strokeBorder(HarcBrand.live.opacity(0.5), lineWidth: 1)
                 )
         )
+    }
+
+    private var microphoneIsSilent: Bool {
+        let history = bridge.microphoneAmplitudeHistory
+        guard history.count >= 24 else { return false }
+        return history.suffix(24).allSatisfy { $0 < 0.02 }
     }
 
     // MARK: - Finishing

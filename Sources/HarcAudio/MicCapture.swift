@@ -18,10 +18,13 @@ public protocol MicCaptureSource: Sendable {
 /// Real implementation backed by AVAudioEngine.
 public actor MicCapture: MicCaptureSource {
     private let engine = AVAudioEngine()
+    private let selection: MicrophoneSelection
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
     private var isRunning = false
 
-    public init() {}
+    public init(selection: MicrophoneSelection = .systemDefault) {
+        self.selection = selection
+    }
 
     public func requestPermission() async throws {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -44,6 +47,21 @@ public actor MicCapture: MicCaptureSource {
         }
 
         let input = engine.inputNode
+        guard let selectedDevice = AudioInputDeviceCatalog.resolvedDevice(for: selection) else {
+            let name = selection.lastKnownName ?? "the selected microphone"
+            throw AudioError.audioEngineFailed(
+                selection.usesSystemDefault
+                    ? "No system-default microphone is available. Choose an input device in Harc."
+                    : "\(name) is not connected. Choose another microphone in Harc."
+            )
+        }
+        do {
+            try input.auAudioUnit.setDeviceID(selectedDevice.deviceID)
+        } catch {
+            throw AudioError.audioEngineFailed(
+                "\(selectedDevice.name) could not be selected: \(error.localizedDescription)"
+            )
+        }
         let outputFormat = input.outputFormat(forBus: 0)
         let inputFormat = input.inputFormat(forBus: 0)
         guard Self.isValidInputFormat(outputFormat) || Self.isValidInputFormat(inputFormat) else {

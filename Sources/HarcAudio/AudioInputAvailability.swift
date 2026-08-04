@@ -1,5 +1,3 @@
-import AVFoundation
-
 /// Whether this Mac actually has a microphone to record from.
 ///
 /// Distinct from the Microphone *permission*, which is what the readiness row
@@ -11,14 +9,12 @@ import AVFoundation
 public enum AudioInputAvailability {
     /// True when the system reports at least one audio input device.
     public static var hasInputDevice: Bool {
-        if AVCaptureDevice.default(for: .audio) != nil { return true }
-        // `default(for:)` can be nil while devices exist but none is chosen as
-        // the system default, so fall back to enumerating.
-        let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.microphone, .external],
-            mediaType: .audio,
-            position: .unspecified
-        )
-        return !discovery.devices.isEmpty
+        !AudioInputDeviceCatalog.availableDevices().isEmpty
+    }
+
+    /// Explicit selections must still exist. System-default selection is ready
+    /// only when macOS currently exposes a default input route.
+    public static func hasInputDevice(for selection: MicrophoneSelection) -> Bool {
+        AudioInputDeviceCatalog.resolvedDevice(for: selection) != nil
     }
 }

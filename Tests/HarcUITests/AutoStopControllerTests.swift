@@ -236,4 +236,21 @@ struct AutoStopControllerTests {
         #expect(c.amplitudeHistory.count == 96)
         #expect(c.amplitudeHistory.allSatisfy { $0 == 0 })
     }
+
+    @Test("mic history stays flat when only system audio has signal")
+    func microphoneHistoryDoesNotUseSystemAudio() {
+        let c = controller()
+        let start = Date(timeIntervalSince1970: 1_000)
+        c.testingBegin(startedAt: start)
+
+        c.testingConsume(
+            smoothedDb: -10,
+            micDb: -.infinity,
+            systemDb: -10,
+            now: start.addingTimeInterval(0.11)
+        )
+
+        #expect((c.amplitudeHistory.last ?? 0) > 0.8)
+        #expect(c.microphoneAmplitudeHistory.last == 0)
+    }
 }

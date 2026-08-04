@@ -137,6 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onStartStop = { [weak self] in
             Task { await self?.toggleRecording() }
         }
+        bridge.onSelectMicrophone = { [weak self] uid in
+            self?.selectMicrophone(uid: uid)
+        }
+        bridge.onStopAndChooseMicrophone = { [weak self] in
+            Task { await self?.stopAndChooseMicrophone() }
+        }
         bridge.onDiscardRecording = { [weak self] in
             Task { await self?.discardRecording() }
         }
@@ -365,6 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if statusPopover.isShown {
             statusPopover.performClose(sender)
         } else {
+            refreshMicrophoneDevices()
             statusPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             statusPopover.contentViewController?.view.window?.makeKey()
         }
@@ -461,6 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Always-on pre-roll ring, present only while the feature is enabled.
     private var preRollCapture: PreRollCapture?
     private var preRollTicker: Timer?
+    private var microphoneDeviceObservers: [NSObjectProtocol] = []
     private var recordingsVM: RecordingsViewModel?
     private var harcWindow: HarcWindowController?
     private var settingsWindow: NSWindowController?
@@ -572,6 +580,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         observeMeetingStateForPulse()
         observePostProcessingState()
         applyAutoStopConfigFromPrefs()
+        startMicrophoneDeviceObservation()
+        refreshMicrophoneDevices()
         updateMenuBarReadiness()
         observeAutoStopPrefs()
         observeAutoStopPhase()
@@ -605,6 +615,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .receive(on: DispatchQueue.main)
             .assign(to: \.amplitudeHistory, on: bridge)
             .store(in: &cancellables)
+        autoStop.$microphoneAmplitudeHistory
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.microphoneAmplitudeHistory, on: bridge)
+            .store(in: &cancellables)
         autoStop.$lastMicDb
             .receive(on: DispatchQueue.main)
             .assign(to: \.autoStopMicDb, on: bridge)
@@ -622,6 +636,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isRecording in
                 self?.bridge.iconState.isRecording = isRecording
+                if !isRecording {
+                    self?.bridge.activeMicrophoneName = nil
+                }
                 self?.updateStatusIcon()
             }
             .store(in: &cancellables)
@@ -635,6 +652,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             .store(in: &cancellables)
 
         prefs.$destinationPath
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarReadiness() }
+            .store(in: &cancellables)
+        prefs.$systemAudioEnabled
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMenuBarReadiness() }
             .store(in: &cancellables)
@@ -664,6 +685,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         prefs.$preRollMinutes
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.syncPreRollCapture() }
+            .store(in: &cancellables)
+        prefs.$microphoneSelection
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshMicrophoneDevices()
+                self?.restartPreRollForMicrophoneChange()
+            }
             .store(in: &cancellables)
         // Release the mic the moment dictation wants it, and take it back when
         // dictation returns to idle.
@@ -731,6 +760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func handleDidBecomeActive() {
+        refreshMicrophoneDevices()
         updateMenuBarReadiness()
         welcomeSetupModel?.refreshPermissions()
         let snapshot = PermissionSnapshot.current()
@@ -783,6 +813,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             NSWorkspace.shared.notificationCenter.removeObserver(token)
             hostWakeToken = nil
         }
+        for observer in microphoneDeviceObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        microphoneDeviceObservers.removeAll()
         detector?.stop()
         frontmostPoller?.invalidate()
         frontmostPoller = nil
@@ -1007,6 +1041,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
+    private func stopAndChooseMicrophone() async {
+        if state.isActiveOrPreparing {
+            await stopRecording(autoStopReason: nil)
+        }
+        guard !state.isActiveOrPreparing,
+              !bridge.recordingStopInFlight,
+              quickCapturePanel?.isVisible != true else {
+            return
+        }
+        toggleQuickCapture()
+    }
+
     // MARK: - Dictation setup
 
     private func setupDictation() {
@@ -1014,7 +1060,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             state: dictationState,
             recordingState: state,
             prefs: prefs,
-            recorderFactory: { MicDictationRecorder() },
+            recorderFactory: { [weak self] in
+                MicDictationRecorder(
+                    mic: MicCapture(
+                        selection: self?.prefs.microphoneSelection ?? .systemDefault
+                    )
+                )
+            },
             transcribe: { path in
                 try await HarcSTTClient().dictate(audioPath: path)
             },
@@ -1038,6 +1090,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             },
             preloadTransformModel: { [weak self] mode in
                 await self?.preloadDictationModel(for: mode)
+            },
+            hasInputDevice: { [weak self] in
+                guard let self else { return false }
+                return AudioInputAvailability.hasInputDevice(
+                    for: self.prefs.microphoneSelection
+                )
             },
             ensureDaemonReady: { [launcher] onColdStart in
                 // Cold daemon → let the UI show "Loading speech model…".
@@ -1498,13 +1556,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             bridge.captureReadinessWarning = true
             return
         }
-        guard AudioInputAvailability.hasInputDevice else {
+        guard !bridge.availableMicrophones.isEmpty else {
             bridge.captureReadinessText = "No microphone connected"
             bridge.captureReadinessWarning = true
             return
         }
-        bridge.captureReadinessText = "Mic + system audio"
+        guard bridge.selectedMicrophoneAvailable else {
+            bridge.captureReadinessText = "\(bridge.selectedMicrophoneName) is disconnected"
+            bridge.captureReadinessWarning = true
+            return
+        }
+        bridge.captureReadinessText = prefs.systemAudioEnabled
+            ? "\(bridge.selectedMicrophoneName) + system audio"
+            : "\(bridge.selectedMicrophoneName) · mic only"
         bridge.captureReadinessWarning = false
+    }
+
+    private func startMicrophoneDeviceObservation() {
+        guard microphoneDeviceObservers.isEmpty else { return }
+        for name in [
+            AVCaptureDevice.wasConnectedNotification,
+            AVCaptureDevice.wasDisconnectedNotification,
+        ] {
+            let observer = NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.refreshMicrophoneDevices()
+                }
+            }
+            microphoneDeviceObservers.append(observer)
+        }
+    }
+
+    private func refreshMicrophoneDevices() {
+        let devices = AudioInputDeviceCatalog.availableDevices()
+        let selection = prefs.microphoneSelection
+        let resolved = AudioInputDeviceCatalog.resolvedDevice(
+            for: selection,
+            devices: devices
+        )
+        bridge.availableMicrophones = devices
+        bridge.microphoneSelection = selection
+        bridge.systemDefaultMicrophoneName = devices.first(where: \.isSystemDefault)?.name
+        bridge.selectedMicrophoneName = resolved?.name
+            ?? selection.lastKnownName
+            ?? "System Default"
+        bridge.selectedMicrophoneAvailable = resolved != nil
+        updateCaptureReadiness()
+    }
+
+    private func selectMicrophone(uid: String?) {
+        guard !state.isActiveOrPreparing else { return }
+        if let uid,
+           let device = bridge.availableMicrophones.first(where: { $0.uid == uid }) {
+            prefs.microphoneSelection = MicrophoneSelection(device: device)
+        } else if uid == nil {
+            prefs.microphoneSelection = .systemDefault
+        }
+    }
+
+    /// Pre-roll contains audio from one declared route. Changing the primary
+    /// microphone clears and restarts it instead of quietly mixing identities.
+    private func restartPreRollForMicrophoneChange() {
+        guard !state.isActiveOrPreparing, let capture = preRollCapture else {
+            syncPreRollCapture()
+            return
+        }
+        preRollCapture = nil
+        preRollTicker?.invalidate()
+        preRollTicker = nil
+        bridge.preRollStatus = nil
+        Task { [weak self] in
+            await capture.stop()
+            await MainActor.run { self?.syncPreRollCapture() }
+        }
     }
 
     private func observeAutoStopPrefs() {
@@ -1583,6 +1711,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
 
+        // Resolve the persisted UID before spinning up the daemon or claiming
+        // capture state. An explicit disconnected mic must never fall through
+        // to whatever macOS currently calls default.
+        refreshMicrophoneDevices()
+        guard bridge.selectedMicrophoneAvailable else {
+            bridge.captureReadinessWarning = true
+            if quickCapturePanel?.isVisible != true {
+                toggleQuickCapture()
+            }
+            return
+        }
+
         // Guard: destination must resolve to an existing directory before
         // spinning up the session. Saves the user from a silent failure
         // when the destination has been deleted, renamed, or sits on an
@@ -1642,8 +1782,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     )
                 )
             }
+            // Daemon launch may have taken seconds. Re-resolve System Default
+            // at the last responsible moment so the displayed and opened route
+            // describe the same device after a dock event during preparation.
+            refreshMicrophoneDevices()
             let session = RecordingSession(
-                mic: MicCapture(),
+                mic: MicCapture(selection: prefs.microphoneSelection),
                 systemAudio: systemSource,
                 transcriber: transcriber,
                 onWriteFailure: { [weak self] message in
@@ -1679,6 +1823,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             preRollCapture = nil
             try await session.start(at: startedAt, preRoll: preRoll)
             state.markStarted(at: startedAt)
+            bridge.activeMicrophoneName = bridge.selectedMicrophoneName
             bridge.activeCaptureTitle = pendingCaptureTitle
             bridge.setActiveCaptureStatus(ActiveCaptureStatus(
                 sourceState: systemAudioOn ? .micAndSystemAudio : .micOnly,
@@ -2179,6 +2324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         let panel = QuickCapturePanel(
             rootView: QuickCaptureView(
                 prefs: prefs,
+                bridge: bridge,
                 bankedText: banked,
                 onStart: { [weak self] title, includePreRoll in
                     guard let self else { return }
@@ -2958,7 +3104,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
 
-        let capture = PreRollCapture(mic: MicCapture(), windowSeconds: desiredSeconds)
+        let capture = PreRollCapture(
+            mic: MicCapture(selection: prefs.microphoneSelection),
+            windowSeconds: desiredSeconds
+        )
         preRollCapture = capture
         Task { [weak self] in
             await capture.start()

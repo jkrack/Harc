@@ -7,6 +7,7 @@ import HarcMeetingDetect
 
 public struct RecordingSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
+    @EnvironmentObject private var bridge: HarcAppBridge
     @State private var notificationsDenied: Bool = false
     @State private var destinationMissing: Bool = false
 
@@ -73,11 +74,17 @@ public struct RecordingSettingsView: View {
             Section {
                 KeyboardShortcuts.Recorder("Toggle recording:", name: .toggleRecording)
                 KeyboardShortcuts.Recorder("Quick Capture:", name: .quickCapture)
+                LabeledContent {
+                    MicrophonePickerControl(bridge: bridge)
+                        .frame(maxWidth: 320)
+                } label: {
+                    Label("Primary microphone", systemImage: "mic")
+                }
                 Toggle("Capture system audio", isOn: $prefs.systemAudioEnabled)
             } header: {
                 Text("Global hotkey")
             } footer: {
-                Text("Toggle recording starts instantly with a timestamp name. Quick Capture opens the name-it-first sheet with capture options. System audio records the other side of the call via ScreenCaptureKit; turning it off records the microphone only.")
+                Text("Toggle recording starts instantly with the selected primary microphone. Quick Capture exposes the same selector before capture. An explicitly selected microphone never silently falls back when it is disconnected. System audio records the other side of the call via ScreenCaptureKit.")
                     .font(.harcLabel)
                     .foregroundStyle(Color.secondary)
             }

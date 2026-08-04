@@ -10,6 +10,7 @@ import SwiftUI
 /// deliberate path, not a gate.
 public struct QuickCaptureView: View {
     @ObservedObject var prefs: HarcPreferences
+    @ObservedObject var bridge: HarcAppBridge
     /// "5:00 banked" text when the retroactive ring is armed; nil hides the row.
     let bankedText: String?
     let onStart: (_ title: String, _ includePreRoll: Bool) -> Void
@@ -21,11 +22,13 @@ public struct QuickCaptureView: View {
 
     public init(
         prefs: HarcPreferences,
+        bridge: HarcAppBridge,
         bankedText: String?,
         onStart: @escaping (_ title: String, _ includePreRoll: Bool) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.prefs = prefs
+        self.bridge = bridge
         self.bankedText = bankedText
         self.onStart = onStart
         self.onCancel = onCancel
@@ -80,15 +83,12 @@ public struct QuickCaptureView: View {
             row(
                 symbol: "mic.fill",
                 title: "Microphone",
-                subtitle: nil
+                subtitle: bridge.selectedMicrophoneAvailable
+                    ? "Primary input for recording, dictation, and pre-roll"
+                    : "\(bridge.selectedMicrophoneName) is disconnected"
             ) {
-                // The mic is the recording; a meeting capture without it is
-                // nothing. Shown, not offered.
-                Toggle("", isOn: .constant(true))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .disabled(true)
+                MicrophonePickerControl(bridge: bridge)
+                    .frame(maxWidth: 250)
             }
             row(
                 symbol: "macwindow",
@@ -167,6 +167,8 @@ public struct QuickCaptureView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.defaultAction)
+            .disabled(!bridge.selectedMicrophoneAvailable)
+            .opacity(bridge.selectedMicrophoneAvailable ? 1 : 0.45)
             .accessibilityIdentifier("harc.quickCapture.start")
         }
         .padding(.horizontal, 20)
@@ -175,6 +177,7 @@ public struct QuickCaptureView: View {
     }
 
     private func start() {
+        guard bridge.selectedMicrophoneAvailable else { return }
         onStart(title, includePreRoll)
     }
 }
