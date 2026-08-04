@@ -41,6 +41,9 @@ enum HarcPostSessionGRPCErrorMapper {
         if let error = error as? HarcHostError {
             return map(error).rpcError
         }
+        if let error = error as? HarcHostLibraryError {
+            return map(error).rpcError
+        }
         return Kind.internalFailure.rpcError
     }
 
@@ -248,6 +251,20 @@ enum HarcPostSessionGRPCErrorMapper {
              .invalidListenerPort, .listenerPortsMustBeDistinct,
              .listenerPortPersistenceConflict:
             .internalFailure
+        }
+    }
+
+    private static func map(_ error: HarcHostLibraryError) -> Kind {
+        switch error {
+        case .invalidSnapshotToken, .snapshotBindingMismatch,
+             .recordingNotFound:
+            .permissionDenied
+        case .snapshotExpired, .invalidPageToken, .cursorAheadOfHost:
+            .failedPrecondition
+        case .invalidPageLimit:
+            .invalidArgument
+        case .snapshotCapacityExceeded:
+            .resourceExhausted
         }
     }
 }

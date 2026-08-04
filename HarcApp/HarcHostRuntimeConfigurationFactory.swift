@@ -41,7 +41,9 @@ enum HarcHostRuntimeConfigurationFactory {
                 canonicalDatabaseURL: canonicalDatabaseURL,
                 hostDatabaseURL: hostDatabaseURL,
                 stagingRoot: HarcHostStore.defaultStagingRoot(),
-                listenerPorts: ports
+                listenerPorts: ports,
+                localOSAuthenticationBoundary:
+                    HarcMacLocalOSAuthenticationBoundary()
             ),
             canonicalAudioRoot: canonicalAudioRoot,
             backgroundRollbackRoot: rollbackRoot,

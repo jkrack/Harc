@@ -24,6 +24,7 @@ final class HarcMobileAppModel {
     private(set) var captureCoordinator: HarcMobileCaptureCoordinator?
     private(set) var pairingCoordinator: HarcMobilePairingCoordinator?
     private(set) var transferCoordinator: HarcMobileTransferCoordinator?
+    private(set) var libraryCoordinator: HarcMobileLibraryCoordinator?
     private var transferStore: HarcTransferStore?
     private var backgroundUploadClient:
         HarcBackgroundURLSessionUploadClientV1?
@@ -66,6 +67,7 @@ final class HarcMobileAppModel {
                 rootDirectory: root,
                 installationDeviceID: identity.deviceID
             )
+            let libraryCache = try HarcLibraryCache(rootDirectory: root)
             try Self.protectTransferState(
                 root: root,
                 locations: clientLocations
@@ -96,6 +98,13 @@ final class HarcMobileAppModel {
                 routeURL: routeURL
             )
             transferCoordinator = transfer
+            let library = HarcMobileLibraryCoordinator(
+                identity: identity,
+                transferStore: store,
+                cache: libraryCache,
+                routeURL: routeURL
+            )
+            libraryCoordinator = library
             captureCoordinator = HarcMobileCaptureCoordinator(
                 producingDeviceID: identity.deviceID,
                 locations: captureLocations
@@ -116,12 +125,14 @@ final class HarcMobileAppModel {
                 hasActiveAdoption: try store.activeAdoption() != nil
             ) { [weak self] in
                 self?.transferCoordinator?.retryPending()
+                self?.libraryCoordinator?.refresh()
             }
             readiness = .ready(
                 deviceID: identity.deviceID,
                 recoveredRecordings: recovered.count
             )
             transfer.retryPending()
+            library.refresh()
             Task {
                 _ = try? await backgroundClient.reconcileAfterRelaunch()
             }

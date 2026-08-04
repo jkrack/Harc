@@ -18,6 +18,9 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
     private let recordingAdapterForBinding: @Sendable (
         HarcGRPCServedIdentityBinding
     ) -> HarcRecordingTransferGRPCServiceAdapterV1
+    private let libraryAdapterForBinding: (@Sendable (
+        HarcGRPCServedIdentityBinding
+    ) -> HarcLibraryGRPCServiceAdapterV1)?
     private let hostAuthorityPublicKey: P256X963PublicKey
     private let capabilityPolicy: HarcCapabilityPolicyV1
     let sourceBindingProvider: HarcHostRPCSourceBindingProvider
@@ -28,6 +31,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
         pairingService: HarcPairingClaimService,
         sessionService: HarcSessionService,
         recordingService: HostRecordingTransferService,
+        libraryService: HarcHostLibraryService,
         hostAuthorityPublicKey: P256X963PublicKey,
         capabilityPolicy: HarcCapabilityPolicyV1,
         hostScopedSourceSecret: Data
@@ -45,6 +49,14 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
                 servedIdentityBinding: servedIdentityBinding
             )
         }
+        self.libraryAdapterForBinding = { servedIdentityBinding in
+            HarcLibraryGRPCServiceAdapterV1(
+                service: libraryService,
+                sessionService: sessionService,
+                servedIdentityBinding: servedIdentityBinding,
+                compatibility: capabilityPolicy.compatibility
+            )
+        }
         self.sourceBindingProvider = try HarcHostRPCSourceBindingProvider(
             hostScopedSecret: hostScopedSourceSecret
         )
@@ -60,6 +72,9 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
         recordingApplication: any HarcRecordingTransferRPCApplication,
         recordingSessionAuthenticator:
             any HarcSessionCredentialAuthenticating,
+        libraryAdapterForBinding: (@Sendable (
+            HarcGRPCServedIdentityBinding
+        ) -> HarcLibraryGRPCServiceAdapterV1)? = nil,
         hostAuthorityPublicKey: P256X963PublicKey,
         capabilityPolicy: HarcCapabilityPolicyV1,
         sourceBindingProvider: HarcHostRPCSourceBindingProvider,
@@ -79,6 +94,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
                 compatibility: capabilityPolicy.compatibility
             )
         }
+        self.libraryAdapterForBinding = libraryAdapterForBinding
         self.sourceBindingProvider = sourceBindingProvider
         self.preauthenticationGate = preauthenticationGate
     }
@@ -109,7 +125,8 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
                 preauthenticationGate: preauthenticationGate,
                 compatibility: capabilityPolicy.compatibility
             ),
-            recording: recordingAdapterForBinding(servedIdentityBinding)
+            recording: recordingAdapterForBinding(servedIdentityBinding),
+            library: libraryAdapterForBinding?(servedIdentityBinding)
         )
     }
 }
@@ -119,9 +136,14 @@ struct HarcBootstrapGRPCServiceAdaptersV1: Sendable {
     let pairing: HarcPairingGRPCServiceAdapterV1
     let session: HarcSessionGRPCServiceAdapterV1
     let recording: HarcRecordingTransferGRPCServiceAdapterV1
+    let library: HarcLibraryGRPCServiceAdapterV1?
 
     var registrableServices: [any RegistrableRPCService] {
-        [hostInfo, pairing, session, recording]
+        var services: [any RegistrableRPCService] = [
+            hostInfo, pairing, session, recording,
+        ]
+        if let library { services.append(library) }
+        return services
     }
 }
 #endif

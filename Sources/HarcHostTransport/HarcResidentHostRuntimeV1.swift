@@ -153,6 +153,9 @@ public actor HarcResidentHostRuntimeV1 {
                 backgroundCapabilityTransportSnapshotProvider:
                     backgroundTransportRelay
             )
+            let library = HarcHostLibraryService(
+                store: storage.recordingStore
+            )
             let sourceSecret = try SystemHostAuthenticationRandomness()
                 .randomBytes(count: 32)
             let bootstrapFactory = try HarcBootstrapGRPCServiceFactoryV1(
@@ -160,6 +163,7 @@ public actor HarcResidentHostRuntimeV1 {
                 pairingService: pairing,
                 sessionService: session,
                 recordingService: recording,
+                libraryService: library,
                 hostAuthorityPublicKey: storage.authorityPublicKey,
                 capabilityPolicy: capabilityPolicy,
                 hostScopedSourceSecret: sourceSecret

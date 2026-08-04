@@ -80,7 +80,7 @@ final class HarcMobilePairingCoordinator {
             let presentation = try await client.beginPairing(
                 ticket: ticket,
                 deviceSigner: identity,
-                requestedScopes: ScopePolicy.minimalScopes(for: .mobile),
+                requestedScopes: Self.requestedScopes(),
                 deviceLabel: UIDevice.current.name
             )
             attempt = ActiveAttempt(
@@ -172,6 +172,21 @@ final class HarcMobilePairingCoordinator {
             supportedDescriptorSchemaIDs: [ChunkDescriptorSchema.v1.rawValue],
             supportedEncodings: [.cafALAC]
         )
+    }
+
+    /// The mobile beta includes the canonical Library experience, so pairing
+    /// requests its read/playback/mutation scopes explicitly. The Host still
+    /// presents and locally authenticates this expansion; requested scopes are
+    /// never self-granted by the phone.
+    private static func requestedScopes() -> [AuthorizationScope] {
+        var scopes = ScopePolicy.minimalScopes(for: .mobile)
+        scopes.append(contentsOf: [
+            .libraryMetadataRead,
+            .libraryTranscriptRead,
+            .libraryAudioRead,
+            .libraryMetadataWrite,
+        ])
+        return Array(Set(scopes)).sorted()
     }
 }
 

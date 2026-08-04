@@ -221,6 +221,58 @@ struct CanonicalLibraryIntegrationTests {
         #expect(postDeleteChanges.suffix(2).map(\.operation) == [.tombstone, .tombstone])
     }
 
+    @Test("materialized delta pages collapse repeated IDs without revision rollback")
+    func materializedDeltaPages() async throws {
+        let store = try await RecordingStore.inMemory()
+        let inserted = try await store.upsert(
+            recording(path: "/tmp/materialized-delta.wav")
+        )
+        let rowID = try #require(inserted.id)
+
+        var second = recording(
+            path: "/tmp/materialized-delta.wav",
+            title: "Second"
+        )
+        second.id = rowID
+        _ = try await store.upsert(second)
+        var third = second
+        third.title = "Third"
+        _ = try await store.upsert(third)
+        var fourth = third
+        fourth.title = "Fourth"
+        _ = try await store.upsert(fourth)
+
+        let firstPage = try await store
+            .anchoredMaterializedLibraryChanges(after: .zero, limit: 3)
+        #expect(firstPage.selectedDescriptorCount == 3)
+        #expect(firstPage.changes.count == 1)
+        #expect(firstPage.throughCursor.rawValue == 3)
+        #expect(firstPage.currentCursor.rawValue == 4)
+        let firstValue = try #require(firstPage.changes.first)
+        #expect(firstValue.descriptor.revision.rawValue == 4)
+        guard case .upsert(let firstSummary) = firstValue.value else {
+            Issue.record("Expected a materialized upsert")
+            return
+        }
+        #expect(firstSummary.title == "Fourth")
+        #expect(firstSummary.revision.rawValue == 4)
+
+        let secondPage = try await store.anchoredMaterializedLibraryChanges(
+            after: firstPage.throughCursor,
+            limit: 3
+        )
+        #expect(secondPage.selectedDescriptorCount == 1)
+        #expect(secondPage.throughCursor == secondPage.currentCursor)
+        #expect(secondPage.changes.count == 1)
+        guard case .upsert(let replayed) = try #require(
+            secondPage.changes.first
+        ).value else {
+            Issue.record("Expected an exact current-value replay")
+            return
+        }
+        #expect(replayed == firstSummary)
+    }
+
     @Test("a populated v15 library snapshots all rows while its migrated log is empty")
     func migratedV15AnchoredSnapshot() async throws {
         let root = FileManager.default.temporaryDirectory

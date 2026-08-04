@@ -9,17 +9,23 @@ public struct HarcResidentHostStorageConfiguration: Sendable {
     public let hostDatabaseURL: URL
     public let stagingRoot: URL
     public let listenerPorts: HarcHostListenerPorts
+    public let localOSAuthenticationBoundary:
+        any HostLocalOSAuthenticationBoundary
 
     public init(
         canonicalDatabaseURL: URL = RecordingStore.defaultURL(),
         hostDatabaseURL: URL = HarcHostStore.defaultDatabaseURL(),
         stagingRoot: URL = HarcHostStore.defaultStagingRoot(),
-        listenerPorts: HarcHostListenerPorts
+        listenerPorts: HarcHostListenerPorts,
+        localOSAuthenticationBoundary:
+            any HostLocalOSAuthenticationBoundary =
+                RejectingHostLocalOSAuthenticationBoundary()
     ) {
         self.canonicalDatabaseURL = canonicalDatabaseURL
         self.hostDatabaseURL = hostDatabaseURL
         self.stagingRoot = stagingRoot
         self.listenerPorts = listenerPorts
+        self.localOSAuthenticationBoundary = localOSAuthenticationBoundary
     }
 }
 
@@ -120,14 +126,18 @@ public actor HarcResidentHostStorageRuntime {
                     databaseURL: configuration.hostDatabaseURL,
                     stagingRoot: configuration.stagingRoot,
                     metadata: metadata,
-                    highWaterMarkStore: highWater
+                    highWaterMarkStore: highWater,
+                    localOSAuthenticationBoundary:
+                        configuration.localOSAuthenticationBoundary
                 )
             } else {
                 hostStore = try await HarcHostStore.onDisk(
                     databaseURL: configuration.hostDatabaseURL,
                     stagingRoot: configuration.stagingRoot,
                     metadata: metadata,
-                    highWaterMarkStore: highWater
+                    highWaterMarkStore: highWater,
+                    localOSAuthenticationBoundary:
+                        configuration.localOSAuthenticationBoundary
                 )
             }
             try await hostStore.persistListenerPorts(

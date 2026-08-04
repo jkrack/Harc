@@ -391,3 +391,89 @@ public struct LibraryChangeDescriptor: Codable, Equatable, Hashable, Sendable {
         }
     }
 }
+
+/// The path-free value carried by a materialized library change page.
+public enum LibraryChangeValue: Equatable, Hashable, Sendable {
+    case upsert(LibraryRecordingSummary)
+    case tombstone(RecordingTombstone)
+}
+
+/// A change-log cursor paired with the exact current value materialized in the
+/// same canonical-store read transaction. The descriptor revision always
+/// matches the projected value, even when several log rows for one recording
+/// are collapsed into a single page result.
+public struct MaterializedLibraryChange: Equatable, Hashable, Sendable {
+    public let descriptor: LibraryChangeDescriptor
+    public let value: LibraryChangeValue
+
+    public init(
+        descriptor: LibraryChangeDescriptor,
+        value: LibraryChangeValue
+    ) throws {
+        switch value {
+        case .upsert(let summary):
+            guard descriptor.operation == .upsert,
+                  descriptor.canonicalID == summary.canonicalID,
+                  descriptor.revision == summary.revision else {
+                throw DomainValidationError.invalidState(
+                    reason: "A materialized upsert must match its descriptor."
+                )
+            }
+        case .tombstone(let tombstone):
+            guard descriptor.operation == .tombstone,
+                  descriptor.canonicalID == tombstone.canonicalID,
+                  descriptor.revision == tombstone.revision else {
+                throw DomainValidationError.invalidState(
+                    reason: "A materialized tombstone must match its descriptor."
+                )
+            }
+        }
+        self.descriptor = descriptor
+        self.value = value
+    }
+}
+
+/// One transactionally anchored change-log read. `currentCursor` is the
+/// canonical high-water mark observed by the same SQLite snapshot as `changes`.
+public struct AnchoredLibraryChangePage: Equatable, Sendable {
+    public let libraryID: LibraryID
+    public let requestedAfter: ChangeCursor
+    public let currentCursor: ChangeCursor
+    public let throughCursor: ChangeCursor
+    public let firstStoredCursor: ChangeCursor?
+    public let selectedDescriptorCount: Int
+    public let changes: [MaterializedLibraryChange]
+
+    public init(
+        libraryID: LibraryID,
+        requestedAfter: ChangeCursor,
+        currentCursor: ChangeCursor,
+        throughCursor: ChangeCursor,
+        firstStoredCursor: ChangeCursor?,
+        selectedDescriptorCount: Int,
+        changes: [MaterializedLibraryChange]
+    ) throws {
+        guard requestedAfter <= currentCursor,
+              requestedAfter <= throughCursor,
+              throughCursor <= currentCursor,
+              selectedDescriptorCount >= changes.count else {
+            throw DomainValidationError.invalidState(
+                reason: "An anchored library change page has invalid cursor bounds."
+            )
+        }
+        let cursors = changes.map(\.descriptor.cursor)
+        guard cursors == cursors.sorted(),
+              Set(cursors).count == cursors.count else {
+            throw DomainValidationError.invalidOrdering(
+                field: "AnchoredLibraryChangePage.changes"
+            )
+        }
+        self.libraryID = libraryID
+        self.requestedAfter = requestedAfter
+        self.currentCursor = currentCursor
+        self.throughCursor = throughCursor
+        self.firstStoredCursor = firstStoredCursor
+        self.selectedDescriptorCount = selectedDescriptorCount
+        self.changes = changes
+    }
+}

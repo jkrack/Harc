@@ -47,6 +47,7 @@ private final class HostPairingViewModel: ObservableObject {
 
     @Published var selectedKind: AdoptedClientKind = .mobile
     @Published private(set) var phase: Phase = .idle
+    @Published private(set) var approvedScopes = Set<AuthorizationScope>()
 
     private let runtime: HarcResidentHostRuntimeV1
     private var task: Task<Void, Never>?
@@ -86,15 +87,30 @@ private final class HostPairingViewModel: ObservableObject {
 
     func approve() {
         guard case .claim(_, let claim) = phase else { return }
+        let grantedScopes = approvedScopes.sorted()
+        guard !grantedScopes.isEmpty else { return }
         task?.cancel()
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                _ = try await runtime.approvePairingClaim(claim.claimID)
+                _ = try await runtime.approvePairingClaim(
+                    claim.claimID,
+                    grantedScopes: grantedScopes
+                )
                 phase = .approved(claim.deviceLabel)
             } catch {
                 phase = .failed(error.localizedDescription)
             }
+        }
+    }
+
+    func setScope(_ scope: AuthorizationScope, enabled: Bool) {
+        guard case .claim(_, let claim) = phase,
+              claim.requestedScopes.contains(scope) else { return }
+        if enabled {
+            approvedScopes.insert(scope)
+        } else {
+            approvedScopes.remove(scope)
         }
     }
 
@@ -137,6 +153,7 @@ private final class HostPairingViewModel: ObservableObject {
             if let claim = try await runtime.pendingPairingClaim(
                 forTicketID: ticket.ticketID
             ) {
+                approvedScopes = Set(claim.requestedScopes)
                 phase = .claim(ticket, claim)
                 return
             }
@@ -247,6 +264,7 @@ private struct HostPairingView: View {
     }
 
     private func claimContent(_ claim: HostPendingPairingClaim) -> some View {
+        ScrollView {
         VStack(spacing: 18) {
             Text(claim.requiresTransportTrustRepair
                  ? "Repair transport trust for \(claim.deviceLabel)?"
@@ -261,16 +279,56 @@ private struct HostPairingView: View {
                 .padding(14)
                 .frame(maxWidth: .infinity)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-            Text(claim.requestedScopes.map(\.rawValue).joined(separator: " · "))
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Approved access")
+                    .font(.subheadline.weight(.semibold))
+                ForEach(claim.requestedScopes, id: \.self) { scope in
+                    Toggle(
+                        isOn: Binding(
+                            get: { model.approvedScopes.contains(scope) },
+                            set: { model.setScope(scope, enabled: $0) }
+                        )
+                    ) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(scopeTitle(scope))
+                            Text(scope.rawValue)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                }
+                if claim.requestedScopes.contains(where: \.isLibraryScope) {
+                    Label(
+                        "Library access requires your Mac password or Touch ID.",
+                        systemImage: "touchid"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
             HStack {
                 Button("Deny", role: .destructive) { model.deny() }
                 Spacer()
                 Button("Words Match — Approve") { model.approve() }
                     .buttonStyle(.borderedProminent)
+                    .disabled(model.approvedScopes.isEmpty)
             }
+        }
+        }
+    }
+
+    private func scopeTitle(_ scope: AuthorizationScope) -> String {
+        switch scope {
+        case .recordingUploadOwn: "Upload this device's recordings"
+        case .recordingReadOwn: "Read this device's recording status"
+        case .libraryMetadataRead: "Browse Library metadata"
+        case .libraryTranscriptRead: "Read transcripts and summaries"
+        case .libraryAudioRead: "Play Library audio"
+        case .libraryMetadataWrite: "Edit Library metadata"
+        case .processingSubmitOwn: "Submit local processing artifacts"
         }
     }
 

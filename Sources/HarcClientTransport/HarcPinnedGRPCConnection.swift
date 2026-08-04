@@ -141,6 +141,9 @@ private typealias HarcSessionGRPCClient = Harc_V1_SessionService.Client<HarcGRPC
 private typealias HarcRecordingTransferGRPCClient = Harc_V1_RecordingTransferService.Client<
     HarcGRPCTransport
 >
+private typealias HarcLibraryGRPCClient = Harc_V1_LibraryService.Client<
+    HarcGRPCTransport
+>
 private typealias HarcBootstrapGRPCAdapter = HarcGeneratedBootstrapRPCAdapter<
     HarcHostInfoGRPCClient,
     HarcPairingGRPCClient,
@@ -148,6 +151,9 @@ private typealias HarcBootstrapGRPCAdapter = HarcGeneratedBootstrapRPCAdapter<
 >
 private typealias HarcRecordingTransferGRPCAdapter = HarcGeneratedRecordingTransferRPCAdapter<
     HarcRecordingTransferGRPCClient
+>
+private typealias HarcLibraryGRPCAdapter = HarcGeneratedLibraryRPCAdapter<
+    HarcLibraryGRPCClient
 >
 
 /// The sole production owner for Harc's pinned foreground gRPC channel.
@@ -164,22 +170,26 @@ private typealias HarcRecordingTransferGRPCAdapter = HarcGeneratedRecordingTrans
 public final class HarcPinnedGRPCConnection:
     HarcBootstrapRPCTransport,
     HarcRecordingTransferRPCTransport,
+    HarcLibraryRPCTransport,
     Sendable
 {
     private let grpcClient: GRPCClient<HarcGRPCTransport>
     private let bootstrapRPCAdapter: HarcBootstrapGRPCAdapter
     private let recordingTransferRPCAdapter: HarcRecordingTransferGRPCAdapter
+    private let libraryRPCAdapter: HarcLibraryGRPCAdapter
     private let taskOwner: HarcClientConnectionTaskOwner
 
     private init(
         grpcClient: GRPCClient<HarcGRPCTransport>,
         bootstrapRPCAdapter: HarcBootstrapGRPCAdapter,
         recordingTransferRPCAdapter: HarcRecordingTransferGRPCAdapter,
+        libraryRPCAdapter: HarcLibraryGRPCAdapter,
         taskOwner: HarcClientConnectionTaskOwner
     ) {
         self.grpcClient = grpcClient
         self.bootstrapRPCAdapter = bootstrapRPCAdapter
         self.recordingTransferRPCAdapter = recordingTransferRPCAdapter
+        self.libraryRPCAdapter = libraryRPCAdapter
         self.taskOwner = taskOwner
     }
 
@@ -346,6 +356,46 @@ public final class HarcPinnedGRPCConnection:
             )
     }
 
+    public func beginLibrarySnapshot(
+        _ request: Harc_V1_BeginLibrarySnapshotRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_BeginLibrarySnapshotResponseV1 {
+        try await libraryRPCAdapter.beginLibrarySnapshot(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func listSnapshotPage(
+        _ request: Harc_V1_ListSnapshotPageRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_ListSnapshotPageResponseV1 {
+        try await libraryRPCAdapter.listSnapshotPage(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func listLibraryChanges(
+        _ request: Harc_V1_ListChangesRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_ListChangesResponseV1 {
+        try await libraryRPCAdapter.listLibraryChanges(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func getLibraryRecording(
+        _ request: Harc_V1_GetRecordingRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_GetRecordingResponseV1 {
+        try await libraryRPCAdapter.getLibraryRecording(
+            request,
+            authorization: authorization
+        )
+    }
+
     public func status() async -> HarcPinnedGRPCConnectionStatus {
         await taskOwner.status()
     }
@@ -394,6 +444,9 @@ public final class HarcPinnedGRPCConnection:
         let recordingTransferRPCAdapter = HarcRecordingTransferGRPCAdapter(
             client: HarcRecordingTransferGRPCClient(wrapping: grpcClient)
         )
+        let libraryRPCAdapter = HarcLibraryGRPCAdapter(
+            client: HarcLibraryGRPCClient(wrapping: grpcClient)
+        )
         let taskOwner = HarcClientConnectionTaskOwner(
             beginGracefulShutdown: {
                 grpcClient.beginGracefulShutdown()
@@ -403,6 +456,7 @@ public final class HarcPinnedGRPCConnection:
             grpcClient: grpcClient,
             bootstrapRPCAdapter: bootstrapRPCAdapter,
             recordingTransferRPCAdapter: recordingTransferRPCAdapter,
+            libraryRPCAdapter: libraryRPCAdapter,
             taskOwner: taskOwner
         )
         await taskOwner.start {

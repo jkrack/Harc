@@ -162,6 +162,110 @@ public extension RecordingStore {
         }
     }
 
+    /// Reads a bounded change-log window and materializes current path-free
+    /// values in the same SQLite snapshot. Multiple descriptors for one
+    /// recording are collapsed to the last cursor in the selected window. The
+    /// current row revision is projected deliberately: a recording that changes
+    /// again beyond this page can be replayed at the same revision on a later
+    /// page without exposing historical paths or requiring payload duplication
+    /// in the durable change log.
+    func anchoredMaterializedLibraryChanges(
+        after cursor: ChangeCursor,
+        limit: Int = 500
+    ) async throws -> AnchoredLibraryChangePage {
+        let boundedLimit = max(1, min(limit, 1_000))
+        let storedCursor = try cursor.signedInt64Value()
+        return try await db.read { database in
+            let metadata = try Self.readLibraryMetadata(in: database)
+            guard cursor <= metadata.currentChangeCursor else {
+                throw StoreError.invalidData(
+                    "Requested library cursor exceeds the canonical high-water mark"
+                )
+            }
+
+            let minimumStored: Int64? = try Int64.fetchOne(
+                database,
+                sql: """
+                    SELECT MIN(cursor) FROM library_changes
+                    WHERE entity_type = 'recording'
+                    """
+            )
+            let rows = try Row.fetchAll(
+                database,
+                sql: """
+                    SELECT cursor, entity_uuid, revision, operation, changed_at
+                    FROM library_changes
+                    WHERE entity_type = 'recording' AND cursor > ?
+                    ORDER BY cursor
+                    LIMIT ?
+                    """,
+                arguments: [storedCursor, boundedLimit]
+            )
+            let descriptors = try rows.map(Self.libraryChange(from:))
+            let through = descriptors.last?.cursor ?? cursor
+
+            var lastDescriptorByID: [CanonicalRecordingID: LibraryChangeDescriptor] = [:]
+            for descriptor in descriptors {
+                lastDescriptorByID[descriptor.canonicalID] = descriptor
+            }
+
+            var changes: [MaterializedLibraryChange] = []
+            changes.reserveCapacity(lastDescriptorByID.count)
+            for selected in lastDescriptorByID.values.sorted(by: {
+                $0.cursor < $1.cursor
+            }) {
+                guard let recording = try Recording
+                    .filter(
+                        Recording.Columns.canonicalID
+                            == selected.canonicalID.description
+                    )
+                    .fetchOne(database) else {
+                    throw StoreError.invalidData(
+                        "A library change references a missing canonical row"
+                    )
+                }
+                let operation: LibraryChangeOperation
+                let value: LibraryChangeValue
+                if let deletedAt = recording.deletedAt {
+                    operation = .tombstone
+                    value = .tombstone(
+                        try RecordingTombstone(
+                            canonicalID: recording.canonicalID,
+                            revision: recording.revision,
+                            deletedAt: deletedAt
+                        )
+                    )
+                } else {
+                    operation = .upsert
+                    value = .upsert(try Self.pathFreeSummary(for: recording))
+                }
+                let descriptor = try LibraryChangeDescriptor(
+                    cursor: selected.cursor,
+                    canonicalID: recording.canonicalID,
+                    revision: recording.revision,
+                    operation: operation,
+                    changedAt: recording.updatedAt
+                )
+                changes.append(
+                    try MaterializedLibraryChange(
+                        descriptor: descriptor,
+                        value: value
+                    )
+                )
+            }
+
+            return try AnchoredLibraryChangePage(
+                libraryID: metadata.libraryID,
+                requestedAfter: cursor,
+                currentCursor: metadata.currentChangeCursor,
+                throughCursor: through,
+                firstStoredCursor: try minimumStored.map(ChangeCursor.init(signedValue:)),
+                selectedDescriptorCount: descriptors.count,
+                changes: changes
+            )
+        }
+    }
+
     /// Path-free authorized-content candidate. Authorization and field
     /// redaction belong to HarcHost; this store mapping guarantees that local
     /// row IDs and filesystem locations are absent from the DTO itself.

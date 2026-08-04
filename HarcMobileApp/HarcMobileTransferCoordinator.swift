@@ -163,52 +163,23 @@ final class HarcMobileTransferCoordinator {
             )
         }.value
 
-        guard let snapshot = try store.activeAdoption() else {
-            throw HarcMobileTransferError.notPaired
-        }
-        let adoption = try HarcPersistedAdoptionValidatorV1.validate(
-            snapshot,
-            devicePublicKey: identity.publicKey
-        )
-        let route: HarcMobileHostRoute
-        do {
-            route = try HarcMobileHostRouteStore.load(from: routeURL)
-        } catch {
-            throw HarcMobileTransferError.notPaired
-        }
         state = .connecting(
             recordingUUID: master.originRecordingID.recordingUUID
         )
-        let trust = HarcTransportTrustCoordinator(
-            adoptedPersistence:
-                HarcTransferStoreTransportTrustPersistenceV1(store: store)
-        )
-        let connection = try await HarcPinnedGRPCConnection.connect(
-            host: route.host,
-            port: Int(route.port),
-            serverHostname: route.serverHostname,
-            trustCoordinator: trust
-        )
+        let opened: HarcMobileOpenedHostConnection
         do {
-            let policy = try Self.capabilityPolicy()
-            let client = HarcBootstrapClient(
-                rpc: connection,
-                capabilityPolicy: policy,
-                sasDictionary: try HarcSASDictionaryV1.bundled()
+            opened = try await HarcMobileHostSessionConnector.open(
+                identity: identity,
+                store: store,
+                routeURL: routeURL
             )
-            let negotiated = try await client.negotiateCapabilities(
-                clientOffer: try Self.capabilityOffer(policy: policy),
-                expectation: HarcBootstrapTrustExpectation(
-                    adoption: adoption
-                )
-            )
-            let session = try await client.openSession(
-                adoption: adoption,
-                negotiatedCapabilities: negotiated.negotiated,
-                deviceSigner: identity
-            )
+        } catch HarcMobileHostSessionConnectorError.notPaired {
+            throw HarcMobileTransferError.notPaired
+        }
+        let connection = opened.connection
+        do {
             let profile = try Self.frozenProfile(
-                negotiated: negotiated.negotiated
+                negotiated: opened.negotiated
             )
             let outbox = try store.recordingOutbox(
                 for: master.originRecordingID
@@ -247,8 +218,9 @@ final class HarcMobileTransferCoordinator {
             }
             let plan = try HarcForegroundRecordingUploadPlan(
                 trustTuple: AdoptedTrustTuple(
-                    libraryID: adoption.hostTrust.libraryID,
-                    hostAuthorityID: adoption.hostTrust.hostAuthorityID
+                    libraryID: opened.adoption.hostTrust.libraryID,
+                    hostAuthorityID:
+                        opened.adoption.hostTrust.hostAuthorityID
                 ),
                 uploadID: uploadID,
                 originRecordingID: master.originRecordingID,
@@ -264,7 +236,7 @@ final class HarcMobileTransferCoordinator {
             )
             _ = try await uploader.drive(
                 plan,
-                openedSession: session,
+                openedSession: opened.session,
                 deviceSigner: identity
             )
             try await connection.shutdownGracefully()
@@ -272,35 +244,6 @@ final class HarcMobileTransferCoordinator {
             await connection.shutdownImmediately()
             throw error
         }
-    }
-
-    private static func capabilityPolicy() throws -> HarcCapabilityPolicyV1 {
-        try HarcCapabilityPolicyV1(
-            supportedFeatureIDs: [],
-            supportedDescriptorSchemaIDs: [
-                ChunkDescriptorSchema.v1.rawValue,
-            ],
-            supportedEncodings: [.cafALAC]
-        )
-    }
-
-    private static func capabilityOffer(
-        policy: HarcCapabilityPolicyV1
-    ) throws -> HarcValidatedCapabilityOfferV1 {
-        var offer = Harc_V1_CapabilityOfferV1()
-        offer.protocolMajor = 1
-        offer.minimumProtocolMinor = 0
-        offer.maximumProtocolMinor = 0
-        offer.supportedDescriptorSchemaIds = [
-            ChunkDescriptorSchema.v1.rawValue,
-        ]
-        offer.supportedEncodings = [
-            Harc_V1_LosslessEncodingConfigurationV1(.cafALAC),
-        ]
-        offer.supportedCanonicalFormats = [
-            Harc_V1_CanonicalPCMFormatV1(.harcV1),
-        ]
-        return try HarcValidatedCapabilityOfferV1(offer, policy: policy)
     }
 
     private static func frozenProfile(

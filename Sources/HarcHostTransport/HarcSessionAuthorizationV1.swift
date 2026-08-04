@@ -55,6 +55,24 @@ enum HarcSessionAuthorizationV1 {
         authenticator: any HarcSessionCredentialAuthenticating,
         servedIdentityBinding: HarcGRPCServedIdentityBinding
     ) async throws -> HostAuthenticatedSession {
+        try await authenticate(
+            metadata: metadata,
+            authenticator: authenticator,
+            servedIdentityBinding: servedIdentityBinding,
+            requiredScope: .recordingUploadOwn
+        )
+    }
+
+    /// Authenticates any post-session request against the TLS identity served
+    /// by this listener generation and an optional method scope. Passing nil is
+    /// reserved for object-sensitive methods which immediately reauthenticate
+    /// with their derived own/library scope before returning content.
+    static func authenticate(
+        metadata: Metadata,
+        authenticator: any HarcSessionCredentialAuthenticating,
+        servedIdentityBinding: HarcGRPCServedIdentityBinding,
+        requiredScope: AuthorizationScope?
+    ) async throws -> HostAuthenticatedSession {
         let credential = try credential(from: metadata)
         let tlsSPKISHA256 = try servedIdentityBinding.requireTLSSPKISHA256(
             generationID: servedIdentityBinding.generationID
@@ -62,7 +80,7 @@ enum HarcSessionAuthorizationV1 {
         return try await authenticator.authenticate(
             credential: credential,
             tlsSPKISHA256: tlsSPKISHA256,
-            requiredScope: .recordingUploadOwn
+            requiredScope: requiredScope
         )
     }
 

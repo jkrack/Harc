@@ -15,14 +15,8 @@ struct HarcMobileRootView: View {
             .tabItem { Label("Record", systemImage: "waveform") }
 
             NavigationStack {
-                ContentUnavailableView(
-                    "No synced recordings yet",
-                    systemImage: "rectangle.stack",
-                    description: Text(
-                        "Pair a host to sync receipts, processing status, and your permitted library view."
-                    )
-                )
-                .navigationTitle("Library")
+                libraryView
+                    .navigationTitle("Library")
             }
             .tabItem { Label("Library", systemImage: "rectangle.stack") }
 
@@ -48,6 +42,7 @@ struct HarcMobileRootView: View {
             )
         ) { _ in
             model.transferCoordinator?.retryPending()
+            model.libraryCoordinator?.refresh()
         }
         .sheet(isPresented: $showsPairingScanner) {
             NavigationStack {
@@ -74,6 +69,104 @@ struct HarcMobileRootView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var libraryView: some View {
+        if let coordinator = model.libraryCoordinator {
+            Group {
+                if coordinator.recordings.isEmpty {
+                    emptyLibraryView(coordinator)
+                } else {
+                    List {
+                        libraryStateRow(coordinator)
+                        ForEach(coordinator.recordings) { recording in
+                            NavigationLink {
+                                HarcMobileRecordingDetailView(
+                                    coordinator: coordinator,
+                                    summary: recording
+                                )
+                            } label: {
+                                HarcMobileRecordingRow(recording: recording)
+                            }
+                        }
+                    }
+                    .refreshable { coordinator.refresh() }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Refresh Library", systemImage: "arrow.clockwise") {
+                        coordinator.refresh()
+                    }
+                    .disabled(coordinator.isRefreshing)
+                }
+            }
+        } else {
+            ProgressView("Opening protected Library cache…")
+        }
+    }
+
+    @ViewBuilder
+    private func emptyLibraryView(
+        _ coordinator: HarcMobileLibraryCoordinator
+    ) -> some View {
+        switch coordinator.state {
+        case .loadingCache, .refreshing:
+            ProgressView("Syncing Library…")
+        case .unpaired:
+            ContentUnavailableView(
+                "Pair a Host",
+                systemImage: "macmini",
+                description: Text(
+                    "Pair locally to sync the Library view permitted by your Host."
+                )
+            )
+        case .accessNotGranted:
+            ContentUnavailableView(
+                "Library access not granted",
+                systemImage: "lock",
+                description: Text(
+                    "Pair again and approve the requested Library scopes on the Host. Existing recordings remain local."
+                )
+            )
+        case .failed(let message), .offline(let message):
+            ContentUnavailableView(
+                "Library unavailable",
+                systemImage: "wifi.slash",
+                description: Text(message)
+            )
+        case .ready:
+            ContentUnavailableView(
+                "No recordings yet",
+                systemImage: "rectangle.stack",
+                description: Text("The Host Library is synced and currently empty.")
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func libraryStateRow(
+        _ coordinator: HarcMobileLibraryCoordinator
+    ) -> some View {
+        switch coordinator.state {
+        case .refreshing:
+            HStack { ProgressView(); Text("Refreshing from Host…") }
+        case .offline(let message):
+            Label(message, systemImage: "wifi.slash")
+                .foregroundStyle(.secondary)
+        case .accessNotGranted:
+            Label(
+                "Cached data only; current grant lacks Library access",
+                systemImage: "lock"
+            )
+            .foregroundStyle(.orange)
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        default:
+            EmptyView()
         }
     }
 
@@ -406,6 +499,117 @@ struct HarcMobileRootView: View {
                     coordinator.resetFailure()
                     showsPairingScanner = true
                 }
+            }
+        }
+    }
+}
+
+private struct HarcMobileRecordingRow: View {
+    let recording: LibraryRecordingSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(recording.title ?? recording.suggestedTitle ?? "Untitled Recording")
+                    .font(.headline)
+                    .lineLimit(2)
+                if recording.pinned {
+                    Image(systemName: "pin.fill")
+                        .foregroundStyle(.tint)
+                        .accessibilityLabel("Pinned")
+                }
+            }
+            Text(recording.startedAt, format: .dateTime.month().day().hour().minute())
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Label(
+                    recording.processing.state.rawValue,
+                    systemImage: processingSymbol
+                )
+                if !recording.tags.isEmpty {
+                    Text(recording.tags.prefix(3).joined(separator: " · "))
+                        .lineLimit(1)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var processingSymbol: String {
+        switch recording.processing.state {
+        case .ready: "checkmark.circle"
+        case .failedRecoverable, .degraded: "exclamationmark.triangle"
+        case .pending, .transcribing, .projecting: "clock"
+        }
+    }
+}
+
+private struct HarcMobileRecordingDetailView: View {
+    let coordinator: HarcMobileLibraryCoordinator
+    let summary: LibraryRecordingSummary
+
+    @State private var detail: LibraryRecordingDetail?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let detail {
+                List {
+                    Section("Status") {
+                        LabeledContent("Processing", value: detail.summary.processing.state.rawValue)
+                        LabeledContent("Projection", value: detail.summary.projection.state.rawValue)
+                        LabeledContent("Revision", value: String(detail.summary.revision.rawValue))
+                    }
+                    if let transcript = detail.transcriptText,
+                       !transcript.isEmpty {
+                        Section("Transcript") {
+                            Text(transcript)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    if let generatedSummary = detail.summaryMarkdown,
+                       !generatedSummary.isEmpty {
+                        Section("Summary") {
+                            Text(generatedSummary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    if let actionItems = detail.actionItemsMarkdown,
+                       !actionItems.isEmpty {
+                        Section("Action Items") {
+                            Text(actionItems)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    if let notes = detail.notesMarkdown, !notes.isEmpty {
+                        Section("Notes") {
+                            Text(notes)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            } else if let errorMessage {
+                ContentUnavailableView(
+                    "Detail unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+            } else {
+                ProgressView("Loading from Host…")
+            }
+        }
+        .navigationTitle(summary.title ?? summary.suggestedTitle ?? "Recording")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: summary.canonicalID) {
+            do {
+                detail = try await coordinator.recordingDetail(
+                    canonicalID: summary.canonicalID
+                )
+            } catch {
+                errorMessage = error.localizedDescription
             }
         }
     }
