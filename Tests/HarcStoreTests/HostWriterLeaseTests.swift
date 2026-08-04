@@ -259,6 +259,10 @@ struct HostWriterLeaseTests {
         #expect(stored.projection == .pending)
         #expect(stored.revision == .initial)
         #expect(try await fixture.store.libraryChanges(after: .zero).count == 1)
+        #expect(
+            try await fixture.store.hostProcessingBacklog()
+                .map(\.canonicalID) == [request.canonicalID]
+        )
 
         let replay = try await fixture.store.commitCanonicalRemoteRecording(
             request,
@@ -279,6 +283,7 @@ struct HostWriterLeaseTests {
             id: try #require(stored.id),
             descriptor: .ready
         )
+        #expect(try await fixture.store.hostProcessingBacklog().isEmpty)
         let replayAfterProcessing = try await fixture.store
             .commitCanonicalRemoteRecording(request, using: capability)
         #expect(replayAfterProcessing.revision == .initial)

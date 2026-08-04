@@ -76,6 +76,29 @@ public extension RecordingStore {
         }
     }
 
+    /// Durable worklist for recordings committed by an adopted client whose
+    /// derived processing has not reached `ready`. The canonical row itself is
+    /// the queue: it is inserted as `pending` in the same transaction that
+    /// publishes the canonical audio, so a process crash cannot lose the job.
+    func hostProcessingBacklog(limit: Int = 500) async throws -> [Recording] {
+        let boundedLimit = max(1, min(limit, 1_000))
+        return try await db.read { database in
+            try Recording.fetchAll(
+                database,
+                sql: """
+                    SELECT * FROM recordings
+                    WHERE deleted_at IS NULL
+                      AND origin_device_id IS NOT NULL
+                      AND origin_recording_uuid IS NOT NULL
+                      AND processing_state <> ?
+                    ORDER BY created_at, id
+                    LIMIT ?
+                    """,
+                arguments: [RecordingProcessingState.ready.rawValue, boundedLimit]
+            )
+        }
+    }
+
     /// Snapshot the current cursor and all base rows in one SQLite read
     /// transaction. This is intentionally independent of the change log so a
     /// populated v15 library with a newly empty v16 log remains fully visible.

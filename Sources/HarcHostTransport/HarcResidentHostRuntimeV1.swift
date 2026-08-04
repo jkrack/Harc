@@ -65,6 +65,23 @@ public actor HarcResidentHostRuntimeV1 {
         cryptographicStateStore: any HostCryptographicStateStore =
             KeychainHostCryptographicStateStore()
     ) async throws -> HarcResidentHostRuntimeV1 {
+        try await start(
+            configuration: configuration,
+            cryptographicStateStore: cryptographicStateStore,
+            makeProcessingScheduler: { _ in processingScheduler }
+        )
+    }
+
+    /// App-composition entry point used when the scheduler must share the
+    /// exact RecordingStore owned by the resident Host runtime.
+    public static func start(
+        configuration: HarcResidentHostRuntimeConfigurationV1,
+        cryptographicStateStore: any HostCryptographicStateStore =
+            KeychainHostCryptographicStateStore(),
+        makeProcessingScheduler: @Sendable (
+            HarcResidentHostStorageRuntime
+        ) async throws -> any HostReceiptDurableProcessingScheduling
+    ) async throws -> HarcResidentHostRuntimeV1 {
         let storage = try await HarcResidentHostStorageRuntime.start(
             configuration: configuration.storage,
             cryptographicStateStore: cryptographicStateStore
@@ -72,6 +89,7 @@ public actor HarcResidentHostRuntimeV1 {
         var startedTransport: HostTransportResidentRuntime?
 
         do {
+            let processingScheduler = try await makeProcessingScheduler(storage)
             let state = try await cryptographicStateStore.load(
                 requiredTuple: storage.tuple
             )
