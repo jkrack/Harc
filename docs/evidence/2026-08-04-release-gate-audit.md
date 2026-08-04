@@ -55,3 +55,20 @@ edge-capable secondary-Mac system, or external TestFlight release complete.
 
 These are evidence gates, not reasons to weaken the fail-closed codec, trust,
 or receipt policies.
+
+## Signed macOS 0.13.0 candidate
+
+- Source commit: `35645e7` (the later appcast-only release commit does not
+  change application bytes).
+- Build: arm64 Release, Developer ID Application, hardened runtime and secure
+  timestamps, with embedded `harc-stt`, `harc-mcp`, and Sparkle verified
+  inside-out.
+- Apple notarization submission:
+  `0c555d91-3b1e-4fac-9eea-057d35458851`, status **Accepted**.
+- Stapler validation: passed.
+- Gatekeeper: `accepted`, `source=Notarized Developer ID`.
+- Published DMG asset size: 64,876,221 bytes.
+- Published DMG SHA-256:
+  `e109a09970cc680fad489d380af095dc833e9103bf18927539efbb5d7d67bd4a`.
+- The Sparkle EdDSA entry was generated only after stapling and covers those
+  exact `Harc-local.dmg` bytes.
