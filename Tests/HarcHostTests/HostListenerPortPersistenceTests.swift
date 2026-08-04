@@ -38,6 +38,7 @@ struct HostListenerPortPersistenceTests {
         try await first.persistListenerPorts(ports)
         try await first.persistListenerPorts(ports)
         #expect(try await first.listenerPorts() == ports)
+        #expect(try HarcHostStore.inspectListenerPorts(onDiskAt: databaseURL) == ports)
 
         let second = try await HarcHostStore.onDisk(
             databaseURL: databaseURL,
@@ -74,6 +75,11 @@ struct HostListenerPortPersistenceTests {
         )
         await #expect(throws: HarcHostError.listenerPortPersistenceConflict) {
             try await store.listenerPorts()
+        }
+        #expect(throws: HarcHostError.listenerPortPersistenceConflict) {
+            try HarcHostStore.inspectListenerPorts(
+                onDiskAt: directory.appendingPathComponent("HarcHost.db")
+            )
         }
     }
 }

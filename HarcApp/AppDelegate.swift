@@ -9,6 +9,8 @@ import HarcAudio
 import HarcClient
 import HarcCore
 import HarcExport
+import HarcHost
+import HarcHostTransport
 import HarcMeetingDetect
 import HarcModels
 import HarcStore
@@ -410,6 +412,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var sttClient: HarcSTTClient?
     private var speakerReIDService: SpeakerReIDService?
     private var store: RecordingStore?
+    /// Present only in Host role. It owns the canonical store above; no second
+    /// RecordingStore is opened while this runtime is resident.
+    private var hostRuntime: HarcResidentHostRuntimeV1?
+    private var hostProcessingWorker: HarcHostProcessingWorker?
+    private var hostWakeToken: NSObjectProtocol?
+    private var hostTerminationInFlight = false
     /// Whole-library operations (re-transcribe, build search index). Created
     /// once the store exists; Settings observes it.
     private var maintenanceStore: LibraryMaintenanceStore?
@@ -517,6 +525,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         AutoStopNotification.registerCategory()
         setupMeetingDetector()
         registerTerminateWatchdog()
+        registerHostWakeObserver()
         observeMeetingDetectionPref()
         observeMeetingStateForPulse()
         observePostProcessingState()
@@ -690,10 +699,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         CoreGrantHistory.noteGranted(snapshot)
     }
 
+    private func registerHostWakeObserver() {
+        hostWakeToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let runtime = self?.hostRuntime else { return }
+                await runtime.handleSystemWake()
+            }
+        }
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard let runtime = hostRuntime else { return .terminateNow }
+        guard !hostTerminationInFlight else { return .terminateLater }
+        hostTerminationInFlight = true
+        Task { [weak sender, weak self] in
+            await self?.hostProcessingWorker?.waitUntilIdle()
+            await runtime.shutdown()
+            await MainActor.run {
+                self?.hostRuntime = nil
+                sender?.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if let token = terminateToken {
             SystemWorkspace.shared.removeObserver(token)
             terminateToken = nil
+        }
+        if let token = hostWakeToken {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+            hostWakeToken = nil
         }
         detector?.stop()
         frontmostPoller?.invalidate()
@@ -3321,7 +3364,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func bootstrapStore() async {
         do {
-            let store = try await RecordingStore.onDisk(url: uiTestDatabaseURL ?? RecordingStore.defaultURL())
+            let store = try await makeApplicationStore()
+            try await finishStoreBootstrap(store)
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc: store init failed: \(error.localizedDescription)\n".utf8
+            ))
+        }
+    }
+
+    private func makeApplicationStore() async throws -> RecordingStore {
+        let databaseURL = uiTestDatabaseURL ?? RecordingStore.defaultURL()
+        guard !isUITesting else {
+            return try await RecordingStore.onDisk(url: databaseURL)
+        }
+
+        switch prefs.runtimeRole {
+        case .standalone:
+            return try await RecordingStore.onDisk(url: databaseURL)
+        case .client:
+            throw HarcHostApplicationRuntimeError.clientModeNotImplemented
+        case .host:
+            let configuration = try HarcHostRuntimeConfigurationFactory.make(
+                canonicalDatabaseURL: databaseURL,
+                canonicalAudioRoot: prefs.destinationURL
+            )
+            let workerBox = HarcHostProcessingWorkerBox()
+            let launcher = launcher
+            let diarize = prefs.diarize
+            let vad = prefs.vadEnabled
+            let runtime = try await HarcResidentHostRuntimeV1.start(
+                configuration: configuration,
+                makeProcessingScheduler: { storage in
+                    let worker = HarcHostProcessingWorker(
+                        store: storage.recordingStore,
+                        launcher: launcher,
+                        diarize: diarize,
+                        vad: vad
+                    )
+                    try await workerBox.install(worker)
+                    return HarcCanonicalLibraryProcessingScheduler(
+                        store: storage.recordingStore,
+                        wakeHandler: { request in
+                            await worker.signal(request)
+                        }
+                    )
+                }
+            )
+            let worker = try await workerBox.requireWorker()
+            hostRuntime = runtime
+            hostProcessingWorker = worker
+
+            // `processing` journal rows are already durably handed off and do
+            // not replay the scheduler during publication recovery. Rebuild
+            // their exact path/inode-bound requests from HostDB explicitly.
+            let backlog = try await runtime.storageRuntime.recordingStore
+                .hostProcessingBacklog()
+            for recording in backlog {
+                do {
+                    let request = try await runtime.validatedProcessingRequest(
+                        canonicalRecordingID: recording.canonicalID
+                    )
+                    await worker.signal(request)
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "harc-host: processing recovery failed for \(recording.canonicalID): \(error.localizedDescription)\n".utf8
+                    ))
+                }
+            }
+            return runtime.storageRuntime.recordingStore
+        }
+    }
+
+    private func finishStoreBootstrap(_ store: RecordingStore) async throws {
             self.store = store
             let recoveryQueue = RecoveryQueue(fileURL: uiTestRecoveryQueueURL ?? RecoveryQueue.defaultURL(), store: store)
             self.recoveryQueue = recoveryQueue
@@ -3409,11 +3524,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             if shouldOpenLibraryForUITest {
                 openLibrary()
             }
-        } catch {
-            FileHandle.standardError.write(Data(
-                "harc: store init failed: \(error.localizedDescription)\n".utf8
-            ))
-        }
     }
 
     private func observeDestinationChanges() {

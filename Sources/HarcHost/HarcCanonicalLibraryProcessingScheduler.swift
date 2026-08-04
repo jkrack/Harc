@@ -12,7 +12,9 @@ import HarcStore
 public actor HarcCanonicalLibraryProcessingScheduler:
     HostReceiptDurableProcessingScheduling
 {
-    public typealias WakeHandler = @Sendable (CanonicalRecordingID) async -> Void
+    public typealias WakeHandler = @Sendable (
+        HostDurableProcessingRequest
+    ) async -> Void
 
     private let store: RecordingStore
     private let wakeHandler: WakeHandler
@@ -43,6 +45,6 @@ public actor HarcCanonicalLibraryProcessingScheduler:
         )
 
         guard recording.processing.state != .ready else { return }
-        await wakeHandler(request.canonicalRecordingID)
+        await wakeHandler(request)
     }
 }

@@ -194,4 +194,18 @@ struct HarcPreferencesTests {
 
         defaults.removeObject(forKey: "harc.modelPerformanceMode")
     }
+
+    @Test("runtime role defaults to Standalone and persists explicit Host selection")
+    func runtimeRolePersists() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "harc.runtimeRole")
+
+        let prefs = HarcPreferences()
+        #expect(prefs.runtimeRole == .standalone)
+
+        prefs.runtimeRole = .host
+        #expect(HarcPreferences().runtimeRole == .host)
+
+        defaults.removeObject(forKey: "harc.runtimeRole")
+    }
 }

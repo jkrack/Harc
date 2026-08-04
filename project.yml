@@ -30,9 +30,15 @@ targets:
       - package: HarcCore
         product: HarcCore
       - package: HarcCore
+        product: HarcDomain
+      - package: HarcCore
         product: HarcAudio
       - package: HarcCore
         product: HarcClient
+      - package: HarcCore
+        product: HarcHost
+      - package: HarcCore
+        product: HarcHostTransport
       - package: HarcCore
         product: HarcStore
       - package: HarcCore

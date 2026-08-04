@@ -521,6 +521,36 @@ extension HarcHostStore {
     }
 
     func receiptProcessingWork(
+        canonicalRecordingID: CanonicalRecordingID
+    ) async throws -> HostReceiptProcessingWork? {
+        let uploadID = try await dbQueue.read { db -> UploadID? in
+            let values = try String.fetchAll(
+                db,
+                sql: """
+                    SELECT upload_id FROM publication_journal
+                    WHERE canonical_recording_id = ?
+                      AND state IN ('receipted', 'processing', 'complete')
+                      AND legacy_quarantined = 0
+                    LIMIT 2
+                    """,
+                arguments: [canonicalRecordingID.description]
+            )
+            guard values.count <= 1 else {
+                throw HarcHostError.databaseFailure(
+                    "A canonical recording has duplicate publication journals."
+                )
+            }
+            guard let value = values.first,
+                  let uuid = UUID(uuidString: value) else {
+                return nil
+            }
+            return UploadID(uuid)
+        }
+        guard let uploadID else { return nil }
+        return try await receiptProcessingWork(uploadID: uploadID)
+    }
+
+    func receiptProcessingWork(
         originRecordingID: OriginRecordingID,
         expectedReceipt: OpaqueExactObjectSlot
     ) async throws -> HostReceiptProcessingWork? {

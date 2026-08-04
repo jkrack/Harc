@@ -46,6 +46,7 @@ public final class HarcPreferences: ObservableObject {
         static let systemAudioEnabled = "harc.systemAudioEnabled"
         static let preRollMinutes = "harc.preRollMinutes"
         static let semanticSearchEnabled = "harc.semanticSearchEnabled"
+        static let runtimeRole = "harc.runtimeRole"
     }
 
     /// Override macOS appearance. `.system` (default) follows System Settings.
@@ -66,6 +67,17 @@ public final class HarcPreferences: ObservableObject {
             case .dark:   return .dark
             }
         }
+    }
+
+    /// Canonical-library ownership mode. Standalone remains the default and
+    /// Client is retained as an explicit future state rather than overloading
+    /// a boolean once desktop adoption lands.
+    public enum RuntimeRole: String, CaseIterable, Identifiable, Sendable {
+        case standalone
+        case host
+        case client
+
+        public var id: String { rawValue }
     }
 
     /// How the dictation hotkey behaves.
@@ -150,6 +162,10 @@ public final class HarcPreferences: ObservableObject {
 
     @Published public var appearance: Appearance {
         didSet { UserDefaults.standard.set(appearance.rawValue, forKey: Key.appearance) }
+    }
+
+    @Published public var runtimeRole: RuntimeRole {
+        didSet { UserDefaults.standard.set(runtimeRole.rawValue, forKey: Key.runtimeRole) }
     }
 
     @Published public var destinationPath: String {
@@ -431,6 +447,9 @@ public final class HarcPreferences: ObservableObject {
         self.updateChecksEnabled = defaults.object(forKey: Key.updateChecksEnabled) as? Bool ?? true
         let rawAppearance = defaults.string(forKey: Key.appearance) ?? Appearance.system.rawValue
         self.appearance = Appearance(rawValue: rawAppearance) ?? .system
+        let rawRuntimeRole = defaults.string(forKey: Key.runtimeRole)
+            ?? RuntimeRole.standalone.rawValue
+        self.runtimeRole = RuntimeRole(rawValue: rawRuntimeRole) ?? .standalone
         if shouldPersistPasteDenyList {
             persistPasteDenyListBundleIDs()
         }

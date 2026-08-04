@@ -279,6 +279,39 @@ public actor HarcCanonicalIngestService {
             failedUploadIDs: failed
         )
     }
+
+    /// Reconstructs and revalidates the exact durable processing request for a
+    /// canonical row. App startup uses this after scanning the canonical
+    /// processing backlog; the Host journal supplies the original inode and
+    /// change-time identity that the canonical row intentionally does not
+    /// duplicate.
+    public func validatedProcessingRequest(
+        canonicalRecordingID: CanonicalRecordingID
+    ) async throws -> HostDurableProcessingRequest {
+        guard let work = try await hostStore.receiptProcessingWork(
+            canonicalRecordingID: canonicalRecordingID
+        ) else {
+            throw HarcHostError.publicationRecoveryRequired(
+                "canonical processing journal is missing"
+            )
+        }
+        let paths = try HostCanonicalPublicationPaths.make(
+            rootAnchor: canonicalRootAnchor,
+            canonicalRecordingID: work.canonicalRecordingID,
+            persistedRelativeWAVPath: work.publicationRelativePath,
+            temporaryName: work.temporaryName
+        )
+        let artifact = try validatedCanonicalArtifact(for: work, paths: paths)
+        let request = try HostDurableProcessingRequest(
+            canonicalRecordingID: work.canonicalRecordingID,
+            canonicalWAVURL: paths.wavURL,
+            canonicalPCMHash: work.canonicalPCMHash,
+            canonicalPCMFrames: work.canonicalPCMFrames,
+            artifactIdentity: work.canonicalArtifactIdentity
+        )
+        try artifact.validateBinding()
+        return request
+    }
 }
 
 private extension HarcCanonicalIngestService {

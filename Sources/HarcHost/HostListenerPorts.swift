@@ -25,6 +25,67 @@ public struct HarcHostListenerPorts: Codable, Equatable, Sendable {
     }
 }
 
+public extension HarcHostStore {
+    /// Read-only startup inspection used before the resident runtime has the
+    /// exact tuple required to open HarcHost.db for serving. An existing Host
+    /// database is authoritative for its port pair; malformed or partial
+    /// values fail closed instead of silently invalidating queued uploads.
+    static func inspectListenerPorts(
+        onDiskAt databaseURL: URL = defaultDatabaseURL()
+    ) throws -> HarcHostListenerPorts? {
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+            return nil
+        }
+        var configuration = Configuration()
+        configuration.readonly = true
+        configuration.foreignKeysEnabled = false
+        configuration.busyMode = .timeout(5)
+        let queue: DatabaseQueue
+        do {
+            queue = try DatabaseQueue(
+                path: databaseURL.path,
+                configuration: configuration
+            )
+        } catch {
+            throw HarcHostError.databaseOpenFailed(error.localizedDescription)
+        }
+        do {
+            return try queue.unsafeRead { database in
+                guard try database.tableExists("host_metadata"),
+                      let row = try Row.fetchOne(
+                          database,
+                          sql: """
+                              SELECT control_port, upload_port
+                              FROM host_metadata WHERE singleton = 1
+                              """
+                      )
+                else { throw HarcHostError.metadataMismatch }
+                let control: Int64? = row["control_port"]
+                let upload: Int64? = row["upload_port"]
+                switch (control, upload) {
+                case (nil, nil):
+                    return nil
+                case let (.some(control), .some(upload)):
+                    guard let controlPort = UInt16(exactly: control),
+                          let uploadPort = UInt16(exactly: upload) else {
+                        throw HarcHostError.listenerPortPersistenceConflict
+                    }
+                    return try HarcHostListenerPorts(
+                        controlPort: controlPort,
+                        uploadPort: uploadPort
+                    )
+                default:
+                    throw HarcHostError.listenerPortPersistenceConflict
+                }
+            }
+        } catch let error as HarcHostError {
+            throw error
+        } catch {
+            throw HarcHostError.databaseFailure(error.localizedDescription)
+        }
+    }
+}
+
 extension HarcHostStore {
     /// Returns the exact persisted listener pair. A partial or malformed pair
     /// is a fail-closed HostDB corruption, never permission to choose anew.

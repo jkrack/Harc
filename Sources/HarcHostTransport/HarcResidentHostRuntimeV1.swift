@@ -324,6 +324,14 @@ public actor HarcResidentHostRuntimeV1 {
         try await canonicalIngest.recoverPendingPublications()
     }
 
+    public func validatedProcessingRequest(
+        canonicalRecordingID: CanonicalRecordingID
+    ) async throws -> HostDurableProcessingRequest {
+        try await canonicalIngest.validatedProcessingRequest(
+            canonicalRecordingID: canonicalRecordingID
+        )
+    }
+
     public func handleSystemWake() async {
         guard !transportStopped else { return }
         await transportRuntime.handleSystemWake()
