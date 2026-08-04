@@ -1,0 +1,188 @@
+#if canImport(Network)
+import Foundation
+import HarcDomain
+import HarcHost
+import HarcIdentity
+import HarcProtocol
+import Network
+
+/// Memory-only foreground payload rendered by the Host UI as a QR code.
+/// The URI contains the ticket secret and must never be logged or persisted.
+public struct HarcForegroundPairingTicketV1: Equatable, Sendable {
+    public let ticketID: UUID
+    public let clientKind: AdoptedClientKind
+    public let pairingURI: String
+    public let issuedAt: Date
+    public let expiresAt: Date
+    public let hostAuthorityID: HostAuthorityID
+
+    public init(
+        ticketID: UUID,
+        clientKind: AdoptedClientKind,
+        pairingURI: String,
+        issuedAt: Date,
+        expiresAt: Date,
+        hostAuthorityID: HostAuthorityID
+    ) {
+        self.ticketID = ticketID
+        self.clientKind = clientKind
+        self.pairingURI = pairingURI
+        self.issuedAt = issuedAt
+        self.expiresAt = expiresAt
+        self.hostAuthorityID = hostAuthorityID
+    }
+}
+
+public enum HarcForegroundPairingTicketControllerError:
+    Error, Equatable, Sendable
+{
+    case invalidClock
+    case invalidTicketIdentifier
+    case transportIdentityMismatch
+}
+
+/// One foreground pairing window owns this actor. Issuing a replacement first
+/// cancels the prior durable placeholder, and dismissal cancels the active one.
+/// Raw ticket secrets exist only in the returned in-memory URI.
+public actor HarcForegroundPairingTicketControllerV1 {
+    public static let ticketLifetime: TimeInterval = 120
+
+    private let hostStore: HarcHostStore
+    private let tuple: HostCryptographicStateTuple
+    private let authorityPublicKey: P256X963PublicKey
+    private let transportReservation: any HarcCapabilityTransportReserving
+    private let endpoints: [PairingEndpointV1]
+    private let randomness: any HostAuthenticationRandomness
+    private let now: @Sendable () -> Date
+    private var activeTicketID: UUID?
+
+    package init(
+        storageRuntime: HarcResidentHostStorageRuntime,
+        transportRuntime: HostTransportResidentRuntime,
+        endpoints: [PairingEndpointV1]
+    ) {
+        self.init(
+            hostStore: storageRuntime.hostStore,
+            tuple: storageRuntime.tuple,
+            authorityPublicKey: storageRuntime.authorityPublicKey,
+            transportReservation: transportRuntime,
+            endpoints: endpoints,
+            randomness: SystemHostAuthenticationRandomness(),
+            now: Date.init
+        )
+    }
+
+    init(
+        hostStore: HarcHostStore,
+        tuple: HostCryptographicStateTuple,
+        authorityPublicKey: P256X963PublicKey,
+        transportReservation: any HarcCapabilityTransportReserving,
+        endpoints: [PairingEndpointV1],
+        randomness: any HostAuthenticationRandomness =
+            SystemHostAuthenticationRandomness(),
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.hostStore = hostStore
+        self.tuple = tuple
+        self.authorityPublicKey = authorityPublicKey
+        self.transportReservation = transportReservation
+        self.endpoints = endpoints
+        self.randomness = randomness
+        self.now = now
+    }
+
+    public func issue(
+        for clientKind: AdoptedClientKind
+    ) async throws -> HarcForegroundPairingTicketV1 {
+        try await cancelActiveTicketIfNeeded()
+
+        let observedAt = now()
+        let observedMilliseconds = observedAt.timeIntervalSince1970 * 1_000
+        guard observedMilliseconds.isFinite,
+              observedMilliseconds >= 0,
+              observedMilliseconds <= Double(UInt64.max - 120_000) else {
+            throw HarcForegroundPairingTicketControllerError.invalidClock
+        }
+        let issuedMilliseconds = UInt64(observedMilliseconds.rounded(.down))
+        let expiresMilliseconds = issuedMilliseconds + 120_000
+        let issuedAt = Date(
+            timeIntervalSince1970: Double(issuedMilliseconds) / 1_000
+        )
+        let expiresAt = Date(
+            timeIntervalSince1970: Double(expiresMilliseconds) / 1_000
+        )
+        let reservation = try await transportReservation
+            .reserveTransportForBackgroundCapability(expiringAt: expiresAt)
+        let verifiedTransport = try VerifiedHostTransportSetV1.decode(
+            reservation.exactSignedTransportSet,
+            hostAuthorityPublicKey: authorityPublicKey
+        )
+        guard verifiedTransport.transportSet.libraryID == tuple.libraryID,
+              verifiedTransport.transportSet.hostAuthorityID
+                == tuple.hostAuthorityID,
+              verifiedTransport.transportSet.setEpoch
+                == reservation.minimumTransportSetEpoch,
+              authorityPublicKey.hostAuthorityID == tuple.hostAuthorityID else {
+            throw HarcForegroundPairingTicketControllerError
+                .transportIdentityMismatch
+        }
+
+        let ticketID = try randomness.randomUUID()
+        guard ticketID != Self.zeroUUID else {
+            throw HarcForegroundPairingTicketControllerError
+                .invalidTicketIdentifier
+        }
+        let secret = try randomness.randomBytes(count: 24)
+        let ticket = try PairingTicketV1(
+            ticketID: ticketID,
+            libraryID: tuple.libraryID,
+            hostAuthorityID: tuple.hostAuthorityID,
+            hostAuthorityPublicKey: authorityPublicKey,
+            verifiedTransportSet: verifiedTransport,
+            ticketSecret: secret,
+            issuedAtUnixMilliseconds: issuedMilliseconds,
+            expiresAtUnixMilliseconds: expiresMilliseconds,
+            endpoints: endpoints
+        )
+        let placeholder = try PairingTicketPlaceholder(
+            ticketID: ticketID,
+            ticketSecretBindingSHA256: ticket.ticketSecretBindingSHA256,
+            clientKind: clientKind,
+            issuedAt: issuedAt,
+            expiresAt: expiresAt
+        )
+        let pairingURI = try ticket.encodedURI()
+        try await hostStore.insertPairingTicketPlaceholder(placeholder)
+        activeTicketID = ticketID
+        return HarcForegroundPairingTicketV1(
+            ticketID: ticketID,
+            clientKind: clientKind,
+            pairingURI: pairingURI,
+            issuedAt: issuedAt,
+            expiresAt: expiresAt,
+            hostAuthorityID: tuple.hostAuthorityID
+        )
+    }
+
+    public func cancel() async throws {
+        try await cancelActiveTicketIfNeeded()
+    }
+
+    private func cancelActiveTicketIfNeeded() async throws {
+        guard let ticketID = activeTicketID else { return }
+        activeTicketID = nil
+        do {
+            try await hostStore.cancelPairingTicketIfOpen(ticketID: ticketID)
+        } catch {
+            // Restore ownership so a transient HostDB failure cannot silently
+            // orphan a still-live secret-bearing foreground presentation.
+            activeTicketID = ticketID
+            throw error
+        }
+    }
+
+    private static let zeroUUID = UUID(uuid: (
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ))
+}
+#endif

@@ -1331,4 +1331,45 @@ extension HarcHostStore {
         }
         guard result != .invalid else { throw HarcHostError.invalidPairingTransition }
     }
+
+    /// Foreground-controller dismissal. Closing an already terminal or expired
+    /// ticket is idempotent, while any still-open ticket is made permanently
+    /// unusable in the same transaction.
+    public func cancelPairingTicketIfOpen(ticketID: UUID) async throws {
+        try await repairSecurityRegistryOnReopen()
+        let cancelledAt = now()
+        guard cancelledAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw HarcHostError.invalidPairingTransition
+        }
+        let timestamp = Self.unixTime(cancelledAt)
+        try await dbQueue.write { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT state, expires_at FROM pairing_tickets WHERE ticket_id = ?",
+                arguments: [ticketID.uuidString.lowercased()]
+            ), let state = PairingTicketState(
+                rawValue: row["state"] as String
+            ) else {
+                throw HarcHostError.invalidPairingTransition
+            }
+            if [.consumed, .expired, .cancelled].contains(state) {
+                return
+            }
+            let terminalState = timestamp >= row["expires_at"] as Double
+                ? PairingTicketState.expired
+                : .cancelled
+            try db.execute(
+                sql: "UPDATE pairing_tickets SET state = ?, updated_at = ? WHERE ticket_id = ? AND state = ?",
+                arguments: [
+                    terminalState.rawValue,
+                    timestamp,
+                    ticketID.uuidString.lowercased(),
+                    state.rawValue,
+                ]
+            )
+            guard db.changesCount == 1 else {
+                throw HarcHostError.invalidPairingTransition
+            }
+        }
+    }
 }
