@@ -28,6 +28,16 @@ public actor HarcSessionService {
         self.randomness = randomness
     }
 
+    public func currentDeviceCommandAuthority(
+        session: HostAuthenticatedSession,
+        requiredScope: AuthorizationScope
+    ) async throws -> HostCurrentDeviceCommandAuthority {
+        try await store.currentDeviceCommandAuthority(
+            session.context,
+            requiredScope: requiredScope
+        )
+    }
+
     public func beginSession(
         _ request: BeginHostSessionRequest
     ) async throws -> BeginHostSessionResponse {

@@ -191,17 +191,22 @@ struct LibraryCacheTests {
             try cache.recordConflict(conflict)
             #expect(try cache.offlineMutations().first?.state == .conflicted)
             #expect(try cache.conflicts() == [conflict])
+            try cache.resolveConflict(conflict.conflictID)
+            try cache.updateOfflineMutationState(
+                operationID: operationID,
+                state: .completed
+            )
+            #expect(try cache.conflicts().isEmpty)
+            #expect(try cache.offlineMutations().isEmpty)
         }
 
         let reopened = try HarcLibraryCache(
             rootDirectory: root,
             storageAttributes: attributes
         )
-        let mutation = try #require(try reopened.offlineMutations().first)
-        #expect(mutation.operationID == operationID)
-        #expect(mutation.exactPayload == Data("New title".utf8))
-        #expect(mutation.state == .conflicted)
-        #expect(try reopened.conflicts().count == 1)
+        #expect(try reopened.offlineMutations().isEmpty)
+        #expect(try reopened.conflicts().isEmpty)
+        #expect(try reopened.conflicts(includeResolved: true).count == 1)
     }
 
     @Test("a new library snapshot replaces only protected cache content")

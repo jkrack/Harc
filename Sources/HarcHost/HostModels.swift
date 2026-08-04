@@ -557,6 +557,19 @@ public enum HostPreparedOperationDisposition: Equatable, Sendable {
     case alreadyApplied(originalResult: Data)
 }
 
+/// Authoritative current-grant snapshot used only at the signed-command edge.
+/// `acceptedAt` comes from the Host store clock and the registry entry is read
+/// in the same database access that reauthorizes the live session context.
+public struct HostCurrentDeviceCommandAuthority: Sendable {
+    public let acceptedAt: Date
+    public let registryEntry: DeviceRegistryEntry
+
+    public init(acceptedAt: Date, registryEntry: DeviceRegistryEntry) {
+        self.acceptedAt = acceptedAt
+        self.registryEntry = registryEntry
+    }
+}
+
 // MARK: - Upload and staging
 
 public enum HostUploadJournalState: String, Codable, CaseIterable, Sendable {

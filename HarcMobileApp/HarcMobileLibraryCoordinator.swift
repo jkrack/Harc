@@ -28,12 +28,20 @@ final class HarcMobileLibraryCoordinator {
         case failed(String)
     }
 
+    enum MutationSubmissionOutcome: Equatable {
+        case applied
+        case queuedOffline
+        case conflict
+    }
+
     private(set) var state: State = .loadingCache
     private(set) var recordings: [LibraryRecordingSummary] = []
     private(set) var isRefreshing = false
     private(set) var searchResults: [SearchResult] = []
     private(set) var isSearching = false
     private(set) var searchMessage: String?
+    private(set) var pendingMutationCount = 0
+    private(set) var conflicts: [VisibleLibraryConflict] = []
 
     private let identity: InstallationSigningIdentity
     private let transferStore: HarcTransferStore
@@ -62,6 +70,111 @@ final class HarcMobileLibraryCoordinator {
         refreshTask = Task { [weak self] in
             await self?.performRefresh()
         }
+    }
+
+    func submitMetadataMutation(
+        summary: LibraryRecordingSummary,
+        mutation: HarcMobileMetadataMutation
+    ) async throws -> MutationSubmissionOutcome {
+        guard let snapshot = try transferStore.activeAdoption() else {
+            throw HarcMobileHostSessionConnectorError.notPaired
+        }
+        let adoption = try HarcPersistedAdoptionValidatorV1.validate(
+            snapshot,
+            devicePublicKey: identity.publicKey
+        )
+        guard adoption.grant.scopes.contains(.libraryMetadataWrite) else {
+            throw HarcMobileLibraryError.accessNotGranted
+        }
+        let signed = try HarcMobileSignedMetadataMutation(
+            mutation: mutation,
+            summary: summary,
+            adoption: adoption,
+            identity: identity
+        )
+        try cache.persistOfflineMutation(signed.queued)
+        loadQueueView()
+
+        do {
+            let opened = try await HarcMobileHostSessionConnector.open(
+                identity: identity,
+                store: transferStore,
+                routeURL: routeURL
+            )
+            do {
+                let authorization = try HarcLibraryAuthorization(
+                    openedSession: opened.session
+                )
+                try await drainOfflineMutations(
+                    opened: opened,
+                    authorization: authorization
+                )
+                try await synchronize(
+                    opened: opened,
+                    authorization: authorization,
+                    mayRestartSnapshot: true
+                )
+                try await opened.connection.shutdownGracefully()
+                loadCachedView()
+                let conflicted = conflicts.contains {
+                    $0.operationID == signed.queued.operationID
+                }
+                return conflicted ? .conflict : .applied
+            } catch {
+                await opened.connection.shutdownImmediately()
+                throw error
+            }
+        } catch {
+            loadQueueView()
+            if conflicts.contains(where: {
+                $0.operationID == signed.queued.operationID
+            }) {
+                return .conflict
+            }
+            if !(try cache.offlineMutations()).contains(where: {
+                $0.operationID == signed.queued.operationID
+            }) {
+                // The Host committed and acknowledged this operation; only
+                // the follow-up cache synchronization failed.
+                return .applied
+            }
+            state = .offline(
+                message: "Your edit is protected on this iPhone and will retry when the Host is reachable."
+            )
+            return .queuedOffline
+        }
+    }
+
+    func acceptHostValue(for conflict: VisibleLibraryConflict) throws {
+        try cache.resolveConflict(conflict.conflictID)
+        if let operationID = conflict.operationID {
+            try cache.updateOfflineMutationState(
+                operationID: operationID,
+                state: .completed
+            )
+        }
+        loadQueueView()
+    }
+
+    func clearDownloadedAudio() throws {
+        let parent = cache.databaseURL.deletingLastPathComponent()
+            .standardizedFileURL
+        let audio = parent.appendingPathComponent(
+            "Audio",
+            isDirectory: true
+        ).standardizedFileURL
+        guard audio.deletingLastPathComponent() == parent else {
+            throw HarcMobileLibraryError.malformedResponse
+        }
+        if FileManager.default.fileExists(atPath: audio.path) {
+            try FileManager.default.removeItem(at: audio)
+        }
+    }
+
+    func resetLibraryCache() throws {
+        try cache.clearCachedLibraryProjection()
+        loadCachedView()
+        refresh()
     }
 
     func recordingDetail(
@@ -279,6 +392,14 @@ final class HarcMobileLibraryCoordinator {
                 let authorization = try HarcLibraryAuthorization(
                     openedSession: opened.session
                 )
+                if opened.adoption.grant.scopes.contains(
+                    .libraryMetadataWrite
+                ) {
+                    try await drainOfflineMutations(
+                        opened: opened,
+                        authorization: authorization
+                    )
+                }
                 try await synchronize(
                     opened: opened,
                     authorization: authorization,
@@ -428,6 +549,113 @@ final class HarcMobileLibraryCoordinator {
             libraryID: opened.adoption.hostTrust.libraryID,
             mayRestartSnapshot: mayRestartSnapshot
         )
+    }
+
+    private func drainOfflineMutations(
+        opened: HarcMobileOpenedHostConnection,
+        authorization: HarcLibraryAuthorization
+    ) async throws {
+        guard opened.adoption.grant.scopes.contains(
+            .libraryMetadataWrite
+        ) else { return }
+        for queued in try cache.offlineMutations() {
+            guard queued.libraryID == opened.adoption.grant.libraryID else {
+                throw HarcMobileLibraryError.malformedResponse
+            }
+            guard queued.state == .queued || queued.state == .sending else {
+                continue
+            }
+            try cache.updateOfflineMutationState(
+                operationID: queued.operationID,
+                state: .sending
+            )
+            do {
+                let response = try await opened.connection
+                    .applyLibraryMetadataMutation(
+                        HarcMobileSignedMetadataMutation.request(for: queued),
+                        authorization: authorization
+                    )
+                try Self.validateLibraryProtocol(
+                    response.hasProtocol,
+                    response.protocol
+                )
+                switch response.result {
+                case .applied(let applied):
+                    guard applied.newRevision >= queued.expectedRevision.rawValue,
+                          applied.changeCursor > 0 else {
+                        throw HarcMobileLibraryError.malformedResponse
+                    }
+                    try cache.updateOfflineMutationState(
+                        operationID: queued.operationID,
+                        state: .completed
+                    )
+                case .conflict(let conflict):
+                    guard conflict.currentRevision > 0,
+                          conflict.hasCurrentValue else {
+                        throw HarcMobileLibraryError.malformedResponse
+                    }
+                    let current = try await fetchRecordingSummary(
+                        canonicalID: queued.canonicalRecordingID,
+                        transport: opened.connection,
+                        authorization: authorization
+                    )
+                    guard current.revision.rawValue
+                            >= conflict.currentRevision else {
+                        throw HarcMobileLibraryError.malformedResponse
+                    }
+                    try cache.recordConflict(
+                        try VisibleLibraryConflict(
+                            operationID: queued.operationID,
+                            libraryID: queued.libraryID,
+                            canonicalRecordingID: queued.canonicalRecordingID,
+                            expectedRevision: queued.expectedRevision,
+                            currentRevision: current.revision,
+                            currentValue: current,
+                            createdAt: Date()
+                        )
+                    )
+                case nil:
+                    throw HarcMobileLibraryError.malformedResponse
+                }
+            } catch {
+                if (try? cache.offlineMutations().first(where: {
+                    $0.operationID == queued.operationID
+                })?.state) == .sending {
+                    try? cache.updateOfflineMutationState(
+                        operationID: queued.operationID,
+                        state: .queued
+                    )
+                }
+                throw error
+            }
+        }
+        loadQueueView()
+    }
+
+    private func fetchRecordingSummary(
+        canonicalID: CanonicalRecordingID,
+        transport: HarcPinnedGRPCConnection,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> LibraryRecordingSummary {
+        var request = Harc_V1_GetRecordingRequestV1()
+        request.protocol = HarcProtocolVersion.v1.protobufV1()
+        request.canonicalRecordingID = Harc_V1_CanonicalRecordingIDV1(
+            canonicalID
+        )
+        request.requestedFields = [.recordingDetailFieldMetadata]
+        let response = try await transport.getLibraryRecording(
+            request,
+            authorization: authorization
+        )
+        try Self.validateLibraryProtocol(response.hasProtocol, response.protocol)
+        guard response.hasRecording else {
+            throw HarcMobileLibraryError.malformedResponse
+        }
+        let detail = try response.recording.domainValue()
+        guard detail.summary.canonicalID == canonicalID else {
+            throw HarcMobileLibraryError.malformedResponse
+        }
+        return detail.summary
     }
 
     private func replaceFromSnapshot(
@@ -606,9 +834,23 @@ final class HarcMobileLibraryCoordinator {
                 }
                 return $0.canonicalID < $1.canonicalID
             }
+            loadQueueView()
         } catch {
             recordings = []
             state = .failed(error.localizedDescription)
+        }
+    }
+
+    private func loadQueueView() {
+        do {
+            let mutations = try cache.offlineMutations()
+            pendingMutationCount = mutations.filter {
+                $0.state == .queued || $0.state == .sending
+            }.count
+            conflicts = try cache.conflicts()
+        } catch {
+            pendingMutationCount = 0
+            conflicts = []
         }
     }
 
@@ -627,8 +869,9 @@ final class HarcMobileLibraryCoordinator {
     }
 }
 
-private enum HarcMobileLibraryError: LocalizedError {
+enum HarcMobileLibraryError: LocalizedError {
     case accessNotGranted
+    case invalidMetadataValue
     case malformedResponse
     case repeatedFullResync
 
@@ -636,6 +879,8 @@ private enum HarcMobileLibraryError: LocalizedError {
         switch self {
         case .accessNotGranted:
             "This pairing does not grant Library access. Pair again and approve the requested Library scopes on the Host."
+        case .invalidMetadataValue:
+            "Metadata values cannot be empty. Clear the field explicitly instead."
         case .malformedResponse:
             "The Host returned an invalid Library response."
         case .repeatedFullResync:

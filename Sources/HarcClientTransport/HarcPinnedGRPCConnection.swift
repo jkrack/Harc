@@ -428,6 +428,16 @@ public final class HarcPinnedGRPCConnection:
         )
     }
 
+    public func applyLibraryMetadataMutation(
+        _ request: Harc_V1_ApplyMetadataMutationRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_ApplyMetadataMutationResponseV1 {
+        try await libraryRPCAdapter.applyLibraryMetadataMutation(
+            request,
+            authorization: authorization
+        )
+    }
+
     public func status() async -> HarcPinnedGRPCConnectionStatus {
         await taskOwner.status()
     }

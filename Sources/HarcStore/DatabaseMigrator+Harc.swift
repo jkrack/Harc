@@ -480,6 +480,23 @@ extension DatabaseMigrator {
                 """)
         }
 
+        // Durable idempotency boundary for signed remote metadata commands.
+        // The Host journals initial acceptance in Host.db before entering this
+        // transaction; this table lets a restarted Host reconcile the exact
+        // canonical result by operation identity without applying it twice.
+        migrator.registerMigration("v17_canonical_metadata_operations") { db in
+            try db.execute(sql: """
+                CREATE TABLE canonical_metadata_operations (
+                    operation_id TEXT PRIMARY KEY NOT NULL
+                        CHECK (length(operation_id) = 36),
+                    exact_request_sha256 BLOB NOT NULL
+                        CHECK (length(exact_request_sha256) = 32),
+                    result_json BLOB NOT NULL,
+                    recorded_at DATETIME NOT NULL
+                )
+                """)
+        }
+
         return migrator
     }
 }

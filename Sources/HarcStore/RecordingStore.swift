@@ -322,7 +322,7 @@ public actor RecordingStore {
     /// Regenerate the recording's canonical `.md` artifact after a mutation
     /// that changes projected content. Best-effort: the DB write already
     /// succeeded; a projection failure logs and moves on.
-    private func reprojectOKF(id: Int64) async {
+    func reprojectOKF(id: Int64) async {
         guard let rec = try? await fetch(id: id) else { return }
         OKFProjection.write(recording: rec)
         // A retitled/retagged member changes the session document's link

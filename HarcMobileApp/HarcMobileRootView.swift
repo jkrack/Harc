@@ -86,6 +86,20 @@ struct HarcMobileRootView: View {
                 } else {
                     List {
                         libraryStateRow(coordinator)
+                        if coordinator.pendingMutationCount > 0 {
+                            Label(
+                                "\(coordinator.pendingMutationCount) protected edit(s) waiting for Host",
+                                systemImage: "arrow.triangle.2.circlepath"
+                            )
+                            .foregroundStyle(.secondary)
+                        }
+                        if !coordinator.conflicts.isEmpty {
+                            Label(
+                                "\(coordinator.conflicts.count) edit conflict(s) need review",
+                                systemImage: "exclamationmark.arrow.triangle.2.circlepath"
+                            )
+                            .foregroundStyle(.orange)
+                        }
                         ForEach(coordinator.recordings) { recording in
                             NavigationLink {
                                 HarcMobileRecordingDetailView(
@@ -112,6 +126,16 @@ struct HarcMobileRootView: View {
                 } catch {}
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu("Library cache", systemImage: "externaldrive") {
+                        Button("Clear downloaded audio") {
+                            try? coordinator.clearDownloadedAudio()
+                        }
+                        Button("Rebuild Library cache") {
+                            try? coordinator.resetLibraryCache()
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Refresh Library", systemImage: "arrow.clockwise") {
                         coordinator.refresh()
@@ -615,6 +639,11 @@ private struct HarcMobileRecordingDetailView: View {
 
     @State private var detail: LibraryRecordingDetail?
     @State private var errorMessage: String?
+    @State private var titleDraft = ""
+    @State private var tagsDraft = ""
+    @State private var notesDraft = ""
+    @State private var mutationMessage: String?
+    @State private var isSavingMetadata = false
     @State private var audioController: HarcMobileRecordingAudioController
 
     init(
@@ -654,6 +683,85 @@ private struct HarcMobileRecordingDetailView: View {
                         LabeledContent("Processing", value: detail.summary.processing.state.rawValue)
                         LabeledContent("Projection", value: detail.summary.projection.state.rawValue)
                         LabeledContent("Revision", value: String(detail.summary.revision.rawValue))
+                    }
+                    Section("Edit on Host") {
+                        TextField("Title", text: $titleDraft)
+                        Button("Save title") {
+                            let trimmed = titleDraft.trimmingCharacters(
+                                in: .whitespacesAndNewlines
+                            )
+                            submitMetadata(
+                                .setTitle(trimmed.isEmpty ? nil : titleDraft)
+                            )
+                        }
+                        TextField(
+                            "Tags separated by commas",
+                            text: $tagsDraft
+                        )
+                        Button("Replace tags") {
+                            submitMetadata(
+                                .replaceTags(tagsDraft.split(separator: ",").map {
+                                    String($0)
+                                })
+                            )
+                        }
+                        TextEditor(text: $notesDraft)
+                            .frame(minHeight: 90)
+                        Button("Save notes") {
+                            let trimmed = notesDraft.trimmingCharacters(
+                                in: .whitespacesAndNewlines
+                            )
+                            submitMetadata(
+                                .setNotesMarkdown(
+                                    trimmed.isEmpty ? nil : notesDraft
+                                )
+                            )
+                        }
+                        Button(
+                            detail.summary.pinned
+                                ? "Unpin recording"
+                                : "Pin recording"
+                        ) {
+                            submitMetadata(
+                                .setPinned(!detail.summary.pinned)
+                            )
+                        }
+                        .disabled(isSavingMetadata)
+                        if isSavingMetadata {
+                            ProgressView("Signing and sending…")
+                        }
+                        if let mutationMessage {
+                            Text(mutationMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    let visibleConflicts = coordinator.conflicts.filter {
+                        $0.canonicalRecordingID == summary.canonicalID
+                    }
+                    if !visibleConflicts.isEmpty {
+                        Section("Edit conflicts") {
+                            ForEach(visibleConflicts, id: \.conflictID) { conflict in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(
+                                        "The Host advanced from revision \(conflict.expectedRevision.rawValue) to \(conflict.currentRevision.rawValue)."
+                                    )
+                                    .font(.footnote)
+                                    Button("Use Host value") {
+                                        do {
+                                            try coordinator.acceptHostValue(
+                                                for: conflict
+                                            )
+                                            mutationMessage =
+                                                "Conflict resolved with the Host value."
+                                            Task { await loadDetail() }
+                                        } catch {
+                                            mutationMessage = error.localizedDescription
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     if let transcript = detail.transcriptText,
                        !transcript.isEmpty {
@@ -696,13 +804,51 @@ private struct HarcMobileRecordingDetailView: View {
         .navigationTitle(summary.title ?? summary.suggestedTitle ?? "Recording")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: summary.canonicalID) {
+            await loadDetail()
+        }
+    }
+
+    private func submitMetadata(_ mutation: HarcMobileMetadataMutation) {
+        guard let current = detail?.summary,
+              !isSavingMetadata else { return }
+        isSavingMetadata = true
+        mutationMessage = nil
+        Task {
+            defer { isSavingMetadata = false }
             do {
-                detail = try await coordinator.recordingDetail(
-                    canonicalID: summary.canonicalID
+                let outcome = try await coordinator.submitMetadataMutation(
+                    summary: current,
+                    mutation: mutation
                 )
+                switch outcome {
+                case .applied:
+                    mutationMessage = "Saved on Host."
+                    await loadDetail()
+                case .queuedOffline:
+                    mutationMessage =
+                        "Saved safely on this iPhone; it will retry when the Host is online."
+                case .conflict:
+                    mutationMessage =
+                        "The Host has a newer revision. Review the conflict below."
+                }
             } catch {
-                errorMessage = error.localizedDescription
+                mutationMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func loadDetail() async {
+        do {
+            let loaded = try await coordinator.recordingDetail(
+                canonicalID: summary.canonicalID
+            )
+            detail = loaded
+            titleDraft = loaded.summary.title ?? ""
+            tagsDraft = loaded.summary.tags.joined(separator: ", ")
+            notesDraft = loaded.notesMarkdown ?? ""
+            errorMessage = nil
+        } catch {
+            if detail == nil { errorMessage = error.localizedDescription }
         }
     }
 

@@ -462,6 +462,31 @@ public final class HarcLibraryCache: @unchecked Sendable {
         }
     }
 
+    public func updateOfflineMutationState(
+        operationID: OperationID,
+        state: OfflineMetadataMutationState
+    ) throws {
+        try database.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE offline_metadata_mutations
+                    SET state = ?, updated_at_ms = ?
+                    WHERE operation_id = ?
+                    """,
+                arguments: [
+                    state.rawValue,
+                    try ClientStoreCoding.milliseconds(now()),
+                    operationID.description,
+                ]
+            )
+            guard db.changesCount == 1 else {
+                throw ClientStoreError.corruptStoredValue(
+                    field: "offlineMutationOperationID"
+                )
+            }
+        }
+    }
+
     public func recordConflict(_ conflict: VisibleLibraryConflict) throws {
         try database.write { db in
             let currentState = try cacheState(in: db)
@@ -533,8 +558,41 @@ public final class HarcLibraryCache: @unchecked Sendable {
         }
     }
 
+    public func resolveConflict(_ conflictID: UUID, at date: Date? = nil) throws {
+        let resolvedAt = date ?? now()
+        try database.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE library_conflicts
+                    SET resolved_at_ms = ?
+                    WHERE conflict_id = ? AND resolved_at_ms IS NULL
+                    """,
+                arguments: [
+                    try ClientStoreCoding.milliseconds(resolvedAt),
+                    conflictID.uuidString.lowercased(),
+                ]
+            )
+            guard db.changesCount == 1 else {
+                throw ClientStoreError.corruptStoredValue(
+                    field: "libraryConflictID"
+                )
+            }
+        }
+    }
+
     public func refreshStorageAttributes() throws {
         try database.refreshStorageAttributes()
+    }
+
+    /// Drops only replaceable Host projections. Durable offline commands and
+    /// visible conflicts remain intact and the next refresh starts a new
+    /// anchored snapshot.
+    public func clearCachedLibraryProjection() throws {
+        try database.write { db in
+            try db.execute(sql: "DELETE FROM cached_recordings")
+            try db.execute(sql: "DELETE FROM cached_tombstones")
+            try db.execute(sql: "DELETE FROM cache_cursor")
+        }
     }
 
     public func checkpoint() throws {

@@ -14,6 +14,7 @@ public struct HarcLibraryGRPCServiceAdapterV1:
     static let defaultSnapshotPageItems = 100
 
     private let service: HarcHostLibraryService
+    private let sessionService: HarcSessionService
     private let sessionAuthenticator: any HarcSessionCredentialAuthenticating
     private let servedIdentityBinding: HarcGRPCServedIdentityBinding
     private let compatibility: HarcProtobufCompatibilityPolicy
@@ -25,6 +26,7 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         compatibility: HarcProtobufCompatibilityPolicy = .currentV1
     ) {
         self.service = service
+        self.sessionService = sessionService
         self.sessionAuthenticator = sessionService
         self.servedIdentityBinding = servedIdentityBinding
         self.compatibility = compatibility
@@ -447,11 +449,112 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         request: ServerRequest<Harc_V1_ApplyMetadataMutationRequestV1>,
         context: ServerContext
     ) async throws -> ServerResponse<Harc_V1_ApplyMetadataMutationResponseV1> {
-        _ = try await authorize(
-            request.metadata,
-            requiredScope: .libraryMetadataWrite
-        )
-        throw RPCError(code: .unimplemented, message: "Remote metadata mutation is not available in this build.")
+        do {
+            let session = try await authorize(
+                request.metadata,
+                requiredScope: .libraryMetadataWrite
+            )
+            let version = try validateProtocol(
+                request.message.hasProtocol,
+                request.message.protocol,
+                knownFields: [1, 2],
+                session: session
+            )
+            guard request.message.hasExactSignedMetadataMutation,
+                  !request.message.exactSignedMetadataMutation.framedBytes.isEmpty else {
+                throw HarcProtobufConversionError.missingField(
+                    "applyMetadataMutation.exactSignedMetadataMutation"
+                )
+            }
+            let exactBytes = request.message.exactSignedMetadataMutation.framedBytes
+            let authority = try await sessionService
+                .currentDeviceCommandAuthority(
+                    session: session,
+                    requiredScope: .libraryMetadataWrite
+                )
+            let currentGrant = try HarcCurrentGrantBindingV1(
+                registryEntry: authority.registryEntry
+            )
+            let signedObject = try HarcSignedObjectV1.decode(
+                exactBytes,
+                versionPolicy: compatibility.versionPolicy
+            )
+            let authenticated: HarcAuthenticatedSignedObjectV1
+            do {
+                authenticated = try signedObject
+                    .authenticateRegisteredPayload(
+                        using: authority.registryEntry.devicePublicKey,
+                        compatibility: compatibility,
+                        purpose: .initialCommandAcceptance(
+                            acceptedAtUnixMilliseconds: try Self
+                                .unixMilliseconds(authority.acceptedAt),
+                            currentGrant: currentGrant
+                        )
+                    )
+            } catch HarcProtocolCodecError.commandExpired {
+                // An exact command may already be durably accepted even after
+                // its initial-acceptance window. Historical verification still
+                // proves its signature and mirrors; the Host replay journal
+                // below returns it only if exact bytes were accepted earlier,
+                // otherwise it rejects the expired first attempt.
+                authenticated = try signedObject
+                    .authenticateRegisteredPayload(
+                        using: authority.registryEntry.devicePublicKey,
+                        compatibility: compatibility,
+                        purpose: .historicalEvidence
+                    )
+            }
+            guard case .metadataMutation(let exactMutation) = authenticated.payload else {
+                throw HarcProtobufConversionError.invalidValue(
+                    field: "applyMetadataMutation.payloadType"
+                )
+            }
+            let wire = exactMutation.message
+            let libraryID = try wire.libraryID.domainValue()
+            let authorityID = try wire.hostAuthorityID.domainValue()
+            let requestingDeviceID = try wire.requestingDeviceID.domainValue()
+            let grantID = try wire.grantID.domainValue()
+            let grantEpoch = try GrantEpoch(wire.grantEpoch)
+            guard libraryID == session.context.libraryID,
+                  authorityID == session.context.hostAuthorityID,
+                  requestingDeviceID == session.context.authenticatedDeviceID,
+                  grantID == session.context.grantID,
+                  grantEpoch == session.context.grantEpoch else {
+                throw HarcHostError.grantMismatch
+            }
+            let command = HarcHostMetadataMutationCommand(
+                operationID: try wire.operationID.domainValue(),
+                issuedAt: try Self.date(unixMilliseconds: wire.issuedAtUnixMs),
+                expiresAt: try Self.date(unixMilliseconds: wire.expiresAtUnixMs),
+                canonicalID: try wire.canonicalRecordingID.domainValue(),
+                expectedRevision: try EntityRevision(wire.expectedRevision),
+                mutation: try Self.metadataMutation(wire.mutation),
+                exactSignedRequestBytes: exactBytes
+            )
+            let result = try await service.applyMetadataMutation(
+                session: session,
+                command: command
+            )
+            var response = Harc_V1_ApplyMetadataMutationResponseV1()
+            response.protocol = version.protobufV1()
+            switch result {
+            case .applied(let newRevision, let changeCursor):
+                var applied = Harc_V1_MetadataMutationAppliedV1()
+                applied.newRevision = newRevision.rawValue
+                applied.changeCursor = changeCursor.rawValue
+                response.result = .applied(applied)
+            case .conflict(let currentRevision, let currentValue):
+                var conflict = Harc_V1_MetadataMutationConflictV1()
+                conflict.currentRevision = currentRevision.rawValue
+                conflict.currentValue = Self.protobufMetadataFieldValue(
+                    currentValue
+                )
+                response.result = .conflict(conflict)
+            }
+            return ServerResponse(message: response)
+        } catch {
+            throw HarcPostSessionGRPCErrorMapper.map(error)
+        }
     }
 
     private func authorize(
@@ -897,5 +1000,74 @@ public struct HarcLibraryGRPCServiceAdapterV1:
             )
         }
         return UInt64(value.rounded(.down))
+    }
+
+    private static func date(unixMilliseconds value: UInt64) throws -> Date {
+        guard value <= 9_007_199_254_740_991 else {
+            throw HarcProtobufConversionError.invalidValue(
+                field: "metadataMutation.date"
+            )
+        }
+        let date = Date(timeIntervalSince1970: Double(value) / 1_000)
+        guard date.timeIntervalSinceReferenceDate.isFinite else {
+            throw HarcProtobufConversionError.invalidValue(
+                field: "metadataMutation.date"
+            )
+        }
+        return date
+    }
+
+    private static func metadataMutation(
+        _ wire: Harc_V1_MetadataMutationV1.OneOf_Mutation?
+    ) throws -> HarcHostMetadataMutation {
+        guard let wire else {
+            throw HarcProtobufConversionError.missingField(
+                "metadataMutation.mutation"
+            )
+        }
+        switch wire {
+        case .setTitle(let value):
+            return .setTitle(value.hasTitle ? value.title : nil)
+        case .replaceTags(let value):
+            return .replaceTags(value.tags)
+        case .setSpeakerLabel(let value):
+            return .setSpeakerLabel(
+                index: value.speakerIndex,
+                displayName: value.hasDisplayName ? value.displayName : nil
+            )
+        case .setNotesMarkdown(let value):
+            return .setNotesMarkdown(
+                value.hasMarkdown ? value.markdown : nil
+            )
+        case .setPinned(let value):
+            return .setPinned(value.pinned)
+        }
+    }
+
+    private static func protobufMetadataFieldValue(
+        _ value: HarcHostMetadataFieldValue
+    ) -> Harc_V1_MetadataFieldValueV1 {
+        var wire = Harc_V1_MetadataFieldValueV1()
+        switch value {
+        case .title(let value):
+            if let value { wire.value = .title(value) }
+            wire.isCleared = value == nil
+        case .tags(let values):
+            var tags = Harc_V1_MetadataTagsValueV1()
+            tags.tags = values
+            wire.value = .tags(tags)
+        case .speakerLabel(let index, let displayName):
+            var label = Harc_V1_MetadataSpeakerLabelValueV1()
+            label.speakerIndex = index
+            if let displayName { label.displayName = displayName }
+            wire.value = .speakerLabel(label)
+            wire.isCleared = displayName == nil
+        case .notesMarkdown(let value):
+            if let value { wire.value = .notesMarkdown(value) }
+            wire.isCleared = value == nil
+        case .pinned(let value):
+            wire.value = .pinned(value)
+        }
+        return wire
     }
 }

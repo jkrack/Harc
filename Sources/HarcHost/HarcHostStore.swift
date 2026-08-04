@@ -787,6 +787,35 @@ extension HarcHostStore {
             )
         }
     }
+
+    /// Reauthorizes a session against the live registry and returns the exact
+    /// current entry needed for registered signed-command verification.
+    public func currentDeviceCommandAuthority(
+        _ context: AuthenticatedDeviceContext,
+        requiredScope: AuthorizationScope
+    ) async throws -> HostCurrentDeviceCommandAuthority {
+        try await repairSecurityRegistryOnReopen()
+        let acceptedAt = now()
+        return try await dbQueue.read { db in
+            _ = try self.authorizeInDatabase(
+                db,
+                context: context,
+                requiredScope: requiredScope,
+                objectOwner: nil,
+                at: acceptedAt
+            )
+            guard let bytes = try Data.fetchOne(
+                db,
+                sql: "SELECT registry_entry_json FROM devices WHERE device_id = ?",
+                arguments: [context.authenticatedDeviceID.rawBytes]
+            ) else { throw HarcHostError.unknownDevice }
+            let entry = try Self.decode(DeviceRegistryEntry.self, from: bytes)
+            return HostCurrentDeviceCommandAuthority(
+                acceptedAt: acceptedAt,
+                registryEntry: entry
+            )
+        }
+    }
 }
 
 public struct HostAuthorizer: Sendable {

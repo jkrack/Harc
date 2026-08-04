@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import HarcDomain
 import HarcIdentity
@@ -17,6 +18,57 @@ public enum HarcHostLibraryError: Error, Equatable, Sendable {
     case canonicalAudioUnavailable
     case invalidResumeOffset
     case canonicalAudioChanged
+    case metadataMutationUnavailable
+    case metadataMutationRateLimited
+}
+
+public enum HarcHostMetadataMutation: Codable, Equatable, Sendable {
+    case setTitle(String?)
+    case replaceTags([String])
+    case setSpeakerLabel(index: UInt32, displayName: String?)
+    case setNotesMarkdown(String?)
+    case setPinned(Bool)
+}
+
+public enum HarcHostMetadataFieldValue: Codable, Equatable, Sendable {
+    case title(String?)
+    case tags([String])
+    case speakerLabel(index: UInt32, displayName: String?)
+    case notesMarkdown(String?)
+    case pinned(Bool)
+}
+
+public enum HarcHostMetadataMutationResult: Codable, Equatable, Sendable {
+    case applied(newRevision: EntityRevision, changeCursor: ChangeCursor)
+    case conflict(currentRevision: EntityRevision, currentValue: HarcHostMetadataFieldValue)
+}
+
+public struct HarcHostMetadataMutationCommand: Sendable {
+    public let operationID: OperationID
+    public let issuedAt: Date
+    public let expiresAt: Date
+    public let canonicalID: CanonicalRecordingID
+    public let expectedRevision: EntityRevision
+    public let mutation: HarcHostMetadataMutation
+    public let exactSignedRequestBytes: Data
+
+    public init(
+        operationID: OperationID,
+        issuedAt: Date,
+        expiresAt: Date,
+        canonicalID: CanonicalRecordingID,
+        expectedRevision: EntityRevision,
+        mutation: HarcHostMetadataMutation,
+        exactSignedRequestBytes: Data
+    ) {
+        self.operationID = operationID
+        self.issuedAt = issuedAt
+        self.expiresAt = expiresAt
+        self.canonicalID = canonicalID
+        self.expectedRevision = expectedRevision
+        self.mutation = mutation
+        self.exactSignedRequestBytes = exactSignedRequestBytes
+    }
 }
 
 public enum HarcHostLibrarySnapshotItem: Equatable, Sendable {
@@ -175,6 +227,8 @@ public actor HarcHostLibraryService {
     public static let maximumPageItems = 1_000
     public static let maximumSearchPageItems = 200
     public static let maximumSearchContinuations = 128
+    public static let metadataMutationRatePerMinute = 10.0
+    public static let metadataMutationBurst = 20.0
 
     private struct SnapshotBinding: Equatable, Sendable {
         let context: AuthenticatedDeviceContext
@@ -225,24 +279,132 @@ public actor HarcHostLibraryService {
         let expiresAt: Date
     }
 
+    private struct MutationRateBucket: Sendable {
+        var tokens: Double
+        var updatedAt: Date
+    }
+
     private let store: RecordingStore
+    private let hostStore: HarcHostStore?
     private let randomness: any HostAuthenticationRandomness
     private let now: @Sendable () -> Date
     private let searchEmbedder: any TextEmbedder
     private var snapshotsByDevice: [DeviceID: Snapshot] = [:]
     private var searchContinuations: [Data: SearchContinuation] = [:]
+    private var mutationRateBuckets: [DeviceID: MutationRateBucket] = [:]
 
     public init(
         store: RecordingStore,
+        hostStore: HarcHostStore? = nil,
         randomness: any HostAuthenticationRandomness =
             SystemHostAuthenticationRandomness(),
         searchEmbedder: any TextEmbedder = HashedLexicalEmbedder(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.store = store
+        self.hostStore = hostStore
         self.randomness = randomness
         self.searchEmbedder = searchEmbedder
         self.now = now
+    }
+
+    public func applyMetadataMutation(
+        session: HostAuthenticatedSession,
+        command: HarcHostMetadataMutationCommand
+    ) async throws -> HarcHostMetadataMutationResult {
+        guard let hostStore else {
+            throw HarcHostLibraryError.metadataMutationUnavailable
+        }
+        guard session.context.libraryID
+                == (try await store.libraryMetadata()).libraryID else {
+            throw HarcHostLibraryError.snapshotBindingMismatch
+        }
+        guard !command.exactSignedRequestBytes.isEmpty else {
+            throw HarcHostLibraryError.metadataMutationUnavailable
+        }
+        try consumeMetadataMutationRateLimit(
+            for: session.context.authenticatedDeviceID
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let decoder = JSONDecoder()
+        let effect = MetadataMutationPreparedEffect(
+            canonicalID: command.canonicalID,
+            expectedRevision: command.expectedRevision,
+            mutation: command.mutation,
+            exactRequestSHA256: Data(SHA256.hash(
+                data: command.exactSignedRequestBytes
+            ))
+        )
+        let preparedEffect = try encoder.encode(effect)
+        let disposition = try await hostStore.prepareExternalOperationEffect(
+            context: session.context,
+            requiredScope: .libraryMetadataWrite,
+            messageType: "library.metadata-mutation.v1",
+            operationID: command.operationID,
+            issuedAt: command.issuedAt,
+            expiresAt: command.expiresAt,
+            exactRequestBytes: command.exactSignedRequestBytes,
+            preparedEffect: preparedEffect
+        )
+        if case .alreadyApplied(let originalResult) = disposition {
+            return try decoder.decode(
+                HarcHostMetadataMutationResult.self,
+                from: originalResult
+            )
+        }
+
+        let canonicalResult = try await store.applyCanonicalMetadataMutation(
+            operationID: command.operationID,
+            exactRequestSHA256: effect.exactRequestSHA256,
+            canonicalID: command.canonicalID,
+            expectedRevision: command.expectedRevision,
+            mutation: command.mutation.canonicalStoreValue,
+            at: hostStore.now()
+        )
+        let result = HarcHostMetadataMutationResult(canonicalResult)
+        let resultBytes = try encoder.encode(result)
+        let key = try HostOperationReplayKey(
+            libraryID: session.context.libraryID,
+            hostAuthorityID: session.context.hostAuthorityID,
+            messageType: "library.metadata-mutation.v1",
+            signer: .device(session.context.authenticatedDeviceID),
+            operationID: command.operationID
+        )
+        _ = try await hostStore.markPreparedOperationApplied(
+            key: key,
+            exactRequestBytes: command.exactSignedRequestBytes,
+            preparedEffect: preparedEffect,
+            originalResult: resultBytes
+        )
+        return result
+    }
+
+    private func consumeMetadataMutationRateLimit(
+        for deviceID: DeviceID
+    ) throws {
+        let current = now()
+        guard current.timeIntervalSinceReferenceDate.isFinite else {
+            throw HarcHostLibraryError.metadataMutationUnavailable
+        }
+        var bucket = mutationRateBuckets[deviceID] ?? MutationRateBucket(
+            tokens: Self.metadataMutationBurst,
+            updatedAt: current
+        )
+        let elapsed = max(0, current.timeIntervalSince(bucket.updatedAt))
+        bucket.tokens = min(
+            Self.metadataMutationBurst,
+            bucket.tokens
+                + elapsed * Self.metadataMutationRatePerMinute / 60
+        )
+        bucket.updatedAt = current
+        guard bucket.tokens >= 1 else {
+            mutationRateBuckets[deviceID] = bucket
+            throw HarcHostLibraryError.metadataMutationRateLimited
+        }
+        bucket.tokens -= 1
+        mutationRateBuckets[deviceID] = bucket
     }
 
     public func beginSnapshot(
@@ -867,5 +1029,55 @@ public actor HarcHostLibraryService {
             return token
         }
         throw HarcHostLibraryError.snapshotCapacityExceeded
+    }
+}
+
+private struct MetadataMutationPreparedEffect: Codable, Equatable, Sendable {
+    let canonicalID: CanonicalRecordingID
+    let expectedRevision: EntityRevision
+    let mutation: HarcHostMetadataMutation
+    let exactRequestSHA256: Data
+}
+
+private extension HarcHostMetadataMutation {
+    var canonicalStoreValue: CanonicalMetadataMutation {
+        switch self {
+        case .setTitle(let value): .setTitle(value)
+        case .replaceTags(let value): .replaceTags(value)
+        case .setSpeakerLabel(let index, let displayName):
+            .setSpeakerLabel(index: index, displayName: displayName)
+        case .setNotesMarkdown(let value): .setNotesMarkdown(value)
+        case .setPinned(let value): .setPinned(value)
+        }
+    }
+}
+
+private extension HarcHostMetadataFieldValue {
+    init(_ value: CanonicalMetadataFieldValue) {
+        switch value {
+        case .title(let value): self = .title(value)
+        case .tags(let value): self = .tags(value)
+        case .speakerLabel(let index, let displayName):
+            self = .speakerLabel(index: index, displayName: displayName)
+        case .notesMarkdown(let value): self = .notesMarkdown(value)
+        case .pinned(let value): self = .pinned(value)
+        }
+    }
+}
+
+private extension HarcHostMetadataMutationResult {
+    init(_ value: CanonicalMetadataMutationResult) {
+        switch value {
+        case .applied(let newRevision, let changeCursor):
+            self = .applied(
+                newRevision: newRevision,
+                changeCursor: changeCursor
+            )
+        case .conflict(let currentRevision, let currentValue):
+            self = .conflict(
+                currentRevision: currentRevision,
+                currentValue: HarcHostMetadataFieldValue(currentValue)
+            )
+        }
     }
 }

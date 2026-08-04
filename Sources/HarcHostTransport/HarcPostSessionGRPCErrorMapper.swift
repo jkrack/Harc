@@ -267,7 +267,11 @@ enum HarcPostSessionGRPCErrorMapper {
             .invalidArgument
         case .snapshotCapacityExceeded:
             .resourceExhausted
+        case .metadataMutationRateLimited:
+            .resourceExhausted
         case .canonicalAudioChanged:
+            .unavailable
+        case .metadataMutationUnavailable:
             .unavailable
         }
     }

@@ -154,7 +154,8 @@ public actor HarcResidentHostRuntimeV1 {
                     backgroundTransportRelay
             )
             let library = HarcHostLibraryService(
-                store: storage.recordingStore
+                store: storage.recordingStore,
+                hostStore: storage.hostStore
             )
             let sourceSecret = try SystemHostAuthenticationRandomness()
                 .randomBytes(count: 32)
