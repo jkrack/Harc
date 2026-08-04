@@ -21,6 +21,7 @@ final class HarcMobileAppModel {
     private(set) var readiness: Readiness = .starting
     private(set) var bootstrapCompleted = false
     private(set) var captureCoordinator: HarcMobileCaptureCoordinator?
+    private(set) var pairingCoordinator: HarcMobilePairingCoordinator?
     private var transferStore: HarcTransferStore?
 
     func bootstrap() async {
@@ -33,9 +34,14 @@ final class HarcMobileAppModel {
             }
             let root = try Self.applicationRoot()
             let clientLocations = try ClientStoreLocations(rootDirectory: root)
+            let captureLocations = try HarcMobileCaptureLocations(
+                applicationSupportRoot: root
+            )
+            let routeURL = root.appendingPathComponent("host-route.json")
             let hasPriorState = FileManager.default.fileExists(
                 atPath: clientLocations.transferDatabase.path
-            )
+            ) || FileManager.default.fileExists(atPath: routeURL.path)
+            let hasCaptureState = try Self.hasCaptureState(captureLocations)
             let identityManager = InstallationIdentityManager(
                 keyStore: KeychainSoftwareInstallationKeyStore(
                     service: "com.harc.Harc.mobile.installation-identity",
@@ -44,7 +50,8 @@ final class HarcMobileAppModel {
             )
             let resolution = try await identityManager.resolve(
                 evidence: InstallationIdentityEvidence(
-                    hasPriorIdentityState: hasPriorState
+                    hasPriorIdentityState: hasPriorState,
+                    hasIdentityBoundCaptures: hasCaptureState
                 )
             )
             guard case .available(let identity, _) = resolution else {
@@ -55,8 +62,9 @@ final class HarcMobileAppModel {
                 rootDirectory: root,
                 installationDeviceID: identity.deviceID
             )
-            let captureLocations = try HarcMobileCaptureLocations(
-                applicationSupportRoot: root
+            try Self.protectTransferState(
+                root: root,
+                locations: clientLocations
             )
             let recovered = try HarcMobileCaptureRecovery
                 .recoverDurablePrefixes(locations: captureLocations)
@@ -66,6 +74,10 @@ final class HarcMobileAppModel {
                     masterFileURL: master.masterFileURL
                 )
             }
+            try Self.protectTransferState(
+                root: root,
+                locations: clientLocations
+            )
             transferStore = store
             captureCoordinator = HarcMobileCaptureCoordinator(
                 producingDeviceID: identity.deviceID,
@@ -79,6 +91,12 @@ final class HarcMobileAppModel {
                     masterFileURL: master.masterFileURL
                 )
             }
+            pairingCoordinator = HarcMobilePairingCoordinator(
+                identity: identity,
+                store: store,
+                routeURL: routeURL,
+                hasActiveAdoption: try store.activeAdoption() != nil
+            )
             readiness = .ready(
                 deviceID: identity.deviceID,
                 recoveredRecordings: recovered.count
@@ -109,6 +127,37 @@ final class HarcMobileAppModel {
             attributes: [.posixPermissions: 0o700]
         )
         return root
+    }
+
+    private static func hasCaptureState(
+        _ locations: HarcMobileCaptureLocations
+    ) throws -> Bool {
+        for directory in [locations.active, locations.finalized]
+        where FileManager.default.fileExists(atPath: directory.path) {
+            if try !FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            ).isEmpty {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func protectTransferState(
+        root: URL,
+        locations: ClientStoreLocations
+    ) throws {
+        let attributes = FoundationHarcMobileCaptureStorageAttributes()
+        try attributes.applyAndVerify(.transferArtifact, to: root)
+        let database = locations.transferDatabase
+        for url in [
+            database,
+            URL(fileURLWithPath: database.path + "-wal"),
+            URL(fileURLWithPath: database.path + "-shm"),
+        ] where FileManager.default.fileExists(atPath: url.path) {
+            try attributes.applyAndVerify(.transferArtifact, to: url)
+        }
     }
 
     private static func finalizedCapture(

@@ -4,6 +4,7 @@ import UIKit
 
 struct HarcMobileRootView: View {
     @Environment(HarcMobileAppModel.self) private var model
+    @State private var showsPairingScanner = false
 
     var body: some View {
         TabView {
@@ -40,6 +41,32 @@ struct HarcMobileRootView: View {
             )
         ) { _ in
             Task { await model.retryAfterProtectedDataBecomesAvailable() }
+        }
+        .sheet(isPresented: $showsPairingScanner) {
+            NavigationStack {
+                HarcPairingScannerView(
+                    onCode: { code in
+                        showsPairingScanner = false
+                        Task {
+                            await model.pairingCoordinator?.begin(
+                                scannedURI: code
+                            )
+                        }
+                    },
+                    onFailure: { message in
+                        showsPairingScanner = false
+                        model.pairingCoordinator?.scannerFailed(message)
+                    }
+                )
+                .ignoresSafeArea()
+                .navigationTitle("Scan Host Code")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showsPairingScanner = false }
+                    }
+                }
+            }
         }
     }
 
@@ -203,6 +230,18 @@ struct HarcMobileRootView: View {
     private var hostView: some View {
         switch model.readiness {
         case .ready(let deviceID, _):
+            hostReadyView(deviceID: deviceID)
+        default:
+            ContentUnavailableView(
+                "Finish local setup first",
+                systemImage: "hourglass"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func hostReadyView(deviceID: DeviceID) -> some View {
+        if let coordinator = model.pairingCoordinator {
             List {
                 Section("This iPhone") {
                     LabeledContent("Device ID") {
@@ -210,18 +249,79 @@ struct HarcMobileRootView: View {
                             .font(.caption.monospaced())
                     }
                 }
-                Section {
-                    Button("Scan Host Pairing Code") {}
-                        .disabled(true)
-                } footer: {
-                    Text("Pairing will compare four security words and still requires approval on the Host Mac.")
+                pairingContent(coordinator)
+            }
+        } else {
+            ProgressView("Preparing secure pairing…")
+        }
+    }
+
+    @ViewBuilder
+    private func pairingContent(
+        _ coordinator: HarcMobilePairingCoordinator
+    ) -> some View {
+        switch coordinator.state {
+        case .unpaired:
+            Section {
+                Button("Scan Host Pairing Code", systemImage: "qrcode.viewfinder") {
+                    showsPairingScanner = true
+                }
+            } footer: {
+                Text("The short-lived code pins the Host identity and local TLS route. No cloud account is used.")
+            }
+        case .connecting:
+            Section {
+                HStack {
+                    ProgressView()
+                    Text("Verifying Host and proving this iPhone…")
                 }
             }
-        default:
-            ContentUnavailableView(
-                "Finish local setup first",
-                systemImage: "hourglass"
-            )
+        case .compareWords(let host, let phrase, let expiresAt):
+            Section("Compare on \(host)") {
+                Text(phrase)
+                    .font(.title2.weight(.semibold).monospaced())
+                    .textSelection(.enabled)
+                    .accessibilityLabel("Security words: \(phrase)")
+                Text("Code expires \(expiresAt, style: .relative).")
+                    .foregroundStyle(.secondary)
+                Button("These Four Words Match", systemImage: "checkmark.shield") {
+                    Task { await coordinator.confirmWordsMatch() }
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Words Do Not Match", role: .destructive) {
+                    Task { await coordinator.wordsDoNotMatch() }
+                }
+            }
+        case .awaitingHostApproval(let host, let phrase):
+            Section("Waiting for \(host)") {
+                HStack {
+                    ProgressView()
+                    Text("Approve this iPhone on the Host computer.")
+                }
+                LabeledContent("Security words", value: phrase)
+            }
+        case .paired(let host):
+            Section {
+                Label(host, systemImage: "checkmark.shield.fill")
+                    .foregroundStyle(.green)
+                Button("Pair a Different Host") {
+                    coordinator.beginReplacement()
+                    showsPairingScanner = true
+                }
+            } header: {
+                Text("Adopted Host")
+            } footer: {
+                Text("Reconnects revalidate the signed Host transport and device grant before opening a session.")
+            }
+        case .failed(let message):
+            Section("Pairing Failed") {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                Button("Try Again") {
+                    coordinator.resetFailure()
+                    showsPairingScanner = true
+                }
+            }
         }
     }
 }
