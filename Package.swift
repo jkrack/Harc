@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "HarcHost", targets: ["HarcHost"]),
         .library(name: "HarcHostTransport", targets: ["HarcHostTransport"]),
         .library(name: "HarcClientTransport", targets: ["HarcClientTransport"]),
+        .library(name: "HarcAudioMobile", targets: ["HarcAudioMobile"]),
         .library(name: "HarcAudio", targets: ["HarcAudio"]),
         .library(name: "HarcClient", targets: ["HarcClient"]),
         .library(name: "HarcStore", targets: ["HarcStore"]),
@@ -205,6 +206,11 @@ let package = Package(
                 ),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
             ],
+            exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcAudioMobile",
+            dependencies: ["HarcDomain"],
             exclude: ["README.md"]
         ),
         .target(
@@ -416,6 +422,10 @@ let package = Package(
         .testTarget(
             name: "HarcAudioTests",
             dependencies: ["HarcAudio", "HarcCore", "HarcDomain", "HarcClient"]
+        ),
+        .testTarget(
+            name: "HarcAudioMobileTests",
+            dependencies: ["HarcAudioMobile", "HarcDomain"]
         ),
         .testTarget(
             name: "HarcClientTests",

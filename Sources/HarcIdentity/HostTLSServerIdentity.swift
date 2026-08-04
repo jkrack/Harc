@@ -469,11 +469,7 @@ private enum HostTLSCertificateDER {
             throw HostCryptographicStateError.unexpectedKeychainStatus(addStatus)
         }
 
-        var identity: SecIdentity?
-        let identityStatus = SecIdentityCreateWithCertificate(nil, certificate, &identity)
-        guard identityStatus == errSecSuccess, let identity else {
-            throw HostCryptographicStateError.serverIdentityUnavailable
-        }
+        let identity = try resolveInstalledServerIdentity(certificate: certificate)
         var matchedPrivateKey: SecKey?
         guard SecIdentityCopyPrivateKey(identity, &matchedPrivateKey) == errSecSuccess,
               let matchedPrivateKey,
@@ -483,6 +479,24 @@ private enum HostTLSCertificateDER {
             throw HostCryptographicStateError.serverIdentityUnavailable
         }
         return identity
+    }
+
+    private static func resolveInstalledServerIdentity(
+        certificate: SecCertificate
+    ) throws -> SecIdentity {
+#if os(macOS)
+        var identity: SecIdentity?
+        let status = SecIdentityCreateWithCertificate(nil, certificate, &identity)
+        guard status == errSecSuccess, let identity else {
+            throw HostCryptographicStateError.serverIdentityUnavailable
+        }
+        return identity
+#else
+        // A Harc client never serves the Host TLS identity. Keep the shared
+        // identity module buildable on iOS without weakening that boundary or
+        // attempting to select an arbitrary client identity from its keychain.
+        throw HostCryptographicStateError.serverIdentityUnavailable
+#endif
     }
 
     static func deleteInstalledCertificateBestEffort(certificateDER: Data) {
