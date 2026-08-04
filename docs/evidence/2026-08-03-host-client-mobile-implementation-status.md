@@ -44,12 +44,15 @@ require hardware outside this coding session.
   focused macOS Swift 6 typecheck.
 - The generated `HarcMobile` scheme completed an unsigned arm64 iOS Simulator
   build with architecture and Xcode target concurrency explicitly bounded.
-- The application-hosted `HarcMobileAppTests` target completed 5/5 tests on an
+- The application-hosted `HarcMobileAppTests` target completed 7/7 tests on an
   arm64 iPhone 17 Pro simulator. These cover the generated privacy/background
   configuration, deterministic bounded HARCAB1 construction and exact replay,
   the required disclosure before a local master is handed to the system
   export destination, and rejection of unresolved Bonjour service endpoints
-  until Network.framework supplies a concrete host and port.
+  until Network.framework supplies a concrete host and port. They also prove
+  that a 48 kHz stereo to 44.1 kHz mono route change rebuilds the converter
+  while preserving one durable master and that a late reconfiguration request
+  fails promptly after writer termination instead of waiting indefinitely.
 - The production iPhone composition now mints request-bound background upload
   capabilities, builds immutable file-backed HARCAB1 batches, persists the
   batch-to-URLSession-task mapping before resume, reconciles task state after
@@ -58,11 +61,13 @@ require hardware outside this coding session.
 - A failed persisted Host route now triggers bounded Bonjour rediscovery. A
   recovered route is persisted only after pinned TLS, adopted-Host validation,
   capability negotiation, and authenticated session opening all succeed.
-- iPhone capture now records old/new input-route descriptors for terminal
-  route changes and covers media reset and engine-configuration changes. A
-  writer or storage failure publishes only the last synchronized durable
-  prefix, with explicit failure and recovery discontinuities, rather than
-  returning a false whole-file success.
+- iPhone capture now records old/new input-route descriptors, drains the old
+  accepted buffers, and rebuilds the engine, tap, and canonical converter for
+  route or engine-configuration changes without splitting the durable master.
+  Media loss/reset remains a visible terminal event. A writer or storage
+  failure publishes only the last synchronized durable prefix, with explicit
+  failure and recovery discontinuities, rather than returning a false
+  whole-file success.
 - The Record screen now exposes protected masters under **On This iPhone** for
   playback and explicit foreground export without a Host. The share sheet is
   reachable only after disclosing that the selected destination is outside the
@@ -102,7 +107,7 @@ several CoreML stacks concurrently.
 | Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,498 Swift Testing cases in 253 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | The unsigned arm64 Debug build and application-hosted tests completed successfully on 2026-08-04. |
-| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 5/5 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
+| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 7/7 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Confirm the selected CAF/ALAC implementation and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |

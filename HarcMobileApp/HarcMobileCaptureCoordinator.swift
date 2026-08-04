@@ -24,7 +24,9 @@ final class HarcMobileCaptureCoordinator {
     private let onFinalized: @MainActor (HarcMobileFinalizedMaster) throws -> Void
     private var engine: AVAudioEngine?
     private var pipeline: HarcMobileCapturePipeline?
+    private var captureInput: HarcMobileCaptureInput?
     private var activeRoute: CaptureRouteDescriptor?
+    private var isReconfiguring = false
     private var observers: [NSObjectProtocol] = []
 
     init(
@@ -93,18 +95,20 @@ final class HarcMobileCaptureCoordinator {
                     await self?.pipelineCompleted(result)
                 }
             }
+            let captureInput = pipeline.initialInput
             candidatePipeline = pipeline
             input.installTap(
                 onBus: 0,
                 bufferSize: 4_096,
                 format: format
-            ) { [weak pipeline] buffer, time in
-                pipeline?.offer(buffer, hostTime: time.hostTime)
+            ) { [captureInput] buffer, time in
+                captureInput.offer(buffer, hostTime: time.hostTime)
             }
             engine.prepare()
             try engine.start()
             self.engine = engine
             self.pipeline = pipeline
+            self.captureInput = captureInput
             activeRoute = Self.routeDescriptor(
                 session.currentRoute,
                 sampleRate: format.sampleRate,
@@ -115,6 +119,7 @@ final class HarcMobileCaptureCoordinator {
             state = .recording(startedAt: startedAt)
         } catch {
             teardownEngine()
+            captureInput = nil
             candidatePipeline?.abandonBeforeStart()
             try? AVAudioSession.sharedInstance().setActive(
                 false,
@@ -148,6 +153,8 @@ final class HarcMobileCaptureCoordinator {
         state = .stopping
         teardownEngine()
         activeRoute = nil
+        captureInput = nil
+        isReconfiguring = false
         pipeline.requestFinish(reason: reason, discontinuity: discontinuity)
     }
 
@@ -155,6 +162,8 @@ final class HarcMobileCaptureCoordinator {
         _ result: Result<HarcMobileFinalizedMaster, any Error>
     ) async {
         pipeline = nil
+        captureInput = nil
+        isReconfiguring = false
         removeObservers()
         do {
             try AVAudioSession.sharedInstance().setActive(
@@ -218,8 +227,7 @@ final class HarcMobileCaptureCoordinator {
                 ).flatMap { Self.routeDescriptor($0) }
                 Task { @MainActor [weak self] in
                     let current = AVAudioSession.sharedInstance()
-                    self?.finishCapture(
-                        reason: .systemEnded,
+                    await self?.rebuildCapturePath(
                         discontinuity: HarcMobileTerminalCaptureDiscontinuity(
                             reason: .routeChanged,
                             oldRoute: previousRoute ?? self?.activeRoute,
@@ -278,16 +286,86 @@ final class HarcMobileCaptureCoordinator {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    self?.finishCapture(
-                        reason: .systemEnded,
+                    let session = AVAudioSession.sharedInstance()
+                    await self?.rebuildCapturePath(
                         discontinuity: HarcMobileTerminalCaptureDiscontinuity(
                             reason: .engineConfigurationChanged,
-                            oldRoute: self?.activeRoute
+                            oldRoute: self?.activeRoute,
+                            newRoute: Self.routeDescriptor(
+                                session.currentRoute,
+                                sampleRate: session.sampleRate,
+                                channelCount: UInt32(
+                                    session.inputNumberOfChannels
+                                )
+                            )
                         )
                     )
                 }
             },
         ]
+    }
+
+    /// Rebuilds the hardware engine and converter while the same durable
+    /// master remains open. The old tap is removed before the writer drains
+    /// its generation; the replacement tap cannot offer frames until the
+    /// writer has finalized the old converter and recorded the discontinuity.
+    private func rebuildCapturePath(
+        discontinuity: HarcMobileTerminalCaptureDiscontinuity
+    ) async {
+        guard case .recording = state,
+              !isReconfiguring,
+              let pipeline,
+              let captureInput else { return }
+        isReconfiguring = true
+        removeObservers()
+        teardownEngine()
+        var replacementPrepared = false
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setActive(true)
+            let replacementEngine = AVAudioEngine()
+            let node = replacementEngine.inputNode
+            let format = node.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                throw HarcMobileAudioConversionError.unsupportedInputFormat
+            }
+            let replacement = try await pipeline.prepareReplacementInput(
+                replacing: captureInput,
+                inputFormat: format,
+                tapFrameCapacity: 4_096,
+                discontinuity: discontinuity
+            )
+            replacementPrepared = true
+            guard case .recording = state else {
+                isReconfiguring = false
+                return
+            }
+            self.engine = replacementEngine
+            self.captureInput = replacement
+            node.installTap(
+                onBus: 0,
+                bufferSize: 4_096,
+                format: format
+            ) { [replacement] buffer, time in
+                replacement.offer(buffer, hostTime: time.hostTime)
+            }
+            replacementEngine.prepare()
+            try replacementEngine.start()
+            activeRoute = Self.routeDescriptor(
+                session.currentRoute,
+                sampleRate: format.sampleRate,
+                channelCount: UInt32(format.channelCount)
+            )
+            isReconfiguring = false
+            installObservers()
+        } catch {
+            isReconfiguring = false
+            guard case .recording = state else { return }
+            finishCapture(
+                reason: .systemEnded,
+                discontinuity: replacementPrepared ? nil : discontinuity
+            )
+        }
     }
 
     nonisolated private static func routeDescriptor(

@@ -30,7 +30,7 @@ public final class HarcMobileAudioHandoffLease: @unchecked Sendable {
 /// The callback uses a try-lock and copies only into buffers allocated at
 /// initialization. It never blocks, allocates, hashes, writes, or calls UI.
 public final class HarcMobileAudioHandoff: @unchecked Sendable {
-    public let available = DispatchSemaphore(value: 0)
+    public let available: DispatchSemaphore
 
     private enum SlotState { case free, ready, consuming }
     private struct Slot {
@@ -51,11 +51,13 @@ public final class HarcMobileAudioHandoff: @unchecked Sendable {
     public init(
         format: AVAudioFormat,
         frameCapacity: AVAudioFrameCount,
-        slotCount: Int = 8
+        slotCount: Int = 8,
+        availabilitySignal: DispatchSemaphore? = nil
     ) throws {
         guard frameCapacity > 0, slotCount >= 2 else {
             throw HarcMobileAudioConversionError.allocationFailed
         }
+        available = availabilitySignal ?? DispatchSemaphore(value: 0)
         var made: [Slot] = []
         made.reserveCapacity(slotCount)
         for _ in 0..<slotCount {
