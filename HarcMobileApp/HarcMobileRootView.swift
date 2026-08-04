@@ -7,6 +7,7 @@ import UIKit
 struct HarcMobileRootView: View {
     @Environment(HarcMobileAppModel.self) private var model
     @State private var showsPairingScanner = false
+    @State private var showsReviewSample = false
     @State private var libraryQuery = ""
 
     var body: some View {
@@ -20,15 +21,42 @@ struct HarcMobileRootView: View {
             NavigationStack {
                 libraryView
                     .navigationTitle("Library")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button(
+                                "Open Review Sample",
+                                systemImage: "doc.text.magnifyingglass"
+                            ) {
+                                showsReviewSample = true
+                            }
+                            .accessibilityIdentifier(
+                                HarcMobileAccessibilityID
+                                    .openReviewSampleToolbar
+                            )
+                        }
+                    }
             }
             .tabItem { Label("Library", systemImage: "rectangle.stack") }
 
             NavigationStack {
                 hostView
                     .navigationTitle("Host")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            NavigationLink {
+                                HarcMobilePrivacyView()
+                            } label: {
+                                Label(
+                                    "Privacy & Data",
+                                    systemImage: "hand.raised"
+                                )
+                            }
+                        }
+                    }
             }
             .tabItem { Label("Host", systemImage: "macmini") }
         }
+        .accessibilityIdentifier(HarcMobileAccessibilityID.root)
         .safeAreaInset(edge: .top, spacing: 0) {
             captureBanner
         }
@@ -71,6 +99,11 @@ struct HarcMobileRootView: View {
                         Button("Cancel") { showsPairingScanner = false }
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $showsReviewSample) {
+            NavigationStack {
+                HarcMobileReviewSampleView()
             }
         }
     }
@@ -187,13 +220,25 @@ struct HarcMobileRootView: View {
         case .loadingCache, .refreshing:
             ProgressView("Syncing Library…")
         case .unpaired:
-            ContentUnavailableView(
-                "Pair a Host",
-                systemImage: "macmini",
-                description: Text(
-                    "Pair locally to sync the Library view permitted by your Host."
+            VStack(spacing: 16) {
+                ContentUnavailableView(
+                    "Pair a Host",
+                    systemImage: "macmini",
+                    description: Text(
+                        "Pair locally to sync the Library view permitted by your Host."
+                    )
                 )
-            )
+                Button(
+                    "Open Offline Review Sample",
+                    systemImage: "doc.text.magnifyingglass"
+                ) {
+                    showsReviewSample = true
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier(
+                    HarcMobileAccessibilityID.openReviewSample
+                )
+            }
         case .accessNotGranted:
             ContentUnavailableView(
                 "Library access not granted",
@@ -471,12 +516,18 @@ struct HarcMobileRootView: View {
                 Task { await coordinator.start() }
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier(
+                HarcMobileAccessibilityID.startRecording
+            )
         case .recording:
             Button("Stop Recording", systemImage: "stop.fill") {
                 coordinator.stop()
             }
             .buttonStyle(.borderedProminent)
             .tint(.red)
+            .accessibilityIdentifier(
+                HarcMobileAccessibilityID.stopRecording
+            )
         case .saved, .storageExhausted, .failed:
             Button("Record Again") { coordinator.resetTerminalState() }
                 .buttonStyle(.borderedProminent)
@@ -500,10 +551,16 @@ struct HarcMobileRootView: View {
                     Button("Stop") { coordinator.stop() }
                         .buttonStyle(.borderedProminent)
                         .tint(.red)
+                        .accessibilityIdentifier(
+                            HarcMobileAccessibilityID.recordingBannerStop
+                        )
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 10)
                 .background(.bar)
+                .accessibilityIdentifier(
+                    HarcMobileAccessibilityID.recordingBanner
+                )
             case .stopping:
                 HStack {
                     ProgressView()
@@ -571,6 +628,9 @@ struct HarcMobileRootView: View {
                 Button("Scan Host Pairing Code", systemImage: "qrcode.viewfinder") {
                     showsPairingScanner = true
                 }
+                .accessibilityIdentifier(
+                    HarcMobileAccessibilityID.scanPairingCode
+                )
             } footer: {
                 Text(
                     "Scanning uses the camera, then connects over your local network. iOS may ask for both permissions. The short-lived code pins the Host identity and TLS route; no cloud account is used."
@@ -595,9 +655,15 @@ struct HarcMobileRootView: View {
                     Task { await coordinator.confirmWordsMatch() }
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier(
+                    HarcMobileAccessibilityID.pairingWordsMatch
+                )
                 Button("Words Do Not Match", role: .destructive) {
                     Task { await coordinator.wordsDoNotMatch() }
                 }
+                .accessibilityIdentifier(
+                    HarcMobileAccessibilityID.pairingWordsMismatch
+                )
             }
         case .awaitingHostApproval(let host, let phrase):
             Section("Waiting for \(host)") {
@@ -717,11 +783,17 @@ private struct HarcMobileLocalRecordingRow: View {
                     Label("Export outside Harc", systemImage: "shield.lefthalf.filled")
                         .font(.title2.weight(.semibold))
                     Text(HarcMobileLocalRecording.exportDisclosure)
+                        .accessibilityIdentifier(
+                            HarcMobileAccessibilityID.exportDisclosure
+                        )
                     ShareLink(item: recording.masterFileURL) {
                         Label("Choose Export Destination", systemImage: "square.and.arrow.up")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier(
+                        HarcMobileAccessibilityID.exportShare
+                    )
                     Spacer()
                 }
                 .padding()

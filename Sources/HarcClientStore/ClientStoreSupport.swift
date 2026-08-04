@@ -157,7 +157,11 @@ public struct FoundationClientStoreStorageAttributes: ClientStoreStorageAttribut
             }
         }
 
-        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+        // Simulator filesystems do not reliably surface physical Data
+        // Protection classes. Keep backup exclusion active there, but never
+        // treat Simulator execution as evidence for the physical protection
+        // gate. Device builds still apply and verify the exact class.
+        #if (os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)) && !targetEnvironment(simulator)
         try FileManager.default.setAttributes(
             [.protectionKey: policy.protection.foundationValue],
             ofItemAtPath: url.path

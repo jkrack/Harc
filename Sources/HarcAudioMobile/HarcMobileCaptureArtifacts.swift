@@ -46,7 +46,10 @@ public struct FoundationHarcMobileCaptureStorageAttributes:
             )
         }
 
-        #if os(iOS)
+        // Simulator filesystems do not reliably expose physical iOS Data
+        // Protection. Backup exclusion remains enforced, while device builds
+        // still fail closed unless the exact protection class round-trips.
+        #if os(iOS) && !targetEnvironment(simulator)
         try FileManager.default.setAttributes(
             [.protectionKey: policy.protection],
             ofItemAtPath: url.path

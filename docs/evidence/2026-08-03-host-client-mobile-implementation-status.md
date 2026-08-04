@@ -14,10 +14,11 @@ extraction, agent, VPN, iPad, and migration work optional after the vertical
 slice is stable.
 
 The local implementation, standalone regression, iOS Simulator build/tests,
-and unsigned macOS application build gates are green. This is not yet a
-mobile-release-complete or TestFlight-complete claim: physical iPhone
-capture/background-transfer gates and the real secondary-Mac acceptance run
-require hardware outside this coding session.
+unsigned macOS application build, and code-owned TestFlight review surfaces are
+green. This is not yet a mobile-release-complete or TestFlight-complete claim:
+physical iPhone capture/background-transfer/accessibility gates, the real
+secondary-Mac acceptance run, and account-owned App Store Connect values require
+evidence outside this coding session.
 
 ## Implemented slices
 
@@ -44,15 +45,33 @@ require hardware outside this coding session.
   focused macOS Swift 6 typecheck.
 - The generated `HarcMobile` scheme completed an unsigned arm64 iOS Simulator
   build with architecture and Xcode target concurrency explicitly bounded.
-- The application-hosted `HarcMobileAppTests` target completed 7/7 tests on an
-  arm64 iPhone 17 Pro simulator. These cover the generated privacy/background
-  configuration, deterministic bounded HARCAB1 construction and exact replay,
-  the required disclosure before a local master is handed to the system
-  export destination, and rejection of unresolved Bonjour service endpoints
-  until Network.framework supplies a concrete host and port. They also prove
-  that a 48 kHz stereo to 44.1 kHz mono route change rebuilds the converter
-  while preserving one durable master and that a late reconfiguration request
-  fails promptly after writer termination instead of waiting indefinitely.
+- The application-hosted `HarcMobileAppTests` target completed 18/18 tests on
+  an arm64 iPhone 17 Pro simulator. These cover the generated
+  privacy/background configuration, the required app-container file-metadata
+  reason, iPhone-only/export metadata, deterministic bounded HARCAB1
+  construction and exact replay, the required disclosure before
+  a local master is handed to the system export destination, and rejection of
+  unresolved Bonjour service endpoints until Network.framework supplies a
+  concrete host and port. They also prove that a 48 kHz stereo to 44.1 kHz mono
+  route change rebuilds the converter while preserving one durable master, that
+  a late reconfiguration request fails promptly after writer termination, and
+  that the offline review sample is read-only, contains canonical synthetic WAV
+  audio, and is isolated from user/client state.
+- The `HarcMobileUITests` release-readiness target completed 2/2 tests on the
+  same Simulator. The tests launch with UUID-scoped Application Support and
+  Keychain identities, verify explicit local-recording disclosure and the Start
+  control, and navigate the real unpaired app to the offline review sample and
+  in-app Privacy & Data disclosure without a Host.
+- Simulator storage bootstrapping now retains backup exclusion but skips only
+  the physical Data Protection round-trip that Simulator filesystems do not
+  reliably expose. Physical iPhone builds continue to apply and verify the
+  exact protection class, and Simulator results remain ineligible for that
+  hardware gate.
+- The source privacy policy, App Privacy/export rationale, external TestFlight
+  checklist, reviewer instructions, and Beta App Review notes are recorded in
+  `docs/privacy/harc-mobile-privacy-policy.md` and
+  `docs/operations/testflight-release-readiness.md`. Publication of the policy
+  URL and account-owner contact/build values remains open.
 - The production iPhone composition now mints request-bound background upload
   capabilities, builds immutable file-backed HARCAB1 batches, persists the
   batch-to-URLSession-task mapping before resume, reconciles task state after
@@ -116,11 +135,11 @@ several CoreML stacks concurrently.
 | Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,498 Swift Testing cases in 253 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | The unsigned arm64 Debug build and application-hosted tests completed successfully on 2026-08-04. |
-| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 7/7 and `HarcMobileSpikesTests` passed 14/14 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. The focused codec-matrix CLI suite passed 10/10. |
+| iOS Simulator test execution | Green | The full `HarcMobile` scheme passed 18/18 hosted tests and 2/2 UI tests; `HarcMobileSpikesTests` passed 14/14 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. The focused codec-matrix CLI suite passed 10/10. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Produce the four fresh-process schema-5 reports and validate them with `harcctl qualify-codec-matrix`; then review the selected codec and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
-| External TestFlight hardening | Deferred | Consent/indicator verification, privacy and export metadata, reviewer-accessible demo/sample flow, accessibility, upgrade/recovery, and Beta Review notes. |
+| External TestFlight hardening | Partially green locally | Offline reviewer sample, in-app privacy disclosure, packaged privacy/export assertions, privacy-policy source, and Beta Review notes are implemented. Physical consent/indicator, VoiceOver/Dynamic Type, upgrade/recovery, public policy URL, contact values, exact archive metadata, and external TestFlight review remain open. |
 
 `xcrun devicectl list devices` reported no attached physical devices on
 2026-08-04, so no physical-gate result is inferred from the Simulator runs.
@@ -162,7 +181,23 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   -skipPackagePluginValidation \
   build
+xcodebuild \
+  -project Harc.xcodeproj \
+  -scheme HarcMobile \
+  -configuration Debug \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -jobs 2 \
+  ARCHS=arm64 \
+  EXCLUDED_ARCHS=x86_64 \
+  ONLY_ACTIVE_ARCH=YES \
+  SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
+  -skipPackagePluginValidation \
+  test
 ```
+
+The UI-test command intentionally keeps normal Simulator ad-hoc signing enabled
+because the app's installation identity uses Keychain. Disabling code signing
+does not exercise the production bootstrap path.
 
 Do not infer success from source typechecks alone. Release status changes only
 after the full builds and hardware matrices produce recorded evidence.

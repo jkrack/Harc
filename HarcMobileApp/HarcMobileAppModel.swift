@@ -25,6 +25,52 @@ enum HarcMobileCaptureQualificationError: LocalizedError, Equatable {
     }
 }
 
+enum HarcMobileUITestConfigurationError: LocalizedError, Equatable {
+    case duplicateRootArgument
+    case missingRootValue
+    case invalidRootValue(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .duplicateRootArgument:
+            "The UI-test root argument was repeated."
+        case .missingRootValue:
+            "The UI-test root argument needs a UUID value."
+        case .invalidRootValue(let value):
+            "The UI-test root UUID is invalid: \(value)."
+        }
+    }
+}
+
+enum HarcMobileUITestConfiguration {
+    static let rootArgument = "--harc-ui-test-root-id"
+
+    static func rootID(arguments: [String]) throws -> UUID? {
+#if DEBUG
+        let indices = arguments.indices.filter {
+            arguments[$0] == rootArgument
+        }
+        guard indices.count <= 1 else {
+            throw HarcMobileUITestConfigurationError.duplicateRootArgument
+        }
+        guard let index = indices.first else { return nil }
+        let valueIndex = arguments.index(after: index)
+        guard valueIndex < arguments.endIndex else {
+            throw HarcMobileUITestConfigurationError.missingRootValue
+        }
+        let rawValue = arguments[valueIndex]
+        guard let value = UUID(uuidString: rawValue),
+              value.uuidString == rawValue.uppercased() else {
+            throw HarcMobileUITestConfigurationError
+                .invalidRootValue(rawValue)
+        }
+        return value
+#else
+        return nil
+#endif
+    }
+}
+
 enum HarcMobileCaptureQualificationConfiguration {
     static let storageExhaustionArgument =
         "--harc-capture-storage-exhaustion-after-canonical-bytes"
@@ -94,7 +140,10 @@ final class HarcMobileAppModel {
                     .storageExhaustionAfterCanonicalBytes(
                         arguments: ProcessInfo.processInfo.arguments
                     )
-            let root = try Self.applicationRoot()
+            let uiTestRootID = try HarcMobileUITestConfiguration.rootID(
+                arguments: ProcessInfo.processInfo.arguments
+            )
+            let root = try Self.applicationRoot(uiTestRootID: uiTestRootID)
             let clientLocations = try ClientStoreLocations(rootDirectory: root)
             let captureLocations = try HarcMobileCaptureLocations(
                 applicationSupportRoot: root
@@ -106,7 +155,9 @@ final class HarcMobileAppModel {
             let hasCaptureState = try Self.hasCaptureState(captureLocations)
             let identityManager = InstallationIdentityManager(
                 keyStore: KeychainSoftwareInstallationKeyStore(
-                    service: "com.harc.Harc.mobile.installation-identity",
+                    service: Self.identityKeyService(
+                        uiTestRootID: uiTestRootID
+                    ),
                     account: "device-p256-signing-v1"
                 )
             )
@@ -214,20 +265,40 @@ final class HarcMobileAppModel {
         await bootstrap()
     }
 
-    private static func applicationRoot() throws -> URL {
+    private static func applicationRoot(uiTestRootID: UUID?) throws -> URL {
         guard let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first else {
             throw CocoaError(.fileNoSuchFile)
         }
-        let root = base.appendingPathComponent("HarcMobile", isDirectory: true)
+        let root: URL
+        if let uiTestRootID {
+            root = base
+                .appendingPathComponent("HarcMobileUITests", isDirectory: true)
+                .appendingPathComponent(
+                    uiTestRootID.uuidString,
+                    isDirectory: true
+                )
+        } else {
+            root = base.appendingPathComponent(
+                "HarcMobile",
+                isDirectory: true
+            )
+        }
         try FileManager.default.createDirectory(
             at: root,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
         return root
+    }
+
+    private static func identityKeyService(uiTestRootID: UUID?) -> String {
+        guard let uiTestRootID else {
+            return "com.harc.Harc.mobile.installation-identity"
+        }
+        return "com.harc.Harc.mobile.installation-identity.ui-test.\(uiTestRootID.uuidString)"
     }
 
     private static func hasCaptureState(

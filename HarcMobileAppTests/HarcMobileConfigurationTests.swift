@@ -24,6 +24,81 @@ final class HarcMobileConfigurationTests: XCTestCase {
         }
     }
 
+    func testPackagedPrivacyManifestMatchesMobileDataAndFileUsage() throws {
+        let url = try XCTUnwrap(
+            Bundle.main.url(
+                forResource: "PrivacyInfo",
+                withExtension: "xcprivacy"
+            )
+        )
+        let data = try Data(contentsOf: url)
+        let manifest = try XCTUnwrap(
+            PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+            ) as? [String: Any]
+        )
+
+        XCTAssertEqual(manifest["NSPrivacyTracking"] as? Bool, false)
+        XCTAssertTrue(try XCTUnwrap(
+            manifest["NSPrivacyCollectedDataTypes"] as? [[String: Any]]
+        ).isEmpty)
+        let accessedAPIs = try XCTUnwrap(
+            manifest["NSPrivacyAccessedAPITypes"] as? [[String: Any]]
+        )
+        XCTAssertEqual(accessedAPIs.count, 1)
+        let fileMetadata = try XCTUnwrap(accessedAPIs.first)
+        XCTAssertEqual(
+            fileMetadata["NSPrivacyAccessedAPIType"] as? String,
+            "NSPrivacyAccessedAPICategoryFileTimestamp"
+        )
+        XCTAssertEqual(
+            fileMetadata["NSPrivacyAccessedAPITypeReasons"] as? [String],
+            ["C617.1"]
+        )
+    }
+
+    func testReleaseMetadataIsIPhoneOnlyAndMatchesExportDeclaration() {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.harc.HarcMobile")
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily")
+                as? [Int],
+            [1]
+        )
+        XCTAssertEqual(
+            Bundle.main.object(
+                forInfoDictionaryKey: "ITSAppUsesNonExemptEncryption"
+            ) as? Bool,
+            false
+        )
+    }
+
+#if targetEnvironment(simulator)
+    func testSimulatorCaptureStorageStillEnforcesBackupExclusion() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "harc-mobile-simulator-storage-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FoundationHarcMobileCaptureStorageAttributes().applyAndVerify(
+            .transferArtifact,
+            to: root
+        )
+        XCTAssertEqual(
+            try root.resourceValues(
+                forKeys: [.isExcludedFromBackupKey]
+            ).isExcludedFromBackup,
+            true
+        )
+    }
+#endif
+
     func testStorageExhaustionQualificationArgumentParsesDurableQuota() throws {
         let argument = HarcMobileCaptureQualificationConfiguration
             .storageExhaustionArgument
@@ -66,6 +141,33 @@ final class HarcMobileConfigurationTests: XCTestCase {
                     argument, String(minimum),
                 ]
             ))
+    }
+
+    func testUITestRootArgumentRequiresOneCanonicalUUID() throws {
+        let argument = HarcMobileUITestConfiguration.rootArgument
+        let rootID = UUID()
+
+        XCTAssertEqual(
+            try HarcMobileUITestConfiguration.rootID(
+                arguments: ["HarcMobile", argument, rootID.uuidString]
+            ),
+            rootID
+        )
+        XCTAssertNil(try HarcMobileUITestConfiguration.rootID(
+            arguments: ["HarcMobile"]
+        ))
+        XCTAssertThrowsError(try HarcMobileUITestConfiguration.rootID(
+            arguments: ["HarcMobile", argument]
+        ))
+        XCTAssertThrowsError(try HarcMobileUITestConfiguration.rootID(
+            arguments: ["HarcMobile", argument, "not-a-uuid"]
+        ))
+        XCTAssertThrowsError(try HarcMobileUITestConfiguration.rootID(
+            arguments: [
+                "HarcMobile", argument, rootID.uuidString,
+                argument, rootID.uuidString,
+            ]
+        ))
     }
 
     @MainActor

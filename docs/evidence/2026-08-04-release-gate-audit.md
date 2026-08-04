@@ -9,9 +9,11 @@
 ## Decision
 
 The local software gate for PRs 0 through 9 is green. The branch compiles as a
-bounded arm64 macOS app and iOS Simulator app, its standalone and
-application-hosted tests pass, and the remaining completion claims require
-hardware or external release metadata that was not available in this run.
+bounded arm64 macOS app and iOS Simulator app, its standalone,
+application-hosted, and UI tests pass, and its reviewer-accessible sample,
+privacy source, and Beta Review notes are implemented. The remaining completion
+claims require hardware or account-owned release metadata that was not
+available in this run.
 
 This audit therefore supports a signed macOS build candidate. It does not
 support claiming the local-network iPhone alpha, useful mobile beta,
@@ -35,12 +37,14 @@ edge-capable secondary-Mac system, or external TestFlight release complete.
 | --- | --- |
 | Focused durable capture recovery | 9 tests in 3 suites passed, including deterministic storage-exhaustion recovery and writer-failure truncation to the synchronized checkpoint. |
 | Full SwiftPM regression | 1,499 Swift Testing cases in 253 suites and 121 XCTest cases passed with two workers. Thirteen real-model/model-quality cases remained opt-in by contract. |
-| HarcMobile app tests | 10/10 passed on arm64 iPhone 17 Pro Simulator, iOS 26.5, including format-changing converter rebuild, terminated-pipeline race coverage, and the C7 qualification hook/UI state. |
+| HarcMobile app tests | 18/18 passed on arm64 iPhone 17 Pro Simulator, iOS 26.5, including no-tracking/no-collection plus the required app-container file-metadata reason, export metadata, Simulator backup exclusion, format-changing converter rebuild, terminated-pipeline race coverage, the C7 qualification hook/UI state, and isolated canonical reviewer content. |
+| HarcMobile UI tests | 2/2 passed with normal Simulator ad-hoc signing and UUID-scoped Application Support/Keychain state. They verify explicit recording disclosure/readiness and navigate the unpaired app to the offline review sample and Privacy & Data surface. |
 | HarcMobile qualification-logic tests | 14/14 passed on the same Simulator. Schema-5 reports now bind evidence to unique report/process IDs, version/build, signing team, and source SHA while continuing to reject Simulator evidence. |
 | Physical codec matrix validator | 10/10 focused `harcctl` tests passed. A real schema-5 quick-mode Simulator report was rejected before matrix acceptance; reused processes, device/build drift, and threshold drift also fail closed. |
 | Generic iOS Simulator build | Passed with arm64 and two-worker limits. |
 | Unsigned macOS app build | Passed with arm64 and two-worker limits, including embedded helpers. |
 | Release-script preflight | Passed with two workers, including Developer ID inside-out signing, DMG signature/checksum, and the new mounted packaged-app deep-signature gate. |
+| TestFlight code-owned artifacts | Offline read-only reviewer sample, synthetic WAV, stable accessibility identifiers, in-app privacy copy, privacy-policy source, App Privacy/export rationale, external checklist, and Beta App Review notes are present and locally tested. |
 | Source hygiene | `git diff --check` passed. |
 
 ## Physical C7 storage-exhaustion hook
@@ -67,10 +71,13 @@ discontinuities, and no zero-byte success. Release builds ignore this argument.
   oldest and current supported iPhones are attached.
 - No second Mac participated in this run, so PR 9's real edge-system gate is
   open.
-- External TestFlight still requires verified recording consent and persistent
-  indication, accessibility and upgrade/recovery evidence, a public privacy
-  policy URL, matching App Privacy/export answers, a reviewer-accessible sample
-  path, and Beta App Review notes.
+- External TestFlight still requires physical verification of recording consent
+  and persistent indication, VoiceOver/largest-Dynamic-Type and upgrade/recovery
+  evidence, a public privacy-policy URL, monitored feedback/review contacts,
+  exact archive metadata, confirmation that the uploaded build still matches
+  the App Privacy/export answers, and the external TestFlight review itself.
+  The reviewer-accessible offline sample and Beta App Review notes are no longer
+  missing code-owned artifacts.
 
 These are evidence gates, not reasons to weaken the fail-closed codec, trust,
 or receipt policies.

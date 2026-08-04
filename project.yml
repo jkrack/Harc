@@ -223,6 +223,22 @@ targets:
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
 
+  HarcMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: HarcMobileUITests
+    dependencies:
+      - target: HarcMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobileUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: 1
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+
   HarcMobileSpikes:
     type: application
     platform: iOS
@@ -283,6 +299,7 @@ schemes:
     test:
       targets:
         - HarcMobileAppTests
+        - HarcMobileUITests
   HarcMobileSpikes:
     build:
       targets:

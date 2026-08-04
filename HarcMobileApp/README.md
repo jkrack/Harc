@@ -15,6 +15,12 @@ status, and the scoped Host Library cache. Library sync supports snapshots,
 deltas, search, detail, verified audio playback, signed metadata mutations, and
 explicit conflict handling.
 
+For external review without access to a developer LAN, the Library exposes a
+bundled, read-only offline sample. Its synthetic audio is generated on device;
+it contains no user data, requests no permission, performs no network operation,
+and never enters the client cache or outbox. This is a reviewer path, not a
+substitute for physical Host/capture/transfer qualification.
+
 The implementation is not a release claim. Simulator compilation and the
 physical-device capture/background-transfer matrix in the normative spec must
 be green before TestFlight. iPad support remains behind its separate UI/device
@@ -27,3 +33,5 @@ See:
 - [Normative implementation specification](../docs/specs/2026-08-02-host-client-mobile-implementation-spec.md)
 - [Implementation and validation status](../docs/evidence/2026-08-03-host-client-mobile-implementation-status.md)
 - [Runtime roles and pairing runbook](../docs/operations/runtime-roles-and-pairing.md)
+- [TestFlight release-readiness runbook](../docs/operations/testflight-release-readiness.md)
+- [Mobile privacy-policy source](../docs/privacy/harc-mobile-privacy-policy.md)
