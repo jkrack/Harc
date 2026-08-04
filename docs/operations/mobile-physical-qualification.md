@@ -52,9 +52,12 @@ For every cell:
 1. Fully terminate `HarcMobileSpikes` before launching the candidate.
 2. Keep the phone on its named OS and ordinary thermal environment; do not use
    Simulator acceleration.
-3. Let all 180 ordinary 60-second chunks complete in real time.
-4. Export the JSON report immediately and name it for the device and codec.
-5. Confirm the app is terminated before starting the other candidate.
+3. Leave the harness in the foreground and do not manually lock the phone. The
+   harness disables the idle timer only while a run is active; keep the phone
+   connected to power for the full gate.
+4. Let all 180 ordinary 60-second chunks complete in real time.
+5. Export the JSON report immediately and name it for the device and codec.
+6. Confirm the app is terminated before starting the other candidate.
 
 The process-launch UUID is generated once per app process. Reusing one process
 for two cells causes the matrix validator to fail even if every codec metric is

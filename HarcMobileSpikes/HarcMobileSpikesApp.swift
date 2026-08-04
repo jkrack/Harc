@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct HarcMobileSpikesApp: App {
@@ -36,6 +37,7 @@ final class CodecSpikeViewModel: ObservableObject {
         runTask?.cancel()
         runTask = nil
         isRunning = false
+        UIApplication.shared.isIdleTimerDisabled = false
         status = "Cancelled"
     }
 
@@ -62,6 +64,7 @@ final class CodecSpikeViewModel: ObservableObject {
         completedChunks = 0
         totalChunks = 0
         status = "Preparing fixtures"
+        UIApplication.shared.isIdleTimerDisabled = true
 
         runTask = Task { [weak self] in
             do {
@@ -95,6 +98,7 @@ final class CodecSpikeViewModel: ObservableObject {
                 self?.status = "Run failed"
             }
             self?.isRunning = false
+            UIApplication.shared.isIdleTimerDisabled = false
             self?.runTask = nil
         }
     }
