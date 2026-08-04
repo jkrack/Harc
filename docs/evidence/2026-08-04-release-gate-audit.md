@@ -36,7 +36,8 @@ edge-capable secondary-Mac system, or external TestFlight release complete.
 | Focused durable capture recovery | 9 tests in 3 suites passed, including deterministic storage-exhaustion recovery and writer-failure truncation to the synchronized checkpoint. |
 | Full SwiftPM regression | 1,499 Swift Testing cases in 253 suites and 121 XCTest cases passed with two workers. Thirteen real-model/model-quality cases remained opt-in by contract. |
 | HarcMobile app tests | 10/10 passed on arm64 iPhone 17 Pro Simulator, iOS 26.5, including format-changing converter rebuild, terminated-pipeline race coverage, and the C7 qualification hook/UI state. |
-| HarcMobile qualification-logic tests | 11/11 passed on the same Simulator and continue to reject Simulator evidence for the physical codec gate. |
+| HarcMobile qualification-logic tests | 14/14 passed on the same Simulator. Schema-5 reports now bind evidence to unique report/process IDs, version/build, signing team, and source SHA while continuing to reject Simulator evidence. |
+| Physical codec matrix validator | 10/10 focused `harcctl` tests passed. A real schema-5 quick-mode Simulator report was rejected before matrix acceptance; reused processes, device/build drift, and threshold drift also fail closed. |
 | Generic iOS Simulator build | Passed with arm64 and two-worker limits. |
 | Unsigned macOS app build | Passed with arm64 and two-worker limits, including embedded helpers. |
 | Release-script preflight | Passed with two workers, including Developer ID inside-out signing, DMG signature/checksum, and the new mounted packaged-app deep-signature gate. |
@@ -60,7 +61,10 @@ discontinuities, and no zero-byte success. Release builds ignore this argument.
 
 - No physical iPhone was attached (`xcrun devicectl list devices` returned no
   devices), so the production codec switch remains intentionally disabled and
-  the physical capture/background-transfer matrix cannot be signed off.
+  the physical capture/background-transfer matrix cannot be signed off. The
+  four-cell, fresh-process procedure and command are recorded in
+  `docs/operations/mobile-physical-qualification.md` for execution when the
+  oldest and current supported iPhones are attached.
 - No second Mac participated in this run, so PR 9's real edge-system gate is
   open.
 - External TestFlight still requires verified recording consent and persistent

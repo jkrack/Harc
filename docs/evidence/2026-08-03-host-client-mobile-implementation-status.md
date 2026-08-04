@@ -76,10 +76,19 @@ require hardware outside this coding session.
 - Mobile recording and Host-library detail now surface capture interruptions,
   route changes, canonical-audio availability, and signed speaker-label edit,
   add, and remove controls.
-- The non-shipping `HarcMobileSpikesTests` target completed 11/11 qualification-
-  logic tests on the same simulator, including the fail-closed rule that
-  simulator, iOS-app-on-Mac, incomplete, or non-phone evidence cannot satisfy
-  the physical codec gate.
+- The non-shipping `HarcMobileSpikesTests` target completed 14/14 qualification-
+  logic tests on the same simulator. Schema-5 reports bind each run to a unique
+  report and app-process launch, the exact app version/build, signing team, and
+  source SHA. Simulator, iOS-app-on-Mac, incomplete, unsigned, or non-phone
+  evidence cannot satisfy the physical codec gate.
+- The `harcctl qualify-codec-matrix` validator completed 10/10 focused CLI tests.
+  It independently revalidates all four oldest/current iPhone and CAF+ALAC/FLAC
+  report cells, rejects reused app processes, and leaves codec selection as a
+  reviewed decision. A real schema-5 quick-mode report produced by the iPhone
+  Simulator was rejected with `quick or unknown modes cannot qualify`.
+- The physical execution procedure is recorded in
+  `docs/operations/mobile-physical-qualification.md`; each codec candidate must
+  run for three hours from a fresh app process on both named physical iPhones.
 - The complete standalone SwiftPM regression passed 1,498 Swift Testing cases
   in 253 suites plus 121 XCTest cases. Nine real-model/daemon Swift Testing
   cases and four model-quality XCTest cases remain explicitly opt-in through
@@ -107,9 +116,9 @@ several CoreML stacks concurrently.
 | Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,498 Swift Testing cases in 253 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | The unsigned arm64 Debug build and application-hosted tests completed successfully on 2026-08-04. |
-| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 7/7 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
+| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 7/7 and `HarcMobileSpikesTests` passed 14/14 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. The focused codec-matrix CLI suite passed 10/10. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
-| Codec release qualification | Open on hardware | Confirm the selected CAF/ALAC implementation and background behavior against the physical-device thresholds. |
+| Codec release qualification | Open on hardware | Produce the four fresh-process schema-5 reports and validate them with `harcctl qualify-codec-matrix`; then review the selected codec and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
 | External TestFlight hardening | Deferred | Consent/indicator verification, privacy and export metadata, reviewer-accessible demo/sample flow, accessibility, upgrade/recovery, and Beta Review notes. |
 

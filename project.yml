@@ -242,6 +242,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         HarcBuildSHA: "$(HARC_BUILD_SHA)"
+        HarcSigningTeamIdentifier: "$(DEVELOPMENT_TEAM)"
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:

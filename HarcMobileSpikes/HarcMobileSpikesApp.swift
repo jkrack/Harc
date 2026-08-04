@@ -86,7 +86,7 @@ final class CodecSpikeViewModel: ObservableObject {
                 lastReport = report
                 reportURL = try Self.write(report)
                 status = report.passesCandidateDeviceThresholds
-                    ? "Candidate/device threshold run passed"
+                    ? "Candidate/device threshold run passed — export, then quit before the next candidate"
                     : "Run complete — review evidence"
             } catch is CancellationError {
                 self?.status = "Cancelled"
@@ -160,6 +160,8 @@ private struct CodecSpikeView: View {
                         LabeledContent("Device", value: report.deviceModel)
                         LabeledContent("OS", value: report.operatingSystem)
                         LabeledContent("Build", value: report.buildSHA)
+                        LabeledContent("Report", value: report.reportUUID.uuidString)
+                        LabeledContent("Process", value: report.processLaunchUUID.uuidString)
                         LabeledContent("Failures", value: "\(report.failures.count)")
                         LabeledContent(
                             "Decision evidence",
@@ -178,7 +180,7 @@ private struct CodecSpikeView: View {
 
                 Section("Acceptance note") {
                     Text(
-                        "A simulator or quick run is diagnostic only. The release codec is frozen only after the three-hour physical-device matrix passes on the named oldest-supported and current iPhones."
+                        "A simulator or quick run is diagnostic only. Export one report, fully quit the app, and relaunch for the other candidate. The release codec is frozen only after the four fresh-process physical-device reports pass the matrix validator."
                     )
                     .font(.footnote)
                     .foregroundStyle(.secondary)

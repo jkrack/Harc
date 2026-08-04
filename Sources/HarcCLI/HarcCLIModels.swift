@@ -13,6 +13,44 @@ public enum HarcCLICommand: Equatable, Sendable {
     )
     case status(stateDirectory: String?, uploadID: UUID?)
     case uploadFixture(seconds: Double, stateDirectory: String?)
+    case qualifyCodecMatrix(HarcCodecQualificationMatrixCommand)
+}
+
+public struct HarcCodecQualificationMatrixCommand: Equatable, Sendable {
+    public let oldestDevice: String
+    public let currentDevice: String
+    public let buildSHA: String
+    public let teamID: String
+    public let version: String
+    public let build: String
+    public let oldestALACReport: String
+    public let oldestFLACReport: String
+    public let currentALACReport: String
+    public let currentFLACReport: String
+
+    public init(
+        oldestDevice: String,
+        currentDevice: String,
+        buildSHA: String,
+        teamID: String,
+        version: String,
+        build: String,
+        oldestALACReport: String,
+        oldestFLACReport: String,
+        currentALACReport: String,
+        currentFLACReport: String
+    ) {
+        self.oldestDevice = oldestDevice
+        self.currentDevice = currentDevice
+        self.buildSHA = buildSHA
+        self.teamID = teamID
+        self.version = version
+        self.build = build
+        self.oldestALACReport = oldestALACReport
+        self.oldestFLACReport = oldestFLACReport
+        self.currentALACReport = currentALACReport
+        self.currentFLACReport = currentFLACReport
+    }
 }
 
 public enum HarcCLIArgumentError: Error, Equatable, CustomStringConvertible {
@@ -117,6 +155,40 @@ public enum HarcCLIArgumentParser {
                 seconds: seconds,
                 stateDirectory: options["--state-dir"]
             )
+        case "qualify-codec-matrix":
+            let options = try parseOptions(
+                tail,
+                allowed: [
+                    "--oldest-device",
+                    "--current-device",
+                    "--build-sha",
+                    "--team-id",
+                    "--version",
+                    "--build",
+                    "--oldest-alac",
+                    "--oldest-flac",
+                    "--current-alac",
+                    "--current-flac",
+                ]
+            )
+            func required(_ option: String) throws -> String {
+                guard let value = options[option] else {
+                    throw HarcCLIArgumentError.requiredOption(option)
+                }
+                return value
+            }
+            return .qualifyCodecMatrix(HarcCodecQualificationMatrixCommand(
+                oldestDevice: try required("--oldest-device"),
+                currentDevice: try required("--current-device"),
+                buildSHA: try required("--build-sha"),
+                teamID: try required("--team-id"),
+                version: try required("--version"),
+                build: try required("--build"),
+                oldestALACReport: try required("--oldest-alac"),
+                oldestFLACReport: try required("--oldest-flac"),
+                currentALACReport: try required("--current-alac"),
+                currentFLACReport: try required("--current-flac")
+            ))
         default:
             throw HarcCLIArgumentError.unknownCommand(command)
         }

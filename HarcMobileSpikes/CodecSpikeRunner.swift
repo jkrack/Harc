@@ -88,7 +88,7 @@ struct CodecSpikeFailure: Codable, Sendable {
 }
 
 struct CodecSpikeReport: Codable, Sendable {
-    private static let qualifyingSchemaVersion = 4
+    private static let qualifyingSchemaVersion = 5
     private static let qualifyingCanonicalFormat = "16000-hz-mono-signed-int16-little-endian"
     private static let qualifyingChunkDurationSeconds = 60
     private static let qualifyingChunkCount = 180
@@ -96,6 +96,8 @@ struct CodecSpikeReport: Codable, Sendable {
     private static let qualifyingElapsedSeconds = 10_800.0
 
     let schemaVersion: Int
+    let reportUUID: UUID
+    let processLaunchUUID: UUID
     let mode: CodecSpikeMode
     let startedAt: Date
     let endedAt: Date
@@ -105,6 +107,10 @@ struct CodecSpikeReport: Codable, Sendable {
     let iOSAppOnMac: Bool
     let userInterfaceIdiom: String
     let operatingSystem: String
+    let bundleIdentifier: String
+    let bundleShortVersion: String
+    let bundleVersion: String
+    let signingTeamIdentifier: String
     let buildSHA: String
     let canonicalFormat: String
     let chunkDurationSeconds: Int
@@ -119,6 +125,11 @@ struct CodecSpikeReport: Codable, Sendable {
             && userInterfaceIdiom == "phone"
             && !deviceModel.hasPrefix("Simulator ")
             && Self.isIPhoneHardwareIdentifier(deviceModel)
+            && reportUUID != processLaunchUUID
+            && bundleIdentifier == "com.harc.HarcMobileSpikes"
+            && !bundleShortVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !bundleVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && Self.isSigningTeamIdentifier(signingTeamIdentifier)
             && buildSHA.count == 40
             && buildSHA.unicodeScalars.allSatisfy {
                 CharacterSet(charactersIn: "0123456789abcdef").contains($0)
@@ -134,6 +145,12 @@ struct CodecSpikeReport: Codable, Sendable {
         return components.allSatisfy { component in
             !component.isEmpty
                 && component.unicodeScalars.allSatisfy(asciiDigits.contains)
+        }
+    }
+
+    private static func isSigningTeamIdentifier(_ value: String) -> Bool {
+        value.count == 10 && value.unicodeScalars.allSatisfy {
+            CharacterSet(charactersIn: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ").contains($0)
         }
     }
 
@@ -180,6 +197,8 @@ struct CodecSpikeReport: Codable, Sendable {
                       && trial.thermalMeasurementAvailable
                       && CodecSpikeRunner.isKnownThermalState(trial.thermalStateBefore)
                       && CodecSpikeRunner.isKnownThermalState(trial.thermalStateAfter)
+                      && !CodecSpikeRunner.isSeriousOrCritical(trial.thermalStateBefore)
+                      && !CodecSpikeRunner.isSeriousOrCritical(trial.thermalStateAfter)
                       && !trial.seriousOrCriticalThermalObserved
                       && trial.peakResidentBytes >= trial.residentBytesBefore
                       && trial.peakResidentBytes >= trial.residentBytesAfter
@@ -246,6 +265,7 @@ struct CodecSpikeRunner: Sendable {
     static let channels = 1
     static let bitsPerChannel = 16
     static let ordinaryChunkSeconds = 60
+    private static let processLaunchUUID = UUID()
 
     typealias ProgressHandler = @Sendable (CodecSpikeProgress) async -> Void
 
@@ -370,7 +390,9 @@ struct CodecSpikeRunner: Sendable {
         let endedInstant = ContinuousClock.now
         let userInterfaceIdiom = await MainActor.run { Self.userInterfaceIdiom }
         return CodecSpikeReport(
-            schemaVersion: 4,
+            schemaVersion: 5,
+            reportUUID: UUID(),
+            processLaunchUUID: Self.processLaunchUUID,
             mode: mode,
             startedAt: startedAt,
             endedAt: Date(),
@@ -380,6 +402,10 @@ struct CodecSpikeRunner: Sendable {
             iOSAppOnMac: ProcessInfo.processInfo.isiOSAppOnMac,
             userInterfaceIdiom: userInterfaceIdiom,
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+            bundleIdentifier: Bundle.main.bundleIdentifier ?? "unrecorded",
+            bundleShortVersion: Self.bundleString("CFBundleShortVersionString"),
+            bundleVersion: Self.bundleString("CFBundleVersion"),
+            signingTeamIdentifier: Self.bundleString("HarcSigningTeamIdentifier"),
             buildSHA: Bundle.main.object(forInfoDictionaryKey: "HarcBuildSHA") as? String ?? "unrecorded",
             canonicalFormat: "16000-hz-mono-signed-int16-little-endian",
             chunkDurationSeconds: Self.ordinaryChunkSeconds,
@@ -388,6 +414,10 @@ struct CodecSpikeRunner: Sendable {
             aggregates: aggregates,
             failures: failures
         )
+    }
+
+    private static func bundleString(_ key: String) -> String {
+        Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "unrecorded"
     }
 
     private static func canonicalPCM(chunkIndex: Int) -> Data {

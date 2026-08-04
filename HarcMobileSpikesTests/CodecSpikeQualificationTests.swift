@@ -12,6 +12,11 @@ final class CodecSpikeQualificationTests: XCTestCase {
         XCTAssertFalse(report.passesCandidateDeviceThresholds)
     }
 
+    func testSeriousThermalStateCannotQualifyEvenWhenSummaryFlagIsFalse() {
+        let report = qualifyingReport(trialThermalState: "serious")
+        XCTAssertFalse(report.passesCandidateDeviceThresholds)
+    }
+
     func testCompleteKnownMeasurementsCanQualify() {
         XCTAssertTrue(qualifyingReport().passesCandidateDeviceThresholds)
     }
@@ -41,7 +46,26 @@ final class CodecSpikeQualificationTests: XCTestCase {
     }
 
     func testOnlyCurrentQualificationSchemaCanQualify() {
-        XCTAssertFalse(qualifyingReport(schemaVersion: 3).passesCandidateDeviceThresholds)
+        XCTAssertFalse(qualifyingReport(schemaVersion: 4).passesCandidateDeviceThresholds)
+    }
+
+    func testUnsignedOrUnidentifiedBuildCannotQualify() {
+        XCTAssertFalse(
+            qualifyingReport(signingTeamIdentifier: "").passesCandidateDeviceThresholds
+        )
+        XCTAssertFalse(
+            qualifyingReport(bundleIdentifier: "com.example.Spike").passesCandidateDeviceThresholds
+        )
+    }
+
+    func testReportAndProcessIdentifiersMustBeIndependent() {
+        let identifier = UUID()
+        XCTAssertFalse(
+            qualifyingReport(
+                reportUUID: identifier,
+                processLaunchUUID: identifier
+            ).passesCandidateDeviceThresholds
+        )
     }
 
     func testSyntheticOneSecondReportCannotQualify() {
@@ -86,7 +110,9 @@ final class CodecSpikeQualificationTests: XCTestCase {
     }
 
     private func qualifyingReport(
-        schemaVersion: Int = 4,
+        schemaVersion: Int = 5,
+        reportUUID: UUID = UUID(),
+        processLaunchUUID: UUID = UUID(),
         elapsedMonotonicSeconds: Double = 10_800,
         wallDurationSeconds: TimeInterval = 10_800,
         memoryMeasurementAvailable: Bool = true,
@@ -96,11 +122,14 @@ final class CodecSpikeQualificationTests: XCTestCase {
         userInterfaceIdiom: String = "phone",
         deviceModel: String = "iPhone17,1",
         operatingSystem: String = "iOS",
+        bundleIdentifier: String = "com.harc.HarcMobileSpikes",
+        signingTeamIdentifier: String = "63TNU5M7P4",
         canonicalFormat: String = "16000-hz-mono-signed-int16-little-endian",
         chunkDurationSeconds: Int = 60,
         scheduledChunkCount: Int = 180,
         trialIndexes: [Int]? = nil,
-        validTrialHashes: Bool = true
+        validTrialHashes: Bool = true,
+        trialThermalState: String = "nominal"
     ) -> CodecSpikeReport {
         let indexes = trialIndexes ?? Array(0..<scheduledChunkCount)
         let pcmHash = validTrialHashes ? String(repeating: "1", count: 64) : "invalid"
@@ -122,14 +151,16 @@ final class CodecSpikeQualificationTests: XCTestCase {
                 residentBytesAfter: 110,
                 peakResidentBytes: 120,
                 memoryMeasurementAvailable: true,
-                thermalStateBefore: "nominal",
-                thermalStateAfter: "nominal",
+                thermalStateBefore: trialThermalState,
+                thermalStateAfter: trialThermalState,
                 thermalMeasurementAvailable: true,
                 seriousOrCriticalThermalObserved: false
             )
         }
         return CodecSpikeReport(
             schemaVersion: schemaVersion,
+            reportUUID: reportUUID,
+            processLaunchUUID: processLaunchUUID,
             mode: .threeHourRealTime,
             startedAt: Date(timeIntervalSince1970: 1_000),
             endedAt: Date(timeIntervalSince1970: 1_000 + wallDurationSeconds),
@@ -139,6 +170,10 @@ final class CodecSpikeQualificationTests: XCTestCase {
             iOSAppOnMac: iOSAppOnMac,
             userInterfaceIdiom: userInterfaceIdiom,
             operatingSystem: operatingSystem,
+            bundleIdentifier: bundleIdentifier,
+            bundleShortVersion: "0.13.0",
+            bundleVersion: "45",
+            signingTeamIdentifier: signingTeamIdentifier,
             buildSHA: String(repeating: "a", count: 40),
             canonicalFormat: canonicalFormat,
             chunkDurationSeconds: chunkDurationSeconds,

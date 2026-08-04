@@ -56,7 +56,31 @@ public struct HarcCLIApplication {
                 seconds: seconds,
                 locations: HarcCLIStateLocations(override: stateDirectory)
             )
+        case .qualifyCodecMatrix(let command):
+            try qualifyCodecMatrix(command)
         }
+    }
+
+    private func qualifyCodecMatrix(
+        _ command: HarcCodecQualificationMatrixCommand
+    ) throws {
+        let summary = try HarcCodecQualificationMatrixValidator.loadAndValidate(command)
+        print("Codec qualification matrix passed.")
+        print("Build: \(summary.buildSHA)")
+        print("Version: \(summary.bundleShortVersion) (\(summary.bundleVersion))")
+        for row in summary.rows {
+            let memoryMiB = Double(row.maximumIncrementalResidentBytes) / 1_048_576
+            let p95 = String(format: "%.1f", row.p95EncodingMilliseconds)
+            let memory = String(format: "%.1f", memoryMiB)
+            print(
+                "\(row.role.label): \(row.deviceModel), \(row.operatingSystem), "
+                    + "p95 \(p95) ms, "
+                    + "queue \(row.maximumQueueDepth), "
+                    + "memory \(memory) MiB, "
+                    + "encoded \(row.totalEncodedBytes) bytes"
+            )
+        }
+        print("Both candidates qualify on both devices; codec selection remains a reviewed release decision.")
     }
 
     private func discover(timeoutSeconds: Double) async throws {
@@ -515,6 +539,10 @@ public struct HarcCLIApplication {
       pair --ticket HARC_PAIR_URI [--kind mac|mobile] [--label NAME] [--state-dir PATH]
       status [--upload UUID] [--state-dir PATH]
       upload-fixture [--seconds SECONDS] [--state-dir PATH]
+      qualify-codec-matrix --oldest-device MODEL --current-device MODEL
+        --build-sha SHA --team-id TEAM --version VERSION --build BUILD
+        --oldest-alac PATH --oldest-flac PATH
+        --current-alac PATH --current-flac PATH
 
     Pairing requires the exact four security words to match and local approval
     on the resident Host. Ticket secrets are never persisted.

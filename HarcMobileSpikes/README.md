@@ -23,28 +23,53 @@ The PR 3 harness offers two deliberately different runs:
   the run, not just at chunk endpoints. Its JSON report is the evidence artifact
   required by the spec.
 
-Build physical evidence with the exact commit embedded, for example by passing
-`HARC_BUILD_SHA=<40-hex-commit>` as an Xcode build setting. A report containing
-`unrecorded`, a simulator model, a quick mode, failures, or incomplete chunks is
-not eligible to freeze the release codec. Memory and thermal measurements must
-also remain available for the complete run; an unavailable Mach measurement or
-an unknown thermal state is explicitly nonqualifying rather than a zero/nominal
-result.
+Build physical evidence with the exact commit and signing team embedded, for
+example by passing `HARC_BUILD_SHA=<40-hex-commit>` and
+`DEVELOPMENT_TEAM=<10-character-team-id>` as Xcode build settings. A report
+containing `unrecorded`, a simulator model, a quick mode, failures, or incomplete
+chunks is not eligible to freeze the release codec. Memory and thermal
+measurements must also remain available for the complete run; an unavailable
+Mach measurement or an unknown thermal state is explicitly nonqualifying rather
+than a zero/nominal result.
 
-Schema 4 also records whether the process is an iOS app running on macOS and
-the current user-interface idiom. A qualifying device must be a phone with an
-`iPhoneN,M` hardware identifier; Simulator, Catalyst, and Designed-for-iPhone
-on Mac runs fail closed.
+Schema 5 records a unique report ID and process-launch ID together with the
+sealed bundle identifier, version/build, signing-team identifier, source commit,
+whether the process is an iOS app running on macOS, and the current
+user-interface idiom. A qualifying device must be a phone with an `iPhoneN,M`
+hardware identifier; Simulator, Catalyst, Designed-for-iPhone on Mac, unsigned
+or unidentified builds, and reused app processes fail closed.
 
 Each qualifying report proves only one candidate on one named device. Freeze
 the release codec only after fresh-process, three-hour reports exist for both
-candidates on the named oldest-supported and current iPhones.
+candidates on the named oldest-supported and current iPhones. Fully quit and
+relaunch the harness between candidates; the host-side validator rejects a
+process-launch ID reused by two matrix cells.
 
 For unattended simulator diagnostics, launch with
 `--run-quick-codec-spike`. The physical gate can be started with
 `--run-three-hour-alac-spike` or `--run-three-hour-flac-spike`; the same
 acceptance rules apply regardless of whether the button or launch argument
 started the run.
+
+After exporting all four reports, validate them on the Mac with:
+
+```bash
+swift run harcctl qualify-codec-matrix \
+  --oldest-device iPhoneN,M \
+  --current-device iPhoneN,M \
+  --build-sha <40-hex-commit> \
+  --team-id <10-character-team-id> \
+  --version <marketing-version> \
+  --build <build-number> \
+  --oldest-alac <oldest-alac.json> \
+  --oldest-flac <oldest-flac.json> \
+  --current-alac <current-alac.json> \
+  --current-flac <current-flac.json>
+```
+
+Passing means both candidates satisfy the frozen thresholds on both devices.
+It does not choose the release codec or enable the production compile-time gate;
+that remains a reviewed decision backed by the retained reports.
 
 Recorded evidence:
 
