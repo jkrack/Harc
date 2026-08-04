@@ -40,6 +40,8 @@ require hardware outside this coding session.
 - The desktop Host connection, processing artifact, Client transfer, Client
   pairing, Client runtime, and Host Library window sources passed together in a
   focused macOS Swift 6 typecheck.
+- The generated `HarcMobile` scheme completed an unsigned arm64 iOS Simulator
+  build with architecture and Xcode target concurrency explicitly bounded.
 - A testable `Harc` policy module emitted successfully, and all committed source
   diffs passed `git diff --check`.
 - Earlier slice-specific evidence remains in this directory for PRs 3 through 6.
@@ -50,15 +52,16 @@ require hardware outside this coding session.
 | --- | --- | --- |
 | Clean full SwiftPM tests | Open | Run `swift test --jobs 2` after all iCloud-backed package artifacts are materialized. |
 | Unsigned macOS app build | Open | Run the plan's bounded Harc `xcodebuild` command and the standalone regression matrix. |
-| iOS Simulator build | Blocked by local environment | A bounded two-job build stalled before compilation while Xcode materialized package state after an iCloud-related Mac crash; it was stopped cleanly. Re-run on a stable checkout. |
+| iOS Simulator build | Green | Unsigned arm64 Debug build completed with `** BUILD SUCCEEDED **` on 2026-08-03. |
+| iOS Simulator test execution | Environment-blocked | `CoreSimulatorService` is unavailable after the machine crash; rerun `HarcMobileAppTests` after the service or Mac is restarted. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Confirm the selected CAF/ALAC implementation and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
 | External TestFlight hardening | Deferred | Consent/indicator verification, privacy and export metadata, reviewer-accessible demo/sample flow, accessibility, upgrade/recovery, and Beta Review notes. |
 
-The local Xcode stall is an environment/materialization failure, not a reported
-Swift compiler failure: it emitted no compile diagnostics before cancellation.
-It must nevertheless remain an open build gate until a clean run completes.
+An initial generic Simulator invocation attempted both arm64 and x86_64 despite
+`ONLY_ACTIVE_ARCH`; it was stopped to protect the machine. The successful run
+therefore pins `ARCHS=arm64` and excludes x86_64 explicitly.
 
 ## Safe validation commands
 
@@ -83,7 +86,10 @@ xcodebuild \
   -configuration Debug \
   -destination 'generic/platform=iOS Simulator' \
   -jobs 2 \
+  ARCHS=arm64 \
+  EXCLUDED_ARCHS=x86_64 \
   ONLY_ACTIVE_ARCH=YES \
+  SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
   CODE_SIGNING_ALLOWED=NO \
   -skipPackagePluginValidation \
   build
