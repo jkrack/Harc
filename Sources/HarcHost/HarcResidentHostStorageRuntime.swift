@@ -38,6 +38,10 @@ public actor HarcResidentHostStorageRuntime {
     package nonisolated let cryptographicStateStore:
         any HostCryptographicStateStore
     package nonisolated let writerLease: HostWriterLease
+    /// True only when this process performed the Standalone -> Host mutation.
+    /// A higher-level startup failure may roll that transition back; recovery
+    /// of an already-present Host marker must instead remain fail-closed.
+    package nonisolated let enabledHostModeDuringStart: Bool
 
     private var hostModeDisabled = false
 
@@ -136,7 +140,8 @@ public actor HarcResidentHostStorageRuntime {
                 authorityPublicKey: cryptographicState.authorityIdentity.publicKey,
                 listenerPorts: configuration.listenerPorts,
                 cryptographicStateStore: cryptographicStateStore,
-                writerLease: lease
+                writerLease: lease,
+                enabledHostModeDuringStart: enabledDuringThisStart
             )
         } catch {
             guard enabledDuringThisStart else { throw error }
@@ -159,7 +164,8 @@ public actor HarcResidentHostStorageRuntime {
         authorityPublicKey: P256X963PublicKey,
         listenerPorts: HarcHostListenerPorts,
         cryptographicStateStore: any HostCryptographicStateStore,
-        writerLease: HostWriterLease
+        writerLease: HostWriterLease,
+        enabledHostModeDuringStart: Bool
     ) {
         self.recordingStore = recordingStore
         self.hostStore = hostStore
@@ -168,6 +174,7 @@ public actor HarcResidentHostStorageRuntime {
         self.listenerPorts = listenerPorts
         self.cryptographicStateStore = cryptographicStateStore
         self.writerLease = writerLease
+        self.enabledHostModeDuringStart = enabledHostModeDuringStart
     }
 
     /// Called only by the full resident runtime after advertisement is gone and

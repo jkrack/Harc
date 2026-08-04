@@ -308,6 +308,10 @@ struct HostTransportDeferredStartupTests: Sendable {
             highWaterMarkStore: highWater
         )
         let boundary = DeferredStartupRecordingBoundary()
+        let preServing = DeferredStartupPreServingProbe(
+            store: deferred,
+            boundary: boundary
+        )
         let lifecycle = HostTransportLifecycle(
             store: deferred,
             cryptographicStateStore: cryptoFixture.crypto,
@@ -336,7 +340,8 @@ struct HostTransportDeferredStartupTests: Sendable {
             transportSetProtocol: TestHostTransportSetProtocolBoundaryV1(),
             generationBoundary: boundary,
             canonicalTuple: cryptoFixture.tuple,
-            now: { now }
+            now: { now },
+            beforeServing: { try await preServing.run() }
         )
         let status = try #require(await runtime.generationStatus())
         let recovered = try await cryptoFixture.crypto.inspect(
@@ -352,6 +357,7 @@ struct HostTransportDeferredStartupTests: Sendable {
         #expect(Set(await boundary.activatedRoles()) == Set(HostTransportListenerRole.allCases))
         #expect(await boundary.observedBindErrors() == [.leaseAlreadyBound])
         #expect(!(try await deferred.requiresDeferredServingBootstrap()))
+        #expect(await preServing.runCount() == 1)
 
         await runtime.shutdown()
         #expect(await boundary.stopCount() == 1)
@@ -807,6 +813,31 @@ private actor DeferredStartupRecordingBoundary: HostTransportGenerationBoundary 
     }
 }
 
+private actor DeferredStartupPreServingProbe {
+    private let store: HarcHostStore
+    private let boundary: DeferredStartupRecordingBoundary
+    private var count = 0
+
+    init(
+        store: HarcHostStore,
+        boundary: DeferredStartupRecordingBoundary
+    ) {
+        self.store = store
+        self.boundary = boundary
+    }
+
+    func run() async throws {
+        guard !(try await store.requiresDeferredServingBootstrap()),
+              await boundary.activatedRoles().isEmpty else {
+            throw DeferredStartupBoundaryError.preServingOrderViolation
+        }
+        count += 1
+    }
+
+    func runCount() -> Int { count }
+}
+
 private enum DeferredStartupBoundaryError: Error {
     case expectedDoubleBindRejection
+    case preServingOrderViolation
 }

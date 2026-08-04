@@ -18,7 +18,8 @@ package actor HostTransportResidentRuntime {
         transportSetProtocol: any HostTransportSetProtocolBoundary,
         generationBoundary: any HostTransportGenerationBoundary,
         canonicalTuple: HostCryptographicStateTuple,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        beforeServing: @escaping @Sendable () async throws -> Void = {}
     ) async throws -> HostTransportResidentRuntime {
         let storeTuple = HostCryptographicStateTuple(
             libraryID: store.expectedMetadata.libraryID,
@@ -60,6 +61,10 @@ package actor HostTransportResidentRuntime {
                     try await store.completeDeferredServingBootstrap()
                 }
             }
+            // App-owned publication recovery runs only after both security
+            // journals are reconciled and before a TLS identity is prepared or
+            // either network listener can bind.
+            try await beforeServing()
             _ = try await lifecycle.prepareForServing()
             let scheduler = HostTransportRenewalScheduler(
                 lifecycle: lifecycle,

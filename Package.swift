@@ -335,6 +335,7 @@ let package = Package(
                 "HarcIdentity",
                 "HarcProtocol",
                 "HarcProtocolWire",
+                "HarcStore",
                 "HarcTransfer",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
                 .product(
