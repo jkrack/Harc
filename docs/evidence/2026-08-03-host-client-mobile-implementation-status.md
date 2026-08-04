@@ -44,6 +44,14 @@ require hardware outside this coding session.
   focused macOS Swift 6 typecheck.
 - The generated `HarcMobile` scheme completed an unsigned arm64 iOS Simulator
   build with architecture and Xcode target concurrency explicitly bounded.
+- The application-hosted `HarcMobileAppTests` target completed 2/2 tests on an
+  arm64 iPhone 17 Pro simulator after correcting its generated test-host path
+  and preserving `HarcMobile` as the Swift module name while the displayed app
+  product remains `Harc`.
+- The non-shipping `HarcMobileSpikesTests` target completed 11/11 qualification-
+  logic tests on the same simulator, including the fail-closed rule that
+  simulator, iOS-app-on-Mac, incomplete, or non-phone evidence cannot satisfy
+  the physical codec gate.
 - The complete standalone SwiftPM regression passed 1,488 Swift Testing cases
   in 252 suites plus 121 XCTest cases. Nine real-model/daemon Swift Testing
   cases and four model-quality XCTest cases remain explicitly opt-in through
@@ -71,7 +79,7 @@ several CoreML stacks concurrently.
 | Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,488 Swift Testing cases in 252 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | Unsigned arm64 Debug build completed with `** BUILD SUCCEEDED **` on 2026-08-03. |
-| iOS Simulator test execution | Environment-blocked | `CoreSimulatorService` is unavailable after the machine crash; rerun `HarcMobileAppTests` after the service or Mac is restarted. |
+| iOS Simulator test execution | Green | `HarcMobileAppTests` passed 2/2 and `HarcMobileSpikesTests` passed 11/11 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. |
 | Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Confirm the selected CAF/ALAC implementation and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |

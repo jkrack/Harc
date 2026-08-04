@@ -199,6 +199,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile
         PRODUCT_NAME: Harc
+        PRODUCT_MODULE_NAME: HarcMobile
         CODE_SIGN_ENTITLEMENTS: HarcMobileApp/HarcMobile.entitlements
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
@@ -217,6 +218,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobileAppTests
         GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Harc.app/Harc"
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
