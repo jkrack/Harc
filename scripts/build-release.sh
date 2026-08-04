@@ -74,6 +74,10 @@ done
 
 cp -R "$APP_SRC" "$APP_DST"
 
+# Finder/file-provider attributes are not part of the app and make codesign
+# reject otherwise identical bytes. Strip them from the staged copy only.
+xattr -cr "$APP_DST"
+
 # Notarization requires hardened runtime AND a secure timestamp on every
 # nested Mach-O. Xcode's incremental build signing and build-daemon.sh both
 # omit --timestamp, so re-sign everything here, inside-out (nested code must
