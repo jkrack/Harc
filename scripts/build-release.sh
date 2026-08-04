@@ -18,9 +18,19 @@ TEAM_ID="63TNU5M7P4"
 SCHEME="Harc"
 CONFIG="Release"
 DERIVED="build/release-derived"
-DIST="build/release-dist"
+DIST="${HARC_RELEASE_DIST:-build/release-dist}"
 APP_NAME="Harc.app"
 BUILD_JOBS="${HARC_BUILD_JOBS:-2}"
+STAGING="$(mktemp -d /private/tmp/harc-release.XXXXXX)"
+trap 'rm -rf "$STAGING"' EXIT
+
+case "$DIST" in
+  build/release-dist|/private/tmp/*) ;;
+  *)
+    echo "error: HARC_RELEASE_DIST must be build/release-dist or below /private/tmp" >&2
+    exit 1
+    ;;
+esac
 
 VERSION="$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' project.yml)"
 if [[ -z "$VERSION" ]]; then
@@ -57,7 +67,7 @@ xcodebuild \
   build
 
 APP_SRC="$DERIVED/Build/Products/$CONFIG/$APP_NAME"
-APP_DST="$DIST/$APP_NAME"
+APP_DST="$STAGING/$APP_NAME"
 
 if [[ ! -d "$APP_SRC" ]]; then
   echo "error: build succeeded but $APP_SRC is missing" >&2
@@ -137,18 +147,27 @@ if [[ -z "$APP_TEAM" || "$MCP_TEAM" != "$APP_TEAM" ]]; then
 fi
 
 echo "==> Building DMG"
+DMG_STAGE="$STAGING/Harc-$VERSION.dmg"
 DMG_PATH="$DIST/Harc-$VERSION.dmg"
 /usr/bin/hdiutil create \
   -volname "Harc" \
   -srcfolder "$APP_DST" \
   -ov \
   -format UDZO \
-  "$DMG_PATH"
+  "$DMG_STAGE"
 
+# Keep app signing outside Documents/iCloud-backed paths. The disk image itself
+# is signed only after copying into release-dist, because copying an already
+# signed image through File Provider can invalidate the embedded image seal.
+cp "$DMG_STAGE" "$DMG_PATH"
+xattr -c "$DMG_PATH"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG_PATH"
 
+codesign --verify --verbose=2 "$DMG_PATH"
+/usr/bin/hdiutil verify "$DMG_PATH"
+
 echo ""
-echo "Built: $APP_DST"
+echo "Built: $APP_DST (packaged in DMG)"
 echo "DMG:   $DMG_PATH"
 echo ""
 echo "Next:"
