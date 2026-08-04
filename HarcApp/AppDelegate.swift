@@ -304,6 +304,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         )
         settings.target = self
         menu.addItem(settings)
+        if hostRuntime != nil {
+            let pair = NSMenuItem(
+                title: "Pair a Device…",
+                action: #selector(openHostPairing(_:)),
+                keyEquivalent: ""
+            )
+            pair.target = self
+            menu.addItem(pair)
+        }
 
         // Assign-click-clear is the standard trick for a right-click-only
         // NSStatusItem menu alongside a left-click action.
@@ -430,6 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var recordingsVM: RecordingsViewModel?
     private var harcWindow: HarcWindowController?
     private var settingsWindow: NSWindowController?
+    private var hostPairingWindow: HostPairingWindowController?
     private var welcomeWindow: NSWindowController?
     /// Retained while the Welcome window is open so app activation can push a
     /// fresh permission read into it — the user grants in System Settings and
@@ -880,6 +890,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                                           keyEquivalent: "i")
         importItem.keyEquivalentModifierMask = [.command, .shift]
         importItem.target = self
+        let pairItem = fileMenu.addItem(
+            withTitle: "Pair a Device…",
+            action: #selector(openHostPairing(_:)),
+            keyEquivalent: ""
+        )
+        pairItem.target = self
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Close Window",
                          action: #selector(NSWindow.performClose(_:)),
@@ -3366,6 +3382,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         controller.window?.makeKeyAndOrderFront(nil)
         trackManagedWindow(controller.window)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openHostPairing(_ sender: Any?) {
+        guard let runtime = hostRuntime else {
+            presentLibraryUnavailable(
+                "Pairing is available only while this Mac is running in Host mode."
+            )
+            return
+        }
+        if let existing = hostPairingWindow, let window = existing.window {
+            existing.showWindow(nil)
+            orderManagedWindowFront(window)
+            return
+        }
+        let controller = HostPairingWindowController(runtime: runtime)
+        hostPairingWindow = controller
+        guard let window = controller.window else { return }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.hostPairingWindow = nil
+            }
+        }
+        controller.showWindow(nil)
+        trackManagedWindow(window)
+        orderManagedWindowFront(window)
     }
 
     private func bootstrapStore() async {

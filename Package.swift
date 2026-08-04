@@ -26,6 +26,7 @@ let package = Package(
         .library(name: "HarcVoiceprint", targets: ["HarcVoiceprint"]),
         .executable(name: "harc-stt", targets: ["HarcSTT"]),
         .executable(name: "harc-mcp", targets: ["HarcMCP"]),
+        .executable(name: "harcctl", targets: ["HarcCLI"]),
     ],
     dependencies: [
         .package(
@@ -271,6 +272,17 @@ let package = Package(
                 .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
+        .executableTarget(
+            name: "HarcCLI",
+            dependencies: [
+                "HarcClientStore",
+                "HarcClientTransport",
+                "HarcDomain",
+                "HarcIdentity",
+                "HarcProtocol",
+                "HarcTransfer",
+            ]
+        ),
         .target(
             name: "HarcExport",
             dependencies: ["HarcCore", "HarcClient", "HarcStore"]
@@ -429,6 +441,14 @@ let package = Package(
                 "HarcHostTransport",
                 "HarcStore",
                 "HarcCore",
+            ]
+        ),
+        .testTarget(
+            name: "HarcCLITests",
+            dependencies: [
+                "HarcCLI",
+                "HarcDomain",
+                "HarcProtocol",
             ]
         ),
     ]

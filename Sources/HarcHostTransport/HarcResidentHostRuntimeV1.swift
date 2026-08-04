@@ -303,6 +303,12 @@ public actor HarcResidentHostRuntimeV1 {
         try await pairingApproval.pendingClaim(claimID)
     }
 
+    public func pendingPairingClaim(
+        forTicketID ticketID: UUID
+    ) async throws -> HostPendingPairingClaim? {
+        try await pairingApproval.pendingClaim(forTicketID: ticketID)
+    }
+
     @discardableResult
     public func approvePairingClaim(
         _ claimID: UUID,

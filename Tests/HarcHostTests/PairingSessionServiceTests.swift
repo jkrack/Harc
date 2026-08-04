@@ -645,7 +645,15 @@ struct PairingSessionServiceTests {
         )
         let pending = try await approval.pendingClaim(begun.response.claimID)
         #expect(pending.requiresTransportTrustRepair)
+        #expect(
+            try await approval.pendingClaim(forTicketID: begun.ticketID)
+                == pending
+        )
         let repairedGrant = try await approval.approve(begun.response.claimID)
+        #expect(
+            try await approval.pendingClaim(forTicketID: begun.ticketID)
+                == nil
+        )
         #expect(repairedGrant.claims.grantEpoch == (try initial.grantEpoch.next()))
         #expect(try await store.deviceRequiresTransportTrustRepair(
             deviceID: fixture.deviceID

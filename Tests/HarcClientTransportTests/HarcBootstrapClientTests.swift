@@ -1,5 +1,6 @@
 #if canImport(Network)
 import Foundation
+import HarcClientStore
 import HarcDomain
 import HarcIdentity
 import HarcProtocol
@@ -53,6 +54,34 @@ struct HarcBootstrapClientTests {
         #expect(adoption.grant.devicePublicKey == fixture.deviceKey.publicKey)
         #expect(adoption.grant.scopes == fixture.scopes)
         #expect(await rpc.proofWasVerified())
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: fixture.deviceKey.publicKey.deviceID
+        )
+        _ = try store.adopt(adoption)
+        let activeAdoption = try store.activeAdoption()
+        let snapshot = try #require(activeAdoption)
+        let revalidated = try HarcPersistedAdoptionValidatorV1.validate(
+            snapshot,
+            devicePublicKey: fixture.deviceKey.publicKey,
+            at: Date(
+                timeIntervalSince1970: Double(fixture.now) / 1_000
+            )
+        )
+        #expect(revalidated == adoption)
+        #expect(throws: HarcPersistedAdoptionValidationError.grantNotYetValid) {
+            try HarcPersistedAdoptionValidatorV1.validate(
+                snapshot,
+                devicePublicKey: fixture.deviceKey.publicKey,
+                at: Date(
+                    timeIntervalSince1970: Double(fixture.now - 2_000) / 1_000
+                )
+            )
+        }
 
         await #expect(throws: HarcBootstrapClientError.noPairingInProgress) {
             try await client.getPairingStatus()

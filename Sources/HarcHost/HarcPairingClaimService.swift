@@ -561,6 +561,21 @@ public actor HarcLocalPairingApprovalService {
         return pending
     }
 
+    /// Returns the single live, proved claim associated with a foreground
+    /// ticket. The resident UI uses this ticket-scoped lookup so it never has
+    /// to learn a claimant-selected identifier through an untrusted side
+    /// channel. Tickets admit at most one active attempt by construction.
+    public func pendingClaim(
+        forTicketID ticketID: UUID
+    ) async throws -> HostPendingPairingClaim? {
+        let checkedAt = store.now()
+        guard let pending = try await loadPendingClaim(ticketID: ticketID),
+              checkedAt < pending.expiresAt else {
+            return nil
+        }
+        return pending
+    }
+
     public func deny(_ claimID: UUID) async throws {
         let deniedAt = store.now()
         let time = HarcHostStore.unixTime(deniedAt)
@@ -663,6 +678,25 @@ public actor HarcLocalPairingApprovalService {
     private func loadPendingClaim(
         _ claimID: UUID
     ) async throws -> HostPendingPairingClaim? {
+        try await loadPendingClaim(
+            predicate: "a.claim_id = ?",
+            argument: claimID.uuidString.lowercased()
+        )
+    }
+
+    private func loadPendingClaim(
+        ticketID: UUID
+    ) async throws -> HostPendingPairingClaim? {
+        try await loadPendingClaim(
+            predicate: "a.ticket_id = ?",
+            argument: ticketID.uuidString.lowercased()
+        )
+    }
+
+    private func loadPendingClaim(
+        predicate: String,
+        argument: String
+    ) async throws -> HostPendingPairingClaim? {
         try await store.dbQueue.read { db in
             guard let row = try Row.fetchOne(
                 db,
@@ -673,11 +707,12 @@ public actor HarcLocalPairingApprovalService {
                     FROM pairing_attempts a
                     JOIN pairing_tickets t ON t.ticket_id = a.ticket_id
                     LEFT JOIN devices d ON d.device_id = a.device_id
-                    WHERE a.claim_id = ? AND a.protocol_state_version = 1
+                    WHERE \(predicate) AND a.protocol_state_version = 1
                       AND a.state = 'awaitingApproval'
                     """,
-                arguments: [claimID.uuidString.lowercased()]
+                arguments: [argument]
             ), let ticketID = UUID(uuidString: row["ticket_id"] as String),
+               let claimID = UUID(uuidString: row["claim_id"] as String),
                let clientKind = AdoptedClientKind(rawValue: row["client_kind"] as String) else {
                 return nil
             }
