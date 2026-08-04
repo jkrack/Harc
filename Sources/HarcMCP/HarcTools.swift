@@ -1,19 +1,20 @@
 import Foundation
 import HarcCore
+import HarcHost
 import HarcStore
 import MCP
 
-/// Tool definitions and handlers for the harc-mcp server. Thin wrappers
-/// over `RecordingStore` — every write goes through the store's mutators,
-/// so the OKF `.md` projections regenerate exactly as they do for in-app
-/// edits. Transcripts are read-only by design.
+/// MCP-SDK adapter around the transport-independent Host allowlist.
 struct HarcTools {
-    let store: RecordingStore
+    private let caller: any HarcMCPToolCalling
 
-    /// Posted after every successful write so a running Harc app can
-    /// refresh: GRDB's ValueObservation cannot see another process's
-    /// commits.
-    static let changeNotification = RecordingStore.externalChangeNotification
+    init(store: RecordingStore) {
+        caller = HarcMCPToolService(store: store)
+    }
+
+    init(caller: any HarcMCPToolCalling) {
+        self.caller = caller
+    }
 
     // MARK: - Definitions
 
@@ -180,198 +181,34 @@ struct HarcTools {
 
     func call(name: String, arguments: [String: Value]?) async -> CallTool.Result {
         do {
-            switch name {
-            case "search_notes":
-                return try await searchNotes(arguments)
-            case "get_recording":
-                return try await getRecording(arguments)
-            case "list_recent":
-                return try await listRecent(arguments)
-            case "update_summary":
-                return try await updateSummary(arguments)
-            case "update_title":
-                return try await updateTitle(arguments)
-            case "update_tags":
-                return try await updateTags(arguments)
-            case "append_note":
-                return try await appendNote(arguments)
-            case "set_speaker_name":
-                return try await setSpeakerName(arguments)
-            default:
-                return failure("Unknown tool: \(name)")
-            }
+            let response = await caller.call(HarcMCPToolRequest(
+                name: name,
+                arguments: try arguments?.mapValues(Self.toolValue(from:))
+            ))
+            return CallTool.Result(
+                content: [.text(response.text)],
+                isError: response.isError
+            )
         } catch {
-            return failure(friendlyMessage(for: error))
+            return failure("The MCP request contains an unsupported value.")
         }
     }
 
-    // MARK: - Reads
-
-    private func searchNotes(_ args: [String: Value]?) async throws -> CallTool.Result {
-        guard let query = args?["query"]?.stringValue,
-              !query.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return failure("search_notes needs a non-empty 'query'.")
+    private static func toolValue(from value: Value) throws -> HarcMCPToolValue {
+        switch value {
+        case .null: return .null
+        case .bool(let value): return .bool(value)
+        case .int(let value): return .int(value)
+        case .double(let value): return .double(value)
+        case .string(let value): return .string(value)
+        case .array(let values): return .array(try values.map(toolValue(from:)))
+        case .object(let values): return .object(try values.mapValues(toolValue(from:)))
+        case .data: throw HarcMCPToolAdapterError.unsupportedDataValue
         }
-        let limit = args?["limit"]?.intValue ?? 10
-        let hits = try await store.hybridSearch(
-            query: query,
-            embedder: HashedLexicalEmbedder(),
-            limit: max(1, min(limit, 50))
-        )
-        let payload = hits.prefix(max(1, min(limit, 50))).map(ToolPayloads.hit(for:))
-        if payload.isEmpty {
-            return success("No recordings matched \"\(query)\".")
-        }
-        return success(try ToolPayloads.encode(Array(payload)))
     }
 
-    private func getRecording(_ args: [String: Value]?) async throws -> CallTool.Result {
-        guard let rec = try await resolveRecording(args) else {
-            return failure("Pass 'recording_id' (from search_notes/list_recent) or 'wav_path'.")
-        }
-        var speakers = rec.speakerNames
-        if let id = rec.id {
-            for link in (try? await store.fetchPersonSpeakerLinks(recordingID: id)) ?? [] {
-                if let name = try? await store.resolvedSpeakerName(
-                    recordingID: id, speakerIndex: link.speakerIndex
-                ) {
-                    speakers[link.speakerIndex] = name
-                }
-            }
-        }
-        return success(try ToolPayloads.encode(ToolPayloads.detail(for: rec, speakers: speakers)))
-    }
-
-    private func listRecent(_ args: [String: Value]?) async throws -> CallTool.Result {
-        let limit = max(1, min(args?["limit"]?.intValue ?? 20, 100))
-        let recordings: [Recording]
-        if let dayKey = args?["day"]?.stringValue {
-            guard let day = Self.date(fromDayKey: dayKey) else {
-                return failure("'day' must be YYYY-MM-DD.")
-            }
-            recordings = try await store.recordings(onDay: day)
-        } else {
-            recordings = try await store.fetchAll(pinnedFirst: false)
-        }
-        let payload = recordings.prefix(limit).map(ToolPayloads.summary(for:))
-        return success(try ToolPayloads.encode(Array(payload)))
-    }
-
-    // MARK: - Writes (store-mediated; OKF regenerates automatically)
-
-    private func updateSummary(_ args: [String: Value]?) async throws -> CallTool.Result {
-        guard let id = args?["recording_id"]?.intValue.map(Int64.init),
-              let summary = args?["summary_markdown"]?.stringValue else {
-            return failure("update_summary needs 'recording_id' and 'summary_markdown'.")
-        }
-        let rec = try await store.fetch(id: id)
-        let wordCount = rec?.transcriptText?
-            .split(whereSeparator: { $0.isWhitespace }).count ?? 0
-        try await store.updateSummary(
-            id: id,
-            markdown: summary,
-            actionItemsMarkdown: args?["action_items_markdown"]?.stringValue ?? "",
-            modelID: "mcp-agent",
-            generatedAt: Date(),
-            sourceWordCount: wordCount
-        )
-        postChangeNotification()
-        return success("Summary updated. The recording's .md file has been regenerated.")
-    }
-
-    private func updateTitle(_ args: [String: Value]?) async throws -> CallTool.Result {
-        guard let id = args?["recording_id"]?.intValue.map(Int64.init),
-              let title = args?["title"]?.stringValue else {
-            return failure("update_title needs 'recording_id' and 'title'.")
-        }
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        try await store.rename(id: id, title: trimmed.isEmpty ? nil : trimmed)
-        postChangeNotification()
-        return success(trimmed.isEmpty ? "Title cleared." : "Title set to \"\(trimmed)\".")
-    }
-
-    private func updateTags(_ args: [String: Value]?) async throws -> CallTool.Result {
-        guard let id = args?["recording_id"]?.intValue.map(Int64.init),
-              let values = args?["tags"]?.arrayValue else {
-            return failure("update_tags needs 'recording_id' and 'tags'.")
-        }
-        let tags = values.compactMap(\.stringValue)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        try await store.updateTags(id: id, tags: tags)
-        postChangeNotification()
-        return success("Tags set: \(tags.isEmpty ? "(none)" : tags.joined(separator: ", ")).")
-    }
-
-    private func appendNote(_ args: [String: Value]?) async throws -> CallTool.Result {
-        guard let id = args?["recording_id"]?.intValue.map(Int64.init),
-              let note = args?["note"]?.stringValue,
-              !note.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return failure("append_note needs 'recording_id' and a non-empty 'note'.")
-        }
-        let author = args?["author"]?.stringValue?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let stamp = Self.attributionStamp(author: (author?.isEmpty == false) ? author! : "agent")
-        let block = note.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + stamp
-        try await store.appendNote(id: id, block: block)
-        postChangeNotification()
-        return success("Note appended to the recording's Notes section.")
-    }
-
-    /// "*— Claude, Aug 1, 2026*" — one quiet line under each agent note so
-    /// the file records what came from an agent and when.
     static func attributionStamp(author: String, date: Date = Date()) -> String {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .none
-        return "*— \(author), \(f.string(from: date))*"
-    }
-
-    private func setSpeakerName(_ args: [String: Value]?) async throws -> CallTool.Result {
-        guard let id = args?["recording_id"]?.intValue.map(Int64.init),
-              let index = args?["speaker_index"]?.intValue,
-              let name = args?["name"]?.stringValue,
-              !name.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return failure("set_speaker_name needs 'recording_id', 'speaker_index', and a non-empty 'name'.")
-        }
-        guard let rec = try await store.fetch(id: id) else {
-            return failure("No recording with id \(id).")
-        }
-        var names = rec.speakerNames
-        names[index] = name
-        try await store.updateSpeakerNames(id: id, names: names)
-        postChangeNotification()
-        return success("Speaker \(index + 1) is now \"\(name)\".")
-    }
-
-    // MARK: - Helpers
-
-    private func resolveRecording(_ args: [String: Value]?) async throws -> Recording? {
-        if let id = args?["recording_id"]?.intValue.map(Int64.init) {
-            if let rec = try await store.fetch(id: id), rec.deletedAt == nil { return rec }
-            return nil
-        }
-        if let path = args?["wav_path"]?.stringValue {
-            if let rec = try await store.fetchByWavPath(path), rec.deletedAt == nil { return rec }
-            return nil
-        }
-        return nil
-    }
-
-    private func postChangeNotification() {
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name(Self.changeNotification),
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
-    }
-
-    private func friendlyMessage(for error: Error) -> String {
-        if case StoreError.notFound = error {
-            return "That recording doesn't exist (it may have been deleted)."
-        }
-        return error.localizedDescription
+        HarcMCPToolService.attributionStamp(author: author, date: date)
     }
 
     private func success(_ text: String) -> CallTool.Result {
@@ -383,12 +220,10 @@ struct HarcTools {
     }
 
     static func date(fromDayKey key: String) -> Date? {
-        let parts = key.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        var comps = DateComponents()
-        comps.year = parts[0]
-        comps.month = parts[1]
-        comps.day = parts[2]
-        return Calendar.current.date(from: comps)
+        HarcMCPToolService.date(fromDayKey: key)
     }
+}
+
+private enum HarcMCPToolAdapterError: Error {
+    case unsupportedDataValue
 }

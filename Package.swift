@@ -258,6 +258,7 @@ let package = Package(
             name: "HarcMCP",
             dependencies: [
                 "HarcCore",
+                "HarcHost",
                 "HarcStore",
                 .product(name: "MCP", package: "swift-sdk"),
             ]
@@ -413,7 +414,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcMCPTests",
-            dependencies: ["HarcMCP", "HarcStore", "HarcCore"]
+            dependencies: ["HarcMCP", "HarcHost", "HarcStore", "HarcCore"]
         ),
     ]
 )

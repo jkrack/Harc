@@ -1,10 +1,7 @@
 import Foundation
 import HarcStore
 
-/// JSON payloads harc-mcp returns to agents. Deliberately flat and
-/// self-describing — the tool results are consumed by a model, not a UI.
-enum ToolPayloads {
-
+enum HarcMCPToolPayloads {
     struct SearchHit: Codable {
         let recordingID: Int64?
         let wavPath: String
@@ -43,9 +40,9 @@ enum ToolPayloads {
     }
 
     static var iso8601: ISO8601DateFormatter {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
     }
 
     static func encode<T: Encodable>(_ value: T) throws -> String {
@@ -55,17 +52,19 @@ enum ToolPayloads {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
-    static func summary(for rec: Recording) -> RecordingSummary {
+    static func summary(for recording: Recording) -> RecordingSummary {
         RecordingSummary(
-            recordingID: rec.id,
-            wavPath: rec.wavPath,
-            title: rec.displayTitle,
-            startedAt: iso8601.string(from: rec.startedAt),
-            endedAt: rec.endedAt.map(iso8601.string(from:)),
-            durationSeconds: rec.endedAt.map { Int($0.timeIntervalSince(rec.startedAt)) },
-            tags: rec.tags,
-            pinned: rec.pinned,
-            hasSummary: rec.summaryMarkdown?.isEmpty == false
+            recordingID: recording.id,
+            wavPath: recording.wavPath,
+            title: recording.displayTitle,
+            startedAt: iso8601.string(from: recording.startedAt),
+            endedAt: recording.endedAt.map(iso8601.string(from:)),
+            durationSeconds: recording.endedAt.map {
+                Int($0.timeIntervalSince(recording.startedAt))
+            },
+            tags: recording.tags,
+            pinned: recording.pinned,
+            hasSummary: recording.summaryMarkdown?.isEmpty == false
         )
     }
 
@@ -80,21 +79,26 @@ enum ToolPayloads {
         )
     }
 
-    static func detail(for rec: Recording, speakers: [Int: String]) -> RecordingDetail {
+    static func detail(
+        for recording: Recording,
+        speakers: [Int: String]
+    ) -> RecordingDetail {
         RecordingDetail(
-            recordingID: rec.id,
-            wavPath: rec.wavPath,
-            markdownPath: OKFProjection.markdownURL(for: rec).path,
-            title: rec.displayTitle,
-            startedAt: iso8601.string(from: rec.startedAt),
-            endedAt: rec.endedAt.map(iso8601.string(from:)),
-            durationSeconds: rec.endedAt.map { Int($0.timeIntervalSince(rec.startedAt)) },
-            tags: rec.tags,
+            recordingID: recording.id,
+            wavPath: recording.wavPath,
+            markdownPath: OKFProjection.markdownURL(for: recording).path,
+            title: recording.displayTitle,
+            startedAt: iso8601.string(from: recording.startedAt),
+            endedAt: recording.endedAt.map(iso8601.string(from:)),
+            durationSeconds: recording.endedAt.map {
+                Int($0.timeIntervalSince(recording.startedAt))
+            },
+            tags: recording.tags,
             speakers: speakers,
-            summaryMarkdown: rec.summaryMarkdown,
-            actionItemsMarkdown: rec.actionItemsMarkdown,
-            notesMarkdown: rec.notesMarkdown,
-            transcript: rec.transcriptText
+            summaryMarkdown: recording.summaryMarkdown,
+            actionItemsMarkdown: recording.actionItemsMarkdown,
+            notesMarkdown: recording.notesMarkdown,
+            transcript: recording.transcriptText
         )
     }
 }
