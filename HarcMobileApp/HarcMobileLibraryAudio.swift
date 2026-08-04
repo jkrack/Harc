@@ -313,9 +313,11 @@ final class HarcMobileRecordingAudioController: NSObject {
             let url = try await coordinator.downloadCanonicalAudio(
                 summary: summary
             )
+            #if os(iOS)
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio)
             try session.setActive(true)
+            #endif
             let player = try AVAudioPlayer(contentsOf: url)
             player.delegate = self
             player.prepareToPlay()
@@ -357,7 +359,7 @@ enum HarcMobileLibraryAudioError: LocalizedError {
         case .malformedStream:
             "The Host returned an invalid canonical audio stream."
         case .playbackFailed:
-            "iPhone could not start audio playback."
+            "Harc could not start audio playback."
         }
     }
 }

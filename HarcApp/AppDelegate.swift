@@ -320,6 +320,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             status.isEnabled = false
             menu.addItem(status)
+            let hostLibrary = NSMenuItem(
+                title: "Host Library…",
+                action: #selector(openDesktopHostLibrary(_:)),
+                keyEquivalent: ""
+            )
+            hostLibrary.target = self
+            menu.addItem(hostLibrary)
             let pair = NSMenuItem(
                 title: "Pair with Host…",
                 action: #selector(openRolePairing(_:)),
@@ -460,6 +467,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var hostPairingWindow: HostPairingWindowController?
     private var desktopClientPairingWindow:
         HarcDesktopClientPairingWindowController?
+    private var desktopHostLibraryWindow:
+        HarcDesktopHostLibraryWindowController?
     private var welcomeWindow: NSWindowController?
     /// Retained while the Welcome window is open so app activation can push a
     /// fresh permission read into it — the user grants in System Settings and
@@ -912,6 +921,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                                           keyEquivalent: "i")
         importItem.keyEquivalentModifierMask = [.command, .shift]
         importItem.target = self
+        if desktopClientRuntime != nil {
+            let hostLibraryItem = fileMenu.addItem(
+                withTitle: "Open Host Library…",
+                action: #selector(openDesktopHostLibrary(_:)),
+                keyEquivalent: "l"
+            )
+            hostLibraryItem.keyEquivalentModifierMask = [.command, .option]
+            hostLibraryItem.target = self
+        }
         let pairItem = fileMenu.addItem(
             withTitle: desktopClientRuntime != nil
                 ? "Pair with Host…"
@@ -3428,6 +3446,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 "Choose Host or Client in Settings, restart Harc, then pair this Mac."
             )
         }
+    }
+
+    @objc private func openDesktopHostLibrary(_ sender: Any?) {
+        guard let runtime = desktopClientRuntime else {
+            presentLibraryUnavailable(
+                "The Host Library is available only while this Mac is running in Client mode."
+            )
+            return
+        }
+        if let existing = desktopHostLibraryWindow,
+           let window = existing.window {
+            runtime.libraryCoordinator.refresh()
+            existing.showWindow(nil)
+            orderManagedWindowFront(window)
+            return
+        }
+        let controller = HarcDesktopHostLibraryWindowController(
+            coordinator: runtime.libraryCoordinator
+        )
+        desktopHostLibraryWindow = controller
+        guard let window = controller.window else { return }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.desktopHostLibraryWindow = nil
+            }
+        }
+        controller.showWindow(nil)
+        trackManagedWindow(window)
+        orderManagedWindowFront(window)
+        runtime.libraryCoordinator.refresh()
     }
 
     @objc private func openDesktopClientPairing(_ sender: Any?) {

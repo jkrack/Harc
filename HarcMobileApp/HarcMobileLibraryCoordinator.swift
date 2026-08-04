@@ -72,6 +72,14 @@ final class HarcMobileLibraryCoordinator {
         }
     }
 
+    func shutdown() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        activeSearchID = nil
+        isRefreshing = false
+        isSearching = false
+    }
+
     func submitMetadataMutation(
         summary: LibraryRecordingSummary,
         mutation: HarcMobileMetadataMutation
@@ -139,7 +147,7 @@ final class HarcMobileLibraryCoordinator {
                 return .applied
             }
             state = .offline(
-                message: "Your edit is protected on this iPhone and will retry when the Host is reachable."
+                message: "Your edit is protected on this client and will retry when the Host is reachable."
             )
             return .queuedOffline
         }

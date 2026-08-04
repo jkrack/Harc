@@ -26,6 +26,13 @@ targets:
     platform: macOS
     sources:
       - path: HarcApp
+      # Platform-neutral Client Library composition is shared with iOS. Keep
+      # capture/scanner/UI files in the mobile target only.
+      - path: HarcMobileApp/HarcMobileHostRoute.swift
+      - path: HarcMobileApp/HarcMobileHostSessionConnector.swift
+      - path: HarcMobileApp/HarcMobileLibraryAudio.swift
+      - path: HarcMobileApp/HarcMobileLibraryCoordinator.swift
+      - path: HarcMobileApp/HarcMobileMetadataMutation.swift
     dependencies:
       - package: HarcCore
         product: HarcCore

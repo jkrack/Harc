@@ -19,6 +19,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
     let libraryCache: HarcLibraryCache
     let transferCoordinator: HarcDesktopClientTransferCoordinator
     let pairingCoordinator: HarcDesktopClientPairingCoordinator
+    let libraryCoordinator: HarcMobileLibraryCoordinator
     let root: URL
     let routeURL: URL
 
@@ -43,6 +44,13 @@ final class HarcDesktopClientRuntime: ObservableObject {
             routeURL: routeURL
         )
         self.transferCoordinator = transferCoordinator
+        let libraryCoordinator = HarcMobileLibraryCoordinator(
+            identity: identity,
+            transferStore: transferStore,
+            cache: libraryCache,
+            routeURL: routeURL
+        )
+        self.libraryCoordinator = libraryCoordinator
         pairingCoordinator = HarcDesktopClientPairingCoordinator(
             identity: identity,
             store: transferStore,
@@ -50,6 +58,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
             hasActiveAdoption: try transferStore.activeAdoption() != nil
         ) {
             transferCoordinator.retryPending()
+            libraryCoordinator.refresh()
         }
         transferCoordinator.objectWillChange
             .sink { [weak self] _ in
@@ -98,6 +107,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
             root: root
         )
         runtime.transferCoordinator.retryPending()
+        runtime.libraryCoordinator.refresh()
         return runtime
     }
 
@@ -128,6 +138,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
     func shutdown() {
         pairingCoordinator.cancel()
         transferCoordinator.shutdown()
+        libraryCoordinator.shutdown()
     }
 
     private static func clientRoot() throws -> URL {
