@@ -123,8 +123,49 @@ enum HarcMobileCaptureFileSystem {
         }
     }
 
+    static func preadExact(
+        count: Int,
+        from descriptor: Int32,
+        offset initialOffset: off_t
+    ) throws -> Data {
+        guard count >= 0 else {
+            throw HarcMobileCaptureStorageError.invalidCanonicalBytes
+        }
+        var result = Data(count: count)
+        try result.withUnsafeMutableBytes { bytes in
+            guard let base = bytes.baseAddress else { return }
+            var readCount = 0
+            while readCount < count {
+                let value = Darwin.pread(
+                    descriptor,
+                    base.advanced(by: readCount),
+                    count - readCount,
+                    initialOffset + off_t(readCount)
+                )
+                if value > 0 {
+                    readCount += value
+                } else if value < 0, errno == EINTR {
+                    continue
+                } else if value == 0 {
+                    throw HarcMobileCaptureStorageError.invalidCanonicalBytes
+                } else {
+                    throw posix("pread", errno)
+                }
+            }
+        }
+        return result
+    }
+
     static func synchronize(_ descriptor: Int32) throws {
         guard fsync(descriptor) == 0 else { throw posix("fsync", errno) }
+    }
+
+    static func fileSize(_ descriptor: Int32) throws -> off_t {
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else {
+            throw posix("fstat", errno)
+        }
+        return info.st_size
     }
 
     static func synchronizeDirectory(_ url: URL) throws {

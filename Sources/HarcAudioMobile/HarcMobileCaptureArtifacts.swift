@@ -66,6 +66,7 @@ public struct HarcMobileCaptureLocations: Equatable, Sendable {
     public let root: URL
     public let active: URL
     public let finalized: URL
+    public let encoded: URL
 
     public init(applicationSupportRoot: URL) throws {
         guard applicationSupportRoot.isFileURL else {
@@ -77,12 +78,13 @@ public struct HarcMobileCaptureLocations: Equatable, Sendable {
             .appendingPathComponent("Capture", isDirectory: true)
         active = root.appendingPathComponent("Active", isDirectory: true)
         finalized = root.appendingPathComponent("Finalized", isDirectory: true)
+        encoded = root.appendingPathComponent("Encoded", isDirectory: true)
     }
 
     public func prepare(
         attributes: any HarcMobileCaptureStorageAttributeApplying
     ) throws {
-        for directory in [root, active, finalized] {
+        for directory in [root, active, finalized, encoded] {
             try HarcMobileCaptureFileSystem.requireSafeDirectory(directory)
             try attributes.applyAndVerify(.transferArtifact, to: directory)
         }
@@ -104,6 +106,15 @@ public struct HarcMobileCaptureLocations: Equatable, Sendable {
     public func finalizedMasterURL(recordingUUID: UUID) -> URL {
         finalized.appendingPathComponent(
             "\(recordingUUID.uuidString.lowercased()).wav"
+        )
+    }
+
+    public func encodedChunkURL(
+        recordingUUID: UUID,
+        chunkIndex: UInt32
+    ) -> URL {
+        encoded.appendingPathComponent(
+            "\(recordingUUID.uuidString.lowercased()).\(chunkIndex).caf"
         )
     }
 }
