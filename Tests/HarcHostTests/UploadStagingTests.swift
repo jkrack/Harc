@@ -1979,7 +1979,7 @@ struct UploadStagingTests {
         )
     }
 
-    @Test("manifest binding stops at the PR5 precommit boundary and recovery is separate")
+    @Test("manifest binding remains precommit and recovery is separate")
     func manifestPrecommitBoundary() async throws {
         let fixture = HostTestFixture()
         let directory = try fixture.temporaryDirectory()
@@ -2049,9 +2049,6 @@ struct UploadStagingTests {
             at: fixture.beganAt.addingTimeInterval(5)
         )
         #expect(replay == .exactReplay(missingChunkIndexes: []))
-        #expect(throws: HarcHostError.canonicalCommitUnavailableUntilPR5) {
-            try upload.store.commitUploadUnavailableUntilPR5()
-        }
         let recovery = try await upload.store.incompleteRemoteUploads(
             at: fixture.beganAt.addingTimeInterval(5)
         )

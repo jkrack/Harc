@@ -8,8 +8,8 @@ import NIOHTTP1
 import NIOTransportServices
 
 /// Compile-time boundary for the separate background-upload HTTP/1.1 adapter.
-/// Routing, limits, authorization, and listener lifecycle are added by PR 6's
-/// transport implementation rather than shared with the gRPC HTTP/2 listener.
+/// Routing, limits, authorization, and listener lifecycle remain in the narrow
+/// upload transport rather than being shared with the gRPC HTTP/2 listener.
 public enum HarcHTTP11UploadTransportAPI {
     public typealias RequestHead = HTTPRequestHead
     public typealias ResponseHead = HTTPResponseHead

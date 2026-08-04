@@ -14,7 +14,7 @@ fallback. Neither adapter exposes private-key material.
 The installation device identity exists before first capture and before pairing;
 pairing registers that stable key rather than creating it.
 
-The module owns validated grant claims and registry decisions, not their PR4
+The module owns validated grant claims and registry decisions, not their
 protobuf encoding or signed-envelope bytes. It also does not own command
 envelopes, recording manifests, receipts, network reachability, or application
 UI.

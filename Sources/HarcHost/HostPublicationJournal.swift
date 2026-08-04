@@ -830,7 +830,7 @@ private extension HarcHostStore {
                     storedExpiresAt,
                     equals: claims.expiresAt.map(Self.unixTime)
                   ),
-                  claims.expiresAt.map { acceptedAt < $0 } ?? true
+                  claims.expiresAt.map({ acceptedAt < $0 }) ?? true
             else {
                 throw HarcHostError.publicationRecoveryRequired(
                     "accepted grant snapshot drifted"

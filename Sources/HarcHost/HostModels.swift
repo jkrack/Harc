@@ -183,7 +183,7 @@ public protocol SecurityRegistryHighWaterMarkStore: Sendable {
 }
 
 /// Test/loopback implementation. Production composes the same protocol with a
-/// this-device-only Keychain item in PR 6.
+/// this-device-only Keychain item.
 public actor InMemorySecurityRegistryHighWaterMarkStore: SecurityRegistryHighWaterMarkStore {
     private var revision: UInt64
 
@@ -280,8 +280,8 @@ public enum SecurityRegistryMutationKind: String, Codable, CaseIterable, Sendabl
     case revokeDevice
 }
 
-/// Exact bytes are opaque until PR 4. They are journaled now so the security
-/// state transition can never get ahead of the future signed grant/revocation.
+/// Exact bytes remain opaque to this module. They are journaled so the security
+/// state transition can never get ahead of the signed grant or revocation.
 public enum SecurityRegistryMutation: Codable, Equatable, Sendable {
     case issueGrant(
         entry: DeviceRegistryEntry,
@@ -337,7 +337,7 @@ public enum SecurityRegistryMutation: Codable, Equatable, Sendable {
     }
 }
 
-// MARK: - Pairing placeholders (wire bytes land in PR 4)
+// MARK: - Pairing ticket state
 
 public enum PairingTicketState: String, Codable, CaseIterable, Sendable {
     case issued
@@ -892,7 +892,6 @@ public enum HarcHostError: Error, Equatable, Sendable {
     case stagingIO(String)
     case incompleteBody
     case manifestEvidenceRequired
-    case canonicalCommitUnavailableUntilPR5
     case incompleteCanonicalUpload
     case publicationRecoveryRequired(String)
     case publicationCheckpointConflict(expected: [String], actual: String)
@@ -989,8 +988,8 @@ extension HarcHostError: LocalizedError {
         case .unsafeStagingPath: "A staged path escaped the host-generated staging namespace or traversed a symlink."
         case .stagingIO(let detail): "Host staging failed: \(detail)"
         case .incompleteBody: "The encoded chunk body ended before the declared byte length."
-        case .manifestEvidenceRequired: "A PR 4 validated exact manifest is required."
-        case .canonicalCommitUnavailableUntilPR5: "Canonical publication and durable receipts are not implemented before PR 5."
+        case .manifestEvidenceRequired:
+            "Validated exact signed recording-manifest evidence is required."
         case .incompleteCanonicalUpload:
             "Every declared upload chunk must be durably staged before canonical publication."
         case .publicationRecoveryRequired(let detail):

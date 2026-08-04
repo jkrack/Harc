@@ -72,6 +72,11 @@ evidence outside this coding session.
   `docs/privacy/harc-mobile-privacy-policy.md` and
   `docs/operations/testflight-release-readiness.md`. Publication of the policy
   URL and account-owner contact/build values remains open.
+- The final slice-boundary audit removed the obsolete public PR-3
+  `commitUploadUnavailableUntilPR5` sentinel and its production error mapping.
+  Canonical ingest now has only the implemented publication/receipt path, while
+  missing exact signed-manifest evidence reports a product invariant rather
+  than an obsolete implementation-phase number.
 - The production iPhone composition now mints request-bound background upload
   capabilities, builds immutable file-backed HARCAB1 batches, persists the
   batch-to-URLSession-task mapping before resume, reconciles task state after

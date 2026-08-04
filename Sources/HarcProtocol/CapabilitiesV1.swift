@@ -5,7 +5,7 @@ import HarcProtocolWire
 import HarcTransfer
 
 /// Local capability policy. The codec set is always supplied by the composing
-/// app so PR 4 does not accidentally freeze a production codec before the
+/// app so the wire-contract layer does not freeze a production codec before the
 /// physical-device qualification gate closes.
 public struct HarcCapabilityPolicyV1: Sendable {
     public let compatibility: HarcProtobufCompatibilityPolicy

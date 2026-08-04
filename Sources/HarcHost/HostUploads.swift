@@ -617,12 +617,6 @@ extension HarcHostStore {
         }
     }
 
-    /// PR 3 intentionally stops here. Calling this makes the boundary explicit
-    /// instead of manufacturing a receipt-shaped success.
-    public nonisolated func commitUploadUnavailableUntilPR5() throws -> Never {
-        throw HarcHostError.canonicalCommitUnavailableUntilPR5
-    }
-
     public func abandonUpload(
         context: AuthenticatedDeviceContext,
         uploadID: UploadID,

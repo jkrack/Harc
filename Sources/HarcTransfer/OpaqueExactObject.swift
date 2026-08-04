@@ -3,8 +3,8 @@ import HarcDomain
 import HarcIdentity
 
 /// Registry tags for exact signed objects whose protobuf payload and signature
-/// verification belong to PR 4/5. This is intentionally not a receipt or
-/// manifest model.
+/// verification belong to the protocol boundary. This is intentionally not a
+/// receipt or manifest model.
 public enum ExactObjectKind: String, Codable, CaseIterable, Sendable {
     case recordingManifestV1
     case recordingReceiptV1
@@ -131,7 +131,7 @@ public struct ValidatedRecordingManifestEvidence: Equatable, Hashable, Sendable 
         finalizedCapture.capture.canonicalFormat
     }
 
-    /// Package access is the explicit PR 4 validator construction seam. Do not
+    /// Package access is the exact-object validator construction seam. Do not
     /// widen this initializer or add a public protocol-based substitute.
     package init(
         hostTrust: RecordingHostTrustBinding,
@@ -189,7 +189,7 @@ public struct ValidatedRecordingReceiptEvidence: Equatable, Hashable, Sendable {
     public let durableCommitTime: Date
     public let processingState: RecordingProcessingState
 
-    /// Package access is the explicit PR 5 validator construction seam. Every
+    /// Package access is the receipt-validator construction seam. Every
     /// argument before the canonical result fields is mirrored against the
     /// already validated manifest so a receipt for another host, upload,
     /// origin, manifest, profile, or audio stream cannot become evidence.

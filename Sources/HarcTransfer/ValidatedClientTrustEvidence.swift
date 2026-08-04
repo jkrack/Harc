@@ -172,8 +172,8 @@ public struct ValidatedClientGrantClaimsProjection: Equatable, Hashable, Sendabl
     }
 }
 
-/// Concrete transport-set evidence emitted only after the future PR 4
-/// validator has verified the authority signature and mirrored the exact host
+/// Concrete transport-set evidence emitted only after the protocol validator
+/// has verified the authority signature and mirrored the exact host
 /// tuple and epoch from the signed payload.
 public struct ValidatedTransportSetEvidence: Equatable, Hashable, Sendable {
     public let hostTrust: RecordingHostTrustBinding
@@ -199,8 +199,8 @@ public struct ValidatedTransportSetEvidence: Equatable, Hashable, Sendable {
     }
 }
 
-/// Concrete grant/registry evidence emitted only after the future PR 4
-/// validator has verified the signed object. `DeviceGrantClaims` supplies the
+/// Concrete grant/registry evidence emitted only after the protocol validator
+/// has verified the signed object. `DeviceGrantClaims` supplies the
 /// canonical LibraryID, HostAuthorityID, GrantID, DeviceID, and registry epoch
 /// rather than accepting a second independently swappable tuple.
 public struct ValidatedDeviceGrantEvidence: Equatable, Hashable, Sendable {

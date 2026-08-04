@@ -157,7 +157,7 @@ public struct GrantEpoch: Hashable, Sendable, Codable, Comparable, CustomStringC
     }
 }
 
-/// Validated grant fields independent of the PR4 protobuf encoding and signed
+/// Validated grant fields independent of the protobuf encoding and signed
 /// envelope. This model must not be treated as signed bytes by itself.
 public struct DeviceGrantClaims: Hashable, Sendable, Codable {
     public let protocolVersion: IdentityProtocolVersion
@@ -316,8 +316,8 @@ public enum DeviceRegistryStatus: String, Codable, Sendable {
     case revoked
 }
 
-/// Transport-neutral revocation facts. PR4 defines their exact protobuf and
-/// envelope bytes.
+/// Transport-neutral revocation facts. `HarcProtocol` defines their exact
+/// protobuf and envelope bytes.
 public struct DeviceRevocationClaims: Hashable, Sendable, Codable {
     public let protocolVersion: IdentityProtocolVersion
     public let libraryID: LibraryID

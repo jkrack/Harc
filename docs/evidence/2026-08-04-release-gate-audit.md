@@ -45,6 +45,7 @@ edge-capable secondary-Mac system, or external TestFlight release complete.
 | Unsigned macOS app build | Passed with arm64 and two-worker limits, including embedded helpers. |
 | Release-script preflight | Passed with two workers, including Developer ID inside-out signing, DMG signature/checksum, and the new mounted packaged-app deep-signature gate. |
 | TestFlight code-owned artifacts | Offline read-only reviewer sample, synthetic WAV, stable accessibility identifiers, in-app privacy copy, privacy-policy source, App Privacy/export rationale, external checklist, and Beta App Review notes are present and locally tested. |
+| Slice-boundary hygiene | The obsolete public `commitUploadUnavailableUntilPR5` sentinel and its error-mapping/test path were removed; production Host upload errors no longer expose superseded PR-phase state. |
 | Source hygiene | `git diff --check` passed. |
 
 ## Physical C7 storage-exhaustion hook

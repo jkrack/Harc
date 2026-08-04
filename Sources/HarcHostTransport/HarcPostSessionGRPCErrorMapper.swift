@@ -246,8 +246,7 @@ enum HarcPostSessionGRPCErrorMapper {
              .processingSchedulerUnavailable:
             .unavailable
 
-        case .canonicalCommitUnavailableUntilPR5,
-             .canonicalArtifactIdentityMismatch, .invalidCanonicalWAV,
+        case .canonicalArtifactIdentityMismatch, .invalidCanonicalWAV,
              .invalidListenerPort, .listenerPortsMustBeDistinct,
              .listenerPortPersistenceConflict:
             .internalFailure

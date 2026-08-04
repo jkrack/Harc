@@ -218,7 +218,7 @@ public enum BackgroundBatchState: String, CaseIterable, Sendable {
     case expired
 }
 
-/// The exact secret and bindings returned by the future PR 4/6 protocol layer.
+/// The exact secret and bindings returned by the authenticated protocol layer.
 /// The transfer store preserves them together before a system task can resume.
 public struct OpaqueBackgroundCapability: Equatable, Sendable {
     public let credential: Data
@@ -1048,7 +1048,8 @@ extension HarcTransferStore {
     /// Persists a typed host reconciliation and advances only chunk staging
     /// facts that match the immutable local attempt. Even a reconciliation
     /// carrying receipt bytes does not commit the recording or enable cleanup;
-    /// PR 5 must validate those bytes against local manifest/audio/trust facts.
+    /// The receipt validator must bind those bytes to local manifest, audio,
+    /// and adopted-host trust facts before cleanup becomes eligible.
     public func applyUploadReconciliation(
         _ reconciliation: UploadReconciliation,
         reconciledAt: Date? = nil

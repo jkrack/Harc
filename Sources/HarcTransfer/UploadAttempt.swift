@@ -292,8 +292,8 @@ public struct UploadAttempt: Codable, Equatable, Hashable, Sendable {
         terminalAt = date
     }
 
-    /// PR 5 supplies concrete validator evidence. HarcTransfer rechecks every
-    /// binding it can recover from the attempt before recording commit.
+    /// The receipt validator supplies concrete evidence. HarcTransfer rechecks
+    /// every binding it can recover from the attempt before recording commit.
     public mutating func markCommitted(
         using evidence: ValidatedRecordingReceiptEvidence,
         generation requestedGeneration: UploadGeneration,

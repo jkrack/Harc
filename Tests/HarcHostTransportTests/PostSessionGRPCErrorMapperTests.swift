@@ -141,7 +141,6 @@ struct PostSessionGRPCErrorMapperTests {
     func internalMappings() {
         assertMapped(
             [
-                HarcHostError.canonicalCommitUnavailableUntilPR5,
                 HarcHostError.canonicalArtifactIdentityMismatch,
                 HarcHostError.invalidCanonicalWAV,
                 TransferValidationError.invalidOutboxTransition(
