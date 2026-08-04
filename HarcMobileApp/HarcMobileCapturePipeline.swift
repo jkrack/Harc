@@ -113,6 +113,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         captureStartedMonotonicNanoseconds: UInt64,
         storageAttributes: any HarcMobileCaptureStorageAttributeApplying =
             FoundationHarcMobileCaptureStorageAttributes(),
+        storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil,
         completion: @escaping Completion
     ) throws {
         let available = DispatchSemaphore(value: 0)
@@ -128,7 +129,9 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
             captureStartedAt: captureStartedAt,
             captureStartedMonotonicNanoseconds:
                 captureStartedMonotonicNanoseconds,
-            attributes: storageAttributes
+            attributes: storageAttributes,
+            storageExhaustionAfterCanonicalBytesForTesting:
+                storageExhaustionAfterCanonicalBytesForTesting
         )
         self.completion = completion
     }

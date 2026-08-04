@@ -445,6 +445,13 @@ struct HarcMobileRootView: View {
             Label("Saved locally", systemImage: "checkmark.circle.fill")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.green)
+        case .storageExhausted:
+            Label("iPhone storage is full", systemImage: "externaldrive.badge.exclamationmark")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text("Recording stopped. Harc saved the durable portion locally.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         case .failed(let message):
             Text("Recording ended")
                 .font(.title2.weight(.semibold))
@@ -470,7 +477,7 @@ struct HarcMobileRootView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.red)
-        case .saved, .failed:
+        case .saved, .storageExhausted, .failed:
             Button("Record Again") { coordinator.resetTerminalState() }
                 .buttonStyle(.borderedProminent)
         case .requestingPermission, .starting, .stopping:

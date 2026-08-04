@@ -33,13 +33,27 @@ edge-capable secondary-Mac system, or external TestFlight release complete.
 
 | Gate | Result |
 | --- | --- |
-| Focused durable capture recovery | 8 tests in 3 suites passed, including writer-failure truncation to the synchronized checkpoint. |
-| Full SwiftPM regression | 1,498 Swift Testing cases in 253 suites and 121 XCTest cases passed with two workers. Thirteen real-model/model-quality cases remained opt-in by contract. |
-| HarcMobile app tests | 7/7 passed on arm64 iPhone 17 Pro Simulator, iOS 26.5, including format-changing converter rebuild and terminated-pipeline race coverage. |
+| Focused durable capture recovery | 9 tests in 3 suites passed, including deterministic storage-exhaustion recovery and writer-failure truncation to the synchronized checkpoint. |
+| Full SwiftPM regression | 1,499 Swift Testing cases in 253 suites and 121 XCTest cases passed with two workers. Thirteen real-model/model-quality cases remained opt-in by contract. |
+| HarcMobile app tests | 10/10 passed on arm64 iPhone 17 Pro Simulator, iOS 26.5, including format-changing converter rebuild, terminated-pipeline race coverage, and the C7 qualification hook/UI state. |
 | HarcMobile qualification-logic tests | 11/11 passed on the same Simulator and continue to reject Simulator evidence for the physical codec gate. |
 | Generic iOS Simulator build | Passed with arm64 and two-worker limits. |
 | Unsigned macOS app build | Passed with arm64 and two-worker limits, including embedded helpers. |
 | Source hygiene | `git diff --check` passed. |
+
+## Physical C7 storage-exhaustion hook
+
+The Debug iPhone app accepts these launch arguments for the C7 physical test:
+
+```text
+--harc-capture-storage-exhaustion-after-canonical-bytes 160000
+```
+
+After at least five seconds of canonical PCM has reached a durable checkpoint,
+the next writer append deterministically returns `ENOSPC`. The expected result
+is a visible **iPhone storage is full** terminal state, one playable nonempty
+durable prefix finalized as `storageExhausted`, `writerFailure` and `recovery`
+discontinuities, and no zero-byte success. Release builds ignore this argument.
 
 ## Gates that remain open
 
@@ -58,17 +72,6 @@ or receipt policies.
 
 ## Signed macOS 0.13.0 candidate
 
-- Source commit: `ec828d5` (the later appcast-only release commit does not
-  change application bytes).
-- Build: arm64 Release, Developer ID Application, hardened runtime and secure
-  timestamps, with embedded `harc-stt`, `harc-mcp`, and Sparkle verified
-  inside-out.
-- Apple notarization submission:
-  `ffb48a65-d981-4ce8-97b4-c9db182ddc5f`, status **Accepted**.
-- Stapler validation: passed.
-- Gatekeeper: `accepted`, `source=Notarized Developer ID`.
-- Published DMG asset size: 64,877,112 bytes.
-- Published DMG SHA-256:
-  `8084b3be454d0eadd3ebfe7b28baee5b4877d6665df35ff2a58cbb6affbf24ca`.
-- The Sparkle EdDSA entry was generated only after stapling and covers those
-  exact `Harc-local.dmg` bytes.
+The previously notarized candidate from source commit `ec828d5` was superseded
+by the C7 qualification-hook change. A replacement candidate must be built,
+notarized, stapled, verified, and signed for Sparkle before publication.

@@ -8,6 +8,58 @@ import HarcTransfer
 import Observation
 import UIKit
 
+enum HarcMobileCaptureQualificationError: LocalizedError, Equatable {
+    case duplicateStorageExhaustionArgument
+    case missingStorageExhaustionValue
+    case invalidStorageExhaustionValue(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .duplicateStorageExhaustionArgument:
+            "The capture storage-exhaustion qualification argument was repeated."
+        case .missingStorageExhaustionValue:
+            "The capture storage-exhaustion qualification argument needs a byte value."
+        case .invalidStorageExhaustionValue(let value):
+            "The capture storage-exhaustion qualification byte value is invalid: \(value)."
+        }
+    }
+}
+
+enum HarcMobileCaptureQualificationConfiguration {
+    static let storageExhaustionArgument =
+        "--harc-capture-storage-exhaustion-after-canonical-bytes"
+
+    static func storageExhaustionAfterCanonicalBytes(
+        arguments: [String]
+    ) throws -> UInt64? {
+#if DEBUG
+        let indices = arguments.indices.filter {
+            arguments[$0] == storageExhaustionArgument
+        }
+        guard indices.count <= 1 else {
+            throw HarcMobileCaptureQualificationError
+                .duplicateStorageExhaustionArgument
+        }
+        guard let index = indices.first else { return nil }
+        let valueIndex = arguments.index(after: index)
+        guard valueIndex < arguments.endIndex else {
+            throw HarcMobileCaptureQualificationError
+                .missingStorageExhaustionValue
+        }
+        let rawValue = arguments[valueIndex]
+        guard let value = UInt64(rawValue),
+              value >= HarcMobileDurableMasterWriter.checkpointFrames * 2,
+              value.isMultiple(of: 2) else {
+            throw HarcMobileCaptureQualificationError
+                .invalidStorageExhaustionValue(rawValue)
+        }
+        return value
+#else
+        return nil
+#endif
+    }
+}
+
 @MainActor
 @Observable
 final class HarcMobileAppModel {
@@ -37,6 +89,11 @@ final class HarcMobileAppModel {
                 readiness = .protectedDataUnavailable
                 return
             }
+            let qualificationStorageExhaustionBytes = try
+                HarcMobileCaptureQualificationConfiguration
+                    .storageExhaustionAfterCanonicalBytes(
+                        arguments: ProcessInfo.processInfo.arguments
+                    )
             let root = try Self.applicationRoot()
             let clientLocations = try ClientStoreLocations(rootDirectory: root)
             let captureLocations = try HarcMobileCaptureLocations(
@@ -117,7 +174,9 @@ final class HarcMobileAppModel {
             libraryCoordinator = library
             captureCoordinator = HarcMobileCaptureCoordinator(
                 producingDeviceID: identity.deviceID,
-                locations: captureLocations
+                locations: captureLocations,
+                storageExhaustionAfterCanonicalBytesForTesting:
+                    qualificationStorageExhaustionBytes
             ) { [weak self] master in
                 guard let self, let store = self.transferStore else {
                     throw CocoaError(.fileNoSuchFile)

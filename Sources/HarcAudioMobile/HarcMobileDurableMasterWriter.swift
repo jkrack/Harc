@@ -102,6 +102,7 @@ public final class HarcMobileDurableMasterWriter {
 
     private let locations: HarcMobileCaptureLocations
     private let attributes: any HarcMobileCaptureStorageAttributeApplying
+    private let storageExhaustionAfterCanonicalBytesForTesting: UInt64?
     private let partialURL: URL
     private let checkpointURL: URL
     private var descriptor: Int32
@@ -120,10 +121,19 @@ public final class HarcMobileDurableMasterWriter {
         captureStartedAt: Date = Date(),
         captureStartedMonotonicNanoseconds: UInt64,
         attributes: any HarcMobileCaptureStorageAttributeApplying =
-            FoundationHarcMobileCaptureStorageAttributes()
+            FoundationHarcMobileCaptureStorageAttributes(),
+        storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil
     ) throws {
+        if let quota = storageExhaustionAfterCanonicalBytesForTesting {
+            guard quota >= Self.checkpointFrames * 2,
+                  quota.isMultiple(of: 2) else {
+                throw HarcMobileCaptureStorageError.invalidCanonicalBytes
+            }
+        }
         self.locations = locations
         self.attributes = attributes
+        self.storageExhaustionAfterCanonicalBytesForTesting =
+            storageExhaustionAfterCanonicalBytesForTesting
         self.producingDeviceID = producingDeviceID
         originRecordingID = OriginRecordingID(
             deviceID: producingDeviceID,
@@ -172,6 +182,13 @@ public final class HarcMobileDurableMasterWriter {
               endedAt >= lastEndedAt,
               endedMonotonicNanoseconds >= lastEndedMonotonicNanoseconds else {
             throw HarcMobileCaptureStorageError.invalidCanonicalBytes
+        }
+        if let quota = storageExhaustionAfterCanonicalBytesForTesting,
+           totalFrames * 2 >= quota {
+            throw HarcMobileCaptureStorageError.posix(
+                operation: "captureQualificationQuota",
+                code: ENOSPC
+            )
         }
         let addedFrames = UInt64(bytes.count / 2)
         let newFrames = totalFrames.addingReportingOverflow(addedFrames)

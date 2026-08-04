@@ -14,6 +14,7 @@ final class HarcMobileCaptureCoordinator {
         case recording(startedAt: Date)
         case stopping
         case saved(recordingUUID: UUID)
+        case storageExhausted(recordingUUID: UUID)
         case failed(String)
     }
 
@@ -21,6 +22,7 @@ final class HarcMobileCaptureCoordinator {
 
     private let producingDeviceID: DeviceID
     private let locations: HarcMobileCaptureLocations
+    private let storageExhaustionAfterCanonicalBytesForTesting: UInt64?
     private let onFinalized: @MainActor (HarcMobileFinalizedMaster) throws -> Void
     private var engine: AVAudioEngine?
     private var pipeline: HarcMobileCapturePipeline?
@@ -32,12 +34,15 @@ final class HarcMobileCaptureCoordinator {
     init(
         producingDeviceID: DeviceID,
         locations: HarcMobileCaptureLocations,
+        storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil,
         onFinalized: @escaping @MainActor (
             HarcMobileFinalizedMaster
         ) throws -> Void
     ) {
         self.producingDeviceID = producingDeviceID
         self.locations = locations
+        self.storageExhaustionAfterCanonicalBytesForTesting =
+            storageExhaustionAfterCanonicalBytesForTesting
         self.onFinalized = onFinalized
     }
 
@@ -89,7 +94,9 @@ final class HarcMobileCaptureCoordinator {
                 inputFormat: format,
                 tapFrameCapacity: 4_096,
                 captureStartedAt: startedAt,
-                captureStartedMonotonicNanoseconds: startedMonotonic
+                captureStartedMonotonicNanoseconds: startedMonotonic,
+                storageExhaustionAfterCanonicalBytesForTesting:
+                    storageExhaustionAfterCanonicalBytesForTesting
             ) { [weak self] result in
                 Task { @MainActor [weak self] in
                     await self?.pipelineCompleted(result)
@@ -140,7 +147,7 @@ final class HarcMobileCaptureCoordinator {
 
     private var isTerminalState: Bool {
         switch state {
-        case .saved, .failed: true
+        case .saved, .storageExhausted, .failed: true
         default: false
         }
     }
@@ -173,8 +180,9 @@ final class HarcMobileCaptureCoordinator {
             switch result {
             case .success(let master):
                 try onFinalized(master)
-                state = .saved(
-                    recordingUUID: master.originRecordingID.recordingUUID
+                state = Self.terminalState(
+                    recordingUUID: master.originRecordingID.recordingUUID,
+                    finalizationReason: master.finalizationReason
                 )
             case .failure(let error):
                 state = .failed(error.localizedDescription)
@@ -182,6 +190,15 @@ final class HarcMobileCaptureCoordinator {
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+
+    static func terminalState(
+        recordingUUID: UUID,
+        finalizationReason: HarcMobileCaptureFinalizationReason
+    ) -> State {
+        finalizationReason == .storageExhausted
+            ? .storageExhausted(recordingUUID: recordingUUID)
+            : .saved(recordingUUID: recordingUUID)
     }
 
     private func teardownEngine() {

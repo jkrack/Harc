@@ -108,6 +108,52 @@ struct HarcMobileDurableMasterWriterTests {
             == durable)
     }
 
+    @Test("qualification quota reports storage exhaustion and keeps a durable prefix")
+    func storageExhaustionQualificationRecovery() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let durable = Data(
+            repeating: 0x55,
+            count: Int(HarcMobileDurableMasterWriter.checkpointFrames * 2)
+        )
+        let writer = try fixture.writer(
+            storageExhaustionAfterCanonicalBytesForTesting:
+                UInt64(durable.count)
+        )
+        try writer.appendCanonicalPCM(
+            durable,
+            endedAt: fixture.started.addingTimeInterval(5),
+            endedMonotonicNanoseconds: 6_000_000_000
+        )
+
+        #expect(throws: HarcMobileCaptureStorageError.posix(
+            operation: "captureQualificationQuota",
+            code: ENOSPC
+        )) {
+            try writer.appendCanonicalPCM(
+                Data(repeating: 0x66, count: 2),
+                endedAt: fixture.started.addingTimeInterval(5.001),
+                endedMonotonicNanoseconds: 6_001_000_000
+            )
+        }
+
+        let recovered = try writer.recoverDurablePrefixAfterFailure(
+            reason: .storageExhausted
+        )
+        let result = try #require(recovered)
+        #expect(result.finalizationReason == .storageExhausted)
+        #expect(result.totalCanonicalFrames
+            == HarcMobileDurableMasterWriter.checkpointFrames)
+        #expect(result.discontinuities.map(\.reason).suffix(2) == [
+            .writerFailure,
+            .recovery,
+        ])
+        #expect(try Data(contentsOf: result.masterFileURL).count
+            == 44 + durable.count)
+        #expect(try Data(contentsOf: result.masterFileURL).dropFirst(44)
+            == durable)
+    }
+
     @Test("a process death before the first frame never publishes zero-byte success")
     func emptyRecovery() throws {
         let fixture = try Fixture()
@@ -206,13 +252,17 @@ private struct Fixture {
         deviceID = try DeviceID(Data(repeating: 0x42, count: 32))
     }
 
-    func writer() throws -> HarcMobileDurableMasterWriter {
+    func writer(
+        storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil
+    ) throws -> HarcMobileDurableMasterWriter {
         try HarcMobileDurableMasterWriter(
             locations: locations,
             producingDeviceID: deviceID,
             captureStartedAt: started,
             captureStartedMonotonicNanoseconds: 1_000_000_000,
-            attributes: NoopStorageAttributes()
+            attributes: NoopStorageAttributes(),
+            storageExhaustionAfterCanonicalBytesForTesting:
+                storageExhaustionAfterCanonicalBytesForTesting
         )
     }
 }
