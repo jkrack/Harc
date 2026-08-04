@@ -18,6 +18,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         case connecting(UUID)
         case uploading(UUID)
         case uploaded(UUID)
+        case edgeArtifactDeferred(UUID, String)
         case retryNeeded(UUID, String)
         case securityBlocked(UUID, String)
     }
@@ -28,6 +29,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private let identity: InstallationSigningIdentity
     private let store: HarcTransferStore
     private let locations: HarcMobileCaptureLocations
+    private let clientRoot: URL
     private let routeURL: URL
     private var queue: [HarcMobileFinalizedMaster] = []
     private var queuedOrigins = Set<OriginRecordingID>()
@@ -41,6 +43,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     ) throws {
         self.identity = identity
         self.store = store
+        self.clientRoot = clientRoot
         locations = try HarcMobileCaptureLocations(
             applicationSupportRoot: clientRoot
         )
@@ -65,6 +68,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             pendingCount == 0
                 ? "All Client recordings are on Host"
                 : "\(pendingCount) recording(s) still waiting for Host"
+        case .edgeArtifactDeferred(_, let message):
+            "Audio is safe on Host; local transcript handoff will retry: \(message)"
         case .retryNeeded(_, let message):
             "Host transfer needs retry: \(message)"
         case .securityBlocked(_, let message):
@@ -74,11 +79,18 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
     func retryPending() {
         do {
-            let pending = try store.recordingOutboxes().filter {
-                $0.stateMachine.state != .committed
-                    && $0.stateMachine.state != .securityBlocked
-                    && $0.integrityBlock == nil
-                    && $0.finalizedCapture.masterFileState == .present
+            let pending = try store.recordingOutboxes().filter { outbox in
+                let transferable = outbox.stateMachine.state != .securityBlocked
+                    && outbox.integrityBlock == nil
+                    && outbox.finalizedCapture.masterFileState == .present
+                return transferable && (
+                    outbox.stateMachine.state != .committed
+                        || Self.needsProcessingArtifact(
+                            origin: outbox.finalizedCapture.capture
+                                .originRecordingID,
+                            clientRoot: clientRoot
+                        )
+                )
             }
             pendingCount = pending.count
             for outbox in pending {
@@ -115,12 +127,19 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             guard !Task.isCancelled else { return }
             let master = queue.removeFirst()
             do {
-                try await transfer(master)
+                let artifactFailure = try await transfer(master)
                 queuedOrigins.remove(master.originRecordingID)
                 pendingCount = max(0, pendingCount - 1)
-                state = .uploaded(
-                    master.originRecordingID.recordingUUID
-                )
+                if let artifactFailure {
+                    state = .edgeArtifactDeferred(
+                        master.originRecordingID.recordingUUID,
+                        artifactFailure
+                    )
+                } else {
+                    state = .uploaded(
+                        master.originRecordingID.recordingUUID
+                    )
+                }
             } catch HarcDesktopClientTransferError.notPaired {
                 queuedOrigins.remove(master.originRecordingID)
                 pendingCount = max(pendingCount, queue.count + 1)
@@ -150,15 +169,27 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         }
     }
 
-    private func transfer(_ master: HarcMobileFinalizedMaster) async throws {
-        state = .encoding(master.originRecordingID.recordingUUID)
-        let locations = locations
-        let artifacts = try await Task.detached(priority: .utility) {
-            try HarcMobileALACChunkEncoder().encode(
-                master,
-                locations: locations
-            )
-        }.value
+    private func transfer(
+        _ master: HarcMobileFinalizedMaster
+    ) async throws -> String? {
+        let alreadyCommitted = try store.recordingOutbox(
+            for: master.originRecordingID
+        )?.stateMachine.state == .committed
+        let artifacts: [HarcMobileEncodedChunkArtifact]
+        if alreadyCommitted {
+            // Artifact-only retries must not re-encode or replay audio that the
+            // Host has already committed and acknowledged.
+            artifacts = []
+        } else {
+            state = .encoding(master.originRecordingID.recordingUUID)
+            let locations = locations
+            artifacts = try await Task.detached(priority: .utility) {
+                try HarcMobileALACChunkEncoder().encode(
+                    master,
+                    locations: locations
+                )
+            }.value
+        }
 
         state = .connecting(master.originRecordingID.recordingUUID)
         let opened: HarcDesktopOpenedHostConnection
@@ -173,6 +204,14 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         }
         let connection = opened.connection
         do {
+            if alreadyCommitted {
+                let artifactFailure = try await submitProcessingArtifactIfPresent(
+                    origin: master.originRecordingID,
+                    opened: opened
+                )
+                try await connection.shutdownGracefully()
+                return artifactFailure
+            }
             let profile = try Self.frozenProfile(
                 negotiated: opened.negotiated
             )
@@ -232,11 +271,161 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 openedSession: opened.session,
                 deviceSigner: identity
             )
+            let artifactFailure = try await submitProcessingArtifactIfPresent(
+                origin: master.originRecordingID,
+                opened: opened
+            )
             try await connection.shutdownGracefully()
+            return artifactFailure
         } catch {
             await connection.shutdownImmediately()
             throw error
         }
+    }
+
+    private func submitProcessingArtifactIfPresent(
+        origin: OriginRecordingID,
+        opened: HarcDesktopOpenedHostConnection
+    ) async throws -> String? {
+        do {
+            guard let submission = try durableProcessingSubmission(
+                origin: origin,
+                adoption: opened.adoption
+            ) else { return nil }
+            let authorization = try HarcProcessingAuthorization(
+                openedSession: opened.session
+            )
+            let requests = HarcDesktopProcessingArtifactBuilder.requests(
+                for: submission
+            )
+            let response = try await opened.connection.submitOwnArtifact(
+                authorization: authorization,
+                requestProducer: { writer in
+                    for request in requests {
+                        try Task.checkCancellation()
+                        try await writer.write(request)
+                    }
+                }
+            )
+            guard response.hasProtocol,
+                  response.protocol.major == 1,
+                  response.protocol.minor
+                    == opened.negotiated.protocolVersion.minor,
+                  response.disposition
+                    != Harc_V1_ProcessingSubmissionDispositionV1
+                        .processingSubmissionDispositionUnspecified else {
+                throw HarcDesktopClientTransferError.malformedProcessingResponse
+            }
+            let marker = HarcDesktopProcessingMarker(
+                exactSignedMetadataSHA256: Data(
+                    SHA256.hash(data: submission.exactSignedMetadata)
+                ),
+                disposition: response.disposition.rawValue,
+                acceptedAt: Date()
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            try HarcDesktopClientFiles.writeProtectedData(
+                encoder.encode(marker),
+                to: Self.processingMarkerURL(
+                    origin: origin,
+                    clientRoot: clientRoot
+                )
+            )
+            return nil
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func durableProcessingSubmission(
+        origin: OriginRecordingID,
+        adoption: ValidatedClientAdoptionEvidence
+    ) throws -> HarcDesktopProcessingSubmission? {
+        let url = Self.processingSubmissionURL(
+            origin: origin,
+            grantID: adoption.grant.grantID,
+            grantEpoch: adoption.grant.registryEpoch,
+            clientRoot: clientRoot
+        )
+        if FileManager.default.fileExists(atPath: url.path) {
+            let persisted = try JSONDecoder().decode(
+                HarcDesktopProcessingSubmission.self,
+                from: Data(contentsOf: url, options: .mappedIfSafe)
+            )
+            guard !persisted.exactSignedMetadata.isEmpty,
+                  persisted.exactSignedMetadata.count
+                    <= HarcProtocolLimits.signedObjectBytes,
+                  !persisted.exactBundle.isEmpty,
+                  persisted.exactBundle.count
+                    <= HarcProcessingBundleV1.maximumExactBytes else {
+                throw HarcDesktopClientTransferError
+                    .invalidDurableProcessingSubmission
+            }
+            return persisted
+        }
+        guard let submission = try HarcDesktopProcessingArtifactBuilder
+            .makeSubmission(
+                origin: origin,
+                clientRoot: clientRoot,
+                adoption: adoption,
+                identity: identity
+            ) else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try HarcDesktopClientFiles.writeProtectedData(
+            encoder.encode(submission),
+            to: url
+        )
+        return submission
+    }
+
+    private static func needsProcessingArtifact(
+        origin: OriginRecordingID,
+        clientRoot: URL
+    ) -> Bool {
+        let marker = processingMarkerURL(origin: origin, clientRoot: clientRoot)
+        guard !FileManager.default.fileExists(atPath: marker.path) else {
+            return false
+        }
+        let sidecar = clientRoot
+            .appendingPathComponent("Captures", isDirectory: true)
+            .appendingPathComponent(
+                "\(origin.recordingUUID.uuidString.lowercased()).capture.json"
+            )
+        guard let data = try? Data(contentsOf: sidecar, options: .mappedIfSafe),
+              let decoded = try? JSONDecoder().decode(
+                HarcDesktopClientCaptureSidecar.self,
+                from: data
+              ) else { return false }
+        return decoded.transcript != nil
+    }
+
+    private static func processingMarkerURL(
+        origin: OriginRecordingID,
+        clientRoot: URL
+    ) -> URL {
+        clientRoot
+            .appendingPathComponent("Captures", isDirectory: true)
+            .appendingPathComponent(
+                "\(origin.recordingUUID.uuidString.lowercased()).edge-accepted.json"
+            )
+    }
+
+    private static func processingSubmissionURL(
+        origin: OriginRecordingID,
+        grantID: GrantID,
+        grantEpoch: UInt64,
+        clientRoot: URL
+    ) -> URL {
+        clientRoot
+            .appendingPathComponent("Captures", isDirectory: true)
+            .appendingPathComponent(
+                "\(origin.recordingUUID.uuidString.lowercased()).edge-submission."
+                    + "\(grantID.description).\(grantEpoch).json"
+            )
     }
 
     private static func frozenProfile(
@@ -326,4 +515,12 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
 private enum HarcDesktopClientTransferError: Error {
     case notPaired
+    case malformedProcessingResponse
+    case invalidDurableProcessingSubmission
+}
+
+private struct HarcDesktopProcessingMarker: Codable, Sendable {
+    let exactSignedMetadataSHA256: Data
+    let disposition: Int
+    let acceptedAt: Date
 }

@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 import HarcHost
 import HarcHostTransport
 
@@ -49,7 +50,10 @@ enum HarcHostRuntimeConfigurationFactory {
             backgroundRollbackRoot: rollbackRoot,
             temporaryUploadParent: temporaryRoot,
             displayName: Host.current().localizedName ?? "Harc Host",
-            localDNSTarget: localDNSTarget()
+            localDNSTarget: localDNSTarget(),
+            acceptedEdgeEngineRevisions: [
+                "harc-stt.\(HarcVersion.sttEngineVersion)"
+            ]
         )
     }
 

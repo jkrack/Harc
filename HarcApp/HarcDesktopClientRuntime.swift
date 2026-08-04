@@ -204,7 +204,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
     }
 }
 
-private struct HarcDesktopClientCaptureSidecar: Codable, Sendable {
+struct HarcDesktopClientCaptureSidecar: Codable, Sendable {
     let capture: FinalizedCapture
     let transcript: SessionTranscript?
     let persistedAt: Date
@@ -383,9 +383,16 @@ enum HarcDesktopClientFiles {
     ) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
+        try writeProtectedData(encoder.encode(sidecar), to: destination)
+    }
+
+    static func writeProtectedData(
+        _ data: Data,
+        to destination: URL
+    ) throws {
         let temporary = destination.deletingLastPathComponent()
             .appendingPathComponent(".\(UUID().uuidString).partial")
-        try encoder.encode(sidecar).write(to: temporary, options: .atomic)
+        try data.write(to: temporary, options: .atomic)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: temporary.path

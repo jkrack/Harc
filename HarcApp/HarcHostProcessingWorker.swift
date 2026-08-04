@@ -76,10 +76,9 @@ actor HarcHostProcessingWorker {
             )
             if recording.processing.state == .ready { return }
 
-            try await store.updateProcessing(
-                id: recordingID,
-                descriptor: try ProcessingDescriptor(state: .transcribing)
-            )
+            guard try await store.beginHostProcessingIfNotReady(
+                id: recordingID
+            ) else { return }
             _ = try await launcher.ensureRunning()
 
             // Revalidate immediately before the daemon opens the path. This is
@@ -93,30 +92,13 @@ actor HarcHostProcessingWorker {
                 vad: vad
             )
 
-            try await store.updateProcessing(
-                id: recordingID,
-                descriptor: try ProcessingDescriptor(state: .projecting)
-            )
-            try await store.updateProjection(
-                id: recordingID,
-                descriptor: try ProjectionDescriptor(state: .projecting)
-            )
-            try await store.applyReprocessedTranscript(
+            guard try await store.stageHostProcessedTranscriptIfNotReady(
                 recordingID: recordingID,
                 text: result.text,
                 modelID: HarcVersion.sttEngineVersion
-            )
-            guard let refreshed = try await store.fetch(id: recordingID),
-                  OKFProjection.write(recording: refreshed) != nil else {
-                throw HostProcessingWorkerError.projectionFailed
-            }
-            try await store.updateProjection(
-                id: recordingID,
-                descriptor: .readyV1
-            )
-            try await store.updateProcessing(
-                id: recordingID,
-                descriptor: .ready
+            ) else { return }
+            _ = try await store.publishHostProcessedProjectionIfNotReady(
+                recordingID: recordingID
             )
         } catch {
             await persistRecoverableFailure(
@@ -141,22 +123,10 @@ actor HarcHostProcessingWorker {
             code: "host.processing_retry",
             message: "Local processing did not finish and can be retried."
         )
-        if recording.projection.state == .projecting, let failure {
-            try? await store.updateProjection(
-                id: recordingID,
-                descriptor: try ProjectionDescriptor(
-                    state: .failedRecoverable,
-                    failure: failure
-                )
-            )
-        }
         if let failure {
-            try? await store.updateProcessing(
-                id: recordingID,
-                descriptor: try ProcessingDescriptor(
-                    state: .failedRecoverable,
-                    failure: failure
-                )
+            _ = try? await store.markHostProcessingFailureIfNotReady(
+                recordingID: recordingID,
+                failure: failure
             )
         }
     }
@@ -164,14 +134,11 @@ actor HarcHostProcessingWorker {
 
 private enum HostProcessingWorkerError: LocalizedError {
     case canonicalBindingChanged
-    case projectionFailed
 
     var errorDescription: String? {
         switch self {
         case .canonicalBindingChanged:
             "The canonical recording binding changed before processing."
-        case .projectionFailed:
-            "The OKF projection could not be written."
         }
     }
 }

@@ -16,6 +16,7 @@ public struct HarcResidentHostRuntimeConfigurationV1: Sendable {
     public let displayName: String
     public let localDNSTarget: String
     public let discoveryCapabilityBits: UInt64
+    public let acceptedEdgeEngineRevisions: Set<String>
 
     public init(
         storage: HarcResidentHostStorageConfiguration,
@@ -24,7 +25,8 @@ public struct HarcResidentHostRuntimeConfigurationV1: Sendable {
         temporaryUploadParent: URL = FileManager.default.temporaryDirectory,
         displayName: String,
         localDNSTarget: String,
-        discoveryCapabilityBits: UInt64 = 0
+        discoveryCapabilityBits: UInt64 = 0,
+        acceptedEdgeEngineRevisions: Set<String> = []
     ) {
         self.storage = storage
         self.canonicalAudioRoot = canonicalAudioRoot
@@ -33,6 +35,7 @@ public struct HarcResidentHostRuntimeConfigurationV1: Sendable {
         self.displayName = displayName
         self.localDNSTarget = localDNSTarget
         self.discoveryCapabilityBits = discoveryCapabilityBits
+        self.acceptedEdgeEngineRevisions = acceptedEdgeEngineRevisions
     }
 }
 
@@ -157,6 +160,14 @@ public actor HarcResidentHostRuntimeV1 {
                 store: storage.recordingStore,
                 hostStore: storage.hostStore
             )
+            let processing = HarcHostProcessingArtifactService(
+                hostStore: storage.hostStore,
+                recordingStore: storage.recordingStore,
+                sessionService: session,
+                acceptedEngineRevisions:
+                    configuration.acceptedEdgeEngineRevisions,
+                compatibility: capabilityPolicy.compatibility
+            )
             let sourceSecret = try SystemHostAuthenticationRandomness()
                 .randomBytes(count: 32)
             let bootstrapFactory = try HarcBootstrapGRPCServiceFactoryV1(
@@ -165,6 +176,7 @@ public actor HarcResidentHostRuntimeV1 {
                 sessionService: session,
                 recordingService: recording,
                 libraryService: library,
+                processingService: processing,
                 hostAuthorityPublicKey: storage.authorityPublicKey,
                 capabilityPolicy: capabilityPolicy,
                 hostScopedSourceSecret: sourceSecret

@@ -21,6 +21,9 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
     private let libraryAdapterForBinding: (@Sendable (
         HarcGRPCServedIdentityBinding
     ) -> HarcLibraryGRPCServiceAdapterV1)?
+    private let processingAdapterForBinding: (@Sendable (
+        HarcGRPCServedIdentityBinding
+    ) -> HarcProcessingGRPCServiceAdapterV1)?
     private let hostAuthorityPublicKey: P256X963PublicKey
     private let capabilityPolicy: HarcCapabilityPolicyV1
     let sourceBindingProvider: HarcHostRPCSourceBindingProvider
@@ -32,6 +35,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
         sessionService: HarcSessionService,
         recordingService: HostRecordingTransferService,
         libraryService: HarcHostLibraryService,
+        processingService: HarcHostProcessingArtifactService? = nil,
         hostAuthorityPublicKey: P256X963PublicKey,
         capabilityPolicy: HarcCapabilityPolicyV1,
         hostScopedSourceSecret: Data
@@ -56,6 +60,18 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
                 servedIdentityBinding: servedIdentityBinding,
                 compatibility: capabilityPolicy.compatibility
             )
+        }
+        if let processingService {
+            self.processingAdapterForBinding = { servedIdentityBinding in
+                HarcProcessingGRPCServiceAdapterV1(
+                    service: processingService,
+                    sessionService: sessionService,
+                    servedIdentityBinding: servedIdentityBinding,
+                    compatibility: capabilityPolicy.compatibility
+                )
+            }
+        } else {
+            self.processingAdapterForBinding = nil
         }
         self.sourceBindingProvider = try HarcHostRPCSourceBindingProvider(
             hostScopedSecret: hostScopedSourceSecret
@@ -95,6 +111,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
             )
         }
         self.libraryAdapterForBinding = libraryAdapterForBinding
+        self.processingAdapterForBinding = nil
         self.sourceBindingProvider = sourceBindingProvider
         self.preauthenticationGate = preauthenticationGate
     }
@@ -126,7 +143,8 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
                 compatibility: capabilityPolicy.compatibility
             ),
             recording: recordingAdapterForBinding(servedIdentityBinding),
-            library: libraryAdapterForBinding?(servedIdentityBinding)
+            library: libraryAdapterForBinding?(servedIdentityBinding),
+            processing: processingAdapterForBinding?(servedIdentityBinding)
         )
     }
 }
@@ -137,12 +155,14 @@ struct HarcBootstrapGRPCServiceAdaptersV1: Sendable {
     let session: HarcSessionGRPCServiceAdapterV1
     let recording: HarcRecordingTransferGRPCServiceAdapterV1
     let library: HarcLibraryGRPCServiceAdapterV1?
+    let processing: HarcProcessingGRPCServiceAdapterV1?
 
     var registrableServices: [any RegistrableRPCService] {
         var services: [any RegistrableRPCService] = [
             hostInfo, pairing, session, recording,
         ]
         if let library { services.append(library) }
+        if let processing { services.append(processing) }
         return services
     }
 }

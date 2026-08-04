@@ -76,6 +76,25 @@ public extension RecordingStore {
         }
     }
 
+    /// Host-only lookup binding a producing device's stable recording origin
+    /// to the single canonical row created by a committed upload.
+    func fetch(originID: OriginRecordingID) async throws -> Recording? {
+        try await db.read { database in
+            try Recording.fetchOne(
+                database,
+                sql: """
+                    SELECT * FROM recordings
+                    WHERE origin_device_id = ? AND origin_recording_uuid = ?
+                    LIMIT 1
+                    """,
+                arguments: [
+                    originID.deviceID.rawBytes,
+                    originID.recordingUUID.uuidString.lowercased(),
+                ]
+            )
+        }
+    }
+
     /// Durable worklist for recordings committed by an adopted client whose
     /// derived processing has not reached `ready`. The canonical row itself is
     /// the queue: it is inserted as `pending` in the same transaction that
