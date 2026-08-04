@@ -29,7 +29,7 @@ DMG="$3"
 
 [[ -f "$DMG" ]] || { echo "error: no such file: $DMG" >&2; exit 1; }
 
-SPARKLE_VERSION="2.9.4"
+SPARKLE_VERSION="2.9.5"
 TOOLS="$HOME/Library/Caches/Harc/sparkle-tools/$SPARKLE_VERSION"
 
 if [[ ! -x "$TOOLS/bin/sign_update" ]]; then
