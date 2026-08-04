@@ -189,8 +189,14 @@ signed entry for every release — in this order:
 2. Notarize and staple, in that order:
    `xcrun notarytool submit build/release-dist/Harc-<version>.dmg --keychain-profile harc-notary --wait`
    then `xcrun stapler staple build/release-dist/Harc-<version>.dmg`.
-   Confirm with `spctl -a -vvv -t install build/release-dist/Harc.app`
-   → expect `source=Notarized Developer ID`.
+   Confirm the exact candidate with
+   `./scripts/verify-release.sh <version> <build> build/release-dist/Harc-<version>.dmg`.
+   The verifier checks the DMG signature and checksum, stapled ticket,
+   Gatekeeper assessment, mounted app and nested signatures, version/build,
+   bundle ID, and arm64 application/helper architecture. Run it from a normal
+   terminal session with access to macOS trust services; a restricted sandbox
+   can hide the keychain certificate chain and produce a false signature
+   failure.
 3. Copy the **stapled** DMG to `Harc-local.dmg` (the asset name every
    appcast enclosure points at) and zip it to `Harc-local-dmg.zip`.
    Stapling rewrites the DMG, so it must happen before signing — the

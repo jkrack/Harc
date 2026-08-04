@@ -39,6 +39,7 @@ edge-capable secondary-Mac system, or external TestFlight release complete.
 | HarcMobile qualification-logic tests | 11/11 passed on the same Simulator and continue to reject Simulator evidence for the physical codec gate. |
 | Generic iOS Simulator build | Passed with arm64 and two-worker limits. |
 | Unsigned macOS app build | Passed with arm64 and two-worker limits, including embedded helpers. |
+| Release-script preflight | Passed with two workers, including Developer ID inside-out signing, DMG signature/checksum, and the new mounted packaged-app deep-signature gate. |
 | Source hygiene | `git diff --check` passed. |
 
 ## Physical C7 storage-exhaustion hook
@@ -72,6 +73,40 @@ or receipt policies.
 
 ## Signed macOS 0.13.0 candidate
 
-The previously notarized candidate from source commit `ec828d5` was superseded
-by the C7 qualification-hook change. A replacement candidate must be built,
-notarized, stapled, verified, and signed for Sparkle before publication.
+The replacement candidate was built from source commit `bf38831` with two
+workers, Developer ID signing, hardened runtime, secure timestamps, and an
+arm64-only Harc application plus `harc-stt` and `harc-mcp` helpers.
+
+| Candidate evidence | Value |
+| --- | --- |
+| Version/build | `0.13.0` / `45` |
+| Notary submission | `3c0b02d1-da93-43be-8e2d-422c92af6d0e` |
+| Apple result | `Accepted`; `Ready for distribution`; no issues |
+| Uploaded pre-staple SHA-256 | `4fcca101f9ee73b14956c89a2a57e7efca2b8325c51cb4e36bad8e09b9500ae3` |
+| Stapled candidate byte count | `64875781` |
+| Stapled candidate SHA-256 | `d49d04f5c97e56492b33fbaea38c9b4539306c18b340633a98ead3c9a5700a54` |
+| DMG CDHash | `f34a06ea9bde361a7d2ac50bd4de5caac7355278` |
+| Harc app CDHash | `f94b64b2771159eacaac6e1884d79da31dcb33ce` |
+| Sparkle EdDSA signature | `/e+5TRHJXOHVZvglks08nL5LhrTqi8E4EsfAJiDdoQEwhI82xH8sHfe4MFWBIGby9rM8/1/Xy9t6fhFNEmw9Bg==` |
+
+`scripts/verify-release.sh` passed against the exact
+`build/release-dist/Harc-local.dmg` bytes. It verified the outer code signature,
+UDIF checksum, stapled ticket, Gatekeeper acceptance, mounted application and
+nested-code signatures, notarized application assessment, bundle metadata, and
+application/helper architectures. `Harc-0.13.0.dmg` and `Harc-local.dmg` have
+the same SHA-256, and `Harc-local-dmg.zip` was generated from that stapled DMG.
+Extracting `Harc-local.dmg` from the ZIP reproduced the same SHA-256, and
+Sparkle's `sign_update --verify` accepted the recorded EdDSA signature against
+the exact DMG bytes.
+
+The first restricted verification attempt incorrectly reported unavailable
+certificate authorities and invalid signatures because the sandbox could not
+see the login-keychain trust chain. Repeating the same checks with normal macOS
+trust access found two valid signing identities and accepted the unchanged app
+and DMG. The release script now mounts and verifies the packaged app before
+notarization, and the separate post-notarization verifier makes the required
+trust boundary explicit.
+
+The candidate and replacement appcast entry are prepared but not published.
+Publishing still requires the deliberately separate main/tag/GitHub-release
+operation, with these exact `Harc-local.dmg` bytes uploaded as the release asset.

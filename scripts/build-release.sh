@@ -22,7 +22,24 @@ DIST="${HARC_RELEASE_DIST:-build/release-dist}"
 APP_NAME="Harc.app"
 BUILD_JOBS="${HARC_BUILD_JOBS:-2}"
 STAGING="$(mktemp -d /private/tmp/harc-release.XXXXXX)"
-trap 'rm -rf "$STAGING"' EXIT
+KEEP_STAGING="${HARC_KEEP_STAGING:-0}"
+VERIFY_MOUNT=""
+
+cleanup() {
+  if [[ -n "$VERIFY_MOUNT" ]]; then
+    /usr/bin/hdiutil detach "$VERIFY_MOUNT" >/dev/null 2>&1 || true
+    rmdir "$VERIFY_MOUNT" >/dev/null 2>&1 || true
+  fi
+
+  if [[ "$KEEP_STAGING" != "1" ]]; then
+    rm -rf "$STAGING"
+  fi
+}
+trap cleanup EXIT
+
+if [[ "$KEEP_STAGING" == "1" ]]; then
+  echo "==> Preserving release staging at $STAGING"
+fi
 
 case "$DIST" in
   build/release-dist|/private/tmp/*) ;;
@@ -166,6 +183,28 @@ codesign --force --timestamp --sign "$IDENTITY" "$DMG_PATH"
 codesign --verify --verbose=2 "$DMG_PATH"
 /usr/bin/hdiutil verify "$DMG_PATH"
 
+# Verify the app after the filesystem round trip, not only the staged source.
+# A valid outer DMG signature does not prove that its embedded app still has a
+# valid resource seal and complete nested-code signatures.
+echo "==> Verifying packaged app"
+VERIFY_MOUNT="$(mktemp -d /private/tmp/harc-release-verify.XXXXXX)"
+/usr/bin/hdiutil attach \
+  -readonly \
+  -nobrowse \
+  -mountpoint "$VERIFY_MOUNT" \
+  "$DMG_PATH" >/dev/null
+
+PACKAGED_APP="$VERIFY_MOUNT/$APP_NAME"
+if [[ ! -d "$PACKAGED_APP" ]]; then
+  echo "error: packaged DMG does not contain $APP_NAME at its root" >&2
+  exit 1
+fi
+codesign --verify --deep --strict --verbose=2 "$PACKAGED_APP"
+
+/usr/bin/hdiutil detach "$VERIFY_MOUNT" >/dev/null
+rmdir "$VERIFY_MOUNT"
+VERIFY_MOUNT=""
+
 echo ""
 echo "Built: $APP_DST (packaged in DMG)"
 echo "DMG:   $DMG_PATH"
@@ -173,3 +212,4 @@ echo ""
 echo "Next:"
 echo "  xcrun notarytool submit $DMG_PATH --keychain-profile harc-notary --wait"
 echo "  xcrun stapler staple $DMG_PATH"
+echo "  ./scripts/verify-release.sh $VERSION <build> $DMG_PATH"
