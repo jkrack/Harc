@@ -20,6 +20,7 @@ CONFIG="Release"
 DERIVED="build/release-derived"
 DIST="build/release-dist"
 APP_NAME="Harc.app"
+BUILD_JOBS="${HARC_BUILD_JOBS:-2}"
 
 VERSION="$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' project.yml)"
 if [[ -z "$VERSION" ]]; then
@@ -32,6 +33,7 @@ mkdir -p "$DIST"
 
 echo "==> Building $SCHEME $VERSION ($CONFIG, Developer ID)"
 xcodebuild \
+  -jobs "$BUILD_JOBS" \
   -skipMacroValidation \
   -skipPackagePluginValidation \
   -project Harc.xcodeproj \
@@ -45,6 +47,7 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=YES \
   CODE_SIGNING_ALLOWED=YES \
   ARCHS=arm64 \
+  SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS="$BUILD_JOBS" \
   ONLY_ACTIVE_ARCH=NO \
   build
 
