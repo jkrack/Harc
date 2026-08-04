@@ -36,6 +36,18 @@ targets:
       - package: HarcCore
         product: HarcClient
       - package: HarcCore
+        product: HarcClientStore
+      - package: HarcCore
+        product: HarcClientTransport
+      - package: HarcCore
+        product: HarcIdentity
+      - package: HarcCore
+        product: HarcProtocol
+      - package: HarcCore
+        product: HarcTransfer
+      - package: HarcCore
+        product: HarcAudioMobile
+      - package: HarcCore
         product: HarcHost
       - package: HarcCore
         product: HarcHostTransport
@@ -112,6 +124,20 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcAppUITests
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_HARDENED_RUNTIME: NO
+        ARCHS: arm64
+
+  HarcAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: HarcAppTests
+    dependencies:
+      - target: Harc
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcAppTests
         GENERATE_INFOPLIST_FILE: YES
         ENABLE_HARDENED_RUNTIME: NO
         ARCHS: arm64

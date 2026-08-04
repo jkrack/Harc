@@ -69,15 +69,23 @@ public final class HarcPreferences: ObservableObject {
         }
     }
 
-    /// Canonical-library ownership mode. Standalone remains the default and
-    /// Client is retained as an explicit future state rather than overloading
-    /// a boolean once desktop adoption lands.
+    /// Canonical-library ownership mode. Standalone remains the default.
+    /// Client uses isolated ClientState while preserving the prior canonical
+    /// library as an explicit On This Mac source.
     public enum RuntimeRole: String, CaseIterable, Identifiable, Sendable {
         case standalone
         case host
         case client
 
         public var id: String { rawValue }
+
+        public var displayName: String {
+            switch self {
+            case .standalone: "Standalone"
+            case .host: "Host"
+            case .client: "Client"
+            }
+        }
     }
 
     /// How the dictation hotkey behaves.

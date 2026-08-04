@@ -307,7 +307,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if hostRuntime != nil {
             let pair = NSMenuItem(
                 title: "Pair a Device…",
-                action: #selector(openHostPairing(_:)),
+                action: #selector(openRolePairing(_:)),
+                keyEquivalent: ""
+            )
+            pair.target = self
+            menu.addItem(pair)
+        } else if let desktopClientRuntime {
+            let status = NSMenuItem(
+                title: desktopClientRuntime.statusMessage,
+                action: nil,
+                keyEquivalent: ""
+            )
+            status.isEnabled = false
+            menu.addItem(status)
+            let pair = NSMenuItem(
+                title: "Pair with Host…",
+                action: #selector(openRolePairing(_:)),
                 keyEquivalent: ""
             )
             pair.target = self
@@ -424,6 +439,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Present only in Host role. It owns the canonical store above; no second
     /// RecordingStore is opened while this runtime is resident.
     private var hostRuntime: HarcResidentHostRuntimeV1?
+    /// Present only in Desktop Client role. The existing canonical store stays
+    /// mounted separately as On This Mac; this runtime owns only ClientState.
+    private var desktopClientRuntime: HarcDesktopClientRuntime?
     private var hostProcessingWorker: HarcHostProcessingWorker?
     /// Same-UID, same-team, designated-requirement-validated local boundary
     /// used by the bundled MCP helper while this process owns the Host writer.
@@ -440,6 +458,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var harcWindow: HarcWindowController?
     private var settingsWindow: NSWindowController?
     private var hostPairingWindow: HostPairingWindowController?
+    private var desktopClientPairingWindow:
+        HarcDesktopClientPairingWindowController?
     private var welcomeWindow: NSWindowController?
     /// Retained while the Welcome window is open so app activation can push a
     /// fresh permission read into it — the user grants in System Settings and
@@ -757,6 +777,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         detector?.stop()
         frontmostPoller?.invalidate()
         frontmostPoller = nil
+        desktopClientRuntime?.shutdown()
+        desktopClientRuntime = nil
         restoreUITestPreferencesIfNeeded()
     }
 
@@ -891,8 +913,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         importItem.keyEquivalentModifierMask = [.command, .shift]
         importItem.target = self
         let pairItem = fileMenu.addItem(
-            withTitle: "Pair a Device…",
-            action: #selector(openHostPairing(_:)),
+            withTitle: desktopClientRuntime != nil
+                ? "Pair with Host…"
+                : "Pair a Device…",
+            action: #selector(openRolePairing(_:)),
             keyEquivalent: ""
         )
         pairItem.target = self
@@ -1590,9 +1614,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // destination can disappear or the preference can change during a
             // long meeting; this recording still belongs to the destination
             // whose readiness check allowed it to start.
-            let committer = StandaloneRecordingCommitter(
-                destination: RecordingDestination(baseDirectory: prefs.destinationURL)
-            )
+            let committer: any RecordingCommitter
+            if let desktopClientRuntime {
+                committer = try desktopClientRuntime.makeRecordingCommitter()
+            } else {
+                committer = StandaloneRecordingCommitter(
+                    destination: RecordingDestination(
+                        baseDirectory: prefs.destinationURL
+                    )
+                )
+            }
             let session = RecordingSession(
                 mic: MicCapture(),
                 systemAudio: systemSource,
@@ -3379,9 +3410,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         )
         harcWindow = controller
         controller.showWindow(nil)
+        if desktopClientRuntime != nil {
+            controller.window?.title = "Harc — On This Mac"
+        }
         controller.window?.makeKeyAndOrderFront(nil)
         trackManagedWindow(controller.window)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openRolePairing(_ sender: Any?) {
+        if hostRuntime != nil {
+            openHostPairing(sender)
+        } else if desktopClientRuntime != nil {
+            openDesktopClientPairing(sender)
+        } else {
+            presentLibraryUnavailable(
+                "Choose Host or Client in Settings, restart Harc, then pair this Mac."
+            )
+        }
+    }
+
+    @objc private func openDesktopClientPairing(_ sender: Any?) {
+        guard let runtime = desktopClientRuntime else {
+            presentLibraryUnavailable(
+                "Pairing with a Host is available only while this Mac is running in Client mode."
+            )
+            return
+        }
+        if let existing = desktopClientPairingWindow,
+           let window = existing.window {
+            existing.showWindow(nil)
+            orderManagedWindowFront(window)
+            return
+        }
+        let controller = HarcDesktopClientPairingWindowController(
+            model: runtime.pairingCoordinator
+        )
+        desktopClientPairingWindow = controller
+        guard let window = controller.window else { return }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.desktopClientPairingWindow = nil
+            }
+        }
+        controller.showWindow(nil)
+        trackManagedWindow(window)
+        orderManagedWindowFront(window)
     }
 
     @objc private func openHostPairing(_ sender: Any?) {
@@ -3428,6 +3506,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             hostRuntime = nil
             hostProcessingWorker = nil
+            desktopClientRuntime?.shutdown()
+            desktopClientRuntime = nil
             FileHandle.standardError.write(Data(
                 "harc: store init failed: \(error.localizedDescription)\n".utf8
             ))
@@ -3444,7 +3524,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         case .standalone:
             return try await RecordingStore.onDisk(url: databaseURL)
         case .client:
-            throw HarcHostApplicationRuntimeError.clientModeNotImplemented
+            let runtime = try await HarcDesktopClientRuntime.start()
+            desktopClientRuntime = runtime
+            // The pre-existing local Library remains a distinct, fully local
+            // On This Mac source. Client captures never enter this store.
+            return try await RecordingStore.onDisk(url: databaseURL)
         case .host:
             let configuration = try HarcHostRuntimeConfigurationFactory.make(
                 canonicalDatabaseURL: databaseURL,
