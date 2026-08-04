@@ -1,11 +1,13 @@
 import Foundation
 import HarcCore
+import HarcHost
 import HarcStore
 import MCP
 
 // harc-mcp — the agent bridge. Speaks MCP over stdio to a locally spawned
 // host (Claude Desktop, Claude Code, any MCP client) and reads/writes the
-// Harc database directly, so it works whether or not the app is running.
+// Harc canonical library through its active authority: a per-call direct
+// Standalone lease, or the signed app-owned local IPC boundary in Host mode.
 // It opens no network connections and holds no credentials: the agent
 // brings its own model, on its own account. Register with e.g.
 //
@@ -43,22 +45,7 @@ while let arg = argIterator.next() {
     }
 }
 
-let store: RecordingStore
-do {
-    store = try await RecordingStore.onDisk(url: dbURL)
-} catch let error as StoreError {
-    if case .migrationFailed(let reason) = error {
-        // The classic skew: an old bundled harc-mcp opening a database a
-        // newer Harc already migrated further. Say so instead of dumping
-        // GRDB internals.
-        fail("Harc's database is newer than this server. Update Harc, then reconnect. (\(reason))")
-    }
-    fail(error.localizedDescription)
-} catch {
-    fail(error.localizedDescription)
-}
-
-let tools = HarcTools(store: store)
+let tools = HarcTools(caller: HarcMCPModeRoutingCaller(databaseURL: dbURL))
 
 let server = Server(
     name: "harc",

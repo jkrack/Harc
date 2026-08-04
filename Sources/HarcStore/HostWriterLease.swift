@@ -143,17 +143,26 @@ final class StoreWriteAccess: @unchecked Sendable {
 struct StoreDatabaseAccess {
     let queue: DatabaseQueue
     let writerCoordinator: StoreWriterCoordinator
+    let waitForLock: Bool
 
     func read<T>(
         _ value: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
-        try await queue.read(value)
+        let access = try writerCoordinator.beginReadAccess(
+            waitForLock: waitForLock
+        )
+        return try await queue.read { database in
+            try access.validate(in: database)
+            return try value(database)
+        }
     }
 
     func write<T>(
         _ updates: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
-        let access = try writerCoordinator.beginWriteAccess(waitForLock: true)
+        let access = try writerCoordinator.beginWriteAccess(
+            waitForLock: waitForLock
+        )
         return try await queue.write { database in
             try access.validate(in: database)
             return try updates(database)
@@ -180,6 +189,30 @@ final class StoreWriterCoordinator: @unchecked Sendable {
         let paths = try AdvisoryFileLock.validatedPaths(for: databaseURL)
         self.databaseURL = paths.databaseURL
         self.lockFileURL = paths.lockFileURL
+    }
+
+    func beginReadAccess(waitForLock: Bool) throws -> StoreWriteAccess {
+        stateLock.lock()
+        let lease = activeHostLease
+        stateLock.unlock()
+
+        if let lease {
+            guard lease.isActive else {
+                throw StoreError.hostWriterCapabilityRequired
+            }
+            return StoreWriteAccess(mode: .host(lease))
+        }
+        guard let lockFileURL else {
+            return StoreWriteAccess(mode: .inMemory)
+        }
+        return StoreWriteAccess(
+            mode: .standalone(
+                try AdvisoryFileLock.acquireShared(
+                    at: lockFileURL,
+                    wait: waitForLock
+                )
+            )
+        )
     }
 
     func beginWriteAccess(waitForLock: Bool) throws -> StoreWriteAccess {
@@ -313,6 +346,18 @@ final class AdvisoryFileLock: @unchecked Sendable {
     }
 
     static func acquireExclusive(at url: URL, wait: Bool) throws -> AdvisoryFileLock {
+        try acquire(at: url, operation: LOCK_EX, wait: wait)
+    }
+
+    static func acquireShared(at url: URL, wait: Bool) throws -> AdvisoryFileLock {
+        try acquire(at: url, operation: LOCK_SH, wait: wait)
+    }
+
+    private static func acquire(
+        at url: URL,
+        operation: Int32,
+        wait: Bool
+    ) throws -> AdvisoryFileLock {
         let flags = O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW
         let descriptor = url.path.withCString { path in
             Darwin.open(path, flags, mode_t(0o600))
@@ -337,7 +382,7 @@ final class AdvisoryFileLock: @unchecked Sendable {
             guard fchmod(descriptor, mode_t(0o600)) == 0 else {
                 throw unsafePOSIX("cannot restrict writer lock permissions")
             }
-            guard flock(descriptor, LOCK_EX | (wait ? 0 : LOCK_NB)) == 0 else {
+            guard flock(descriptor, operation | (wait ? 0 : LOCK_NB)) == 0 else {
                 if errno == EWOULDBLOCK || errno == EAGAIN {
                     throw StoreError.writerLeaseUnavailable
                 }

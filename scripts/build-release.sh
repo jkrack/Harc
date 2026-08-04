@@ -98,6 +98,7 @@ codesign --force --options runtime --timestamp --sign "$IDENTITY" \
   "$APP_DST/Contents/MacOS/harc-stt"
 
 codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+  --identifier com.harc.Harc.mcp \
   "$APP_DST/Contents/MacOS/harc-mcp"
 
 codesign --force --options runtime --timestamp \
@@ -107,6 +108,21 @@ codesign --force --options runtime --timestamp \
 
 echo "==> Verifying signature"
 codesign --verify --deep --strict --verbose=2 "$APP_DST"
+
+MCP_SIGNING_INFO="$(codesign -d --verbose=4 \
+  "$APP_DST/Contents/MacOS/harc-mcp" 2>&1)"
+if [[ "$MCP_SIGNING_INFO" != *$'Identifier=com.harc.Harc.mcp\n'* ]]; then
+  echo "error: embedded harc-mcp does not have its required identifier" >&2
+  exit 1
+fi
+APP_TEAM="$(codesign -d --verbose=4 "$APP_DST" 2>&1 | \
+  sed -n 's/^TeamIdentifier=//p')"
+MCP_TEAM="$(printf '%s\n' "$MCP_SIGNING_INFO" | \
+  sed -n 's/^TeamIdentifier=//p')"
+if [[ -z "$APP_TEAM" || "$MCP_TEAM" != "$APP_TEAM" ]]; then
+  echo "error: Harc and harc-mcp must share one non-empty Team Identifier" >&2
+  exit 1
+fi
 
 echo "==> Building DMG"
 DMG_PATH="$DIST/Harc-$VERSION.dmg"

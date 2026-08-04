@@ -59,6 +59,46 @@ struct HostWriterLeaseTests {
         #expect(row.id != nil)
     }
 
+    @Test("External authority calls use nonblocking shared/exclusive locks")
+    func externalAuthorityLocksFailClosedDuringHostLifetime() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.cleanup() }
+
+        // Open before adoption to model a long-lived MCP process. The store
+        // itself retains no advisory lock between individual calls.
+        let external = try await RecordingStore
+            .onDiskForExternalAuthorityRouting(url: fixture.databaseURL)
+        _ = try await external.fetchAll()
+
+        let lease = try await fixture.store.enableHostMode(
+            expectedLibraryID: fixture.libraryID,
+            hostAuthorityID: fixture.authorityID,
+            hostStateID: fixture.stateID
+        )
+
+        do {
+            _ = try await external.fetchAll()
+            Issue.record("A direct read must not cross the Host lifetime lease")
+        } catch let error as StoreError {
+            #expect(error == .writerLeaseUnavailable)
+        }
+
+        do {
+            _ = try await external.upsert(
+                Recording(
+                    wavPath: fixture.root.appendingPathComponent("blocked.wav").path,
+                    startedAt: startedAt
+                )
+            )
+            Issue.record("A direct mutation must not cross the Host lifetime lease")
+        } catch let error as StoreError {
+            #expect(error == .writerLeaseUnavailable)
+        }
+
+        try await fixture.store.disableHostMode(lease)
+        _ = try await external.fetchAll()
+    }
+
     @Test("Process death releases flock but leaves a fail-closed Host marker")
     func processDeathMarkerAndExactResume() async throws {
         let fixture = try await makeFixture()
@@ -71,7 +111,9 @@ struct HostWriterLeaseTests {
         )
         try await fixture.store.abandonHostLeaseForTesting(lease)
 
-        let afterDeath = try await fixture.store.libraryMetadata()
+        let afterDeath = try RecordingStore.inspectLibraryMetadata(
+            onDiskAt: fixture.databaseURL
+        )
         #expect(afterDeath.writerMode == .host)
 
         let lockHolder = Process()
@@ -113,6 +155,13 @@ struct HostWriterLeaseTests {
         lockHolder.waitUntilExit()
         #expect(lockHolder.terminationReason == .uncaughtSignal)
         #expect(lockHolder.terminationStatus == SIGKILL)
+
+        do {
+            _ = try await restarted.fetchAll()
+            Issue.record("Standalone reads must fail closed on a stale Host marker")
+        } catch let error as StoreError {
+            #expect(error == .staleHostWriterMarker)
+        }
 
         do {
             _ = try await restarted.upsert(

@@ -39,6 +39,14 @@ public actor HarcMCPToolService: HarcMCPToolCalling {
             if case StoreError.notFound = error {
                 return failure("That recording doesn't exist (it may have been deleted).")
             }
+            if let storeError = error as? StoreError,
+               storeError == .writerLeaseUnavailable
+                || storeError == .staleHostWriterMarker {
+                return failure(
+                    "The canonical library authority changed before this tool ran.",
+                    reason: .authorityUnavailable
+                )
+            }
             return failure(error.localizedDescription)
         }
     }
@@ -224,8 +232,15 @@ public actor HarcMCPToolService: HarcMCPToolCalling {
         HarcMCPToolResponse(text: text, isError: false)
     }
 
-    private func failure(_ text: String) -> HarcMCPToolResponse {
-        HarcMCPToolResponse(text: text, isError: true)
+    private func failure(
+        _ text: String,
+        reason: HarcMCPToolResponse.FailureReason? = nil
+    ) -> HarcMCPToolResponse {
+        HarcMCPToolResponse(
+            text: text,
+            isError: true,
+            failureReason: reason
+        )
     }
 
     public static func attributionStamp(

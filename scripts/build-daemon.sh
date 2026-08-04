@@ -8,9 +8,11 @@ set -euo pipefail
 cd "$SRCROOT"
 
 SCRATCH="$SRCROOT/.build-daemon"
+BUILD_JOBS="${HARC_EMBED_BUILD_JOBS:-2}"
 echo "note: building harc-stt into $SCRATCH"
 
 swift build \
+  --jobs "$BUILD_JOBS" \
   -c release \
   --product harc-stt \
   --scratch-path "$SCRATCH" \

@@ -157,6 +157,7 @@ let package = Package(
             name: "HarcHostTransport",
             dependencies: [
                 "HarcHost",
+                "HarcIPCSystem",
                 "HarcIdentity",
                 "HarcProtocol",
                 "HarcTransfer",
@@ -176,6 +177,11 @@ let package = Package(
                 ),
             ],
             exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcIPCSystem",
+            publicHeadersPath: "include",
+            linkerSettings: [.linkedLibrary("bsm")]
         ),
         .target(
             name: "HarcClientTransport",
@@ -258,7 +264,9 @@ let package = Package(
             name: "HarcMCP",
             dependencies: [
                 "HarcCore",
+                "HarcDomain",
                 "HarcHost",
+                "HarcHostTransport",
                 "HarcStore",
                 .product(name: "MCP", package: "swift-sdk"),
             ]
@@ -333,6 +341,7 @@ let package = Package(
                 "HarcDomain",
                 "HarcHost",
                 "HarcHostTransport",
+                "HarcIPCSystem",
                 "HarcIdentity",
                 "HarcProtocol",
                 "HarcProtocolWire",
@@ -414,7 +423,13 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcMCPTests",
-            dependencies: ["HarcMCP", "HarcHost", "HarcStore", "HarcCore"]
+            dependencies: [
+                "HarcMCP",
+                "HarcHost",
+                "HarcHostTransport",
+                "HarcStore",
+                "HarcCore",
+            ]
         ),
     ]
 )

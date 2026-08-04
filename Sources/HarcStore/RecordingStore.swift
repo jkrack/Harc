@@ -7,6 +7,7 @@ import GRDB
 public actor RecordingStore {
     private let dbQueue: DatabaseQueue
     let writerCoordinator: StoreWriterCoordinator
+    private let waitForWriterLock: Bool
 
     /// Distributed-notification name harc-mcp posts after a successful write.
     /// GRDB's ValueObservation only sees this process's commits, so the app
@@ -21,7 +22,25 @@ public actor RecordingStore {
 
     /// Factory — opens (or creates) a file-backed DB, runs migrations.
     public static func onDisk(url: URL = defaultURL()) async throws -> RecordingStore {
-        try openOnDisk(url: url, migrator: DatabaseMigrator.harcMigrator())
+        try openOnDisk(
+            url: url,
+            migrator: DatabaseMigrator.harcMigrator(),
+            waitForWriterLock: true
+        )
+    }
+
+    /// Opens a per-request external authority adapter. Reads take a shared
+    /// advisory lock, writes take an exclusive lock, and neither waits when a
+    /// resident Host owns the lifetime lease. The caller must route that
+    /// contention to Host IPC and must not retain this store between requests.
+    public static func onDiskForExternalAuthorityRouting(
+        url: URL = defaultURL()
+    ) async throws -> RecordingStore {
+        try openOnDisk(
+            url: url,
+            migrator: DatabaseMigrator.harcMigrator(),
+            waitForWriterLock: false
+        )
     }
 
     /// Synchronous implementation keeps GRDB's non-Sendable migrator wholly
@@ -29,7 +48,8 @@ public actor RecordingStore {
     /// the store is not yet published to another task.
     private static func openOnDisk(
         url: URL,
-        migrator: DatabaseMigrator
+        migrator: DatabaseMigrator,
+        waitForWriterLock: Bool
     ) throws -> RecordingStore {
         let parent = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -50,8 +70,22 @@ public actor RecordingStore {
             throw StoreError.databaseOpenFailed(error.localizedDescription)
         }
         do {
-            let needsMigration = try dbq.unsafeRead { database in
-                try !migrator.hasCompletedMigrations(database)
+            let needsMigration: Bool
+            if waitForWriterLock {
+                needsMigration = try dbq.unsafeRead { database in
+                    try !migrator.hasCompletedMigrations(database)
+                }
+            } else {
+                // External authority routing must not even inspect schema
+                // state behind Host's lifetime exclusive lock. Release this
+                // shared probe before a possible exclusive migration attempt.
+                let inspectionAccess = try writerCoordinator.beginReadAccess(
+                    waitForLock: false
+                )
+                needsMigration = try dbq.unsafeRead { database in
+                    try !migrator.hasCompletedMigrations(database)
+                }
+                withExtendedLifetime(inspectionAccess) {}
             }
             if needsMigration {
                 // Schema upgrades are writes and therefore use the same
@@ -85,7 +119,11 @@ public actor RecordingStore {
         } catch {
             throw StoreError.migrationFailed(error.localizedDescription)
         }
-        return RecordingStore(dbQueue: dbq, writerCoordinator: writerCoordinator)
+        return RecordingStore(
+            dbQueue: dbq,
+            writerCoordinator: writerCoordinator,
+            waitForWriterLock: waitForWriterLock
+        )
     }
 
     /// `@testable` seam for proving a future migration can be applied while a
@@ -94,7 +132,11 @@ public actor RecordingStore {
         url: URL,
         migrator: DatabaseMigrator
     ) throws -> RecordingStore {
-        try openOnDisk(url: url, migrator: migrator)
+        try openOnDisk(
+            url: url,
+            migrator: migrator,
+            waitForWriterLock: true
+        )
     }
 
     /// Factory — in-memory DB for tests.
@@ -112,21 +154,28 @@ public actor RecordingStore {
         }
         return RecordingStore(
             dbQueue: dbq,
-            writerCoordinator: StoreWriterCoordinator(inMemoryIdentifier: UUID())
+            writerCoordinator: StoreWriterCoordinator(inMemoryIdentifier: UUID()),
+            waitForWriterLock: true
         )
     }
 
     init(
         dbQueue: DatabaseQueue,
-        writerCoordinator: StoreWriterCoordinator
+        writerCoordinator: StoreWriterCoordinator,
+        waitForWriterLock: Bool = true
     ) {
         self.dbQueue = dbQueue
         self.writerCoordinator = writerCoordinator
+        self.waitForWriterLock = waitForWriterLock
     }
 
     /// Internal accessor for same-module extensions that live in separate files.
     var db: StoreDatabaseAccess {
-        StoreDatabaseAccess(queue: dbQueue, writerCoordinator: writerCoordinator)
+        StoreDatabaseAccess(
+            queue: dbQueue,
+            writerCoordinator: writerCoordinator,
+            waitForLock: waitForWriterLock
+        )
     }
 
     var uncoordinatedDB: DatabaseQueue { dbQueue }
@@ -214,7 +263,7 @@ public actor RecordingStore {
         includeDeleted: Bool = false,
         pinnedFirst: Bool = true
     ) async throws -> [Recording] {
-        try await dbQueue.read { db in
+        try await db.read { db in
             var request = Recording.all()
             if !includeDeleted {
                 request = request.filter(Recording.Columns.deletedAt == nil)
@@ -233,7 +282,7 @@ public actor RecordingStore {
     }
 
     public func fetchByWavPath(_ wavPath: String) async throws -> Recording? {
-        try await dbQueue.read { db in
+        try await db.read { db in
             try Recording.filter(Recording.Columns.wavPath == wavPath).fetchOne(db)
         }
     }
@@ -241,7 +290,7 @@ public actor RecordingStore {
     /// Fetch a recording by primary key. Returns `nil` if the row was
     /// deleted or never existed.
     public func fetch(id: Int64) async throws -> Recording? {
-        try await dbQueue.read { db in
+        try await db.read { db in
             try Recording.filter(key: id).fetchOne(db)
         }
     }
@@ -572,7 +621,7 @@ public actor RecordingStore {
     /// usable transcript (missing JSON sidecar, etc.) are tolerated by the
     /// queue worker, which fast-returns success and advances.
     public func unsummarizedRecordings(limit: Int = 20) async throws -> [Recording] {
-        try await dbQueue.read { db in
+        try await db.read { db in
             try Recording
                 .filter(Recording.Columns.deletedAt == nil)
                 .filter(Recording.Columns.summaryMarkdown == nil)
@@ -658,7 +707,7 @@ public actor RecordingStore {
     /// The embedding for a specific (recording, speaker), or `nil` if none
     /// was stored (e.g. the speaker had too little audio to embed reliably).
     public func speakerEmbedding(recordingID: Int64, speakerIndex: Int) async throws -> SpeakerEmbeddingRow? {
-        try await dbQueue.read { db in
+        try await db.read { db in
             if let row = try Row.fetchOne(
                 db,
                 sql: """
@@ -688,7 +737,7 @@ public actor RecordingStore {
         excludingRecording: Int64? = nil,
         embedderKind: String? = nil
     ) async throws -> [SpeakerEmbeddingRow] {
-        try await dbQueue.read { db in
+        try await db.read { db in
             var clauses: [String] = []
             var args: [DatabaseValueConvertible] = []
             if let excluded = excludingRecording {
@@ -834,7 +883,7 @@ public actor RecordingStore {
         let pattern = Self.ftsPattern(from: query)
         guard !pattern.isEmpty else { return [] }
 
-        return try await dbQueue.read { db in
+        return try await db.read { db in
             let sql = """
                 SELECT
                     recordings.*,
@@ -879,7 +928,7 @@ public actor RecordingStore {
     public func daysWithRecordings(inMonthContaining reference: Date) async throws -> Set<Date> {
         let (start, end) = Self.monthBounds(reference)
         let cal = Calendar.current
-        let rows = try await dbQueue.read { db in
+        let rows = try await db.read { db in
             try Recording
                 .filter(Recording.Columns.deletedAt == nil)
                 .filter(Recording.Columns.startedAt >= start && Recording.Columns.startedAt < end)
@@ -898,7 +947,7 @@ public actor RecordingStore {
         guard let end = cal.date(byAdding: .day, value: 1, to: start) else {
             throw StoreError.writeFailed("date math failed")
         }
-        return try await dbQueue.read { db in
+        return try await db.read { db in
             try Recording
                 .filter(Recording.Columns.deletedAt == nil)
                 .filter(Recording.Columns.startedAt >= start && Recording.Columns.startedAt < end)

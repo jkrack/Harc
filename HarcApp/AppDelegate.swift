@@ -416,6 +416,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// RecordingStore is opened while this runtime is resident.
     private var hostRuntime: HarcResidentHostRuntimeV1?
     private var hostProcessingWorker: HarcHostProcessingWorker?
+    /// Same-UID, same-team, designated-requirement-validated local boundary
+    /// used by the bundled MCP helper while this process owns the Host writer.
+    private var hostMCPServer: HarcLocalMCPIPCServer?
     private var hostWakeToken: NSObjectProtocol?
     private var hostTerminationInFlight = false
     /// Whole-library operations (re-transcribe, build search index). Created
@@ -719,10 +722,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         guard !hostTerminationInFlight else { return .terminateLater }
         hostTerminationInFlight = true
         Task { [weak sender, weak self] in
+            await self?.hostMCPServer?.shutdown()
+            await MainActor.run { self?.hostMCPServer = nil }
             await self?.hostProcessingWorker?.waitUntilIdle()
             await runtime.shutdown()
             await MainActor.run {
                 self?.hostRuntime = nil
+                self?.hostProcessingWorker = nil
                 sender?.reply(toApplicationShouldTerminate: true)
             }
         }
@@ -3367,6 +3373,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             let store = try await makeApplicationStore()
             try await finishStoreBootstrap(store)
         } catch {
+            // A failure after Host startup must not strand its writer lease,
+            // listeners, or local socket behind a UI graph that never opened.
+            await hostMCPServer?.shutdown()
+            hostMCPServer = nil
+            await hostProcessingWorker?.waitUntilIdle()
+            if let hostRuntime {
+                await hostRuntime.shutdown()
+            }
+            hostRuntime = nil
+            hostProcessingWorker = nil
             FileHandle.standardError.write(Data(
                 "harc: store init failed: \(error.localizedDescription)\n".utf8
             ))
@@ -3390,36 +3406,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 canonicalAudioRoot: prefs.destinationURL
             )
             let workerBox = HarcHostProcessingWorkerBox()
+            let mcpServerBox = HarcHostMCPServerBox()
+            // Host mode deliberately fails closed in ad-hoc/unsigned builds.
+            // The production boundary derives the Team ID from this live app
+            // and never accepts an environment or command-line bypass.
+            let mcpAuthorizer = try HarcMCPCodeSigningPeerAuthorizer(
+                expectedOwnIdentifier: "com.harc.Harc"
+            )
             let launcher = launcher
             let diarize = prefs.diarize
             let vad = prefs.vadEnabled
-            let runtime = try await HarcResidentHostRuntimeV1.start(
-                configuration: configuration,
-                makeProcessingScheduler: { storage in
-                    let worker = HarcHostProcessingWorker(
-                        store: storage.recordingStore,
-                        launcher: launcher,
-                        diarize: diarize,
-                        vad: vad
-                    )
-                    try await workerBox.install(worker)
-                    return HarcCanonicalLibraryProcessingScheduler(
-                        store: storage.recordingStore,
-                        wakeHandler: { request in
-                            await worker.signal(request)
+            let runtime: HarcResidentHostRuntimeV1
+            do {
+                runtime = try await HarcResidentHostRuntimeV1.start(
+                    configuration: configuration,
+                    makeProcessingScheduler: { storage in
+                        let mcpServer = try HarcLocalMCPIPCServer.start(
+                            service: HarcMCPToolService(
+                                store: storage.recordingStore
+                            ),
+                            authorizer: mcpAuthorizer
+                        )
+                        do {
+                            try await mcpServerBox.install(mcpServer)
+                        } catch {
+                            await mcpServer.shutdown()
+                            throw error
                         }
-                    )
+                        do {
+                            let worker = HarcHostProcessingWorker(
+                                store: storage.recordingStore,
+                                launcher: launcher,
+                                diarize: diarize,
+                                vad: vad
+                            )
+                            try await workerBox.install(worker)
+                            return HarcCanonicalLibraryProcessingScheduler(
+                                store: storage.recordingStore,
+                                wakeHandler: { request in
+                                    await worker.signal(request)
+                                }
+                            )
+                        } catch {
+                            await mcpServer.shutdown()
+                            throw error
+                        }
+                    }
+                )
+            } catch {
+                // The runtime starts transport listeners after creating its
+                // processing scheduler. If that later phase fails, unwind the
+                // already-installed local boundary as part of the same start.
+                if let server = await mcpServerBox.installedServer() {
+                    await server.shutdown()
                 }
-            )
-            let worker = try await workerBox.requireWorker()
-            hostRuntime = runtime
-            hostProcessingWorker = worker
+                throw error
+            }
+            let worker: HarcHostProcessingWorker
+            let mcpServer: HarcLocalMCPIPCServer
+            do {
+                worker = try await workerBox.requireWorker()
+                mcpServer = try await mcpServerBox.requireServer()
+            } catch {
+                if let server = await mcpServerBox.installedServer() {
+                    await server.shutdown()
+                }
+                await runtime.shutdown()
+                throw error
+            }
 
             // `processing` journal rows are already durably handed off and do
             // not replay the scheduler during publication recovery. Rebuild
             // their exact path/inode-bound requests from HostDB explicitly.
-            let backlog = try await runtime.storageRuntime.recordingStore
-                .hostProcessingBacklog()
+            let backlog: [Recording]
+            do {
+                backlog = try await runtime.storageRuntime.recordingStore
+                    .hostProcessingBacklog()
+            } catch {
+                await mcpServer.shutdown()
+                await runtime.shutdown()
+                throw error
+            }
             for recording in backlog {
                 do {
                     let request = try await runtime.validatedProcessingRequest(
@@ -3432,6 +3499,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     ))
                 }
             }
+            hostRuntime = runtime
+            hostProcessingWorker = worker
+            hostMCPServer = mcpServer
             return runtime.storageRuntime.recordingStore
         }
     }

@@ -103,9 +103,33 @@ actor HarcHostProcessingWorkerBox {
     }
 }
 
+actor HarcHostMCPServerBox {
+    private var server: HarcLocalMCPIPCServer?
+
+    func install(_ server: HarcLocalMCPIPCServer) throws {
+        guard self.server == nil else {
+            throw HarcHostApplicationRuntimeError.mcpServerAlreadyInstalled
+        }
+        self.server = server
+    }
+
+    func requireServer() throws -> HarcLocalMCPIPCServer {
+        guard let server else {
+            throw HarcHostApplicationRuntimeError.mcpServerMissing
+        }
+        return server
+    }
+
+    func installedServer() -> HarcLocalMCPIPCServer? {
+        server
+    }
+}
+
 enum HarcHostApplicationRuntimeError: LocalizedError {
     case processingWorkerAlreadyInstalled
     case processingWorkerMissing
+    case mcpServerAlreadyInstalled
+    case mcpServerMissing
     case clientModeNotImplemented
 
     var errorDescription: String? {
@@ -114,6 +138,10 @@ enum HarcHostApplicationRuntimeError: LocalizedError {
             "The Host processing worker was installed more than once."
         case .processingWorkerMissing:
             "The Host processing worker was not installed."
+        case .mcpServerAlreadyInstalled:
+            "The Host MCP server was installed more than once."
+        case .mcpServerMissing:
+            "The Host MCP server was not installed."
         case .clientModeNotImplemented:
             "Desktop Client mode is not available in this build."
         }

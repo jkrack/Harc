@@ -10,9 +10,11 @@ cd "$SRCROOT"
 # Shares the daemon's scratch dir — same package, same dependency graph, so
 # a combined build reuses every module the harc-stt phase already compiled.
 SCRATCH="$SRCROOT/.build-daemon"
+BUILD_JOBS="${HARC_EMBED_BUILD_JOBS:-2}"
 echo "note: building harc-mcp into $SCRATCH"
 
 swift build \
+  --jobs "$BUILD_JOBS" \
   -c release \
   --product harc-mcp \
   --scratch-path "$SCRATCH" \
@@ -28,6 +30,8 @@ IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then IDENTITY="-"; fi
 
 echo "note: signing $MCP_DST with identity '$IDENTITY'"
-codesign --force --sign "$IDENTITY" --options runtime "$MCP_DST"
+codesign --force --sign "$IDENTITY" --options runtime \
+  --identifier com.harc.Harc.mcp \
+  "$MCP_DST"
 
 echo "note: embedded harc-mcp at $MCP_DST"

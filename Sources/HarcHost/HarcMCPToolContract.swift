@@ -71,12 +71,24 @@ public struct HarcMCPToolRequest: Codable, Equatable, Sendable {
 }
 
 public struct HarcMCPToolResponse: Codable, Equatable, Sendable {
+    public enum FailureReason: String, Codable, Equatable, Sendable {
+        /// The direct store rejected access before the tool body ran because
+        /// another authority owns the canonical writer lease or Host marker.
+        case authorityUnavailable
+    }
+
     public let text: String
     public let isError: Bool
+    public let failureReason: FailureReason?
 
-    public init(text: String, isError: Bool) {
+    public init(
+        text: String,
+        isError: Bool,
+        failureReason: FailureReason? = nil
+    ) {
         self.text = text
         self.isError = isError
+        self.failureReason = failureReason
     }
 }
 
