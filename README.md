@@ -133,10 +133,11 @@ Which means you can, without asking Harc for permission:
   and if you want to
 
 That last one is the point of the distinction. Harc never sends your audio or
-transcripts anywhere — no cloud STT, no account, no telemetry. But local-only
-should not mean trapped: if you decide a meeting is worth handing to a cloud
-model, that is a copy-paste, not an export ritual, and it is *your* decision
-each time rather than a setting you forgot you enabled.
+transcripts to a Harc cloud service — there is no cloud STT, account, or
+telemetry. If you explicitly adopt your own Harc Host, a client can synchronize
+with that authenticated private computer; recording and recovery still work
+offline, and the Host remains under your control. A user-directed export or
+copy into another service is a separate decision outside that trust boundary.
 
 The folder of Markdown remains the primary agent surface — an agent with
 filesystem access needs no API to read it. For agents that should also
@@ -174,16 +175,22 @@ database mutators the app uses and the Markdown regenerates correctly
 projection). Notes are append-only for agents: each note lands under the
 document's `## Notes` section with an author-and-date stamp, and an agent
 can never rewrite what you (or an earlier note) already said. Transcripts
-are read-only to agents by design. The server talks JSON-RPC over stdio to the
-locally spawned host, works while Harc is closed, and opens no network
-connections and holds no API keys: the agent brings its own model, on your
-own account. The app itself remains fully local.
+are read-only to agents by design. The server talks JSON-RPC over stdio and
+holds no API keys. In Standalone mode it keeps the existing local-store
+behavior. In Host mode it routes through the resident, same-user Harc process
+so the app remains the sole canonical writer; if that process is unavailable,
+MCP fails explicitly rather than writing the database directly.
+
+The Host/client/mobile work is documented in the
+[architecture](docs/architecture/host-client-architecture.md), with setup in
+the [runtime roles and pairing runbook](docs/operations/runtime-roles-and-pairing.md).
 
 ## Privacy
 
 <img src="docs/images/welcome-local-first.png" alt="Local first: speech, diarization, summaries and audio all stay on the Mac" width="820">
 
-- **No cloud speech-to-text.** Audio never leaves the machine.
+- **No cloud speech-to-text.** Audio stays on the recording device unless you
+  explicitly adopt your own authenticated Harc Host.
 - **No account, no sign-in, no telemetry.**
 - Models are downloaded once from Hugging Face, version-pinned and
   checksum-verified. After that, Harc works offline.

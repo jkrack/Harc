@@ -1,6 +1,7 @@
 # Harc Host, Client, and Mobile Buildout
 
-**Status:** Approved for implementation
+**Status:** PR 0-9 implementation landed on `codex/host-client-mobile`; full
+build and release hardware gates remain open
 
 **Date:** 2026-08-02
 
@@ -9,6 +10,8 @@
 **Normative specification:** [Implementation specification](../specs/2026-08-02-host-client-mobile-implementation-spec.md)
 
 **Recorded baseline:** [Pre-host/client baseline](baselines/2026-08-02-pre-host-client.md)
+
+**Current evidence:** [Implementation and validation status](../evidence/2026-08-03-host-client-mobile-implementation-status.md)
 
 ## Objective
 
