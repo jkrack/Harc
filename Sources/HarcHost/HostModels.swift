@@ -813,6 +813,9 @@ public enum HarcHostError: Error, Equatable, Sendable {
     case migrationFailed(String)
     case databaseFailure(String)
     case metadataMismatch
+    case invalidListenerPort(field: String)
+    case listenerPortsMustBeDistinct
+    case listenerPortPersistenceConflict
     case invalidDigestLength(field: String, expected: Int, actual: Int)
     case invalidMessageType(String)
     case invalidOperationID
@@ -904,6 +907,10 @@ extension HarcHostError: LocalizedError {
         case .migrationFailed(let detail): "Could not migrate HarcHost.db: \(detail)"
         case .databaseFailure(let detail): "HarcHost.db failed: \(detail)"
         case .metadataMismatch: "The host-state identity tuple does not match this library and authority."
+        case .invalidListenerPort(let field): "The host listener \(field) must be a nonzero UInt16 port."
+        case .listenerPortsMustBeDistinct: "The host control and upload listeners must use distinct ports."
+        case .listenerPortPersistenceConflict:
+            "The persisted host listener ports are missing, malformed, or differ from the requested restart binding."
         case .invalidDigestLength(let field, let expected, let actual): "\(field) must be \(expected) bytes; received \(actual)."
         case .invalidMessageType(let value): "Unregistered or malformed message type: \(value)"
         case .invalidOperationID: "Operation IDs must be nonzero UUIDs."
