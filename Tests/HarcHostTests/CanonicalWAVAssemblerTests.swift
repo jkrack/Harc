@@ -1,3 +1,5 @@
+@preconcurrency import AVFoundation
+import AudioToolbox
 import CryptoKit
 import Foundation
 import HarcDomain
@@ -80,6 +82,105 @@ struct CanonicalWAVAssemblerTests {
         )) {
             try await QualifiedHostChunkDecoderUnavailable().decode(request) { _ in }
         }
+    }
+
+    @Test("production decoder streams exact canonical PCM from CAF/ALAC")
+    func productionCAFALACDecoder() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let frameCount = 40_000
+        let samples = (0 ..< frameCount).map { index in
+            Int16(clamping: Int(sin(Double(index) * 0.03125) * 24_000))
+        }
+        let canonicalPCM = samples.withUnsafeBytes { Data($0) }
+        let encodedURL = directory.appendingPathComponent("source.caf")
+        try writeCAFALAC(samples: samples, to: encodedURL)
+        let encoded = try Data(contentsOf: encodedURL)
+
+        let stagingDirectory = try HostStagingDirectory(root: directory)
+        let objectName = "\(UUID().uuidString.lowercased()).chunk"
+        let stagedURL = directory
+            .appendingPathComponent("objects", isDirectory: true)
+            .appendingPathComponent(objectName)
+        try encoded.write(to: stagedURL)
+
+        let origin = OriginRecordingID(
+            deviceID: fixture.deviceID,
+            recordingUUID: UUID()
+        )
+        let descriptor = try LogicalChunkDescriptor(
+            originRecordingID: origin,
+            chunkID: .random(),
+            chunkIndex: 0,
+            canonicalStartFrame: 0,
+            canonicalFrameCount: UInt64(frameCount),
+            encoding: .cafALAC,
+            encodedByteLength: UInt64(encoded.count),
+            encodedSHA256: EncodedChunkSHA256(Data(SHA256.hash(data: encoded))),
+            canonicalDecodedByteLength: UInt64(canonicalPCM.count),
+            canonicalDecodedSHA256: CanonicalPCMHash(
+                Data(SHA256.hash(data: canonicalPCM))
+            )
+        )
+        let handle = try HostStagedObjectReadHandle(
+            directory: stagingDirectory,
+            objectName: objectName
+        )
+        defer { handle.close() }
+        let collector = CanonicalByteCollector()
+
+        try await CAFALACHostChunkDecoder().decode(
+            HostChunkDecodeRequest(
+                stagedEncodedHandle: handle,
+                descriptor: descriptor,
+                uploadPurpose: .production
+            )
+        ) { fragment in
+            #expect(fragment.count <= Int(
+                CAFALACHostChunkDecoder.maximumDecodedFramesPerFragment
+            ) * MemoryLayout<Int16>.size)
+            await collector.append(fragment)
+        }
+
+        #expect(await collector.data() == canonicalPCM)
+    }
+
+    private func writeCAFALAC(samples: [Int16], to url: URL) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatAppleLossless),
+            AVSampleRateKey: 16_000.0,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitDepthHintKey: 16,
+        ]
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 16_000,
+            channels: 1,
+            interleaved: true
+        )!
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: settings,
+            commonFormat: .pcmFormatInt16,
+            interleaved: true
+        )
+        let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(samples.count)
+        )!
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        let bytes = samples.withUnsafeBytes { Data($0) }
+        guard let destination = buffer.mutableAudioBufferList.pointee.mBuffers.mData else {
+            throw HarcHostError.publicationIO("Could not create the CAF/ALAC test input.")
+        }
+        bytes.copyBytes(
+            to: destination.assumingMemoryBound(to: UInt8.self),
+            count: bytes.count
+        )
+        buffer.mutableAudioBufferList.pointee.mBuffers.mDataByteSize = UInt32(bytes.count)
+        try file.write(from: buffer)
     }
 
     @Test("canonical WAV is exact, synchronized, exclusively published, and hash validated")
