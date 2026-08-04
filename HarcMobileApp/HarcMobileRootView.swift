@@ -615,11 +615,41 @@ private struct HarcMobileRecordingDetailView: View {
 
     @State private var detail: LibraryRecordingDetail?
     @State private var errorMessage: String?
+    @State private var audioController: HarcMobileRecordingAudioController
+
+    init(
+        coordinator: HarcMobileLibraryCoordinator,
+        summary: LibraryRecordingSummary
+    ) {
+        self.coordinator = coordinator
+        self.summary = summary
+        _audioController = State(
+            initialValue: HarcMobileRecordingAudioController(
+                coordinator: coordinator,
+                summary: summary
+            )
+        )
+    }
 
     var body: some View {
         Group {
             if let detail {
                 List {
+                    if detail.summary.canonicalAudio.availability == .available {
+                        Section("Audio") {
+                            Button {
+                                Task { await audioController.playOrPause() }
+                            } label: {
+                                audioPlaybackLabel
+                            }
+                            .disabled(audioController.state == .downloading)
+                            if case .failed(let message) = audioController.state {
+                                Text(message)
+                                    .font(.footnote)
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                    }
                     Section("Status") {
                         LabeledContent("Processing", value: detail.summary.processing.state.rawValue)
                         LabeledContent("Projection", value: detail.summary.projection.state.rawValue)
@@ -673,6 +703,25 @@ private struct HarcMobileRecordingDetailView: View {
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    @ViewBuilder
+    private var audioPlaybackLabel: some View {
+        switch audioController.state {
+        case .idle:
+            Label("Play canonical audio", systemImage: "play.fill")
+        case .downloading:
+            HStack {
+                ProgressView()
+                Text("Downloading verified audio…")
+            }
+        case .playing:
+            Label("Pause", systemImage: "pause.fill")
+        case .paused:
+            Label("Resume", systemImage: "play.fill")
+        case .failed:
+            Label("Try audio again", systemImage: "arrow.clockwise")
         }
     }
 }

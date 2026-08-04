@@ -13,6 +13,10 @@ public enum HarcHostLibraryError: Error, Equatable, Sendable {
     case cursorAheadOfHost
     case recordingNotFound
     case invalidSearchQuery
+    case recordingRevisionConflict
+    case canonicalAudioUnavailable
+    case invalidResumeOffset
+    case canonicalAudioChanged
 }
 
 public enum HarcHostLibrarySnapshotItem: Equatable, Sendable {
@@ -405,6 +409,42 @@ public actor HarcHostLibraryService {
             throw HarcHostLibraryError.recordingNotFound
         }
         return detail
+    }
+
+    public func prepareAudioDownload(
+        session: HostAuthenticatedSession,
+        canonicalID: CanonicalRecordingID,
+        expectedRevision: EntityRevision
+    ) async throws -> HarcHostPreparedAudioDownload {
+        guard try await store.libraryMetadata().libraryID
+                == session.context.libraryID else {
+            throw HarcHostLibraryError.snapshotBindingMismatch
+        }
+        guard let recording = try await store.fetch(canonicalID: canonicalID),
+              recording.deletedAt == nil else {
+            throw HarcHostLibraryError.recordingNotFound
+        }
+        guard recording.revision == expectedRevision else {
+            throw HarcHostLibraryError.recordingRevisionConflict
+        }
+        guard let pcmHash = recording.canonicalPCMHash,
+              let totalFrames = recording.canonicalPCMFrames else {
+            throw HarcHostLibraryError.canonicalAudioUnavailable
+        }
+        let fileURL = URL(fileURLWithPath: recording.wavPath)
+        let reader = try await Task.detached(priority: .userInitiated) {
+            try HarcHostCanonicalAudioReader(
+                canonicalID: canonicalID,
+                revision: expectedRevision,
+                fileURL: fileURL,
+                canonicalPCMSHA256: pcmHash,
+                totalCanonicalFrames: totalFrames
+            )
+        }.value
+        return HarcHostPreparedAudioDownload(
+            descriptor: reader.descriptor,
+            reader: reader
+        )
     }
 
     public func searchMetadata(

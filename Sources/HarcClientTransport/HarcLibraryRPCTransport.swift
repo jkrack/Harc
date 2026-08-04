@@ -27,6 +27,10 @@ public enum HarcLibraryAuthorizationError: Error, Equatable, Sendable {
     case invalidOpenedSessionAuthorization
 }
 
+public typealias HarcLibraryAudioResponseConsumer = @Sendable (
+    Harc_V1_GetAudioResponseV1
+) async throws -> Void
+
 public protocol HarcLibraryRPCTransport: Sendable {
     func beginLibrarySnapshot(
         _ request: Harc_V1_BeginLibrarySnapshotRequestV1,
@@ -47,6 +51,12 @@ public protocol HarcLibraryRPCTransport: Sendable {
         _ request: Harc_V1_GetRecordingRequestV1,
         authorization: HarcLibraryAuthorization
     ) async throws -> Harc_V1_GetRecordingResponseV1
+
+    func getLibraryAudio(
+        _ request: Harc_V1_GetAudioRequestV1,
+        authorization: HarcLibraryAuthorization,
+        responseConsumer: @escaping HarcLibraryAudioResponseConsumer
+    ) async throws
 
     func searchLibraryMetadata(
         _ request: Harc_V1_SearchMetadataRequestV1,
@@ -106,6 +116,22 @@ public struct HarcGeneratedLibraryRPCAdapter<
         try await client.getRecording(
             request,
             metadata: authorization.metadata
+        )
+    }
+
+    public func getLibraryAudio(
+        _ request: Harc_V1_GetAudioRequestV1,
+        authorization: HarcLibraryAuthorization,
+        responseConsumer: @escaping HarcLibraryAudioResponseConsumer
+    ) async throws {
+        try await client.getAudio(
+            request,
+            metadata: authorization.metadata,
+            onResponse: { response in
+                for try await message in response.messages {
+                    try await responseConsumer(message)
+                }
+            }
         )
     }
 

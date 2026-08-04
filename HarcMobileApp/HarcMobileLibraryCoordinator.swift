@@ -97,7 +97,10 @@ final class HarcMobileLibraryCoordinator {
                     openedSession: opened.session
                 )
             )
-            try Self.validateProtocol(response.hasProtocol, response.protocol)
+            try Self.validateLibraryProtocol(
+                response.hasProtocol,
+                response.protocol
+            )
             guard response.hasRecording else {
                 throw HarcMobileLibraryError.malformedResponse
             }
@@ -109,6 +112,66 @@ final class HarcMobileLibraryCoordinator {
             return detail
         } catch {
             await opened.connection.shutdownImmediately()
+            throw error
+        }
+    }
+
+    func downloadCanonicalAudio(
+        summary: LibraryRecordingSummary
+    ) async throws -> URL {
+        guard summary.canonicalAudio.availability == .available else {
+            throw HarcMobileLibraryAudioError.malformedStream
+        }
+        let localCache = cache
+        let paths = try await Task.detached(priority: .userInitiated) {
+            try HarcMobileAudioCachePaths(cache: localCache, summary: summary)
+        }.value
+        let cached = try await Task.detached(priority: .userInitiated) {
+            try paths.validatedCachedURL(summary: summary)
+        }.value
+        if let cached {
+            return cached
+        }
+        let resumeOffset = try await Task.detached(priority: .userInitiated) {
+            try paths.boundedResumeOffset(summary: summary)
+        }.value
+        let sink = try await Task.detached(priority: .userInitiated) {
+            try HarcMobileAudioDownloadSink(
+                paths: paths,
+                summary: summary,
+                resumeOffset: resumeOffset
+            )
+        }.value
+        let opened = try await HarcMobileHostSessionConnector.open(
+            identity: identity,
+            store: transferStore,
+            routeURL: routeURL
+        )
+        do {
+            var request = Harc_V1_GetAudioRequestV1()
+            request.protocol = HarcProtocolVersion.v1.protobufV1()
+            request.canonicalRecordingID =
+                Harc_V1_CanonicalRecordingIDV1(summary.canonicalID)
+            request.expectedRevision = summary.revision.rawValue
+            request.representation = .audioRepresentationCanonicalWav
+            if resumeOffset > 0 { request.resumeByteOffset = resumeOffset }
+            try await opened.connection.getLibraryAudio(
+                request,
+                authorization: try HarcLibraryAuthorization(
+                    openedSession: opened.session
+                ),
+                responseConsumer: { response in
+                    try await sink.consume(response)
+                }
+            )
+            let final = try await sink.finish()
+            try await opened.connection.shutdownGracefully()
+            return final
+        } catch {
+            await opened.connection.shutdownImmediately()
+            if error is HarcMobileLibraryAudioError {
+                await sink.discardUnverifiedPartial()
+            }
             throw error
         }
     }
@@ -261,7 +324,10 @@ final class HarcMobileLibraryCoordinator {
                 request,
                 authorization: authorization
             )
-            try Self.validateProtocol(response.hasProtocol, response.protocol)
+            try Self.validateLibraryProtocol(
+                response.hasProtocol,
+                response.protocol
+            )
             results.append(contentsOf: try response.recordings.map {
                 SearchResult(
                     recording: try $0.domainValue(),
@@ -299,7 +365,10 @@ final class HarcMobileLibraryCoordinator {
                 request,
                 authorization: authorization
             )
-            try Self.validateProtocol(response.hasProtocol, response.protocol)
+            try Self.validateLibraryProtocol(
+                response.hasProtocol,
+                response.protocol
+            )
             for hit in response.hits {
                 guard hit.hasRecording, hit.score.isFinite else {
                     throw HarcMobileLibraryError.malformedResponse
@@ -373,7 +442,7 @@ final class HarcMobileLibraryCoordinator {
             begin,
             authorization: authorization
         )
-        try Self.validateProtocol(started.hasProtocol, started.protocol)
+        try Self.validateLibraryProtocol(started.hasProtocol, started.protocol)
         guard started.snapshotToken.count == 32 else {
             throw HarcMobileLibraryError.malformedResponse
         }
@@ -396,7 +465,7 @@ final class HarcMobileLibraryCoordinator {
                 request,
                 authorization: authorization
             )
-            try Self.validateProtocol(page.hasProtocol, page.protocol)
+            try Self.validateLibraryProtocol(page.hasProtocol, page.protocol)
             guard page.snapshotAnchor == started.snapshotAnchor else {
                 throw HarcMobileLibraryError.malformedResponse
             }
@@ -469,7 +538,10 @@ final class HarcMobileLibraryCoordinator {
                 request,
                 authorization: authorization
             )
-            try Self.validateProtocol(response.hasProtocol, response.protocol)
+            try Self.validateLibraryProtocol(
+                response.hasProtocol,
+                response.protocol
+            )
             switch response.disposition {
             case .listChangesDispositionFullResyncRequired:
                 guard mayRestartSnapshot else {
@@ -540,7 +612,7 @@ final class HarcMobileLibraryCoordinator {
         }
     }
 
-    private static func validateProtocol(
+    nonisolated static func validateLibraryProtocol(
         _ isPresent: Bool,
         _ wire: Harc_V1_ProtocolVersionV1
     ) throws {

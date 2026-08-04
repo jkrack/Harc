@@ -396,6 +396,18 @@ public final class HarcPinnedGRPCConnection:
         )
     }
 
+    public func getLibraryAudio(
+        _ request: Harc_V1_GetAudioRequestV1,
+        authorization: HarcLibraryAuthorization,
+        responseConsumer: @escaping HarcLibraryAudioResponseConsumer
+    ) async throws {
+        try await libraryRPCAdapter.getLibraryAudio(
+            request,
+            authorization: authorization,
+            responseConsumer: responseConsumer
+        )
+    }
+
     public func searchLibraryMetadata(
         _ request: Harc_V1_SearchMetadataRequestV1,
         authorization: HarcLibraryAuthorization

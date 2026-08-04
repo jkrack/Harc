@@ -251,11 +251,104 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         request: ServerRequest<Harc_V1_GetAudioRequestV1>,
         context: ServerContext
     ) async throws -> StreamingServerResponse<Harc_V1_GetAudioResponseV1> {
-        _ = try await authorize(request.metadata, requiredScope: nil)
-        throw RPCError(
-            code: .unimplemented,
-            message: "Canonical audio streaming is not available in this build."
-        )
+        do {
+            let initial = try await authorize(
+                request.metadata,
+                requiredScope: nil
+            )
+            let version = try validateProtocol(
+                request.message.hasProtocol,
+                request.message.protocol,
+                knownFields: [1, 2, 3, 4, 5],
+                session: initial
+            )
+            guard request.message.hasCanonicalRecordingID else {
+                throw HarcProtobufConversionError.missingField(
+                    "getAudio.canonicalRecordingID"
+                )
+            }
+            let canonicalID = try request.message.canonicalRecordingID
+                .domainValue()
+            let revision = try EntityRevision(request.message.expectedRevision)
+            guard request.message.representation
+                    == .audioRepresentationCanonicalWav else {
+                throw HarcProtobufConversionError.unsupportedEnum(
+                    field: "getAudio.representation",
+                    rawValue: request.message.representation.rawValue
+                )
+            }
+            let candidate = try await service.recording(
+                session: initial,
+                canonicalID: canonicalID
+            )
+            let ownsRecording = candidate.summary.originID?.deviceID
+                == initial.context.authenticatedDeviceID
+            let requiredScope: AuthorizationScope = ownsRecording
+                ? .recordingReadOwn
+                : .libraryAudioRead
+            let authorized = try await authorize(
+                request.metadata,
+                requiredScope: requiredScope
+            )
+            guard authorized.context == initial.context else {
+                throw HarcHostLibraryError.snapshotBindingMismatch
+            }
+            let prepared = try await service.prepareAudioDownload(
+                session: authorized,
+                canonicalID: canonicalID,
+                expectedRevision: revision
+            )
+            let offset = request.message.hasResumeByteOffset
+                ? request.message.resumeByteOffset
+                : 0
+            guard offset <= prepared.descriptor.totalByteLength else {
+                throw HarcHostLibraryError.invalidResumeOffset
+            }
+            let descriptorMessage = try Self.audioDescriptorResponse(
+                prepared.descriptor,
+                protocolVersion: version
+            )
+            return StreamingServerResponse(metadata: [:]) { writer in
+                do {
+                    try await writer.write(descriptorMessage)
+                    var nextOffset = offset
+                    while nextOffset < prepared.descriptor.totalByteLength {
+                        let live = try await authorize(
+                            request.metadata,
+                            requiredScope: requiredScope
+                        )
+                        guard live.context == authorized.context else {
+                            throw HarcHostLibraryError.snapshotBindingMismatch
+                        }
+                        guard let bytes = try await prepared.reader.read(
+                            at: nextOffset,
+                            maximumBytes: 512 * 1_024
+                        ), !bytes.isEmpty else {
+                            throw HarcHostLibraryError.canonicalAudioChanged
+                        }
+                        var frame = Harc_V1_AudioDownloadFrameV1()
+                        frame.byteOffset = nextOffset
+                        frame.data = bytes
+                        var response = Harc_V1_GetAudioResponseV1()
+                        response.protocol = version.protobufV1()
+                        response.value = .frame(frame)
+                        try await writer.write(response)
+                        nextOffset += UInt64(bytes.count)
+                    }
+                    guard try await prepared.reader.read(
+                        at: nextOffset,
+                        maximumBytes: 1
+                    ) == nil else {
+                        throw HarcHostLibraryError.canonicalAudioChanged
+                    }
+                    return [:]
+                } catch {
+                    throw HarcPostSessionGRPCErrorMapper.map(error)
+                }
+            }
+        } catch {
+            throw HarcPostSessionGRPCErrorMapper.map(error)
+        }
     }
 
     public func searchMetadata(
@@ -626,6 +719,40 @@ public struct HarcLibraryGRPCServiceAdapterV1:
             return result
         }
         return wire
+    }
+
+    private static func audioDescriptorResponse(
+        _ value: HarcHostAudioDownloadDescriptor,
+        protocolVersion: HarcProtocolVersion
+    ) throws -> Harc_V1_GetAudioResponseV1 {
+        guard value.contentSHA256.count == 32 else {
+            throw HarcProtobufConversionError.invalidLength(
+                field: "getAudio.contentSHA256",
+                expected: 32,
+                actual: value.contentSHA256.count
+            )
+        }
+        var descriptor = Harc_V1_AudioDownloadDescriptorV1()
+        descriptor.canonicalRecordingID =
+            Harc_V1_CanonicalRecordingIDV1(value.canonicalID)
+        descriptor.revision = value.revision.rawValue
+        descriptor.representation = .audioRepresentationCanonicalWav
+        descriptor.contentType = value.contentType
+        descriptor.totalByteLength = value.totalByteLength
+        descriptor.contentSha256 = try Harc_V1_SHA256DigestV1(
+            exactBytes: value.contentSHA256
+        )
+        descriptor.canonicalFormat = Harc_V1_CanonicalPCMFormatV1(
+            value.canonicalFormat
+        )
+        descriptor.totalCanonicalFrames = value.totalCanonicalFrames
+        descriptor.canonicalPcmSha256 = try Harc_V1_SHA256DigestV1(
+            exactBytes: value.canonicalPCMSHA256.rawBytes
+        )
+        var response = Harc_V1_GetAudioResponseV1()
+        response.protocol = protocolVersion.protobufV1()
+        response.value = .descriptor(descriptor)
+        return response
     }
 
     private static func searchPageToken(

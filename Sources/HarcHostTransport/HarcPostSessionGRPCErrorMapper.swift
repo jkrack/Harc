@@ -261,10 +261,14 @@ enum HarcPostSessionGRPCErrorMapper {
             .permissionDenied
         case .snapshotExpired, .invalidPageToken, .cursorAheadOfHost:
             .failedPrecondition
-        case .invalidPageLimit, .invalidSearchQuery:
+        case .recordingRevisionConflict, .canonicalAudioUnavailable:
+            .failedPrecondition
+        case .invalidPageLimit, .invalidSearchQuery, .invalidResumeOffset:
             .invalidArgument
         case .snapshotCapacityExceeded:
             .resourceExhausted
+        case .canonicalAudioChanged:
+            .unavailable
         }
     }
 }
