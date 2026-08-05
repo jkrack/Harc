@@ -87,10 +87,16 @@ actor SecurityHostCryptographicStateRecordBackend: HostCryptographicStateRecordB
             guard let attributes = result as? [String: Any],
                   let record = attributes[kSecValueData as String] as? Data,
                   let storedDigest = attributes[kSecAttrGeneric as String] as? Data,
-                  storedDigest == Self.integrityDigest(record),
-                  let accessibility = attributes[kSecAttrAccessible as String] as? String,
-                  accessibility == (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+                  storedDigest == Self.integrityDigest(record)
             else {
+                throw HostCryptographicStateError.corruptKeychainItem
+            }
+            // The legacy macOS Keychain normally omits accessibility on
+            // return. If it is exposed, it must still match the insert policy.
+            if let accessibility = attributes[kSecAttrAccessible as String] as? String,
+               accessibility
+                != (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+            {
                 throw HostCryptographicStateError.corruptKeychainItem
             }
             return record
@@ -107,7 +113,6 @@ actor SecurityHostCryptographicStateRecordBackend: HostCryptographicStateRecordB
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
         ]
     }
 
@@ -134,10 +139,15 @@ actor SecurityHostCryptographicStateRecordBackend: HostCryptographicStateRecordB
     }
 }
 
-/// Production host cryptographic persistence. One non-synchronizing,
-/// `AfterFirstUnlockThisDeviceOnly` Keychain item atomically binds the exact
-/// host tuple, distinct active/staged/retiring key references, and both
-/// anti-rollback marks.
+/// Production host cryptographic persistence. One non-synchronizing legacy
+/// macOS Keychain item atomically binds the exact host tuple, distinct
+/// active/staged/retiring key references, and both anti-rollback marks.
+///
+/// Harc is a non-sandboxed Developer ID app because it writes continuously to
+/// user-selected recording folders. Such apps are not provisioned for the
+/// Data Protection Keychain and receive `errSecMissingEntitlement` when they
+/// opt into it. The legacy login Keychain still enforces signing-aware item
+/// ACLs, remains local/non-synchronizing, and supports background access.
 public struct KeychainHostCryptographicStateStore: HostCryptographicStateStore, Sendable {
     public static let defaultService = "com.harc.Harc.host-cryptographic-state"
     public static let defaultAccount = "authority-tls-and-marks-v1"
@@ -154,9 +164,17 @@ public struct KeychainHostCryptographicStateStore: HostCryptographicStateStore, 
                 account: account
             ),
             authorityKeyFactory: .preferred,
-            tlsKeyFactory: .permanentTLS(
+            tlsKeyFactory: .permanentLegacyTLS(
                 applicationTagPrefix: "\(service).\(account).tls-p256-v1"
-            )
+            ),
+            persistentSecurityKeyLoader: { applicationTag, protection in
+                .securityFramework(
+                    try HostSecurityP256SigningKey.loadLegacyKeychain(
+                        applicationTag: applicationTag,
+                        protection: protection
+                    )
+                )
+            }
         )
     }
 

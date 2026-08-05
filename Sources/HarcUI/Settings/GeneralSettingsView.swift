@@ -3,6 +3,7 @@ import ServiceManagement
 
 public struct GeneralSettingsView: View {
     @EnvironmentObject private var prefs: HarcPreferences
+    @EnvironmentObject private var bridge: HarcAppBridge
     /// Mirrors `SMAppService.mainApp.status` — refreshed on appear because the
     /// user can also change it in System Settings → Login Items.
     @State private var launchAtLogin = false
@@ -69,6 +70,41 @@ public struct GeneralSettingsView: View {
                 } footer: {
                     Text(
                         "Playback downloads verified audio only when allowed. By default, a work Mac removes that audio when playback ends. Managed preferences can lock either setting. Local capture and transcription remain available."
+                    )
+                        .font(.harcLabel)
+                        .foregroundStyle(Color.secondary)
+                }
+            }
+            if prefs.runtimeRole == .host {
+                Section {
+                    if bridge.hostRuntimeReady {
+                        Label("Host is running", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(Color.green)
+                        Button("Pair a Device…") {
+                            bridge.onOpenHostPairing()
+                        }
+                    } else if let error = bridge.runtimeStartupError {
+                        Label(
+                            "Host could not start",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                            .foregroundStyle(Color.orange)
+                        Text(error)
+                            .font(.harcLabel)
+                            .foregroundStyle(Color.secondary)
+                            .textSelection(.enabled)
+                    } else {
+                        HStack {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Starting Host…")
+                        }
+                    }
+                } header: {
+                    Text("Host")
+                } footer: {
+                    Text(
+                        "Pairing is available after Harc opens its local identity and network listeners."
                     )
                         .font(.harcLabel)
                         .foregroundStyle(Color.secondary)

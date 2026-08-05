@@ -91,6 +91,12 @@ public final class HarcAppBridge: ObservableObject {
     /// Newer release Sparkle has found (published by the app target's
     /// updater delegate) so the panel and About can show an update row.
     @Published public var availableUpdate: AvailableUpdate? = nil
+    /// The configured role is only a preference; this reports whether the
+    /// resident Host graph actually completed startup.
+    @Published public var hostRuntimeReady: Bool = false
+    /// Persists a launch failure after stderr disappears so Settings cannot
+    /// claim "Host" while every Host-only action is absent.
+    @Published public var runtimeStartupError: String? = nil
 
     public var onStartStop: () -> Void = {}
     /// Preserve the current recording, then open the chooser. V1 does not
@@ -115,6 +121,7 @@ public final class HarcAppBridge: ObservableObject {
     public var onClearPreRoll: () -> Void = {}
     public var onStopNow: () -> Void = {}
     public var onOpenSettings: () -> Void = {}
+    public var onOpenHostPairing: () -> Void = {}
     /// Open the Library's Activity surface (readiness / recovery / jobs) —
     /// the destination behind the panel's single status row.
     public var onOpenActivity: () -> Void = {}

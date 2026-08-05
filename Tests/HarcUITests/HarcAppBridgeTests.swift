@@ -74,6 +74,23 @@ struct HarcAppBridgeTests {
         #expect(bridge.summarizerReadinessText == "Standard not installed")
     }
 
+    @Test("Host readiness distinguishes configured role from running runtime")
+    func hostRuntimeReadinessPublishesFailureAndRecovery() {
+        let bridge = HarcAppBridge(
+            recordingState: RecordingState(),
+            trayState: PostStopTrayState()
+        )
+
+        bridge.runtimeStartupError = "The Keychain returned unexpected status -34018."
+        #expect(bridge.hostRuntimeReady == false)
+        #expect(bridge.runtimeStartupError != nil)
+
+        bridge.runtimeStartupError = nil
+        bridge.hostRuntimeReady = true
+        #expect(bridge.hostRuntimeReady == true)
+        #expect(bridge.runtimeStartupError == nil)
+    }
+
     @Test("recovery artifacts publish through bridge")
     func recoveryArtifactsPublishThroughBridge() {
         let bridge = HarcAppBridge(

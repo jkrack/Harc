@@ -1,10 +1,35 @@
 import Foundation
 import HarcDomain
+import Security
 import Testing
 @testable import HarcIdentity
 
 @Suite("HarcIdentity protected host cryptographic state")
 struct HostCryptographicStateTests {
+    @Test("production host record works without Data Protection Keychain entitlement")
+    func productionLegacyKeychainRecord() async throws {
+        let service = "com.harc.tests.host-state.\(UUID().uuidString.lowercased())"
+        let account = "record"
+        let cleanupQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        defer { SecItemDelete(cleanupQuery as CFDictionary) }
+        let backend = SecurityHostCryptographicStateRecordBackend(
+            service: service,
+            account: account
+        )
+        let first = Data("host-state-v1".utf8)
+        let second = Data("host-state-v2".utf8)
+
+        #expect(try await backend.loadRecord() == nil)
+        #expect(try await backend.insertRecordIfAbsent(first))
+        #expect(try await backend.loadRecord() == first)
+        #expect(try await backend.replaceRecord(expected: first, with: second))
+        #expect(try await backend.loadRecord() == second)
+    }
+
     @Test("load-or-create persists distinct authority and TLS keys through an injectable backend")
     func persistenceAndSeparateKeyRoles() async throws {
         let backend = InMemoryHostCryptographicStateRecordBackend()

@@ -20,7 +20,7 @@ public enum HarcVersion {
     /// the xctest runner. `VersionTests` asserts this stays equal to
     /// `project.yml`'s `MARKETING_VERSION`, which is the check that would have
     /// caught the original drift.
-    public static let fallbackVersion = "0.13.0"
+    public static let fallbackVersion = "0.13.1"
 
     /// Identity of the speech engine, stamped onto every transcript as
     /// provenance. Bump this whenever a change would alter transcription

@@ -101,11 +101,11 @@ struct HostProtectedP256SigningKeyFactory: Sendable {
         )
     }
 
-    static func permanentLegacyTLSForTesting(applicationTagPrefix: String) -> Self {
+    static func permanentLegacyTLS(applicationTagPrefix: String) -> Self {
         Self(
             makeKey: {
                 .securityFramework(
-                    try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(
+                    try HostSecurityP256SigningKey.createLegacyKeychain(
                         applicationTag: Data(
                             "\(applicationTagPrefix).legacy.\(UUID().uuidString.lowercased())".utf8
                         )
@@ -120,19 +120,19 @@ struct HostProtectedP256SigningKeyFactory: Sendable {
                     )
                 },
                 loadIfPresent: { tag in
-                    try HostSecurityP256SigningKey.loadLegacyKeychainTestFixtureIfPresent(
+                    try HostSecurityP256SigningKey.loadLegacyKeychainIfPresent(
                         applicationTag: tag
                     ).map { .securityFramework($0) }
                 },
                 loadOrCreate: { tag in
                     .securityFramework(
-                        try HostSecurityP256SigningKey.loadOrCreateLegacyKeychainTestFixture(
+                        try HostSecurityP256SigningKey.loadOrCreateLegacyKeychain(
                             applicationTag: tag
                         )
                     )
                 },
                 deleteAndConfirmAbsent: { tag, protection, publicKey in
-                    try HostSecurityP256SigningKey.deleteLegacyKeychainTestFixtureAndConfirmAbsent(
+                    try HostSecurityP256SigningKey.deleteLegacyKeychainAndConfirmAbsent(
                         applicationTag: tag,
                         protection: protection,
                         expectedPublicKey: publicKey
@@ -140,6 +140,10 @@ struct HostProtectedP256SigningKeyFactory: Sendable {
                 }
             )
         )
+    }
+
+    static func permanentLegacyTLSForTesting(applicationTagPrefix: String) -> Self {
+        permanentLegacyTLS(applicationTagPrefix: applicationTagPrefix)
     }
 }
 

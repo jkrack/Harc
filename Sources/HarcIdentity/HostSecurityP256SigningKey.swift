@@ -20,11 +20,9 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
 
     private enum KeychainDomain: Sendable {
         case dataProtection
-        /// SwiftPM's unsigned test executable has no Data Protection Keychain
-        /// entitlement. This package-internal domain exists only so tests can
-        /// exercise a genuinely permanent SecKey and SecIdentity. Production
-        /// creation and loading never select it.
-        case legacyTestFixture
+        /// Non-sandboxed Developer ID apps and unsigned SwiftPM tests cannot
+        /// use the entitlement-gated Data Protection Keychain on macOS.
+        case legacyMacOS
     }
 
     let applicationTag: Data
@@ -132,11 +130,15 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     /// legacy macOS Keychain because the SwiftPM runner cannot access the Data
     /// Protection Keychain.
     static func createLegacyKeychainTestFixture(applicationTag: Data) throws -> Self {
+        try createLegacyKeychain(applicationTag: applicationTag)
+    }
+
+    static func createLegacyKeychain(applicationTag: Data) throws -> Self {
         try withKeychainLifecycle {
             try create(
                 applicationTag: applicationTag,
                 protection: .keychainSoftware,
-                keychainDomain: .legacyTestFixture
+                keychainDomain: .legacyMacOS
             )
         }
     }
@@ -144,11 +146,15 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     static func loadOrCreateLegacyKeychainTestFixture(
         applicationTag: Data
     ) throws -> Self {
+        try loadOrCreateLegacyKeychain(applicationTag: applicationTag)
+    }
+
+    static func loadOrCreateLegacyKeychain(applicationTag: Data) throws -> Self {
         lifecycleLock.lock()
         defer { lifecycleLock.unlock() }
         if let existing = try loadIfPresent(
             applicationTag: applicationTag,
-            keychainDomain: .legacyTestFixture
+            keychainDomain: .legacyMacOS
         ) {
             return existing
         }
@@ -156,12 +162,12 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
             return try create(
                 applicationTag: applicationTag,
                 protection: .keychainSoftware,
-                keychainDomain: .legacyTestFixture
+                keychainDomain: .legacyMacOS
             )
         } catch {
             if let existing = try loadIfPresent(
                 applicationTag: applicationTag,
-                keychainDomain: .legacyTestFixture
+                keychainDomain: .legacyMacOS
             ) {
                 return existing
             }
@@ -172,10 +178,14 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     static func loadLegacyKeychainTestFixtureIfPresent(
         applicationTag: Data
     ) throws -> Self? {
+        try loadLegacyKeychainIfPresent(applicationTag: applicationTag)
+    }
+
+    static func loadLegacyKeychainIfPresent(applicationTag: Data) throws -> Self? {
         try withKeychainLifecycle {
             try loadIfPresent(
                 applicationTag: applicationTag,
-                keychainDomain: .legacyTestFixture
+                keychainDomain: .legacyMacOS
             )
         }
     }
@@ -197,11 +207,21 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
         applicationTag: Data,
         protection: InstallationKeyProtection
     ) throws -> Self {
+        try loadLegacyKeychain(
+            applicationTag: applicationTag,
+            protection: protection
+        )
+    }
+
+    static func loadLegacyKeychain(
+        applicationTag: Data,
+        protection: InstallationKeyProtection
+    ) throws -> Self {
         try withKeychainLifecycle {
             try load(
                 applicationTag: applicationTag,
                 protection: protection,
-                keychainDomain: .legacyTestFixture
+                keychainDomain: .legacyMacOS
             )
         }
     }
@@ -328,11 +348,23 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
         protection: InstallationKeyProtection,
         expectedPublicKey: P256X963PublicKey
     ) throws {
+        try deleteLegacyKeychainAndConfirmAbsent(
+            applicationTag: applicationTag,
+            protection: protection,
+            expectedPublicKey: expectedPublicKey
+        )
+    }
+
+    static func deleteLegacyKeychainAndConfirmAbsent(
+        applicationTag: Data,
+        protection: InstallationKeyProtection,
+        expectedPublicKey: P256X963PublicKey
+    ) throws {
         try deleteAndConfirmAbsent(
             applicationTag: applicationTag,
             protection: protection,
             expectedPublicKey: expectedPublicKey,
-            keychainDomain: .legacyTestFixture
+            keychainDomain: .legacyMacOS
         )
     }
 

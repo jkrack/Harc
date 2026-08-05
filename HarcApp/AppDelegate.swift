@@ -173,6 +173,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onOpenSettings = { [weak self] in
             self?.openSettings()
         }
+        bridge.onOpenHostPairing = { [weak self] in
+            self?.openHostPairing(nil)
+        }
         bridge.onOpenActivity = { [weak self] in
             self?.statusPopover?.performClose(nil)
             self?.openLibrary()
@@ -3693,9 +3696,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func bootstrapStore() async {
+        bridge.runtimeStartupError = nil
+        bridge.hostRuntimeReady = false
         do {
             let store = try await makeApplicationStore()
             try await finishStoreBootstrap(store)
+            bridge.hostRuntimeReady = prefs.runtimeRole == .host
         } catch {
             // A failure after Host startup must not strand its writer lease,
             // listeners, or local socket behind a UI graph that never opened.
@@ -3709,6 +3715,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             hostProcessingWorker = nil
             desktopClientRuntime?.shutdown()
             desktopClientRuntime = nil
+            bridge.hostRuntimeReady = false
+            bridge.runtimeStartupError = error.localizedDescription
             FileHandle.standardError.write(Data(
                 "harc: store init failed: \(error.localizedDescription)\n".utf8
             ))
