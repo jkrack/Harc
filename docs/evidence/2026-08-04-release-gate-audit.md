@@ -85,21 +85,23 @@ or receipt policies.
 
 ## Signed macOS 0.13.0 candidate
 
-The replacement candidate was built from source commit `bf38831` with two
+The final candidate was built from source commit `807721b` with two
 workers, Developer ID signing, hardened runtime, secure timestamps, and an
 arm64-only Harc application plus `harc-stt` and `harc-mcp` helpers.
 
 | Candidate evidence | Value |
 | --- | --- |
 | Version/build | `0.13.0` / `45` |
-| Notary submission | `3c0b02d1-da93-43be-8e2d-422c92af6d0e` |
+| Notary submission | `fa35f126-3cb0-4dff-a5f4-62159ad45dcc` |
 | Apple result | `Accepted`; `Ready for distribution`; no issues |
-| Uploaded pre-staple SHA-256 | `4fcca101f9ee73b14956c89a2a57e7efca2b8325c51cb4e36bad8e09b9500ae3` |
-| Stapled candidate byte count | `64875781` |
-| Stapled candidate SHA-256 | `d49d04f5c97e56492b33fbaea38c9b4539306c18b340633a98ead3c9a5700a54` |
-| DMG CDHash | `f34a06ea9bde361a7d2ac50bd4de5caac7355278` |
-| Harc app CDHash | `f94b64b2771159eacaac6e1884d79da31dcb33ce` |
-| Sparkle EdDSA signature | `/e+5TRHJXOHVZvglks08nL5LhrTqi8E4EsfAJiDdoQEwhI82xH8sHfe4MFWBIGby9rM8/1/Xy9t6fhFNEmw9Bg==` |
+| Uploaded pre-staple SHA-256 | `3dfbd3e3faeb3b6eaa3b89fe8fbdad0ad0d3f07f60d7a4f679f227e0e586f55a` |
+| Stapled candidate byte count | `64878338` |
+| Stapled candidate SHA-256 | `f8e7fcb483c877ee8cf881b3a6f0f4057e422bf821b15e4fa63f6bac7caffd86` |
+| Release ZIP byte count | `62124315` |
+| Release ZIP SHA-256 | `6d5bfe53e4a49958496b6165991cd25ad2c1ba21b2187bf91caff45eb4ef0c52` |
+| DMG CDHash | `1239e852d5190a2fd9c95a4ffcba0fa64e8177fe` |
+| Harc app CDHash | `306c5ed99e1bf15775e906b1a905ddfd8a31d337` |
+| Sparkle EdDSA signature | `kaMydoVUl9DDkqap3UqYsGToD80jGkvP9EfPG+0ImKfeq3lkrrtJTkGOzIIguZ5i7L9zf52VDKPMkBeSf9isAQ==` |
 
 `scripts/verify-release.sh` passed against the exact
 `build/release-dist/Harc-local.dmg` bytes. It verified the outer code signature,
@@ -119,6 +121,6 @@ and DMG. The release script now mounts and verifies the packaged app before
 notarization, and the separate post-notarization verifier makes the required
 trust boundary explicit.
 
-The candidate and replacement appcast entry are prepared but not published.
+The final candidate and refreshed appcast entry are prepared but not published.
 Publishing still requires the deliberately separate main/tag/GitHub-release
 operation, with these exact `Harc-local.dmg` bytes uploaded as the release asset.

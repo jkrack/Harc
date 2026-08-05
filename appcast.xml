@@ -19,10 +19,10 @@
       <sparkle:version>45</sparkle:version>
       <sparkle:shortVersionString>0.13.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-      <pubDate>Tue, 04 Aug 2026 21:04:19 +0000</pubDate>
+      <pubDate>Wed, 05 Aug 2026 03:13:57 +0000</pubDate>
       <enclosure
         url="https://github.com/jkrack/Harc/releases/download/v0.13.0/Harc-local.dmg"
-        sparkle:edSignature="/e+5TRHJXOHVZvglks08nL5LhrTqi8E4EsfAJiDdoQEwhI82xH8sHfe4MFWBIGby9rM8/1/Xy9t6fhFNEmw9Bg==" length="64875781"
+        sparkle:edSignature="kaMydoVUl9DDkqap3UqYsGToD80jGkvP9EfPG+0ImKfeq3lkrrtJTkGOzIIguZ5i7L9zf52VDKPMkBeSf9isAQ==" length="64878338"
         type="application/octet-stream"/>
     </item>
     <item>
