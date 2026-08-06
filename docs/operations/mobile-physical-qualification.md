@@ -4,6 +4,26 @@ This runbook collects the physical evidence required before Harc can enable a
 shipping mobile lossless codec or claim the local-network iPhone alpha complete.
 Simulator, Catalyst, and iOS-app-on-Mac results are diagnostic only.
 
+## Short product-path checkpoint
+
+Before beginning long physical scenarios, make one ordinary recording in the
+installed HarcMobile app and wait for **Saved locally**. Copy and summarize the
+phone state without XCTest:
+
+```bash
+./scripts/audit-mobile-state.sh <device-name-or-identifier>
+```
+
+The script refuses to overwrite an explicitly named output directory, copies
+only HarcMobile's Application Support state, opens the copied SQLite databases
+read-only, and reports nonsecret capture, outbox, upload, receipt, conflict,
+cache, and live Host-ingest counts. Retain the printed snapshot path until the
+checkpoint evidence is recorded.
+
+This is a content/state audit only. Copying files to macOS does not preserve
+evidence of their original iOS Data Protection class or backup-exclusion
+metadata, so the script cannot satisfy the physical protection gate.
+
 ## Codec matrix prerequisites
 
 - One named oldest-supported iPhone/OS and one named current iPhone/current OS.
