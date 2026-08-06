@@ -14,6 +14,18 @@
     <description>Local speech-to-text for macOS — meeting capture and dictation.</description>
     <language>en</language>
     <item>
+      <title>Harc v0.13.4</title>
+      <link>https://github.com/jkrack/Harc/releases/tag/v0.13.4</link>
+      <sparkle:version>49</sparkle:version>
+      <sparkle:shortVersionString>0.13.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <pubDate>Thu, 06 Aug 2026 02:39:48 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jkrack/Harc/releases/download/v0.13.4/Harc-local.dmg"
+        sparkle:edSignature="1SMpmw4UBuXLvlAhQ5BuGN2kuiKs0viZazMkwSXR5L69wWUqN0EZ2ghlWaFC7FjbPC69QkLc9biAWgqcZ4zmDw==" length="64976545"
+        type="application/octet-stream"/>
+    </item>
+    <item>
       <title>Harc v0.13.3</title>
       <link>https://github.com/jkrack/Harc/releases/tag/v0.13.3</link>
       <sparkle:version>48</sparkle:version>
