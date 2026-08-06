@@ -1,4 +1,6 @@
+import AVFoundation
 import HarcAudioMobile
+import UIKit
 import XCTest
 @testable import HarcMobile
 
@@ -22,6 +24,24 @@ final class HarcMobileConfigurationTests: XCTestCase {
                     .isEmpty ?? true
             )
         }
+    }
+
+    @MainActor
+    func testPairingCameraPreviewTracksSheetLayoutBounds() {
+        let controller = HarcPairingPreviewViewController(
+            session: AVCaptureSession()
+        )
+        controller.loadViewIfNeeded()
+
+        controller.view.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.previewLayer.frame, controller.view.bounds)
+
+        controller.view.frame = CGRect(x: 0, y: 0, width: 852, height: 393)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.previewLayer.frame, controller.view.bounds)
     }
 
     func testPackagedPrivacyManifestMatchesMobileDataAndFileUsage() throws {

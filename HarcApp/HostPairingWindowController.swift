@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import HarcDomain
 import HarcHost
 import HarcHostTransport
 import HarcIdentity
@@ -40,7 +41,7 @@ private final class HostPairingViewModel: ObservableObject {
         case issuing
         case ticket(HarcForegroundPairingTicketV1)
         case claim(HarcForegroundPairingTicketV1, HostPendingPairingClaim)
-        case approved(String)
+        case approved(HostPairedDevicePresentation)
         case denied
         case failed(String)
     }
@@ -48,12 +49,16 @@ private final class HostPairingViewModel: ObservableObject {
     @Published var selectedKind: AdoptedClientKind = .mobile
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var approvedScopes = Set<AuthorizationScope>()
+    @Published private(set) var pairedDevices = [HostPairedDeviceSummary]()
 
     private let runtime: HarcResidentHostRuntimeV1
     private var task: Task<Void, Never>?
 
     init(runtime: HarcResidentHostRuntimeV1) {
         self.runtime = runtime
+        Task { [weak self] in
+            await self?.refreshPairedDevices()
+        }
     }
 
     func begin() {
@@ -93,11 +98,20 @@ private final class HostPairingViewModel: ObservableObject {
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                _ = try await runtime.approvePairingClaim(
+                let issued = try await runtime.approvePairingClaim(
                     claim.claimID,
                     grantedScopes: grantedScopes
                 )
-                phase = .approved(claim.deviceLabel)
+                phase = .approved(
+                    HostPairedDevicePresentation(
+                        label: claim.deviceLabel,
+                        clientKind: claim.clientKind,
+                        deviceID: issued.claims.deviceID,
+                        scopes: issued.claims.scopes,
+                        pairedAt: issued.claims.issuedAt
+                    )
+                )
+                await refreshPairedDevices()
             } catch {
                 phase = .failed(error.localizedDescription)
             }
@@ -128,23 +142,10 @@ private final class HostPairingViewModel: ObservableObject {
         }
     }
 
-    func copyPairingLink() {
-        guard let ticket = currentTicket else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(ticket.pairingURI, forType: .string)
-    }
-
     func cancel() {
         task?.cancel()
         task = nil
         Task { try? await runtime.cancelPairingTicket() }
-    }
-
-    var currentTicket: HarcForegroundPairingTicketV1? {
-        switch phase {
-        case .ticket(let ticket), .claim(let ticket, _): ticket
-        default: nil
-        }
     }
 
     private func poll(ticket: HarcForegroundPairingTicketV1) async throws {
@@ -161,6 +162,23 @@ private final class HostPairingViewModel: ObservableObject {
         }
         throw HostPairingPresentationError.ticketExpired
     }
+
+    private func refreshPairedDevices() async {
+        do {
+            pairedDevices = try await runtime.pairedDevices()
+        } catch {
+            // Pairing remains available even if the management projection
+            // cannot be loaded. Approval errors continue to surface normally.
+        }
+    }
+}
+
+private struct HostPairedDevicePresentation: Equatable {
+    let label: String
+    let clientKind: AdoptedClientKind
+    let deviceID: DeviceID
+    let scopes: [AuthorizationScope]
+    let pairedAt: Date
 }
 
 private enum HostPairingPresentationError: LocalizedError {
@@ -211,6 +229,7 @@ private struct HostPairingView: View {
                 .pickerStyle(.segmented)
                 Button("Create Pairing Code") { model.begin() }
                     .buttonStyle(.borderedProminent)
+                pairedDevicesSection
             }
         case .issuing:
             ProgressView("Creating a short-lived pairing code…")
@@ -218,12 +237,12 @@ private struct HostPairingView: View {
             ticketContent(ticket)
         case .claim(_, let claim):
             claimContent(claim)
-        case .approved(let label):
-            resultContent(
+        case .approved(let device):
+            pairedResultContent(
                 symbol: "checkmark.circle.fill",
                 color: .green,
                 title: "Paired",
-                detail: "\(label) can now connect with its approved device identity."
+                device: device
             )
         case .denied:
             resultContent(
@@ -257,7 +276,6 @@ private struct HostPairingView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Copy Pairing Link") { model.copyPairingLink() }
             ProgressView("Waiting for the device…")
                 .controlSize(.small)
         }
@@ -270,6 +288,15 @@ private struct HostPairingView: View {
                  ? "Repair transport trust for \(claim.deviceLabel)?"
                  : "Approve \(claim.deviceLabel)?")
                 .font(.headline)
+            deviceIdentityCard(
+                label: claim.deviceLabel,
+                clientKind: claim.clientKind,
+                deviceID: claim.deviceID,
+                status: nil,
+                pairedAt: nil,
+                lastConnectedAt: nil,
+                scopes: claim.requestedScopes
+            )
             Text("Confirm these four words match exactly on the device:")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -330,6 +357,142 @@ private struct HostPairingView: View {
         case .libraryMetadataWrite: "Edit Library metadata"
         case .processingSubmitOwn: "Submit local processing artifacts"
         }
+    }
+
+    private var pairedDevicesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            Text("Paired Devices")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if model.pairedDevices.isEmpty {
+                Text("No paired device identities yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(model.pairedDevices, id: \.deviceID) { device in
+                            deviceIdentityCard(
+                                label: device.label,
+                                clientKind: device.clientKind,
+                                deviceID: device.deviceID,
+                                status: device.status,
+                                pairedAt: device.pairedAt,
+                                lastConnectedAt: device.lastConnectedAt,
+                                scopes: device.scopes
+                            )
+                        }
+                    }
+                }
+                .frame(maxHeight: 280)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func pairedResultContent(
+        symbol: String,
+        color: Color,
+        title: String,
+        device: HostPairedDevicePresentation
+    ) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 42))
+                .foregroundStyle(color)
+            Text(title).font(.headline)
+            deviceIdentityCard(
+                label: device.label,
+                clientKind: device.clientKind,
+                deviceID: device.deviceID,
+                status: .active,
+                pairedAt: device.pairedAt,
+                lastConnectedAt: nil,
+                scopes: device.scopes
+            )
+            Text("This exact installation can now connect with the approved access shown above.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Create Another Pairing Code") { model.restart() }
+        }
+    }
+
+    private func deviceIdentityCard(
+        label: String,
+        clientKind: AdoptedClientKind?,
+        deviceID: DeviceID,
+        status: DeviceRegistryStatus?,
+        pairedAt: Date?,
+        lastConnectedAt: Date?,
+        scopes: [AuthorizationScope]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(label, systemImage: deviceSymbol(clientKind))
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let status {
+                    Text(status == .active ? "Active" : "Revoked")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(
+                            status == .active ? Color.green : Color.secondary
+                        )
+                }
+            }
+            Text(clientKindTitle(clientKind))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Device fingerprint")
+                .font(.caption.weight(.semibold))
+            Text(deviceFingerprint(deviceID))
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let pairedAt {
+                Text("Paired \(pairedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let lastConnectedAt {
+                Text("Last connected \(lastConnectedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(scopes.count) approved access scope\(scopes.count == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func deviceSymbol(_ kind: AdoptedClientKind?) -> String {
+        switch kind {
+        case .some(.mobile): "iphone"
+        case .some(.macClient): "laptopcomputer"
+        case nil: "desktopcomputer.and.macbook"
+        }
+    }
+
+    private func clientKindTitle(_ kind: AdoptedClientKind?) -> String {
+        switch kind {
+        case .some(.mobile): "iPhone client"
+        case .some(.macClient): "Mac client"
+        case nil: "Harc client"
+        }
+    }
+
+    private func deviceFingerprint(_ deviceID: DeviceID) -> String {
+        let value = deviceID.description.uppercased()
+        return stride(from: 0, to: value.count, by: 4).map { offset in
+            let start = value.index(value.startIndex, offsetBy: offset)
+            let end = value.index(start, offsetBy: min(4, value.count - offset))
+            return String(value[start..<end])
+        }.joined(separator: " ")
     }
 
     private func resultContent(

@@ -1206,9 +1206,18 @@ public extension Harc_V1_LibraryRecordingSummaryV1 {
             originRecordingID = Harc_V1_OriginRecordingIDV1(originID)
         }
         revision = value.revision.rawValue
-        startedAtUnixMs = try harcWireUnixMilliseconds(value.startedAt, field: "recordingSummary.startedAt")
+        // Library summaries are a projection over both current and legacy recordings.
+        // Their wire contract is millisecond-precision, so canonicalize higher-precision
+        // store dates here instead of making one legacy row poison an entire page.
+        startedAtUnixMs = try harcWireCanonicalUnixMilliseconds(
+            value.startedAt,
+            field: "recordingSummary.startedAt"
+        )
         if let endedAt = value.endedAt {
-            endedAtUnixMs = try harcWireUnixMilliseconds(endedAt, field: "recordingSummary.endedAt")
+            endedAtUnixMs = try harcWireCanonicalUnixMilliseconds(
+                endedAt,
+                field: "recordingSummary.endedAt"
+            )
         }
         if let title = value.title { self.title = title }
         if let suggestedTitle = value.suggestedTitle { self.suggestedTitle = suggestedTitle }
@@ -1481,6 +1490,21 @@ private func harcWireUnixMilliseconds(_ value: Date, field: String) throws -> UI
     let rounded = scaled.rounded()
     guard let result = UInt64(exactly: rounded),
           Date(timeIntervalSince1970: Double(result) / 1_000) == value else {
+        throw HarcProtobufConversionError.lossyConversion(field: field)
+    }
+    return result
+}
+
+private func harcWireCanonicalUnixMilliseconds(_ value: Date, field: String) throws -> UInt64 {
+    let seconds = value.timeIntervalSince1970
+    guard seconds.isFinite, seconds >= 0 else {
+        throw HarcProtobufConversionError.invalidValue(field: field)
+    }
+    let scaled = seconds * 1_000
+    guard scaled.isFinite, scaled <= Double(harcMaximumExactlyRepresentableUnixMilliseconds) else {
+        throw HarcProtobufConversionError.integerOutOfRange(field: field)
+    }
+    guard let result = UInt64(exactly: scaled.rounded()) else {
         throw HarcProtobufConversionError.lossyConversion(field: field)
     }
     return result

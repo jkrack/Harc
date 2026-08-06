@@ -364,18 +364,24 @@ struct DomainConversionsTests {
         }
     }
 
-    @Test("domain dates with sub-millisecond precision cannot silently truncate")
-    func datePrecision() throws {
+    @Test("library summaries canonicalize legacy dates to wire milliseconds")
+    func librarySummaryDatePrecision() throws {
+        let startedAt = Date(timeIntervalSince1970: 2_000_000_000.0005)
+        let endedAt = Date(timeIntervalSince1970: 2_000_000_001.0006)
         let summary = try LibraryRecordingSummary(
             canonicalID: CanonicalRecordingID(uuid(40)),
             revision: .initial,
-            startedAt: Date(timeIntervalSince1970: 2_000_000_000.0005)
+            startedAt: startedAt,
+            endedAt: endedAt
         )
-        #expect(throws: HarcProtobufConversionError.lossyConversion(
-            field: "recordingSummary.startedAt"
-        )) {
-            try Harc_V1_LibraryRecordingSummaryV1(summary)
-        }
+        let wire = try Harc_V1_LibraryRecordingSummaryV1(summary)
+
+        #expect(wire.startedAtUnixMs == UInt64((startedAt.timeIntervalSince1970 * 1_000).rounded()))
+        #expect(wire.endedAtUnixMs == UInt64((endedAt.timeIntervalSince1970 * 1_000).rounded()))
+
+        let decoded = try wire.domainValue()
+        #expect(decoded.startedAt == Date(timeIntervalSince1970: Double(wire.startedAtUnixMs) / 1_000))
+        #expect(decoded.endedAt == Date(timeIntervalSince1970: Double(wire.endedAtUnixMs) / 1_000))
     }
 
     private func signingKey(_ value: UInt8) throws -> SoftwareP256SigningKey {

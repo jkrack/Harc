@@ -23,8 +23,8 @@ final class HarcDesktopClientPairingWindowController:
         )
         window.title = "Pair with Host"
         window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 520, height: 500))
-        window.minSize = NSSize(width: 480, height: 440)
+        window.setContentSize(NSSize(width: 560, height: 620))
+        window.minSize = NSSize(width: 520, height: 540)
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -79,11 +79,8 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
 
     func begin(pairingURI: String) async {
         guard attempt == nil else { return }
-        let normalized = pairingURI.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        guard !normalized.isEmpty else {
-            state = .failed("Paste the short-lived pairing link shown by your Host.")
+        guard HarcDesktopPairingCodeFilter.accepts(pairingURI) else {
+            state = .failed("Scan a fresh Harc pairing code shown by your Host.")
             return
         }
         state = .connecting
@@ -91,7 +88,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         do {
             let nowMS = UInt64(Date().timeIntervalSince1970 * 1_000)
             let ticket = try PairingTicketV1.decodeURI(
-                normalized,
+                pairingURI,
                 atUnixMilliseconds: nowMS
             )
             let route = try HarcDesktopHostRoute(ticket: ticket)
@@ -220,7 +217,10 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
 
 private struct HarcDesktopClientPairingView: View {
     @ObservedObject var model: HarcDesktopClientPairingCoordinator
-    @State private var pairingURI = ""
+    @State private var showingScanner = false
+    @State private var cameras = [HarcDesktopPairingCamera]()
+    @State private var selectedCameraID = ""
+    @State private var scannerFailure: String?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -230,7 +230,7 @@ private struct HarcDesktopClientPairingView: View {
             Text("Pair with your Harc Host")
                 .font(.title2.weight(.semibold))
             Text(
-                "On the Host, choose Pair a Device and select Mac client. Paste its short-lived link here, then compare the four security words on both Macs."
+                "On the Host, choose Pair a Device and select Mac client. Scan its short-lived code, then compare the four security words on both Macs."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -240,32 +240,64 @@ private struct HarcDesktopClientPairingView: View {
             Spacer(minLength: 0)
         }
         .padding(28)
-        .frame(width: 520)
-        .frame(minHeight: 440)
+        .frame(width: 560)
+        .frame(minHeight: 540)
     }
 
     @ViewBuilder
     private var content: some View {
         switch model.state {
         case .unpaired:
-            VStack(spacing: 12) {
-                TextField("harc://pair/…", text: $pairingURI)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("Paste Link") {
-                        pairingURI = NSPasteboard.general.string(
-                            forType: .string
-                        ) ?? ""
+            if showingScanner {
+                VStack(spacing: 12) {
+                    if cameras.count > 1 {
+                        Picker("Camera", selection: $selectedCameraID) {
+                            ForEach(cameras) { camera in
+                                Text(camera.name).tag(camera.id)
+                            }
+                        }
                     }
-                    Button("Connect") {
-                        Task { await model.begin(pairingURI: pairingURI) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(
-                        pairingURI.trimmingCharacters(
-                            in: .whitespacesAndNewlines
-                        ).isEmpty
+                    HarcDesktopPairingScannerView(
+                        cameraID: selectedCameraID,
+                        onCode: { code in
+                            showingScanner = false
+                            scannerFailure = nil
+                            Task { await model.begin(pairingURI: code) }
+                        },
+                        onFailure: { message in
+                            scannerFailure = message
+                        }
                     )
+                    .frame(height: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(.quaternary, lineWidth: 1)
+                    }
+                    if let scannerFailure {
+                        Label(scannerFailure, systemImage: "camera.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                    }
+                    Button("Cancel Scan") { showingScanner = false }
+                }
+            } else {
+                VStack(spacing: 12) {
+                    Text(
+                        "Use this Mac's built-in, external, or Continuity Camera. The pairing secret never enters the clipboard or a cloud service."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    Button("Scan Host Code") { startScanning() }
+                        .buttonStyle(.borderedProminent)
+                    if let scannerFailure {
+                        Label(scannerFailure, systemImage: "camera.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                    }
                 }
             }
         case .connecting:
@@ -306,7 +338,10 @@ private struct HarcDesktopClientPairingView: View {
                     title: "Paired with \(host)",
                     detail: "New Client recordings can now resume secure, compressed transfer. Your previous local library remains On This Mac."
                 )
-                Button("Pair with a Different Host") { model.reset() }
+                Button("Pair with a Different Host") {
+                    showingScanner = false
+                    model.reset()
+                }
             }
         case .failed(let message):
             VStack(spacing: 14) {
@@ -317,11 +352,26 @@ private struct HarcDesktopClientPairingView: View {
                     detail: message
                 )
                 Button("Try Again") {
-                    pairingURI = ""
+                    showingScanner = false
+                    scannerFailure = nil
                     model.reset()
                 }
             }
         }
+    }
+
+    private func startScanning() {
+        let discovered = HarcDesktopPairingCameraDiscovery.availableCameras()
+        guard let first = discovered.first else {
+            scannerFailure = "No camera is available. Connect a camera or make an iPhone available as Continuity Camera."
+            return
+        }
+        cameras = discovered
+        if !discovered.contains(where: { $0.id == selectedCameraID }) {
+            selectedCameraID = first.id
+        }
+        scannerFailure = nil
+        showingScanner = true
     }
 
     private func result(

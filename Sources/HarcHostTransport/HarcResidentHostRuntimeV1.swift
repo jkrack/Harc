@@ -341,6 +341,11 @@ public actor HarcResidentHostRuntimeV1 {
         try await pairingApproval.deny(claimID)
     }
 
+    /// Local Host-management projection of the durable device registry.
+    public func pairedDevices() async throws -> [HostPairedDeviceSummary] {
+        try await storageRuntime.hostStore.pairedDevices()
+    }
+
     public func recoverPendingPublications() async throws
         -> HostCanonicalRecoveryReport
     {

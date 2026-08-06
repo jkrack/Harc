@@ -104,13 +104,11 @@ final class HarcMobileCaptureCoordinator {
             }
             let captureInput = pipeline.initialInput
             candidatePipeline = pipeline
-            input.installTap(
-                onBus: 0,
-                bufferSize: 4_096,
-                format: format
-            ) { [captureInput] buffer, time in
-                captureInput.offer(buffer, hostTime: time.hostTime)
-            }
+            HarcMobileAudioTapInstaller.install(
+                on: input,
+                format: format,
+                captureInput: captureInput
+            )
             engine.prepare()
             try engine.start()
             self.engine = engine
@@ -359,13 +357,11 @@ final class HarcMobileCaptureCoordinator {
             }
             self.engine = replacementEngine
             self.captureInput = replacement
-            node.installTap(
-                onBus: 0,
-                bufferSize: 4_096,
-                format: format
-            ) { [replacement] buffer, time in
-                replacement.offer(buffer, hostTime: time.hostTime)
-            }
+            HarcMobileAudioTapInstaller.install(
+                on: node,
+                format: format,
+                captureInput: replacement
+            )
             replacementEngine.prepare()
             try replacementEngine.start()
             activeRoute = Self.routeDescriptor(
@@ -404,5 +400,26 @@ final class HarcMobileCaptureCoordinator {
             NotificationCenter.default.removeObserver(observer)
         }
         observers.removeAll()
+    }
+}
+
+/// Installs the Core Audio callback outside the capture coordinator's
+/// `@MainActor` isolation. AVAudioEngine invokes tap blocks on a real-time
+/// audio queue; allowing the closure to inherit the coordinator's executor
+/// causes Swift's runtime isolation check to trap when a route rebuild begins
+/// delivering audio.
+private enum HarcMobileAudioTapInstaller {
+    nonisolated static func install(
+        on node: AVAudioNode,
+        format: AVAudioFormat,
+        captureInput: HarcMobileCaptureInput
+    ) {
+        node.installTap(
+            onBus: 0,
+            bufferSize: 4_096,
+            format: format
+        ) { [captureInput] buffer, time in
+            captureInput.offer(buffer, hostTime: time.hostTime)
+        }
     }
 }

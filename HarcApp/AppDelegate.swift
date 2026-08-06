@@ -313,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         )
         settings.target = self
         menu.addItem(settings)
-        if hostRuntime != nil {
+        if prefs.runtimeRole == .host {
             let pair = NSMenuItem(
                 title: "Pair a Device…",
                 action: #selector(openRolePairing(_:)),
@@ -321,9 +321,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             pair.target = self
             menu.addItem(pair)
-        } else if let desktopClientRuntime {
+        } else if prefs.runtimeRole == .client {
             let status = NSMenuItem(
-                title: desktopClientRuntime.statusMessage,
+                title: desktopClientRuntime?.statusMessage
+                    ?? bridge.runtimeStartupError
+                    ?? "Starting Client storage…",
                 action: nil,
                 keyEquivalent: ""
             )
@@ -958,7 +960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                                           keyEquivalent: "i")
         importItem.keyEquivalentModifierMask = [.command, .shift]
         importItem.target = self
-        if desktopClientRuntime != nil {
+        if prefs.runtimeRole == .client {
             let hostLibraryItem = fileMenu.addItem(
                 withTitle: "Open Host Library…",
                 action: #selector(openDesktopHostLibrary(_:)),
@@ -968,7 +970,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             hostLibraryItem.target = self
         }
         let pairItem = fileMenu.addItem(
-            withTitle: desktopClientRuntime != nil
+            withTitle: prefs.runtimeRole == .client
                 ? "Pair with Host…"
                 : "Pair a Device…",
             action: #selector(openRolePairing(_:)),
@@ -3589,9 +3591,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     @objc private func openRolePairing(_ sender: Any?) {
-        if hostRuntime != nil {
+        if prefs.runtimeRole == .host {
             openHostPairing(sender)
-        } else if desktopClientRuntime != nil {
+        } else if prefs.runtimeRole == .client {
             openDesktopClientPairing(sender)
         } else {
             presentLibraryUnavailable(
@@ -3637,7 +3639,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     @objc private func openDesktopClientPairing(_ sender: Any?) {
         guard let runtime = desktopClientRuntime else {
             presentLibraryUnavailable(
-                "Pairing with a Host is available only while this Mac is running in Client mode."
+                bridge.runtimeStartupError
+                    ?? "Client storage is still starting. Wait a moment and try again."
             )
             return
         }
