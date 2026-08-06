@@ -4,8 +4,9 @@
 
 **Status:** Harc 0.13.7 (52) prevented the Objective-C crash. Its physical Brio
 follow-up exposed a false unsupported result and black preview. The readiness
-follow-up is source-fixed and app-target green for Harc 0.13.8 (53), with
-publication and the affected-Mac retry pending.
+follow-up is source-fixed, app-target green, signed, notarized, and release-
+verified for Harc 0.13.8 (53), with publication and the affected-Mac retry
+pending.
 
 ## Observed failure
 
@@ -76,7 +77,7 @@ Its readiness regression covers the transient-empty retry, bounded exhaustion,
 nonempty unsupported capability, and eventual QR-ready states. The app target
 compiled with the selected-camera lifecycle and readiness cancellation logic.
 
-## Release candidate
+## 0.13.7 release
 
 | Evidence | Value |
 | --- | --- |
@@ -104,6 +105,23 @@ normally. `/Applications/Harc.app` then passed Developer ID and Gatekeeper
 verification, reported 0.13.7 (52), and launched with `harc-stt` as a child of
 the main Harc process. The prior application bundle remains recoverable at
 `/private/tmp/Harc-0.13.6-build51-backup.app` for this boot session.
+
+## 0.13.8 release candidate
+
+| Evidence | Value |
+| --- | --- |
+| Source/version commit | `e157133` |
+| Apple notarization | Accepted; submission `29e1824e-019c-45c0-8fa5-642c1c6042d1` |
+| Stapled DMG bytes | `64,992,634` |
+| Stapled DMG SHA-256 | `f6b2c74cbf257b82d895599a0dbede462d2fd3403985e784e836e308254fd0df` |
+| Release ZIP bytes | `62,248,946` |
+| Release ZIP SHA-256 | `be28ac6c7906c8c0efe14cc27f3052c8dd4525a1d63d9cab0b7b48884fdc93a1` |
+| Sparkle EdDSA signature | `4RR70t0I9oMbJ6RG/4sFiZltISFkPAfc6F8fSPDx7HkJG7jKRrZz+v4xN6IqpZszaDAIh44sUT1W9YwIjl0oDQ==` |
+
+The full post-staple verifier accepted the exact 0.13.8 DMG, including its
+outer signature, UDIF checksum, ticket, Gatekeeper assessments, nested-code
+signatures, version/build metadata, bundle identifier, and arm64-only app and
+helper binaries.
 
 The development Mac did not expose a camera through `system_profiler`, so the
 physical Brio preview and QR decode remain post-release acceptance checks on the
