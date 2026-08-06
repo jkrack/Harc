@@ -13,7 +13,11 @@ struct DaemonIdleClockTests {
     func statusResetsIdleClock() async throws {
         let socketPath = "/tmp/harc-idle-\(UUID().uuidString.prefix(8)).sock"
 
-        let daemon = Daemon(socketPath: socketPath, idleTimeout: 600)
+        let daemon = Daemon(
+            socketPath: socketPath,
+            idleTimeout: 600,
+            preloadModels: false
+        )
         let daemonTask = Task { try await daemon.run() }
 
         // Wait up to 5s for the socket to appear.

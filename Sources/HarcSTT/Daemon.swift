@@ -15,6 +15,7 @@ public actor Daemon {
 
     private let socketPath: String
     private let idleTimeout: TimeInterval
+    private let preloadModels: Bool
     private let transcriber: Transcriber
     private let diarizer: Diarizer
     private let startedAt: Date
@@ -24,10 +25,12 @@ public actor Daemon {
     public init(
         socketPath: String = Daemon.defaultSocketPath,
         idleTimeout: TimeInterval = Daemon.defaultIdleTimeout,
-        asrEngine: Transcriber.ASREngine = .v2
+        asrEngine: Transcriber.ASREngine = .v2,
+        preloadModels: Bool = true
     ) {
         self.socketPath = socketPath
         self.idleTimeout = idleTimeout
+        self.preloadModels = preloadModels
         self.transcriber = Transcriber(engine: asrEngine)
         self.diarizer = Diarizer()
         self.startedAt = Date()
@@ -41,26 +44,30 @@ public actor Daemon {
         ))
 
         // Pre-load models in the background so first transcribe doesn't block.
-        Task.detached { [transcriber] in
-            do {
-                try await transcriber.loadModels()
-                FileHandle.standardError.write(Data("harc-stt: ASR model loaded\n".utf8))
-            } catch {
-                FileHandle.standardError.write(Data(
-                    "harc-stt: ASR model load failed: \(error.localizedDescription)\n".utf8
-                ))
+        // Socket-only tests disable this explicitly so detached Core ML work
+        // cannot escape the test lifetime and contaminate unrelated suites.
+        if preloadModels {
+            Task.detached { [transcriber] in
+                do {
+                    try await transcriber.loadModels()
+                    FileHandle.standardError.write(Data("harc-stt: ASR model loaded\n".utf8))
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "harc-stt: ASR model load failed: \(error.localizedDescription)\n".utf8
+                    ))
+                }
             }
-        }
 
-        Task.detached { [diarizer] in
-            do {
-                try await diarizer.loadModels()
-                FileHandle.standardError.write(Data("harc-stt: diarizer model loaded\n".utf8))
-            } catch {
-                // Diarizer is optional — log but don't fail the daemon.
-                FileHandle.standardError.write(Data(
-                    "harc-stt: diarizer load failed (diarization will return empty): \(error.localizedDescription)\n".utf8
-                ))
+            Task.detached { [diarizer] in
+                do {
+                    try await diarizer.loadModels()
+                    FileHandle.standardError.write(Data("harc-stt: diarizer model loaded\n".utf8))
+                } catch {
+                    // Diarizer is optional — log but don't fail the daemon.
+                    FileHandle.standardError.write(Data(
+                        "harc-stt: diarizer load failed (diarization will return empty): \(error.localizedDescription)\n".utf8
+                    ))
+                }
             }
         }
 
