@@ -64,6 +64,13 @@ assets. The remote `v0.13.7` tag resolves to source commit `70d4a16`, and the
 live raw `main` appcast exposes 0.13.7 (52) first with the recorded signature,
 length, and release URL.
 
+The exact published DMG was mounted and its application revalidated before
+installation. It replaced 0.13.6 (51) only after Harc and its helpers exited
+normally. `/Applications/Harc.app` then passed Developer ID and Gatekeeper
+verification, reported 0.13.7 (52), and launched with `harc-stt` as a child of
+the main Harc process. The prior application bundle remains recoverable at
+`/private/tmp/Harc-0.13.6-build51-backup.app` for this boot session.
+
 The development Mac did not expose a camera through `system_profiler`, so the
 physical Brio retry remains a post-release acceptance check on the affected
 Mac. The regression prevents the exception-producing setter call whenever the
