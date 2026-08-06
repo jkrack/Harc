@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import Testing
 @testable import Harc
 
@@ -42,6 +43,25 @@ struct HarcDesktopPairingScannerTests {
             HarcDesktopPairingCodeFilter.pastedCandidate(
                 "not-a-harc-link"
             ) == nil
+        )
+    }
+
+    @Test("configures QR only after the attached output reports support")
+    func metadataCapabilityPolicy() {
+        #expect(
+            HarcDesktopPairingMetadataPolicy.qrObjectTypes(
+                availableTypes: []
+            ) == nil
+        )
+        #expect(
+            HarcDesktopPairingMetadataPolicy.qrObjectTypes(
+                availableTypes: [.face]
+            ) == nil
+        )
+        #expect(
+            HarcDesktopPairingMetadataPolicy.qrObjectTypes(
+                availableTypes: [.face, .qr]
+            ) == [.qr]
         )
     }
 }

@@ -29,6 +29,14 @@ enum HarcDesktopPairingCodeFilter {
     }
 }
 
+enum HarcDesktopPairingMetadataPolicy {
+    static func qrObjectTypes(
+        availableTypes: [AVMetadataObject.ObjectType]
+    ) -> [AVMetadataObject.ObjectType]? {
+        availableTypes.contains(.qr) ? [.qr] : nil
+    }
+}
+
 enum HarcDesktopPairingCameraDiscovery {
     static func availableCameras() -> [HarcDesktopPairingCamera] {
         discoverySession().devices.map {
@@ -175,22 +183,47 @@ struct HarcDesktopPairingScannerView: NSViewControllerRepresentable {
         }
 
         private func configureSession(input: AVCaptureDeviceInput) throws {
+            let output = try attachMetadataOutput(input: input)
+            guard let objectTypes = HarcDesktopPairingMetadataPolicy
+                .qrObjectTypes(
+                    availableTypes: output.availableMetadataObjectTypes
+                ) else {
+                removeMetadataOutput(output)
+                throw HarcDesktopPairingScannerError.qrUnsupported
+            }
+            output.setMetadataObjectsDelegate(self, queue: sessionQueue)
+            output.metadataObjectTypes = objectTypes
+        }
+
+        /// Attach and commit the input/output graph before consulting metadata
+        /// capabilities. AVFoundation can report an empty availability list
+        /// while a newly added output is still inside begin/commitConfiguration.
+        private func attachMetadataOutput(
+            input: AVCaptureDeviceInput
+        ) throws -> AVCaptureMetadataOutput {
             session.beginConfiguration()
             defer { session.commitConfiguration() }
+            for existing in session.outputs { session.removeOutput(existing) }
             for existing in session.inputs { session.removeInput(existing) }
             guard session.canAddInput(input) else {
                 throw HarcDesktopPairingScannerError.configuration
             }
             session.addInput(input)
-            if session.outputs.isEmpty {
-                let output = AVCaptureMetadataOutput()
-                guard session.canAddOutput(output) else {
-                    throw HarcDesktopPairingScannerError.configuration
-                }
-                session.addOutput(output)
-                output.setMetadataObjectsDelegate(self, queue: sessionQueue)
-                output.metadataObjectTypes = [.qr]
+            let output = AVCaptureMetadataOutput()
+            guard session.canAddOutput(output) else {
+                throw HarcDesktopPairingScannerError.configuration
             }
+            session.addOutput(output)
+            return output
+        }
+
+        private func removeMetadataOutput(_ output: AVCaptureMetadataOutput) {
+            session.beginConfiguration()
+            defer { session.commitConfiguration() }
+            guard session.outputs.contains(where: { $0 === output }) else {
+                return
+            }
+            session.removeOutput(output)
         }
 
         private func reportFailure(_ message: String) {
@@ -265,11 +298,14 @@ private final class HarcDesktopPairingPreviewViewController: NSViewController {
 private enum HarcDesktopPairingScannerError: LocalizedError {
     case noCamera
     case configuration
+    case qrUnsupported
 
     var errorDescription: String? {
         switch self {
         case .noCamera: "The selected camera is no longer available."
         case .configuration: "The camera could not start QR scanning."
+        case .qrUnsupported:
+            "The selected camera does not support QR scanning. Choose another camera or paste the Host pairing link."
         }
     }
 }
