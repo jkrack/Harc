@@ -115,6 +115,31 @@ struct HarcSTTClientTests {
         try await fakeTask.value
     }
 
+    @Test("termination shuts down a healthy daemon not spawned by this launcher")
+    func shutdownInheritedDaemon() async throws {
+        let (serverFd, clientFd) = try makePair()
+        defer { close(serverFd) }
+
+        let fakeDaemon = Task.detached { [serverFd] in
+            let request: IPCRequest = try await HarcSTTClientTests.readOnly(fd: serverFd)
+            #expect(request == .shutdown)
+            try HarcSTTClientTests.writeOnly(
+                IPCResponse.status(DaemonStatus(
+                    version: "test",
+                    modelLoaded: true,
+                    uptimeSeconds: 1
+                )),
+                to: serverFd
+            )
+        }
+
+        // This launcher owns no Process. The shutdown request must still reach
+        // the inherited healthy daemon through its socket connection.
+        let launcher = DaemonLauncher()
+        await launcher.shutdownDaemon(client: HarcSTTClient(connectedFd: clientFd))
+        try await fakeDaemon.value
+    }
+
     // Helpers reachable from the detached fake tasks.
     static func readOnly<T: Decodable>(fd: Int32) async throws -> T {
         try readOnlyBlocking(fd: fd)

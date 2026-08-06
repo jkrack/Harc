@@ -81,8 +81,22 @@ public actor DaemonLauncher {
 
     public func stop() async {
         guard let p = process else { return }
-        p.terminate()
+        if p.isRunning {
+            p.terminate()
+        }
         self.process = nil
+    }
+
+    /// Stops the speech daemon at application termination. The IPC request is
+    /// intentionally sent even when this launcher did not create the process:
+    /// after an app update or crash, a healthy daemon can outlive its original
+    /// parent and be inherited by the next Harc launch. `stop()` remains the
+    /// fallback for the process owned by this launcher when IPC is unavailable.
+    public func shutdownDaemon(
+        client: HarcSTTClient = HarcSTTClient()
+    ) async {
+        try? await client.shutdown()
+        await stop()
     }
 
     /// Resolves the harc-stt binary location.

@@ -466,7 +466,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// used by the bundled MCP helper while this process owns the Host writer.
     private var hostMCPServer: HarcLocalMCPIPCServer?
     private var hostWakeToken: NSObjectProtocol?
-    private var hostTerminationInFlight = false
+    /// App termination is asynchronous in every role so the process-owned
+    /// speech daemon receives a bounded shutdown request before Sparkle or the
+    /// user replaces the application bundle.
+    private var terminationInFlight = false
     /// Whole-library operations (re-transcribe, build search index). Created
     /// once the store exists; Settings observes it.
     private var maintenanceStore: LibraryMaintenanceStore?
@@ -792,17 +795,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
-        guard let runtime = hostRuntime else { return .terminateNow }
-        guard !hostTerminationInFlight else { return .terminateLater }
-        hostTerminationInFlight = true
+        guard !terminationInFlight else { return .terminateLater }
+        terminationInFlight = true
         Task { [weak sender, weak self] in
-            await self?.hostMCPServer?.shutdown()
-            await MainActor.run { self?.hostMCPServer = nil }
-            await self?.hostProcessingWorker?.waitUntilIdle()
-            await runtime.shutdown()
+            guard let self else {
+                sender?.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            if let runtime = self.hostRuntime {
+                await self.hostMCPServer?.shutdown()
+                self.hostMCPServer = nil
+                await self.hostProcessingWorker?.waitUntilIdle()
+                await runtime.shutdown()
+            }
+
+            // `harc-stt` deliberately has a long idle lifetime for warm
+            // dictation, so merely releasing DaemonLauncher leaves an
+            // orphaned executable after the app quits. The IPC shutdown also
+            // reaches a healthy daemon inherited from an older Harc process;
+            // launcher.stop() is the bounded fallback for the process this
+            // launch owns when IPC is unavailable.
+            self.dictationKeepWarm?.setEnabled(false)
+            await self.launcher.shutdownDaemon()
+
             await MainActor.run {
-                self?.hostRuntime = nil
-                self?.hostProcessingWorker = nil
+                self.hostRuntime = nil
+                self.hostProcessingWorker = nil
                 sender?.reply(toApplicationShouldTerminate: true)
             }
         }
