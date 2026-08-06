@@ -2,9 +2,8 @@
 
 **Date:** 2026-08-06
 
-**Status:** Source fix, focused application regression, signed release build,
-Apple notarization, and post-staple verification green for Harc 0.13.7 (52).
-GitHub and Sparkle publication are pending.
+**Status:** Fixed, tested, notarized, published, and live through Sparkle in Harc
+0.13.7 (52). Physical Brio behavior remains the affected-Mac acceptance check.
 
 ## Observed failure
 
@@ -54,11 +53,16 @@ also genuinely omit QR metadata support.
 | Release ZIP bytes | `62,250,561` |
 | Release ZIP SHA-256 | `2add1d45c65d31270d7b3dd7a484e122bf0b8bdb1268d315ab03367626c690a3` |
 | Sparkle EdDSA signature | `6BhOd9XR0yWgFBnJ63r000UclPWteTsacmaIAx1EGolTPTm3mle9bs6tphnk2cLQ4c+RGPOzM8ofA/3mZzviAw==` |
+| Release | <https://github.com/jkrack/Harc/releases/tag/v0.13.7> |
 
 `scripts/verify-release.sh` accepted the exact stapled DMG using the normal
 macOS trust boundary. It verified the outer signature, UDIF checksum, stapled
 ticket, Gatekeeper assessment, mounted application and nested signatures,
 version/build, bundle identifier, and arm64-only application/helper binaries.
+GitHub's server-side byte counts and SHA-256 digests matched both exact local
+assets. The remote `v0.13.7` tag resolves to source commit `70d4a16`, and the
+live raw `main` appcast exposes 0.13.7 (52) first with the recorded signature,
+length, and release URL.
 
 The development Mac did not expose a camera through `system_profiler`, so the
 physical Brio retry remains a post-release acceptance check on the affected
