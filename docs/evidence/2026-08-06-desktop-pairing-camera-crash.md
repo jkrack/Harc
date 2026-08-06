@@ -4,9 +4,9 @@
 
 **Status:** Harc 0.13.7 (52) prevented the Objective-C crash. Its physical Brio
 follow-up exposed a false unsupported result and black preview. The readiness
-follow-up is source-fixed, app-target green, signed, notarized, and release-
-verified for Harc 0.13.8 (53), with publication and the affected-Mac retry
-pending.
+follow-up is source-fixed, app-target green, signed, notarized, published, and
+live through Sparkle in Harc 0.13.8 (53). The affected-Mac preview and QR scan
+are the remaining physical acceptance checks.
 
 ## Observed failure
 
@@ -117,11 +117,23 @@ the main Harc process. The prior application bundle remains recoverable at
 | Release ZIP bytes | `62,248,946` |
 | Release ZIP SHA-256 | `be28ac6c7906c8c0efe14cc27f3052c8dd4525a1d63d9cab0b7b48884fdc93a1` |
 | Sparkle EdDSA signature | `4RR70t0I9oMbJ6RG/4sFiZltISFkPAfc6F8fSPDx7HkJG7jKRrZz+v4xN6IqpZszaDAIh44sUT1W9YwIjl0oDQ==` |
+| Release | <https://github.com/jkrack/Harc/releases/tag/v0.13.8> |
 
 The full post-staple verifier accepted the exact 0.13.8 DMG, including its
 outer signature, UDIF checksum, ticket, Gatekeeper assessments, nested-code
 signatures, version/build metadata, bundle identifier, and arm64-only app and
 helper binaries.
+GitHub's server-side byte counts and SHA-256 digests matched both exact local
+assets. The remote `v0.13.8` tag resolves to source commit `e157133`, and the
+live raw `main` appcast exposes 0.13.8 (53) first with the recorded signature,
+length, and release URL.
+
+The exact published DMG was mounted and revalidated before installation. Harc
+0.13.7 and its helpers exited normally, `/Applications/Harc.app` was replaced,
+and the installed 0.13.8 (53) bundle passed Developer ID and Gatekeeper checks.
+It launched with `harc-stt` as a child of the main process. The previous app is
+recoverable at `/private/tmp/Harc-0.13.7-build52-backup.app` for this boot
+session.
 
 The development Mac did not expose a camera through `system_profiler`, so the
 physical Brio preview and QR decode remain post-release acceptance checks on the
