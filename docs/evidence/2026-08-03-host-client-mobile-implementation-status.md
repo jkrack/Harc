@@ -1,14 +1,14 @@
 # Host, Client, and Mobile Implementation Status
 
-**Date:** 2026-08-04
+**Date:** 2026-08-05
 
-**Branch:** `codex/host-client-mobile`
+**Branch:** `main`
 
 **Specification:** [2026-08-02 Host/client/mobile implementation specification](../specs/2026-08-02-host-client-mobile-implementation-spec.md)
 
 ## Outcome
 
-The planned PR 0-9 source surface is implemented on the feature branch. PR 10
+The planned PR 0-9 source surface is implemented on `main`. PR 10
 remains intentionally deferred because the specification makes its inference
 extraction, agent, VPN, iPad, and migration work optional after the vertical
 slice is stable.
@@ -20,6 +20,26 @@ physical iPhone capture/background-transfer/accessibility gates, the real
 secondary-Mac acceptance run, and account-owned App Store Connect values require
 evidence outside this coding session.
 
+## Latest signed-runtime and hardware checkpoint
+
+- Harc 0.13.6 (51) is published through the notarized GitHub release and live
+  Sparkle feed. The signed production regression proved that a normal Quit
+  removes both the application and an inherited `harc-stt` helper; 0.13.5 had
+  reproduced the orphaned-helper failure immediately before replacement.
+- Desktop pairing no longer requires a camera. Harc 0.13.5 added an explicit
+  short-lived **Copy Pairing Link** action on the Host and **Paste Pairing
+  Link** action on a Mac Client while retaining the single-use ticket, pinned
+  TLS, four-word comparison, and foreground Host approval requirements.
+- The connected physical iPhone is an iPhone 15 Pro Max (`iPhone16,2`) running
+  iOS 26.0 with signed HarcMobile 0.13.5 (50) installed. CoreDevice can list the
+  app and launch it normally without XCTest. The prior XCTest runner failure
+  remains infrastructure-only; it did not execute the microphone test body.
+- A read-only live Host-state query found one active paired iPhone identity,
+  no Mac Client identity, no upload rows, and no canonical publication-journal
+  rows. The latest Mac pairing tickets expired or were cancelled; no second-Mac
+  claim reached approval. These absences are evidence that the physical
+  secondary-Mac and phone transfer gates remain open, not product failures.
+
 ## Implemented slices
 
 | Slice | Result | Representative commits |
@@ -28,7 +48,7 @@ evidence outside this coding session.
 | PR 3-4 | Device identity, transfer/client/host stores, protobuf and exact signed wire contracts | `a403275`, `117050e` |
 | PR 5 | Canonical ingest, durable signed receipts, processing publication | `0151fc6` |
 | PR 6 | Pairing/TLS, pinned gRPC, narrow HTTPS upload, discovery, resident Host lifecycle, local MCP authority, UI and CLI | `77f0556` through `06c7ff7` |
-| PR 7 | iPhone durable capture, QR adoption, lossless chunks, persistent outbox, production background transfer/relaunch reconciliation, receipt flow, and standalone local playback/export | `2e0c58b` through current branch |
+| PR 7 | iPhone durable capture, QR adoption, lossless chunks, persistent outbox, production background transfer/relaunch reconciliation, receipt flow, and standalone local playback/export | `2e0c58b` through `main` |
 | PR 8 | Host Library snapshot/delta sync, search, detail, verified audio playback, signed metadata mutations and conflicts | `4aa7858` through `8c5e3bd` |
 | PR 9 | Mac Client pairing/outbox, Host Library, signed edge artifacts, Host arbitration, managed audio cache policy | `33e0b2e` through `c5bba8c` |
 
@@ -141,13 +161,15 @@ several CoreML stacks concurrently.
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | The unsigned arm64 Debug build and application-hosted tests completed successfully on 2026-08-04. |
 | iOS Simulator test execution | Green | The full `HarcMobile` scheme passed 18/18 hosted tests and 2/2 UI tests; `HarcMobileSpikesTests` passed 14/14 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. The focused codec-matrix CLI suite passed 10/10. |
-| Physical iPhone C1/C2/T1/T2 | Open | Three successful runs on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
+| Physical iPhone C1/C2/T1/T2 | Open; current phone connected | The iPhone 15 Pro Max has a signed install, normal launch, and preserved adoption/cache evidence, but no physical capture or transfer scenario has completed. Three successful runs remain required on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Produce the four fresh-process schema-5 reports and validate them with `harcctl qualify-codec-matrix`; then review the selected codec and background behavior against the physical-device thresholds. |
-| Secondary-Mac PR 9 gate | Open on hardware | Pair a real second Mac, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
+| Secondary-Mac PR 9 gate | Open on hardware | The Host has no approved Mac Client identity and no upload. Update the second Mac to 0.13.6, paste a fresh two-minute pairing link, approve matching words/scopes, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
 | External TestFlight hardening | Partially green locally | Offline reviewer sample, in-app privacy disclosure, packaged privacy/export assertions, privacy-policy source, and Beta Review notes are implemented. Physical consent/indicator, VoiceOver/Dynamic Type, upgrade/recovery, public policy URL, contact values, exact archive metadata, and external TestFlight review remain open. |
 
-`xcrun devicectl list devices` reported no attached physical devices on
-2026-08-04, so no physical-gate result is inferred from the Simulator runs.
+`xcrun devicectl list devices` reported the iPhone 15 Pro Max available and
+paired with the development Mac on 2026-08-05. Device availability and ordinary
+app launch do not by themselves satisfy a physical capture, transfer, or codec
+gate.
 
 An initial generic Simulator invocation attempted both arm64 and x86_64 despite
 `ONLY_ACTIVE_ARCH`; it was stopped to protect the machine. The successful run
