@@ -82,7 +82,8 @@ final class HarcDesktopClientRuntime: ObservableObject {
         let identityManager = InstallationIdentityManager(
             keyStore: KeychainSoftwareInstallationKeyStore(
                 service: "com.harc.Harc.desktop-client.installation-identity",
-                account: "device-p256-signing-v1"
+                account: "device-p256-signing-v1",
+                domain: .legacyMacOS
             )
         )
         let resolution = try await identityManager.resolve(

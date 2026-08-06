@@ -52,6 +52,39 @@ public struct GeneralSettingsView: View {
             }
             if prefs.runtimeRole == .client {
                 Section {
+                    if bridge.clientRuntimeReady {
+                        Label("Client is ready", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(Color.green)
+                        Button("Pair with Host…") {
+                            bridge.onOpenHostPairing()
+                        }
+                    } else if let error = bridge.runtimeStartupError {
+                        Label(
+                            "Client could not start",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                            .foregroundStyle(Color.orange)
+                        Text(error)
+                            .font(.harcLabel)
+                            .foregroundStyle(Color.secondary)
+                            .textSelection(.enabled)
+                    } else {
+                        HStack {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Starting Client…")
+                        }
+                    }
+                } header: {
+                    Text("Client")
+                } footer: {
+                    Text(
+                        "Pair this Mac by scanning a Host QR code. Its existing library remains separate under On This Mac."
+                    )
+                        .font(.harcLabel)
+                        .foregroundStyle(Color.secondary)
+                }
+                Section {
                     Toggle(
                         "Allow Host audio downloads",
                         isOn: $prefs.clientHostAudioDownloadEnabled

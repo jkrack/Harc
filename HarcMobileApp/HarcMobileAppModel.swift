@@ -158,7 +158,8 @@ final class HarcMobileAppModel {
                     service: Self.identityKeyService(
                         uiTestRootID: uiTestRootID
                     ),
-                    account: "device-p256-signing-v1"
+                    account: "device-p256-signing-v1",
+                    domain: .dataProtection
                 )
             )
             let resolution = try await identityManager.resolve(

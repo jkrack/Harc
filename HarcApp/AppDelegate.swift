@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             self?.openSettings()
         }
         bridge.onOpenHostPairing = { [weak self] in
-            self?.openHostPairing(nil)
+            self?.openRolePairing(nil)
         }
         bridge.onOpenActivity = { [weak self] in
             self?.statusPopover?.performClose(nil)
@@ -3543,7 +3543,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         guard let store else {
-            presentLibraryUnavailable("The recording database has not finished opening yet. Try again in a moment.")
+            presentLibraryUnavailable(
+                bridge.runtimeStartupError.map {
+                    "Harc could not open the recording database:\n\n\($0)"
+                } ?? "The recording database has not finished opening yet. Try again in a moment."
+            )
             return
         }
         guard let reIDService = speakerReIDService else {
@@ -3701,10 +3705,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func bootstrapStore() async {
         bridge.runtimeStartupError = nil
         bridge.hostRuntimeReady = false
+        bridge.clientRuntimeReady = false
         do {
             let store = try await makeApplicationStore()
             try await finishStoreBootstrap(store)
             bridge.hostRuntimeReady = prefs.runtimeRole == .host
+            bridge.clientRuntimeReady = prefs.runtimeRole == .client
         } catch {
             // A failure after Host startup must not strand its writer lease,
             // listeners, or local socket behind a UI graph that never opened.
@@ -3719,6 +3725,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             desktopClientRuntime?.shutdown()
             desktopClientRuntime = nil
             bridge.hostRuntimeReady = false
+            bridge.clientRuntimeReady = false
             bridge.runtimeStartupError = error.localizedDescription
             FileHandle.standardError.write(Data(
                 "harc: store init failed: \(error.localizedDescription)\n".utf8

@@ -348,7 +348,8 @@ public struct HarcCLIApplication {
         let manager = InstallationIdentityManager(
             keyStore: KeychainSoftwareInstallationKeyStore(
                 service: Self.keychainService,
-                account: Self.keychainAccount
+                account: Self.keychainAccount,
+                domain: .legacyMacOS
             )
         )
         switch try await manager.resolve(evidence: InstallationIdentityEvidence(

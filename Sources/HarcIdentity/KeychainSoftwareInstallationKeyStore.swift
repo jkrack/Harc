@@ -1,11 +1,36 @@
 import Foundation
 import Security
 
-public enum InstallationKeychainError: Error, Equatable, Sendable {
+public enum InstallationKeychainError: Error, Equatable, Sendable, LocalizedError {
     case unexpectedStatus(OSStatus)
     case invalidStoredItem
     case invalidStoredKey
     case duplicateItemCouldNotBeReloaded
+
+    public var errorDescription: String? {
+        switch self {
+        case .unexpectedStatus(let status):
+            let systemMessage = SecCopyErrorMessageString(status, nil)
+                .map { String($0) }
+                ?? "Unknown Keychain error"
+            return "The Keychain operation failed (OSStatus \(status)): \(systemMessage)"
+        case .invalidStoredItem:
+            return "The stored installation identity has an unexpected Keychain format."
+        case .invalidStoredKey:
+            return "The stored installation identity contains an invalid signing key."
+        case .duplicateItemCouldNotBeReloaded:
+            return "The installation identity already exists in Keychain but could not be reloaded."
+        }
+    }
+}
+
+/// Selects the Security.framework Keychain domain appropriate to the shipping
+/// process. iOS application identities use the Data Protection Keychain.
+/// Harc's non-sandboxed Developer ID macOS processes are not provisioned for
+/// that domain and must use the local, non-synchronizing login Keychain.
+public enum InstallationKeychainDomain: Equatable, Sendable {
+    case dataProtection
+    case legacyMacOS
 }
 
 /// Keychain-backed software fallback for hardware that cannot provide a
@@ -20,15 +45,18 @@ public actor KeychainSoftwareInstallationKeyStore: InstallationSigningKeyStore {
 
     private let service: String
     private let account: String
+    private let domain: InstallationKeychainDomain
 
     public init(
         service: String = KeychainSoftwareInstallationKeyStore.defaultService,
-        account: String = KeychainSoftwareInstallationKeyStore.defaultAccount
+        account: String = KeychainSoftwareInstallationKeyStore.defaultAccount,
+        domain: InstallationKeychainDomain = .dataProtection
     ) {
         precondition(!service.isEmpty)
         precondition(!account.isEmpty)
         self.service = service
         self.account = account
+        self.domain = domain
     }
 
     public func load() throws -> InstallationSigningKey? {
@@ -79,13 +107,16 @@ public actor KeychainSoftwareInstallationKeyStore: InstallationSigningKeyStore {
     }
 
     private var baseQuery: [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
         ]
+        if domain == .dataProtection {
+            query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
+        }
+        return query
     }
 
     private var loadQuery: [String: Any] {

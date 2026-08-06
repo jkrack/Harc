@@ -91,6 +91,23 @@ struct HarcAppBridgeTests {
         #expect(bridge.runtimeStartupError == nil)
     }
 
+    @Test("Client readiness distinguishes configured role from running runtime")
+    func clientRuntimeReadinessPublishesFailureAndRecovery() {
+        let bridge = HarcAppBridge(
+            recordingState: RecordingState(),
+            trayState: PostStopTrayState()
+        )
+
+        bridge.runtimeStartupError = "The installation identity is unavailable."
+        #expect(bridge.clientRuntimeReady == false)
+        #expect(bridge.runtimeStartupError != nil)
+
+        bridge.runtimeStartupError = nil
+        bridge.clientRuntimeReady = true
+        #expect(bridge.clientRuntimeReady == true)
+        #expect(bridge.runtimeStartupError == nil)
+    }
+
     @Test("recovery artifacts publish through bridge")
     func recoveryArtifactsPublishThroughBridge() {
         let bridge = HarcAppBridge(

@@ -1,10 +1,77 @@
 import Foundation
 import HarcDomain
+import Security
 import Testing
 @testable import HarcIdentity
 
 @Suite("HarcIdentity installation identity lifecycle")
 struct InstallationIdentityTests {
+    @Test("Production macOS identity persists in the legacy login Keychain")
+    func productionLegacyMacOSKeychainIdentity() async throws {
+        let service = "com.harc.tests.installation-identity.\(UUID().uuidString.lowercased())"
+        let account = "device-p256-signing-v1"
+        let cleanupQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        defer { SecItemDelete(cleanupQuery as CFDictionary) }
+
+        let firstStore = KeychainSoftwareInstallationKeyStore(
+            service: service,
+            account: account,
+            domain: .legacyMacOS
+        )
+        let first = try await InstallationIdentityManager(
+            keyStore: firstStore
+        ).resolve(evidence: .cleanInstallation)
+        guard case .available(let firstIdentity, let firstOrigin) = first else {
+            Issue.record("Expected a newly persisted macOS identity")
+            return
+        }
+        #expect(firstOrigin == .newlyCreatedKey)
+
+        let reopenedStore = KeychainSoftwareInstallationKeyStore(
+            service: service,
+            account: account,
+            domain: .legacyMacOS
+        )
+        let reopened = try await InstallationIdentityManager(
+            keyStore: reopenedStore
+        ).resolve(evidence: InstallationIdentityEvidence(
+            rememberedDeviceID: firstIdentity.deviceID,
+            hasPriorIdentityState: true
+        ))
+        guard case .available(let reopenedIdentity, let reopenedOrigin) = reopened else {
+            Issue.record("Expected the persisted macOS identity")
+            return
+        }
+        #expect(reopenedOrigin == .existingKey)
+        #expect(reopenedIdentity.deviceID == firstIdentity.deviceID)
+    }
+
+    @Test("Keychain failures expose actionable status and corruption details")
+    func keychainFailureDescriptionsAreActionable() {
+        let status = InstallationKeychainError.unexpectedStatus(
+            errSecInteractionNotAllowed
+        ).localizedDescription
+        #expect(status.contains("Keychain operation failed"))
+        #expect(status.contains(String(errSecInteractionNotAllowed)))
+
+        #expect(
+            InstallationKeychainError.invalidStoredItem.localizedDescription
+                .contains("unexpected Keychain format")
+        )
+        #expect(
+            InstallationKeychainError.invalidStoredKey.localizedDescription
+                .contains("invalid signing key")
+        )
+        #expect(
+            InstallationKeychainError.duplicateItemCouldNotBeReloaded
+                .localizedDescription.contains("could not be reloaded")
+        )
+    }
+
     @Test("production selection prefers Secure Enclave, falls back by capability, and preserves an existing key")
     func protectionSelection() async throws {
         let secureBackend = InMemorySoftwareInstallationKeyStore {
