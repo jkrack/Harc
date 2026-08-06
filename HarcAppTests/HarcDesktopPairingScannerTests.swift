@@ -46,22 +46,32 @@ struct HarcDesktopPairingScannerTests {
         )
     }
 
-    @Test("configures QR only after the attached output reports support")
+    @Test("waits for a running output to publish QR capability")
     func metadataCapabilityPolicy() {
         #expect(
-            HarcDesktopPairingMetadataPolicy.qrObjectTypes(
-                availableTypes: []
-            ) == nil
+            HarcDesktopPairingMetadataPolicy.readiness(
+                availableTypes: [],
+                attempt: 0
+            ) == .retry
         )
         #expect(
-            HarcDesktopPairingMetadataPolicy.qrObjectTypes(
-                availableTypes: [.face]
-            ) == nil
+            HarcDesktopPairingMetadataPolicy.readiness(
+                availableTypes: [],
+                attempt: HarcDesktopPairingMetadataPolicy
+                    .maximumAvailabilityAttempts
+            ) == .unsupported
         )
         #expect(
-            HarcDesktopPairingMetadataPolicy.qrObjectTypes(
-                availableTypes: [.face, .qr]
-            ) == [.qr]
+            HarcDesktopPairingMetadataPolicy.readiness(
+                availableTypes: [.face],
+                attempt: 0
+            ) == .unsupported
+        )
+        #expect(
+            HarcDesktopPairingMetadataPolicy.readiness(
+                availableTypes: [.face, .qr],
+                attempt: 0
+            ) == .ready([.qr])
         )
     }
 }

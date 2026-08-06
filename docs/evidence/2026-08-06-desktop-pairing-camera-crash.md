@@ -1,9 +1,11 @@
-# Desktop pairing camera crash regression
+# Desktop pairing camera crash and readiness regressions
 
 **Date:** 2026-08-06
 
-**Status:** Fixed, tested, notarized, published, and live through Sparkle in Harc
-0.13.7 (52). Physical Brio behavior remains the affected-Mac acceptance check.
+**Status:** Harc 0.13.7 (52) prevented the Objective-C crash. Its physical Brio
+follow-up exposed a false unsupported result and black preview. The readiness
+follow-up is source-fixed and app-target green for Harc 0.13.8 (53), with
+publication and the affected-Mac retry pending.
 
 ## Observed failure
 
@@ -18,7 +20,7 @@ This is an Objective-C precondition failure and is not catchable by Swift's
 
 ## Root cause and fix
 
-The scanner added its metadata output inside an open
+The pre-0.13.7 scanner added its metadata output inside an open
 `beginConfiguration()`/`commitConfiguration()` transaction and assigned `.qr`
 before that transaction committed. AVFoundation can still report an empty
 capability list at that point. An external, virtual, or Continuity camera can
@@ -29,9 +31,36 @@ also genuinely omit QR metadata support.
   QR configuration from carrying onto an incompatible device.
 - The scanner reads `availableMetadataObjectTypes` only after attachment has
   committed and assigns `.qr` only when the returned list contains `.qr`.
-- An unsupported camera is detached from metadata scanning and produces a
+- In 0.13.7, an unsupported camera was detached from metadata scanning and produced a
   visible instruction to choose another camera or paste the Host pairing link.
 - The canonical copy/paste pairing flow remains available and unchanged.
+
+## Physical Brio follow-up
+
+The affected Mac confirmed that 0.13.7 no longer crashed, but it selected the
+Logitech BRIO, showed a black preview, and immediately reported that the camera
+did not support QR scanning. The camera continued to work in other apps.
+
+The scanner was still consulting `availableMetadataObjectTypes` before calling
+`startRunning()`. For this external camera the attached-but-not-running output
+temporarily returned an empty list. Harc interpreted that transient state as a
+permanent capability result, removed the output, threw the warning, and never
+started the session. The UI therefore named the correct camera while displaying
+no video from it.
+
+The 0.13.8 follow-up now:
+
+- attaches the selected input and a fresh metadata output, then starts the
+  capture session on the existing serial camera queue;
+- treats an empty capability list as transient for up to one second, using
+  bounded 50 ms retries after the session is running;
+- assigns `.qr` only after the live output advertises it, preserving the
+  exception guard from 0.13.7;
+- cancels stale readiness retries when the user switches cameras or closes the
+  scanner; and
+- leaves the selected camera session and preview running if QR is genuinely
+  unsupported, so the camera selection remains observable and the paste-link
+  fallback stays available.
 
 ## Validation
 
@@ -41,6 +70,11 @@ also genuinely omit QR metadata support.
 | Focused scanner suite | `HarcDesktopPairingScannerTests` passed 4/4, including empty and non-QR capability lists plus a mixed list containing `.qr`. |
 | Bounded build | `xcodebuild` used an arm64 macOS destination, two workers, and `SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2`. |
 | Source hygiene | `Package.resolved` was restored to the documented Sparkle-free SwiftPM state and `git diff --check` passed. |
+
+The 0.13.8 focused scanner suite also passed 4/4 in the full macOS app target.
+Its readiness regression covers the transient-empty retry, bounded exhaustion,
+nonempty unsupported capability, and eventual QR-ready states. The app target
+compiled with the selected-camera lifecycle and readiness cancellation logic.
 
 ## Release candidate
 
@@ -72,6 +106,6 @@ the main Harc process. The prior application bundle remains recoverable at
 `/private/tmp/Harc-0.13.6-build51-backup.app` for this boot session.
 
 The development Mac did not expose a camera through `system_profiler`, so the
-physical Brio retry remains a post-release acceptance check on the affected
-Mac. The regression prevents the exception-producing setter call whenever the
-selected device does not advertise QR support.
+physical Brio preview and QR decode remain post-release acceptance checks on the
+affected Mac. The software regression prevents the exception-producing setter
+call whenever the selected device does not advertise QR support.

@@ -30,10 +30,26 @@ enum HarcDesktopPairingCodeFilter {
 }
 
 enum HarcDesktopPairingMetadataPolicy {
-    static func qrObjectTypes(
-        availableTypes: [AVMetadataObject.ObjectType]
-    ) -> [AVMetadataObject.ObjectType]? {
-        availableTypes.contains(.qr) ? [.qr] : nil
+    static let maximumAvailabilityAttempts = 20
+
+    enum Readiness: Equatable {
+        case ready([AVMetadataObject.ObjectType])
+        case retry
+        case unsupported
+    }
+
+    static func readiness(
+        availableTypes: [AVMetadataObject.ObjectType],
+        attempt: Int
+    ) -> Readiness {
+        if availableTypes.contains(.qr) {
+            return .ready([.qr])
+        }
+        if availableTypes.isEmpty,
+           attempt < maximumAvailabilityAttempts {
+            return .retry
+        }
+        return .unsupported
     }
 }
 
@@ -60,10 +76,15 @@ enum HarcDesktopPairingCameraDiscovery {
 struct HarcDesktopPairingScannerView: NSViewControllerRepresentable {
     let cameraID: String
     let onCode: @MainActor @Sendable (String) -> Void
+    let onReady: @MainActor @Sendable () -> Void
     let onFailure: @MainActor @Sendable (String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onCode: onCode, onFailure: onFailure)
+        Coordinator(
+            onCode: onCode,
+            onReady: onReady,
+            onFailure: onFailure
+        )
     }
 
     func makeNSViewController(context: Context) -> NSViewController {
@@ -93,16 +114,20 @@ struct HarcDesktopPairingScannerView: NSViewControllerRepresentable {
             label: "com.harc.desktop.pairing-camera"
         )
         private let onCode: @MainActor (String) -> Void
+        private let onReady: @MainActor () -> Void
         private let onFailure: @MainActor (String) -> Void
         private var isActive = false
         private var selectedCameraID: String?
         private var delivered = false
+        private var configurationGeneration = 0
 
         init(
             onCode: @escaping @MainActor @Sendable (String) -> Void,
+            onReady: @escaping @MainActor @Sendable () -> Void,
             onFailure: @escaping @MainActor @Sendable (String) -> Void
         ) {
             self.onCode = onCode
+            self.onReady = onReady
             self.onFailure = onFailure
         }
 
@@ -132,6 +157,7 @@ struct HarcDesktopPairingScannerView: NSViewControllerRepresentable {
             sessionQueue.async { [weak self] in
                 guard let self else { return }
                 isActive = false
+                configurationGeneration &+= 1
                 if session.isRunning { session.stopRunning() }
             }
         }
@@ -173,26 +199,95 @@ struct HarcDesktopPairingScannerView: NSViewControllerRepresentable {
                 }
                 if session.isRunning { session.stopRunning() }
                 let input = try AVCaptureDeviceInput(device: camera)
-                try configureSession(input: input)
+                let output = try configureSession(input: input)
                 selectedCameraID = cameraID
                 delivered = false
+                configurationGeneration &+= 1
+                let generation = configurationGeneration
                 session.startRunning()
+                configureMetadataOutput(
+                    output,
+                    cameraID: cameraID,
+                    generation: generation,
+                    attempt: 0
+                )
             } catch {
                 reportFailure(error.localizedDescription)
             }
         }
 
-        private func configureSession(input: AVCaptureDeviceInput) throws {
+        private func configureSession(
+            input: AVCaptureDeviceInput
+        ) throws -> AVCaptureMetadataOutput {
             let output = try attachMetadataOutput(input: input)
-            guard let objectTypes = HarcDesktopPairingMetadataPolicy
-                .qrObjectTypes(
-                    availableTypes: output.availableMetadataObjectTypes
-                ) else {
-                removeMetadataOutput(output)
-                throw HarcDesktopPairingScannerError.qrUnsupported
-            }
             output.setMetadataObjectsDelegate(self, queue: sessionQueue)
-            output.metadataObjectTypes = objectTypes
+            return output
+        }
+
+        private func configureMetadataOutput(
+            _ output: AVCaptureMetadataOutput,
+            cameraID: String,
+            generation: Int,
+            attempt: Int
+        ) {
+            guard isActive,
+                  selectedCameraID == cameraID,
+                  configurationGeneration == generation,
+                  session.outputs.contains(where: { $0 === output }) else {
+                return
+            }
+
+            switch HarcDesktopPairingMetadataPolicy.readiness(
+                availableTypes: output.availableMetadataObjectTypes,
+                attempt: attempt
+            ) {
+            case .ready(let objectTypes):
+                // The Objective-C setter raises NSInvalidArgumentException if
+                // any requested type is unavailable. Consult the live output
+                // immediately before assigning the guarded subset.
+                guard output.availableMetadataObjectTypes.contains(.qr) else {
+                    scheduleMetadataRetry(
+                        output,
+                        cameraID: cameraID,
+                        generation: generation,
+                        attempt: attempt + 1
+                    )
+                    return
+                }
+                output.metadataObjectTypes = objectTypes
+                reportReady()
+            case .retry:
+                scheduleMetadataRetry(
+                    output,
+                    cameraID: cameraID,
+                    generation: generation,
+                    attempt: attempt + 1
+                )
+            case .unsupported:
+                reportFailure(
+                    HarcDesktopPairingScannerError.qrUnsupported
+                        .localizedDescription
+                )
+            }
+        }
+
+        private func scheduleMetadataRetry(
+            _ output: AVCaptureMetadataOutput,
+            cameraID: String,
+            generation: Int,
+            attempt: Int
+        ) {
+            sessionQueue.asyncAfter(
+                deadline: .now() + .milliseconds(50)
+            ) { [weak self, weak output] in
+                guard let self, let output else { return }
+                configureMetadataOutput(
+                    output,
+                    cameraID: cameraID,
+                    generation: generation,
+                    attempt: attempt
+                )
+            }
         }
 
         /// Attach and commit the input/output graph before consulting metadata
@@ -217,17 +312,12 @@ struct HarcDesktopPairingScannerView: NSViewControllerRepresentable {
             return output
         }
 
-        private func removeMetadataOutput(_ output: AVCaptureMetadataOutput) {
-            session.beginConfiguration()
-            defer { session.commitConfiguration() }
-            guard session.outputs.contains(where: { $0 === output }) else {
-                return
-            }
-            session.removeOutput(output)
-        }
-
         private func reportFailure(_ message: String) {
             Task { @MainActor [onFailure] in onFailure(message) }
+        }
+
+        private func reportReady() {
+            Task { @MainActor [onReady] in onReady() }
         }
 
         func metadataOutput(

@@ -264,6 +264,9 @@ private struct HarcDesktopClientPairingView: View {
                             scannerFailure = nil
                             Task { await model.begin(pairingURI: code) }
                         },
+                        onReady: {
+                            scannerFailure = nil
+                        },
                         onFailure: { message in
                             scannerFailure = message
                         }
