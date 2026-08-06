@@ -24,4 +24,24 @@ struct HarcDesktopPairingScannerTests {
         #expect(HarcDesktopPairingCodeFilter.accepts(accepted))
         #expect(!HarcDesktopPairingCodeFilter.accepts(accepted + "A"))
     }
+
+    @Test("normalizes only surrounding pasteboard whitespace")
+    func pastedCandidate() {
+        let link = "harc-pair://v1/ABC_123-xyz"
+        #expect(
+            HarcDesktopPairingCodeFilter.pastedCandidate(" \n\(link)\t")
+                == link
+        )
+        #expect(HarcDesktopPairingCodeFilter.pastedCandidate(nil) == nil)
+        #expect(
+            HarcDesktopPairingCodeFilter.pastedCandidate(
+                "harc-pair://v1/ABC 123"
+            ) == nil
+        )
+        #expect(
+            HarcDesktopPairingCodeFilter.pastedCandidate(
+                "not-a-harc-link"
+            ) == nil
+        )
+    }
 }

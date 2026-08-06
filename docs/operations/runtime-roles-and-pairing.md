@@ -35,9 +35,13 @@ differs. Possessing the QR ticket alone never grants access.
 1. On the secondary Mac, choose **General > This Mac > Client**, confirm, and
    restart Harc.
 2. On the Host, choose **Pair a Device… > Mac client** and create the short-lived
-   pairing QR code.
-3. On the Client, choose **Pair with Host… > Scan Host Code**. Select its
-   built-in, external, or Continuity Camera and scan the code shown by the Host.
+   pairing QR code or copyable pairing link.
+3. On the Client, choose **Pair with Host…**. Either select **Scan Host Code**
+   and use its built-in, external, or Continuity Camera, or explicitly copy the
+   short-lived pairing link on the Host and select **Paste Pairing Link** on the
+   Client. A copied link contains the one-time pairing secret; Universal
+   Clipboard or messaging may sync it through a cloud service, so use only a
+   transfer channel you trust.
 4. Compare the four security words and device label on both Macs, then approve
    the exact scopes on the Host.
 5. Use **Host Library…** for the scoped canonical Library. The Client's earlier

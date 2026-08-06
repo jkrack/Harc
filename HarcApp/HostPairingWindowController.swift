@@ -50,6 +50,7 @@ private final class HostPairingViewModel: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var approvedScopes = Set<AuthorizationScope>()
     @Published private(set) var pairedDevices = [HostPairedDeviceSummary]()
+    @Published private(set) var pairingLinkCopied = false
 
     private let runtime: HarcResidentHostRuntimeV1
     private var task: Task<Void, Never>?
@@ -65,29 +66,19 @@ private final class HostPairingViewModel: ObservableObject {
         guard task == nil else { return }
         phase = .issuing
         task = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let ticket = try await runtime.issuePairingTicket(
-                    for: selectedKind
-                )
-                try Task.checkCancellation()
-                phase = .ticket(ticket)
-                try await poll(ticket: ticket)
-            } catch is CancellationError {
-                // Closing the foreground window intentionally cancels the
-                // memory-only secret and its durable reservation.
-            } catch {
-                phase = .failed(error.localizedDescription)
-            }
+            await self?.runPairingFlow(cancelExistingTicket: false)
         }
     }
 
     func restart() {
-        task?.cancel()
-        task = nil
-        Task { try? await runtime.cancelPairingTicket() }
-        phase = .idle
-        begin()
+        let previousTask = task
+        previousTask?.cancel()
+        pairingLinkCopied = false
+        phase = .issuing
+        task = Task { [weak self] in
+            await previousTask?.value
+            await self?.runPairingFlow(cancelExistingTicket: true)
+        }
     }
 
     func approve() {
@@ -128,6 +119,15 @@ private final class HostPairingViewModel: ObservableObject {
         }
     }
 
+    func copyPairingLink(_ ticket: HarcForegroundPairingTicketV1) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pairingLinkCopied = pasteboard.setString(
+            ticket.pairingURI,
+            forType: .string
+        )
+    }
+
     func deny() {
         guard case .claim(_, let claim) = phase else { return }
         task?.cancel()
@@ -161,6 +161,27 @@ private final class HostPairingViewModel: ObservableObject {
             try await Task.sleep(for: .milliseconds(400))
         }
         throw HostPairingPresentationError.ticketExpired
+    }
+
+    private func runPairingFlow(cancelExistingTicket: Bool) async {
+        do {
+            if cancelExistingTicket {
+                try await runtime.cancelPairingTicket()
+                try Task.checkCancellation()
+            }
+            let ticket = try await runtime.issuePairingTicket(
+                for: selectedKind
+            )
+            try Task.checkCancellation()
+            pairingLinkCopied = false
+            phase = .ticket(ticket)
+            try await poll(ticket: ticket)
+        } catch is CancellationError {
+            // Closing the foreground window intentionally cancels the
+            // memory-only secret and its durable reservation.
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
     }
 
     private func refreshPairedDevices() async {
@@ -265,6 +286,9 @@ private struct HostPairingView: View {
         _ ticket: HarcForegroundPairingTicketV1
     ) -> some View {
         VStack(spacing: 14) {
+            Label("Pairing code created", systemImage: "checkmark.circle.fill")
+                .font(.headline)
+                .foregroundStyle(.green)
             if let image = HostPairingQRCode.image(for: ticket.pairingURI) {
                 Image(nsImage: image)
                     .interpolation(.none)
@@ -272,12 +296,41 @@ private struct HostPairingView: View {
                     .frame(width: 300, height: 300)
                     .accessibilityLabel("Harc pairing QR code")
             }
-            Text("Scan this code in Harc. It expires in two minutes and can be used only once.")
+            Text("On the Client, choose Pair with Host, then scan this code or paste its pairing link. It can be used only once.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            ProgressView("Waiting for the device…")
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let seconds = max(
+                    0,
+                    Int(ticket.expiresAt.timeIntervalSince(context.date).rounded(.up))
+                )
+                Text("Expires in \(seconds) second\(seconds == 1 ? "" : "s")")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            ProgressView("Waiting for the Client to scan or paste this link…")
                 .controlSize(.small)
+            HStack(spacing: 16) {
+                Button {
+                    model.copyPairingLink(ticket)
+                } label: {
+                    Label(
+                        model.pairingLinkCopied
+                            ? "Pairing Link Copied"
+                            : "Copy Pairing Link",
+                        systemImage: model.pairingLinkCopied
+                            ? "checkmark"
+                            : "doc.on.doc"
+                    )
+                }
+                Button("Create a New Code") { model.restart() }
+            }
+            .buttonStyle(.link)
+            Text("The link contains a temporary pairing secret. Universal Clipboard and messaging may sync it through a cloud service; transfer it only through a channel you trust.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
     }
 

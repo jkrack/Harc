@@ -21,6 +21,12 @@ enum HarcDesktopPairingCodeFilter {
                 (0x21 ... 0x7E).contains($0.value)
             }
     }
+
+    static func pastedCandidate(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return accepts(candidate) ? candidate : nil
+    }
 }
 
 enum HarcDesktopPairingCameraDiscovery {

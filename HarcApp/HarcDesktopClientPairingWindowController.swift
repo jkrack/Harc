@@ -230,7 +230,7 @@ private struct HarcDesktopClientPairingView: View {
             Text("Pair with your Harc Host")
                 .font(.title2.weight(.semibold))
             Text(
-                "On the Host, choose Pair a Device and select Mac client. Scan its short-lived code, then compare the four security words on both Macs."
+                "On the Host, choose Pair a Device and select Mac client. Scan or securely paste its short-lived pairing link, then compare the four security words on both Macs."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -285,13 +285,16 @@ private struct HarcDesktopClientPairingView: View {
             } else {
                 VStack(spacing: 12) {
                     Text(
-                        "Use this Mac's built-in, external, or Continuity Camera. The pairing secret never enters the clipboard or a cloud service."
+                        "Scan with this Mac's built-in, external, or Continuity Camera. If that is unavailable, paste a link copied explicitly on the Host."
                     )
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    Button("Scan Host Code") { startScanning() }
-                        .buttonStyle(.borderedProminent)
+                    HStack {
+                        Button("Scan Host Code") { startScanning() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Paste Pairing Link") { pastePairingLink() }
+                    }
                     if let scannerFailure {
                         Label(scannerFailure, systemImage: "camera.fill")
                             .font(.callout)
@@ -372,6 +375,23 @@ private struct HarcDesktopClientPairingView: View {
         }
         scannerFailure = nil
         showingScanner = true
+    }
+
+    private func pastePairingLink() {
+        let rawValue = NSPasteboard.general.string(forType: .string)
+        guard rawValue != nil else {
+            scannerFailure = "The clipboard does not contain a Harc pairing link."
+            return
+        }
+        guard let value = HarcDesktopPairingCodeFilter.pastedCandidate(
+            rawValue
+        ) else {
+            scannerFailure = "The clipboard does not contain a valid Harc pairing link. Create a fresh link on the Host and copy it again."
+            return
+        }
+        showingScanner = false
+        scannerFailure = nil
+        Task { await model.begin(pairingURI: value) }
     }
 
     private func result(
