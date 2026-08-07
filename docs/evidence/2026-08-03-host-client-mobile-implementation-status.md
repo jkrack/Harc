@@ -37,10 +37,13 @@ evidence outside this coding session.
   short-lived **Copy Pairing Link** action on the Host and **Paste Pairing
   Link** action on a Mac Client while retaining the single-use ticket, pinned
   TLS, four-word comparison, and foreground Host approval requirements.
-- The connected physical iPhone is an iPhone 15 Pro Max (`iPhone16,2`) running
-  iOS 26.0 with signed HarcMobile 0.13.5 (50) installed. CoreDevice can list the
-  app and launch it normally without XCTest. The prior XCTest runner failure
-  remains infrastructure-only; it did not execute the microphone test body.
+- The connected physical iPhone is an iPhone 15 Pro Max (`iPhone16,2`) now
+  running iOS 26.6. The last verified installed runtime was signed HarcMobile
+  0.13.5 (50); deployment of source-current 0.13.8 (53) is pending. On
+  2026-08-06 CoreDevice reached the paired phone but could not mount developer
+  services because the device was actively locked
+  (`kAMDMobileImageMounterDeviceLocked`). This is a physical unlock gate, not
+  evidence of an app build or Xcode compatibility failure.
 - A read-only live Host-state query found one active paired iPhone identity,
   no Mac Client identity, no upload rows, and no canonical publication-journal
   rows. The latest Mac pairing tickets expired or were cancelled; no second-Mac
@@ -58,7 +61,7 @@ evidence outside this coding session.
 | PR 7 | iPhone durable capture, QR adoption, lossless chunks, persistent outbox, production background transfer/relaunch reconciliation, receipt flow, and standalone local playback/export | `2e0c58b` through `main` |
 | PR 8 | Host Library snapshot/delta sync, search, detail, verified audio playback, signed metadata mutations and conflicts | `4aa7858` through `8c5e3bd` |
 | PR 9 | Mac Client pairing/outbox, Host Library, signed edge artifacts, Host arbitration, managed audio cache policy | `33e0b2e` through `c5bba8c` |
-| Shared speaker identity | Stable Host People/prototypes, versioned client recognition packs, idempotent observations, signed assignments, and canonical labels | Unreleased working tree; [validation evidence](2026-08-06-shared-speaker-identity.md) |
+| Shared speaker identity | Stable Host People/prototypes, versioned client recognition packs, idempotent observations, signed assignments, and canonical labels | `bde01bd`; [validation evidence](2026-08-06-shared-speaker-identity.md) |
 
 ## Validation completed in this pass
 
@@ -165,19 +168,22 @@ several CoreML stacks concurrently.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,498 Swift Testing cases in 253 suites and 121 XCTest cases on 2026-08-04; 13 real-model/model-quality cases were intentionally skipped by their opt-in contract. |
+| Clean full SwiftPM tests | Green | `swift test --jobs 2` passed 1,520 Swift Testing cases in 257 suites and 123 XCTest cases on 2026-08-06; four integration tests were intentionally skipped by their opt-in contract. |
+| macOS app-layer tests | Green | Bounded `HarcAppTests` execution passed 10/10 tests across desktop pairing scanning, durable Client capture files, edge-processing framing, and Host-audio cache policy on 2026-08-06. |
 | Unsigned macOS app build | Green | Bounded unsigned arm64 `Harc` build completed with `** BUILD SUCCEEDED **` on 2026-08-04. |
 | iOS Simulator build | Green | The unsigned arm64 Debug build and application-hosted tests completed successfully on 2026-08-04. |
 | iOS Simulator test execution | Green | The full `HarcMobile` scheme passed 18/18 hosted tests and 2/2 UI tests; `HarcMobileSpikesTests` passed 14/14 on an arm64 iPhone 17 Pro simulator running iOS 26.5 on 2026-08-04. The focused codec-matrix CLI suite passed 10/10. |
 | Physical iPhone C1/C2/T1/T2 | Open; current phone connected | The iPhone 15 Pro Max has a signed install, normal launch, and preserved adoption/cache evidence, but no physical capture or transfer scenario has completed. Three successful runs remain required on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Produce the four fresh-process schema-5 reports and validate them with `harcctl qualify-codec-matrix`; then review the selected codec and background behavior against the physical-device thresholds. |
-| Secondary-Mac PR 9 gate | Open on hardware | The Host has no approved Mac Client identity and no upload. Update the second Mac to 0.13.6, paste a fresh two-minute pairing link, approve matching words/scopes, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
+| Secondary-Mac PR 9 gate | Open on hardware | The Host has no approved Mac Client identity and no upload. Update the second Mac to 0.13.8, paste a fresh two-minute pairing link, approve matching words/scopes, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
 | External TestFlight hardening | Partially green locally | Offline reviewer sample, in-app privacy disclosure, packaged privacy/export assertions, privacy-policy source, and Beta Review notes are implemented. Physical consent/indicator, VoiceOver/Dynamic Type, upgrade/recovery, public policy URL, contact values, exact archive metadata, and external TestFlight review remain open. |
 
-`xcrun devicectl list devices` reported the iPhone 15 Pro Max available and
-paired with the development Mac on 2026-08-05. Device availability and ordinary
-app launch do not by themselves satisfy a physical capture, transfer, or codec
-gate.
+`xcrun devicectl` reported the iPhone 15 Pro Max available and paired with the
+development Mac on 2026-08-06. Developer Mode is enabled and the local-network
+tunnel is connected. Deployment remains paused at the explicit locked-device
+developer-image error until the phone is unlocked and kept awake. Device
+availability and ordinary app launch do not by themselves satisfy a physical
+capture, transfer, or codec gate.
 
 An initial generic Simulator invocation attempted both arm64 and x86_64 despite
 `ONLY_ACTIVE_ARCH`; it was stopped to protect the machine. The successful run

@@ -67,6 +67,9 @@ The implementation adds:
   `** BUILD SUCCEEDED **`, including `harc-stt` and `harc-mcp`.
 - The unsigned generic iOS `HarcMobile` application build completed with
   `** BUILD SUCCEEDED **`.
+- The focused macOS `HarcAppTests` target passed 10/10 tests, covering the
+  application composition that owns desktop pairing, durable Client capture
+  files, processing framing, and Host-audio cache policy.
 - Validation was bounded to two workers on the 16 GB development Mac.
 - `Package.resolved` is unchanged and `git diff --check` is clean.
 
