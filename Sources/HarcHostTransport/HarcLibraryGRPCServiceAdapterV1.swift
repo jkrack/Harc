@@ -557,6 +557,73 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         }
     }
 
+    public func getSpeakerRecognitionPack(
+        request: ServerRequest<Harc_V1_GetSpeakerRecognitionPackRequestV1>,
+        context: ServerContext
+    ) async throws -> ServerResponse<Harc_V1_GetSpeakerRecognitionPackResponseV1> {
+        do {
+            let session = try await authorize(
+                request.metadata,
+                requiredScope: .speakerIdentityRead
+            )
+            let version = try validateProtocol(
+                request.message.hasProtocol,
+                request.message.protocol,
+                knownFields: [1, 2],
+                session: session
+            )
+            let afterRevision = request.message.hasAfterRevision
+                ? try EntityRevision(request.message.afterRevision)
+                : nil
+            let pack = try await service.speakerRecognitionPack(
+                session: session,
+                afterRevision: afterRevision
+            )
+            var response = Harc_V1_GetSpeakerRecognitionPackResponseV1()
+            response.protocol = version.protobufV1()
+            response.unchanged = pack == nil
+            if let pack {
+                response.pack = try Harc_V1_SpeakerRecognitionPackV1(pack)
+            }
+            return ServerResponse(message: response)
+        } catch {
+            throw HarcPostSessionGRPCErrorMapper.map(error)
+        }
+    }
+
+    public func submitSpeakerObservation(
+        request: ServerRequest<Harc_V1_SubmitSpeakerObservationRequestV1>,
+        context: ServerContext
+    ) async throws -> ServerResponse<Harc_V1_SubmitSpeakerObservationResponseV1> {
+        do {
+            let session = try await authorize(
+                request.metadata,
+                requiredScope: .speakerObservationWrite
+            )
+            let version = try validateProtocol(
+                request.message.hasProtocol,
+                request.message.protocol,
+                knownFields: [1, 2],
+                session: session
+            )
+            guard request.message.hasObservation else {
+                throw HarcProtobufConversionError.missingField(
+                    "submitSpeakerObservation.observation"
+                )
+            }
+            let decision = try await service.submitSpeakerObservation(
+                session: session,
+                observation: request.message.observation.domainValue()
+            )
+            var response = Harc_V1_SubmitSpeakerObservationResponseV1()
+            response.protocol = version.protobufV1()
+            response.decision = Harc_V1_SpeakerObservationDecisionV1(decision)
+            return ServerResponse(message: response)
+        } catch {
+            throw HarcPostSessionGRPCErrorMapper.map(error)
+        }
+    }
+
     private func authorize(
         _ metadata: Metadata,
         requiredScope: AuthorizationScope?
@@ -1035,6 +1102,13 @@ public struct HarcLibraryGRPCServiceAdapterV1:
                 index: value.speakerIndex,
                 displayName: value.hasDisplayName ? value.displayName : nil
             )
+        case .assignSpeakerIdentity(let value):
+            return .assignSpeakerIdentity(
+                index: value.speakerIndex,
+                personID: value.hasPersonID
+                    ? try value.personID.domainValue()
+                    : nil
+            )
         case .setNotesMarkdown(let value):
             return .setNotesMarkdown(
                 value.hasMarkdown ? value.markdown : nil
@@ -1062,6 +1136,13 @@ public struct HarcLibraryGRPCServiceAdapterV1:
             if let displayName { label.displayName = displayName }
             wire.value = .speakerLabel(label)
             wire.isCleared = displayName == nil
+        case .speakerIdentity(let index, let personID, let displayName):
+            var identity = Harc_V1_MetadataSpeakerIdentityValueV1()
+            identity.speakerIndex = index
+            if let personID { identity.personID = Harc_V1_PersonIDV1(personID) }
+            if let displayName { identity.displayName = displayName }
+            wire.value = .speakerIdentity(identity)
+            wire.isCleared = personID == nil
         case .notesMarkdown(let value):
             if let value { wire.value = .notesMarkdown(value) }
             wire.isCleared = value == nil

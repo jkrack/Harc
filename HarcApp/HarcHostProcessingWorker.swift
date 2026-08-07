@@ -1,9 +1,11 @@
+import CryptoKit
 import Foundation
 import HarcClient
 import HarcCore
 import HarcDomain
 import HarcHost
 import HarcStore
+import HarcVoiceprint
 
 /// Serial daemon-backed worker for canonical recordings received by Host.
 /// Its queue of record IDs is the canonical database; this actor only retains
@@ -92,11 +94,62 @@ actor HarcHostProcessingWorker {
                 vad: vad
             )
 
+            let transcript = SessionTranscript(
+                startedAt: recording.startedAt,
+                endedAt: recording.endedAt ?? recording.startedAt,
+                audioPath: recording.wavPath,
+                joinedText: result.text,
+                words: result.words,
+                speakers: result.speakers,
+                chunks: []
+            )
+            let renderedText = TranscriptPlainTextRenderer.render(transcript)
+
             guard try await store.stageHostProcessedTranscriptIfNotReady(
                 recordingID: recordingID,
-                text: result.text,
+                text: renderedText,
                 modelID: HarcVersion.sttEngineVersion
             ) else { return }
+
+            if !result.speakerEmbeddings.isEmpty {
+                let rows = result.speakerEmbeddings.map {
+                    RecordingStore.SpeakerEmbeddingRow(
+                        recordingID: recordingID,
+                        speakerIndex: $0.speakerIndex,
+                        embedding: EmbeddingBlob.encode($0.vector),
+                        segmentCount: $0.segmentCount,
+                        totalMs: $0.totalMs,
+                        embedderKind: EmbedderKind.wespeakerV2
+                    )
+                }
+                try await store.upsertSpeakerEmbeddings(
+                    recordingID: recordingID,
+                    rows: rows
+                )
+            }
+            if let sourceDeviceID = recording.originID?.deviceID {
+                for embedding in result.speakerEmbeddings {
+                    guard embedding.speakerIndex >= 0,
+                          embedding.totalMs > 0,
+                          embedding.segmentCount > 0 else { continue }
+                    let observation = try SpeakerEmbeddingObservation(
+                        operationID: Self.observationOperationID(
+                            canonicalID: request.canonicalRecordingID,
+                            speakerIndex: embedding.speakerIndex
+                        ),
+                        canonicalRecordingID: request.canonicalRecordingID,
+                        speakerIndex: UInt32(embedding.speakerIndex),
+                        embedding: try .quantizing(embedding.vector),
+                        modelID: EmbedderKind.wespeakerV2,
+                        speechDurationMs: UInt64(embedding.totalMs),
+                        segmentCount: UInt32(embedding.segmentCount)
+                    )
+                    _ = try await store.submitSpeakerObservation(
+                        observation,
+                        from: sourceDeviceID
+                    )
+                }
+            }
             _ = try await store.publishHostProcessedProjectionIfNotReady(
                 recordingID: recordingID
             )
@@ -129,6 +182,25 @@ actor HarcHostProcessingWorker {
                 failure: failure
             )
         }
+    }
+
+    private static func observationOperationID(
+        canonicalID: CanonicalRecordingID,
+        speakerIndex: Int
+    ) -> OperationID {
+        let material = Data(
+            "host-speaker-observation-v1:\(canonicalID.description):\(speakerIndex)".utf8
+        )
+        var bytes = Array(SHA256.hash(data: material).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x50
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        let uuid = UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+        return OperationID(uuid)
     }
 }
 

@@ -46,13 +46,39 @@ public struct TranscribeResult: Codable, Equatable, Sendable {
     public var text: String
     public var words: [Word]
     public var speakers: [SpeakerSegment]
+    /// Full-recording speaker centroids when the daemon performed
+    /// diarization as part of this request. Older daemons omit this field.
+    public var speakerEmbeddings: [SpeakerEmbeddingRow]
     public var processingMs: Int
 
-    public init(text: String, words: [Word], speakers: [SpeakerSegment], processingMs: Int) {
+    public init(
+        text: String,
+        words: [Word],
+        speakers: [SpeakerSegment],
+        speakerEmbeddings: [SpeakerEmbeddingRow] = [],
+        processingMs: Int
+    ) {
         self.text = text
         self.words = words
         self.speakers = speakers
+        self.speakerEmbeddings = speakerEmbeddings
         self.processingMs = processingMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text, words, speakers, speakerEmbeddings, processingMs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        words = try container.decode([Word].self, forKey: .words)
+        speakers = try container.decode([SpeakerSegment].self, forKey: .speakers)
+        speakerEmbeddings = try container.decodeIfPresent(
+            [SpeakerEmbeddingRow].self,
+            forKey: .speakerEmbeddings
+        ) ?? []
+        processingMs = try container.decode(Int.self, forKey: .processingMs)
     }
 }
 

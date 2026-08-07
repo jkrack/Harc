@@ -777,6 +777,10 @@ private enum HarcRegisteredPayloadDecoderV1 {
             if value.hasDisplayName {
                 try requireNonemptyText(value.displayName, field: "metadataMutation.speakerLabel")
             }
+        case .assignSpeakerIdentity(let value):
+            if value.hasPersonID {
+                _ = try value.personID.domainValue()
+            }
         case .setNotesMarkdown(let value):
             if value.hasMarkdown {
                 try requireNonemptyText(value.markdown, field: "metadataMutation.notesMarkdown")

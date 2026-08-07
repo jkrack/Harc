@@ -1,28 +1,35 @@
 import Foundation
+import HarcDomain
 
 /// A named voice. Linked to one or more (recording, speakerIndex) slots
 /// via `PersonSpeakerLink`. Renamed via `RecordingStore.renamePerson`.
 public struct Person: Sendable, Equatable, Identifiable {
     public let id: Int64
+    public let stableID: PersonID
     public var displayName: String
     /// Per-Person match threshold override; nil falls back to the global
     /// default in `SpeakerReIDService`.
     public var matchThreshold: Double?
     public var createdAt: Date
     public var updatedAt: Date
+    public var profileRevision: EntityRevision
 
     public init(
         id: Int64,
+        stableID: PersonID = .random(),
         displayName: String,
         matchThreshold: Double? = nil,
         createdAt: Date,
-        updatedAt: Date
+        updatedAt: Date,
+        profileRevision: EntityRevision = .initial
     ) {
         self.id = id
+        self.stableID = stableID
         self.displayName = displayName
         self.matchThreshold = matchThreshold
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.profileRevision = profileRevision
     }
 }
 

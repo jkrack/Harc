@@ -110,6 +110,10 @@ public struct HarcWindowRootView: View {
     /// "Speaker N+1" when no Person link exists (same resolution order as
     /// `RecordingStore.resolvedSpeakerName`).
     @State var resolvedSpeakerLabels: [Int: String] = [:]
+    /// Labels currently materialized in `editorText`. Kept separately from
+    /// the resolved store snapshot so repeated renames can replace the prior
+    /// visible head without touching transcript bodies.
+    @State var renderedSpeakerLabels: [Int: String] = [:]
 
     // Task 8.1: pending suggestions for the inspector chip system
     @State var inspectorPendingSuggestions: [PendingSuggestion] = []
@@ -1083,6 +1087,10 @@ public struct HarcWindowRootView: View {
                                 recordingID: s.recordingID,
                                 speakerIndex: s.speakerIndex
                             )
+                            try await mirrorResolvedSpeakerName(
+                                recordingID: s.recordingID,
+                                speakerIndex: s.speakerIndex
+                            )
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1113,6 +1121,10 @@ public struct HarcWindowRootView: View {
                     Task {
                         do {
                             try await store.linkSpeaker(personID: personID, recordingID: rid, speakerIndex: speakerIndex)
+                            try await mirrorResolvedSpeakerName(
+                                recordingID: rid,
+                                speakerIndex: speakerIndex
+                            )
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1127,6 +1139,10 @@ public struct HarcWindowRootView: View {
                         do {
                             let pid = try await store.createPerson(displayName: name, matchThreshold: nil)
                             try await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
+                            try await mirrorResolvedSpeakerName(
+                                recordingID: rid,
+                                speakerIndex: speakerIndex
+                            )
                             // Best-effort, non-blocking: backfill suggestions for the new person.
                             Task.detached { [store] in
                                 let engine = SpeakerSuggestionEngine(store: store, embedderKind: "wespeaker_v2")
@@ -1145,6 +1161,10 @@ public struct HarcWindowRootView: View {
                     Task {
                         do {
                             try await store.unlinkSpeaker(recordingID: rid, speakerIndex: speakerIndex)
+                            try await clearMirroredSpeakerName(
+                                recordingID: rid,
+                                speakerIndex: speakerIndex
+                            )
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1215,6 +1235,27 @@ public struct HarcWindowRootView: View {
         } else {
             inspectorPendingSuggestions = []
         }
+    }
+
+    /// Keep the recording's portable speaker-name metadata in step with its
+    /// local Person link. Export, OKF projection, remote clients, and search
+    /// consume `speakerNames` without access to the host's People table.
+    func mirrorResolvedSpeakerName(recordingID: Int64, speakerIndex: Int) async throws {
+        guard let latest = try await store.fetch(id: recordingID) else { return }
+        let name = try await store.resolvedSpeakerName(
+            recordingID: recordingID,
+            speakerIndex: speakerIndex
+        )
+        var names = latest.speakerNames
+        names[speakerIndex] = name
+        try await store.updateSpeakerNames(id: recordingID, names: names)
+    }
+
+    func clearMirroredSpeakerName(recordingID: Int64, speakerIndex: Int) async throws {
+        guard let latest = try await store.fetch(id: recordingID) else { return }
+        var names = latest.speakerNames
+        names.removeValue(forKey: speakerIndex)
+        try await store.updateSpeakerNames(id: recordingID, names: names)
     }
 
     // MARK: - Helpers
@@ -1303,7 +1344,10 @@ public struct HarcWindowRootView: View {
     /// transcript turns.
     func loadResolvedLabels() async {
         guard let rec = currentRecording, let id = rec.id else {
-            await MainActor.run { resolvedSpeakerLabels = [:] }
+            await MainActor.run {
+                resolvedSpeakerLabels = [:]
+                renderedSpeakerLabels = [:]
+            }
             return
         }
         var out: [Int: String] = [:]
@@ -1313,12 +1357,15 @@ public struct HarcWindowRootView: View {
             }
         }
         await MainActor.run {
+            guard currentRecording?.id == id else { return }
+            let previousLabels = renderedSpeakerLabels
             resolvedSpeakerLabels = out
             // Rebuild transcript segments with the freshly-resolved labels so
             // Person-linked names appear in the transcript turns. This handles
             // the case where loadTranscript() ran before this async read
             // completed and built segments with an empty dict.
             rebuildTranscriptSegments()
+            applyResolvedSpeakerLabels(from: previousLabels)
         }
     }
 
@@ -1336,6 +1383,7 @@ public struct HarcWindowRootView: View {
         editorSaveError = nil
         lastAutosaveAt = nil
         speakerBoundaries = []
+        renderedSpeakerLabels = [:]
         guard let recording = selectedRecording else { return }
         titleDraft = recording.title ?? ""
 
@@ -1348,6 +1396,7 @@ public struct HarcWindowRootView: View {
         speakerBoundaries = Self.speakerTurnOffsets(in: doc.initialText)
         vocabCandidates = []
         lastSavedEditorText = doc.initialText
+        renderedSpeakerLabels = recording.speakerNames
 
         // Plain text for fallback / pasteboard copy.
         if let cached = recording.transcriptText, !cached.isEmpty {
@@ -1400,6 +1449,31 @@ public struct HarcWindowRootView: View {
                 speakerNames: resolvedSpeakerLabels
             )
         }
+    }
+
+    /// Project store-backed identity into the editable transcript's turn
+    /// headers while preserving every body edit. Turn order comes from the
+    /// JSON diarization, so several clusters may safely share one Person name.
+    @MainActor
+    func applyResolvedSpeakerLabels(from previousLabels: [Int: String]) {
+        guard let recording = selectedRecording, let document = detailDocument else { return }
+        let turnSpeakerIndices = ExportInputBuilder.build(from: recording).segments.compactMap(\.speaker)
+        let rewritten = TranscriptSpeakerLabelRewriter.rewrite(
+            editorText,
+            turnSpeakerIndices: turnSpeakerIndices,
+            previousLabels: previousLabels,
+            resolvedLabels: resolvedSpeakerLabels
+        )
+        renderedSpeakerLabels = resolvedSpeakerLabels
+        guard rewritten != editorText else { return }
+
+        let wasDirty = editorDirty
+        detailDocument = document.replacingInitialText(rewritten)
+        editorText = rewritten
+        transcriptText = rewritten
+        speakerBoundaries = Self.speakerTurnOffsets(in: rewritten)
+        lastSavedEditorText = rewritten
+        editorDirty = wasDirty
     }
 
     static func buildDisplaySegments(

@@ -68,8 +68,11 @@ public struct RequestHandler: Sendable {
                 var result = try await transcriber.transcribe(audioPath: req.audioPath, vad: req.vad)
                 if req.diarize, let diarizer {
                     do {
-                        let segs = try await diarizer.diarize(audioPath: req.audioPath)
-                        result.speakers = segs
+                        let output = try await diarizer.diarizeWithEmbeddings(
+                            audioPath: req.audioPath
+                        )
+                        result.speakers = output.segments
+                        result.speakerEmbeddings = output.speakers
                     } catch {
                         // Diarization is best-effort during chunked transcribe;
                         // log but return text + words intact.

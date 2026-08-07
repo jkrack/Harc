@@ -27,6 +27,10 @@ public enum HarcLibraryAuthorizationError: Error, Equatable, Sendable {
     case invalidOpenedSessionAuthorization
 }
 
+public enum HarcLibraryRPCTransportError: Error, Equatable, Sendable {
+    case speakerIdentitySyncUnsupported
+}
+
 public typealias HarcLibraryAudioResponseConsumer = @Sendable (
     Harc_V1_GetAudioResponseV1
 ) async throws -> Void
@@ -72,6 +76,32 @@ public protocol HarcLibraryRPCTransport: Sendable {
         _ request: Harc_V1_ApplyMetadataMutationRequestV1,
         authorization: HarcLibraryAuthorization
     ) async throws -> Harc_V1_ApplyMetadataMutationResponseV1
+
+    func getSpeakerRecognitionPack(
+        _ request: Harc_V1_GetSpeakerRecognitionPackRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_GetSpeakerRecognitionPackResponseV1
+
+    func submitSpeakerObservation(
+        _ request: Harc_V1_SubmitSpeakerObservationRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SubmitSpeakerObservationResponseV1
+}
+
+public extension HarcLibraryRPCTransport {
+    func getSpeakerRecognitionPack(
+        _ request: Harc_V1_GetSpeakerRecognitionPackRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_GetSpeakerRecognitionPackResponseV1 {
+        throw HarcLibraryRPCTransportError.speakerIdentitySyncUnsupported
+    }
+
+    func submitSpeakerObservation(
+        _ request: Harc_V1_SubmitSpeakerObservationRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SubmitSpeakerObservationResponseV1 {
+        throw HarcLibraryRPCTransportError.speakerIdentitySyncUnsupported
+    }
 }
 
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
@@ -165,6 +195,26 @@ public struct HarcGeneratedLibraryRPCAdapter<
         authorization: HarcLibraryAuthorization
     ) async throws -> Harc_V1_ApplyMetadataMutationResponseV1 {
         try await client.applyMetadataMutation(
+            request,
+            metadata: authorization.metadata
+        )
+    }
+
+    public func getSpeakerRecognitionPack(
+        _ request: Harc_V1_GetSpeakerRecognitionPackRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_GetSpeakerRecognitionPackResponseV1 {
+        try await client.getSpeakerRecognitionPack(
+            request,
+            metadata: authorization.metadata
+        )
+    }
+
+    public func submitSpeakerObservation(
+        _ request: Harc_V1_SubmitSpeakerObservationRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SubmitSpeakerObservationResponseV1 {
+        try await client.submitSpeakerObservation(
             request,
             metadata: authorization.metadata
         )

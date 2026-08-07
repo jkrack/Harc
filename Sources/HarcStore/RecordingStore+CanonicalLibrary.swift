@@ -296,13 +296,41 @@ public extension RecordingStore {
                 .fetchOne(database)
             else { return nil }
 
-            let labels = try recording.speakerNames
+            var names = recording.speakerNames
+            var identities: [Int: (PersonID, EntityRevision)] = [:]
+            if let recordingID = recording.id {
+                let identityRows = try Row.fetchAll(database, sql: """
+                    SELECT ps.speaker_index, p.stable_uuid, p.display_name,
+                           p.profile_revision
+                    FROM person_speakers ps
+                    JOIN people p ON p.id = ps.person_id
+                    WHERE ps.recording_id = ?
+                    """, arguments: [recordingID])
+                for row in identityRows {
+                    let index: Int = row["speaker_index"]
+                    guard let uuid = UUID(uuidString: row["stable_uuid"] as String) else {
+                        throw StoreError.invalidData("Stored stable speaker identity is invalid")
+                    }
+                    names[index] = row["display_name"]
+                    identities[index] = (
+                        PersonID(uuid),
+                        try EntityRevision(signedValue: row["profile_revision"])
+                    )
+                }
+            }
+
+            let labels = try names
                 .sorted { $0.key < $1.key }
                 .map { index, name in
                     guard let portableIndex = UInt32(exactly: index) else {
                         throw StoreError.invalidData("Speaker index is outside the portable range")
                     }
-                    return try SpeakerLabel(speakerIndex: portableIndex, displayName: name)
+                    return try SpeakerLabel(
+                        speakerIndex: portableIndex,
+                        displayName: name,
+                        personID: identities[index]?.0,
+                        identityRevision: identities[index]?.1
+                    )
                 }
 
             return try LibraryRecordingDetail(

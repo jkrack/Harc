@@ -26,6 +26,7 @@ public enum HarcHostMetadataMutation: Codable, Equatable, Sendable {
     case setTitle(String?)
     case replaceTags([String])
     case setSpeakerLabel(index: UInt32, displayName: String?)
+    case assignSpeakerIdentity(index: UInt32, personID: PersonID?)
     case setNotesMarkdown(String?)
     case setPinned(Bool)
 }
@@ -34,6 +35,7 @@ public enum HarcHostMetadataFieldValue: Codable, Equatable, Sendable {
     case title(String?)
     case tags([String])
     case speakerLabel(index: UInt32, displayName: String?)
+    case speakerIdentity(index: UInt32, personID: PersonID?, displayName: String?)
     case notesMarkdown(String?)
     case pinned(Bool)
 }
@@ -338,9 +340,13 @@ public actor HarcHostLibraryService {
             ))
         )
         let preparedEffect = try encoder.encode(effect)
+        let requiredScope: AuthorizationScope = switch command.mutation {
+        case .assignSpeakerIdentity: .speakerAssignmentWrite
+        default: .libraryMetadataWrite
+        }
         let disposition = try await hostStore.prepareExternalOperationEffect(
             context: session.context,
-            requiredScope: .libraryMetadataWrite,
+            requiredScope: requiredScope,
             messageType: "library.metadata-mutation.v1",
             operationID: command.operationID,
             issuedAt: command.issuedAt,
@@ -571,6 +577,36 @@ public actor HarcHostLibraryService {
             throw HarcHostLibraryError.recordingNotFound
         }
         return detail
+    }
+
+    public func speakerRecognitionPack(
+        session: HostAuthenticatedSession,
+        afterRevision: EntityRevision?
+    ) async throws -> SpeakerRecognitionPack? {
+        guard try await store.libraryMetadata().libraryID
+                == session.context.libraryID else {
+            throw HarcHostLibraryError.snapshotBindingMismatch
+        }
+        let pack = try await store.speakerRecognitionPack(at: now())
+        if let afterRevision, afterRevision == pack.revision {
+            return nil
+        }
+        return pack
+    }
+
+    public func submitSpeakerObservation(
+        session: HostAuthenticatedSession,
+        observation: SpeakerEmbeddingObservation
+    ) async throws -> SpeakerObservationDecision {
+        guard try await store.libraryMetadata().libraryID
+                == session.context.libraryID else {
+            throw HarcHostLibraryError.snapshotBindingMismatch
+        }
+        return try await store.submitSpeakerObservation(
+            observation,
+            from: session.context.authenticatedDeviceID,
+            at: now()
+        )
     }
 
     public func prepareAudioDownload(
@@ -1046,6 +1082,8 @@ private extension HarcHostMetadataMutation {
         case .replaceTags(let value): .replaceTags(value)
         case .setSpeakerLabel(let index, let displayName):
             .setSpeakerLabel(index: index, displayName: displayName)
+        case .assignSpeakerIdentity(let index, let personID):
+            .assignSpeakerIdentity(index: index, personID: personID)
         case .setNotesMarkdown(let value): .setNotesMarkdown(value)
         case .setPinned(let value): .setPinned(value)
         }
@@ -1059,6 +1097,12 @@ private extension HarcHostMetadataFieldValue {
         case .tags(let value): self = .tags(value)
         case .speakerLabel(let index, let displayName):
             self = .speakerLabel(index: index, displayName: displayName)
+        case .speakerIdentity(let index, let personID, let displayName):
+            self = .speakerIdentity(
+                index: index,
+                personID: personID,
+                displayName: displayName
+            )
         case .notesMarkdown(let value): self = .notesMarkdown(value)
         case .pinned(let value): self = .pinned(value)
         }

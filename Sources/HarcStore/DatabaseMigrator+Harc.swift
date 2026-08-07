@@ -497,6 +497,119 @@ extension DatabaseMigrator {
                 """)
         }
 
+        // Stable host-authoritative speaker identities and the durable intake
+        // journal for client-computed voice observations. Existing local row
+        // IDs remain intact; stable UUIDs are the only IDs sent over the wire.
+        migrator.registerMigration("v18_speaker_identity_sync") { db in
+            try db.alter(table: "speaker_embeddings") { table in
+                table.add(column: "prototype_uuid", .text).notNull().defaults(to: "")
+            }
+            let legacyPrototypes = try Row.fetchAll(
+                db,
+                sql: "SELECT recording_id, speaker_index FROM speaker_embeddings ORDER BY recording_id, speaker_index"
+            )
+            for row in legacyPrototypes {
+                try db.execute(
+                    sql: "UPDATE speaker_embeddings SET prototype_uuid = ? WHERE recording_id = ? AND speaker_index = ?",
+                    arguments: [
+                        UUID().uuidString.lowercased(),
+                        row["recording_id"] as Int64,
+                        row["speaker_index"] as Int,
+                    ]
+                )
+            }
+            try db.execute(sql: "CREATE UNIQUE INDEX speaker_embeddings_prototype_uuid_uq ON speaker_embeddings(prototype_uuid)")
+            try db.execute(sql: """
+                CREATE TRIGGER speaker_embeddings_v18_validate_prototype_insert
+                BEFORE INSERT ON speaker_embeddings FOR EACH ROW
+                WHEN length(NEW.prototype_uuid) <> 36
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid speaker prototype identity');
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER speaker_embeddings_v18_validate_prototype_update
+                BEFORE UPDATE OF prototype_uuid ON speaker_embeddings FOR EACH ROW
+                WHEN length(NEW.prototype_uuid) <> 36
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid speaker prototype identity');
+                END
+                """)
+
+            try db.alter(table: "people") { table in
+                table.add(column: "stable_uuid", .text).notNull().defaults(to: "")
+                table.add(column: "profile_revision", .integer).notNull().defaults(to: 1)
+            }
+            let personIDs = try Int64.fetchAll(db, sql: "SELECT id FROM people ORDER BY id")
+            for personID in personIDs {
+                try db.execute(
+                    sql: "UPDATE people SET stable_uuid = ? WHERE id = ?",
+                    arguments: [UUID().uuidString.lowercased(), personID]
+                )
+            }
+            try db.execute(sql: "CREATE UNIQUE INDEX people_stable_uuid_uq ON people(stable_uuid)")
+            try db.execute(sql: """
+                CREATE TRIGGER people_v18_validate_stable_uuid_insert
+                BEFORE INSERT ON people FOR EACH ROW
+                WHEN length(NEW.stable_uuid) <> 36 OR NEW.profile_revision < 1
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid stable speaker identity');
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER people_v18_validate_stable_uuid_update
+                BEFORE UPDATE OF stable_uuid, profile_revision ON people FOR EACH ROW
+                WHEN length(NEW.stable_uuid) <> 36 OR NEW.profile_revision < 1
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid stable speaker identity');
+                END
+                """)
+
+            try db.execute(sql: """
+                CREATE TABLE speaker_identity_metadata (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    pack_revision INTEGER NOT NULL CHECK(pack_revision > 0),
+                    updated_at REAL NOT NULL
+                )
+                """)
+            try db.execute(
+                sql: "INSERT INTO speaker_identity_metadata (singleton, pack_revision, updated_at) VALUES (1, 1, ?)",
+                arguments: [Date().timeIntervalSince1970]
+            )
+
+            try db.execute(sql: """
+                CREATE TABLE speaker_embedding_observations (
+                    operation_uuid TEXT PRIMARY KEY CHECK(length(operation_uuid) = 36),
+                    request_sha256 BLOB NOT NULL CHECK(length(request_sha256) = 32),
+                    canonical_recording_uuid TEXT NOT NULL CHECK(length(canonical_recording_uuid) = 36),
+                    speaker_index INTEGER NOT NULL CHECK(speaker_index >= 0),
+                    source_device_id BLOB NOT NULL CHECK(length(source_device_id) = 32),
+                    model_id TEXT NOT NULL CHECK(length(model_id) BETWEEN 1 AND 128),
+                    dimensions INTEGER NOT NULL CHECK(dimensions BETWEEN 1 AND 4096),
+                    quantized_embedding BLOB NOT NULL,
+                    quantization_scale REAL NOT NULL CHECK(quantization_scale > 0),
+                    segment_count INTEGER NOT NULL CHECK(segment_count > 0),
+                    speech_duration_ms INTEGER NOT NULL CHECK(speech_duration_ms > 0),
+                    source_pack_revision INTEGER,
+                    proposed_person_uuid TEXT,
+                    proposed_score REAL,
+                    disposition TEXT NOT NULL CHECK(disposition IN ('matched', 'noMatch', 'pendingReview')),
+                    decided_person_uuid TEXT,
+                    decided_score REAL,
+                    received_at REAL NOT NULL,
+                    result_json BLOB NOT NULL,
+                    CHECK(length(quantized_embedding) = dimensions),
+                    CHECK(source_pack_revision IS NULL OR source_pack_revision > 0),
+                    CHECK((proposed_person_uuid IS NULL) = (proposed_score IS NULL)),
+                    CHECK((decided_person_uuid IS NULL) = (decided_score IS NULL))
+                )
+                """)
+            try db.execute(sql: """
+                CREATE INDEX speaker_embedding_observations_recording_idx
+                ON speaker_embedding_observations(canonical_recording_uuid, speaker_index)
+                """)
+        }
+
         return migrator
     }
 }

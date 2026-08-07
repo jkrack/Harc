@@ -210,6 +210,9 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
             .libraryTranscriptRead,
             .libraryAudioRead,
             .libraryMetadataWrite,
+            .speakerIdentityRead,
+            .speakerObservationWrite,
+            .speakerAssignmentWrite,
         ])
         return Array(Set(scopes)).sorted()
     }

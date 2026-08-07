@@ -6,7 +6,7 @@ import Testing
 
 @Suite("Harc protobuf schema contract")
 struct SchemaContractTests {
-    @Test("generated services pin all 25 V1 RPC names and streaming shapes")
+    @Test("generated services pin all 27 V1 RPC names and streaming shapes")
     func serviceMethodInventory() {
         let descriptorGroups = [
             Harc_V1_HostInfoService.Method.descriptors,
@@ -48,11 +48,13 @@ struct SchemaContractTests {
             "harc.v1.LibraryService/SearchMetadata|unary",
             "harc.v1.LibraryService/SearchTranscripts|unary",
             "harc.v1.LibraryService/ApplyMetadataMutation|unary",
+            "harc.v1.LibraryService/GetSpeakerRecognitionPack|unary",
+            "harc.v1.LibraryService/SubmitSpeakerObservation|unary",
             "harc.v1.ProcessingService/SubmitOwnArtifact|clientStreaming",
             "harc.v1.ProcessingService/GetProcessingStatus|unary",
         ]
 
-        #expect(actual.count == 25)
+        #expect(actual.count == 27)
         #expect(actual == expected)
     }
 
@@ -131,6 +133,12 @@ struct SchemaContractTests {
         let _: (Harc_V1_ApplyMetadataMutationRequestV1.Type, Harc_V1_ApplyMetadataMutationResponseV1.Type) =
             (Harc_V1_LibraryService.Method.ApplyMetadataMutation.Input.self,
              Harc_V1_LibraryService.Method.ApplyMetadataMutation.Output.self)
+        let _: (Harc_V1_GetSpeakerRecognitionPackRequestV1.Type, Harc_V1_GetSpeakerRecognitionPackResponseV1.Type) =
+            (Harc_V1_LibraryService.Method.GetSpeakerRecognitionPack.Input.self,
+             Harc_V1_LibraryService.Method.GetSpeakerRecognitionPack.Output.self)
+        let _: (Harc_V1_SubmitSpeakerObservationRequestV1.Type, Harc_V1_SubmitSpeakerObservationResponseV1.Type) =
+            (Harc_V1_LibraryService.Method.SubmitSpeakerObservation.Input.self,
+             Harc_V1_LibraryService.Method.SubmitSpeakerObservation.Output.self)
 
         let _: (Harc_V1_SubmitOwnArtifactRequestV1.Type, Harc_V1_SubmitOwnArtifactResponseV1.Type) =
             (Harc_V1_ProcessingService.Method.SubmitOwnArtifact.Input.self,
@@ -140,7 +148,7 @@ struct SchemaContractTests {
              Harc_V1_ProcessingService.Method.GetProcessingStatus.Output.self)
     }
 
-    @Test("all 28 closed V1 enums default to their zero unspecified value")
+    @Test("all 29 closed V1 enums default to their zero unspecified value")
     func enumZeroValues() {
         let zeroValues: [(name: String, rawValue: Int)] = [
             ("CanonicalPCMEncodingV1", Harc_V1_CanonicalPCMEncodingV1().rawValue),
@@ -169,11 +177,12 @@ struct SchemaContractTests {
             ("AudioRepresentationV1", Harc_V1_AudioRepresentationV1().rawValue),
             ("MetadataSearchSortV1", Harc_V1_MetadataSearchSortV1().rawValue),
             ("TranscriptSearchModeV1", Harc_V1_TranscriptSearchModeV1().rawValue),
+            ("SpeakerObservationDispositionV1", Harc_V1_SpeakerObservationDispositionV1().rawValue),
             ("ProcessingBundleEntryTypeV1", Harc_V1_ProcessingBundleEntryTypeV1().rawValue),
             ("ProcessingSubmissionDispositionV1", Harc_V1_ProcessingSubmissionDispositionV1().rawValue),
         ]
 
-        #expect(zeroValues.count == 28)
+        #expect(zeroValues.count == 29)
         for value in zeroValues {
             #expect(value.rawValue == 0, "\(value.name) must preserve UNSPECIFIED = 0")
         }

@@ -150,10 +150,18 @@ struct MigrationTests {
             try db.execute(
                 sql: """
                 INSERT INTO speaker_embeddings
-                (recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind, prototype_uuid)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                arguments: [recID, 0, Data(repeating: 0xAA, count: 1024), 3, 4500, "wespeaker_v2"]
+                arguments: [
+                    recID,
+                    0,
+                    Data(repeating: 0xAA, count: 1024),
+                    3,
+                    4500,
+                    "wespeaker_v2",
+                    UUID().uuidString.lowercased(),
+                ]
             )
         }
 

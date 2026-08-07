@@ -103,6 +103,23 @@ public struct TranscriptDocument: Sendable {
         )
     }
 
+    /// Return the same document metadata with a different presentation text
+    /// and a word index rebuilt for that text. Speaker identity changes the
+    /// visible turn headers, so offsets must be refreshed at the same time.
+    public func replacingInitialText(_ text: String) -> TranscriptDocument {
+        TranscriptDocument(
+            recordingID: recordingID,
+            initialText: text,
+            words: words,
+            speakers: speakers,
+            wavURL: wavURL,
+            txtURL: txtURL,
+            jsonURL: jsonURL,
+            audioAvailable: audioAvailable,
+            jsonAvailable: jsonAvailable
+        )
+    }
+
     /// Atomic write of the edited text to `txtURL`, plus a best-effort stamp
     /// of `manualEditAt` onto the JSON. JSON-stamp failures are logged to
     /// stderr but don't fail the save.

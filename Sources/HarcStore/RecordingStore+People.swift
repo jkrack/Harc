@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import HarcDomain
 
 public extension RecordingStore {
 
@@ -10,12 +11,15 @@ public extension RecordingStore {
             let now = Date().timeIntervalSince1970
             try database.execute(
                 sql: """
-                    INSERT INTO people (display_name, match_threshold, created_at, updated_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO people
+                        (stable_uuid, display_name, match_threshold, created_at, updated_at, profile_revision)
+                    VALUES (?, ?, ?, ?, ?, 1)
                     """,
-                arguments: [displayName, matchThreshold, now, now]
+                arguments: [PersonID.random().description, displayName, matchThreshold, now, now]
             )
-            return database.lastInsertedRowID
+            let localID = database.lastInsertedRowID
+            try Self.bumpSpeakerRecognitionPackRevision(in: database, at: now)
+            return localID
         }
     }
 
@@ -27,17 +31,23 @@ public extension RecordingStore {
 
     static func fetchPeople(db database: Database) throws -> [Person] {
         let rows = try Row.fetchAll(database, sql: """
-            SELECT id, display_name, match_threshold, created_at, updated_at
+            SELECT id, stable_uuid, display_name, match_threshold,
+                   created_at, updated_at, profile_revision
             FROM people
             ORDER BY display_name COLLATE NOCASE
             """)
-        return rows.map { row in
-            Person(
+        return try rows.map { row in
+            guard let uuid = UUID(uuidString: row["stable_uuid"] as String) else {
+                throw StoreError.invalidData("Stored stable speaker identity is invalid")
+            }
+            return Person(
                 id: row["id"],
+                stableID: PersonID(uuid),
                 displayName: row["display_name"],
                 matchThreshold: row["match_threshold"],
                 createdAt: Date(timeIntervalSince1970: row["created_at"]),
-                updatedAt: Date(timeIntervalSince1970: row["updated_at"])
+                updatedAt: Date(timeIntervalSince1970: row["updated_at"]),
+                profileRevision: try EntityRevision(signedValue: row["profile_revision"])
             )
         }
     }
@@ -46,16 +56,26 @@ public extension RecordingStore {
 
     func renamePerson(id: Int64, to newName: String) async throws {
         try await db.write { database in
+            let now = Date().timeIntervalSince1970
             try database.execute(
-                sql: "UPDATE people SET display_name = ?, updated_at = ? WHERE id = ?",
-                arguments: [newName, Date().timeIntervalSince1970, id]
+                sql: "UPDATE people SET display_name = ?, updated_at = ?, profile_revision = profile_revision + 1 WHERE id = ?",
+                arguments: [newName, now, id]
             )
+            if database.changesCount == 1 {
+                try Self.bumpSpeakerRecognitionPackRevision(in: database, at: now)
+            }
         }
     }
 
     func deletePerson(id: Int64) async throws {
         try await db.write { database in
             try database.execute(sql: "DELETE FROM people WHERE id = ?", arguments: [id])
+            if database.changesCount == 1 {
+                try Self.bumpSpeakerRecognitionPackRevision(
+                    in: database,
+                    at: Date().timeIntervalSince1970
+                )
+            }
         }
     }
 
@@ -63,19 +83,35 @@ public extension RecordingStore {
 
     func linkSpeaker(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws {
         try await db.write { database in
+            let oldPersonID = try Int64.fetchOne(
+                database,
+                sql: "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, speakerIndex]
+            )
+            let now = Date().timeIntervalSince1970
             try database.execute(
                 sql: """
                     INSERT OR REPLACE INTO person_speakers
                         (person_id, recording_id, speaker_index, confirmed_at)
                     VALUES (?, ?, ?, ?)
                     """,
-                arguments: [personID, recordingID, speakerIndex, Date().timeIntervalSince1970]
+                arguments: [personID, recordingID, speakerIndex, now]
+            )
+            _ = try Self.bumpSpeakerProfiles(
+                in: database,
+                personIDs: Set([oldPersonID, personID].compactMap { $0 }),
+                at: now
             )
         }
     }
 
     func unlinkSpeaker(recordingID: Int64, speakerIndex: Int) async throws {
         try await db.write { database in
+            let personID = try Int64.fetchOne(
+                database,
+                sql: "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, speakerIndex]
+            )
             try database.execute(
                 sql: """
                     DELETE FROM person_speakers
@@ -83,6 +119,13 @@ public extension RecordingStore {
                     """,
                 arguments: [recordingID, speakerIndex]
             )
+            if let personID, database.changesCount == 1 {
+                _ = try Self.bumpSpeakerProfiles(
+                    in: database,
+                    personIDs: [personID],
+                    at: Date().timeIntervalSince1970
+                )
+            }
         }
     }
 
@@ -145,13 +188,19 @@ public extension RecordingStore {
 
     func confirmSuggestion(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws {
         try await db.write { db in
+            let oldPersonID = try Int64.fetchOne(
+                db,
+                sql: "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, speakerIndex]
+            )
+            let now = Date().timeIntervalSince1970
             try db.execute(
                 sql: """
                     INSERT OR REPLACE INTO person_speakers
                         (person_id, recording_id, speaker_index, confirmed_at)
                     VALUES (?, ?, ?, ?)
                     """,
-                arguments: [personID, recordingID, speakerIndex, Date().timeIntervalSince1970]
+                arguments: [personID, recordingID, speakerIndex, now]
             )
             try db.execute(
                 sql: """
@@ -159,6 +208,11 @@ public extension RecordingStore {
                     WHERE recording_id = ? AND speaker_index = ?
                     """,
                 arguments: [recordingID, speakerIndex]
+            )
+            _ = try Self.bumpSpeakerProfiles(
+                in: db,
+                personIDs: Set([oldPersonID, personID].compactMap { $0 }),
+                at: now
             )
         }
     }
@@ -216,6 +270,7 @@ public extension RecordingStore {
     func mergePeople(sourceIDs: [Int64], into targetID: Int64) async throws {
         guard !sourceIDs.isEmpty else { return }
         try await db.write { db in
+            let now = Date().timeIntervalSince1970
             for sourceID in sourceIDs where sourceID != targetID {
                 // Re-attribute confirmed linkages.
                 try db.execute(
@@ -273,6 +328,13 @@ public extension RecordingStore {
                     arguments: [sourceID]
                 )
             }
+            try db.execute(
+                sql: "UPDATE people SET profile_revision = profile_revision + 1, updated_at = ? WHERE id = ?",
+                arguments: [now, targetID]
+            )
+            if db.changesCount == 1 {
+                try Self.bumpSpeakerRecognitionPackRevision(in: db, at: now)
+            }
         }
     }
 
@@ -284,13 +346,22 @@ public extension RecordingStore {
             let now = Date().timeIntervalSince1970
             try db.execute(
                 sql: """
-                    INSERT INTO people (display_name, match_threshold, created_at, updated_at)
-                    VALUES (?, NULL, ?, ?)
+                    INSERT INTO people
+                        (stable_uuid, display_name, match_threshold, created_at, updated_at, profile_revision)
+                    VALUES (?, ?, NULL, ?, ?, 1)
                     """,
-                arguments: [name, now, now]
+                arguments: [PersonID.random().description, name, now, now]
             )
             let newID = db.lastInsertedRowID
+            var affectedPersonIDs: Set<Int64> = [newID]
             for slot in slots {
+                if let oldPersonID = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
+                    arguments: [slot.recordingID, slot.speakerIndex]
+                ) {
+                    affectedPersonIDs.insert(oldPersonID)
+                }
                 try db.execute(
                     sql: """
                         UPDATE person_speakers
@@ -300,6 +371,11 @@ public extension RecordingStore {
                     arguments: [newID, now, slot.recordingID, slot.speakerIndex]
                 )
             }
+            _ = try Self.bumpSpeakerProfiles(
+                in: db,
+                personIDs: affectedPersonIDs,
+                at: now
+            )
             return newID
         }
     }
@@ -330,12 +406,13 @@ public extension RecordingStore {
     func fetchSpeakerEmbeddings(recordingID: Int64, embedderKind: String) async throws -> [SpeakerEmbeddingRow] {
         try await db.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
+                SELECT prototype_uuid, recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
                 FROM speaker_embeddings
                 WHERE recording_id = ? AND embedder_kind = ?
                 """, arguments: [recordingID, embedderKind])
             return rows.map {
                 SpeakerEmbeddingRow(
+                    prototypeID: SpeakerPrototypeID(UUID(uuidString: $0["prototype_uuid"] as String)!),
                     recordingID: $0["recording_id"],
                     speakerIndex: $0["speaker_index"],
                     embedding: $0["embedding"],
@@ -351,7 +428,7 @@ public extension RecordingStore {
     func fetchEmbeddingsForPerson(_ personID: Int64, embedderKind: String) async throws -> [SpeakerEmbeddingRow] {
         try await db.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT e.recording_id, e.speaker_index, e.embedding, e.segment_count, e.total_ms, e.embedder_kind
+                SELECT e.prototype_uuid, e.recording_id, e.speaker_index, e.embedding, e.segment_count, e.total_ms, e.embedder_kind
                 FROM speaker_embeddings e
                 JOIN person_speakers ps
                   ON ps.recording_id = e.recording_id
@@ -360,6 +437,7 @@ public extension RecordingStore {
                 """, arguments: [personID, embedderKind])
             return rows.map {
                 SpeakerEmbeddingRow(
+                    prototypeID: SpeakerPrototypeID(UUID(uuidString: $0["prototype_uuid"] as String)!),
                     recordingID: $0["recording_id"],
                     speakerIndex: $0["speaker_index"],
                     embedding: $0["embedding"],
@@ -375,12 +453,13 @@ public extension RecordingStore {
     func fetchAllSpeakerEmbeddings(embedderKind: String) async throws -> [SpeakerEmbeddingRow] {
         try await db.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
+                SELECT prototype_uuid, recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
                 FROM speaker_embeddings
                 WHERE embedder_kind = ?
                 """, arguments: [embedderKind])
             return rows.map {
                 SpeakerEmbeddingRow(
+                    prototypeID: SpeakerPrototypeID(UUID(uuidString: $0["prototype_uuid"] as String)!),
                     recordingID: $0["recording_id"],
                     speakerIndex: $0["speaker_index"],
                     embedding: $0["embedding"],

@@ -192,8 +192,6 @@ extension HarcWindowRootView {
             .padding([.horizontal, .top])
             .padding(.bottom, HarcSpacing.sm)
 
-            Divider()
-
             // The transcript, editable in place. This pane is the single
             // surface — the separate editor window, its second toolbar,
             // second find bar and hash-derived waveform are gone.
@@ -297,6 +295,10 @@ extension HarcWindowRootView {
                         }
                     )
                     .frame(maxWidth: 680)
+                    // AppKit rulers may otherwise draw outside the frame
+                    // SwiftUI assigns during split-view relayout, producing
+                    // a full-height hairline through the header.
+                    .clipped()
                     Spacer(minLength: 0)
                 }
             }

@@ -84,4 +84,59 @@ struct CanonicalMetadataMutationTests {
             at: Date(timeIntervalSince1970: 1_800_000_200)
         ) == result)
     }
+
+    @Test("signed identity assignment binds the stable Host person and replays")
+    func speakerIdentityAssignment() async throws {
+        let store = try await RecordingStore.inMemory()
+        let inserted = try await store.upsert(
+            Recording(
+                wavPath: "/tmp/identity-assignment.wav",
+                startedAt: Date(timeIntervalSince1970: 1_800_000_000)
+            )
+        )
+        let recordingID = try #require(inserted.id)
+        let localPersonID = try await store.createPerson(displayName: "Frank Thomas")
+        let person = try #require(
+            try await store.fetchPeople().first { $0.id == localPersonID }
+        )
+        let digest = Data(repeating: 0x43, count: 32)
+        let operationID = OperationID(UUID())
+        let result = try await store.applyCanonicalMetadataMutation(
+            operationID: operationID,
+            exactRequestSHA256: digest,
+            canonicalID: inserted.canonicalID,
+            expectedRevision: inserted.revision,
+            mutation: .assignSpeakerIdentity(
+                index: 0,
+                personID: person.stableID
+            ),
+            at: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        guard case .applied(let revision, _) = result else {
+            Issue.record("Expected applied assignment")
+            return
+        }
+        let links = try await store.fetchPersonSpeakerLinks(recordingID: recordingID)
+        #expect(links.count == 1)
+        #expect(links.first?.personID == localPersonID)
+        #expect(try await store.resolvedSpeakerName(
+            recordingID: recordingID,
+            speakerIndex: 0
+        ) == "Frank Thomas")
+        #expect(try await store.fetch(canonicalID: inserted.canonicalID)?.revision == revision)
+
+        let replay = try await store.applyCanonicalMetadataMutation(
+            operationID: operationID,
+            exactRequestSHA256: digest,
+            canonicalID: inserted.canonicalID,
+            expectedRevision: inserted.revision,
+            mutation: .assignSpeakerIdentity(
+                index: 0,
+                personID: person.stableID
+            ),
+            at: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        #expect(replay == result)
+        #expect(try await store.fetchPersonSpeakerLinks(recordingID: recordingID).count == 1)
+    }
 }

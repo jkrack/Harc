@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import HarcDomain
 
 /// GRDB-backed store for `Recording` rows. Actor-isolated; all DB access
 /// serializes through `dbQueue` (GRDB's `DatabaseQueue` is itself thread-safe
@@ -647,6 +648,7 @@ public actor RecordingStore {
     /// `SpeakerEmbedding` so `HarcStore` can ship without a dep on the
     /// voiceprint library — callers translate at the boundary.
     public struct SpeakerEmbeddingRow: Sendable, Equatable {
+        public let prototypeID: SpeakerPrototypeID
         public let recordingID: Int64
         public let speakerIndex: Int
         public let embedding: Data        // packed Float32
@@ -655,6 +657,7 @@ public actor RecordingStore {
         public let embedderKind: String?
 
         public init(
+            prototypeID: SpeakerPrototypeID = .random(),
             recordingID: Int64,
             speakerIndex: Int,
             embedding: Data,
@@ -662,6 +665,7 @@ public actor RecordingStore {
             totalMs: Int,
             embedderKind: String? = nil
         ) {
+            self.prototypeID = prototypeID
             self.recordingID = recordingID
             self.speakerIndex = speakerIndex
             self.embedding = embedding
@@ -678,6 +682,11 @@ public actor RecordingStore {
         rows: [SpeakerEmbeddingRow]
     ) async throws {
         try await db.write { db in
+            let linkedPersonIDs = Set(try Int64.fetchAll(
+                db,
+                sql: "SELECT DISTINCT person_id FROM person_speakers WHERE recording_id = ?",
+                arguments: [recordingID]
+            ))
             try db.execute(
                 sql: "DELETE FROM speaker_embeddings WHERE recording_id = ?",
                 arguments: [recordingID]
@@ -688,10 +697,11 @@ public actor RecordingStore {
                 try db.execute(
                     sql: """
                     INSERT INTO speaker_embeddings
-                    (recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (prototype_uuid, recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     arguments: [
+                        row.prototypeID.description,
                         row.recordingID,
                         row.speakerIndex,
                         row.embedding,
@@ -699,6 +709,13 @@ public actor RecordingStore {
                         row.totalMs,
                         row.embedderKind,
                     ]
+                )
+            }
+            if !linkedPersonIDs.isEmpty {
+                _ = try Self.bumpSpeakerProfiles(
+                    in: db,
+                    personIDs: linkedPersonIDs,
+                    at: Date().timeIntervalSince1970
                 )
             }
         }
@@ -711,13 +728,14 @@ public actor RecordingStore {
             if let row = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
+                SELECT prototype_uuid, recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
                 FROM speaker_embeddings
                 WHERE recording_id = ? AND speaker_index = ?
                 """,
                 arguments: [recordingID, speakerIndex]
             ) {
                 return SpeakerEmbeddingRow(
+                    prototypeID: SpeakerPrototypeID(UUID(uuidString: row["prototype_uuid"] as String)!),
                     recordingID: row["recording_id"],
                     speakerIndex: row["speaker_index"],
                     embedding: row["embedding"],
@@ -750,12 +768,13 @@ public actor RecordingStore {
             }
             let where_ = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
             let sql = """
-                SELECT recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
+                SELECT prototype_uuid, recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
                 FROM speaker_embeddings
                 \(where_)
                 """
             return try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args)).map { row in
                 SpeakerEmbeddingRow(
+                    prototypeID: SpeakerPrototypeID(UUID(uuidString: row["prototype_uuid"] as String)!),
                     recordingID: row["recording_id"],
                     speakerIndex: row["speaker_index"],
                     embedding: row["embedding"],

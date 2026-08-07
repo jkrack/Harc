@@ -9,6 +9,7 @@ enum HarcMobileMetadataMutation: Equatable, Sendable {
     case setTitle(String?)
     case replaceTags([String])
     case setSpeakerLabel(index: UInt32, displayName: String?)
+    case assignSpeakerIdentity(index: UInt32, personID: PersonID?)
     case setNotesMarkdown(String?)
     case setPinned(Bool)
 
@@ -17,6 +18,7 @@ enum HarcMobileMetadataMutation: Equatable, Sendable {
         case .setTitle: .setTitle
         case .replaceTags: .setTags
         case .setSpeakerLabel: .setSpeakerLabel
+        case .assignSpeakerIdentity: .assignSpeakerIdentity
         case .setNotesMarkdown: .setNotes
         case .setPinned: .setPinned
         }
@@ -145,6 +147,11 @@ struct HarcMobileSignedMetadataMutation: Sendable {
                 value.displayName = displayName
             }
             return .setSpeakerLabel(value)
+        case .assignSpeakerIdentity(let index, let personID):
+            var value = Harc_V1_AssignSpeakerIdentityMutationV1()
+            value.speakerIndex = index
+            if let personID { value.personID = Harc_V1_PersonIDV1(personID) }
+            return .assignSpeakerIdentity(value)
         case .setNotesMarkdown(let markdown):
             var value = Harc_V1_SetNotesMarkdownMutationV1()
             if let markdown {

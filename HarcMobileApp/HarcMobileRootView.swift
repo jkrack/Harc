@@ -1114,17 +1114,27 @@ private struct HarcMobileRecordingDetailView: View {
                             ) { label in
                                 HarcMobileSpeakerLabelEditor(
                                     label: label,
-                                    isSaving: isSavingMetadata
-                                ) { displayName in
+                                    profiles: coordinator.recognitionPack?.profiles ?? [],
+                                    isSaving: isSavingMetadata,
+                                    onSave: { displayName in
                                     submitMetadata(
                                         .setSpeakerLabel(
                                             index: label.speakerIndex,
                                             displayName: displayName
                                         )
                                     )
-                                }
+                                    },
+                                    onAssign: { personID in
+                                        submitMetadata(
+                                            .assignSpeakerIdentity(
+                                                index: label.speakerIndex,
+                                                personID: personID
+                                            )
+                                        )
+                                    }
+                                )
                                 .id(
-                                    "\(label.speakerIndex)-\(label.displayName)"
+                                    "\(label.speakerIndex)-\(label.displayName)-\(label.personID?.description ?? "unlinked")-\(coordinator.recognitionPack?.revision.rawValue ?? 0)"
                                 )
                             }
                         }
@@ -1244,7 +1254,12 @@ private struct HarcMobileRecordingDetailView: View {
                     if let transcript = detail.transcriptText,
                        !transcript.isEmpty {
                         Section("Transcript") {
-                            Text(transcript)
+                            Text(
+                                SpeakerTranscriptLabelProjector.project(
+                                    transcript,
+                                    labels: detail.speakerLabels
+                                )
+                            )
                                 .textSelection(.enabled)
                         }
                     }
@@ -1388,19 +1403,25 @@ private struct HarcMobileRecordingDetailView: View {
 
 private struct HarcMobileSpeakerLabelEditor: View {
     let label: SpeakerLabel
+    let profiles: [SpeakerIdentityProfile]
     let isSaving: Bool
     let onSave: (String?) -> Void
+    let onAssign: (PersonID?) -> Void
 
     @State private var displayName: String
 
     init(
         label: SpeakerLabel,
+        profiles: [SpeakerIdentityProfile],
         isSaving: Bool,
-        onSave: @escaping (String?) -> Void
+        onSave: @escaping (String?) -> Void,
+        onAssign: @escaping (PersonID?) -> Void
     ) {
         self.label = label
+        self.profiles = profiles
         self.isSaving = isSaving
         self.onSave = onSave
+        self.onAssign = onAssign
         _displayName = State(initialValue: label.displayName)
     }
 
@@ -1410,6 +1431,30 @@ private struct HarcMobileSpeakerLabelEditor: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextField("Display name", text: $displayName)
+            if !profiles.isEmpty {
+                Menu {
+                    if label.personID != nil {
+                        Button("Remove Host identity", role: .destructive) {
+                            onAssign(nil)
+                        }
+                        Divider()
+                    }
+                    ForEach(profiles) { profile in
+                        Button(profile.displayName) {
+                            onAssign(profile.id)
+                        }
+                    }
+                } label: {
+                    Label(
+                        label.personID == nil
+                            ? "Link to a Host person"
+                            : "Host identity: \(label.displayName)",
+                        systemImage: label.personID == nil
+                            ? "person.crop.circle.badge.plus"
+                            : "person.crop.circle.badge.checkmark"
+                    )
+                }
+            }
             HStack {
                 Button("Save") {
                     let trimmed = displayName.trimmingCharacters(

@@ -384,6 +384,62 @@ struct DomainConversionsTests {
         #expect(decoded.endedAt == Date(timeIntervalSince1970: Double(wire.endedAtUnixMs) / 1_000))
     }
 
+    @Test("speaker recognition packs and observations retain stable identities")
+    func speakerIdentityRoundTrip() throws {
+        let personID = PersonID(uuid(700))
+        let embedding = try QuantizedSpeakerEmbedding(
+            dimensions: 4,
+            values: Data([0x01, 0x7f, 0xff, 0x20]),
+            scale: 0.01
+        )
+        let prototype = try SpeakerRecognitionPrototype(
+            id: SpeakerPrototypeID(uuid(701)),
+            embedding: embedding,
+            speechDurationMs: 8_000,
+            segmentCount: 3
+        )
+        let profile = try SpeakerIdentityProfile(
+            id: personID,
+            displayName: "Frank Thomas",
+            matchThreshold: 0.72,
+            revision: EntityRevision(4),
+            prototypes: [prototype]
+        )
+        let pack = try SpeakerRecognitionPack(
+            revision: EntityRevision(9),
+            modelID: "wespeaker_v2",
+            dimensions: 4,
+            generatedAt: Date(timeIntervalSince1970: 2_000_000_000),
+            expiresAt: Date(timeIntervalSince1970: 2_000_086_400),
+            profiles: [profile]
+        )
+        #expect(try Harc_V1_SpeakerRecognitionPackV1(pack).domainValue() == pack)
+
+        let observation = try SpeakerEmbeddingObservation(
+            operationID: OperationID(uuid(702)),
+            canonicalRecordingID: CanonicalRecordingID(uuid(703)),
+            speakerIndex: 1,
+            embedding: embedding,
+            modelID: "wespeaker_v2",
+            speechDurationMs: 5_000,
+            segmentCount: 2,
+            sourcePackRevision: pack.revision,
+            proposedPersonID: personID,
+            proposedScore: 0.81
+        )
+        #expect(
+            try Harc_V1_SpeakerEmbeddingObservationV1(observation)
+                .domainValue() == observation
+        )
+        let label = try SpeakerLabel(
+            speakerIndex: 1,
+            displayName: "Frank Thomas",
+            personID: personID,
+            identityRevision: profile.revision
+        )
+        #expect(try Harc_V1_SpeakerLabelV1(label).domainValue() == label)
+    }
+
     private func signingKey(_ value: UInt8) throws -> SoftwareP256SigningKey {
         var scalar = Data(repeating: 0, count: 32)
         scalar[31] = value

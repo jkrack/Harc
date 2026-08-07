@@ -48,6 +48,7 @@ public enum OfflineMetadataMutationKind: String, CaseIterable, Sendable {
     case setTags
     case setPinned
     case setSpeakerLabel
+    case assignSpeakerIdentity
     case setNotes
 }
 
@@ -226,6 +227,7 @@ public final class HarcLibraryCache: @unchecked Sendable {
                     // switching to a different host library.
                     try db.execute(sql: "DELETE FROM library_conflicts")
                     try db.execute(sql: "DELETE FROM offline_metadata_mutations")
+                    try db.execute(sql: "DELETE FROM cached_speaker_recognition_pack")
                 }
             }
             try db.execute(sql: "DELETE FROM cached_recordings")
@@ -359,6 +361,81 @@ public final class HarcLibraryCache: @unchecked Sendable {
                 from: payload,
                 field: "cachedRecording"
             )
+        }
+    }
+
+    public func speakerRecognitionPack(
+        libraryID: LibraryID
+    ) throws -> SpeakerRecognitionPack? {
+        try database.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT library_id, pack_payload
+                    FROM cached_speaker_recognition_pack
+                    WHERE singleton = 1
+                    """
+            ) else { return nil }
+            guard (row["library_id"] as String) == libraryID.description else {
+                return nil
+            }
+            return try ClientStoreCoding.decode(
+                SpeakerRecognitionPack.self,
+                from: row["pack_payload"],
+                field: "speakerRecognitionPack"
+            )
+        }
+    }
+
+    public func persistSpeakerRecognitionPack(
+        _ pack: SpeakerRecognitionPack,
+        libraryID: LibraryID
+    ) throws {
+        try database.write { db in
+            if let current = try cacheState(in: db), current.libraryID != libraryID {
+                throw ClientStoreError.wrongLibrary(
+                    expected: current.libraryID,
+                    presented: libraryID
+                )
+            }
+            let encodedPack = try ClientStoreCoding.encode(pack)
+            if let existing = try Row.fetchOne(
+                db,
+                sql: "SELECT pack_revision, pack_payload FROM cached_speaker_recognition_pack WHERE singleton = 1"
+            ) {
+                let stored = try EntityRevision(
+                    signedValue: existing["pack_revision"]
+                )
+                guard pack.revision >= stored else {
+                    throw ClientStoreError.revisionRollback(
+                        stored: stored,
+                        presented: pack.revision
+                    )
+                }
+                if pack.revision == stored {
+                    guard existing["pack_payload"] as Data == encodedPack else {
+                        throw ClientStoreError.revisionEquivocation(
+                            revision: pack.revision
+                        )
+                    }
+                    return
+                }
+            }
+            try db.execute(sql: """
+                INSERT INTO cached_speaker_recognition_pack (
+                    singleton, library_id, pack_revision, pack_payload, cached_at_ms
+                ) VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(singleton) DO UPDATE SET
+                    library_id = excluded.library_id,
+                    pack_revision = excluded.pack_revision,
+                    pack_payload = excluded.pack_payload,
+                    cached_at_ms = excluded.cached_at_ms
+                """, arguments: [
+                    libraryID.description,
+                    try pack.revision.signedInt64Value(),
+                    encodedPack,
+                    try ClientStoreCoding.milliseconds(now()),
+                ])
         }
     }
 
@@ -592,6 +669,7 @@ public final class HarcLibraryCache: @unchecked Sendable {
             try db.execute(sql: "DELETE FROM cached_recordings")
             try db.execute(sql: "DELETE FROM cached_tombstones")
             try db.execute(sql: "DELETE FROM cache_cursor")
+            try db.execute(sql: "DELETE FROM cached_speaker_recognition_pack")
         }
     }
 

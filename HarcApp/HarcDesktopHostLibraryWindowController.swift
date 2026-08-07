@@ -295,7 +295,15 @@ private struct HarcDesktopHostRecordingDetailView: View {
                         header(detail)
                         metadataEditor(detail)
                         conflicts
-                        textSection("Transcript", detail.transcriptText)
+                        textSection(
+                            "Transcript",
+                            detail.transcriptText.map {
+                                SpeakerTranscriptLabelProjector.project(
+                                    $0,
+                                    labels: detail.speakerLabels
+                                )
+                            }
+                        )
                         textSection("Summary", detail.summaryMarkdown)
                         textSection("Action Items", detail.actionItemsMarkdown)
                         textSection("Notes", detail.notesMarkdown)
@@ -366,6 +374,50 @@ private struct HarcDesktopHostRecordingDetailView: View {
                             tagsDraft.split(separator: ",").map(String.init)
                         )
                     )
+                }
+                if !detail.speakerLabels.isEmpty {
+                    Divider()
+                    Text("Speaker identities")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(detail.speakerLabels, id: \.speakerIndex) { label in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Speaker \(label.speakerIndex)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(label.displayName)
+                            }
+                            Spacer()
+                            Menu(label.personID == nil ? "Link Person" : "Change Person") {
+                                if label.personID != nil {
+                                    Button("Remove Host identity", role: .destructive) {
+                                        submitMetadata(
+                                            .assignSpeakerIdentity(
+                                                index: label.speakerIndex,
+                                                personID: nil
+                                            )
+                                        )
+                                    }
+                                    Divider()
+                                }
+                                ForEach(coordinator.recognitionPack?.profiles ?? []) { profile in
+                                    Button(profile.displayName) {
+                                        submitMetadata(
+                                            .assignSpeakerIdentity(
+                                                index: label.speakerIndex,
+                                                personID: profile.id
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                            .disabled(
+                                isSavingMetadata
+                                    || coordinator.recognitionPack?.profiles.isEmpty != false
+                            )
+                        }
+                    }
                 }
                 Text("Notes").font(.caption).foregroundStyle(.secondary)
                 TextEditor(text: $notesDraft)

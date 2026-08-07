@@ -100,19 +100,35 @@ public struct LibraryRecordingSummary: Codable, Equatable, Hashable, Sendable, I
 public struct SpeakerLabel: Codable, Equatable, Hashable, Sendable {
     public let speakerIndex: UInt32
     public let displayName: String
+    public let personID: PersonID?
+    public let identityRevision: EntityRevision?
 
-    public init(speakerIndex: UInt32, displayName: String) throws {
+    public init(
+        speakerIndex: UInt32,
+        displayName: String,
+        personID: PersonID? = nil,
+        identityRevision: EntityRevision? = nil
+    ) throws {
+        guard (personID == nil) == (identityRevision == nil) else {
+            throw DomainValidationError.invalidState(
+                reason: "A canonical speaker identity requires both person ID and revision"
+            )
+        }
         self.speakerIndex = speakerIndex
         self.displayName = try DomainValidation.nonemptyTrimmed(
             displayName,
             field: "SpeakerLabel.displayName",
             maximum: 256
         )
+        self.personID = personID
+        self.identityRevision = identityRevision
     }
 
     private enum CodingKeys: String, CodingKey {
         case speakerIndex
         case displayName
+        case personID
+        case identityRevision
     }
 
     public init(from decoder: any Decoder) throws {
@@ -120,7 +136,9 @@ public struct SpeakerLabel: Codable, Equatable, Hashable, Sendable {
         do {
             try self.init(
                 speakerIndex: container.decode(UInt32.self, forKey: .speakerIndex),
-                displayName: container.decode(String.self, forKey: .displayName)
+                displayName: container.decode(String.self, forKey: .displayName),
+                personID: container.decodeIfPresent(PersonID.self, forKey: .personID),
+                identityRevision: container.decodeIfPresent(EntityRevision.self, forKey: .identityRevision)
             )
         } catch {
             throw DecodingError.dataCorrupted(

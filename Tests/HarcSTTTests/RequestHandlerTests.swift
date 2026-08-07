@@ -195,6 +195,41 @@ struct RequestHandlerTests {
         #expect(await fakeDi.diarizeWithEmbeddingsCalls.isEmpty)
     }
 
+    @Test("transcribe with diarization returns segments and embeddings together")
+    func transcribeReturnsDiarizationEmbeddings() async throws {
+        let fake = FakeTranscriber()
+        let fakeDi = FakeDiarizer()
+        let embedding = SpeakerEmbeddingRow(
+            speakerIndex: 0,
+            vector: [Float](repeating: 0.0625, count: 256),
+            totalMs: 2_000,
+            segmentCount: 1
+        )
+        await fakeDi.setDiarizationResult(Diarizer.DiarizationOutput(
+            segments: [SpeakerSegment(speaker: 0, startMs: 0, endMs: 2_000)],
+            speakers: [embedding]
+        ))
+        let handler = RequestHandler(
+            transcriber: fake,
+            diarizer: fakeDi,
+            version: "0.1.0",
+            startedAt: Date()
+        )
+
+        let response = await handler.handle(.transcribe(
+            TranscribeRequest(audioPath: "/tmp/d.wav", diarize: true)
+        ))
+
+        guard case .result(let result) = response else {
+            Issue.record("expected .result, got: \(response)")
+            return
+        }
+        #expect(result.speakers.count == 1)
+        #expect(result.speakerEmbeddings == [embedding])
+        #expect(await fakeDi.diarizeWithEmbeddingsCalls == ["/tmp/d.wav"])
+        #expect(await fakeDi.diarizeCalls.isEmpty)
+    }
+
     @Test("diarize request returns .diarization with embeddings")
     func diarizeRequestReturnsEmbeddings() async throws {
         let fake = FakeTranscriber()

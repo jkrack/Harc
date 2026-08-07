@@ -120,6 +120,34 @@ public struct OperationID: Hashable, Sendable, Comparable, Codable, CustomString
     public func encode(to encoder: any Encoder) throws { try encodeUUID(rawValue, to: encoder) }
 }
 
+/// Stable, host-authoritative identity for one known speaker.
+///
+/// This UUID is portable across paired clients. The integer `people.id` used by
+/// the desktop database remains an implementation detail and must never cross
+/// the host boundary.
+public struct PersonID: Hashable, Sendable, Comparable, Codable, CustomStringConvertible {
+    public let rawValue: UUID
+
+    public init(_ rawValue: UUID) { self.rawValue = rawValue }
+    public static func random() -> Self { Self(UUID()) }
+    public var description: String { rawValue.uuidString.lowercased() }
+    public static func < (lhs: Self, rhs: Self) -> Bool { uuidLessThan(lhs.rawValue, rhs.rawValue) }
+    public init(from decoder: any Decoder) throws { self.init(try decodeUUID(from: decoder, typeName: "PersonID")) }
+    public func encode(to encoder: any Encoder) throws { try encodeUUID(rawValue, to: encoder) }
+}
+
+/// Stable identity for one prototype included in a recognition pack.
+public struct SpeakerPrototypeID: Hashable, Sendable, Comparable, Codable, CustomStringConvertible {
+    public let rawValue: UUID
+
+    public init(_ rawValue: UUID) { self.rawValue = rawValue }
+    public static func random() -> Self { Self(UUID()) }
+    public var description: String { rawValue.uuidString.lowercased() }
+    public static func < (lhs: Self, rhs: Self) -> Bool { uuidLessThan(lhs.rawValue, rhs.rawValue) }
+    public init(from decoder: any Decoder) throws { self.init(try decodeUUID(from: decoder, typeName: "SpeakerPrototypeID")) }
+    public func encode(to encoder: any Encoder) throws { try encodeUUID(rawValue, to: encoder) }
+}
+
 /// SHA-256 identity of the host's versioned canonical authority public key.
 public struct HostAuthorityID: Hashable, Sendable, Comparable, Codable, CustomStringConvertible {
     public static let byteCount = 32

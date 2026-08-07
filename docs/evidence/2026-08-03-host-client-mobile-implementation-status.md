@@ -1,6 +1,6 @@
 # Host, Client, and Mobile Implementation Status
 
-**Date:** 2026-08-05
+**Date:** 2026-08-06
 
 **Branch:** `main`
 
@@ -13,6 +13,12 @@ remains intentionally deferred because the specification makes its inference
 extraction, agent, VPN, iPad, and migration work optional after the vertical
 slice is stable.
 
+The post-roadmap shared-speaker extension is also source-complete and locally
+validated: the Host owns stable Person identities and canonical labels, while
+desktop and mobile clients receive a versioned recognition pack and submit
+idempotent observations or exact-signed manual assignments. Full evidence is in
+[2026-08-06 shared speaker identity](2026-08-06-shared-speaker-identity.md).
+
 The local implementation, standalone regression, iOS Simulator build/tests,
 unsigned macOS application build, and code-owned TestFlight review surfaces are
 green. This is not yet a mobile-release-complete or TestFlight-complete claim:
@@ -22,8 +28,9 @@ evidence outside this coding session.
 
 ## Latest signed-runtime and hardware checkpoint
 
-- Harc 0.13.6 (51) is published through the notarized GitHub release and live
-  Sparkle feed. The signed production regression proved that a normal Quit
+- Harc 0.13.8 (53) is published through the notarized GitHub release and live
+  Sparkle feed. It includes the pairing-camera readiness fix and the signed
+  production regression proving that a normal Quit
   removes both the application and an inherited `harc-stt` helper; 0.13.5 had
   reproduced the orphaned-helper failure immediately before replacement.
 - Desktop pairing no longer requires a camera. Harc 0.13.5 added an explicit
@@ -51,6 +58,7 @@ evidence outside this coding session.
 | PR 7 | iPhone durable capture, QR adoption, lossless chunks, persistent outbox, production background transfer/relaunch reconciliation, receipt flow, and standalone local playback/export | `2e0c58b` through `main` |
 | PR 8 | Host Library snapshot/delta sync, search, detail, verified audio playback, signed metadata mutations and conflicts | `4aa7858` through `8c5e3bd` |
 | PR 9 | Mac Client pairing/outbox, Host Library, signed edge artifacts, Host arbitration, managed audio cache policy | `33e0b2e` through `c5bba8c` |
+| Shared speaker identity | Stable Host People/prototypes, versioned client recognition packs, idempotent observations, signed assignments, and canonical labels | Unreleased working tree; [validation evidence](2026-08-06-shared-speaker-identity.md) |
 
 ## Validation completed in this pass
 

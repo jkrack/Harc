@@ -185,6 +185,9 @@ final class HarcMobilePairingCoordinator {
             .libraryTranscriptRead,
             .libraryAudioRead,
             .libraryMetadataWrite,
+            .speakerIdentityRead,
+            .speakerObservationWrite,
+            .speakerAssignmentWrite,
         ])
         return Array(Set(scopes)).sorted()
     }

@@ -5,6 +5,7 @@ import Foundation
 import HarcAudio
 import HarcClient
 import HarcClientStore
+import HarcCore
 import HarcDomain
 import HarcIdentity
 import HarcTransfer
@@ -224,6 +225,9 @@ final class HarcDesktopClientRuntime: ObservableObject {
 struct HarcDesktopClientCaptureSidecar: Codable, Sendable {
     let capture: FinalizedCapture
     let transcript: SessionTranscript?
+    /// Optional for backward compatibility with captures created before
+    /// federated speaker identity synchronization.
+    let speakerEmbeddings: [SpeakerEmbeddingRow]?
     let persistedAt: Date
 }
 
@@ -281,6 +285,7 @@ private struct HarcDesktopClientRecordingCommitter: RecordingCommitter {
         let sidecar = HarcDesktopClientCaptureSidecar(
             capture: capture,
             transcript: transcript,
+            speakerEmbeddings: captured.speakerEmbeddings,
             persistedAt: Date()
         )
         let sidecarURL = directory.appendingPathComponent(

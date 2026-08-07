@@ -409,6 +409,9 @@ private struct HostPairingView: View {
         case .libraryAudioRead: "Play Library audio"
         case .libraryMetadataWrite: "Edit Library metadata"
         case .processingSubmitOwn: "Submit local processing artifacts"
+        case .speakerIdentityRead: "Download speaker recognition profiles"
+        case .speakerObservationWrite: "Contribute local speaker observations"
+        case .speakerAssignmentWrite: "Confirm speaker identities"
         }
     }
 

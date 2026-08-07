@@ -448,6 +448,26 @@ public final class HarcPinnedGRPCConnection:
         )
     }
 
+    public func getSpeakerRecognitionPack(
+        _ request: Harc_V1_GetSpeakerRecognitionPackRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_GetSpeakerRecognitionPackResponseV1 {
+        try await libraryRPCAdapter.getSpeakerRecognitionPack(
+            request,
+            authorization: authorization
+        )
+    }
+
+    public func submitSpeakerObservation(
+        _ request: Harc_V1_SubmitSpeakerObservationRequestV1,
+        authorization: HarcLibraryAuthorization
+    ) async throws -> Harc_V1_SubmitSpeakerObservationResponseV1 {
+        try await libraryRPCAdapter.submitSpeakerObservation(
+            request,
+            authorization: authorization
+        )
+    }
+
     public func submitOwnArtifact(
         authorization: HarcProcessingAuthorization,
         requestProducer: @escaping HarcProcessingRequestProducer

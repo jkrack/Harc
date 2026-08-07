@@ -38,6 +38,92 @@ message LibraryRecordingSummaryV1 {
 message SpeakerLabelV1 {
   uint32 speaker_index = 1;
   string display_name = 2;
+  optional PersonIDV1 person_id = 3;
+  optional uint64 identity_revision = 4;
+}
+
+// Compact client recognition state. `signed_int8_values` stores the bit
+// patterns of signed Int8 values; value * scale reconstructs an approximate
+// normalized Float32 component. Raw Host embedding history is never returned.
+message QuantizedSpeakerEmbeddingV1 {
+  uint32 dimensions = 1;
+  bytes signed_int8_values = 2;
+  float scale = 3;
+}
+
+message SpeakerRecognitionPrototypeV1 {
+  SpeakerPrototypeIDV1 prototype_id = 1;
+  QuantizedSpeakerEmbeddingV1 embedding = 2;
+  uint64 speech_duration_ms = 3;
+  uint32 segment_count = 4;
+}
+
+message SpeakerIdentityProfileV1 {
+  PersonIDV1 person_id = 1;
+  string display_name = 2;
+  double match_threshold = 3;
+  uint64 revision = 4;
+  repeated SpeakerRecognitionPrototypeV1 prototypes = 5;
+}
+
+message SpeakerRecognitionPackV1 {
+  uint64 revision = 1;
+  string model_id = 2;
+  uint32 dimensions = 3;
+  uint64 generated_at_unix_ms = 4;
+  uint64 expires_at_unix_ms = 5;
+  repeated SpeakerIdentityProfileV1 profiles = 6;
+}
+
+message GetSpeakerRecognitionPackRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  optional uint64 after_revision = 2;
+}
+
+message GetSpeakerRecognitionPackResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  bool unchanged = 2;
+  optional SpeakerRecognitionPackV1 pack = 3;
+}
+
+message SpeakerEmbeddingObservationV1 {
+  OperationIDV1 operation_id = 1;
+  CanonicalRecordingIDV1 canonical_recording_id = 2;
+  uint32 speaker_index = 3;
+  QuantizedSpeakerEmbeddingV1 embedding = 4;
+  string model_id = 5;
+  uint64 speech_duration_ms = 6;
+  uint32 segment_count = 7;
+  optional uint64 source_pack_revision = 8;
+  optional PersonIDV1 proposed_person_id = 9;
+  optional double proposed_score = 10;
+}
+
+enum SpeakerObservationDispositionV1 {
+  SPEAKER_OBSERVATION_DISPOSITION_UNSPECIFIED = 0;
+  SPEAKER_OBSERVATION_DISPOSITION_MATCHED = 1;
+  SPEAKER_OBSERVATION_DISPOSITION_NO_MATCH = 2;
+  SPEAKER_OBSERVATION_DISPOSITION_PENDING_REVIEW = 3;
+}
+
+message SpeakerObservationDecisionV1 {
+  OperationIDV1 operation_id = 1;
+  SpeakerObservationDispositionV1 disposition = 2;
+  optional PersonIDV1 person_id = 3;
+  optional string display_name = 4;
+  optional double score = 5;
+  uint64 recognition_pack_revision = 6;
+  uint64 recording_revision = 7;
+}
+
+message SubmitSpeakerObservationRequestV1 {
+  ProtocolVersionV1 protocol = 1;
+  SpeakerEmbeddingObservationV1 observation = 2;
+}
+
+message SubmitSpeakerObservationResponseV1 {
+  ProtocolVersionV1 protocol = 1;
+  SpeakerObservationDecisionV1 decision = 2;
 }
 
 message LibraryRecordingDetailV1 {
@@ -297,6 +383,14 @@ message SetSpeakerLabelMutationV1 {
   optional string display_name = 2;
 }
 
+// Binds a diarized speaker slot to a Host-owned identity. The stable Person ID
+// is used instead of a display name so Host renames and recognition updates
+// converge on every paired client. Absent person_id removes the binding.
+message AssignSpeakerIdentityMutationV1 {
+  uint32 speaker_index = 1;
+  optional PersonIDV1 person_id = 2;
+}
+
 message SetPinnedMutationV1 {
   bool pinned = 1;
 }
@@ -325,6 +419,7 @@ message MetadataMutationV1 {
     SetSpeakerLabelMutationV1 set_speaker_label = 14;
     SetNotesMarkdownMutationV1 set_notes_markdown = 15;
     SetPinnedMutationV1 set_pinned = 16;
+    AssignSpeakerIdentityMutationV1 assign_speaker_identity = 17;
   }
 }
 
@@ -332,6 +427,11 @@ message MetadataTagsValueV1 { repeated string tags = 1; }
 message MetadataSpeakerLabelValueV1 {
   uint32 speaker_index = 1;
   optional string display_name = 2;
+}
+message MetadataSpeakerIdentityValueV1 {
+  uint32 speaker_index = 1;
+  optional PersonIDV1 person_id = 2;
+  optional string display_name = 3;
 }
 
 message MetadataFieldValueV1 {
@@ -341,6 +441,7 @@ message MetadataFieldValueV1 {
     MetadataSpeakerLabelValueV1 speaker_label = 3;
     bool pinned = 4;
     string notes_markdown = 5;
+    MetadataSpeakerIdentityValueV1 speaker_identity = 7;
   }
   // Distinguishes a cleared optional field from a present empty-invalid value.
   bool is_cleared = 6;
@@ -382,4 +483,8 @@ service LibraryService {
       returns (SearchTranscriptsResponseV1);
   rpc ApplyMetadataMutation(ApplyMetadataMutationRequestV1)
       returns (ApplyMetadataMutationResponseV1);
+  rpc GetSpeakerRecognitionPack(GetSpeakerRecognitionPackRequestV1)
+      returns (GetSpeakerRecognitionPackResponseV1);
+  rpc SubmitSpeakerObservation(SubmitSpeakerObservationRequestV1)
+      returns (SubmitSpeakerObservationResponseV1);
 }

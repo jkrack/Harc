@@ -480,6 +480,17 @@ enum ClientStoreMigrators {
                 )
                 """)
         }
+        migrator.registerMigration("v2_speaker_recognition_pack") { db in
+            try db.execute(sql: """
+                CREATE TABLE cached_speaker_recognition_pack (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    library_id TEXT NOT NULL CHECK(length(library_id) = 36),
+                    pack_revision INTEGER NOT NULL CHECK(pack_revision > 0),
+                    pack_payload BLOB NOT NULL CHECK(length(pack_payload) > 0),
+                    cached_at_ms INTEGER NOT NULL
+                )
+                """)
+        }
         return migrator
     }
 }

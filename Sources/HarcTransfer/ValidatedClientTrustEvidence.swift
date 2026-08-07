@@ -22,6 +22,9 @@ public enum ClientAuthorizationScope: String, Codable, CaseIterable, Sendable,
     case libraryAudioRead = "library.audio.read"
     case libraryMetadataWrite = "library.metadata.write"
     case processingSubmitOwn = "processing.submit.own"
+    case speakerIdentityRead = "speaker.identity.read"
+    case speakerObservationWrite = "speaker.observation.write"
+    case speakerAssignmentWrite = "speaker.assignment.write"
 
     public static func < (lhs: Self, rhs: Self) -> Bool {
         lhs.rawValue < rhs.rawValue

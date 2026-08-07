@@ -6,6 +6,7 @@ public enum CanonicalMetadataMutation: Codable, Equatable, Sendable {
     case setTitle(String?)
     case replaceTags([String])
     case setSpeakerLabel(index: UInt32, displayName: String?)
+    case assignSpeakerIdentity(index: UInt32, personID: PersonID?)
     case setNotesMarkdown(String?)
     case setPinned(Bool)
 }
@@ -14,6 +15,7 @@ public enum CanonicalMetadataFieldValue: Codable, Equatable, Sendable {
     case title(String?)
     case tags([String])
     case speakerLabel(index: UInt32, displayName: String?)
+    case speakerIdentity(index: UInt32, personID: PersonID?, displayName: String?)
     case notesMarkdown(String?)
     case pinned(Bool)
 }
@@ -81,13 +83,17 @@ public extension RecordingStore {
             if recording.revision != expectedRevision {
                 result = .conflict(
                     currentRevision: recording.revision,
-                    currentValue: Self.currentMetadataFieldValue(
+                    currentValue: try Self.currentMetadataFieldValue(
+                        database: database,
+                        recordingID: recordingID,
                         recording: recording,
                         mutation: mutation
                     )
                 )
             } else {
-                let values = try Self.metadataMutationAssignments(
+                let prepared = try Self.prepareMetadataMutation(
+                    database: database,
+                    recordingID: recordingID,
                     recording: recording,
                     mutation: mutation,
                     updatedAt: date
@@ -96,12 +102,41 @@ public extension RecordingStore {
                 let count = try Recording
                     .filter(key: recordingID)
                     .filter(Recording.Columns.revision == expectedRevisionValue)
-                    .updateAll(database, values)
+                    .updateAll(database, prepared.assignments)
                 guard count == 1 else {
                     throw StoreError.revisionConflict(
                         expected: expectedRevision.rawValue,
                         actual: recording.revision.rawValue
                     )
+                }
+                if let identity = prepared.identityAssignment {
+                    try database.execute(
+                        sql: "DELETE FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
+                        arguments: [recordingID, identity.speakerIndex]
+                    )
+                    if let newPersonID = identity.newPersonLocalID {
+                        try database.execute(sql: """
+                            INSERT INTO person_speakers
+                                (person_id, recording_id, speaker_index, confirmed_at)
+                            VALUES (?, ?, ?, ?)
+                            """, arguments: [
+                                newPersonID,
+                                recordingID,
+                                identity.speakerIndex,
+                                date.timeIntervalSince1970,
+                            ])
+                    }
+                    let affectedPeople = Set([
+                        identity.oldPersonLocalID,
+                        identity.newPersonLocalID,
+                    ].compactMap { $0 })
+                    if !affectedPeople.isEmpty {
+                        _ = try Self.bumpSpeakerProfiles(
+                            in: database,
+                            personIDs: affectedPeople,
+                            at: date.timeIntervalSince1970
+                        )
+                    }
                 }
                 let cursorValue = try Self.bumpRevisionAndAppendLibraryChange(
                     in: database,
@@ -163,6 +198,8 @@ public extension RecordingStore {
             for value in values { try validateOptional(value, field: "tag") }
         case .setSpeakerLabel(_, let value):
             try validateOptional(value, field: "speaker label")
+        case .assignSpeakerIdentity:
+            break
         case .setNotesMarkdown(let value):
             try validateOptional(value, field: "notes")
         case .setPinned:
@@ -171,9 +208,11 @@ public extension RecordingStore {
     }
 
     private static func currentMetadataFieldValue(
+        database: Database,
+        recordingID: Int64,
         recording: Recording,
         mutation: CanonicalMetadataMutation
-    ) -> CanonicalMetadataFieldValue {
+    ) throws -> CanonicalMetadataFieldValue {
         switch mutation {
         case .setTitle:
             return .title(recording.title)
@@ -184,6 +223,24 @@ public extension RecordingStore {
                 index: index,
                 displayName: Int(exactly: index).flatMap { recording.speakerNames[$0] }
             )
+        case .assignSpeakerIdentity(let index, _):
+            let row = try Row.fetchOne(database, sql: """
+                SELECT p.stable_uuid, p.display_name
+                FROM person_speakers ps
+                JOIN people p ON p.id = ps.person_id
+                WHERE ps.recording_id = ? AND ps.speaker_index = ?
+                """, arguments: [recordingID, index])
+            let personID = try row.map { row -> PersonID in
+                guard let uuid = UUID(uuidString: row["stable_uuid"] as String) else {
+                    throw StoreError.invalidData("Stored Person identity is invalid")
+                }
+                return PersonID(uuid)
+            }
+            return .speakerIdentity(
+                index: index,
+                personID: personID,
+                displayName: row?["display_name"]
+            )
         case .setNotesMarkdown:
             return .notesMarkdown(recording.notesMarkdown)
         case .setPinned:
@@ -191,14 +248,28 @@ public extension RecordingStore {
         }
     }
 
-    private static func metadataMutationAssignments(
+    private struct PreparedMetadataMutation {
+        let assignments: [ColumnAssignment]
+        let identityAssignment: IdentityAssignment?
+    }
+
+    private struct IdentityAssignment {
+        let speakerIndex: UInt32
+        let oldPersonLocalID: Int64?
+        let newPersonLocalID: Int64?
+    }
+
+    private static func prepareMetadataMutation(
+        database: Database,
+        recordingID: Int64,
         recording: Recording,
         mutation: CanonicalMetadataMutation,
         updatedAt: Date
-    ) throws -> [ColumnAssignment] {
+    ) throws -> PreparedMetadataMutation {
         var assignments: [ColumnAssignment] = [
             Recording.Columns.updatedAt.set(to: updatedAt)
         ]
+        var identityAssignment: IdentityAssignment?
         switch mutation {
         case .setTitle(let value):
             assignments.append(Recording.Columns.title.set(to: value))
@@ -223,11 +294,51 @@ public extension RecordingStore {
                 json = String(data: try JSONEncoder().encode(encoded), encoding: .utf8)
             }
             assignments.append(Recording.Columns.speakerNames.set(to: json))
+        case .assignSpeakerIdentity(let index, let personID):
+            guard let integerIndex = Int(exactly: index) else {
+                throw StoreError.invalidData("Speaker index is out of range")
+            }
+            let oldPersonID = try Int64.fetchOne(
+                database,
+                sql: "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, index]
+            )
+            let newPerson: (localID: Int64, name: String)?
+            if let personID {
+                guard let row = try Row.fetchOne(
+                    database,
+                    sql: "SELECT id, display_name FROM people WHERE stable_uuid = ?",
+                    arguments: [personID.description]
+                ) else { throw StoreError.notFound }
+                newPerson = (row["id"], row["display_name"])
+            } else {
+                newPerson = nil
+            }
+            var names = recording.speakerNames
+            names[integerIndex] = newPerson?.name
+            let json: String?
+            if names.isEmpty {
+                json = nil
+            } else {
+                let encoded = Dictionary(uniqueKeysWithValues: names.map {
+                    (String($0.key), $0.value)
+                })
+                json = String(data: try JSONEncoder().encode(encoded), encoding: .utf8)
+            }
+            assignments.append(Recording.Columns.speakerNames.set(to: json))
+            identityAssignment = IdentityAssignment(
+                speakerIndex: index,
+                oldPersonLocalID: oldPersonID,
+                newPersonLocalID: newPerson?.localID
+            )
         case .setNotesMarkdown(let value):
             assignments.append(Recording.Columns.notesMarkdown.set(to: value))
         case .setPinned(let value):
             assignments.append(Recording.Columns.pinned.set(to: value))
         }
-        return assignments
+        return PreparedMetadataMutation(
+            assignments: assignments,
+            identityAssignment: identityAssignment
+        )
     }
 }

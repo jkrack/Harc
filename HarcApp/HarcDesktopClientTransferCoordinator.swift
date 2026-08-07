@@ -69,7 +69,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 ? "All Client recordings are on Host"
                 : "\(pendingCount) recording(s) still waiting for Host"
         case .edgeArtifactDeferred(_, let message):
-            "Audio is safe on Host; local transcript handoff will retry: \(message)"
+            "Audio is safe on Host; local metadata handoff will retry: \(message)"
         case .retryNeeded(_, let message):
             "Host transfer needs retry: \(message)"
         case .securityBlocked(_, let message):
@@ -86,6 +86,11 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 return transferable && (
                     outbox.stateMachine.state != .committed
                         || Self.needsProcessingArtifact(
+                            origin: outbox.finalizedCapture.capture
+                                .originRecordingID,
+                            clientRoot: clientRoot
+                        )
+                        || Self.needsSpeakerObservations(
                             origin: outbox.finalizedCapture.capture
                                 .originRecordingID,
                             clientRoot: clientRoot
@@ -205,12 +210,25 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         let connection = opened.connection
         do {
             if alreadyCommitted {
+                guard let receipt = try store.verifiedRecordingReceipt(
+                    for: master.originRecordingID
+                ) else {
+                    throw HarcDesktopClientTransferError.missingVerifiedReceipt
+                }
                 let artifactFailure = try await submitProcessingArtifactIfPresent(
                     origin: master.originRecordingID,
                     opened: opened
                 )
+                let speakerFailure = try await submitSpeakerObservationsIfPresent(
+                    origin: master.originRecordingID,
+                    canonicalID: receipt.canonicalRecordingID,
+                    opened: opened
+                )
                 try await connection.shutdownGracefully()
-                return artifactFailure
+                return Self.combinedDeferredMessage(
+                    artifactFailure,
+                    speakerFailure
+                )
             }
             let profile = try Self.frozenProfile(
                 negotiated: opened.negotiated
@@ -266,7 +284,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 store: store,
                 transport: connection
             )
-            _ = try await uploader.drive(
+            let receipt = try await uploader.drive(
                 plan,
                 openedSession: opened.session,
                 deviceSigner: identity
@@ -275,11 +293,136 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 origin: master.originRecordingID,
                 opened: opened
             )
+            let speakerFailure = try await submitSpeakerObservationsIfPresent(
+                origin: master.originRecordingID,
+                canonicalID: receipt.canonicalRecordingID,
+                opened: opened
+            )
             try await connection.shutdownGracefully()
-            return artifactFailure
+            return Self.combinedDeferredMessage(
+                artifactFailure,
+                speakerFailure
+            )
         } catch {
             await connection.shutdownImmediately()
             throw error
+        }
+    }
+
+    private func submitSpeakerObservationsIfPresent(
+        origin: OriginRecordingID,
+        canonicalID: CanonicalRecordingID,
+        opened: HarcDesktopOpenedHostConnection
+    ) async throws -> String? {
+        do {
+            let sidecarURL = Self.captureSidecarURL(
+                origin: origin,
+                clientRoot: clientRoot
+            )
+            let sidecar = try JSONDecoder().decode(
+                HarcDesktopClientCaptureSidecar.self,
+                from: Data(contentsOf: sidecarURL, options: .mappedIfSafe)
+            )
+            let embeddings = sidecar.speakerEmbeddings ?? []
+            guard !embeddings.isEmpty else { return nil }
+            guard opened.adoption.grant.scopes.contains(
+                .speakerObservationWrite
+            ) else {
+                throw HarcDesktopClientTransferError.speakerScopeNotGranted
+            }
+
+            let authorization = try HarcLibraryAuthorization(
+                openedSession: opened.session
+            )
+            var pack: SpeakerRecognitionPack?
+            if opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
+                var packRequest = Harc_V1_GetSpeakerRecognitionPackRequestV1()
+                packRequest.protocol = HarcProtocolVersion.v1.protobufV1()
+                let response = try await opened.connection
+                    .getSpeakerRecognitionPack(
+                        packRequest,
+                        authorization: authorization
+                    )
+                try Self.validateLibraryProtocol(
+                    response.hasProtocol,
+                    response.protocol
+                )
+                guard response.unchanged != response.hasPack else {
+                    throw HarcDesktopClientTransferError
+                        .malformedSpeakerResponse
+                }
+                if response.hasPack { pack = try response.pack.domainValue() }
+            }
+
+            for row in embeddings {
+                guard row.speakerIndex >= 0,
+                      row.totalMs > 0,
+                      row.segmentCount > 0 else { continue }
+                let quantized = try QuantizedSpeakerEmbedding.quantizing(
+                    row.vector
+                )
+                let match = pack.flatMap {
+                    SpeakerRecognitionMatcher.bestMatch(
+                        embedding: quantized,
+                        modelID: "wespeaker_v2",
+                        pack: $0
+                    )
+                }
+                let observation = try SpeakerEmbeddingObservation(
+                    operationID: Self.observationOperationID(
+                        origin: origin,
+                        speakerIndex: row.speakerIndex
+                    ),
+                    canonicalRecordingID: canonicalID,
+                    speakerIndex: UInt32(row.speakerIndex),
+                    embedding: quantized,
+                    modelID: "wespeaker_v2",
+                    speechDurationMs: UInt64(row.totalMs),
+                    segmentCount: UInt32(row.segmentCount),
+                    sourcePackRevision: match?.packRevision ?? pack?.revision,
+                    proposedPersonID: match?.personID,
+                    proposedScore: match?.score
+                )
+                var request = Harc_V1_SubmitSpeakerObservationRequestV1()
+                request.protocol = HarcProtocolVersion.v1.protobufV1()
+                request.observation = Harc_V1_SpeakerEmbeddingObservationV1(
+                    observation
+                )
+                let response = try await opened.connection
+                    .submitSpeakerObservation(
+                        request,
+                        authorization: authorization
+                    )
+                try Self.validateLibraryProtocol(
+                    response.hasProtocol,
+                    response.protocol
+                )
+                guard response.hasDecision,
+                      try response.decision.domainValue().operationID
+                        == observation.operationID else {
+                    throw HarcDesktopClientTransferError
+                        .malformedSpeakerResponse
+                }
+            }
+
+            let marker = HarcDesktopSpeakerObservationMarker(
+                canonicalRecordingID: canonicalID,
+                acceptedAt: Date()
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            try HarcDesktopClientFiles.writeProtectedData(
+                encoder.encode(marker),
+                to: Self.speakerObservationMarkerURL(
+                    origin: origin,
+                    clientRoot: clientRoot
+                )
+            )
+            return nil
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return error.localizedDescription
         }
     }
 
@@ -403,6 +546,51 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         return decoded.transcript != nil
     }
 
+    private static func needsSpeakerObservations(
+        origin: OriginRecordingID,
+        clientRoot: URL
+    ) -> Bool {
+        guard !FileManager.default.fileExists(
+            atPath: speakerObservationMarkerURL(
+                origin: origin,
+                clientRoot: clientRoot
+            ).path
+        ) else { return false }
+        guard let data = try? Data(
+            contentsOf: captureSidecarURL(
+                origin: origin,
+                clientRoot: clientRoot
+            ),
+            options: .mappedIfSafe
+        ), let sidecar = try? JSONDecoder().decode(
+            HarcDesktopClientCaptureSidecar.self,
+            from: data
+        ) else { return false }
+        return !(sidecar.speakerEmbeddings ?? []).isEmpty
+    }
+
+    private static func captureSidecarURL(
+        origin: OriginRecordingID,
+        clientRoot: URL
+    ) -> URL {
+        clientRoot
+            .appendingPathComponent("Captures", isDirectory: true)
+            .appendingPathComponent(
+                "\(origin.recordingUUID.uuidString.lowercased()).capture.json"
+            )
+    }
+
+    private static func speakerObservationMarkerURL(
+        origin: OriginRecordingID,
+        clientRoot: URL
+    ) -> URL {
+        clientRoot
+            .appendingPathComponent("Captures", isDirectory: true)
+            .appendingPathComponent(
+                "\(origin.recordingUUID.uuidString.lowercased()).speakers-accepted.json"
+            )
+    }
+
     private static func processingMarkerURL(
         origin: OriginRecordingID,
         clientRoot: URL
@@ -483,6 +671,43 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         return ChunkID(uuid)
     }
 
+    private static func observationOperationID(
+        origin: OriginRecordingID,
+        speakerIndex: Int
+    ) -> OperationID {
+        var input = Data("harc-desktop-speaker-observation-v1".utf8)
+        input.append(origin.deviceID.rawBytes)
+        input.append(Data(origin.recordingUUID.uuidString.lowercased().utf8))
+        var index = Int64(speakerIndex).bigEndian
+        withUnsafeBytes(of: &index) { input.append(contentsOf: $0) }
+        var bytes = Array(SHA256.hash(data: input).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x50
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        let uuid = bytes.withUnsafeBufferPointer { buffer in
+            UUID(uuidString: NSUUID(uuidBytes: buffer.baseAddress!).uuidString)!
+        }
+        return OperationID(uuid)
+    }
+
+    private static func validateLibraryProtocol(
+        _ hasProtocol: Bool,
+        _ value: Harc_V1_ProtocolVersionV1
+    ) throws {
+        guard hasProtocol,
+              value.major == HarcProtocolVersion.v1.major,
+              value.minor == HarcProtocolVersion.v1.minor else {
+            throw HarcDesktopClientTransferError.malformedSpeakerResponse
+        }
+    }
+
+    private static func combinedDeferredMessage(
+        _ first: String?,
+        _ second: String?
+    ) -> String? {
+        [first, second].compactMap { $0 }.nilIfEmpty?
+            .joined(separator: " ")
+    }
+
     private static func master(
         from stored: StoredFinalizedCapture
     ) throws -> HarcMobileFinalizedMaster {
@@ -513,14 +738,43 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     }
 }
 
-private enum HarcDesktopClientTransferError: Error {
+private enum HarcDesktopClientTransferError: LocalizedError {
     case notPaired
     case malformedProcessingResponse
     case invalidDurableProcessingSubmission
+    case missingVerifiedReceipt
+    case speakerScopeNotGranted
+    case malformedSpeakerResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .notPaired:
+            "The paired Harc Host is unavailable."
+        case .malformedProcessingResponse:
+            "The Host returned an invalid processing status."
+        case .invalidDurableProcessingSubmission:
+            "The saved processing submission is invalid."
+        case .missingVerifiedReceipt:
+            "The Host did not return a verified recording receipt."
+        case .speakerScopeNotGranted:
+            "This pairing predates shared speaker identity. Re-pair this Mac with the Host."
+        case .malformedSpeakerResponse:
+            "The Host returned invalid speaker identity data."
+        }
+    }
 }
 
 private struct HarcDesktopProcessingMarker: Codable, Sendable {
     let exactSignedMetadataSHA256: Data
     let disposition: Int
     let acceptedAt: Date
+}
+
+private struct HarcDesktopSpeakerObservationMarker: Codable, Sendable {
+    let canonicalRecordingID: CanonicalRecordingID
+    let acceptedAt: Date
+}
+
+private extension Array {
+    var nilIfEmpty: Self? { isEmpty ? nil : self }
 }

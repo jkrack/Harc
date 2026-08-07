@@ -267,6 +267,20 @@ public extension Harc_V1_OperationIDV1 {
     func domainValue() throws -> OperationID { OperationID(try harcUUIDFromWire(value, field: "operationID")) }
 }
 
+public extension Harc_V1_PersonIDV1 {
+    init(_ value: PersonID) { self.init(); self.value = harcUUIDBytesForWire(value.rawValue) }
+    func domainValue() throws -> PersonID {
+        PersonID(try harcUUIDFromWire(value, field: "personID"))
+    }
+}
+
+public extension Harc_V1_SpeakerPrototypeIDV1 {
+    init(_ value: SpeakerPrototypeID) { self.init(); self.value = harcUUIDBytesForWire(value.rawValue) }
+    func domainValue() throws -> SpeakerPrototypeID {
+        SpeakerPrototypeID(try harcUUIDFromWire(value, field: "speakerPrototypeID"))
+    }
+}
+
 public extension Harc_V1_ChunkIDV1 {
     init(_ value: ChunkID) { self.init(); self.value = harcUUIDBytesForWire(value.rawValue) }
     func domainValue() throws -> ChunkID { ChunkID(try harcUUIDFromWire(value, field: "chunkID")) }
@@ -564,6 +578,9 @@ public extension Harc_V1_AuthorizationScopeV1 {
         case .processingSubmitOwn: self = .authorizationScopeProcessingSubmitOwn
         case .recordingReadOwn: self = .authorizationScopeRecordingReadOwn
         case .recordingUploadOwn: self = .authorizationScopeRecordingUploadOwn
+        case .speakerIdentityRead: self = .authorizationScopeSpeakerIdentityRead
+        case .speakerObservationWrite: self = .authorizationScopeSpeakerObservationWrite
+        case .speakerAssignmentWrite: self = .authorizationScopeSpeakerAssignmentWrite
         }
     }
 
@@ -576,6 +593,9 @@ public extension Harc_V1_AuthorizationScopeV1 {
         case .authorizationScopeProcessingSubmitOwn: return .processingSubmitOwn
         case .authorizationScopeRecordingReadOwn: return .recordingReadOwn
         case .authorizationScopeRecordingUploadOwn: return .recordingUploadOwn
+        case .authorizationScopeSpeakerIdentityRead: return .speakerIdentityRead
+        case .authorizationScopeSpeakerObservationWrite: return .speakerObservationWrite
+        case .authorizationScopeSpeakerAssignmentWrite: return .speakerAssignmentWrite
         case .authorizationScopeUnspecified:
             throw HarcProtobufConversionError.unsupportedEnum(
                 field: "authorizationScope",
@@ -1271,10 +1291,20 @@ public extension Harc_V1_SpeakerLabelV1 {
         self.init()
         speakerIndex = value.speakerIndex
         displayName = value.displayName
+        if let personID = value.personID { self.personID = Harc_V1_PersonIDV1(personID) }
+        if let revision = value.identityRevision { identityRevision = revision.rawValue }
     }
 
     func domainValue() throws -> SpeakerLabel {
-        let result = try SpeakerLabel(speakerIndex: speakerIndex, displayName: displayName)
+        guard hasPersonID == hasIdentityRevision else {
+            throw HarcProtobufConversionError.invalidValue(field: "speakerLabel.identity")
+        }
+        let result = try SpeakerLabel(
+            speakerIndex: speakerIndex,
+            displayName: displayName,
+            personID: hasPersonID ? try personID.domainValue() : nil,
+            identityRevision: hasIdentityRevision ? try EntityRevision(identityRevision) : nil
+        )
         guard result.displayName == displayName else {
             throw HarcProtobufConversionError.lossyConversion(field: "speakerLabel.displayName")
         }

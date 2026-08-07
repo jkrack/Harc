@@ -1,4 +1,5 @@
 import XCTest
+import HarcDomain
 @testable import HarcStore
 
 final class PeopleStoreTests: XCTestCase {
@@ -252,6 +253,102 @@ final class PeopleStoreTests: XCTestCase {
         XCTAssertNotNil(items[0].lastSeen)
     }
 
+    // MARK: - Host-authoritative speaker identity sync
+
+    func test_recognitionPack_usesStablePersonAndPrototypeIdentities() async throws {
+        let store = try await RecordingStore.inMemory()
+        let recordingID = try await seedRecording(in: store, wav: "/tmp/pack.wav")
+        let personID = try await store.createPerson(displayName: "Frank Thomas")
+        try await store.linkSpeaker(
+            personID: personID,
+            recordingID: recordingID,
+            speakerIndex: 0
+        )
+        let vector = [Float](repeating: 0.0625, count: 256)
+        let prototypeID = SpeakerPrototypeID.random()
+        try await store.upsertSpeakerEmbeddings(
+            recordingID: recordingID,
+            rows: [
+                .init(
+                    prototypeID: prototypeID,
+                    recordingID: recordingID,
+                    speakerIndex: 0,
+                    embedding: encodeFloat32(vector),
+                    segmentCount: 4,
+                    totalMs: 12_000,
+                    embedderKind: "wespeaker_v2"
+                ),
+            ]
+        )
+
+        let fetchedPeople = try await store.fetchPeople()
+        let person = try XCTUnwrap(fetchedPeople.first)
+        let pack = try await store.speakerRecognitionPack()
+
+        XCTAssertEqual(pack.profiles.count, 1)
+        XCTAssertEqual(pack.profiles[0].id, person.stableID)
+        XCTAssertEqual(pack.profiles[0].displayName, "Frank Thomas")
+        XCTAssertEqual(pack.profiles[0].prototypes.map(\.id), [prototypeID])
+        XCTAssertEqual(pack.profiles[0].prototypes[0].embedding.dimensions, 256)
+        XCTAssertEqual(pack.profiles[0].prototypes[0].embedding.values.count, 256)
+    }
+
+    func test_submitSpeakerObservation_hostDecisionIsCanonicalAndIdempotent() async throws {
+        let store = try await RecordingStore.inMemory()
+        let referenceID = try await seedRecording(in: store, wav: "/tmp/reference.wav")
+        let incomingID = try await seedRecording(in: store, wav: "/tmp/incoming.wav")
+        let personID = try await store.createPerson(displayName: "Frank Thomas")
+        try await store.linkSpeaker(
+            personID: personID,
+            recordingID: referenceID,
+            speakerIndex: 0
+        )
+        let vector = [Float](repeating: 0.0625, count: 256)
+        try await store.upsertSpeakerEmbeddings(
+            recordingID: referenceID,
+            rows: [
+                .init(
+                    recordingID: referenceID,
+                    speakerIndex: 0,
+                    embedding: encodeFloat32(vector),
+                    segmentCount: 5,
+                    totalMs: 15_000,
+                    embedderKind: "wespeaker_v2"
+                ),
+            ]
+        )
+        let fetchedIncoming = try await store.fetch(id: incomingID)
+        let incoming = try XCTUnwrap(fetchedIncoming)
+        let observation = try SpeakerEmbeddingObservation(
+            operationID: .random(),
+            canonicalRecordingID: incoming.canonicalID,
+            speakerIndex: 0,
+            embedding: RecordingStore.quantizeSpeakerEmbedding(vector),
+            modelID: "wespeaker_v2",
+            speechDurationMs: 9_000,
+            segmentCount: 3
+        )
+        let sourceDevice = try DeviceID(Data(repeating: 7, count: DeviceID.byteCount))
+
+        let first = try await store.submitSpeakerObservation(
+            observation,
+            from: sourceDevice
+        )
+        let replay = try await store.submitSpeakerObservation(
+            observation,
+            from: sourceDevice
+        )
+
+        XCTAssertEqual(first, replay)
+        XCTAssertEqual(first.disposition, .matched)
+        XCTAssertEqual(first.displayName, "Frank Thomas")
+        XCTAssertGreaterThan(first.score ?? 0, 0.99)
+        let fetchedUpdated = try await store.fetch(id: incomingID)
+        let updated = try XCTUnwrap(fetchedUpdated)
+        XCTAssertEqual(updated.speakerNames[0], "Frank Thomas")
+        XCTAssertGreaterThan(updated.revision, incoming.revision)
+    }
+
     // MARK: - Helpers
 
     private func seedRecording(in store: RecordingStore, wav: String) async throws -> Int64 {
@@ -265,5 +362,14 @@ final class PeopleStoreTests: XCTestCase {
         )
         let saved = try await store.upsert(rec)
         return saved.id!
+    }
+
+    private func encodeFloat32(_ vector: [Float]) -> Data {
+        var data = Data(capacity: vector.count * 4)
+        for value in vector {
+            var bits = value.bitPattern.littleEndian
+            withUnsafeBytes(of: &bits) { data.append(contentsOf: $0) }
+        }
+        return data
     }
 }

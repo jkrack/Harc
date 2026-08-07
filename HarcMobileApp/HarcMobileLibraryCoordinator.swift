@@ -57,6 +57,7 @@ final class HarcMobileLibraryCoordinator {
     private(set) var searchMessage: String?
     private(set) var pendingMutationCount = 0
     private(set) var conflicts: [VisibleLibraryConflict] = []
+    private(set) var recognitionPack: SpeakerRecognitionPack?
     private(set) var audioPolicy: HarcLibraryAudioPolicy
 
     private let identity: InstallationSigningIdentity
@@ -117,6 +118,10 @@ final class HarcMobileLibraryCoordinator {
             devicePublicKey: identity.publicKey
         )
         guard adoption.grant.scopes.contains(.libraryMetadataWrite) else {
+            throw HarcMobileLibraryError.accessNotGranted
+        }
+        if case .assignSpeakerIdentity = mutation,
+           !adoption.grant.scopes.contains(.speakerAssignmentWrite) {
             throw HarcMobileLibraryError.accessNotGranted
         }
         let signed = try HarcMobileSignedMetadataMutation(
@@ -256,6 +261,58 @@ final class HarcMobileLibraryCoordinator {
             }
             try await opened.connection.shutdownGracefully()
             return detail
+        } catch {
+            await opened.connection.shutdownImmediately()
+            throw error
+        }
+    }
+
+    func submitSpeakerObservation(
+        _ observation: SpeakerEmbeddingObservation
+    ) async throws -> SpeakerObservationDecision {
+        let opened = try await HarcMobileHostSessionConnector.open(
+            identity: identity,
+            store: transferStore,
+            routeURL: routeURL
+        )
+        do {
+            guard opened.adoption.grant.scopes.contains(
+                .speakerObservationWrite
+            ) else {
+                throw HarcMobileLibraryError.accessNotGranted
+            }
+            let authorization = try HarcLibraryAuthorization(
+                openedSession: opened.session
+            )
+            var request = Harc_V1_SubmitSpeakerObservationRequestV1()
+            request.protocol = HarcProtocolVersion.v1.protobufV1()
+            request.observation = Harc_V1_SpeakerEmbeddingObservationV1(
+                observation
+            )
+            let response = try await opened.connection
+                .submitSpeakerObservation(
+                    request,
+                    authorization: authorization
+                )
+            try Self.validateLibraryProtocol(
+                response.hasProtocol,
+                response.protocol
+            )
+            guard response.hasDecision else {
+                throw HarcMobileLibraryError.malformedResponse
+            }
+            let decision = try response.decision.domainValue()
+            guard decision.operationID == observation.operationID else {
+                throw HarcMobileLibraryError.malformedResponse
+            }
+            if opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
+                try await refreshRecognitionPack(
+                    opened: opened,
+                    authorization: authorization
+                )
+            }
+            try await opened.connection.shutdownGracefully()
+            return decision
         } catch {
             await opened.connection.shutdownImmediately()
             throw error
@@ -599,6 +656,41 @@ final class HarcMobileLibraryCoordinator {
             libraryID: opened.adoption.hostTrust.libraryID,
             mayRestartSnapshot: mayRestartSnapshot
         )
+        if opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
+            try await refreshRecognitionPack(
+                opened: opened,
+                authorization: authorization
+            )
+        }
+    }
+
+    private func refreshRecognitionPack(
+        opened: HarcMobileOpenedHostConnection,
+        authorization: HarcLibraryAuthorization
+    ) async throws {
+        let libraryID = opened.adoption.hostTrust.libraryID
+        let cached = try cache.speakerRecognitionPack(libraryID: libraryID)
+        var request = Harc_V1_GetSpeakerRecognitionPackRequestV1()
+        request.protocol = HarcProtocolVersion.v1.protobufV1()
+        if let cached { request.afterRevision = cached.revision.rawValue }
+        let response = try await opened.connection.getSpeakerRecognitionPack(
+            request,
+            authorization: authorization
+        )
+        try Self.validateLibraryProtocol(
+            response.hasProtocol,
+            response.protocol
+        )
+        guard response.unchanged != response.hasPack else {
+            throw HarcMobileLibraryError.malformedResponse
+        }
+        if response.unchanged {
+            recognitionPack = cached
+            return
+        }
+        let pack = try response.pack.domainValue()
+        try cache.persistSpeakerRecognitionPack(pack, libraryID: libraryID)
+        recognitionPack = pack
     }
 
     private func drainOfflineMutations(
@@ -883,6 +975,13 @@ final class HarcMobileLibraryCoordinator {
                     return $0.startedAt > $1.startedAt
                 }
                 return $0.canonicalID < $1.canonicalID
+            }
+            if let libraryID = try cache.state()?.libraryID {
+                recognitionPack = try cache.speakerRecognitionPack(
+                    libraryID: libraryID
+                )
+            } else {
+                recognitionPack = nil
             }
             loadQueueView()
         } catch {

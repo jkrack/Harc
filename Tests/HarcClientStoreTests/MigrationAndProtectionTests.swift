@@ -60,6 +60,7 @@ struct MigrationAndProtectionTests {
         #expect(cacheTables.contains("cached_recordings"))
         #expect(cacheTables.contains("cached_tombstones"))
         #expect(cacheTables.contains("offline_metadata_mutations"))
+        #expect(cacheTables.contains("cached_speaker_recognition_pack"))
         #expect(!cacheTables.contains("trust_namespaces"))
         #expect(!cacheTables.contains("upload_batches"))
 
@@ -142,7 +143,7 @@ struct MigrationAndProtectionTests {
             let migrationCount = try db.read { db in
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM grdb_migrations")
             }
-            #expect(migrationCount == (url == locations.transferDatabase ? 4 : 1))
+            #expect(migrationCount == (url == locations.transferDatabase ? 4 : 2))
         }
     }
 

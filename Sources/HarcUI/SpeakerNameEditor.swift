@@ -104,11 +104,15 @@ public struct SpeakerNameEditor: View {
                 set: { addingPersonForIndex = $0?.value }
             )) { box in
                 AddPersonNameSheet { name in
+                    draftNames[box.value] = name
                     onCreatePerson(name, box.value)
                     addingPersonForIndex = nil
                 } onCancel: {
                     addingPersonForIndex = nil
                 }
+            }
+            .onChange(of: initialNames) { _, newNames in
+                draftNames = newNames
             }
         }
     }
@@ -123,6 +127,7 @@ public struct SpeakerNameEditor: View {
             Menu {
                 ForEach(allPeople) { p in
                     Button(p.displayName) {
+                        draftNames[index] = p.displayName
                         onLinkPerson(p.id, index)
                     }
                 }
@@ -134,6 +139,7 @@ public struct SpeakerNameEditor: View {
                 }
                 Divider()
                 Button("Unassign") {
+                    draftNames.removeValue(forKey: index)
                     onUnlinkPerson(index)
                 }
             } label: {

@@ -239,4 +239,79 @@ struct LibraryCacheTests {
         #expect(try cache.state()?.changeCursor == ChangeCursor(1))
         #expect(try cache.recordings().map(\.canonicalID) == [CanonicalRecordingID(ClientStoreFixtures.uuid(2))])
     }
+
+    @Test("recognition pack is durable, monotonic, and bound to its library")
+    func recognitionPackPersistence() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let libraryID = LibraryID(ClientStoreFixtures.uuid(1))
+        let cache = try HarcLibraryCache(
+            rootDirectory: root,
+            storageAttributes: RecordingStorageAttributes()
+        )
+        let pack = try speakerPack(revision: 3, displayName: "Frank Thomas")
+        try cache.persistSpeakerRecognitionPack(pack, libraryID: libraryID)
+        try cache.persistSpeakerRecognitionPack(pack, libraryID: libraryID)
+        let revisionTwo = try EntityRevision(2)
+        let revisionThree = try EntityRevision(3)
+        #expect(try cache.speakerRecognitionPack(libraryID: libraryID) == pack)
+        #expect(
+            try cache.speakerRecognitionPack(
+                libraryID: LibraryID(ClientStoreFixtures.uuid(2))
+            ) == nil
+        )
+        #expect(throws: ClientStoreError.revisionEquivocation(revision: revisionThree)) {
+            try cache.persistSpeakerRecognitionPack(
+                try speakerPack(revision: 3, displayName: "Changed"),
+                libraryID: libraryID
+            )
+        }
+        #expect(throws: ClientStoreError.revisionRollback(
+            stored: revisionThree,
+            presented: revisionTwo
+        )) {
+            try cache.persistSpeakerRecognitionPack(
+                try speakerPack(revision: 2, displayName: "Older"),
+                libraryID: libraryID
+            )
+        }
+
+        let reopened = try HarcLibraryCache(
+            rootDirectory: root,
+            storageAttributes: RecordingStorageAttributes()
+        )
+        #expect(try reopened.speakerRecognitionPack(libraryID: libraryID) == pack)
+    }
+
+    private func speakerPack(
+        revision: UInt64,
+        displayName: String
+    ) throws -> SpeakerRecognitionPack {
+        let embedding = try QuantizedSpeakerEmbedding(
+            dimensions: 2,
+            values: Data([0x20, 0xe0]),
+            scale: 0.01
+        )
+        let prototype = try SpeakerRecognitionPrototype(
+            id: SpeakerPrototypeID(ClientStoreFixtures.uuid(801)),
+            embedding: embedding,
+            speechDurationMs: 5_000,
+            segmentCount: 2
+        )
+        let profile = try SpeakerIdentityProfile(
+            id: PersonID(ClientStoreFixtures.uuid(800)),
+            displayName: displayName,
+            matchThreshold: 0.7,
+            revision: EntityRevision(revision),
+            prototypes: [prototype]
+        )
+        return try SpeakerRecognitionPack(
+            revision: EntityRevision(revision),
+            modelID: "wespeaker_v2",
+            dimensions: 2,
+            generatedAt: ClientStoreFixtures.baseDate,
+            expiresAt: ClientStoreFixtures.baseDate.addingTimeInterval(86_400),
+            profiles: [profile]
+        )
+    }
 }
