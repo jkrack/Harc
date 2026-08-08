@@ -221,6 +221,12 @@ public struct HarcRecordingTransferGRPCServiceAdapterV1:
                 )
             )
         } catch {
+#if DEBUG
+            print(
+                "[Harc host-transfer] BeginUpload rejected: "
+                    + String(reflecting: error)
+            )
+#endif
             throw HarcPostSessionGRPCErrorMapper.map(error)
         }
     }
@@ -846,8 +852,7 @@ enum HarcRecordingTransferGRPCProjectionV1 {
         guard seconds.isFinite, seconds >= 0,
               milliseconds.isFinite,
               milliseconds <= 9_007_199_254_740_991,
-              let result = UInt64(exactly: milliseconds.rounded()),
-              Date(timeIntervalSince1970: Double(result) / 1_000) == date else {
+              let result = UInt64(exactly: milliseconds.rounded()) else {
             throw HarcProtobufConversionError.lossyConversion(field: field)
         }
         return result

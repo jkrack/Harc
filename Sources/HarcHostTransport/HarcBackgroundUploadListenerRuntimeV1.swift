@@ -387,6 +387,9 @@ package struct HarcBackgroundUploadConnectionHandlerV1: Sendable {
                 parsedHead = try HarcBackgroundUploadHTTPV1
                     .parseRequestHead(requestHead)
             } catch let error as HarcBackgroundUploadHTTPV1Error {
+#if DEBUG
+                print("[Harc background-upload] request-head rejected: \(error)")
+#endif
                 try await writeError(
                     HarcBackgroundUploadHTTPV1.responseStatus(for: error),
                     to: outbound
@@ -408,6 +411,9 @@ package struct HarcBackgroundUploadConnectionHandlerV1: Sendable {
                     servingGeneration
                 )
             } catch {
+#if DEBUG
+                print("[Harc background-upload] admission rejected: \(String(reflecting: error))")
+#endif
                 try await writeError(
                     Self.admissionFailureStatus(error),
                     to: outbound
@@ -499,6 +505,9 @@ package struct HarcBackgroundUploadConnectionHandlerV1: Sendable {
                             finished.url
                         )
                     } catch {
+#if DEBUG
+                        print("[Harc background-upload] ingest rejected: \(String(reflecting: error))")
+#endif
                         try await writeError(
                             Self.ingestFailureStatus(error),
                             to: outbound
@@ -518,7 +527,13 @@ package struct HarcBackgroundUploadConnectionHandlerV1: Sendable {
                                 .end(nil),
                             ]
                         )
+#if DEBUG
+                        print("[Harc background-upload] durable batch acknowledged")
+#endif
                     } catch let error as HarcBackgroundUploadHTTPV1Error {
+#if DEBUG
+                        print("[Harc background-upload] acknowledgement response rejected: \(error)")
+#endif
                         try await writeError(
                             HarcBackgroundUploadHTTPV1.responseStatus(
                                 for: error
@@ -532,6 +547,9 @@ package struct HarcBackgroundUploadConnectionHandlerV1: Sendable {
 
             try await writeError(.badRequest, to: outbound)
         } catch {
+#if DEBUG
+            print("[Harc background-upload] connection failed: \(String(reflecting: error))")
+#endif
             // A peer or pipeline failure can make writing impossible. If it is
             // still writable, return an empty, closing non-redirect response.
             try? await writeError(.badRequest, to: outbound)
@@ -564,7 +582,7 @@ package struct HarcBackgroundUploadConnectionHandlerV1: Sendable {
         }
     }
 
-    private static func ingestFailureStatus(
+    package static func ingestFailureStatus(
         _ error: any Error
     ) -> HTTPResponseStatus {
         if let admissionError = error as?
@@ -578,6 +596,16 @@ package struct HarcBackgroundUploadConnectionHandlerV1: Sendable {
             case .invalidRollbackRoot, .invalidServingGenerationBinding,
                  .rollbackIO, .stagedAcknowledgementMismatch:
                 return .internalServerError
+            }
+        }
+        if let hostError = error as? HarcHostError {
+            switch hostError {
+            case .insufficientFreeSpace, .quotaExceeded:
+                return .insufficientStorage
+            case .volumeCapacityUnavailable, .databaseFailure:
+                return .serviceUnavailable
+            default:
+                break
             }
         }
         return .unprocessableEntity
@@ -729,14 +757,6 @@ package actor HarcBackgroundUploadListenerRuntimeV1:
                 group: eventLoopGroup
             )
             .childChannelOption(ChannelOptions.autoRead, value: true)
-            .childChannelOption(
-                ChannelOptions.recvAllocator,
-                value: AdaptiveRecvByteBufferAllocator(
-                    minimum: 4 * 1_024,
-                    initial: 16 * 1_024,
-                    maximum: 256 * 1_024
-                )
-            )
             .withNWListener(
                 listener,
                 serverBackPressureStrategy: .init(

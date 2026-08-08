@@ -92,7 +92,9 @@ final class HarcMobileCaptureCoordinator {
                 locations: locations,
                 producingDeviceID: producingDeviceID,
                 inputFormat: format,
-                tapFrameCapacity: 4_096,
+                tapFrameCapacity: Self.handoffFrameCapacity(
+                    inputSampleRate: format.sampleRate
+                ),
                 captureStartedAt: startedAt,
                 captureStartedMonotonicNanoseconds: startedMonotonic,
                 storageExhaustionAfterCanonicalBytesForTesting:
@@ -242,17 +244,23 @@ final class HarcMobileCaptureCoordinator {
                 ).flatMap { Self.routeDescriptor($0) }
                 Task { @MainActor [weak self] in
                     let current = AVAudioSession.sharedInstance()
-                    await self?.rebuildCapturePath(
+                    let currentRoute = Self.routeDescriptor(
+                        current.currentRoute,
+                        sampleRate: current.sampleRate,
+                        channelCount: UInt32(
+                            current.inputNumberOfChannels
+                        )
+                    )
+                    guard let self,
+                          Self.capturePathRequiresRebuild(
+                              activeRoute: self.activeRoute,
+                              currentRoute: currentRoute
+                          ) else { return }
+                    await self.rebuildCapturePath(
                         discontinuity: HarcMobileTerminalCaptureDiscontinuity(
                             reason: .routeChanged,
-                            oldRoute: previousRoute ?? self?.activeRoute,
-                            newRoute: Self.routeDescriptor(
-                                current.currentRoute,
-                                sampleRate: current.sampleRate,
-                                channelCount: UInt32(
-                                    current.inputNumberOfChannels
-                                )
-                            )
+                            oldRoute: previousRoute ?? self.activeRoute,
+                            newRoute: currentRoute
                         )
                     )
                 }
@@ -347,7 +355,9 @@ final class HarcMobileCaptureCoordinator {
             let replacement = try await pipeline.prepareReplacementInput(
                 replacing: captureInput,
                 inputFormat: format,
-                tapFrameCapacity: 4_096,
+                tapFrameCapacity: Self.handoffFrameCapacity(
+                    inputSampleRate: format.sampleRate
+                ),
                 discontinuity: discontinuity
             )
             replacementPrepared = true
@@ -400,6 +410,35 @@ final class HarcMobileCaptureCoordinator {
             NotificationCenter.default.removeObserver(observer)
         }
         observers.removeAll()
+    }
+
+    /// iOS may deliver route-sized input buffers that exceed the tap's
+    /// requested buffer size. Preallocate enough room for one second at the
+    /// active hardware rate so the real-time callback can keep its bounded,
+    /// allocation-free contract instead of rejecting every oversized slice.
+    nonisolated static func handoffFrameCapacity(
+        inputSampleRate: Double,
+        requestedTapFrames: AVAudioFrameCount = 4_096
+    ) -> AVAudioFrameCount {
+        guard inputSampleRate.isFinite, inputSampleRate > 0 else {
+            return requestedTapFrames
+        }
+        let boundedHardwareFrames = min(
+            max(inputSampleRate.rounded(.up), Double(requestedTapFrames)),
+            192_000
+        )
+        return AVAudioFrameCount(boundedHardwareFrames)
+    }
+
+    /// Activating an audio session can enqueue a stale route notification even
+    /// though the effective input and format are unchanged. Rebuilding for
+    /// that notification creates a false discontinuity at frame zero.
+    nonisolated static func capturePathRequiresRebuild(
+        activeRoute: CaptureRouteDescriptor?,
+        currentRoute: CaptureRouteDescriptor?
+    ) -> Bool {
+        guard let activeRoute, let currentRoute else { return true }
+        return activeRoute != currentRoute
     }
 }
 

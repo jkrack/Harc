@@ -829,8 +829,7 @@ private func transferUnixMilliseconds(
         throw HarcProtobufConversionError.integerOutOfRange(field: field)
     }
     let rounded = milliseconds.rounded()
-    guard let result = UInt64(exactly: rounded),
-          Date(timeIntervalSince1970: Double(result) / 1_000) == value else {
+    guard let result = UInt64(exactly: rounded) else {
         throw HarcProtobufConversionError.lossyConversion(field: field)
     }
     return result

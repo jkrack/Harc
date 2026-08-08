@@ -374,6 +374,45 @@ struct HarcForegroundRecordingOutboxCoordinatorTests {
             == ForegroundCoordinatorFixture.nowMilliseconds)
     }
 
+    @Test("physical capture clocks canonicalize to signed wire milliseconds")
+    func physicalCaptureClockPrecision() async throws {
+        let fixture = try ForegroundCoordinatorFixture(
+            highPrecisionCaptureDates: true
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let rpc = ForegroundRecordingRPCFake(fixture: fixture, mode: .normal)
+        let coordinator = HarcForegroundRecordingOutboxCoordinator(
+            store: fixture.store,
+            transport: rpc,
+            now: { fixture.now }
+        )
+
+        _ = try await coordinator.drive(
+            fixture.plan,
+            openedSession: fixture.session,
+            deviceSigner: fixture.deviceKey
+        )
+
+        let exactManifest = try #require(await rpc.acceptedManifestBytes())
+        let signed = try HarcSignedObjectV1.decode(exactManifest)
+        let payload = try HarcExactProtobufPayload(
+            decoding: signed.exactPayloadBytes,
+            as: Harc_V1_RecordingManifestV1.self
+        ).message
+        #expect(payload.captureStartedAtUnixMs == UInt64(
+            (fixture.capture.captureStartedAt.timeIntervalSince1970 * 1_000)
+                .rounded()
+        ))
+        #expect(payload.captureEndedAtUnixMs == UInt64(
+            (fixture.capture.captureEndedAt.timeIntervalSince1970 * 1_000)
+                .rounded()
+        ))
+        #expect(payload.discontinuities.first?.wallTimeUnixMs == UInt64(
+            (fixture.capture.discontinuities[0].wallTime.timeIntervalSince1970
+                * 1_000).rounded()
+        ))
+    }
+
     @Test("background scheduling mints exact batch capability and preserves local files")
     func backgroundScheduling() async throws {
         let fixture = try ForegroundCoordinatorFixture()
@@ -534,7 +573,7 @@ private struct ForegroundCoordinatorFixture: @unchecked Sendable {
     let session: HarcOpenedClientSession
     let store: HarcTransferStore
 
-    init() throws {
+    init(highPrecisionCaptureDates: Bool = false) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "harc-foreground-outbox-\(UUID().uuidString)",
             isDirectory: true
@@ -567,11 +606,35 @@ private struct ForegroundCoordinatorFixture: @unchecked Sendable {
         let firstBytes = Data([0x01, 0x02, 0x03, 0x04])
         let secondBytes = Data([0x05, 0x06, 0x07, 0x08])
         let canonicalBytes = firstBytes + secondBytes
+        let capturePrecisionOffset = highPrecisionCaptureDates
+            ? 0.000_417
+            : 0
+        let captureStartedAt = Self.date(
+            Self.nowMilliseconds - 100_000
+        ).addingTimeInterval(capturePrecisionOffset)
+        let captureEndedAt = Self.date(
+            Self.nowMilliseconds - 90_000
+        ).addingTimeInterval(capturePrecisionOffset)
+        let discontinuities = highPrecisionCaptureDates
+            ? [try CaptureDiscontinuity(
+                recordingID: origin,
+                monotonicTimeNanoseconds: 1_500,
+                wallTime: Self.date(
+                    Self.nowMilliseconds - 95_000
+                ).addingTimeInterval(capturePrecisionOffset),
+                reason: .routeChanged,
+                affectedFrames: CanonicalFrameRange(
+                    startFrame: 2,
+                    endFrameExclusive: 2
+                ),
+                canonicalizationPolicy: .annotateGapWithoutInsertedSilence
+            )]
+            : []
         capture = try FinalizedCapture(
             producingDeviceID: origin.deviceID,
             originRecordingID: origin,
-            captureStartedAt: Self.date(Self.nowMilliseconds - 100_000),
-            captureEndedAt: Self.date(Self.nowMilliseconds - 90_000),
+            captureStartedAt: captureStartedAt,
+            captureEndedAt: captureEndedAt,
             captureStartedMonotonicNanoseconds: 1_000,
             captureEndedMonotonicNanoseconds: 2_000,
             finalizationReason: .userStopped,
@@ -580,7 +643,7 @@ private struct ForegroundCoordinatorFixture: @unchecked Sendable {
             canonicalPCMSHA256: try CanonicalPCMHash(
                 Data(SHA256.hash(data: canonicalBytes))
             ),
-            discontinuities: []
+            discontinuities: discontinuities
         )
         let chunkBytes = [firstBytes, secondBytes]
         var plannedChunks: [HarcForegroundEncodedChunk] = []

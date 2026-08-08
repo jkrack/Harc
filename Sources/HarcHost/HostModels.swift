@@ -758,14 +758,14 @@ public struct HostStagingQuotaPolicy: Equatable, Sendable {
     public let perDeviceBytes: UInt64
     public let globalBytes: UInt64
     public let minimumFreeBytes: UInt64
-    /// Integer permille avoids floating-point policy drift. The default 100 is 10%.
+    /// Integer permille avoids floating-point policy drift. The default 50 is 5%.
     public let minimumFreePermille: UInt16
 
     public init(
         perDeviceBytes: UInt64 = 20 * Self.gibibyte,
         globalBytes: UInt64 = 100 * Self.gibibyte,
         minimumFreeBytes: UInt64 = 10 * Self.gibibyte,
-        minimumFreePermille: UInt16 = 100
+        minimumFreePermille: UInt16 = 50
     ) {
         precondition(perDeviceBytes > 0)
         precondition(globalBytes > 0)

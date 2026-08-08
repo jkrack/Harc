@@ -9,6 +9,13 @@ import HarcTransfer
 
 @Suite("HarcHost upload state and bounded staging")
 struct UploadStagingTests {
+    @Test("default staging reserve keeps ten GiB and five percent free")
+    func defaultStagingReserve() {
+        let policy = HostStagingQuotaPolicy()
+        #expect(policy.minimumFreeBytes == 10 * HostStagingQuotaPolicy.gibibyte)
+        #expect(policy.minimumFreePermille == 50)
+    }
+
     private struct AuthorizingHostLocalOSAuthenticationBoundary: HostLocalOSAuthenticationBoundary {
         func authorizeInitialGrantExpansion(
             for deviceID: DeviceID,

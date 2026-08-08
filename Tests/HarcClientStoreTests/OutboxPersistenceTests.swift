@@ -1243,6 +1243,10 @@ struct OutboxPersistenceTests {
         #expect(try store.taskMappings().map(\.state) == [
             .failedRecoverable,
         ])
+        #expect(
+            try store.recordingOutbox(for: origin)?.stateMachine.state
+                == .failedRecoverable
+        )
 
         try store.persistBackgroundBatchForScheduling(
             batch,
@@ -1271,6 +1275,10 @@ struct OutboxPersistenceTests {
         #expect(try store.taskMappings().map(\.state) == [
             .securityBlocked,
         ])
+        #expect(
+            try store.recordingOutbox(for: origin)?.stateMachine.state
+                == .securityBlocked
+        )
         let blockedReconciliation = try store.reconcileBackgroundTasks(
             observedSystemTasks: []
         )
@@ -1298,5 +1306,26 @@ struct OutboxPersistenceTests {
         #expect(try reopened.taskMappings().map(\.state) == [
             .securityBlocked,
         ])
+        #expect(
+            try reopened.recordingOutbox(for: origin)?.stateMachine.state
+                == .securityBlocked
+        )
+        #expect(
+            try reopened.resumeSecurityBlockedBackgroundUpload(for: origin)
+        )
+        #expect(
+            try reopened.recordingOutbox(for: origin)?.stateMachine.state
+                == .queued
+        )
+        #expect(
+            try reopened.backgroundBatch(id: batch.batchID)?.state
+                == .failedRecoverable
+        )
+        #expect(try reopened.taskMappings().map(\.state) == [
+            .failedRecoverable,
+        ])
+        #expect(
+            try !reopened.resumeSecurityBlockedBackgroundUpload(for: origin)
+        )
     }
 }

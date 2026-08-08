@@ -79,6 +79,34 @@ struct RecordingTransferGRPCServiceAdapterTests {
         )
     }
 
+    @Test("BeginUpload canonicalizes sub-millisecond durable response clocks")
+    func beginUploadCanonicalizesResponseClocks() async throws {
+        let fixture = try RecordingTransferAdapterFixture()
+        let application = try fixture.application(
+            reconciliationPrecisionOffset: 0.000_417
+        )
+        let adapter = fixture.adapter(
+            application: application,
+            authenticator: RecordingTransferSessionAuthenticatorFake(
+                session: fixture.session
+            )
+        )
+
+        let wire = try await adapter.beginUpload(
+            request: ServerRequest(
+                metadata: fixture.metadata,
+                message: fixture.beginUploadRequest()
+            )
+        ).message
+
+        #expect(wire.reconciliation.firstBeganAtUnixMs == 2_000_000_000_000)
+        #expect(
+            wire.reconciliation.generationBeganAtUnixMs
+                == 2_000_000_000_000
+        )
+        #expect(wire.generationExpiresAtUnixMs == 2_000_000_060_000)
+    }
+
     @Test("DeclareChunks projects the durable typed conflict")
     func declarationConflict() async throws {
         let fixture = try RecordingTransferAdapterFixture()
@@ -418,10 +446,13 @@ private struct RecordingTransferAdapterFixture {
 
     func application(
         mintResult: HostBackgroundCapabilityMintResult? = nil,
-        declarationDisposition: ChunkDeclarationDisposition? = nil
+        declarationDisposition: ChunkDeclarationDisposition? = nil,
+        reconciliationPrecisionOffset: TimeInterval = 0
     ) throws -> RecordingTransferRPCApplicationFake {
         RecordingTransferRPCApplicationFake(
-            beginDisposition: .created(try reconciliation()),
+            beginDisposition: .created(try reconciliation(
+                precisionOffset: reconciliationPrecisionOffset
+            )),
             declarationDisposition: declarationDisposition,
             recordingStatus: try HostRecordingStatusResult(
                 uploadID: uploadID,
@@ -541,16 +572,24 @@ private struct RecordingTransferAdapterFixture {
         return request
     }
 
-    private func reconciliation() throws -> UploadReconciliation {
+    private func reconciliation(
+        precisionOffset: TimeInterval = 0
+    ) throws -> UploadReconciliation {
         try UploadReconciliation(
             uploadID: uploadID,
             ownerDeviceID: deviceID,
             originRecordingID: originRecordingID,
             uploadProfileSHA256: profileSHA256,
             generation: .initial,
-            firstBeganAt: Date(timeIntervalSince1970: 2_000_000_000),
-            generationBeganAt: Date(timeIntervalSince1970: 2_000_000_000),
-            generationExpiresAt: Date(timeIntervalSince1970: 2_000_000_060),
+            firstBeganAt: Date(
+                timeIntervalSince1970: 2_000_000_000 + precisionOffset
+            ),
+            generationBeganAt: Date(
+                timeIntervalSince1970: 2_000_000_000 + precisionOffset
+            ),
+            generationExpiresAt: Date(
+                timeIntervalSince1970: 2_000_000_060 + precisionOffset
+            ),
             declarations: [],
             boundManifestObjectSHA256: nil,
             durableChunks: [],

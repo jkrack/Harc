@@ -189,6 +189,11 @@ final class HarcMobileAppModel {
                     masterFileURL: master.masterFileURL
                 )
             }
+            try Self.rebaseRelocatedArtifactPaths(
+                store: store,
+                locations: captureLocations,
+                currentRoot: root
+            )
             try Self.protectTransferState(
                 root: root,
                 locations: clientLocations
@@ -200,9 +205,19 @@ final class HarcMobileAppModel {
                 HarcBackgroundURLSessionUploadClientV1.makeProduction(
                     store: store,
                     completionReporter: { _ in
+#if DEBUG
+                        print("[Harc host-transfer] background task ACK persisted")
+#endif
                         await backgroundEventRelay.didFinish()
                     },
-                    failureReporter: { _ in
+                    failureReporter: { failure in
+#if DEBUG
+                        print(
+                            "[Harc host-transfer] background task "
+                            + "\(failure.taskIdentifier) failed: "
+                            + failure.errorDescription
+                        )
+#endif
                         await backgroundEventRelay.didFinish()
                     }
                 )
@@ -252,6 +267,10 @@ final class HarcMobileAppModel {
                 deviceID: identity.deviceID,
                 recoveredRecordings: recovered.count
             )
+            // Reconcile the durable background state before considering a
+            // foreground retry. Reconciliation calls retryPending() after it
+            // has repaired any terminal task state, preventing a stale queued
+            // recording from racing ahead of a persisted security block.
             transfer.reconcileBackgroundUploads()
             library.refresh()
         } catch {
@@ -264,6 +283,39 @@ final class HarcMobileAppModel {
         bootstrapCompleted = false
         readiness = .starting
         await bootstrap()
+    }
+
+    private static func rebaseRelocatedArtifactPaths(
+        store: HarcTransferStore,
+        locations: HarcMobileCaptureLocations,
+        currentRoot: URL
+    ) throws {
+        let currentRoot = currentRoot.standardizedFileURL
+        var staleRoots = Set<URL>()
+        for outbox in try store.recordingOutboxes() {
+            let stored = outbox.finalizedCapture.masterFileURL
+                .standardizedFileURL
+            let current = locations.finalizedMasterURL(
+                recordingUUID: outbox.finalizedCapture.capture
+                    .originRecordingID.recordingUUID
+            ).standardizedFileURL
+            guard stored != current,
+                  !FileManager.default.fileExists(atPath: stored.path),
+                  FileManager.default.fileExists(atPath: current.path)
+            else { continue }
+            let staleRoot = stored
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .standardizedFileURL
+            staleRoots.insert(staleRoot)
+        }
+        for staleRoot in staleRoots where staleRoot != currentRoot {
+            try store.rebaseLocalArtifactPaths(
+                from: staleRoot,
+                to: currentRoot
+            )
+        }
     }
 
     private static func applicationRoot(uiTestRootID: UUID?) throws -> URL {

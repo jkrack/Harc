@@ -407,6 +407,48 @@ struct HarcBackgroundURLSessionUploadClientV1Tests {
         ])
     }
 
+    @Test("Host storage pressure is a recoverable server rejection")
+    func persistsRecoverableStoragePressure() async throws {
+        let fixture = try BackgroundUploadFixture(seed: 13)
+        let context = try fixture.completionContext(taskIdentifier: 131)
+        let event = try fixture.completionEvent(
+            context: context,
+            acknowledgementBytes: Data(),
+            statusCode: 507
+        )
+
+        do {
+            try await context.coordinator.handleCompletion(event)
+            #expect(Bool(false), "Storage pressure was accepted as an ACK")
+        } catch let error as HarcBackgroundURLSessionUploadError {
+            #expect(error == .serverRejected(statusCode: 507))
+        }
+        #expect(context.persistence.persistedFailureDispositions == [
+            .failedRecoverable,
+        ])
+    }
+
+    @Test("semantic server rejection remains security blocked")
+    func securityBlocksSemanticServerRejection() async throws {
+        let fixture = try BackgroundUploadFixture(seed: 14)
+        let context = try fixture.completionContext(taskIdentifier: 141)
+        let event = try fixture.completionEvent(
+            context: context,
+            acknowledgementBytes: Data(),
+            statusCode: 422
+        )
+
+        do {
+            try await context.coordinator.handleCompletion(event)
+            #expect(Bool(false), "Semantic rejection was accepted as an ACK")
+        } catch let error as HarcBackgroundURLSessionUploadError {
+            #expect(error == .serverRejected(statusCode: 422))
+        }
+        #expect(context.persistence.persistedFailureDispositions == [
+            .securityBlocked,
+        ])
+    }
+
     @Test("validated exact signed ACK is synchronously persisted")
     func persistsValidatedAcknowledgement() async throws {
         let fixture = try BackgroundUploadFixture(seed: 9)
@@ -649,13 +691,14 @@ private struct BackgroundUploadFixture: @unchecked Sendable {
         context: BackgroundUploadCompletionContext,
         acknowledgementBytes: Data,
         finalURL: URL? = nil,
+        statusCode: Int = 200,
         responseOverflowed: Bool = false,
         transportFailure: HarcBackgroundURLSessionUploadError? = nil
     ) throws -> HarcBackgroundUploadCompletionEventV1 {
         let responseURL = finalURL ?? endpointBinding.absoluteUploadURL
         guard let response = HTTPURLResponse(
             url: responseURL,
-            statusCode: 200,
+            statusCode: statusCode,
             httpVersion: "HTTP/1.1",
             headerFields: [
                 "Content-Type": HarcBackgroundUploadHTTPRequestV1

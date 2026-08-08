@@ -95,6 +95,7 @@ extension HarcTransferStore {
                 from: local["finalized_capture_json"],
                 field: "finalizedCapture"
             )
+            let canonicalCapture = try receiptWireCanonicalCapture(capture)
             var attempt: UploadAttempt = try ClientStoreCoding.decode(
                 UploadAttempt.self,
                 from: local["attempt_json"],
@@ -143,7 +144,7 @@ extension HarcTransferStore {
                 field: "exact signed manifest"
             )
             try requireVerifiedReceiptBinding(
-                attempt.boundFinalizedCapture?.capture == capture
+                attempt.boundFinalizedCapture?.capture == canonicalCapture
                     && capture.canonicalPCMSHA256 == evidence.canonicalPCMSHA256
                     && capture.totalCanonicalFrames == evidence.totalCanonicalFrames
                     && capture.canonicalFormat == evidence.canonicalFormat,
@@ -608,4 +609,44 @@ extension HarcTransferStore {
             && stored.durableCommitTime == evidence.durableCommitTime
             && stored.processingState == evidence.processingState
     }
+}
+
+private func receiptWireCanonicalCapture(
+    _ capture: FinalizedCapture
+) throws -> FinalizedCapture {
+    func canonicalDate(_ value: Date) throws -> Date {
+        ClientStoreCoding.date(
+            milliseconds: try ClientStoreCoding.milliseconds(value)
+        )
+    }
+
+    let discontinuities = try capture.discontinuities.map { discontinuity in
+        try CaptureDiscontinuity(
+            recordingID: discontinuity.recordingID,
+            monotonicTimeNanoseconds:
+                discontinuity.monotonicTimeNanoseconds,
+            wallTime: canonicalDate(discontinuity.wallTime),
+            reason: discontinuity.reason,
+            oldRoute: discontinuity.oldRoute,
+            newRoute: discontinuity.newRoute,
+            affectedFrames: discontinuity.affectedFrames,
+            canonicalizationPolicy: discontinuity.canonicalizationPolicy
+        )
+    }
+    return try FinalizedCapture(
+        producingDeviceID: capture.producingDeviceID,
+        originRecordingID: capture.originRecordingID,
+        captureStartedAt: canonicalDate(capture.captureStartedAt),
+        captureEndedAt: canonicalDate(capture.captureEndedAt),
+        captureStartedMonotonicNanoseconds:
+            capture.captureStartedMonotonicNanoseconds,
+        captureEndedMonotonicNanoseconds:
+            capture.captureEndedMonotonicNanoseconds,
+        finalizationReason: capture.finalizationReason,
+        canonicalFormat: capture.canonicalFormat,
+        totalCanonicalFrames: capture.totalCanonicalFrames,
+        totalCanonicalBytes: capture.totalCanonicalBytes,
+        canonicalPCMSHA256: capture.canonicalPCMSHA256,
+        discontinuities: discontinuities
+    )
 }

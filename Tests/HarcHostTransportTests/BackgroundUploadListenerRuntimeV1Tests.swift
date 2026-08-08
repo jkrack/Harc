@@ -13,6 +13,23 @@ import Testing
 
 @Suite("Background upload listener runtime")
 struct BackgroundUploadListenerRuntimeV1Tests {
+    @Test("storage pressure maps to a retryable HTTP status")
+    func storagePressureStatus() {
+        #expect(
+            HarcBackgroundUploadConnectionHandlerV1.ingestFailureStatus(
+                HarcHostError.insufficientFreeSpace(
+                    requiredRemaining: 20,
+                    projectedRemaining: 10
+                )
+            ) == .insufficientStorage
+        )
+        #expect(
+            HarcBackgroundUploadConnectionHandlerV1.ingestFailureStatus(
+                HarcHostError.volumeCapacityUnavailable
+            ) == .serviceUnavailable
+        )
+    }
+
     @Test("admitted body is hashed in a private file before exact ACK")
     func admittedBodyAndExactAcknowledgement() async throws {
         let parent = try makeTemporaryParent()
@@ -216,6 +233,65 @@ struct BackgroundUploadListenerRuntimeV1Tests {
                 Issue.record("intentional stop was reported as unexpected")
             }
         )
+        await runtime.stopImmediately()
+    }
+
+    @Test("Network.framework listener accepts a child connection")
+    func acceptsNetworkFrameworkChildConnection() async throws {
+        let parent = try makeTemporaryParent()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let bodies = try HarcBackgroundUploadTemporaryBodyStoreV1(
+            parentDirectory: parent
+        )
+        let handler = HarcBackgroundUploadConnectionHandlerV1(
+            temporaryBodies: bodies
+        ) { _, _ in
+            throw HostBackgroundCapabilityAdmissionError.credentialRejected
+        }
+        let runtime = HarcBackgroundUploadListenerRuntimeV1(
+            connectionHandler: handler,
+            gracefulDrainTimeout: .seconds(1),
+            hardStopTimeout: .seconds(1)
+        )
+        let listener = try NWListener(using: .tcp, on: .any)
+
+        try await runtime.start(
+            listener: listener,
+            servingGeneration: try servingGeneration(
+                id: UUID(
+                    uuidString: "00000000-0000-0000-0000-000000000a03"
+                )!,
+                epoch: 3
+            ),
+            unexpectedExitHandler: { _ in
+                Issue.record("live listener exited unexpectedly")
+            }
+        )
+        defer { Task { await runtime.stopImmediately() } }
+
+        let port = try #require(listener.port)
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        #expect(descriptor >= 0)
+        guard descriptor >= 0 else { return }
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port.rawValue).bigEndian
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(
+                    descriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
+        #expect(result == 0)
+
+        try await Task.sleep(for: .milliseconds(100))
         await runtime.stopImmediately()
     }
 

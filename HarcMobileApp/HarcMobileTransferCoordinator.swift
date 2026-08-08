@@ -8,6 +8,7 @@ import HarcIdentity
 import HarcProtocol
 import HarcTransfer
 import Observation
+import OSLog
 
 struct HarcMobileLocalRecording: Identifiable, Equatable {
     enum TransferState: Equatable {
@@ -34,6 +35,11 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
 @MainActor
 @Observable
 final class HarcMobileTransferCoordinator {
+    private static let logger = Logger(
+        subsystem: "com.harc.HarcMobile",
+        category: "host-transfer"
+    )
+
     enum State: Equatable {
         case idle
         case encoding(recordingUUID: UUID)
@@ -88,6 +94,10 @@ final class HarcMobileTransferCoordinator {
     }
 
     func retryPending() {
+        Self.logger.info("Searching the durable outbox for Host transfers to retry")
+#if DEBUG
+        print("[Harc host-transfer] searching durable outbox")
+#endif
         do {
             refreshLocalRecordings()
             let backgroundManagedUploadIDs = try activeBackgroundUploadIDs()
@@ -101,6 +111,10 @@ final class HarcMobileTransferCoordinator {
                     } ?? true)
             }
             pendingCount = pending.count
+            Self.logger.info("Found \(pending.count, privacy: .public) Host transfer(s) eligible for retry")
+#if DEBUG
+            print("[Harc host-transfer] eligible retries: \(pending.count)")
+#endif
             for outbox in pending {
                 let master = try Self.master(from: outbox.finalizedCapture)
                 guard queuedOrigins.insert(master.originRecordingID).inserted
@@ -109,10 +123,31 @@ final class HarcMobileTransferCoordinator {
             }
             startWorkerIfNeeded()
         } catch {
+            Self.logger.error("Could not prepare Host transfer retries: \(String(reflecting: error), privacy: .public)")
+#if DEBUG
+            print("[Harc host-transfer] retry preparation failed: \(String(reflecting: error))")
+#endif
             state = .retryNeeded(
                 recordingUUID: UUID(),
                 message: error.localizedDescription
             )
+        }
+    }
+
+    func retry(recordingUUID: UUID) {
+        let origin = OriginRecordingID(
+            deviceID: identity.deviceID,
+            recordingUUID: recordingUUID
+        )
+        do {
+            _ = try store.resumeSecurityBlockedBackgroundUpload(for: origin)
+            retryPending()
+        } catch {
+            state = .securityBlocked(
+                recordingUUID: recordingUUID,
+                message: Self.diagnosticMessage(error)
+            )
+            refreshLocalRecordings()
         }
     }
 
@@ -165,12 +200,26 @@ final class HarcMobileTransferCoordinator {
             guard let self else { return }
             defer { backgroundReconciliationTask = nil }
             do {
-                _ = try await backgroundUploadClient.reconcileAfterRelaunch()
+                let result = try await backgroundUploadClient
+                    .reconcileAfterRelaunch()
+#if DEBUG
+                let reconciliation = result.storeReconciliation
+                print(
+                    "[Harc host-transfer] background reconciliation "
+                    + "matched=\(reconciliation.matchedTasks.count) "
+                    + "rescheduled=\(result.newlyScheduledTasks.count) "
+                    + "refresh=\(result.batchesRequiringCapabilityRefresh.count)"
+                )
+                for summary in await backgroundUploadClient
+                    .debugTaskSummary() {
+                    print("[Harc host-transfer] \(summary)")
+                }
+#endif
                 retryPending()
             } catch {
                 state = .retryNeeded(
                     recordingUUID: UUID(),
-                    message: error.localizedDescription
+                    message: Self.diagnosticMessage(error)
                 )
             }
         }
@@ -199,6 +248,11 @@ final class HarcMobileTransferCoordinator {
         defer { worker = nil }
         while !queue.isEmpty {
             let master = queue.removeFirst()
+            let recordingID = master.originRecordingID.recordingUUID.uuidString
+            Self.logger.info("Starting Host transfer retry for recording \(recordingID, privacy: .public)")
+#if DEBUG
+            print("[Harc host-transfer] starting \(recordingID)")
+#endif
             do {
                 let outcome = try await transfer(master)
                 queuedOrigins.remove(master.originRecordingID)
@@ -216,12 +270,14 @@ final class HarcMobileTransferCoordinator {
                 }
                 refreshLocalRecordings()
             } catch HarcMobileTransferError.notPaired {
+                Self.logger.error("Host transfer retry stopped because the client is not paired")
                 queuedOrigins.remove(master.originRecordingID)
                 pendingCount = max(pendingCount, queue.count + 1)
                 state = .waitingForPairing(pending: pendingCount)
                 refreshLocalRecordings()
                 return
             } catch HarcMobileTransferError.codecNotQualified {
+                Self.logger.error("Host transfer retry stopped because the codec is not qualified")
                 queuedOrigins.remove(master.originRecordingID)
                 pendingCount = max(pendingCount, queue.count + 1)
                 state = .codecQualificationRequired(
@@ -230,6 +286,7 @@ final class HarcMobileTransferCoordinator {
                 refreshLocalRecordings()
                 return
             } catch let error as HarcMobileALACEncodingError {
+                Self.logger.error("Host transfer encoding failed: \(String(reflecting: error), privacy: .public)")
                 queuedOrigins.remove(master.originRecordingID)
                 if case .encodingFailed = error {
                     pendingCount = max(pendingCount, queue.count + 1)
@@ -247,6 +304,10 @@ final class HarcMobileTransferCoordinator {
                 refreshLocalRecordings()
                 return
             } catch {
+                Self.logger.error("Host transfer retry failed: \(String(reflecting: error), privacy: .public)")
+#if DEBUG
+                print("[Harc host-transfer] failed: \(String(reflecting: error))")
+#endif
                 queuedOrigins.remove(master.originRecordingID)
                 let outbox = try? store.recordingOutbox(
                     for: master.originRecordingID
@@ -255,13 +316,13 @@ final class HarcMobileTransferCoordinator {
                     state = .securityBlocked(
                         recordingUUID:
                             master.originRecordingID.recordingUUID,
-                        message: error.localizedDescription
+                        message: Self.diagnosticMessage(error)
                     )
                 } else {
                     state = .retryNeeded(
                         recordingUUID:
                             master.originRecordingID.recordingUUID,
-                        message: error.localizedDescription
+                        message: Self.diagnosticMessage(error)
                     )
                 }
                 refreshLocalRecordings()
@@ -291,6 +352,10 @@ final class HarcMobileTransferCoordinator {
                 locations: locations
             )
         }.value
+        Self.logger.info("Host transfer encoding is ready; opening the adopted Host session")
+#if DEBUG
+        print("[Harc host-transfer] encoded; opening Host session")
+#endif
 
         state = .connecting(
             recordingUUID: master.originRecordingID.recordingUUID
@@ -302,6 +367,10 @@ final class HarcMobileTransferCoordinator {
                 store: store,
                 routeURL: routeURL
             )
+            Self.logger.info("Opened the adopted Host session")
+#if DEBUG
+            print("[Harc host-transfer] Host session opened")
+#endif
         } catch HarcMobileHostSessionConnectorError.notPaired {
             throw HarcMobileTransferError.notPaired
         }
@@ -438,6 +507,11 @@ final class HarcMobileTransferCoordinator {
             UUID(uuidString: NSUUID(uuidBytes: buffer.baseAddress!).uuidString)!
         }
         return ChunkID(uuid)
+    }
+
+    private static func diagnosticMessage(_ error: any Error) -> String {
+        let reflected = String(reflecting: error)
+        return reflected.isEmpty ? error.localizedDescription : reflected
     }
 
     private static func master(

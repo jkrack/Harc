@@ -1,5 +1,6 @@
 import AVFoundation
 import HarcAudioMobile
+import HarcDomain
 import UIKit
 import XCTest
 @testable import HarcMobile
@@ -201,5 +202,69 @@ final class HarcMobileConfigurationTests: XCTestCase {
             ),
             .storageExhausted(recordingUUID: recordingUUID)
         )
+    }
+
+    func testHandoffCapacityCoversHardwareSizedInputSlices() {
+        XCTAssertEqual(
+            HarcMobileCaptureCoordinator.handoffFrameCapacity(
+                inputSampleRate: 48_000
+            ),
+            48_000
+        )
+        XCTAssertEqual(
+            HarcMobileCaptureCoordinator.handoffFrameCapacity(
+                inputSampleRate: 44_100
+            ),
+            44_100
+        )
+    }
+
+    func testHandoffCapacityPreservesFloorAndMemoryBound() {
+        XCTAssertEqual(
+            HarcMobileCaptureCoordinator.handoffFrameCapacity(
+                inputSampleRate: 2_000
+            ),
+            4_096
+        )
+        XCTAssertEqual(
+            HarcMobileCaptureCoordinator.handoffFrameCapacity(
+                inputSampleRate: 384_000
+            ),
+            192_000
+        )
+        XCTAssertEqual(
+            HarcMobileCaptureCoordinator.handoffFrameCapacity(
+                inputSampleRate: .nan
+            ),
+            4_096
+        )
+    }
+
+    func testCapturePathIgnoresUnchangedRouteNotifications() throws {
+        let builtIn = try CaptureRouteDescriptor(
+            identifier: "Built-In Microphone",
+            name: "iPhone Microphone",
+            sampleRateHz: 48_000,
+            channelCount: 1
+        )
+        let headset = try CaptureRouteDescriptor(
+            identifier: "Headset Microphone",
+            name: "Headset Microphone",
+            sampleRateHz: 48_000,
+            channelCount: 1
+        )
+
+        XCTAssertFalse(HarcMobileCaptureCoordinator.capturePathRequiresRebuild(
+            activeRoute: builtIn,
+            currentRoute: builtIn
+        ))
+        XCTAssertTrue(HarcMobileCaptureCoordinator.capturePathRequiresRebuild(
+            activeRoute: builtIn,
+            currentRoute: headset
+        ))
+        XCTAssertTrue(HarcMobileCaptureCoordinator.capturePathRequiresRebuild(
+            activeRoute: builtIn,
+            currentRoute: nil
+        ))
     }
 }

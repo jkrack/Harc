@@ -786,7 +786,9 @@ public extension Harc_V1_CaptureDiscontinuityV1 {
         self.init()
         originRecordingID = Harc_V1_OriginRecordingIDV1(value.recordingID)
         monotonicTimeNanoseconds = value.monotonicTimeNanoseconds
-        wallTimeUnixMs = try harcWireUnixMilliseconds(
+        // Capture clocks retain native precision in durable local evidence.
+        // The signed wire representation is canonical at milliseconds.
+        wallTimeUnixMs = try harcWireCanonicalUnixMilliseconds(
             value.wallTime,
             field: "captureDiscontinuity.wallTime"
         )

@@ -537,6 +537,87 @@ extension HarcTransferStore {
         }
     }
 
+    /// Rebinds client-local artifact URLs after an operating-system container
+    /// relocation. Wire evidence and immutable descriptors are unchanged;
+    /// only paths beneath `oldRoot` are projected beneath `newRoot`.
+    public func rebaseLocalArtifactPaths(
+        from oldRoot: URL,
+        to newRoot: URL
+    ) throws {
+        let oldRoot = try localFileURL(oldRoot)
+        let newRoot = try localFileURL(newRoot)
+        guard oldRoot.path != "/", newRoot.path != "/" else {
+            throw ClientStoreError.invalidLocalArtifactURL(oldRoot.path)
+        }
+        guard oldRoot != newRoot else { return }
+
+        func rebased(_ url: URL) throws -> URL {
+            let url = try localFileURL(url)
+            let oldPrefix = oldRoot.path + "/"
+            guard url.path.hasPrefix(oldPrefix) else { return url }
+            let relative = String(url.path.dropFirst(oldPrefix.count))
+            return newRoot.appendingPathComponent(relative)
+                .standardizedFileURL
+        }
+
+        try database.write { db in
+            for (table, column) in [
+                ("finalized_captures", "master_path"),
+                ("upload_chunks", "encoded_path"),
+                ("upload_batches", "body_path"),
+            ] {
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: "SELECT rowid AS artifact_rowid, \(column) AS artifact_path FROM \(table)"
+                )
+                for row in rows {
+                    let rowID: Int64 = row["artifact_rowid"]
+                    let prior = URL(fileURLWithPath: row["artifact_path"] as String)
+                    let replacement = try rebased(prior)
+                    guard replacement != prior.standardizedFileURL else {
+                        continue
+                    }
+                    try db.execute(
+                        sql: "UPDATE \(table) SET \(column) = ? WHERE rowid = ?",
+                        arguments: [replacement.path, rowID]
+                    )
+                }
+            }
+
+            let intentRows = try Row.fetchAll(
+                db,
+                sql: "SELECT rowid AS intent_rowid, intent_json FROM upload_begin_intents"
+            )
+            for row in intentRows {
+                let intent: UploadBeginIntent = try ClientStoreCoding.decode(
+                    UploadBeginIntent.self,
+                    from: row["intent_json"],
+                    field: "uploadBeginIntent"
+                )
+                let chunks = try intent.chunks.map { chunk in
+                    try UploadBeginChunkIntent(
+                        descriptor: chunk.descriptor,
+                        encodedFileURL: rebased(chunk.encodedFileURL)
+                    )
+                }
+                guard chunks != intent.chunks else { continue }
+                let replacement = try UploadBeginIntent(
+                    trustTuple: intent.trustTuple,
+                    uploadID: intent.uploadID,
+                    originRecordingID: intent.originRecordingID,
+                    frozenProfile: intent.frozenProfile,
+                    chunks: chunks,
+                    exactBeginRequest: intent.exactBeginRequest
+                )
+                let rowID: Int64 = row["intent_rowid"]
+                try db.execute(
+                    sql: "UPDATE upload_begin_intents SET intent_json = ? WHERE rowid = ?",
+                    arguments: [try ClientStoreCoding.encode(replacement), rowID]
+                )
+            }
+        }
+    }
+
     /// Atomically freezes the exact BeginUpload replay facts and advances the
     /// recording into authorization. An existing row is accepted only as an
     /// exact replay; the origin primary key rejects a competing upload ID even
@@ -1609,11 +1690,78 @@ extension HarcTransferStore {
                     """,
                 arguments: [targetState, timestampMS, batchID.description]
             )
+            try persistBackgroundFailureOnRecording(
+                batch.descriptor.originRecordingID,
+                disposition: securityBlocked
+                    ? .securityBlocked
+                    : .failedRecoverable,
+                updatedAtMS: timestampMS,
+                in: db
+            )
         }
     }
 
     public func taskMappings() throws -> [StoredBackgroundTaskMapping] {
         try database.read { db in try taskMappings(in: db) }
+    }
+
+    /// Explicit user-reviewed recovery for a background response previously
+    /// classified as a security failure. Automatic reconciliation never calls
+    /// this API and therefore cannot weaken a durable security block.
+    @discardableResult
+    public func resumeSecurityBlockedBackgroundUpload(
+        for origin: OriginRecordingID,
+        resumedAt: Date? = nil
+    ) throws -> Bool {
+        try database.write { db in
+            guard let outbox = try recordingOutbox(origin, in: db) else {
+                throw ClientStoreError.missingRow(entity: "recording outbox")
+            }
+            try requireCurrentInstallationOwner(
+                outbox.finalizedCapture.capture.producingDeviceID
+            )
+            try requireCurrentInstallationAuthorization(in: db)
+            guard outbox.integrityBlock == nil else {
+                throw ClientStoreError.localArtifactIntegrityBlocked(
+                    origin: origin
+                )
+            }
+            guard outbox.stateMachine.state == .securityBlocked,
+                  let uploadID = outbox.uploadID else { return false }
+
+            let timestampMS = try ClientStoreCoding.milliseconds(
+                resumedAt ?? now()
+            )
+            var machine = outbox.stateMachine
+            try machine.resumeAfterUserSecurityAction()
+            try persistRecordingMachine(
+                machine,
+                origin: origin,
+                in: db,
+                updatedAtMS: timestampMS
+            )
+            try db.execute(
+                sql: """
+                    UPDATE upload_batches
+                    SET state = 'failedRecoverable', updated_at_ms = ?
+                    WHERE upload_id = ? AND state = 'securityBlocked'
+                    """,
+                arguments: [timestampMS, uploadID.description]
+            )
+            try db.execute(
+                sql: """
+                    UPDATE background_task_mappings
+                    SET state = 'failedRecoverable', updated_at_ms = ?
+                    WHERE state = 'securityBlocked'
+                      AND batch_id IN (
+                          SELECT batch_id FROM upload_batches
+                          WHERE upload_id = ?
+                      )
+                    """,
+                arguments: [timestampMS, uploadID.description]
+            )
+            return true
+        }
     }
 
     /// Compares persisted mappings with the operating system's task list. It
@@ -1624,6 +1772,25 @@ extension HarcTransferStore {
     ) throws -> BackgroundTaskReconciliation {
         try database.write { db in
             let persisted = try taskMappings(in: db)
+            let timestampMS = try ClientStoreCoding.milliseconds(
+                reconciledAt ?? now()
+            )
+            for mapping in persisted {
+                guard mapping.state == .failedRecoverable
+                        || mapping.state == .securityBlocked,
+                      let batch = try backgroundBatch(
+                          id: mapping.batchID,
+                          in: db
+                      ) else { continue }
+                try persistBackgroundFailureOnRecording(
+                    batch.descriptor.originRecordingID,
+                    disposition: mapping.state == .securityBlocked
+                        ? .securityBlocked
+                        : .failedRecoverable,
+                    updatedAtMS: timestampMS,
+                    in: db
+                )
+            }
             for mapping in persisted
             where mapping.state != .completed
                 && mapping.state != .securityBlocked {
@@ -1639,7 +1806,6 @@ extension HarcTransferStore {
             var missingBatchCandidates = Set<AudioBatchID>()
             var observedBatchIDs = Set<AudioBatchID>()
             var matched: [SystemBackgroundTaskIdentity] = []
-            let timestampMS = try ClientStoreCoding.milliseconds(reconciledAt ?? now())
 
             for mapping in persisted {
                 let mayRun = mapping.state != .completed
@@ -2184,6 +2350,55 @@ extension HarcTransferStore {
                 origin.deviceID.rawBytes,
                 origin.recordingUUID.uuidString.lowercased(),
             ]
+        )
+    }
+
+    private func persistBackgroundFailureOnRecording(
+        _ origin: OriginRecordingID,
+        disposition: BackgroundTaskFailureDisposition,
+        updatedAtMS: Int64,
+        in db: Database
+    ) throws {
+        guard let outbox = try recordingOutbox(origin, in: db) else {
+            throw ClientStoreError.missingRow(entity: "recording outbox")
+        }
+        var machine = outbox.stateMachine
+        switch disposition {
+        case .failedRecoverable:
+            switch machine.state {
+            case .localOnly, .queued, .authorizing, .activeUpload,
+                 .backgroundScheduled, .hostCommitPending:
+                try machine.failRecoverably(
+                    TransferFailure(code: "background-upload-failed")
+                )
+            case .failedRecoverable, .securityBlocked, .committed:
+                return
+            }
+        case .securityBlocked:
+            switch machine.state {
+            case .localOnly:
+                try machine.queue()
+                try machine.beginAuthorization()
+                try machine.blockForSecurity(.signatureOrObjectMismatch)
+            case .queued:
+                try machine.beginAuthorization()
+                try machine.blockForSecurity(.signatureOrObjectMismatch)
+            case .failedRecoverable:
+                try machine.retryRecoverable()
+                try machine.beginAuthorization()
+                try machine.blockForSecurity(.signatureOrObjectMismatch)
+            case .authorizing, .activeUpload, .backgroundScheduled,
+                 .hostCommitPending:
+                try machine.blockForSecurity(.signatureOrObjectMismatch)
+            case .securityBlocked, .committed:
+                return
+            }
+        }
+        try persistRecordingMachine(
+            machine,
+            origin: origin,
+            in: db,
+            updatedAtMS: updatedAtMS
         )
     }
 

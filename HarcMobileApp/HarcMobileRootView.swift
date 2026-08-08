@@ -373,7 +373,8 @@ struct HarcMobileRootView: View {
                 ForEach(coordinator.localRecordings) { recording in
                     HarcMobileLocalRecordingRow(
                         recording: recording,
-                        captureIsActive: captureIsActive
+                        captureIsActive: captureIsActive,
+                        retryTransfer: coordinator.retry(recordingUUID:)
                     )
                 }
             }
@@ -447,7 +448,7 @@ struct HarcMobileRootView: View {
                 }
                 .buttonStyle(.bordered)
             }
-        case .securityBlocked(_, let message):
+        case .securityBlocked(let recordingUUID, let message):
             VStack(spacing: 8) {
                 Label(
                     "Transfer blocked for security",
@@ -458,6 +459,10 @@ struct HarcMobileRootView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                Button("Review and Retry Transfer") {
+                    coordinator.retry(recordingUUID: recordingUUID)
+                }
+                .buttonStyle(.bordered)
             }
         }
     }
@@ -702,16 +707,19 @@ struct HarcMobileRootView: View {
 private struct HarcMobileLocalRecordingRow: View {
     let recording: HarcMobileLocalRecording
     let captureIsActive: Bool
+    let retryTransfer: (UUID) -> Void
 
     @State private var audio: HarcMobileLocalRecordingAudioController
     @State private var showsExport = false
 
     init(
         recording: HarcMobileLocalRecording,
-        captureIsActive: Bool
+        captureIsActive: Bool,
+        retryTransfer: @escaping (UUID) -> Void
     ) {
         self.recording = recording
         self.captureIsActive = captureIsActive
+        self.retryTransfer = retryTransfer
         _audio = State(
             initialValue: HarcMobileLocalRecordingAudioController(
                 url: recording.masterFileURL
@@ -820,11 +828,17 @@ private struct HarcMobileLocalRecordingRow: View {
             Label("Transferring", systemImage: "arrow.up.circle")
                 .foregroundStyle(.secondary)
         case .retryNeeded:
-            Label("Retry", systemImage: "arrow.clockwise")
+            Button("Retry", systemImage: "arrow.clockwise") {
+                retryTransfer(recording.id)
+            }
+                .buttonStyle(.borderless)
                 .foregroundStyle(.orange)
         case .securityBlocked:
-            Label("Blocked", systemImage: "lock.trianglebadge.exclamationmark")
-                .foregroundStyle(.red)
+            Button("Review & Retry", systemImage: "lock.open") {
+                retryTransfer(recording.id)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red)
         case .committed:
             Label("On Host", systemImage: "checkmark.shield")
                 .foregroundStyle(.green)

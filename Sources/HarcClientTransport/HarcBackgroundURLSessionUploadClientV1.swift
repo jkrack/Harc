@@ -22,6 +22,7 @@ public enum HarcBackgroundURLSessionUploadError:
     case invalidPersistedRequest
     case transportFailed(domain: String, code: Int)
     case responseTooLarge
+    case serverRejected(statusCode: Int)
     case invalidHTTPResponse(field: String)
     case acknowledgementValidationFailed
     case duplicateBackgroundCompletionHandler
@@ -1052,6 +1053,11 @@ actor HarcBackgroundUploadCoordinatorV1 {
             case .transportFailed, .capabilityExpired, .bodyUnavailable,
                  .sessionNotInstalled:
                 return .failedRecoverable
+            case .serverRejected(let statusCode):
+                return [408, 425, 429, 500, 502, 503, 504, 507]
+                    .contains(statusCode)
+                    ? .failedRecoverable
+                    : .securityBlocked
             case .invalidEndpointBinding, .corruptEndpointBinding,
                  .bodyIntegrityMismatch, .taskIdentityMismatch,
                  .missingTaskMapping, .missingBackgroundBatch,
@@ -1113,8 +1119,9 @@ actor HarcBackgroundUploadCoordinatorV1 {
                 .invalidHTTPResponse(field: "url")
         }
         guard event.response.statusCode == 200 else {
-            throw HarcBackgroundURLSessionUploadError
-                .invalidHTTPResponse(field: "status")
+            throw HarcBackgroundURLSessionUploadError.serverRejected(
+                statusCode: event.response.statusCode ?? 0
+            )
         }
         guard event.response.contentType
                 == HarcBackgroundUploadHTTPRequestV1
@@ -1546,6 +1553,35 @@ public final class HarcBackgroundURLSessionUploadClientV1:
         -> HarcBackgroundUploadRelaunchResultV1 {
         try await coordinator.reconcileAfterRelaunch()
     }
+
+#if DEBUG
+    /// Credential-free task telemetry for physical-device qualification.
+    /// URLs and request headers are deliberately excluded.
+    public func debugTaskSummary() async -> [String] {
+        await withCheckedContinuation { continuation in
+            foundationSession.getAllTasks { tasks in
+                continuation.resume(returning: tasks.map { task in
+                    let state = switch task.state {
+                    case .running: "running"
+                    case .suspended: "suspended"
+                    case .canceling: "canceling"
+                    case .completed: "completed"
+                    @unknown default: "unknown"
+                    }
+                    let errorCode = task.error.map {
+                        let error = $0 as NSError
+                        return "\(error.domain):\(error.code)"
+                    } ?? "none"
+                    return "task=\(task.taskIdentifier) state=\(state) "
+                        + "sent=\(task.countOfBytesSent)/"
+                        + "\(task.countOfBytesExpectedToSend) "
+                        + "received=\(task.countOfBytesReceived) "
+                        + "error=\(errorCode)"
+                })
+            }
+        }
+    }
+#endif
 
     /// Call from the iOS application delegate's
     /// `handleEventsForBackgroundURLSession`. The handler is invoked exactly

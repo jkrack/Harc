@@ -951,7 +951,7 @@ public actor HarcForegroundRecordingOutboxCoordinator {
         request.canonicalFormat = Harc_V1_CanonicalPCMFormatV1(
             capture.canonicalFormat
         )
-        request.captureStartedAtUnixMs = try exactUnixMilliseconds(
+        request.captureStartedAtUnixMs = try canonicalUnixMilliseconds(
             capture.captureStartedAt,
             field: "captureStartedAt"
         )
@@ -1481,11 +1481,11 @@ public actor HarcForegroundRecordingOutboxCoordinator {
         value.encoding = Harc_V1_LosslessEncodingConfigurationV1(
             plan.frozenProfile.encoding
         )
-        value.captureStartedAtUnixMs = try exactUnixMilliseconds(
+        value.captureStartedAtUnixMs = try canonicalUnixMilliseconds(
             capture.capture.captureStartedAt,
             field: "manifestCaptureStartedAt"
         )
-        value.captureEndedAtUnixMs = try exactUnixMilliseconds(
+        value.captureEndedAtUnixMs = try canonicalUnixMilliseconds(
             capture.capture.captureEndedAt,
             field: "manifestCaptureEndedAt"
         )
@@ -1588,6 +1588,7 @@ public actor HarcForegroundRecordingOutboxCoordinator {
         producingDevicePublicKey: P256X963PublicKey
     ) throws -> ValidatedRecordingManifestEvidence {
         do {
+            let canonicalCapture = try wireCanonicalCapture(capture)
             let evidence = try evidenceCodec.validateRecordingManifest(
                 exactSignedManifestBytes: exactBytes,
                 hostTrust: hostTrust,
@@ -1597,7 +1598,7 @@ public actor HarcForegroundRecordingOutboxCoordinator {
                   evidence.originRecordingID == plan.originRecordingID,
                   evidence.uploadProfileSHA256
                     == plan.frozenProfile.profileSHA256,
-                  evidence.finalizedCapture == capture else {
+                  evidence.finalizedCapture == canonicalCapture else {
                 throw HarcForegroundRecordingOutboxError
                     .evidenceValidationFailed("manifest bindings")
             }
@@ -1899,4 +1900,84 @@ private func exactUnixMilliseconds(
         throw HarcForegroundRecordingOutboxError.invalidPlan(field: field)
     }
     return result
+}
+
+/// Capture clocks retain their native precision locally. Canonicalize those
+/// immutable facts to the wire contract's nearest millisecond when producing
+/// begin and signed-manifest evidence. Repeating this operation is stable and
+/// also lets durable captures created by older clients resume safely.
+private func canonicalUnixMilliseconds(
+    _ date: Date,
+    field: String
+) throws -> UInt64 {
+    let seconds = date.timeIntervalSince1970
+    let milliseconds = seconds * 1_000
+    guard seconds.isFinite, seconds >= 0, milliseconds.isFinite,
+          milliseconds <= Double(foregroundMaximumUnixMilliseconds),
+          let result = UInt64(exactly: milliseconds.rounded()) else {
+        throw HarcForegroundRecordingOutboxError.invalidPlan(field: field)
+    }
+    return result
+}
+
+private func wireCanonicalDate(
+    _ date: Date,
+    field: String
+) throws -> Date {
+    Date(
+        timeIntervalSince1970: Double(
+            try canonicalUnixMilliseconds(date, field: field)
+        ) / 1_000
+    )
+}
+
+/// Manifest validation decodes wire dates at millisecond precision. Compare
+/// that evidence with the same deterministic projection of the durable local
+/// capture, while leaving the higher-precision local facts untouched.
+private func wireCanonicalCapture(
+    _ value: ChunkedFinalizedCapture
+) throws -> ChunkedFinalizedCapture {
+    let capture = value.capture
+    let discontinuities = try capture.discontinuities.map { discontinuity in
+        try CaptureDiscontinuity(
+            recordingID: discontinuity.recordingID,
+            monotonicTimeNanoseconds:
+                discontinuity.monotonicTimeNanoseconds,
+            wallTime: wireCanonicalDate(
+                discontinuity.wallTime,
+                field: "captureDiscontinuity.wallTime"
+            ),
+            reason: discontinuity.reason,
+            oldRoute: discontinuity.oldRoute,
+            newRoute: discontinuity.newRoute,
+            affectedFrames: discontinuity.affectedFrames,
+            canonicalizationPolicy: discontinuity.canonicalizationPolicy
+        )
+    }
+    let canonical = try FinalizedCapture(
+        producingDeviceID: capture.producingDeviceID,
+        originRecordingID: capture.originRecordingID,
+        captureStartedAt: wireCanonicalDate(
+            capture.captureStartedAt,
+            field: "manifestCaptureStartedAt"
+        ),
+        captureEndedAt: wireCanonicalDate(
+            capture.captureEndedAt,
+            field: "manifestCaptureEndedAt"
+        ),
+        captureStartedMonotonicNanoseconds:
+            capture.captureStartedMonotonicNanoseconds,
+        captureEndedMonotonicNanoseconds:
+            capture.captureEndedMonotonicNanoseconds,
+        finalizationReason: capture.finalizationReason,
+        canonicalFormat: capture.canonicalFormat,
+        totalCanonicalFrames: capture.totalCanonicalFrames,
+        totalCanonicalBytes: capture.totalCanonicalBytes,
+        canonicalPCMSHA256: capture.canonicalPCMSHA256,
+        discontinuities: discontinuities
+    )
+    return try ChunkedFinalizedCapture(
+        capture: canonical,
+        chunks: value.chunks
+    )
 }
