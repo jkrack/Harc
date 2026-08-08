@@ -3,10 +3,12 @@ import Combine
 import Foundation
 import HarcClientStore
 import HarcClientTransport
+import HarcDomain
 import HarcIdentity
 import HarcProtocol
 import HarcTransfer
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class HarcDesktopClientPairingWindowController:
@@ -41,6 +43,11 @@ final class HarcDesktopClientPairingWindowController:
 final class HarcDesktopClientPairingCoordinator: ObservableObject {
     enum State: Equatable {
         case unpaired
+        case reviewInvitation(
+            host: String,
+            fingerprint: String,
+            expiresAt: Date
+        )
         case connecting
         case compareWords(host: String, phrase: String, expiresAt: Date)
         case awaitingHostApproval(host: String, phrase: String)
@@ -62,6 +69,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
     private let routeURL: URL
     private let onAdopted: @MainActor () -> Void
     private var attempt: ActiveAttempt?
+    private var reviewedPairingURI: String?
 
     init(
         identity: InstallationSigningIdentity,
@@ -79,6 +87,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
 
     func begin(pairingURI: String) async {
         guard attempt == nil else { return }
+        reviewedPairingURI = nil
         guard HarcDesktopPairingCodeFilter.accepts(pairingURI) else {
             state = .failed("Scan a fresh Harc pairing code shown by your Host.")
             return
@@ -133,6 +142,45 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
             if let connection { await connection.shutdownImmediately() }
             state = .failed(error.localizedDescription)
         }
+    }
+
+    func review(pairingURI: String) {
+        guard attempt == nil else { return }
+        do {
+            let nowMS = UInt64(Date().timeIntervalSince1970 * 1_000)
+            let ticket = try PairingTicketV1.decodeURI(
+                pairingURI,
+                atUnixMilliseconds: nowMS
+            )
+            let route = try HarcDesktopHostRoute(ticket: ticket)
+            reviewedPairingURI = pairingURI
+            state = .reviewInvitation(
+                host: route.host,
+                fingerprint: Self.hostFingerprint(ticket.hostAuthorityID),
+                expiresAt: Date(
+                    timeIntervalSince1970:
+                        Double(ticket.expiresAtUnixMilliseconds) / 1_000
+                )
+            )
+        } catch {
+            reviewedPairingURI = nil
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    func acceptReviewedInvitation() async {
+        guard let pairingURI = reviewedPairingURI else {
+            state = .unpaired
+            return
+        }
+        reviewedPairingURI = nil
+        await begin(pairingURI: pairingURI)
+    }
+
+    func declineReviewedInvitation() {
+        guard attempt == nil else { return }
+        reviewedPairingURI = nil
+        state = .unpaired
     }
 
     func confirmWordsMatch() async {
@@ -190,11 +238,16 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
 
     func reset() {
         guard attempt == nil else { return }
+        reviewedPairingURI = nil
         state = .unpaired
     }
 
     func cancel() {
-        guard let attempt else { return }
+        reviewedPairingURI = nil
+        guard let attempt else {
+            state = .unpaired
+            return
+        }
         self.attempt = nil
         Task {
             await attempt.client.abandonLocalPairingState()
@@ -216,6 +269,20 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         ])
         return Array(Set(scopes)).sorted()
     }
+
+    private static func hostFingerprint(
+        _ hostAuthorityID: HostAuthorityID
+    ) -> String {
+        let value = hostAuthorityID.description.uppercased()
+        return stride(from: 0, to: value.count, by: 4).map { offset in
+            let start = value.index(value.startIndex, offsetBy: offset)
+            let end = value.index(
+                start,
+                offsetBy: min(4, value.count - offset)
+            )
+            return String(value[start ..< end])
+        }.joined(separator: " ")
+    }
 }
 
 private struct HarcDesktopClientPairingView: View {
@@ -224,6 +291,7 @@ private struct HarcDesktopClientPairingView: View {
     @State private var cameras = [HarcDesktopPairingCamera]()
     @State private var selectedCameraID = ""
     @State private var scannerFailure: String?
+    @State private var showingInvitationImporter = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -233,7 +301,7 @@ private struct HarcDesktopClientPairingView: View {
             Text("Pair with your Harc Host")
                 .font(.title2.weight(.semibold))
             Text(
-                "On the Host, choose Pair a Device and select Mac client. Scan or securely paste its short-lived pairing link, then compare the four security words on both Macs."
+                "On the Host, choose Pair a Device and select Mac client. Open its short-lived pairing invite, scan its code, or paste its link, then compare the four security words on both Macs."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -245,6 +313,13 @@ private struct HarcDesktopClientPairingView: View {
         .padding(28)
         .frame(width: 560)
         .frame(minHeight: 540)
+        .fileImporter(
+            isPresented: $showingInvitationImporter,
+            allowedContentTypes: [.harcPairingInvitation],
+            allowsMultipleSelection: false
+        ) { result in
+            importPairingInvitation(result)
+        }
     }
 
     @ViewBuilder
@@ -291,22 +366,62 @@ private struct HarcDesktopClientPairingView: View {
             } else {
                 VStack(spacing: 12) {
                     Text(
-                        "Scan with this Mac's built-in, external, or Continuity Camera. If that is unavailable, paste a link copied explicitly on the Host."
+                        "A saved invite can be transferred between Macs without a shared clipboard. The Host must still be reachable on the same local or private network."
                     )
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     HStack {
-                        Button("Scan Host Code") { startScanning() }
+                        Button("Open Pairing Invite…") {
+                            showingInvitationImporter = true
+                        }
                             .buttonStyle(.borderedProminent)
                         Button("Paste Pairing Link") { pastePairingLink() }
                     }
+                    Button("Scan Host Code") { startScanning() }
                     if let scannerFailure {
                         Label(scannerFailure, systemImage: "camera.fill")
                             .font(.callout)
                             .foregroundStyle(.orange)
                             .multilineTextAlignment(.center)
                     }
+                }
+            }
+        case .reviewInvitation(let host, let fingerprint, let expiresAt):
+            VStack(spacing: 14) {
+                Label(
+                    "Review Pairing Invitation",
+                    systemImage: "doc.badge.gearshape"
+                )
+                .font(.headline)
+                Text(host)
+                    .font(.title3.weight(.semibold))
+                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Host authority fingerprint")
+                        .font(.caption.weight(.semibold))
+                    Text(fingerprint)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    .quaternary,
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
+                Text("Expires \(expiresAt, style: .relative). Connecting creates a pending claim only; this Host must still show matching security words and approve this Mac.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                HStack {
+                    Button("Cancel", role: .cancel) {
+                        model.declineReviewedInvitation()
+                    }
+                    Button("Connect to This Host") {
+                        Task { await model.acceptReviewedInvitation() }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
         case .connecting:
@@ -397,7 +512,27 @@ private struct HarcDesktopClientPairingView: View {
         }
         showingScanner = false
         scannerFailure = nil
-        Task { await model.begin(pairingURI: value) }
+        model.review(pairingURI: value)
+    }
+
+    private func importPairingInvitation(
+        _ result: Result<[URL], any Error>
+    ) {
+        do {
+            guard let url = try result.get().first else {
+                throw HarcPairingInvitationDocumentError.unreadableFile
+            }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { url.stopAccessingSecurityScopedResource() }
+            }
+            let pairingURI = try HarcPairingInvitationDocument.load(from: url)
+            showingScanner = false
+            scannerFailure = nil
+            model.review(pairingURI: pairingURI)
+        } catch {
+            scannerFailure = error.localizedDescription
+        }
     }
 
     private func result(

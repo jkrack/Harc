@@ -568,10 +568,18 @@ fingerprint is derived from `host_authority_id`; it is not a second QR field.
 Golden fixtures pin the binary ticket, URI, QR round trip, maximum-size case,
 authority/transport binding, and one-bit/length/order/base64/tamper rejections.
 
-The host retains the raw ticket only in the foreground pairing controller long
-enough to render; the client retains it only through claim establishment. The
-URI/secret is never copied to pasteboard, logs, diagnostics, analytics, disk, or
-backup by Harc.
+The host retains the raw ticket in the foreground pairing controller long
+enough to render. Harc never automatically copies it to pasteboard, logs,
+diagnostics, analytics, disk, backup, or any relay. For Mac-to-Mac adoption, the
+user MAY explicitly export the exact URI as a canonical `.harcpair` invitation.
+That file is created with current-user-only permissions, contains no additional
+identity or authority, and retains the ticket's original two-minute expiry. The
+Client reads only a bounded regular file without following symlinks, validates
+the complete canonical ticket before network use, presents the Host address,
+authority fingerprint, and expiry for confirmation, and retains the raw ticket
+only through claim establishment. Harc provides no cloud transfer service;
+moving the invitation through email, messaging, a cloud drive, or a shared
+clipboard is an explicit user-directed export outside Harc's trust boundary.
 
 The host persists only the value named
 `ticket_secret_binding_sha256`:
@@ -586,10 +594,12 @@ are atomic. Only one applicant may reserve a ticket. Approval, expiry,
 cancellation, signature mismatch, or verification mismatch makes it permanently
 unusable.
 
-V1 ships QR adoption only. A future manual fallback MUST NOT be a short numeric
-bearer code. It requires either a separately authenticated high-entropy payload
-that binds the host authority or a reviewed PAKE such as SPAKE2+; it is a new
-security protocol, not a different rendering of this ticket.
+V1 ships QR adoption and an explicit file rendering of the identical canonical
+high-entropy ticket for Mac-to-Mac transfer. It does not ship a short numeric
+bearer code. Any future human-entered fallback requires either a separately
+authenticated high-entropy payload that binds the host authority or a reviewed
+PAKE such as SPAKE2+; it is a new security protocol, not another rendering of
+this ticket.
 
 ### 10.2 Handshake
 

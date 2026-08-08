@@ -13,6 +13,7 @@ import HarcHost
 import HarcHostTransport
 import HarcMeetingDetect
 import HarcModels
+import HarcProtocol
 import HarcStore
 import HarcUI
 import HarcSummarize
@@ -483,6 +484,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var hostPairingWindow: HostPairingWindowController?
     private var desktopClientPairingWindow:
         HarcDesktopClientPairingWindowController?
+    /// A document/open-URL event may arrive before ClientState finishes
+    /// opening. Keep only the memory-resident URI and present it once the
+    /// Client runtime is ready; never log or persist the bearer secret.
+    private var pendingDesktopPairingInvitationURI: String?
     private var desktopHostLibraryWindow:
         HarcDesktopHostLibraryWindowController?
     private var welcomeWindow: NSWindowController?
@@ -1378,10 +1383,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - Deep links (harc://)
+    // MARK: - Deep links and pairing invitations
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
+            if url.scheme?.lowercased() == "harc-pair"
+                || (url.isFileURL
+                    && url.pathExtension.lowercased()
+                        == PairingInvitationFileV1.filenameExtension)
+            {
+                openPairingInvitation(url)
+                continue
+            }
             guard let link = DictationDeepLink.parse(url) else {
                 FileHandle.standardError.write(Data(
                     "harc: ignoring unrecognized deep link \(url.absoluteString)\n".utf8
@@ -1414,6 +1427,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 openDictationHistoryWindow()
             }
         }
+    }
+
+    private func openPairingInvitation(_ url: URL) {
+        do {
+            let pairingURI: String
+            if url.isFileURL {
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessed { url.stopAccessingSecurityScopedResource() }
+                }
+                pairingURI = try HarcPairingInvitationDocument.load(from: url)
+            } else {
+                pairingURI = url.absoluteString
+                _ = try PairingInvitationFileV1.encode(
+                    pairingURI: pairingURI,
+                    atUnixMilliseconds: UInt64(
+                        (Date().timeIntervalSince1970 * 1_000).rounded(.down)
+                    )
+                )
+            }
+            presentDesktopPairingInvitation(pairingURI)
+        } catch {
+            presentPairingUnavailable(error.localizedDescription)
+        }
+    }
+
+    private func presentDesktopPairingInvitation(_ pairingURI: String) {
+        guard prefs.runtimeRole == .client else {
+            presentPairingUnavailable(
+                "Set General > This Mac to Client, restart Harc, and open the invitation again."
+            )
+            return
+        }
+        guard let runtime = desktopClientRuntime else {
+            pendingDesktopPairingInvitationURI = pairingURI
+            return
+        }
+        pendingDesktopPairingInvitationURI = nil
+        openDesktopClientPairing(nil)
+        runtime.pairingCoordinator.review(pairingURI: pairingURI)
+    }
+
+    private func presentPairingUnavailable(_ reason: String) {
+        let alert = NSAlert()
+        alert.messageText = "Pairing invitation unavailable"
+        alert.informativeText = reason
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func updateDictationHUD(for phase: DictationState.Phase) {
@@ -3729,6 +3790,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             try await finishStoreBootstrap(store)
             bridge.hostRuntimeReady = prefs.runtimeRole == .host
             bridge.clientRuntimeReady = prefs.runtimeRole == .client
+            if let pairingURI = pendingDesktopPairingInvitationURI {
+                presentDesktopPairingInvitation(pairingURI)
+            }
         } catch {
             // A failure after Host startup must not strand its writer lease,
             // listeners, or local socket behind a UI graph that never opened.

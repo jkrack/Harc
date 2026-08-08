@@ -7,7 +7,9 @@ import HarcProtocol
 import Network
 
 /// Memory-only foreground payload rendered by the Host UI as a QR code.
-/// The URI contains the ticket secret and must never be logged or persisted.
+/// The URI contains the ticket secret and must never be logged or persisted
+/// automatically. The foreground UI may explicitly export a short-lived copy
+/// at the user's direction for pairing a remote Mac.
 public struct HarcForegroundPairingTicketV1: Equatable, Sendable {
     public let ticketID: UUID
     public let clientKind: AdoptedClientKind
@@ -43,7 +45,8 @@ public enum HarcForegroundPairingTicketControllerError:
 
 /// One foreground pairing window owns this actor. Issuing a replacement first
 /// cancels the prior durable placeholder, and dismissal cancels the active one.
-/// Raw ticket secrets exist only in the returned in-memory URI.
+/// Raw ticket secrets exist only in the returned in-memory URI unless the user
+/// explicitly exports the same short-lived payload from the foreground UI.
 public actor HarcForegroundPairingTicketControllerV1 {
     public static let ticketLifetime: TimeInterval = 120
 

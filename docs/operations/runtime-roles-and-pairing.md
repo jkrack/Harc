@@ -35,16 +35,22 @@ differs. Possessing the QR ticket alone never grants access.
 1. On the secondary Mac, choose **General > This Mac > Client**, confirm, and
    restart Harc.
 2. On the Host, choose **Pair a Device… > Mac client** and create the short-lived
-   pairing QR code or copyable pairing link.
-3. On the Client, choose **Pair with Host…**. Either select **Scan Host Code**
-   and use its built-in, external, or Continuity Camera, or explicitly copy the
-   short-lived pairing link on the Host and select **Paste Pairing Link** on the
-   Client. A copied link contains the one-time pairing secret; Universal
-   Clipboard or messaging may sync it through a cloud service, so use only a
-   transfer channel you trust.
-4. Compare the four security words and device label on both Macs, then approve
+   pairing QR code.
+3. For Macs in the same room, select **Scan Host Code** on the Client. For a Mac
+   elsewhere, select **Save Invite…** on the Host and deliberately transfer the
+   resulting `.harcpair` file to the Client, then double-click it or choose
+   **Open Pairing Invite…**. The invitation contains the same one-time bearer
+   secret as the QR, expires after two minutes, and is protected as a
+   current-user-only file. Harc does not upload or relay it. Email, messaging,
+   cloud drives, and Universal Clipboard can place the secret outside Harc's
+   private trust boundary, so use only a channel you intentionally trust and
+   delete any transferred copy after pairing.
+4. The Client displays the Host address, authority fingerprint, and expiry
+   before making a connection. Confirm **Connect to This Host** only if those
+   details match the Host you intended to adopt.
+5. Compare the four security words and device label on both Macs, then approve
    the exact scopes on the Host.
-5. Use **Host Library…** for the scoped canonical Library. The Client's earlier
+6. Use **Host Library…** for the scoped canonical Library. The Client's earlier
    library remains separately available as **On This Mac**; Harc never merges,
    moves, or uploads it implicitly.
 

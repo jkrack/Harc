@@ -6,7 +6,9 @@ import HarcDomain
 import HarcHost
 import HarcHostTransport
 import HarcIdentity
+import HarcProtocol
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class HostPairingWindowController: NSWindowController, NSWindowDelegate {
@@ -51,6 +53,7 @@ private final class HostPairingViewModel: ObservableObject {
     @Published private(set) var approvedScopes = Set<AuthorizationScope>()
     @Published private(set) var pairedDevices = [HostPairedDeviceSummary]()
     @Published private(set) var pairingLinkCopied = false
+    @Published private(set) var pairingInviteExportStatus: String?
 
     private let runtime: HarcResidentHostRuntimeV1
     private var task: Task<Void, Never>?
@@ -74,6 +77,7 @@ private final class HostPairingViewModel: ObservableObject {
         let previousTask = task
         previousTask?.cancel()
         pairingLinkCopied = false
+        pairingInviteExportStatus = nil
         phase = .issuing
         task = Task { [weak self] in
             await previousTask?.value
@@ -128,6 +132,28 @@ private final class HostPairingViewModel: ObservableObject {
         )
     }
 
+    func savePairingInvite(_ ticket: HarcForegroundPairingTicketV1) {
+        let panel = NSSavePanel()
+        panel.title = "Save Pairing Invite"
+        panel.prompt = "Save Invite"
+        panel.nameFieldStringValue =
+            "Harc Pairing Invite.\(PairingInvitationFileV1.filenameExtension)"
+        panel.allowedContentTypes = [.harcPairingInvitation]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try HarcPairingInvitationDocument.save(
+                pairingURI: ticket.pairingURI,
+                to: url
+            )
+            pairingInviteExportStatus =
+                "Invite saved. It remains usable only until the countdown ends."
+        } catch {
+            pairingInviteExportStatus = error.localizedDescription
+        }
+    }
+
     func deny() {
         guard case .claim(_, let claim) = phase else { return }
         task?.cancel()
@@ -174,6 +200,7 @@ private final class HostPairingViewModel: ObservableObject {
             )
             try Task.checkCancellation()
             pairingLinkCopied = false
+            pairingInviteExportStatus = nil
             phase = .ticket(ticket)
             try await poll(ticket: ticket)
         } catch is CancellationError {
@@ -296,7 +323,7 @@ private struct HostPairingView: View {
                     .frame(width: 300, height: 300)
                     .accessibilityLabel("Harc pairing QR code")
             }
-            Text("On the Client, choose Pair with Host, then scan this code or paste its pairing link. It can be used only once.")
+            Text("On the Client, choose Pair with Host, then scan this code, open a saved invite, or paste its pairing link. It can be used only once.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -309,9 +336,9 @@ private struct HostPairingView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            ProgressView("Waiting for the Client to scan or paste this link…")
+            ProgressView("Waiting for the Client to open this invitation…")
                 .controlSize(.small)
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 Button {
                     model.copyPairingLink(ticket)
                 } label: {
@@ -324,10 +351,25 @@ private struct HostPairingView: View {
                             : "doc.on.doc"
                     )
                 }
-                Button("Create a New Code") { model.restart() }
+                ShareLink(item: ticket.pairingURI) {
+                    Label("Share Invite", systemImage: "square.and.arrow.up")
+                }
+                Button {
+                    model.savePairingInvite(ticket)
+                } label: {
+                    Label("Save Invite", systemImage: "square.and.arrow.down")
+                }
             }
             .buttonStyle(.link)
-            Text("The link contains a temporary pairing secret. Universal Clipboard and messaging may sync it through a cloud service; transfer it only through a channel you trust.")
+            Button("Create a New Code") { model.restart() }
+                .buttonStyle(.link)
+            if let status = model.pairingInviteExportStatus {
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            Text("The invitation contains a temporary pairing secret. Save or Share explicitly exports it outside Harc's adopted-host trust boundary. Use a channel you trust, keep this Host reachable on the same private network, and compare all four security words before approval.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

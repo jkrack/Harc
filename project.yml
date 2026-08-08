@@ -89,6 +89,24 @@ targets:
           - CFBundleURLName: com.harc.Harc.deeplink
             CFBundleURLSchemes:
               - harc
+          - CFBundleURLName: com.harc.Harc.pairing-invitation
+            CFBundleURLSchemes:
+              - harc-pair
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Harc Pairing Invitation
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.harc.pairing-invitation
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.harc.pairing-invitation
+            UTTypeDescription: Harc Pairing Invitation
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - harcpair
+              public.mime-type: application/vnd.harc.pairing-invitation
         # Sparkle 2 auto-updates. The private half of this key lives only
         # in the login Keychain (service "https://sparkle-project.org").
         SUFeedURL: "https://raw.githubusercontent.com/jkrack/Harc/main/appcast.xml"
