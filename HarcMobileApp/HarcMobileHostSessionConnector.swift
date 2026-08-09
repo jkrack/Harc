@@ -1,6 +1,7 @@
 import Foundation
 import HarcClientStore
 import HarcClientTransport
+import HarcRemoteTransport
 import HarcIdentity
 import HarcProtocol
 import HarcTransfer
@@ -45,21 +46,76 @@ enum HarcMobileHostSessionConnector {
                 .discover()
             for route in recoveredRoutes where route != persistedRoute {
                 do {
+                    let recoveredRoute = try HarcMobileHostRoute(
+                        host: route.host,
+                        port: route.port,
+                        serverHostname: route.serverHostname,
+                        relay: persistedRoute.relay
+                    )
                     let opened = try await open(
-                        route: route,
+                        route: recoveredRoute,
                         adoption: adoption,
                         identity: identity,
                         store: store
                     )
                     do {
-                        try HarcMobileHostRouteStore.save(route, to: routeURL)
+                        try HarcMobileHostRouteStore.save(
+                            recoveredRoute,
+                            to: routeURL
+                        )
                         return opened
                     } catch {
                         await opened.connection.shutdownImmediately()
                     }
                 } catch {}
             }
+            if let relay = persistedRoute.relay {
+                return try await openViaRelay(
+                    route: persistedRoute,
+                    relay: relay,
+                    adoption: adoption,
+                    identity: identity,
+                    store: store
+                )
+            }
             throw persistedRouteError
+        }
+    }
+
+    private static func openViaRelay(
+        route: HarcMobileHostRoute,
+        relay: HarcRemoteRelayRouteV1,
+        adoption: ValidatedClientAdoptionEvidence,
+        identity: InstallationSigningIdentity,
+        store: HarcTransferStore
+    ) async throws -> HarcMobileOpenedHostConnection {
+        let tunnel = try await HarcRemoteRelayClientTunnel.open(route: relay)
+        let trust = HarcTransportTrustCoordinator(
+            adoptedPersistence:
+                HarcTransferStoreTransportTrustPersistenceV1(store: store)
+        )
+        let connection: HarcPinnedGRPCConnection
+        do {
+            connection = try await HarcPinnedGRPCConnection.connect(
+                host: tunnel.localHost,
+                port: Int(tunnel.localPort),
+                serverHostname: route.serverHostname,
+                trustCoordinator: trust,
+                transportLifetime: tunnel
+            )
+        } catch {
+            await tunnel.shutdown()
+            throw error
+        }
+        do {
+            return try await finishOpening(
+                connection: connection,
+                adoption: adoption,
+                identity: identity
+            )
+        } catch {
+            await connection.shutdownImmediately()
+            throw error
         }
     }
 
@@ -80,33 +136,43 @@ enum HarcMobileHostSessionConnector {
             trustCoordinator: trust
         )
         do {
-            let policy = try capabilityPolicy()
-            let client = HarcBootstrapClient(
-                rpc: connection,
-                capabilityPolicy: policy,
-                sasDictionary: try HarcSASDictionaryV1.bundled()
-            )
-            let negotiated = try await client.negotiateCapabilities(
-                clientOffer: try capabilityOffer(policy: policy),
-                expectation: HarcBootstrapTrustExpectation(
-                    adoption: adoption
-                )
-            )
-            let session = try await client.openSession(
-                adoption: adoption,
-                negotiatedCapabilities: negotiated.negotiated,
-                deviceSigner: identity
-            )
-            return HarcMobileOpenedHostConnection(
+            return try await finishOpening(
                 connection: connection,
                 adoption: adoption,
-                session: session,
-                negotiated: negotiated.negotiated
+                identity: identity
             )
         } catch {
             await connection.shutdownImmediately()
             throw error
         }
+    }
+
+    private static func finishOpening(
+        connection: HarcPinnedGRPCConnection,
+        adoption: ValidatedClientAdoptionEvidence,
+        identity: InstallationSigningIdentity
+    ) async throws -> HarcMobileOpenedHostConnection {
+        let policy = try capabilityPolicy()
+        let client = HarcBootstrapClient(
+            rpc: connection,
+            capabilityPolicy: policy,
+            sasDictionary: try HarcSASDictionaryV1.bundled()
+        )
+        let negotiated = try await client.negotiateCapabilities(
+            clientOffer: try capabilityOffer(policy: policy),
+            expectation: HarcBootstrapTrustExpectation(adoption: adoption)
+        )
+        let session = try await client.openSession(
+            adoption: adoption,
+            negotiatedCapabilities: negotiated.negotiated,
+            deviceSigner: identity
+        )
+        return HarcMobileOpenedHostConnection(
+            connection: connection,
+            adoption: adoption,
+            session: session,
+            negotiated: negotiated.negotiated
+        )
     }
 
     private static func capabilityPolicy() throws -> HarcCapabilityPolicyV1 {

@@ -61,6 +61,7 @@ INFO_PLIST="$APP/Contents/Info.plist"
 ACTUAL_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$INFO_PLIST")"
 ACTUAL_BUILD="$(plutil -extract CFBundleVersion raw -o - "$INFO_PLIST")"
 ACTUAL_BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw -o - "$INFO_PLIST")"
+ACTUAL_RELAY_ORIGIN="$(plutil -extract HarcRemoteRelayOrigin raw -o - "$INFO_PLIST")"
 
 if [[ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]]; then
   echo "error: expected version $EXPECTED_VERSION, got $ACTUAL_VERSION" >&2
@@ -72,6 +73,10 @@ if [[ "$ACTUAL_BUILD" != "$EXPECTED_BUILD" ]]; then
 fi
 if [[ "$ACTUAL_BUNDLE_ID" != "com.harc.Harc" ]]; then
   echo "error: expected bundle ID com.harc.Harc, got $ACTUAL_BUNDLE_ID" >&2
+  exit 1
+fi
+if [[ "$ACTUAL_RELAY_ORIGIN" != "https://relay.adaptcontext.com" ]]; then
+  echo "error: expected relay origin https://relay.adaptcontext.com, got $ACTUAL_RELAY_ORIGIN" >&2
   exit 1
 fi
 
@@ -90,6 +95,7 @@ echo ""
 echo "Release candidate verified:"
 echo "  Version: $ACTUAL_VERSION ($ACTUAL_BUILD)"
 echo "  Bundle:  $ACTUAL_BUNDLE_ID"
+echo "  Relay:   $ACTUAL_RELAY_ORIGIN"
 echo "  Arch:    arm64"
 echo "  Bytes:   $BYTE_COUNT"
 echo "  SHA-256: $SHA256"

@@ -20,7 +20,7 @@ Every client records safely and works offline; an explicitly adopted host Mac
 owns the canonical library, accepts losslessly compressed audio, returns a
 signed durable receipt, and processes recordings privately.
 
-The first TestFlight slice is complete when a new iPhone can pair by QR with a
+The first physical alpha slice is complete when a new iPhone can pair by QR with a
 locally approved host, record through lock, survive an unavailable host, resume
 an interrupted upload without duplication, persist a signed receipt, and see
 processing status. The existing standalone Mac app must remain releasable after
@@ -269,8 +269,9 @@ flowchart TD
   and storage exhaustion cannot silently lose or duplicate audio.
 - A verified receipt is the only event that enables master-retention cleanup.
 
-This PR completes the local-network **internal** TestFlight alpha. External
-TestFlight waits for reviewer-accessible demo/privacy/review readiness.
+This PR completes the local-network **physical development alpha**. App Store
+submission waits for reviewer-accessible demo/privacy/review readiness and the
+full release gates; TestFlight distribution is optional.
 
 ## PR 8 — Mobile library cache and delta sync
 
@@ -325,9 +326,10 @@ Consider these independently after measured need:
 - a sole-writer `SMAppService.agent` if hosting must survive Quit Harc;
 - user-managed Tailscale/VPN reachability;
 - adaptive iPad UI; and
-- transparent host migration or a Harc-operated relay only under new specs.
+- transparent host migration, or a Harc-operated relay except under the separate
+  [Harc Remote relay specification](../specs/2026-08-08-harc-remote-relay-spec.md).
 
-None is required for the internal TestFlight alpha, and none may destabilize the
+None is required for the physical alpha, and none may destabilize the
 existing Mac path merely to make the module tree symmetrical.
 
 ## Validation commands
@@ -366,7 +368,7 @@ the normative spec and is stored with date, device, OS, build, hashes, and logs.
 
 ## Planning range
 
-- **Local-network internal TestFlight alpha (PRs 0–7):** 8–12 focused engineering weeks
+- **Local-network physical alpha (PRs 0–7):** 8–12 focused engineering weeks
   for one experienced Apple-platform engineer after successful early spikes.
 - **Mobile beta, desktop Client mode, and hardening:** approximately 20–28 weeks
   total.

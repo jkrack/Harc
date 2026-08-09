@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import HarcClientStore
 import HarcClientTransport
+import HarcRemoteTransport
 import HarcIdentity
 import HarcProtocol
 import HarcTransfer
@@ -10,6 +11,7 @@ struct HarcDesktopHostRoute: Codable, Equatable, Sendable {
     let host: String
     let port: UInt16
     let serverHostname: String
+    let relay: HarcRemoteRelayRouteV1?
 
     init(ticket: PairingTicketV1) throws {
         guard let endpoint = ticket.endpoints.first(where: {
@@ -23,6 +25,40 @@ struct HarcDesktopHostRoute: Codable, Equatable, Sendable {
         self.host = host
         port = endpoint.port
         serverHostname = host
+        if let relayEndpoint = ticket.endpoints.first(where: {
+            $0.kind == .remoteRelay
+        }) {
+            let decoded = try PairingRelayEndpointV1.decode(relayEndpoint)
+            guard let origin = URL(
+                string: "https://\(decoded.serviceHost)"
+            ) else {
+                throw HarcDesktopHostConnectionError.noDNSRoute
+            }
+            relay = try HarcRemoteRelayRouteV1(
+                serviceOrigin: origin,
+                hostRouteID: decoded.hostRouteID,
+                deviceRouteID: decoded.admissionRouteID,
+                capability: decoded.capability
+            )
+        } else {
+            relay = nil
+        }
+    }
+
+    init(
+        host: String,
+        port: UInt16,
+        serverHostname: String? = nil,
+        relay: HarcRemoteRelayRouteV1? = nil
+    ) throws {
+        let host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty, port > 0 else {
+            throw HarcDesktopHostConnectionError.noDNSRoute
+        }
+        self.host = host
+        self.port = port
+        self.serverHostname = serverHostname ?? host
+        self.relay = relay
     }
 }
 
@@ -107,12 +143,34 @@ enum HarcDesktopHostSessionConnector {
             adoptedPersistence:
                 HarcTransferStoreTransportTrustPersistenceV1(store: store)
         )
-        let connection = try await HarcPinnedGRPCConnection.connect(
-            host: route.host,
-            port: Int(route.port),
-            serverHostname: route.serverHostname,
-            trustCoordinator: trust
-        )
+        let connection: HarcPinnedGRPCConnection
+        do {
+            connection = try await HarcPinnedGRPCConnection.connect(
+                host: route.host,
+                port: Int(route.port),
+                serverHostname: route.serverHostname,
+                trustCoordinator: trust
+            )
+        } catch {
+            guard let relay = route.relay else {
+                throw error
+            }
+            let tunnel = try await HarcRemoteRelayClientTunnel.open(
+                route: relay
+            )
+            do {
+                connection = try await HarcPinnedGRPCConnection.connect(
+                    host: tunnel.localHost,
+                    port: Int(tunnel.localPort),
+                    serverHostname: route.serverHostname,
+                    trustCoordinator: trust,
+                    transportLifetime: tunnel
+                )
+            } catch {
+                await tunnel.shutdown()
+                throw error
+            }
+        }
         do {
             let policy = try capabilityPolicy()
             let client = HarcBootstrapClient(

@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import HarcClientStore
 import HarcClientTransport
+import HarcRemoteTransport
 import HarcDomain
 import HarcIdentity
 import HarcProtocol
@@ -105,12 +106,32 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                 pairingExactQRTransportSet: ticket.exactTransportObjectBytes,
                 hostAuthorityPublicKey: ticket.hostAuthorityPublicKey
             )
-            let opened = try await HarcPinnedGRPCConnection.connect(
-                host: route.host,
-                port: Int(route.port),
-                serverHostname: route.serverHostname,
-                trustCoordinator: trust
-            )
+            let opened: HarcPinnedGRPCConnection
+            do {
+                opened = try await HarcPinnedGRPCConnection.connect(
+                    host: route.host,
+                    port: Int(route.port),
+                    serverHostname: route.serverHostname,
+                    trustCoordinator: trust
+                )
+            } catch {
+                guard let relay = route.relay else { throw error }
+                let tunnel = try await HarcRemoteRelayClientTunnel.open(
+                    route: relay
+                )
+                do {
+                    opened = try await HarcPinnedGRPCConnection.connect(
+                        host: tunnel.localHost,
+                        port: Int(tunnel.localPort),
+                        serverHostname: route.serverHostname,
+                        trustCoordinator: trust,
+                        transportLifetime: tunnel
+                    )
+                } catch {
+                    await tunnel.shutdown()
+                    throw error
+                }
+            }
             connection = opened
             let client = HarcBootstrapClient(
                 rpc: opened,
@@ -195,9 +216,15 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                 switch try await attempt.client.getPairingStatus() {
                 case .pending:
                     try await Task.sleep(for: .milliseconds(500))
-                case .approved(let adoption):
+                case .approved(let adoption, let remoteRelayRoute):
+                    let adoptedRoute = try HarcDesktopHostRoute(
+                        host: attempt.route.host,
+                        port: attempt.route.port,
+                        serverHostname: attempt.route.serverHostname,
+                        relay: remoteRelayRoute
+                    )
                     try HarcDesktopHostRouteStore.save(
-                        attempt.route,
+                        adoptedRoute,
                         to: routeURL
                     )
                     _ = try store.adopt(adoption)

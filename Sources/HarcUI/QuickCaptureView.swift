@@ -146,7 +146,7 @@ public struct QuickCaptureView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("Everything stays on this Mac")
+            Text("Saved safely on this Mac first")
                 .font(.harcCaption)
                 .foregroundStyle(.secondary)
             Spacer()

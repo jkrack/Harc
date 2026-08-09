@@ -267,6 +267,7 @@ Harc/
 │   ├── HarcHost/                Transport-independent host services
 │   ├── HarcHostTransport/       gRPC, HTTPS, Bonjour, local MCP IPC adapters
 │   ├── HarcClientTransport/     gRPC, HTTPS, discovery client adapters
+│   ├── HarcRemoteTransport/     Shared blind-relay outer tunnel adapters
 │   ├── HarcClientStore/         Cache, cursor, outboxes, conflicts
 │   ├── HarcAudioMobile/         iOS capture and protected master
 │   ├── HarcAudioMac/            Deferred tested extraction
@@ -290,8 +291,9 @@ directories do not become targets merely for symmetry.
    verified Tailscale or VPN endpoint. Bonjour is not used remotely.
 
 There is no Harc-operated account service, relay, public-port onboarding, or
-cloud processor in V1. A relay remains a separate future privacy and operations
-decision.
+cloud processor in base V1. The optional blind reachability relay is governed by
+the separately approved [Harc Remote relay architecture](harc-remote-relay.md)
+and specification; it does not move processing or canonical data into the cloud.
 
 ## Deliberately deferred decisions
 

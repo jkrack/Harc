@@ -6,6 +6,7 @@ import HarcClientTransport
 import HarcDomain
 import HarcIdentity
 import HarcProtocol
+import HarcRemoteTransport
 import HarcTransfer
 
 public enum HarcCLIApplicationError: Error, CustomStringConvertible {
@@ -171,7 +172,7 @@ public struct HarcCLIApplication {
                 switch try await client.getPairingStatus() {
                 case .pending:
                     try await Task.sleep(for: .milliseconds(500))
-                case .approved(let adoption):
+                case .approved(let adoption, _):
                     _ = try store.adopt(adoption)
                     try HarcCLIRouteStore.save(route, to: locations.route)
                     print("Paired. Device ID: \(identity.deviceID)")

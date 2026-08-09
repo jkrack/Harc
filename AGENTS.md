@@ -115,6 +115,9 @@ the resident host is unavailable.
 Run focused tests for the surface you changed, then broaden only as risk
 requires.
 
+On the current constrained development Mac, cap Swift and Xcode concurrency at
+two workers and stop before free disk falls below 5 GiB.
+
     swift test --filter RecordingCacheRecoveryTests
     swift test --filter LocalStackHealthTests
     swift test --filter CustomerExperienceE2ETests

@@ -7,6 +7,7 @@ import SwiftUI
 import UserNotifications
 import HarcAudio
 import HarcClient
+import HarcClientTransport
 import HarcCore
 import HarcExport
 import HarcHost
@@ -14,6 +15,7 @@ import HarcHostTransport
 import HarcMeetingDetect
 import HarcModels
 import HarcProtocol
+import HarcRemoteTransport
 import HarcStore
 import HarcUI
 import HarcSummarize
@@ -459,6 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Present only in Host role. It owns the canonical store above; no second
     /// RecordingStore is opened while this runtime is resident.
     private var hostRuntime: HarcResidentHostRuntimeV1?
+    private var remoteRelayStatusTask: Task<Void, Never>?
     /// Present only in Desktop Client role. The existing canonical store stays
     /// mounted separately as On This Mac; this runtime owns only ClientState.
     private var desktopClientRuntime: HarcDesktopClientRuntime?
@@ -528,7 +531,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Sparkle. Held for the app's lifetime; nil under UI testing.
     private var updaterController: SPUStandardUpdaterController?
     private let updaterDelegate = HarcUpdaterDelegate()
-    private var managedWindowCount = 0
+    /// Windows that currently require Harc to behave as a regular app. A set
+    /// (rather than a presentation count) makes close/reopen idempotent for
+    /// retained controllers such as the Library window.
+    private var activeManagedWindows: Set<ObjectIdentifier> = []
+    private var managedWindowCloseObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
     private var mainMenuInstalled = false
 
     /// Minimum transcript word count to actually call the summarizer.
@@ -546,6 +553,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             UITestPreferenceRestore.restore(prefs)
         }
         applyUITestConfigurationIfNeeded()
+        bridge.remoteRelayAvailable = Self.remoteRelayOrigin != nil
+        bridge.remoteRelayStatusText = bridge.remoteRelayAvailable
+            ? (prefs.remoteRelayEnabled ? "Starts after restart" : "Off")
+            : "Not configured"
         installStatusItem()
 
         // A fresh install must be able to record immediately — create the
@@ -808,6 +819,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 return
             }
             if let runtime = self.hostRuntime {
+                self.remoteRelayStatusTask?.cancel()
                 await self.hostMCPServer?.shutdown()
                 self.hostMCPServer = nil
                 await self.hostProcessingWorker?.waitUntilIdle()
@@ -837,6 +849,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             SystemWorkspace.shared.removeObserver(token)
             terminateToken = nil
         }
+        remoteRelayStatusTask?.cancel()
+        remoteRelayStatusTask = nil
         if let token = hostWakeToken {
             NSWorkspace.shared.notificationCenter.removeObserver(token)
             hostWakeToken = nil
@@ -848,6 +862,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         detector?.stop()
         frontmostPoller?.invalidate()
         frontmostPoller = nil
+        for observer in managedWindowCloseObservers.values {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        managedWindowCloseObservers.removeAll()
+        activeManagedWindows.removeAll()
         desktopClientRuntime?.shutdown()
         desktopClientRuntime = nil
         restoreUITestPreferencesIfNeeded()
@@ -866,19 +885,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func trackManagedWindow(_ window: NSWindow?) {
         guard let window else { return }
-        managedWindowCount += 1
+        let identifier = ObjectIdentifier(window)
+        guard activeManagedWindows.insert(identifier).inserted else {
+            refreshActivationPolicy()
+            return
+        }
         refreshActivationPolicy()
-        NotificationCenter.default.addObserver(
+        let observer = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.managedWindowCount = max(0, self.managedWindowCount - 1)
+                self.activeManagedWindows.remove(identifier)
+                if let observer = self.managedWindowCloseObservers.removeValue(
+                    forKey: identifier
+                ) {
+                    NotificationCenter.default.removeObserver(observer)
+                }
                 self.refreshActivationPolicy()
             }
         }
+        managedWindowCloseObservers[identifier] = observer
     }
 
     /// Bring a managed window to the user without fighting macOS 26's
@@ -905,7 +934,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func refreshActivationPolicy() {
-        let desired: NSApplication.ActivationPolicy = managedWindowCount > 0 ? .regular : .accessory
+        let desired: NSApplication.ActivationPolicy = activeManagedWindows.isEmpty
+            ? .accessory
+            : .regular
         guard NSApp.activationPolicy() != desired else { return }
         if desired == .regular {
             installMainMenuIfNeeded()
@@ -3617,8 +3648,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     @objc private func openLibrary() {
         if let existing = harcWindow {
             existing.showWindow(nil)
-            existing.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            guard let window = existing.window else { return }
+            // Harc retains the Library controller after close. Re-register
+            // the reopened window so the accessory app is promoted back to
+            // `.regular` and its application menu (including Settings) is
+            // restored.
+            trackManagedWindow(window)
+            orderManagedWindowFront(window)
             return
         }
         guard let store else {
@@ -3790,6 +3826,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             try await finishStoreBootstrap(store)
             bridge.hostRuntimeReady = prefs.runtimeRole == .host
             bridge.clientRuntimeReady = prefs.runtimeRole == .client
+            startRemoteRelayStatusUpdates()
             if let pairingURI = pendingDesktopPairingInvitationURI {
                 presentDesktopPairingInvitation(pairingURI)
             }
@@ -3808,11 +3845,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             desktopClientRuntime = nil
             bridge.hostRuntimeReady = false
             bridge.clientRuntimeReady = false
+            remoteRelayStatusTask?.cancel()
+            remoteRelayStatusTask = nil
             bridge.runtimeStartupError = error.localizedDescription
             FileHandle.standardError.write(Data(
                 "harc: store init failed: \(error.localizedDescription)\n".utf8
             ))
         }
+    }
+
+    private func startRemoteRelayStatusUpdates() {
+        remoteRelayStatusTask?.cancel()
+        guard prefs.remoteRelayEnabled, bridge.remoteRelayAvailable else {
+            bridge.remoteRelayStatusText = bridge.remoteRelayAvailable
+                ? "Off"
+                : "Not configured"
+            return
+        }
+        guard let hostRuntime else {
+            bridge.remoteRelayStatusText = prefs.runtimeRole == .client
+                ? "Enabled — connects when direct LAN is unavailable"
+                : "Starts after restart"
+            return
+        }
+        remoteRelayStatusTask = Task { [weak self, weak hostRuntime] in
+            while !Task.isCancelled, let hostRuntime {
+                let state = await hostRuntime.remoteRelayState()
+                let text: String
+                switch state {
+                case .connected?: text = "Connected"
+                case .connecting?: text = "Connecting…"
+                case .reconnecting(let attempt)?:
+                    text = "Reconnecting (attempt \(attempt))"
+                case .stopped?: text = "Stopped"
+                case nil: text = "Unavailable"
+                }
+                await MainActor.run {
+                    self?.bridge.remoteRelayStatusText = text
+                }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private static var remoteRelayOrigin: String? {
+        ProcessInfo.processInfo.environment["HARC_REMOTE_RELAY_ORIGIN"]
+            ?? Bundle.main.object(
+                forInfoDictionaryKey: "HarcRemoteRelayOrigin"
+            ) as? String
     }
 
     private func makeApplicationStore() async throws -> RecordingStore {

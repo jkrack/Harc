@@ -64,6 +64,28 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 4))
     }
 
+    func testSettingsCanOpenAfterLibraryIsClosedAndReopened() throws {
+        launchFixtureLibrary()
+
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4), app.debugDescription)
+
+        // Activating a running app with no visible windows exercises
+        // applicationShouldHandleReopen, which reuses the retained Library
+        // window controller rather than constructing a fresh one.
+        app.activate()
+        XCTAssertTrue(app.windows["Harc"].waitForExistence(timeout: 8), app.debugDescription)
+
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(
+            app.windows["Harc Settings"].waitForExistence(timeout: 6)
+                || app.windows["Settings"].waitForExistence(timeout: 6)
+                || app.windows["General"].waitForExistence(timeout: 6),
+            app.debugDescription
+        )
+        XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 4))
+    }
+
     func testWikiAndReviewModesShowSeededKnowledgeAndApproveProposal() throws {
         launchFixtureLibrary()
 

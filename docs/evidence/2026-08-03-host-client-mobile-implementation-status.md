@@ -6,6 +6,16 @@
 
 **Specification:** [2026-08-02 Host/client/mobile implementation specification](../specs/2026-08-02-host-client-mobile-implementation-spec.md)
 
+**Current architecture decision:**
+[2026-08-08 project, specification, and architecture audit](2026-08-08-project-spec-architecture-audit.md)
+
+The later audit approves the core architecture but classifies the overall
+release as a hardening phase, not complete. In particular, it preserves the
+physical mobile and secondary-Mac gates below and adds Harc Remote invitation
+integrity, relay-side overload, staging, privacy, and load gates. Use that audit
+for the current go/no-go decision; retain this document as the detailed PR 0-9
+implementation record.
+
 ## Outcome
 
 The planned PR 0-9 source surface is implemented on `main`. PR 10
@@ -20,8 +30,8 @@ idempotent observations or exact-signed manual assignments. Full evidence is in
 [2026-08-06 shared speaker identity](2026-08-06-shared-speaker-identity.md).
 
 The local implementation, standalone regression, iOS Simulator build/tests,
-unsigned macOS application build, and code-owned TestFlight review surfaces are
-green. This is not yet a mobile-release-complete or TestFlight-complete claim:
+unsigned macOS application build, and code-owned App Review surfaces are
+green. This is not yet a mobile App Store release-complete claim:
 physical iPhone capture/background-transfer/accessibility gates, the real
 secondary-Mac acceptance run, and account-owned App Store Connect values require
 evidence outside this coding session.
@@ -98,10 +108,10 @@ evidence outside this coding session.
   reliably expose. Physical iPhone builds continue to apply and verify the
   exact protection class, and Simulator results remain ineligible for that
   hardware gate.
-- The source privacy policy, App Privacy/export rationale, external TestFlight
-  checklist, reviewer instructions, and Beta App Review notes are recorded in
+- The source privacy policy, App Privacy/export rationale, direct App Store
+  checklist, reviewer instructions, and App Review notes are recorded in
   `docs/privacy/harc-mobile-privacy-policy.md` and
-  `docs/operations/testflight-release-readiness.md`. Publication of the policy
+  `docs/operations/app-store-release-readiness.md`. Publication of the policy
   URL and account-owner contact/build values remains open.
 - The final slice-boundary audit removed the obsolete public PR-3
   `commitUploadUnavailableUntilPR5` sentinel and its production error mapping.
@@ -176,7 +186,7 @@ several CoreML stacks concurrently.
 | Physical iPhone C1/C2/T1/T2 | Open; current phone connected | The iPhone 15 Pro Max has a signed install, normal launch, and preserved adoption/cache evidence, but no physical capture or transfer scenario has completed. Three successful runs remain required on the oldest and current supported test iPhones, with device, OS, build, hashes, and logs. |
 | Codec release qualification | Open on hardware | Produce the four fresh-process schema-5 reports and validate them with `harcctl qualify-codec-matrix`; then review the selected codec and background behavior against the physical-device thresholds. |
 | Secondary-Mac PR 9 gate | Open on hardware | The Host has no approved Mac Client identity and no upload. Update the second Mac to 0.13.8, paste a fresh two-minute pairing link, approve matching words/scopes, record/system-capture and transcribe locally, upload concurrently, then observe Host acceptance or visible reprocessing. |
-| External TestFlight hardening | Partially green locally | Offline reviewer sample, in-app privacy disclosure, packaged privacy/export assertions, privacy-policy source, and Beta Review notes are implemented. Physical consent/indicator, VoiceOver/Dynamic Type, upgrade/recovery, public policy URL, contact values, exact archive metadata, and external TestFlight review remain open. |
+| App Store submission hardening | Partially green locally | Offline reviewer sample, in-app privacy disclosure, packaged privacy/export assertions, privacy-policy source, and App Review notes are implemented. Physical consent/indicator, VoiceOver/Dynamic Type, upgrade/recovery, public policy/support URLs, contact values, screenshots, exact archive metadata, exact-build App Privacy/export answers, and App Review remain open. TestFlight is optional. |
 
 `xcrun devicectl` reported the iPhone 15 Pro Max available and paired with the
 development Mac on 2026-08-06. Developer Mode is enabled and the local-network

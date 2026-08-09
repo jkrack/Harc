@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.13.9"
-    CURRENT_PROJECT_VERSION: "54"
+    MARKETING_VERSION: "0.14.0"
+    CURRENT_PROJECT_VERSION: "55"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
     ONLY_ACTIVE_ARCH: NO
@@ -51,6 +51,8 @@ targets:
       - package: HarcCore
         product: HarcProtocol
       - package: HarcCore
+        product: HarcRemoteTransport
+      - package: HarcCore
         product: HarcTransfer
       - package: HarcCore
         product: HarcAudioMobile
@@ -83,6 +85,7 @@ targets:
         NSCameraUsageDescription: "Harc uses a camera only when you scan a short-lived pairing code shown by your Harc host."
         NSScreenCaptureUsageDescription: "Harc captures system audio so remote participants appear in transcriptions."
         NSLocalNetworkUsageDescription: "Harc discovers and securely connects to paired Harc hosts on your local network."
+        HarcRemoteRelayOrigin: "https://relay.adaptcontext.com"
         NSBonjourServices:
           - _harc._tcp
         CFBundleURLTypes:
@@ -191,6 +194,8 @@ targets:
       - package: HarcCore
         product: HarcProtocol
       - package: HarcCore
+        product: HarcRemoteTransport
+      - package: HarcCore
         product: HarcTransfer
     info:
       path: HarcMobileApp/Info.plist
@@ -203,6 +208,8 @@ targets:
         NSMicrophoneUsageDescription: "Harc records microphone audio only when you explicitly start a recording."
         NSCameraUsageDescription: "Harc uses the camera to scan a short-lived pairing code shown by your Harc host."
         NSLocalNetworkUsageDescription: "Harc discovers and securely connects to the Harc host you approve on your local network."
+        HarcPrivacyPolicyURL: "https://github.com/jkrack/Harc/blob/main/docs/privacy/harc-mobile-privacy-policy.md"
+        HarcRemoteRelayOrigin: "https://relay.adaptcontext.com"
         NSBonjourServices:
           - _harc._tcp
         UIBackgroundModes:

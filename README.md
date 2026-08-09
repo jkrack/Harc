@@ -1,162 +1,219 @@
 <div align="center">
 
+<img src="docs/images/app-icon.png" alt="Harc hummingbird app icon" width="112">
+
 # Harc
 
-**Meeting memory for your Mac.**
+**Private meeting memory for Apple Silicon.**
 
-Record a meeting, get a speaker-labelled transcript you can paste into an LLM.
-Hold a key anywhere, speak, and the text lands at your cursor.
-Everything runs on your Mac — no cloud, no account, no telemetry.
+Capture microphone and system audio, produce speaker-labelled transcripts,
+summarize with local models, and dictate into any Mac app. Use one Mac as your
+private Host when you want the same canonical library from an iPhone or another
+Mac—without moving speech recognition or your library into a SaaS account.
 
-[Download](https://github.com/jkrack/Harc/releases/latest) ·
-[Features](#what-it-does) ·
-[Privacy](#privacy) ·
+[Download Harc 0.14.0](https://github.com/jkrack/Harc/releases/latest) ·
+[See the product](#the-product) ·
+[Host and clients](#one-host-your-clients) ·
+[Privacy](#privacy-boundary) ·
 [Install](#install)
 
-macOS 26 (Tahoe) or later · Apple Silicon · ~460 MB speech model
+macOS 26 or later · Apple Silicon · No account · No telemetry
 
 </div>
 
 ---
 
-<img src="docs/images/library-hero.png" alt="The Harc library: waveform, an on-device summary, and the transcript" width="100%">
+<img src="docs/images/library-hero.png" alt="Harc Library showing a demo recording, waveform, local summary, action items, and speaker-labelled transcript" width="100%">
 
-## What it does
+## The product
 
-Harc is two tools that happen to share a speech engine.
+Harc starts as a complete local Mac app. It records meetings durably, transcribes
+and identifies speakers on device, makes the result searchable, and writes plain
+files you own. Push-to-talk dictation uses the same warm speech engine to put text
+at the cursor in any app.
 
-### 1. Meeting capture
+When one Mac is not enough, Harc can adopt clients around a single authoritative
+Host:
 
-Start recording from the menu bar or a hotkey. Harc captures **your microphone
-and the system audio together**, so the people on the call end up in the
-transcript too — not just you. Audio is written to disk as it records, and
-transcription runs in the background in rolling chunks, so the transcript is
-essentially finished the moment you press stop.
+- a personal or always-on Mac owns the canonical library and device grants;
+- a work Mac still captures and transcribes locally, then uploads losslessly in
+  the background;
+- an iPhone captures to a protected local master, remains usable when the Host is
+  unavailable, and retries transfer from its durable outbox; and
+- direct LAN is preferred, with an opt-in blind relay for different networks.
 
-The design goal is not low latency. It is **never losing an hour of audio**:
-the recording survives a crash, a sleep, or a power loss, and a recovery inbox
-offers to rebuild anything that was interrupted.
+### Availability today
 
-<!-- SCREENSHOT: menu-bar panel mid-recording, showing elapsed time and levels. -->
+| Surface | Public status |
+| --- | --- |
+| **macOS standalone recording, Library, dictation, local AI, and MCP** | Released in Harc 0.14.0 |
+| **Mac Host and secondary-Mac Client** | Available in Harc 0.14.0 with direct-LAN pairing and durable transfer |
+| **HarcMobile for iPhone** | Implemented in the current source; App Store distribution is tracked separately |
+| **Harc Remote** | Available in Harc 0.14.0 through `relay.adaptcontext.com`; opt-in and off until the Host owner enables it |
 
-### 2. Push-to-talk dictation
+Harc Remote is a production feature, not a beta service. It remains opt-in so a
+Host owner explicitly chooses when remote clients may use the relay.
 
-Hold ⌃⌥D, speak, release. The text is inserted at your cursor in whatever app
-you were already in. A floating pill shows the waveform without stealing
-focus.
+## Capture that is designed not to lose the meeting
 
-Modes reshape what you said before it lands — clean up the filler, turn it
-into an email, a message, a bullet list, or answer a question about the text
-you have selected. All of it runs through a local model.
+Start from the menu bar, the Library, or a global hotkey. Harc records the chosen
+microphone and system audio together, so remote participants are included. It
+writes durable audio while capture is active and processes finished chunks in
+the background; transcription is usually ready when recording stops.
 
-<img src="docs/images/welcome-dictation.png" alt="Dictation: hold the hotkey, speak, release — text lands at the cursor" width="820">
+- Pick a primary microphone instead of trusting whichever device a dock or
+  camera made the system default.
+- An explicitly selected microphone never silently falls back when disconnected.
+- Quick Capture exposes the same selector before recording starts.
+- Auto-stop warns before ending a silent meeting, with a separate hard duration
+  cap.
+- Interrupted captures enter a recovery inbox rather than disappearing.
+- Retroactive record can keep the previous 1–10 minutes in memory until you
+  choose to save them. It is off by default.
 
-<!-- SCREENSHOT: the dictation HUD mid-dictation, live waveform + mode chip. -->
+<img src="docs/images/microphone-selection.jpg" alt="Harc Recording settings showing hotkeys, primary microphone selection, system-audio capture, and meeting detection" width="900">
 
-## Feature list
+## Transcription, speakers, and local AI
 
-**Capture**
-- Microphone **and** system audio, mixed to one recording (via ScreenCaptureKit)
-- Toggle recording from the menu bar, a global hotkey (⌃⌥R by default), or the Library window
-- **Retroactive record** — for the moment someone says something worth keeping and you weren't recording. Harc can hold the last 1–10 minutes in memory, so pressing record captures the conversation you already had, not just the one starting now. Off by default; see [Privacy](#privacy) for what it costs
-- Auto-stop on silence, with a warning before it fires, plus a hard duration cap
-- Meeting detection: notices when a video-call app launches and offers to record
-- Durable WAV on disk during capture; a recovery inbox for anything interrupted
+Harc runs Parakeet TDT 0.6B v3 through Core ML on Apple Silicon. Voice activity
+detection skips silence; diarization produces speaker turns; and voiceprints can
+associate a known person across recordings. The Host is authoritative for shared
+speaker identity and can reconcile labels learned by clients.
 
-**Transcription**
-- Parakeet TDT 0.6B v3 running on the Neural Engine via Core ML
-- Speaker diarization on by default — `Speaker 1:` / `Speaker 2:` labels a downstream LLM can use
-- Speaker re-identification links the same voice to a named person across recordings
-- Voice-activity detection skips silence, which is most of a meeting's mic track
-- A vocabulary list rewrites names, acronyms and jargon the model mishears
-- **Re-transcribe the archive** when a better engine ships, so old recordings improve too
+The Library adds:
 
-**Library**
-- Searchable across every transcript, with optional **hybrid search** that blends meaning into keyword results
-- Calendar, pinning, and date grouping in the sidebar
-- Transcript editor, speaker renaming, and an inspector with file metadata
-- Every recording is written as plain files you own — see [Your data stays yours](#your-data-stays-yours)
+- full-text and optional hybrid semantic search;
+- waveform playback and word/speaker timestamps;
+- speaker naming, transcript correction, notes, tags, and pinning;
+- local summaries and action items from selectable MLX model tiers; and
+- re-transcription of older recordings when the speech pipeline improves.
 
-**Dictation**
-- Push-to-talk or toggle, on a hotkey you choose
-- Inserts at the cursor in any app, or copies to the clipboard instead
-- Restores whatever you had copied once the text lands
-- Keeps the speech model warm so there is no cold-load pause
-- Searchable history of recent dictations, kept locally and switchable off
-- Refuses to run while a meeting recording is active — mic and daemon are single-user resources
+Local model tiers are explicit downloads. Harc shows disk and memory guidance
+before installation rather than silently pulling a large model.
 
-<img src="docs/images/settings-dictation.png" alt="Dictation settings: hotkey, trigger style, insertion behaviour and history" width="820">
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/settings-models.png" alt="Harc AI Models settings with local summarizer tiers and RAM guidance"></td>
+    <td width="50%"><img src="docs/images/settings-modes.png" alt="Harc dictation modes including clean-up, email, message, bullet list, and answer"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Local summarizer tiers with honest hardware guidance</sub></td>
+    <td align="center"><sub>Built-in and custom local text transformations</sub></td>
+  </tr>
+</table>
 
-**AI, on device**
-- Meeting summaries and action items from a local MLX model
-- Summarizer tiers from 3.6 GB to 18 GB — download only what your Mac can run, with RAM guidance per tier
-- Dictation modes (Clean-up, Email, Message, Bullet List, Answer, or your own), each with an optional hotkey and per-app rules
+## Dictate anywhere
 
-<img src="docs/images/settings-models.png" alt="AI Models settings: on-device summarizer tiers with size and RAM guidance" width="820">
+Hold <kbd>⌃</kbd><kbd>⌥</kbd><kbd>D</kbd>, speak, and release. Harc inserts the
+result at the cursor without taking focus. Push-to-talk and toggle triggers are
+configurable, clipboard contents can be restored after insertion, and recent
+dictations can be kept locally or disabled entirely.
 
-<img src="docs/images/settings-modes.png" alt="Dictation modes: built-in and custom text transformations" width="820">
+Modes reshape speech before insertion—raw transcript, clean-up, email, message,
+bullet list, answer, or a custom prompt. If the selected local model is not
+available, Harc fails back to the raw transcript rather than dropping the text.
+
+<img src="docs/images/settings-dictation.png" alt="Harc Dictation settings showing the hotkey, trigger, insertion behavior, clipboard restoration, and local history" width="900">
+
+## One Host, your clients
+
+The optional distributed mode has one canonical Host and multiple adopted
+Mac or iPhone clients. A Mac mini is a natural Host, but it is not a protocol
+requirement: a MacBook, iMac, or Mac Studio can be the authority as long as it is
+available when clients need it.
+
+<img src="docs/images/host-remote.jpg" alt="Harc General settings showing a healthy Host, device pairing, and the opt-in Harc Remote blind relay" width="900">
+
+### Identity and pairing
+
+- Every installation generates a non-synchronizing P-256 device key in Keychain.
+- The Host has a separate persistent authority key and grants least-privilege
+  scopes to each adopted device.
+- Pairing tickets expire after two minutes and never grant access by themselves.
+- Both sides show the same four security words; the Host must approve the exact
+  device and scopes locally.
+- iPhone pairs by QR. A remote Mac can use a deliberately transferred `.harcpair`
+  invitation file instead of photographing another screen.
+- Revocation is Host-authoritative and invalidates both application access and
+  relay admission.
+
+The Client's existing library stays separately available as **On This Mac**.
+Harc never merges, moves, or bulk-uploads it merely because the role changed.
+Only new Client-mode captures enter the Host outbox.
+
+### Direct first, blind relay second
+
+```mermaid
+flowchart LR
+    iPhone["iPhone client"]
+    WorkMac["Secondary Mac client"]
+    LAN["Direct LAN\nBonjour + pinned TLS"]
+    Relay["Cloudflare blind relay\nopaque binary frames"]
+    Host["Your Harc Host\ncanonical library + inference"]
+
+    iPhone -->|"preferred when local"| LAN
+    WorkMac -->|"preferred when local"| LAN
+    LAN --> Host
+    iPhone -->|"remote fallback\ninner TLS records"| Relay
+    WorkMac -->|"remote fallback\ninner TLS records"| Relay
+    Relay -->|"outbound Host tunnel"| Host
+```
+
+Harc Remote solves reachability; it is not a cloud library and it does not run
+inference. Both the client and Host make outbound WebSocket connections, so the
+Host needs no inbound port forwarding. Inside those WebSockets, Harc keeps its
+existing pinned-TLS gRPC session intact. Cloudflare relays binary TLS records
+without receiving Harc application plaintext.
+
+The relay necessarily observes network metadata—connection timing, approximate
+byte counts, and opaque random routing identifiers. It does **not** receive
+audio, transcripts, summaries, device names, speaker identities, library
+records, or the keys needed to decrypt them. Relayed payload frames are never
+written to Durable Object storage. If the relay or Host is unavailable, capture
+still succeeds locally and the outbox retries later.
+
+The public implementation and its limits are documented in the
+[Host/client architecture](docs/architecture/host-client-architecture.md),
+[Harc Remote architecture](docs/architecture/harc-remote-relay.md), and
+[runtime pairing runbook](docs/operations/runtime-roles-and-pairing.md).
 
 ## Your data stays yours
 
-Local by default is only half of it. The other half is that nothing here is
-locked in.
+Every standalone or canonical Host recording is projected as plain files in a
+folder you choose (`~/Documents/Harc` by default):
 
-Every recording lands as **three plain files** in a folder you choose
-(`~/Documents/Harc` unless you change it), organised by date:
-
-```
+```text
 Harc/2026/2026-07-26/
   index.md          # day index, one link per meeting
-  09-15-02.wav      # the audio
+  09-15-02.wav      # audio master
   09-15-02.md       # Open Knowledge Format document
-  09-15-02.json     # transcript, word timestamps, speaker segments
+  09-15-02.json     # transcript, words, timestamps, speaker segments
 ```
 
-The `.md` is an **Open Knowledge Format** (OKF v0.1) document: YAML
-frontmatter (`type`, `title`, `resource`, `tags`, `timestamp`)
-followed by `## Summary`, `## Action Items`, and `## Transcript`.
+The Markdown file is an **Open Knowledge Format (OKF v0.1)** document with YAML
+frontmatter followed by Summary, Action Items, Notes, and Transcript sections.
+SQLite is the live indexed library; Markdown is regenerated after edits so the
+portable folder remains current.
 
-That has a specific consequence. **The SQLite library is an index, not the
-record.** The Markdown is regenerated from it after every edit, so the folder
-is always current — and the files stand on their own if Harc is not running,
-not installed, or gone entirely.
+You can point Obsidian at it, search it with standard tools, put it in git, back
+it up, or give a filesystem-capable agent read access. Harc does not require an
+export API to release your own words.
 
-Which means you can, without asking Harc for permission:
+## Agents through MCP
 
-- Point **Obsidian** at the folder and get a working vault, wiki-links and all
-- `grep` a year of meetings, or put the folder in **git** and diff them
-- Let a **coding agent or LLM with filesystem access** read the transcripts
-  directly — they are Markdown with structured frontmatter, which is the
-  format those tools already read best
-- Sync it with iCloud, Dropbox or Syncthing, or back it up like any folder
-- Copy a transcript into **ChatGPT, Claude or a local model** yourself, when
-  and if you want to
+The app bundles `harc-mcp`, a local stdio MCP server. It holds no API keys and
+opens no network listener. Agents can search and read the Library, change titles,
+tags, speaker names, and summaries through Harc's store, and append stamped
+notes. Transcripts are read-only to agents by design.
 
-That last one is the point of the distinction. Harc never sends your audio or
-transcripts to a Harc cloud service — there is no cloud STT, account, or
-telemetry. If you explicitly adopt your own Harc Host, a client can synchronize
-with that authenticated private computer; recording and recovery still work
-offline, and the Host remains under your control. A user-directed export or
-copy into another service is a separate decision outside that trust boundary.
+For Claude Code:
 
-The folder of Markdown remains the primary agent surface — an agent with
-filesystem access needs no API to read it. For agents that should also
-*search* the library and *write back safely*, Harc bundles a small MCP
-server, `harc-mcp` (inside the app at `Contents/MacOS/harc-mcp`). Register it
-with the agent you already run:
-
-```
+```sh
 claude mcp add --scope user harc -- /Applications/Harc.app/Contents/MacOS/harc-mcp
 ```
 
-(`--scope user` registers it for every project; the default scope is the
-current directory only.)
-
-**Claude Desktop** has no command line — use the one-click **Add to Claude
-Desktop** button in Settings → Agents instead (it merges the entry into
-`~/Library/Application Support/Claude/claude_desktop_config.json`, backing
-the file up first; restart Desktop afterwards). For any other stdio MCP
-client — or a project `.mcp.json` — this block works verbatim:
+Claude Desktop can be configured from **Settings → Agents → Add to Claude
+Desktop**. For another stdio MCP client:
 
 ```json
 {
@@ -168,122 +225,108 @@ client — or a project `.mcp.json` — this block works verbatim:
 }
 ```
 
-It exposes hybrid search plus store-mediated writes — titles, tags, speaker
-names, summaries, and appended notes — so agent edits go through the same
-database mutators the app uses and the Markdown regenerates correctly
-(direct file edits to generated sections get overwritten by the next
-projection). Notes are append-only for agents: each note lands under the
-document's `## Notes` section with an author-and-date stamp, and an agent
-can never rewrite what you (or an earlier note) already said. Transcripts
-are read-only to agents by design. The server talks JSON-RPC over stdio and
-holds no API keys. In Standalone mode it keeps the existing local-store
-behavior. In Host mode it routes through the resident, same-user Harc process
-so the app remains the sole canonical writer; if that process is unavailable,
-MCP fails explicitly rather than writing the database directly.
+In Host mode, MCP mutations route through authenticated same-user IPC to the
+resident Host process so there is still one canonical writer.
 
-The Host/client/mobile work is documented in the
-[architecture](docs/architecture/host-client-architecture.md), with setup in
-the [runtime roles and pairing runbook](docs/operations/runtime-roles-and-pairing.md).
+## Privacy boundary
 
-## Privacy
+<img src="docs/images/welcome-local-first.png" alt="Harc welcome screen explaining local speech recognition, diarization, summaries, and durable local audio" width="900">
 
-<img src="docs/images/welcome-local-first.png" alt="Local first: speech, diarization, summaries and audio all stay on the Mac" width="820">
+| Component | What it can access |
+| --- | --- |
+| **Standalone Mac** | Its local recordings, models, Library, and settings |
+| **Mac/iPhone client** | Its protected local capture/outbox plus Host data allowed by its explicit grant |
+| **Your Host** | The canonical Library, adopted-device registry, inference, and authorized incoming captures |
+| **Cloudflare relay** | Outer connection metadata and opaque routing values; encrypted inner-TLS records only |
+| **Harc project** | No account, no hosted transcript database, and no product telemetry |
 
-- **No cloud speech-to-text.** Audio stays on the recording device unless you
-  explicitly adopt your own authenticated Harc Host.
-- **No account, no sign-in, no telemetry.**
-- Models are downloaded once from Hugging Face, version-pinned and
-  checksum-verified. After that, Harc works offline.
-- Auto-paste refuses to type into password managers and the login window, and
-  that list is not editable away.
-- **Retroactive record, if you enable it, keeps the microphone open while Harc
-  sits idle.** That is the honest cost of being able to record something that
-  already happened, and it is why the feature ships switched off. What it does
-  *not* do is write anything down: the last few minutes live in memory, are
-  continuously overwritten, and reach the disk only when you press record.
-  macOS shows its orange microphone indicator the entire time it is on, the
-  menu-bar panel shows how much is banked, and **Clear** wipes it instantly —
-  for the moment you say something you would rather not keep.
-
-Harc is source-available under [PolyForm Noncommercial](https://polyformproject.org/licenses/noncommercial/1.0.0),
-so you can read exactly what it does with your audio.
+- Speech-to-text, diarization, summaries, and speaker embeddings run on Harc
+  devices you control.
+- Models are version-pinned and checksum-verified after download.
+- Auto-paste refuses password managers, the login window, and other protected
+  destinations.
+- Retroactive record holds a rolling buffer only in memory until you explicitly
+  save it; macOS still shows the microphone privacy indicator while enabled.
+- Copying or exporting a transcript into another product is your explicit action
+  and outside Harc's trust boundary.
 
 ## Install
 
-1. Download the DMG from [Releases](https://github.com/jkrack/Harc/releases/latest)
-   and drag `Harc.app` to `/Applications`. Builds are signed and notarized, so
-   there is nothing to un-quarantine.
-2. Launch it. The welcome flow asks for Microphone and Screen Recording, and
-   for Accessibility if you want dictation to insert text.
-3. The speech model (~460 MB) downloads on first run — the menu-bar panel
-   shows progress. Recording works as soon as it lands. Summarizer models are
-   optional and install from Settings → AI Models.
+1. Download the signed, notarized DMG from
+   [Releases](https://github.com/jkrack/Harc/releases/latest).
+2. Drag `Harc.app` to `/Applications` and launch it.
+3. Grant Microphone permission. Grant Screen Recording to capture the other side
+   of a call, and Accessibility only if you want dictation inserted at the cursor.
+4. Let the ~460 MB speech model finish downloading. Summarizer models are
+   optional.
 
-<img src="docs/images/welcome-canvas.png" alt="Harc's welcome flow" width="820">
-
-Updates arrive through Sparkle; Harc checks on its own and installs in place.
+Updates are signed and delivered through Sparkle.
 
 ## Requirements
 
-| | |
-|---|---|
-| **macOS** | 26 (Tahoe) or later |
-| **Chip** | Apple Silicon (arm64) — no Intel build |
-| **Disk** | ~460 MB speech model, plus 3.6–18 GB per summarizer tier you choose |
-| **RAM** | 8 GB works; 16 GB recommended if you want summaries |
-| **Language** | English only, by design — it is what allows the best model choice |
+### Standalone Mac
 
-Screen Recording permission is what allows Harc to capture the *other* side of
-a call. Decline it and recording still works, mic-only.
+| | |
+| --- | --- |
+| **macOS** | 26 (Tahoe) or later |
+| **Chip** | Apple Silicon (arm64) |
+| **Memory** | 8 GB works; 16 GB recommended for summaries |
+| **Disk** | ~460 MB speech model plus 3.6–18 GB for any summarizer tier you choose |
+| **Language** | English |
+
+### Host profile
+
+The supported starting profile is Apple Silicon, macOS 26, 16 GB unified memory,
+50 GB free after model installation, and launch at login enabled. A Mac with
+24 GB memory, 512 GB or larger storage, wired Ethernet, and reliable awake time
+is recommended; 32 GB is preferable for concurrent clients or larger models.
+These recommendations will be refined from measured production load data.
 
 ## How it works
 
-The speech engine is a separate executable (`harc-stt`) that Harc launches and
-talks to over a Unix socket, so model load cost is paid once and a crash in
-the audio stack cannot take the UI with it. Recording writes a durable WAV to
-a cache directory; a background worker feeds finished ~60-second chunks to the
-daemon while capture continues, then the finished bundle is moved atomically
-into your chosen folder. The library is GRDB/SQLite, and the Markdown document
-is a projection of it — regenerated after every edit, never the source of
-truth.
+`harc-stt` is a separate executable reached over a Unix socket, so model load is
+paid once and an audio-stack failure does not have to take down the UI. Capture
+writes a durable WAV before processing. Background workers transcribe completed
+chunks, then commit the recording bundle atomically. GRDB/SQLite backs the live
+Library and projects each edit back into OKF Markdown.
 
-`AGENTS.md` has the architecture map, the reliability rules, and the release
-ritual.
+Distributed mode adds scoped device identities, signed grants and receipts,
+gRPC over pinned TLS, lossless ALAC transfer, resumable outboxes, and a
+Host-authoritative processing and speaker-identity policy. The blind relay wraps
+that existing TLS byte stream; it does not replace the application protocol.
 
 ## Build from source
 
-Requires Xcode / Swift 6.2 and Homebrew.
+Requires Xcode with Swift 6.2 and Homebrew:
 
-    brew install xcodegen
-    swift test            # SwiftPM suite
-    xcodegen generate     # produce Harc.xcodeproj
-    open Harc.xcodeproj   # build + run the Harc app target
+```sh
+brew install xcodegen
+swift test --jobs 2
+xcodegen generate
+xcodebuild -project Harc.xcodeproj -scheme Harc -destination 'platform=macOS' -jobs 2 build
+```
 
-`swift test` does not compile `HarcApp/` — always finish with an `xcodebuild`
-before calling the tree green. See `AGENTS.md` for known-flaky suites and the
-full validation workflow.
-
-Real-model speech, daemon, and quality gates are intentionally opt-in so the
-standalone suite does not start several CoreML stacks at once. Run them on a
-qualified machine with `HARC_INTEGRATION_TESTS=1 swift test`, preferably one
-filtered model suite at a time.
+`swift test` does not compile `HarcApp/`; always finish with an Xcode build.
+Relay development is isolated under [`CloudflareRelay/`](CloudflareRelay/).
+See [`AGENTS.md`](AGENTS.md) for architecture and validation rules.
 
 ## Uninstall
 
-Quit Harc, delete `Harc.app`, then remove what you don't want to keep
-(Settings → About → Storage lists the same paths with sizes):
+Quit Harc and delete `Harc.app`. Then remove only the data you no longer want:
 
-    ~/Documents/Harc                                # recordings + transcripts (yours — keep!)
-    ~/Library/Application Support/Harc              # library DB, modes, history, summarizer models
-    ~/Library/Application Support/FluidAudio/Models # speech models
-    ~/Library/Caches/Harc                           # caches + daemon log
-    ~/.harc                                         # daemon socket
+```text
+~/Documents/Harc                                # recordings and transcripts—keep if wanted
+~/Library/Application Support/Harc              # Library, roles, outboxes, settings, local models
+~/Library/Application Support/FluidAudio/Models # speech models
+~/Library/Caches/Harc                           # rebuildable caches and daemon log
+~/.harc                                         # local daemon sockets
+```
 
 ## License
 
 Copyright © 2026 **CloudArchitech LLC**.
 
-Licensed under [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
-— see `LICENSE`. Open for personal and other noncommercial use; commercial use
-requires a separate license from CloudArchitech LLC. Official signed builds are
-available from [Releases](https://github.com/jkrack/Harc/releases).
+Harc is source-available under
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0).
+Personal and other noncommercial use is allowed; commercial use requires a
+separate license from CloudArchitech LLC. See [`LICENSE`](LICENSE).

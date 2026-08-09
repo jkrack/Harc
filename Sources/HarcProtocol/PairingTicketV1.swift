@@ -8,6 +8,138 @@ public enum PairingEndpointKindV1: UInt8, CaseIterable, Sendable {
     case dnsHost = 2
     case ipv4 = 3
     case ipv6 = 4
+    case remoteRelay = 5
+}
+
+/// Compact relay reachability carried inside the same short-lived bearer
+/// ticket as direct endpoints. Only an HTTPS hostname and three independent
+/// 256-bit opaque values cross this boundary; no Harc identity is used as a
+/// relay route.
+public struct PairingRelayEndpointV1: Equatable, Hashable, Sendable {
+    public static let port: UInt16 = 443
+    public static let maximumServiceHostBytes = 120
+
+    public let serviceHost: String
+    public let hostRouteID: String
+    public let admissionRouteID: String
+    public let capability: String
+
+    public init(
+        serviceHost: String,
+        hostRouteID: String,
+        admissionRouteID: String,
+        capability: String
+    ) throws {
+        let serviceBytes = Data(serviceHost.utf8)
+        guard !serviceBytes.isEmpty,
+              serviceBytes.count <= Self.maximumServiceHostBytes else {
+            throw HarcProtocolCodecError.invalidEndpoint(
+                field: "remoteRelay.serviceHost"
+            )
+        }
+        try PairingEndpointV1.validateDNS(serviceBytes)
+        for (field, value) in [
+            ("hostRouteID", hostRouteID),
+            ("admissionRouteID", admissionRouteID),
+            ("capability", capability),
+        ] {
+            let decoded = try harcDecodeCanonicalBase64URL(value)
+            guard decoded.count == 32 else {
+                throw HarcProtocolCodecError.invalidEndpoint(
+                    field: "remoteRelay.\(field)"
+                )
+            }
+        }
+        self.serviceHost = serviceHost
+        self.hostRouteID = hostRouteID
+        self.admissionRouteID = admissionRouteID
+        self.capability = capability
+    }
+
+    public func pairingEndpoint() throws -> PairingEndpointV1 {
+        var writer = HarcBinaryWriter()
+        let serviceBytes = Data(serviceHost.utf8)
+        writer.append(UInt8(1))
+        writer.append(UInt8(serviceBytes.count))
+        writer.append(serviceBytes)
+        writer.append(try harcDecodeCanonicalBase64URL(hostRouteID))
+        writer.append(try harcDecodeCanonicalBase64URL(admissionRouteID))
+        writer.append(try harcDecodeCanonicalBase64URL(capability))
+        return try PairingEndpointV1(
+            kind: .remoteRelay,
+            port: Self.port,
+            value: writer.data
+        )
+    }
+
+    public static func decode(_ endpoint: PairingEndpointV1) throws -> Self {
+        guard endpoint.kind == .remoteRelay, endpoint.port == port else {
+            throw HarcProtocolCodecError.invalidEndpoint(field: "remoteRelay")
+        }
+        let decoded = try decodeUnchecked(
+            port: endpoint.port,
+            value: endpoint.value
+        )
+        guard try decoded.pairingEndpoint() == endpoint else {
+            throw HarcProtocolCodecError.headerPayloadMismatch(
+                field: "canonicalRemoteRelay"
+            )
+        }
+        return decoded
+    }
+
+    fileprivate static func decodeUnchecked(
+        port: UInt16,
+        value: Data
+    ) throws -> Self {
+        guard port == Self.port else {
+            throw HarcProtocolCodecError.invalidEndpoint(
+                field: "remoteRelay.port"
+            )
+        }
+        var reader = try HarcBinaryReader(
+            value,
+            maximumBytes: Int(UInt8.max),
+            field: "remoteRelay"
+        )
+        guard try reader.readUInt8(field: "remoteRelay.version") == 1 else {
+            throw HarcProtocolCodecError.invalidEndpoint(
+                field: "remoteRelay.version"
+            )
+        }
+        let hostLength = Int(
+            try reader.readUInt8(field: "remoteRelay.serviceHostLength")
+        )
+        guard (1 ... maximumServiceHostBytes).contains(hostLength) else {
+            throw HarcProtocolCodecError.invalidEndpoint(
+                field: "remoteRelay.serviceHostLength"
+            )
+        }
+        let serviceBytes = try reader.readData(
+            count: hostLength,
+            field: "remoteRelay.serviceHost"
+        )
+        guard let serviceHost = String(data: serviceBytes, encoding: .ascii),
+              Data(serviceHost.utf8) == serviceBytes else {
+            throw HarcProtocolCodecError.invalidEndpoint(
+                field: "remoteRelay.serviceHost"
+            )
+        }
+        let decoded = try Self(
+            serviceHost: serviceHost,
+            hostRouteID: harcEncodeBase64URL(
+                reader.readData(count: 32, field: "remoteRelay.hostRouteID")
+            ),
+            admissionRouteID: harcEncodeBase64URL(
+                reader.readData(count: 32, field: "remoteRelay.admissionRouteID")
+            ),
+            capability: harcEncodeBase64URL(
+                reader.readData(count: 32, field: "remoteRelay.capability")
+            )
+        )
+        try reader.requireEnd()
+        return decoded
+    }
 }
 
 public struct PairingEndpointV1: Equatable, Hashable, Sendable {
@@ -43,6 +175,16 @@ public struct PairingEndpointV1: Equatable, Hashable, Sendable {
             guard port != 0, value.count == 16 else {
                 throw HarcProtocolCodecError.invalidEndpoint(field: "ipv6")
             }
+        case .remoteRelay:
+            guard port == PairingRelayEndpointV1.port else {
+                throw HarcProtocolCodecError.invalidEndpoint(
+                    field: "remoteRelay.port"
+                )
+            }
+            _ = try PairingRelayEndpointV1.decodeUnchecked(
+                port: port,
+                value: value
+            )
         }
         self.kind = kind
         self.port = port
@@ -68,7 +210,7 @@ public struct PairingEndpointV1: Equatable, Hashable, Sendable {
     public var textValue: String? {
         switch kind {
         case .bonjourInstance, .dnsHost: String(data: value, encoding: .utf8)
-        case .ipv4, .ipv6: nil
+        case .ipv4, .ipv6, .remoteRelay: nil
         }
     }
 
@@ -83,7 +225,7 @@ public struct PairingEndpointV1: Equatable, Hashable, Sendable {
         return lhs.port < rhs.port ? .orderedAscending : .orderedDescending
     }
 
-    private static func validateDNS(_ bytes: Data) throws {
+    fileprivate static func validateDNS(_ bytes: Data) throws {
         guard let value = String(data: bytes, encoding: .ascii),
               Data(value.utf8) == bytes,
               value == value.lowercased(),
@@ -115,6 +257,8 @@ public struct PairingTicketV1: Equatable, Hashable, Sendable {
     public static let magic = Data("HARCTKT1\0".utf8)
     public static let uriPrefix = "harc-pair://v1/"
     private static let secretBindingDomain = "HARC-PAIRING-TICKET-SECRET-V1\0"
+    private static let remoteAdmissionDomain =
+        "HARC-PAIRING-REMOTE-ADMISSION-V1\0"
 
     public let protocolVersion: HarcProtocolVersion
     public let ticketID: UUID
@@ -210,8 +354,30 @@ public struct PairingTicketV1: Equatable, Hashable, Sendable {
         _ = try encoded()
     }
 
+    /// The 24-byte bearer presented to `BeginPairingClaim`.
+    ///
+    /// Direct-only V1 tickets retain their frozen raw-secret behavior. A ticket
+    /// containing a remote relay endpoint instead derives the bearer from the
+    /// complete canonical ticket, so changing, adding, or removing any relay
+    /// reachability byte produces a value the Host's original reservation will
+    /// reject. The resulting binding is also included in the signed pairing
+    /// transcript and SAS.
+    public var pairingAdmissionSecret: Data {
+        guard endpoints.contains(where: { $0.kind == .remoteRelay }) else {
+            return ticketSecret
+        }
+        let digest = harcDomainSeparatedSHA256(
+            Self.remoteAdmissionDomain,
+            try! encoded()
+        )
+        return Data(digest.prefix(ticketSecret.count))
+    }
+
     public var ticketSecretBindingSHA256: Data {
-        try! Self.ticketSecretBindingSHA256(ticketID: ticketID, secret: ticketSecret)
+        try! Self.ticketSecretBindingSHA256(
+            ticketID: ticketID,
+            secret: pairingAdmissionSecret
+        )
     }
 
     public static func ticketSecretBindingSHA256(ticketID: UUID, secret: Data) throws -> Data {

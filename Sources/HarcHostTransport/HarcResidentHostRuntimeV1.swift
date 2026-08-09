@@ -1,5 +1,6 @@
 #if canImport(Network)
 import Foundation
+import HarcRemoteTransport
 import HarcDomain
 import HarcHost
 import HarcIdentity
@@ -17,6 +18,9 @@ public struct HarcResidentHostRuntimeConfigurationV1: Sendable {
     public let localDNSTarget: String
     public let discoveryCapabilityBits: UInt64
     public let acceptedEdgeEngineRevisions: Set<String>
+    public let remoteRelay: HarcRemoteRelayHostConfigurationV1?
+    public let remoteRelayRouteDeliveryPersistence:
+        (any HarcRemoteRelayRouteDeliveryPersistence)?
 
     public init(
         storage: HarcResidentHostStorageConfiguration,
@@ -26,7 +30,10 @@ public struct HarcResidentHostRuntimeConfigurationV1: Sendable {
         displayName: String,
         localDNSTarget: String,
         discoveryCapabilityBits: UInt64 = 0,
-        acceptedEdgeEngineRevisions: Set<String> = []
+        acceptedEdgeEngineRevisions: Set<String> = [],
+        remoteRelay: HarcRemoteRelayHostConfigurationV1? = nil,
+        remoteRelayRouteDeliveryPersistence:
+            (any HarcRemoteRelayRouteDeliveryPersistence)? = nil
     ) {
         self.storage = storage
         self.canonicalAudioRoot = canonicalAudioRoot
@@ -36,6 +43,9 @@ public struct HarcResidentHostRuntimeConfigurationV1: Sendable {
         self.localDNSTarget = localDNSTarget
         self.discoveryCapabilityBits = discoveryCapabilityBits
         self.acceptedEdgeEngineRevisions = acceptedEdgeEngineRevisions
+        self.remoteRelay = remoteRelay
+        self.remoteRelayRouteDeliveryPersistence =
+            remoteRelayRouteDeliveryPersistence
     }
 }
 
@@ -54,6 +64,9 @@ public actor HarcResidentHostRuntimeV1 {
     private let canonicalIngest: HarcCanonicalIngestService
     private let pairingTickets: HarcForegroundPairingTicketControllerV1
     private let pairingApproval: HarcLocalPairingApprovalService
+    private let remoteRelayHostAgent: HarcRemoteRelayHostAgent?
+    private let remoteRelayRouteDeliveryBox:
+        HarcRemoteRelayRouteDeliveryBox
     private var transportStopped = false
     private var hostModeDisabled = false
 
@@ -170,6 +183,11 @@ public actor HarcResidentHostRuntimeV1 {
             )
             let sourceSecret = try SystemHostAuthenticationRandomness()
                 .randomBytes(count: 32)
+            let remoteRelayRouteDeliveryBox =
+                HarcRemoteRelayRouteDeliveryBox(
+                    persistence:
+                        configuration.remoteRelayRouteDeliveryPersistence
+                )
             let bootstrapFactory = try HarcBootstrapGRPCServiceFactoryV1(
                 hostInfoService: hostInfo,
                 pairingService: pairing,
@@ -179,7 +197,9 @@ public actor HarcResidentHostRuntimeV1 {
                 processingService: processing,
                 hostAuthorityPublicKey: storage.authorityPublicKey,
                 capabilityPolicy: capabilityPolicy,
-                hostScopedSourceSecret: sourceSecret
+                hostScopedSourceSecret: sourceSecret,
+                remoteRelayRouteDeliveryBox:
+                    remoteRelayRouteDeliveryBox
             )
             let grpcRuntime = HarcGRPCServerRuntime(
                 bootstrapServiceFactory: bootstrapFactory
@@ -254,10 +274,21 @@ public actor HarcResidentHostRuntimeV1 {
                 localDNSTarget: configuration.localDNSTarget,
                 controlPort: storage.listenerPorts.controlPort
             )
+            let remoteRelayHostAgent: HarcRemoteRelayHostAgent?
+            if let remoteRelay = configuration.remoteRelay {
+                remoteRelayHostAgent = await HarcRemoteRelayHostAgent.start(
+                    configuration: remoteRelay
+                )
+            } else {
+                remoteRelayHostAgent = nil
+            }
             let pairingTickets = HarcForegroundPairingTicketControllerV1(
                 storageRuntime: storage,
                 transportRuntime: transport,
-                endpoints: endpoints
+                endpoints: endpoints,
+                remoteRelayHostAgent: remoteRelayHostAgent,
+                remoteRelayRouteDeliveryBox:
+                    remoteRelayRouteDeliveryBox
             )
             return HarcResidentHostRuntimeV1(
                 storageRuntime: storage,
@@ -265,6 +296,9 @@ public actor HarcResidentHostRuntimeV1 {
                 canonicalIngest: ingest,
                 pairingTickets: pairingTickets,
                 pairingApproval: approval,
+                remoteRelayHostAgent: remoteRelayHostAgent,
+                remoteRelayRouteDeliveryBox:
+                    remoteRelayRouteDeliveryBox,
                 startupRecoveryReport: recovery
             )
         } catch {
@@ -289,6 +323,8 @@ public actor HarcResidentHostRuntimeV1 {
         canonicalIngest: HarcCanonicalIngestService,
         pairingTickets: HarcForegroundPairingTicketControllerV1,
         pairingApproval: HarcLocalPairingApprovalService,
+        remoteRelayHostAgent: HarcRemoteRelayHostAgent?,
+        remoteRelayRouteDeliveryBox: HarcRemoteRelayRouteDeliveryBox,
         startupRecoveryReport: HostCanonicalRecoveryReport
     ) {
         self.storageRuntime = storageRuntime
@@ -296,6 +332,8 @@ public actor HarcResidentHostRuntimeV1 {
         self.canonicalIngest = canonicalIngest
         self.pairingTickets = pairingTickets
         self.pairingApproval = pairingApproval
+        self.remoteRelayHostAgent = remoteRelayHostAgent
+        self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
         self.startupRecoveryReport = startupRecoveryReport
         tuple = storageRuntime.tuple
         listenerPorts = storageRuntime.listenerPorts
@@ -331,10 +369,37 @@ public actor HarcResidentHostRuntimeV1 {
         _ claimID: UUID,
         grantedScopes: [AuthorizationScope]? = nil
     ) async throws -> HostPairingIssuedGrant {
-        try await pairingApproval.approve(
-            claimID,
-            grantedScopes: grantedScopes
-        )
+        let pending = try await pairingApproval.pendingClaim(claimID)
+        let expectsRelayRoute = remoteRelayHostAgent != nil
+        if expectsRelayRoute {
+            await remoteRelayRouteDeliveryBox.beginProvisioning(
+                forClaimID: claimID
+            )
+        }
+        do {
+            let grant = try await pairingApproval.approve(
+                claimID,
+                grantedScopes: grantedScopes
+            )
+            if expectsRelayRoute {
+                try? await pairingTickets.provisionApprovedRelayRoute(
+                    forTicketID: pending.ticketID,
+                    claimID: claimID,
+                    deviceID: grant.claims.deviceID
+                )
+                await remoteRelayRouteDeliveryBox.finishProvisioning(
+                    forClaimID: claimID
+                )
+            }
+            return grant
+        } catch {
+            if expectsRelayRoute {
+                await remoteRelayRouteDeliveryBox.finishProvisioning(
+                    forClaimID: claimID
+                )
+            }
+            throw error
+        }
     }
 
     public func denyPairingClaim(_ claimID: UUID) async throws {
@@ -346,10 +411,52 @@ public actor HarcResidentHostRuntimeV1 {
         try await storageRuntime.hostStore.pairedDevices()
     }
 
+    /// Revokes the authoritative Harc grant first, then removes the optional
+    /// relay admission. Calling this again for an already-revoked device safely
+    /// retries relay cleanup after a transient network failure.
+    public func revokePairedDevice(_ deviceID: DeviceID) async throws {
+        guard let entry = try await storageRuntime.hostStore
+            .deviceRegistryEntry(deviceID: deviceID) else {
+            throw HarcHostError.unknownDevice
+        }
+        if entry.status == .active {
+            let revocationID = UUID()
+            let evidence = try JSONEncoder().encode(
+                HarcLocalDeviceRevocationEvidenceV1(
+                    revocationID: revocationID,
+                    deviceID: deviceID.description,
+                    reasonCode: "user.revoked"
+                )
+            )
+            try await storageRuntime.hostStore.revokeDevice(
+                deviceID,
+                revocationID: revocationID,
+                reasonCode: "user.revoked",
+                exactRevocationBytes: evidence
+            )
+        }
+        if let route = try await remoteRelayRouteDeliveryBox.binding(
+            forDeviceID: deviceID
+        ) {
+            try await remoteRelayHostAgent?.revoke(
+                routeID: route.deviceRouteID
+            )
+            try await remoteRelayRouteDeliveryBox.removeBinding(
+                forDeviceID: deviceID
+            )
+        }
+    }
+
     public func recoverPendingPublications() async throws
         -> HostCanonicalRecoveryReport
     {
         try await canonicalIngest.recoverPendingPublications()
+    }
+
+    public func remoteRelayState() async
+        -> HarcRemoteRelayHostConnectionState?
+    {
+        await remoteRelayHostAgent?.state()
     }
 
     public func validatedProcessingRequest(
@@ -363,6 +470,7 @@ public actor HarcResidentHostRuntimeV1 {
     public func handleSystemWake() async {
         guard !transportStopped else { return }
         await transportRuntime.handleSystemWake()
+        await remoteRelayHostAgent?.handleSystemWake()
     }
 
     /// Stops advertisement and both listeners while preserving the durable
@@ -372,6 +480,7 @@ public actor HarcResidentHostRuntimeV1 {
         guard !transportStopped else { return }
         transportStopped = true
         try? await pairingTickets.cancel()
+        await remoteRelayHostAgent?.shutdown()
         await transportRuntime.shutdown()
     }
 
@@ -425,6 +534,13 @@ public actor HarcResidentHostRuntimeV1 {
             try .dnsHost(localDNSTarget.lowercased(), port: controlPort),
         ]
     }
+}
+
+private struct HarcLocalDeviceRevocationEvidenceV1: Encodable, Sendable {
+    let format = "harc-local-device-revocation-v1"
+    let revocationID: UUID
+    let deviceID: String
+    let reasonCode: String
 }
 
 public enum HarcResidentHostRuntimeError: Error, Equatable, Sendable {

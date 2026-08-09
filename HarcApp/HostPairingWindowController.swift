@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreTransferable
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import HarcDomain
@@ -54,9 +55,13 @@ private final class HostPairingViewModel: ObservableObject {
     @Published private(set) var pairedDevices = [HostPairedDeviceSummary]()
     @Published private(set) var pairingLinkCopied = false
     @Published private(set) var pairingInviteExportStatus: String?
+    @Published var pendingRevocation: HostPairedDeviceSummary?
+    @Published private(set) var revokingDeviceID: DeviceID?
+    @Published private(set) var deviceManagementError: String?
 
     private let runtime: HarcResidentHostRuntimeV1
     private var task: Task<Void, Never>?
+    private var deviceManagementTask: Task<Void, Never>?
 
     init(runtime: HarcResidentHostRuntimeV1) {
         self.runtime = runtime
@@ -170,8 +175,36 @@ private final class HostPairingViewModel: ObservableObject {
 
     func cancel() {
         task?.cancel()
+        deviceManagementTask?.cancel()
         task = nil
+        deviceManagementTask = nil
         Task { try? await runtime.cancelPairingTicket() }
+    }
+
+    func requestRevocation(_ device: HostPairedDeviceSummary) {
+        pendingRevocation = device
+        deviceManagementError = nil
+    }
+
+    func confirmRevocation() {
+        guard let device = pendingRevocation,
+              deviceManagementTask == nil else { return }
+        pendingRevocation = nil
+        revokingDeviceID = device.deviceID
+        deviceManagementTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await runtime.revokePairedDevice(device.deviceID)
+                deviceManagementError = nil
+            } catch is CancellationError {
+                // Window dismissal intentionally cancels UI management work.
+            } catch {
+                deviceManagementError = error.localizedDescription
+            }
+            await refreshPairedDevices()
+            revokingDeviceID = nil
+            deviceManagementTask = nil
+        }
     }
 
     private func poll(ticket: HarcForegroundPairingTicketV1) async throws {
@@ -237,6 +270,23 @@ private enum HostPairingPresentationError: LocalizedError {
     }
 }
 
+private struct HarcPairingInvitationShareItem: Transferable, Sendable {
+    let pairingURI: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(
+            exportedContentType: .harcPairingInvitation
+        ) { item in
+            let file = try HarcPairingInvitationDocument
+                .makeTemporaryShareFile(pairingURI: item.pairingURI)
+            return SentTransferredFile(
+                file,
+                allowAccessingOriginalFile: false
+            )
+        }
+    }
+}
+
 private struct HostPairingView: View {
     @ObservedObject var model: HostPairingViewModel
 
@@ -249,6 +299,23 @@ private struct HostPairingView: View {
         .padding(28)
         .frame(width: 520)
         .frame(minHeight: 620)
+        .confirmationDialog(
+            "Revoke this device?",
+            isPresented: Binding(
+                get: { model.pendingRevocation != nil },
+                set: { if !$0 { model.pendingRevocation = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Revoke Device", role: .destructive) {
+                model.confirmRevocation()
+            }
+            Button("Cancel", role: .cancel) {
+                model.pendingRevocation = nil
+            }
+        } message: {
+            Text("This immediately invalidates the Harc grant and removes its remote relay access. Pair the installation again to restore access.")
+        }
     }
 
     private var header: some View {
@@ -351,7 +418,12 @@ private struct HostPairingView: View {
                             : "doc.on.doc"
                     )
                 }
-                ShareLink(item: ticket.pairingURI) {
+                ShareLink(
+                    item: HarcPairingInvitationShareItem(
+                        pairingURI: ticket.pairingURI
+                    ),
+                    preview: SharePreview("Harc Pairing Invite")
+                ) {
                     Label("Share Invite", systemImage: "square.and.arrow.up")
                 }
                 Button {
@@ -479,12 +551,26 @@ private struct HostPairingView: View {
                                 status: device.status,
                                 pairedAt: device.pairedAt,
                                 lastConnectedAt: device.lastConnectedAt,
-                                scopes: device.scopes
+                                scopes: device.scopes,
+                                actionTitle: device.status == .active
+                                    ? "Revoke…"
+                                    : "Retry Remote Revocation",
+                                actionDisabled:
+                                    model.revokingDeviceID == device.deviceID,
+                                action: {
+                                    model.requestRevocation(device)
+                                }
                             )
                         }
                     }
                 }
                 .frame(maxHeight: 280)
+            }
+            if let error = model.deviceManagementError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.top, 4)
@@ -525,7 +611,10 @@ private struct HostPairingView: View {
         status: DeviceRegistryStatus?,
         pairedAt: Date?,
         lastConnectedAt: Date?,
-        scopes: [AuthorizationScope]
+        scopes: [AuthorizationScope],
+        actionTitle: String? = nil,
+        actionDisabled: Bool = false,
+        action: (() -> Void)? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -562,6 +651,11 @@ private struct HostPairingView: View {
             Text("\(scopes.count) approved access scope\(scopes.count == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let actionTitle, let action {
+                Button(actionTitle, role: .destructive, action: action)
+                    .font(.caption)
+                    .disabled(actionDisabled)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

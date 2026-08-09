@@ -1,6 +1,7 @@
 import Foundation
 import HarcIdentity
 import HarcProtocol
+import HarcRemoteTransport
 import HarcTransfer
 
 public enum HarcBootstrapClientError: Error, Equatable, Sendable {
@@ -93,7 +94,10 @@ public struct HarcPairingClaimPresentation: Equatable, Sendable {
 
 public enum HarcPairingClaimResult: Equatable, Sendable {
     case pending
-    case approved(ValidatedClientAdoptionEvidence)
+    case approved(
+        ValidatedClientAdoptionEvidence,
+        remoteRelayRoute: HarcRemoteRelayRouteV1?
+    )
     case denied
     case expired
     case cancelled
@@ -289,7 +293,7 @@ public actor HarcBootstrapClient {
         var begin = Harc_V1_BeginPairingClaimRequestV1()
         begin.protocol = ticket.protocolVersion.protobufV1()
         begin.ticketID = Harc_V1_TicketIDV1(ticket.ticketID)
-        begin.ticketSecret = ticket.ticketSecret
+        begin.ticketSecret = ticket.pairingAdmissionSecret
         begin.clientNonce = clientNonce
         begin.devicePublicKeyX963 = deviceSigner.publicKey.rawBytes
         begin.requestedScopes = requestedScopes.map {
@@ -363,7 +367,7 @@ public actor HarcBootstrapClient {
         _ = try Self.validateProtocol(
             present: proofMessage.hasProtocol,
             proofMessage.protocol,
-            knownFields: Set(1 ... 3),
+            knownFields: Set(1 ... 4),
             field: "provePairingClaim.protocol",
             policy: capabilityPolicy.compatibility
         )
@@ -434,7 +438,8 @@ public actor HarcBootstrapClient {
         )
         switch message.state {
         case .pairingClaimStatePending:
-            guard !message.hasExactSignedDeviceGrant else {
+            guard !message.hasExactSignedDeviceGrant,
+                  !message.hasRemoteRelayRoute else {
                 throw HarcBootstrapClientError.invalidResponse(
                     field: "pendingPairingGrant"
                 )
@@ -467,12 +472,21 @@ public actor HarcBootstrapClient {
                     timeIntervalSince1970: Double(adoptedAt) / 1_000
                 )
             )
+            let remoteRelayRoute = try message.hasRemoteRelayRoute
+                ? HarcRemoteRelayRouteV1(
+                    pairingWire: message.remoteRelayRoute
+                )
+                : nil
             try requireCurrentPollingOperation(operationID)
             pairingState = .idle
-            return .approved(adoption)
+            return .approved(
+                adoption,
+                remoteRelayRoute: remoteRelayRoute
+            )
 
         case .pairingClaimStateDenied:
-            guard !message.hasExactSignedDeviceGrant else {
+            guard !message.hasExactSignedDeviceGrant,
+                  !message.hasRemoteRelayRoute else {
                 throw HarcBootstrapClientError.invalidResponse(field: "deniedPairingGrant")
             }
             try requireCurrentPollingOperation(operationID)
@@ -480,7 +494,8 @@ public actor HarcBootstrapClient {
             return .denied
 
         case .pairingClaimStateExpired:
-            guard !message.hasExactSignedDeviceGrant else {
+            guard !message.hasExactSignedDeviceGrant,
+                  !message.hasRemoteRelayRoute else {
                 throw HarcBootstrapClientError.invalidResponse(field: "expiredPairingGrant")
             }
             try requireCurrentPollingOperation(operationID)
@@ -488,7 +503,8 @@ public actor HarcBootstrapClient {
             return .expired
 
         case .pairingClaimStateCancelled:
-            guard !message.hasExactSignedDeviceGrant else {
+            guard !message.hasExactSignedDeviceGrant,
+                  !message.hasRemoteRelayRoute else {
                 throw HarcBootstrapClientError.invalidResponse(field: "cancelledPairingGrant")
             }
             try requireCurrentPollingOperation(operationID)

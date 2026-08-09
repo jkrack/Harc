@@ -1,5 +1,6 @@
 import Foundation
 import GRPCCore
+import HarcRemoteTransport
 import HarcHost
 import HarcIdentity
 import HarcProtocol
@@ -34,6 +35,8 @@ public struct HarcPairingGRPCServiceAdapterV1:
     private let sourceBindingProvider: HarcHostRPCSourceBindingProvider
     private let preauthenticationGate: HarcBootstrapPreauthenticationGate
     private let compatibility: HarcProtobufCompatibilityPolicy
+    private let remoteRelayRouteDeliveryBox:
+        HarcRemoteRelayRouteDeliveryBox?
 
     init(
         service: HarcPairingClaimService,
@@ -41,7 +44,9 @@ public struct HarcPairingGRPCServiceAdapterV1:
         servedIdentityBinding: HarcGRPCServedIdentityBinding,
         sourceBindingProvider: HarcHostRPCSourceBindingProvider,
         preauthenticationGate: HarcBootstrapPreauthenticationGate,
-        compatibility: HarcProtobufCompatibilityPolicy = .currentV1
+        compatibility: HarcProtobufCompatibilityPolicy = .currentV1,
+        remoteRelayRouteDeliveryBox:
+            HarcRemoteRelayRouteDeliveryBox? = nil
     ) {
         self.application = service
         self.hostAuthorityPublicKey = hostAuthorityPublicKey
@@ -49,6 +54,7 @@ public struct HarcPairingGRPCServiceAdapterV1:
         self.sourceBindingProvider = sourceBindingProvider
         self.preauthenticationGate = preauthenticationGate
         self.compatibility = compatibility
+        self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
     }
 
     init(
@@ -57,7 +63,9 @@ public struct HarcPairingGRPCServiceAdapterV1:
         servedIdentityBinding: HarcGRPCServedIdentityBinding,
         sourceBindingProvider: HarcHostRPCSourceBindingProvider,
         preauthenticationGate: HarcBootstrapPreauthenticationGate,
-        compatibility: HarcProtobufCompatibilityPolicy = .currentV1
+        compatibility: HarcProtobufCompatibilityPolicy = .currentV1,
+        remoteRelayRouteDeliveryBox:
+            HarcRemoteRelayRouteDeliveryBox? = nil
     ) {
         self.application = application
         self.hostAuthorityPublicKey = hostAuthorityPublicKey
@@ -65,6 +73,7 @@ public struct HarcPairingGRPCServiceAdapterV1:
         self.sourceBindingProvider = sourceBindingProvider
         self.preauthenticationGate = preauthenticationGate
         self.compatibility = compatibility
+        self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
     }
 
     public func beginPairingClaim(
@@ -256,6 +265,11 @@ public struct HarcPairingGRPCServiceAdapterV1:
                 var exactGrant = Harc_V1_ExactSignedObjectV1()
                 exactGrant.framedBytes = exactGrantBytes
                 wire.exactSignedDeviceGrant = exactGrant
+                if let route = try await remoteRelayRouteDeliveryBox?.route(
+                    forClaimID: validated.claimID
+                ) {
+                    wire.remoteRelayRoute = try route.pairingWireV1()
+                }
             case .denied:
                 wire.state = .pairingClaimStateDenied
             case .expired:

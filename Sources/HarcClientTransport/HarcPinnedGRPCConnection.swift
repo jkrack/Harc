@@ -3,6 +3,7 @@ import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2TransportServices
 import HarcProtocol
+import HarcRemoteTransport
 
 public enum HarcPinnedGRPCConnectionStatus: Equatable, Sendable {
     case running
@@ -186,6 +187,8 @@ public final class HarcPinnedGRPCConnection:
     private let libraryRPCAdapter: HarcLibraryGRPCAdapter
     private let processingRPCAdapter: HarcProcessingGRPCAdapter
     private let taskOwner: HarcClientConnectionTaskOwner
+    private let transportLifetime:
+        (any HarcPinnedConnectionTransportLifetime)?
 
     private init(
         grpcClient: GRPCClient<HarcGRPCTransport>,
@@ -193,7 +196,9 @@ public final class HarcPinnedGRPCConnection:
         recordingTransferRPCAdapter: HarcRecordingTransferGRPCAdapter,
         libraryRPCAdapter: HarcLibraryGRPCAdapter,
         processingRPCAdapter: HarcProcessingGRPCAdapter,
-        taskOwner: HarcClientConnectionTaskOwner
+        taskOwner: HarcClientConnectionTaskOwner,
+        transportLifetime:
+            (any HarcPinnedConnectionTransportLifetime)? = nil
     ) {
         self.grpcClient = grpcClient
         self.bootstrapRPCAdapter = bootstrapRPCAdapter
@@ -201,6 +206,7 @@ public final class HarcPinnedGRPCConnection:
         self.libraryRPCAdapter = libraryRPCAdapter
         self.processingRPCAdapter = processingRPCAdapter
         self.taskOwner = taskOwner
+        self.transportLifetime = transportLifetime
     }
 
     /// Starts a dedicated pinned connection to a host name or IP address.
@@ -212,6 +218,26 @@ public final class HarcPinnedGRPCConnection:
         port: Int,
         serverHostname: String? = nil,
         trustCoordinator: HarcTransportTrustCoordinator
+    ) async throws -> HarcPinnedGRPCConnection {
+        try await connect(
+            host: host,
+            port: port,
+            serverHostname: serverHostname,
+            trustCoordinator: trustCoordinator,
+            transportLifetime: nil
+        )
+    }
+
+    /// Connects through a caller-owned reachability path whose lifetime must
+    /// end with the pinned gRPC channel. The overload preserves the original
+    /// four-argument API as a stable function value for direct connections.
+    public static func connect(
+        host: String,
+        port: Int,
+        serverHostname: String? = nil,
+        trustCoordinator: HarcTransportTrustCoordinator,
+        transportLifetime:
+            (any HarcPinnedConnectionTransportLifetime)?
     ) async throws -> HarcPinnedGRPCConnection {
         guard !host.isEmpty else {
             throw HarcPinnedGRPCConnectionError.invalidEndpoint(field: "host")
@@ -229,7 +255,8 @@ public final class HarcPinnedGRPCConnection:
         return try await make(
             target: .dns(host: host, port: port),
             serverHostname: resolvedServerHostname,
-            trustCoordinator: trustCoordinator
+            trustCoordinator: trustCoordinator,
+            transportLifetime: transportLifetime
         )
     }
 
@@ -496,17 +523,30 @@ public final class HarcPinnedGRPCConnection:
     /// return/failure. Callers supervising a long-lived host link should keep a
     /// task awaiting this method.
     public func waitForTermination() async throws {
-        try await taskOwner.waitForTermination()
+        do {
+            try await taskOwner.waitForTermination()
+            await transportLifetime?.shutdown()
+        } catch {
+            await transportLifetime?.shutdown()
+            throw error
+        }
     }
 
     /// Stops accepting new RPCs and waits for in-flight RPCs to drain.
     public func shutdownGracefully() async throws {
-        try await taskOwner.shutdownGracefully()
+        do {
+            try await taskOwner.shutdownGracefully()
+            await transportLifetime?.shutdown()
+        } catch {
+            await transportLifetime?.shutdown()
+            throw error
+        }
     }
 
     /// Cancels the connection task and any in-flight RPCs.
     public func shutdownImmediately() async {
         await taskOwner.shutdownImmediately()
+        await transportLifetime?.shutdown()
     }
 
     deinit {
@@ -518,7 +558,9 @@ public final class HarcPinnedGRPCConnection:
     private static func make(
         target: any ResolvableTarget,
         serverHostname: String,
-        trustCoordinator: HarcTransportTrustCoordinator
+        trustCoordinator: HarcTransportTrustCoordinator,
+        transportLifetime:
+            (any HarcPinnedConnectionTransportLifetime)? = nil
     ) async throws -> HarcPinnedGRPCConnection {
         let tls = try HarcPinnedGRPCTLS(
             serverHostname: serverHostname,
@@ -553,7 +595,8 @@ public final class HarcPinnedGRPCConnection:
             recordingTransferRPCAdapter: recordingTransferRPCAdapter,
             libraryRPCAdapter: libraryRPCAdapter,
             processingRPCAdapter: processingRPCAdapter,
-            taskOwner: taskOwner
+            taskOwner: taskOwner,
+            transportLifetime: transportLifetime
         )
         await taskOwner.start {
             try await grpcClient.runConnections()

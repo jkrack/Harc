@@ -215,7 +215,7 @@ public struct AboutSettingsView: View {
                 Text("Local-first")
                     .font(.harcTitle)
             }
-            Text("No cloud STT. No external telemetry. No accounts. Every byte of audio, every transcript, and every summary stays on this Mac. Harc's only network use is downloading models once from Hugging Face — your audio and text never leave this Mac.")
+            Text("No cloud STT, external telemetry, or account. In Standalone mode, recordings and derived content stay on this Mac. If you explicitly adopt a Host, Harc can synchronize authorized encrypted content to that computer; optional Harc Remote relays only the already-encrypted connection.")
                 .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)

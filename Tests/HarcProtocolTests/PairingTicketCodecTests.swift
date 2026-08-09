@@ -150,11 +150,86 @@ struct PairingTicketCodecTests {
         #expect(decoded == ticket)
         #expect(uriDecoded == ticket)
         #expect(decoded.exactTransportObjectBytes == verified.exactSignedBytes)
+        #expect(decoded.pairingAdmissionSecret == decoded.ticketSecret)
         let expectedSecretBinding = try PairingTicketV1.ticketSecretBindingSHA256(
             ticketID: ticket.ticketID,
-            secret: ticket.ticketSecret
+            secret: ticket.pairingAdmissionSecret
         )
         #expect(decoded.ticketSecretBindingSHA256 == expectedSecretBinding)
+    }
+
+    @Test("remote relay endpoint round-trips opaque binary routing only")
+    func remoteRelayEndpointRoundTrip() throws {
+        let route = harcEncodeBase64URL(Data(repeating: 0x11, count: 32))
+        let admission = harcEncodeBase64URL(Data(repeating: 0x22, count: 32))
+        let capability = harcEncodeBase64URL(Data(repeating: 0x33, count: 32))
+        let relay = try PairingRelayEndpointV1(
+            serviceHost: "relay.harc.example",
+            hostRouteID: route,
+            admissionRouteID: admission,
+            capability: capability
+        )
+        let endpoint = try relay.pairingEndpoint()
+
+        #expect(endpoint.kind == .remoteRelay)
+        #expect(endpoint.port == 443)
+        #expect(endpoint.textValue == nil)
+        #expect(try PairingRelayEndpointV1.decode(endpoint) == relay)
+
+        #expect(throws: HarcProtocolCodecError.self) {
+            try PairingRelayEndpointV1(
+                serviceHost: "https://relay.harc.example",
+                hostRouteID: route,
+                admissionRouteID: admission,
+                capability: capability
+            )
+        }
+    }
+
+    @Test("remote relay endpoint bytes are bound into pairing admission")
+    func remoteRelayEndpointAdmissionBinding() throws {
+        let hostKey = ProtocolCodecFixtures.key(15)
+        let libraryID = LibraryID(ProtocolCodecFixtures.uuid(150))
+        let verified = try ProtocolCodecFixtures.verifiedTransportSet(
+            hostKey: hostKey,
+            libraryID: libraryID
+        )
+        let route = harcEncodeBase64URL(Data(repeating: 0x11, count: 32))
+        let capability = harcEncodeBase64URL(Data(repeating: 0x33, count: 32))
+        let makeTicket: (UInt8) throws -> PairingTicketV1 = { admissionByte in
+            let endpoint = try PairingRelayEndpointV1(
+                serviceHost: "relay.harc.example",
+                hostRouteID: route,
+                admissionRouteID: harcEncodeBase64URL(
+                    Data(repeating: admissionByte, count: 32)
+                ),
+                capability: capability
+            ).pairingEndpoint()
+            return try PairingTicketV1(
+                ticketID: ProtocolCodecFixtures.uuid(151),
+                libraryID: libraryID,
+                hostAuthorityID: hostKey.publicKey.hostAuthorityID,
+                hostAuthorityPublicKey: hostKey.publicKey,
+                verifiedTransportSet: verified,
+                ticketSecret: ProtocolCodecFixtures.bytes(0x41, count: 24),
+                issuedAtUnixMilliseconds: ProtocolCodecFixtures.issuedAt,
+                expiresAtUnixMilliseconds: ProtocolCodecFixtures.issuedAt + 120_000,
+                endpoints: [endpoint]
+            )
+        }
+        let issued = try makeTicket(0x22)
+        let redirected = try makeTicket(0x23)
+
+        #expect(issued.pairingAdmissionSecret.count == 24)
+        #expect(issued.pairingAdmissionSecret != issued.ticketSecret)
+        #expect(
+            issued.pairingAdmissionSecret
+                != redirected.pairingAdmissionSecret
+        )
+        #expect(
+            issued.ticketSecretBindingSHA256
+                != redirected.ticketSecretBindingSHA256
+        )
     }
 
     @Test("ticket rejects expiry, lengths, URI variants, authority tamper, and transport tamper")

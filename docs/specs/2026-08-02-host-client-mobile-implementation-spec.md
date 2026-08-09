@@ -90,6 +90,11 @@ the same durable outbox, identity, provenance, and host-commit rules.
 - Remote `host.admin` operations.
 - Transparent host-authority key migration or multi-host write replication.
 - Multiple active canonical hosts for one library.
+
+The separately approved [Harc Remote relay specification](2026-08-08-harc-remote-relay-spec.md)
+adds an optional blind reachability relay without changing V1's single canonical
+Host, application authorization, private inference, or durable capture rules.
+The base V1 remains fully functional without that service.
 - A host process that survives the user choosing Quit Harc.
 - iOS system-audio or phone-call audio capture.
 - Cloud STT, cloud diarization, cloud summarization, or external telemetry.
@@ -187,6 +192,7 @@ directories remain documentation-only and MUST NOT perturb the current build.
 | `HarcHost` | Transport-independent authorization, staging, commit, recovery, library and processing application services | NIO, Bonjour, SwiftUI |
 | `HarcHostTransport` | gRPC server, HTTPS upload endpoint, Bonjour advertisement, transport interceptors, authenticated local MCP IPC | Canonical business decisions |
 | `HarcClientTransport` | gRPC client, HTTPS/background adapters, discovery and connection state | Client persistence or UI |
+| `HarcRemoteTransport` | Shared, content-blind outer WebSocket tunnel and relay reachability material used by Host and Client adapters | Harc authority, inner TLS, canonical host policy, persistence or UI |
 | `HarcClientStore` | Mobile/desktop cache, change cursor, mutation outbox, upload outbox, receipt persistence | Canonical host state |
 | `HarcAudioMobile` | iOS audio-session lifecycle, capture, protected master writer and discontinuities | Host networking and STT |
 | `HarcAudioMac` | Future macOS capture adapters after tested extraction | Mobile behavior |
@@ -208,8 +214,9 @@ Dependency direction is fixed (right side means “depends on”):
 | `HarcProtocol` | `HarcProtocolWire`, `HarcDomain`, `HarcIdentity`, `HarcTransfer` |
 | `HarcClientStore` | `HarcDomain`, `HarcTransfer`, existing GRDB product |
 | `HarcHost` | `HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcStore`, existing daemon client adapter |
-| `HarcHostTransport` | `HarcHost`, `HarcIdentity`, `HarcProtocol` plus transport runtimes |
-| `HarcClientTransport` | `HarcProtocol`, `HarcIdentity`, `HarcTransfer` plus transport runtimes |
+| `HarcRemoteTransport` | `HarcDomain`, `HarcProtocol` plus platform networking runtimes |
+| `HarcHostTransport` | `HarcHost`, `HarcIdentity`, `HarcProtocol`, `HarcRemoteTransport` plus transport runtimes |
+| `HarcClientTransport` | `HarcProtocol`, `HarcIdentity`, `HarcTransfer`, `HarcRemoteTransport` plus transport runtimes |
 | `HarcAudioMobile` | `HarcDomain`, AVFAudio/Foundation |
 
 The application targets compose stores, transports, audio, and UI. No lower
@@ -548,22 +555,28 @@ issued_at_unix_ms         u64 big-endian
 expires_at_unix_ms        u64 big-endian
 endpoint_count           u8, 0...4
 endpoints                 sorted; each:
-  kind                    u8: 1 Bonjour instance, 2 DNS host, 3 IPv4, 4 IPv6
+  kind                    u8: 1 Bonjour instance, 2 DNS host, 3 IPv4, 4 IPv6,
+                          5 remote relay
   port                    u16 big-endian; zero only for a Bonjour instance
   value_length            u8, 1...255
-  value                   exact bytes: UTF-8 text, 4-byte IPv4, or 16-byte IPv6
+  value                   exact kind-specific bytes
 ```
 
 Text is NFC UTF-8 without NUL/control characters; DNS is a lowercase A-label
 without a trailing dot. Endpoints are unique and sorted by kind, value bytes,
 then port. IPv4 and IPv6 value lengths are exactly four and sixteen; text kinds
-use the stated one-to-255-byte bound. Base64url uses the RFC 4648 URL alphabet
-and shortest canonical form.
+use the stated one-to-255-byte bound. A remote-relay value is its versioned
+canonical HTTPS-host and three-independent-256-bit-opaque-value encoding from
+the Harc Remote contract and always uses port 443. Base64url uses the RFC 4648
+URL alphabet and shortest canonical form.
 Unknown version/kind, wrong key/ID derivation, length mismatch, duplicate,
 noncanonical order/text, invalid signed transport object, expired ticket, expiry
 more than two minutes after issue, or trailing byte is rejected before network
-use. Endpoint values remain untrusted reachability hints. The displayed host
-fingerprint is derived from `host_authority_id`; it is not a second QR field.
+use. Endpoints remain reachability hints rather than Host identities; direct
+hints are authenticated only by the pinned TLS connection, while any ticket
+containing a Remote hint also commits its complete canonical bytes into pairing
+admission as specified below. The displayed host fingerprint is derived from
+`host_authority_id`; it is not a second QR field.
 
 Golden fixtures pin the binary ticket, URI, QR round trip, maximum-size case,
 authority/transport binding, and one-bit/length/order/base64/tamper rejections.
@@ -581,11 +594,23 @@ only through claim establishment. Harc provides no cloud transfer service;
 moving the invitation through email, messaging, a cloud drive, or a shared
 clipboard is an explicit user-directed export outside Harc's trust boundary.
 
-The host persists only the value named
-`ticket_secret_binding_sha256`:
+For a direct-only ticket, `pairing_admission_secret` is the raw 24-byte
+`ticket_secret`, preserving the frozen V1 direct-pairing behavior. If any
+remote-relay endpoint is present, the client and issuing Host instead derive:
 
 ```text
-SHA256("HARC-PAIRING-TICKET-SECRET-V1\0" || ticket_id_bytes || secret)
+pairing_admission_secret = first 24 bytes of
+SHA256("HARC-PAIRING-REMOTE-ADMISSION-V1\0" || exact_pairing_ticket_bytes)
+```
+
+This commits the admission bearer to every canonical invitation byte. Adding,
+removing, or changing a relay endpoint therefore produces a different bearer
+that cannot match the Host's original reservation. The host persists only the
+value named `ticket_secret_binding_sha256`:
+
+```text
+SHA256("HARC-PAIRING-TICKET-SECRET-V1\0" || ticket_id_bytes ||
+       pairing_admission_secret)
 ```
 
 Ticket state is one of `issued`,
@@ -608,9 +633,11 @@ this ticket.
    explicit key-loss policy below rather than silently generating one.
 2. It connects using a ticket endpoint hint and verifies TLS through the QR-pinned
    host authority and transport set.
-3. `BeginPairingClaim` sends ticket ID, the raw one-time secret, a fresh 32-byte
-   client nonce, the device public key, and sorted requested scopes. The raw
-   secret exists only in this pinned TLS request and is never logged or stored.
+3. `BeginPairingClaim` sends ticket ID, the 24-byte
+   `pairing_admission_secret`, a fresh 32-byte client nonce, the device public
+   key, and sorted requested scopes. For a Remote ticket the raw invitation
+   seed is never sent; both values remain ephemeral and are never logged or
+   stored.
 4. The host recomputes and constant-time compares the stored secret hash, checks
    expiry and rate limits, atomically reserves the ticket for that device, and
    creates a claim ID, fresh 32-byte host nonce, and 32-byte opaque claimant
@@ -694,9 +721,11 @@ SHA256("HARC-PAIRING-SAS-V1\0" || transcript_bytes || client_signature_raw)
 ```
 
 `ticket_secret_binding_sha256` is exactly the domain-separated value persisted
-in Section 10.1, not `SHA256(secret)`. The client computes it from the raw QR
-secret and ticket ID; the host copies its persisted value into the transcript,
-so neither side needs the raw secret after claim reservation.
+in Section 10.1, not `SHA256(secret)`. The client computes it from the derived
+admission secret and ticket ID; the host copies its persisted value into the
+transcript, so every Remote endpoint byte is indirectly covered by the device
+signature and SAS and neither side needs the admission secret after claim
+reservation.
 
 The SAS dictionary is the checked-in UTF-8/LF file
 `Protos/Fixtures/harc-sas-words-v1.txt`. It contains exactly 2,048 unique,
@@ -1405,7 +1434,7 @@ Simulator, Catalyst, and iOS-app-on-Mac reports are diagnostic only and MUST
 fail qualification. A qualifying report records a physical iPhone hardware
 identifier and phone interface idiom in addition to the signed build identity.
 Until that decision lands, raw canonical PCM is permitted only for fixtures and
-loopback tests; the TestFlight path requires lossless compression.
+loopback tests; the App Store submission path requires lossless compression.
 
 ### 15.2 Host-bound signed recording manifest
 
@@ -2053,7 +2082,7 @@ broad `NSAllowsArbitraryLoads`, and an export-compliance determination covering
 TLS and application signing. App Privacy answers are reviewed against the final
 implemented behavior rather than assumed from the user-owned-host design. The
 app UI and App Store metadata expose the same current privacy-policy URL before
-external TestFlight.
+App Store submission.
 
 ### 24.2 macOS host and client
 
@@ -2239,14 +2268,14 @@ and rollback-safe behavior. No PR is a repository-wide reorganization.
 
 ## 27. Release slices and completion gates
 
-### Local-network internal TestFlight alpha
+### Local-network physical alpha
 
 PRs 0 through 7 are complete when a new iPhone pairs locally, records through
 lock, survives host/network loss, transfers compressed audio, persists a signed
 receipt, and observes host processing status. C1, C2, T1, and T2 are green on
 physical devices.
 
-This is an internal TestFlight milestone, not an external-review claim.
+This is a physical-development milestone, not an App Review claim.
 
 ### Useful mobile beta
 
@@ -2263,14 +2292,15 @@ bearing artifacts.
 ### Release hardening
 
 The full reliability/security matrix, accessibility, upgrade recovery,
-privacy/export disclosures, TestFlight review path, and documentation are green.
-External review notes include a demo path because reviewers cannot access the
-developer's host LAN.
+privacy/export disclosures, App Review path, and documentation are green.
+Review notes include a demo path because reviewers cannot access the developer's
+host LAN.
 
-The first external TestFlight build occurs only after recording consent and the
+The first App Store submission occurs only after recording consent and the
 persistent indicator are verified, a reviewer-accessible demo/sample flow and
-privacy-policy metadata exist, App Privacy/export answers match the build, and
-Beta App Review notes explain background audio and offline use.
+privacy-policy metadata exist, App Privacy/export answers match the exact build,
+and App Review notes explain background audio and offline use. TestFlight is
+optional and does not satisfy or replace any release gate.
 
 ## 28. Initial engineering estimate
 
@@ -2338,4 +2368,4 @@ these from this document without inventing a cross-cutting policy:
 - [Apple complete-unless-open file protection](https://developer.apple.com/documentation/foundation/fileprotectiontype/completeunlessopen)
 - [Apple background URLSession guidance](https://developer.apple.com/documentation/foundation/downloading-files-in-the-background)
 - [Apple local-network privacy guidance](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)
-- [Apple TestFlight overview](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/)
+- [Apple App Review submission overview](https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/overview-of-submitting-for-review)

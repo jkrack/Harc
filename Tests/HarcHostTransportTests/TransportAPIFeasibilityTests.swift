@@ -86,6 +86,7 @@ struct HostTransportAPIFeasibilityTests {
                 libraryService:processingService:hostAuthorityPublicKey:
                 capabilityPolicy:
                 hostScopedSourceSecret:
+                remoteRelayRouteDeliveryBox:
         )
         _ = HarcGRPCServerRuntime.init(
             bootstrapServiceFactory:bindTimeout:gracefulDrainTimeout:

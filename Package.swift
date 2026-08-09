@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "HarcHost", targets: ["HarcHost"]),
         .library(name: "HarcHostTransport", targets: ["HarcHostTransport"]),
         .library(name: "HarcClientTransport", targets: ["HarcClientTransport"]),
+        .library(name: "HarcRemoteTransport", targets: ["HarcRemoteTransport"]),
         .library(name: "HarcAudioMobile", targets: ["HarcAudioMobile"]),
         .library(name: "HarcAudio", targets: ["HarcAudio"]),
         .library(name: "HarcClient", targets: ["HarcClient"]),
@@ -163,6 +164,7 @@ let package = Package(
                 "HarcIPCSystem",
                 "HarcIdentity",
                 "HarcProtocol",
+                "HarcRemoteTransport",
                 "HarcTransfer",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
                 .product(
@@ -190,7 +192,9 @@ let package = Package(
             name: "HarcClientTransport",
             dependencies: [
                 "HarcClientStore",
+                "HarcDomain",
                 "HarcProtocol",
+                "HarcRemoteTransport",
                 "HarcIdentity",
                 "HarcTransfer",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
@@ -208,6 +212,13 @@ let package = Package(
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
             ],
             exclude: ["README.md"]
+        ),
+        .target(
+            name: "HarcRemoteTransport",
+            dependencies: [
+                "HarcDomain",
+                "HarcProtocol",
+            ]
         ),
         .target(
             name: "HarcAudioMobile",
@@ -284,6 +295,7 @@ let package = Package(
             dependencies: [
                 "HarcClientStore",
                 "HarcClientTransport",
+                "HarcRemoteTransport",
                 "HarcDomain",
                 "HarcIdentity",
                 "HarcProtocol",
@@ -360,6 +372,7 @@ let package = Package(
                 "HarcDomain",
                 "HarcHost",
                 "HarcHostTransport",
+                "HarcRemoteTransport",
                 "HarcIPCSystem",
                 "HarcIdentity",
                 "HarcProtocol",
@@ -386,6 +399,7 @@ let package = Package(
                 "HarcDomain",
                 "HarcIdentity",
                 "HarcProtocol",
+                "HarcRemoteTransport",
                 "HarcTransfer",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),

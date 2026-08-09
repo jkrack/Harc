@@ -123,7 +123,7 @@ public struct AgentsSettingsView: View {
         } header: {
             Text("What Agents Can Read and Write")
         } footer: {
-            Text("Handing a transcript to a cloud model is your decision, made in the agent — Harc itself never sends audio or text anywhere.")
+            Text("Harc never sends a transcript to an agent automatically. Handing content to a cloud model is your decision in that agent; adopted-Host synchronization is configured separately.")
                 .font(.harcLabel)
                 .foregroundStyle(Color.secondary)
         }

@@ -218,6 +218,11 @@ public struct HarcMobileALACChunkEncoder: Sendable {
         expectedSHA256: Data,
         chunkIndex: UInt32
     ) throws {
+        guard expectedBytes > 0, expectedBytes.isMultiple(of: 2) else {
+            throw HarcMobileALACEncodingError.decodeMismatch(
+                chunkIndex: chunkIndex
+            )
+        }
         let file = try AVAudioFile(
             forReading: url,
             commonFormat: .pcmFormatInt16,
@@ -231,9 +236,11 @@ public struct HarcMobileALACChunkEncoder: Sendable {
         }
         var hasher = SHA256()
         var byteCount = 0
-        while file.framePosition < file.length {
-            let remaining = file.length - file.framePosition
-            let frames = AVAudioFrameCount(min(remaining, 65_536))
+        while byteCount < expectedBytes {
+            let remainingBytes = expectedBytes - byteCount
+            let frames = AVAudioFrameCount(
+                min(remainingBytes / MemoryLayout<Int16>.size, 65_536)
+            )
             guard let buffer = AVAudioPCMBuffer(
                 pcmFormat: file.processingFormat,
                 frameCapacity: frames
@@ -242,6 +249,7 @@ public struct HarcMobileALACChunkEncoder: Sendable {
                     chunkIndex: chunkIndex
                 )
             }
+            let priorPosition = file.framePosition
             try file.read(into: buffer, frameCount: frames)
             let list = UnsafeMutableAudioBufferListPointer(
                 buffer.mutableAudioBufferList
@@ -251,7 +259,16 @@ public struct HarcMobileALACChunkEncoder: Sendable {
                     chunkIndex: chunkIndex
                 )
             }
-            let data = Data(bytes: bytes, count: Int(list[0].mDataByteSize))
+            let decodedByteCount = Int(list[0].mDataByteSize)
+            guard buffer.frameLength > 0,
+                  decodedByteCount > 0,
+                  decodedByteCount <= remainingBytes,
+                  file.framePosition > priorPosition else {
+                throw HarcMobileALACEncodingError.decodeMismatch(
+                    chunkIndex: chunkIndex
+                )
+            }
+            let data = Data(bytes: bytes, count: decodedByteCount)
             hasher.update(data: data)
             byteCount += data.count
         }
@@ -261,6 +278,37 @@ public struct HarcMobileALACChunkEncoder: Sendable {
                 chunkIndex: chunkIndex
             )
         }
+
+        // macOS and the simulator may report ALAC packet padding in `length`
+        // but reject a read started exactly after the proved canonical frames.
+        // The shipping codec gate runs this extra probe on physical iPhone;
+        // desktop validation has already proved the exact byte count and hash.
+        #if os(macOS) || targetEnvironment(simulator)
+        return
+        #else
+        // ALAC containers can report codec packet remainder in `file.length`
+        // after every valid canonical frame has been decoded. Probe once for
+        // real trailing audio instead of looping on a length that may never
+        // advance at end-of-stream.
+        guard let trailingProbe = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: 1
+        ) else {
+            throw HarcMobileALACEncodingError.decodeMismatch(
+                chunkIndex: chunkIndex
+            )
+        }
+        try file.read(into: trailingProbe, frameCount: 1)
+        let trailingList = UnsafeMutableAudioBufferListPointer(
+            trailingProbe.mutableAudioBufferList
+        )
+        guard trailingProbe.frameLength == 0,
+              trailingList.allSatisfy({ $0.mDataByteSize == 0 }) else {
+            throw HarcMobileALACEncodingError.decodeMismatch(
+                chunkIndex: chunkIndex
+            )
+        }
+        #endif
     }
 
     private func validateMaster(

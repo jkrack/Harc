@@ -7,6 +7,7 @@ import HarcProtocol
 import HarcTransfer
 import Testing
 @testable import HarcClientTransport
+import HarcRemoteTransport
 
 @Suite("Client bootstrap, pairing, and session application layer")
 struct HarcBootstrapClientTests {
@@ -31,7 +32,16 @@ struct HarcBootstrapClientTests {
     @Test("pairing proves the exact TLS-bound transcript and returns persistable adoption")
     func pairingClaimAndAdoption() async throws {
         let fixture = try BootstrapClientFixture()
-        let rpc = BootstrapClientFakeRPC(fixture: fixture)
+        let relayRoute = try HarcRemoteRelayRouteV1(
+            serviceOrigin: URL(string: "https://relay.test")!,
+            hostRouteID: String(repeating: "A", count: 43),
+            deviceRouteID: String(repeating: "B", count: 42) + "A",
+            capability: String(repeating: "C", count: 42) + "A"
+        )
+        let rpc = BootstrapClientFakeRPC(
+            fixture: fixture,
+            remoteRelayRoute: relayRoute
+        )
         let client = try fixture.client(rpc: rpc)
 
         let presentation = try await client.beginPairing(
@@ -45,7 +55,7 @@ struct HarcBootstrapClientTests {
         #expect(presentation.hostDisplayName == "Harc Test Host")
 
         let result = try await client.getPairingStatus()
-        guard case .approved(let adoption) = result else {
+        guard case .approved(let adoption, let deliveredRelayRoute) = result else {
             Issue.record("Expected an approved adoption")
             return
         }
@@ -53,6 +63,7 @@ struct HarcBootstrapClientTests {
         #expect(adoption.transportSet.exactSignedBytes == fixture.transport.exactSignedBytes)
         #expect(adoption.grant.devicePublicKey == fixture.deviceKey.publicKey)
         #expect(adoption.grant.scopes == fixture.scopes)
+        #expect(deliveredRelayRoute == relayRoute)
         #expect(await rpc.proofWasVerified())
 
         let root = FileManager.default.temporaryDirectory
@@ -101,7 +112,7 @@ struct HarcBootstrapClientTests {
             deviceLabel: "Test Mac"
         )
         let pairingResult = try await client.getPairingStatus()
-        guard case .approved(let adoption) = pairingResult else {
+        guard case .approved(let adoption, _) = pairingResult else {
             Issue.record("Expected an approved adoption")
             return
         }
@@ -157,7 +168,7 @@ struct HarcBootstrapClientTests {
             requestedScopes: fixture.scopes,
             deviceLabel: "Test Mac"
         )
-        guard case .approved(let adoption) = try await client.getPairingStatus() else {
+        guard case .approved(let adoption, _) = try await client.getPairingStatus() else {
             Issue.record("Expected an approved adoption")
             return
         }
@@ -209,7 +220,7 @@ struct HarcBootstrapClientTests {
             requestedScopes: fixture.scopes,
             deviceLabel: "Test Mac"
         )
-        guard case .approved(let adoption) = try await client.getPairingStatus() else {
+        guard case .approved(let adoption, _) = try await client.getPairingStatus() else {
             Issue.record("Expected an approved adoption")
             return
         }
@@ -242,7 +253,7 @@ struct HarcBootstrapClientTests {
             requestedScopes: fixture.scopes,
             deviceLabel: "Test Mac"
         )
-        guard case .approved(let adoption) = try await client.getPairingStatus() else {
+        guard case .approved(let adoption, _) = try await client.getPairingStatus() else {
             Issue.record("Expected an approved adoption")
             return
         }
@@ -563,7 +574,7 @@ struct HarcBootstrapClientTests {
         }
         #expect(await rpc.pairingStatusCallCount() == 1)
 
-        guard case .approved(let adoption) = try await client.getPairingStatus() else {
+        guard case .approved(let adoption, _) = try await client.getPairingStatus() else {
             Issue.record("Expected the retained claim to remain pollable")
             return
         }
@@ -602,7 +613,7 @@ struct HarcBootstrapClientTests {
             requestedScopes: fixture.scopes,
             deviceLabel: "Test iPhone"
         )
-        guard case .approved(let adoption) = try await client.getPairingStatus() else {
+        guard case .approved(let adoption, _) = try await client.getPairingStatus() else {
             throw BootstrapClientFakeError.invalidProof
         }
         return adoption
@@ -860,6 +871,7 @@ private actor BootstrapClientFakeRPC: HarcBootstrapRPCTransport {
     let beginSessionGrantOverride: Data?
     let sessionCredentialOverride: Data?
     let blockedRPC: BootstrapClientBlockedRPC?
+    let remoteRelayRoute: HarcRemoteRelayRouteV1?
     private var pairingRequest: Harc_V1_BeginPairingClaimRequestV1?
     private var hostInfoCalls = 0
     private var capabilityNegotiationCalls = 0
@@ -879,13 +891,15 @@ private actor BootstrapClientFakeRPC: HarcBootstrapRPCTransport {
         hostInfoTransportOverride: Data? = nil,
         beginSessionGrantOverride: Data? = nil,
         sessionCredentialOverride: Data? = nil,
-        blockedRPC: BootstrapClientBlockedRPC? = nil
+        blockedRPC: BootstrapClientBlockedRPC? = nil,
+        remoteRelayRoute: HarcRemoteRelayRouteV1? = nil
     ) {
         self.fixture = fixture
         self.hostInfoTransportOverride = hostInfoTransportOverride
         self.beginSessionGrantOverride = beginSessionGrantOverride
         self.sessionCredentialOverride = sessionCredentialOverride
         self.blockedRPC = blockedRPC
+        self.remoteRelayRoute = remoteRelayRoute
     }
 
     func proofWasVerified() -> Bool { pairingProofVerified }
@@ -967,7 +981,7 @@ private actor BootstrapClientFakeRPC: HarcBootstrapRPCTransport {
     func beginPairingClaim(
         _ request: Harc_V1_BeginPairingClaimRequestV1
     ) async throws -> HarcBootstrapRPCResponse<Harc_V1_BeginPairingClaimResponseV1> {
-        guard request.ticketSecret == fixture.ticket.ticketSecret,
+        guard request.ticketSecret == fixture.ticket.pairingAdmissionSecret,
               request.clientNonce == fixture.clientNonce else {
             throw BootstrapClientFakeError.invalidRequest
         }
@@ -1037,6 +1051,9 @@ private actor BootstrapClientFakeRPC: HarcBootstrapRPCTransport {
         var exact = Harc_V1_ExactSignedObjectV1()
         exact.framedBytes = fixture.exactGrant
         message.exactSignedDeviceGrant = exact
+        if let remoteRelayRoute {
+            message.remoteRelayRoute = try remoteRelayRoute.pairingWireV1()
+        }
         await blockIfConfigured(.pairingStatus)
         return response(message)
     }

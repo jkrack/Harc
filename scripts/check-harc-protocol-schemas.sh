@@ -125,8 +125,8 @@ if ! awk '
             print "unterminated enum declaration" > "/dev/stderr"
             failed = 1
         }
-        if (enum_count != 28) {
-            print "expected 28 V1 enums, found " enum_count > "/dev/stderr"
+        if (enum_count != 29) {
+            print "expected 29 V1 enums, found " enum_count > "/dev/stderr"
             failed = 1
         }
         exit failed
@@ -150,7 +150,7 @@ SessionService'
 [ "$services" = "$expected_services" ] || fail "the six-service V1 inventory changed"
 
 rpc_count=$(printf '%s\n' "$schema_source" | grep -Ec '^[[:space:]]*rpc[[:space:]]+')
-[ "$rpc_count" -eq 25 ] || fail "the V1 service inventory must contain exactly 25 RPCs"
+[ "$rpc_count" -eq 27 ] || fail "the V1 service inventory must contain exactly 27 RPCs"
 
 inventory_file=Protos/Fixtures/harc-protocol-sources-v1.sha256
 [ -f "$inventory_file" ] || fail "the V1 schema checksum inventory is missing"
@@ -169,4 +169,4 @@ if ! shasum -a 256 -c "$inventory_file" >/dev/null; then
     fail "a schema or generator-config checksum changed; review and deliberately refresh the V1 inventory"
 fi
 
-printf 'Harc protocol schema guard passed: 7 schemas, 6 services, 25 RPCs, 28 enums.\n'
+printf 'Harc protocol schema guard passed: 7 schemas, 6 services, 27 RPCs, 29 enums.\n'

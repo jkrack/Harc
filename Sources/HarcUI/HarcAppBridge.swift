@@ -101,6 +101,11 @@ public final class HarcAppBridge: ObservableObject {
     /// Persists a launch failure after stderr disappears so Settings cannot
     /// claim "Host" while every Host-only action is absent.
     @Published public var runtimeStartupError: String? = nil
+    /// True only when this build or launch environment names a Harc Remote
+    /// service origin. The preference remains visible but cannot be enabled
+    /// accidentally in an unconfigured build.
+    @Published public var remoteRelayAvailable: Bool = false
+    @Published public var remoteRelayStatusText: String = "Off"
 
     public var onStartStop: () -> Void = {}
     /// Preserve the current recording, then open the chooser. V1 does not

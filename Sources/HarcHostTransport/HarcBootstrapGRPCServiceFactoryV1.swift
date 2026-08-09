@@ -28,6 +28,8 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
     private let capabilityPolicy: HarcCapabilityPolicyV1
     let sourceBindingProvider: HarcHostRPCSourceBindingProvider
     private let preauthenticationGate: HarcBootstrapPreauthenticationGate
+    private let remoteRelayRouteDeliveryBox:
+        HarcRemoteRelayRouteDeliveryBox?
 
     package init(
         hostInfoService: HarcHostInfoService,
@@ -38,7 +40,9 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
         processingService: HarcHostProcessingArtifactService? = nil,
         hostAuthorityPublicKey: P256X963PublicKey,
         capabilityPolicy: HarcCapabilityPolicyV1,
-        hostScopedSourceSecret: Data
+        hostScopedSourceSecret: Data,
+        remoteRelayRouteDeliveryBox:
+            HarcRemoteRelayRouteDeliveryBox? = nil
     ) throws {
         self.hostInfoApplication = hostInfoService
         self.pairingApplication = pairingService
@@ -77,6 +81,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
             hostScopedSecret: hostScopedSourceSecret
         )
         self.preauthenticationGate = HarcBootstrapPreauthenticationGate()
+        self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
     }
 
     /// Test-only composition seam. Production callers cannot substitute an
@@ -94,7 +99,9 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
         hostAuthorityPublicKey: P256X963PublicKey,
         capabilityPolicy: HarcCapabilityPolicyV1,
         sourceBindingProvider: HarcHostRPCSourceBindingProvider,
-        preauthenticationGate: HarcBootstrapPreauthenticationGate = .init()
+        preauthenticationGate: HarcBootstrapPreauthenticationGate = .init(),
+        remoteRelayRouteDeliveryBox:
+            HarcRemoteRelayRouteDeliveryBox? = nil
     ) {
         self.hostInfoApplication = hostInfoApplication
         self.pairingApplication = pairingApplication
@@ -114,6 +121,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
         self.processingAdapterForBinding = nil
         self.sourceBindingProvider = sourceBindingProvider
         self.preauthenticationGate = preauthenticationGate
+        self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
     }
 
     func makeServices(
@@ -132,7 +140,8 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
                 servedIdentityBinding: servedIdentityBinding,
                 sourceBindingProvider: sourceBindingProvider,
                 preauthenticationGate: preauthenticationGate,
-                compatibility: capabilityPolicy.compatibility
+                compatibility: capabilityPolicy.compatibility,
+                remoteRelayRouteDeliveryBox: remoteRelayRouteDeliveryBox
             ),
             session: HarcSessionGRPCServiceAdapterV1(
                 application: sessionApplication,

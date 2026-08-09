@@ -14,7 +14,7 @@ public struct HarcLibraryGRPCServiceAdapterV1:
     static let defaultSnapshotPageItems = 100
 
     private let service: HarcHostLibraryService
-    private let sessionService: HarcSessionService
+    private let sessionService: HarcSessionService?
     private let sessionAuthenticator: any HarcSessionCredentialAuthenticating
     private let servedIdentityBinding: HarcGRPCServedIdentityBinding
     private let compatibility: HarcProtobufCompatibilityPolicy
@@ -28,6 +28,22 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         self.service = service
         self.sessionService = sessionService
         self.sessionAuthenticator = sessionService
+        self.servedIdentityBinding = servedIdentityBinding
+        self.compatibility = compatibility
+    }
+
+    /// Test-only seam for exercising the authenticated read path without
+    /// manufacturing a durable session registry. Production composition uses
+    /// `HarcSessionService` for both authentication and command authority.
+    init(
+        service: HarcHostLibraryService,
+        sessionAuthenticator: any HarcSessionCredentialAuthenticating,
+        servedIdentityBinding: HarcGRPCServedIdentityBinding,
+        compatibility: HarcProtobufCompatibilityPolicy = .currentV1
+    ) {
+        self.service = service
+        self.sessionService = nil
+        self.sessionAuthenticator = sessionAuthenticator
         self.servedIdentityBinding = servedIdentityBinding
         self.compatibility = compatibility
     }
@@ -467,6 +483,9 @@ public struct HarcLibraryGRPCServiceAdapterV1:
                 )
             }
             let exactBytes = request.message.exactSignedMetadataMutation.framedBytes
+            guard let sessionService else {
+                throw HarcHostLibraryError.metadataMutationUnavailable
+            }
             let authority = try await sessionService
                 .currentDeviceCommandAuthority(
                     session: session,

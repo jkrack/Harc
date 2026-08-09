@@ -56,12 +56,26 @@ message GetPairingStatusRequestV1 {
   ClaimIDV1 claim_id = 2;
 }
 
+// Fresh post-adoption relay admission delivered only over the existing pinned
+// TLS pairing channel after the Host has approved the signed device grant.
+// Values are independent opaque 256-bit relay identifiers/capabilities; no
+// Harc identity is used as a Cloudflare object name.
+message RemoteRelayRouteV1 {
+  string service_host = 1;
+  bytes host_route_id = 2;
+  bytes device_route_id = 3;
+  bytes capability = 4;
+}
+
 message GetPairingStatusResponseV1 {
   ProtocolVersionV1 protocol = 1;
   PairingClaimStateV1 state = 2;
   // Present only for APPROVED. These are exact HARCSO1 bytes and must be
   // persisted and verified before the grant payload is interpreted.
   optional ExactSignedObjectV1 exact_signed_device_grant = 3;
+  // Present only for APPROVED when Harc Remote is enabled. This is never the
+  // one-time invitation capability and must replace it in client persistence.
+  optional RemoteRelayRouteV1 remote_relay_route = 4;
 }
 
 service PairingService {

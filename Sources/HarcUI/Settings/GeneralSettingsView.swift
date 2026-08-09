@@ -143,6 +143,29 @@ public struct GeneralSettingsView: View {
                         .foregroundStyle(Color.secondary)
                 }
             }
+            if prefs.runtimeRole == .host || prefs.runtimeRole == .client {
+                Section {
+                    Toggle(
+                        "Reach my Host from other networks",
+                        isOn: $prefs.remoteRelayEnabled
+                    )
+                    .disabled(!bridge.remoteRelayAvailable)
+                    LabeledContent("Status") {
+                        Text(bridge.remoteRelayStatusText)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Harc Remote")
+                } footer: {
+                    Text(
+                        bridge.remoteRelayAvailable
+                            ? "Uses Cloudflare only as a blind byte relay. Harc’s pinned TLS remains inside the tunnel, so audio, transcripts, and library content stay encrypted. Changes take effect after restarting Harc."
+                            : "Harc Remote is not configured in this build. Local capture, direct LAN pairing, and queued transfer remain available."
+                    )
+                        .font(.harcLabel)
+                        .foregroundStyle(Color.secondary)
+                }
+            }
         }
         .confirmationDialog(
             "Change this Mac’s role?",

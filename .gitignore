@@ -29,3 +29,10 @@ HarcMobileApp/Info.plist
 HarcMobileSpikes/Info.plist
 .claude/
 dist/
+
+# Cloudflare relay local tooling and emulator state
+CloudflareRelay/node_modules/
+CloudflareRelay/.wrangler/
+CloudflareRelay/.dev.vars
+CloudflareRelay/.env
+CloudflareRelay/*.cpuprofile

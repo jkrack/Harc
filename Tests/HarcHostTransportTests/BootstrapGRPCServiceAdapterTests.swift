@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
 import GRPCCore
+import HarcClientTransport
+import HarcRemoteTransport
 import HarcDomain
 @testable import HarcHost
 @testable import HarcHostTransport
@@ -10,6 +12,56 @@ import Testing
 
 @Suite("Host bootstrap gRPC service adapters")
 struct BootstrapGRPCServiceAdapterTests {
+    @Test("approved relay routes remain bound to the adopted device")
+    func approvedRelayRouteDeviceBinding() async throws {
+        let now: UInt64 = 1_000_000
+        let route = try HarcRemoteRelayRouteV1(
+            serviceOrigin: URL(string: "https://relay.test")!,
+            hostRouteID: String(repeating: "A", count: 43),
+            deviceRouteID: String(repeating: "B", count: 42) + "A",
+            capability: String(repeating: "C", count: 42) + "A"
+        )
+        let deviceID = try DeviceID(bytes(0x81))
+        let box = HarcRemoteRelayRouteDeliveryBox(
+            nowMilliseconds: { now }
+        )
+
+        try await box.saveBinding(
+            route,
+            forDeviceID: deviceID,
+            expiresAtMilliseconds: now + 60_000
+        )
+        #expect(try await box.binding(forDeviceID: deviceID) == route)
+
+        try await box.removeBinding(forDeviceID: deviceID)
+        #expect(try await box.binding(forDeviceID: deviceID) == nil)
+    }
+
+    @Test("approved status waits for replacement relay route provisioning")
+    func approvedStatusWaitsForRelayProvisioning() async throws {
+        let claimID = UUID()
+        let route = try HarcRemoteRelayRouteV1(
+            serviceOrigin: URL(string: "https://relay.test")!,
+            hostRouteID: String(repeating: "A", count: 43),
+            deviceRouteID: String(repeating: "B", count: 42) + "A",
+            capability: String(repeating: "C", count: 42) + "A"
+        )
+        let box = HarcRemoteRelayRouteDeliveryBox()
+        await box.beginProvisioning(forClaimID: claimID)
+
+        async let delivered = box.route(forClaimID: claimID)
+        try await Task.sleep(for: .milliseconds(100))
+        try await box.save(
+            route,
+            forClaimID: claimID,
+            expiresAtMilliseconds:
+                UInt64(Date().timeIntervalSince1970 * 1_000) + 60_000
+        )
+        await box.finishProvisioning(forClaimID: claimID)
+
+        #expect(try await delivered == route)
+    }
+
     @Test("pairing begin validates protobuf and preserves source and one-shot response bytes")
     func pairingBegin() async throws {
         let deviceKey = SoftwareP256SigningKey()
@@ -93,10 +145,24 @@ struct BootstrapGRPCServiceAdapterTests {
             proofResponse: try proofResponse(),
             status: .approved(exactGrantBytes: Data("HARCSO1\0grant".utf8))
         )
+        let relayRoute = try HarcRemoteRelayRouteV1(
+            serviceOrigin: URL(string: "https://relay.test")!,
+            hostRouteID: String(repeating: "A", count: 43),
+            deviceRouteID: String(repeating: "B", count: 42) + "A",
+            capability: String(repeating: "C", count: 42) + "A"
+        )
+        let relayDelivery = HarcRemoteRelayRouteDeliveryBox()
+        try await relayDelivery.save(
+            relayRoute,
+            forClaimID: claimID,
+            expiresAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
+                + 60_000
+        )
         let adapter = try pairingAdapter(
             application: application,
             hostKey: hostKey,
-            sourceBinding: bytes(0x53)
+            sourceBinding: bytes(0x53),
+            remoteRelayRouteDeliveryBox: relayDelivery
         )
         var metadata = Metadata()
         metadata.addString(
@@ -134,6 +200,11 @@ struct BootstrapGRPCServiceAdapterTests {
         #expect(statusWire.state == .pairingClaimStateApproved)
         #expect(statusWire.exactSignedDeviceGrant.framedBytes
             == Data("HARCSO1\0grant".utf8))
+        #expect(
+            try HarcRemoteRelayRouteV1(
+                pairingWire: statusWire.remoteRelayRoute
+            ) == relayRoute
+        )
     }
 
     @Test("pairing bearer ambiguity is rejected before HarcHost is called")
@@ -414,14 +485,17 @@ struct BootstrapGRPCServiceAdapterTests {
     private func pairingAdapter(
         application: PairingRPCApplicationFake,
         hostKey: SoftwareP256SigningKey,
-        sourceBinding: Data
+        sourceBinding: Data,
+        remoteRelayRouteDeliveryBox:
+            HarcRemoteRelayRouteDeliveryBox? = nil
     ) throws -> HarcPairingGRPCServiceAdapterV1 {
         HarcPairingGRPCServiceAdapterV1(
             application: application,
             hostAuthorityPublicKey: hostKey.publicKey,
             servedIdentityBinding: try servedIdentity(bytes(0x41)),
             sourceBindingProvider: sourceProvider(sourceBinding),
-            preauthenticationGate: HarcBootstrapPreauthenticationGate()
+            preauthenticationGate: HarcBootstrapPreauthenticationGate(),
+            remoteRelayRouteDeliveryBox: remoteRelayRouteDeliveryBox
         )
     }
 

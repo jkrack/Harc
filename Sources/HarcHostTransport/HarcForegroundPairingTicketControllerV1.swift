@@ -1,5 +1,6 @@
 #if canImport(Network)
 import Foundation
+import HarcRemoteTransport
 import HarcDomain
 import HarcHost
 import HarcIdentity
@@ -57,12 +58,19 @@ public actor HarcForegroundPairingTicketControllerV1 {
     private let endpoints: [PairingEndpointV1]
     private let randomness: any HostAuthenticationRandomness
     private let now: @Sendable () -> Date
+    private let remoteRelayHostAgent: HarcRemoteRelayHostAgent?
+    private let remoteRelayRouteDeliveryBox:
+        HarcRemoteRelayRouteDeliveryBox?
     private var activeTicketID: UUID?
+    private var activeRelayRouteID: String?
 
     package init(
         storageRuntime: HarcResidentHostStorageRuntime,
         transportRuntime: HostTransportResidentRuntime,
-        endpoints: [PairingEndpointV1]
+        endpoints: [PairingEndpointV1],
+        remoteRelayHostAgent: HarcRemoteRelayHostAgent? = nil,
+        remoteRelayRouteDeliveryBox:
+            HarcRemoteRelayRouteDeliveryBox? = nil
     ) {
         self.init(
             hostStore: storageRuntime.hostStore,
@@ -71,7 +79,9 @@ public actor HarcForegroundPairingTicketControllerV1 {
             transportReservation: transportRuntime,
             endpoints: endpoints,
             randomness: SystemHostAuthenticationRandomness(),
-            now: Date.init
+            now: Date.init,
+            remoteRelayHostAgent: remoteRelayHostAgent,
+            remoteRelayRouteDeliveryBox: remoteRelayRouteDeliveryBox
         )
     }
 
@@ -83,7 +93,10 @@ public actor HarcForegroundPairingTicketControllerV1 {
         endpoints: [PairingEndpointV1],
         randomness: any HostAuthenticationRandomness =
             SystemHostAuthenticationRandomness(),
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        remoteRelayHostAgent: HarcRemoteRelayHostAgent? = nil,
+        remoteRelayRouteDeliveryBox:
+            HarcRemoteRelayRouteDeliveryBox? = nil
     ) {
         self.hostStore = hostStore
         self.tuple = tuple
@@ -92,6 +105,8 @@ public actor HarcForegroundPairingTicketControllerV1 {
         self.endpoints = endpoints
         self.randomness = randomness
         self.now = now
+        self.remoteRelayHostAgent = remoteRelayHostAgent
+        self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
     }
 
     public func issue(
@@ -136,6 +151,26 @@ public actor HarcForegroundPairingTicketControllerV1 {
                 .invalidTicketIdentifier
         }
         let secret = try randomness.randomBytes(count: 24)
+        var ticketEndpoints = endpoints
+        var issuedRelayRouteID: String?
+        if let remoteRelayHostAgent {
+            let relay = try await remoteRelayHostAgent.issueAdmission(
+                kind: .pairing,
+                expiresAtMilliseconds: expiresMilliseconds
+            )
+            guard let serviceHost = relay.serviceOrigin.host else {
+                throw HarcRemoteRelayError.invalidServiceOrigin
+            }
+            ticketEndpoints.append(
+                try PairingRelayEndpointV1(
+                    serviceHost: serviceHost,
+                    hostRouteID: relay.hostRouteID,
+                    admissionRouteID: relay.deviceRouteID,
+                    capability: relay.capability
+                ).pairingEndpoint()
+            )
+            issuedRelayRouteID = relay.deviceRouteID
+        }
         let ticket = try PairingTicketV1(
             ticketID: ticketID,
             libraryID: tuple.libraryID,
@@ -145,7 +180,7 @@ public actor HarcForegroundPairingTicketControllerV1 {
             ticketSecret: secret,
             issuedAtUnixMilliseconds: issuedMilliseconds,
             expiresAtUnixMilliseconds: expiresMilliseconds,
-            endpoints: endpoints
+            endpoints: ticketEndpoints
         )
         let placeholder = try PairingTicketPlaceholder(
             ticketID: ticketID,
@@ -157,6 +192,7 @@ public actor HarcForegroundPairingTicketControllerV1 {
         let pairingURI = try ticket.encodedURI()
         try await hostStore.insertPairingTicketPlaceholder(placeholder)
         activeTicketID = ticketID
+        activeRelayRouteID = issuedRelayRouteID
         return HarcForegroundPairingTicketV1(
             ticketID: ticketID,
             clientKind: clientKind,
@@ -171,15 +207,70 @@ public actor HarcForegroundPairingTicketControllerV1 {
         try await cancelActiveTicketIfNeeded()
     }
 
+    /// Replaces the one-time invitation admission with a freshly randomized,
+    /// reusable transport-only route. The invitation bearer is never promoted.
+    public func provisionApprovedRelayRoute(
+        forTicketID ticketID: UUID,
+        claimID: UUID,
+        deviceID: DeviceID
+    ) async throws {
+        guard activeTicketID == ticketID,
+              let invitationRouteID = activeRelayRouteID,
+              let remoteRelayHostAgent,
+              let remoteRelayRouteDeliveryBox else { return }
+        let observed = now().timeIntervalSince1970 * 1_000
+        guard observed.isFinite, observed >= 0,
+              observed <= Double(UInt64.max) else {
+            throw HarcForegroundPairingTicketControllerError.invalidClock
+        }
+        let approvedAt = UInt64(observed.rounded(.down))
+        let expiresAt = approvedAt
+            + 366 * 24 * 60 * 60 * 1_000
+        let route = try await remoteRelayHostAgent.issueAdmission(
+            kind: .device,
+            expiresAtMilliseconds: expiresAt
+        )
+        do {
+            try await remoteRelayRouteDeliveryBox.saveBinding(
+                route,
+                forDeviceID: deviceID,
+                expiresAtMilliseconds: expiresAt
+            )
+            try await remoteRelayRouteDeliveryBox.save(
+                route,
+                forClaimID: claimID,
+                expiresAtMilliseconds: approvedAt + 10 * 60 * 1_000
+            )
+        } catch {
+            try? await remoteRelayRouteDeliveryBox.removeBinding(
+                forDeviceID: deviceID
+            )
+            try? await remoteRelayHostAgent.revoke(
+                routeID: route.deviceRouteID
+            )
+            throw error
+        }
+        try await remoteRelayHostAgent.revoke(routeID: invitationRouteID)
+        activeRelayRouteID = nil
+    }
+
     private func cancelActiveTicketIfNeeded() async throws {
         guard let ticketID = activeTicketID else { return }
+        let relayRouteID = activeRelayRouteID
         activeTicketID = nil
+        activeRelayRouteID = nil
         do {
             try await hostStore.cancelPairingTicketIfOpen(ticketID: ticketID)
+            if let relayRouteID {
+                try? await remoteRelayHostAgent?.revoke(
+                    routeID: relayRouteID
+                )
+            }
         } catch {
             // Restore ownership so a transient HostDB failure cannot silently
             // orphan a still-live secret-bearing foreground presentation.
             activeTicketID = ticketID
+            activeRelayRouteID = relayRouteID
             throw error
         }
     }

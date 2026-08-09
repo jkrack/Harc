@@ -7,9 +7,16 @@ public struct HarcLibraryAuthorization: Sendable {
     fileprivate let headerValue: String
 
     public init(openedSession: HarcOpenedClientSession) throws {
+        try self.init(
+            credential: openedSession.credential,
+            authorizationHeader: openedSession.authorizationHeader
+        )
+    }
+
+    init(credential: Data, authorizationHeader: String) throws {
         guard let canonical = try? HarcBootstrapAuthorization.sessionHeader(
-            credential: openedSession.credential
-        ), canonical == openedSession.authorizationHeader else {
+            credential: credential
+        ), canonical == authorizationHeader else {
             throw HarcLibraryAuthorizationError
                 .invalidOpenedSessionAuthorization
         }

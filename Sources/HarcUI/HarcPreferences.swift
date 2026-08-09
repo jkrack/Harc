@@ -49,6 +49,7 @@ public final class HarcPreferences: ObservableObject {
         static let preRollMinutes = "harc.preRollMinutes"
         static let semanticSearchEnabled = "harc.semanticSearchEnabled"
         static let runtimeRole = "harc.runtimeRole"
+        static let remoteRelayEnabled = "harc.remoteRelayEnabled"
         static let clientHostAudioDownloadEnabled =
             "harc.client.hostAudioDownloadEnabled"
         static let clientHostAudioRetentionEnabled =
@@ -180,6 +181,15 @@ public final class HarcPreferences: ObservableObject {
 
     @Published public var runtimeRole: RuntimeRole {
         didSet { UserDefaults.standard.set(runtimeRole.rawValue, forKey: Key.runtimeRole) }
+    }
+
+    @Published public var remoteRelayEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                remoteRelayEnabled,
+                forKey: Key.remoteRelayEnabled
+            )
+        }
     }
 
     /// Whether Client mode may fetch canonical audio from the paired Host.
@@ -517,6 +527,9 @@ public final class HarcPreferences: ObservableObject {
         let rawRuntimeRole = defaults.string(forKey: Key.runtimeRole)
             ?? RuntimeRole.standalone.rawValue
         self.runtimeRole = RuntimeRole(rawValue: rawRuntimeRole) ?? .standalone
+        self.remoteRelayEnabled = defaults.object(
+            forKey: Key.remoteRelayEnabled
+        ) as? Bool ?? false
         self.clientHostAudioDownloadEnabled = defaults.object(
             forKey: Key.clientHostAudioDownloadEnabled
         ) as? Bool ?? true

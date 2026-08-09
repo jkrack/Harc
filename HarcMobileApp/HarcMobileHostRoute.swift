@@ -1,6 +1,7 @@
 import Foundation
 import HarcAudioMobile
 import HarcClientTransport
+import HarcRemoteTransport
 import HarcProtocol
 @preconcurrency import Network
 
@@ -8,6 +9,7 @@ struct HarcMobileHostRoute: Codable, Equatable, Sendable {
     let host: String
     let port: UInt16
     let serverHostname: String
+    let relay: HarcRemoteRelayRouteV1?
 
     init(ticket: PairingTicketV1) throws {
         guard let endpoint = ticket.endpoints.first(where: {
@@ -21,9 +23,32 @@ struct HarcMobileHostRoute: Codable, Equatable, Sendable {
         self.host = host
         port = endpoint.port
         serverHostname = host
+        if let relayEndpoint = ticket.endpoints.first(where: {
+            $0.kind == .remoteRelay
+        }) {
+            let decoded = try PairingRelayEndpointV1.decode(relayEndpoint)
+            guard let origin = URL(
+                string: "https://\(decoded.serviceHost)"
+            ) else {
+                throw HarcMobileHostRouteError.invalidResolvedRoute
+            }
+            relay = try HarcRemoteRelayRouteV1(
+                serviceOrigin: origin,
+                hostRouteID: decoded.hostRouteID,
+                deviceRouteID: decoded.admissionRouteID,
+                capability: decoded.capability
+            )
+        } else {
+            relay = nil
+        }
     }
 
-    init(host: String, port: UInt16, serverHostname: String? = nil) throws {
+    init(
+        host: String,
+        port: UInt16,
+        serverHostname: String? = nil,
+        relay: HarcRemoteRelayRouteV1? = nil
+    ) throws {
         let host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty, port > 0 else {
             throw HarcMobileHostRouteError.invalidResolvedRoute
@@ -31,6 +56,7 @@ struct HarcMobileHostRoute: Codable, Equatable, Sendable {
         self.host = host
         self.port = port
         self.serverHostname = serverHostname ?? host
+        self.relay = relay
     }
 }
 

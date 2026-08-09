@@ -12,6 +12,44 @@ extension UTType {
 }
 
 enum HarcPairingInvitationDocument {
+    /// Creates the concrete file handed to macOS sharing services. Keeping
+    /// this separate from `save` matters: sharing a `String` causes Mail and
+    /// Messages to insert the bearer URI into their body instead of attaching
+    /// an importable `.harcpair` document.
+    static func makeTemporaryShareFile(
+        pairingURI: String,
+        now: Date = Date(),
+        temporaryRoot: URL = FileManager.default.temporaryDirectory
+    ) throws -> URL {
+        guard temporaryRoot.isFileURL else {
+            throw HarcPairingInvitationDocumentError.unsafeFile
+        }
+        let directory = temporaryRoot.appendingPathComponent(
+            "HarcPairingInvitation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            let file = directory
+                .appendingPathComponent(
+                    "Harc Pairing Invite",
+                    isDirectory: false
+                )
+                .appendingPathExtension(
+                    PairingInvitationFileV1.filenameExtension
+                )
+            try save(pairingURI: pairingURI, to: file, now: now)
+            return file
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
     static func save(
         pairingURI: String,
         to url: URL,
