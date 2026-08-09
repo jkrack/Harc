@@ -29,6 +29,8 @@ enum HarcMobileUITestConfigurationError: LocalizedError, Equatable {
     case duplicateRootArgument
     case missingRootValue
     case invalidRootValue(String)
+    case duplicateResetRootArgument
+    case resetRootWithoutRootID
 
     var errorDescription: String? {
         switch self {
@@ -38,12 +40,17 @@ enum HarcMobileUITestConfigurationError: LocalizedError, Equatable {
             "The UI-test root argument needs a UUID value."
         case .invalidRootValue(let value):
             "The UI-test root UUID is invalid: \(value)."
+        case .duplicateResetRootArgument:
+            "The UI-test reset-root argument was repeated."
+        case .resetRootWithoutRootID:
+            "The UI-test reset-root argument requires a scoped root UUID."
         }
     }
 }
 
 enum HarcMobileUITestConfiguration {
     static let rootArgument = "--harc-ui-test-root-id"
+    static let resetRootArgument = "--harc-ui-test-reset-root"
 
     static func rootID(arguments: [String]) throws -> UUID? {
 #if DEBUG
@@ -67,6 +74,26 @@ enum HarcMobileUITestConfiguration {
         return value
 #else
         return nil
+#endif
+    }
+
+    static func shouldResetRoot(
+        arguments: [String],
+        rootID: UUID?
+    ) throws -> Bool {
+#if DEBUG
+        let count = arguments.count { $0 == resetRootArgument }
+        guard count <= 1 else {
+            throw HarcMobileUITestConfigurationError
+                .duplicateResetRootArgument
+        }
+        guard count == 1 else { return false }
+        guard rootID != nil else {
+            throw HarcMobileUITestConfigurationError.resetRootWithoutRootID
+        }
+        return true
+#else
+        return false
 #endif
     }
 }
@@ -135,15 +162,24 @@ final class HarcMobileAppModel {
                 readiness = .protectedDataUnavailable
                 return
             }
+            let processArguments = ProcessInfo.processInfo.arguments
             let qualificationStorageExhaustionBytes = try
                 HarcMobileCaptureQualificationConfiguration
                     .storageExhaustionAfterCanonicalBytes(
-                        arguments: ProcessInfo.processInfo.arguments
+                        arguments: processArguments
                     )
             let uiTestRootID = try HarcMobileUITestConfiguration.rootID(
-                arguments: ProcessInfo.processInfo.arguments
+                arguments: processArguments
             )
-            let root = try Self.applicationRoot(uiTestRootID: uiTestRootID)
+            let shouldResetUITestRoot = try HarcMobileUITestConfiguration
+                .shouldResetRoot(
+                    arguments: processArguments,
+                    rootID: uiTestRootID
+                )
+            let root = try Self.applicationRoot(
+                uiTestRootID: uiTestRootID,
+                resetUITestRoot: shouldResetUITestRoot
+            )
             let clientLocations = try ClientStoreLocations(rootDirectory: root)
             let captureLocations = try HarcMobileCaptureLocations(
                 applicationSupportRoot: root
@@ -318,7 +354,10 @@ final class HarcMobileAppModel {
         }
     }
 
-    private static func applicationRoot(uiTestRootID: UUID?) throws -> URL {
+    private static func applicationRoot(
+        uiTestRootID: UUID?,
+        resetUITestRoot: Bool
+    ) throws -> URL {
         guard let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -338,6 +377,15 @@ final class HarcMobileAppModel {
                 "HarcMobile",
                 isDirectory: true
             )
+        }
+        if resetUITestRoot {
+            guard uiTestRootID != nil else {
+                throw HarcMobileUITestConfigurationError
+                    .resetRootWithoutRootID
+            }
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
         }
         try FileManager.default.createDirectory(
             at: root,

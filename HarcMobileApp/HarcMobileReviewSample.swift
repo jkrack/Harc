@@ -52,7 +52,7 @@ struct HarcMobileReviewSampleView: View {
                 Text(
                     "This review path works without a Host, contains no user data, and never enters Harc's Library cache or transfer outbox."
                 )
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
                 NavigationLink("Privacy & Data") {
                     HarcMobilePrivacyView()
                 }
@@ -78,7 +78,7 @@ struct HarcMobileReviewSampleView: View {
                     "The eight-second tone is generated on this iPhone and is not a recording of a person."
                 )
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
                 if case .failed(let message) = audio.state {
                     Text(message)
                         .font(.footnote)
@@ -87,10 +87,15 @@ struct HarcMobileReviewSampleView: View {
             }
 
             Section("Status") {
-                LabeledContent("Processing", value: "Ready")
-                LabeledContent("Canonical audio", value: "Bundled sample")
-                LabeledContent("Source", value: "Offline review content")
-                LabeledContent("Duration", value: "0:08")
+                accessibleLabeledContent("Processing", value: "Ready")
+                accessibleLabeledContent(
+                    "Canonical audio",
+                    value: "Bundled sample"
+                )
+                accessibleLabeledContent(
+                    "Source",
+                    value: "Offline review content"
+                )
             }
 
             Section("Summary") {
@@ -103,15 +108,15 @@ struct HarcMobileReviewSampleView: View {
             }
 
             Section("Metadata") {
-                LabeledContent(
+                accessibleLabeledContent(
                     "Title",
                     value: HarcMobileReviewSample.title
                 )
-                LabeledContent(
+                accessibleLabeledContent(
                     "Tags",
                     value: HarcMobileReviewSample.tags.joined(separator: ", ")
                 )
-                LabeledContent(
+                accessibleLabeledContent(
                     "Started",
                     value: HarcMobileReviewSample.startedAt.formatted(
                         date: .abbreviated,
@@ -120,31 +125,42 @@ struct HarcMobileReviewSampleView: View {
                 )
             }
         }
+        .foregroundStyle(.primary)
         .navigationTitle("Review Sample")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier(HarcMobileAccessibilityID.reviewSampleRoot)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { dismiss() }
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark")
+                }
+                .accessibilityLabel("Close Review Sample")
             }
         }
         .onDisappear { audio.stop() }
     }
+
+    private func accessibleLabeledContent(
+        _ title: String,
+        value: String
+    ) -> some View {
+        Text(title + ": " + value)
+    }
 }
 
 enum HarcMobilePrivacyCopy {
-    static let dataCollectionAnswer = "No, we do not collect data from this app."
+    static let dataCollectionAnswer = "No tracking, advertising, app-use analytics, or developer access to recording content."
     static let summary = """
-    Harc has no cloud account, advertising, analytics, or developer-operated processing service. Recordings and derived content stay on your devices and the Harc Host you adopt.
+    Harc has no cloud account, advertising, app-use analytics, or developer-operated processing service. Recordings and derived content stay on your devices and the Harc Host you adopt. If you enable Harc Remote, Cloudflare processes minimum connection metadata in real time to relay the already-encrypted connection but cannot read its content. Harc's production relay configuration does not retain Workers logs or traces.
     """
     static let recording = """
     Harc accesses the microphone only after you explicitly start recording. A protected local master remains on this iPhone until the adopted Host returns a verified durable receipt. Harc's developer cannot access your iPhone or Host library.
     """
     static let permissions = """
-    Camera access is used only to scan a short-lived Host pairing code. Local Network access discovers and connects to the Host you approve. Harc does not upload photos, contacts, location, advertising identifiers, or analytics.
+    Camera access is used only to scan a short-lived Host pairing code. Local Network access discovers and connects to the Host you approve. Optional Harc Remote exposes minimum connection metadata to the relay provider while servicing the connection, but not recording or transcript content. Harc does not upload photos, contacts, advertising identifiers, or app-use analytics.
     """
     static let export = """
-    Automatic transfer is limited to your adopted Host. A recording leaves that trust boundary only when you explicitly choose Export and select a destination in the system share sheet.
+    Automatic transfer is limited to your adopted Host, directly or through the optional content-blind relay. A recording leaves that trust boundary only when you explicitly choose Export and select a destination in the system share sheet.
     """
 }
 
@@ -163,15 +179,21 @@ struct HarcMobilePrivacyView: View {
             Section("Export") {
                 Text(HarcMobilePrivacyCopy.export)
             }
-            Section("App Privacy answer") {
+            Section("App Privacy") {
                 Text(HarcMobilePrivacyCopy.dataCollectionAnswer)
                 Text(
-                    "This answer must be re-reviewed if a future build adds developer-accessible servers, analytics, advertising, telemetry, or third-party processing."
+                    "The App Store privacy disclosure is re-reviewed for every release, including the relay provider's handling of connection metadata."
                 )
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
+            }
+            Section("Policy and support") {
+                if let privacyPolicy = HarcMobilePublicLinks.privacyPolicy {
+                    Link("Read the Privacy Policy", destination: privacyPolicy)
+                }
             }
         }
+        .foregroundStyle(.primary)
         .navigationTitle("Privacy & Data")
         .accessibilityIdentifier(HarcMobileAccessibilityID.privacy)
     }

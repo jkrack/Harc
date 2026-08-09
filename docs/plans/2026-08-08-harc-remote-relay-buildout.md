@@ -1,8 +1,8 @@
 # Harc Remote Relay Buildout
 
 **Status:** Production relay and hardened Worker deployed; opt-in Harc 0.14.0
-release candidate notarized, with expanded load, cost, and two-network evidence
-continuing as post-release operations
+release candidate notarized; staging overload and 1,000-Host load/cost passed;
+two-network and final privacy evidence remain release gates
 
 **Date:** 2026-08-08
 
@@ -44,7 +44,7 @@ LAN, standalone capture, local client processing, or durable transfer recovery.
   first/client relay fallback, loopback byte pumps around the existing pinned
   TLS gRPC channel, compact relay pairing endpoints, and Host lifecycle wiring.
 - Focused Swift relay and pairing-ticket tests pass. The complete bounded Swift
-  regression passes 1,540 tests in 259 suites, the macOS Harc Debug app target
+  regression passes 1,541 tests in 259 suites, the macOS Harc Debug app target
   builds with both production helpers embedded, and the generic-device iOS
   HarcMobile Debug target builds with signing disabled.
 - The relay-enabled `0.14.0 (55)` macOS release candidate builds arm64-only,
@@ -76,12 +76,14 @@ LAN, standalone capture, local client processing, or durable transfer recovery.
 - Host-rendezvous eviction, concurrent capability replay, rate-limit, and
   payload-not-persisted tests are green. The Swift bridge and Worker now each
   own one-frame credit state, and the Worker's normal credit lifecycle is
-  covered locally. Its forced-close overload branch still requires staging
-  evidence because the local hibernation emulator is unstable on that path.
-  Relay-session live-socket eviction,
-  local-emulator inner-TLS, wire plaintext-negative, two-network physical-device,
-  1,000-idle-Host, pricing, physical-device iOS, and expanded two-network
-  evidence remain post-release follow-up work.
+  covered locally. Its forced-close overload branch passed twice in real
+  staging because the local hibernation emulator is unstable on that path.
+  Relay-session live-socket eviction, local-emulator inner-TLS, and wire
+  plaintext-negative evidence pass. A 1,000-idle-Host staging run and current
+  plan pricing assessment and the safe aggregate staging-redaction exercise
+  also pass. Relay-level reconnect/revocation now pass in real staging.
+  Physical iOS, secondary-Mac, and expanded two-network evidence remain release
+  work.
 
 ### R0 — Contract and local relay skeleton
 
@@ -164,6 +166,30 @@ revocation. **Open:** real secondary-Mac evidence.
   redaction and deletion, and run two-network iPhone and Mac tests. Confirm the
   production deployment has persistent Workers Logs and Traces disabled.
 
+2026-08-09 checkpoint: distinct staging is deployed and the real Cloudflare
+`4429` overload path passed before and after redeployment. Production and
+staging both read back with persistent observability disabled. Raw real-time
+tailing is not an acceptable sampling mechanism because Cloudflare includes
+secret request headers and network metadata; the command was removed and the
+privacy guard now rejects it. The purpose-built aggregate-only observer passed
+the named canary, overload, and pinned-TLS exercise, then was detached and
+deleted. Restored staging version
+`6d537995-70ea-40d0-aed7-4442d93a0efa` passed privacy, health, and overload.
+The checked-in lifecycle harness subsequently passed real relay-level
+Host-offline handling, same-route Host reconnect, fresh-session replacement,
+bidirectional acknowledged frames, revocation, stale-capability rejection, and
+replacement authorization. Physical two-network behavior and visible device
+state remain open.
+
+The 1,000-idle-Host load/cost exercise is also complete in the isolated staging
+environment; see R6 and the dated evidence. The remaining R5 exit evidence is
+the physical two-network and direct-route recovery behavior.
+
+The deployed-staging pinned-TLS application gate also passes: bootstrap,
+authenticated Library access, interrupted-upload reconciliation, and resume all
+completed through the real staging Worker. The repeatable wrapper refuses the
+production origin and checks deployed privacy configuration before and after.
+
 Exit: physical-device evidence covers unavailable Host, network changes,
 interrupted transfer, direct-route recovery, and no content in observability.
 
@@ -173,12 +199,24 @@ interrupted transfer, direct-route recovery, and no content in observability.
   active ALAC transfer.
 - Record message, duration, CPU, memory, and operational support cost.
 - Approve per-Host pricing, included remote allowance, abuse limits, and support
-  policy before production deployment.
+  policy before expanding beyond the owner-approved opt-in production release.
 - Complete bounded Swift tests, macOS app build, iOS build, notarization, Sparkle
   publication, and staged remote enablement.
 
 Exit: production is opt-in, reversible, measured, and does not make capture or
 LAN use depend on the relay.
+
+**Passed 2026-08-09:** the staging-only aggregate harness opened 1,000/1,000
+idle Host rendezvous connections with zero retries, held all for 30 seconds,
+and transferred 16 MiB through the production acknowledgement protocol at
+2.91 MiB/s. Health remained OK, Cloudflare reported no resource/application
+errors, post-load no-retention checks passed, and the measured Worker, Durable
+Object, and SQLite counters fit current Workers Paid monthly allowances. The
+overage-equivalent upper bound for the displayed counters is under $0.01. See
+`docs/evidence/2026-08-09-harc-remote-staging-load.md`. Recurring-test synthetic
+state lifecycle and alert semantics remain operational hardening items. The
+relay treats ALAC and the harness's same-sized opaque fixture identically; it
+does not inspect or branch on application payload encoding.
 
 ## Machine-safe validation
 

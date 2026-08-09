@@ -4,9 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "npm run types:check && npm run typecheck && npm test && npm run deploy:dry",
-    "deploy:dry": "WRANGLER_SEND_ERROR_REPORTS=false wrangler deploy --dry-run --outdir dist",
+    "check": "npm run privacy:check && npm run types:check && npm run redaction:observer:types:check && npm run typecheck && npm test && npm run test:redaction-observer && npm run deploy:dry && npm run redaction:observer:dry",
+    "deploy:dry": "WRANGLER_SEND_ERROR_REPORTS=false wrangler deploy --env= --dry-run --outdir dist",
+    "deploy:staging:dry": "WRANGLER_SEND_ERROR_REPORTS=false wrangler deploy --env staging --dry-run --outdir dist/staging",
+    "redaction:observer:dry": "WRANGLER_SEND_ERROR_REPORTS=false wrangler deploy --config wrangler.redaction-observer.jsonc --dry-run --outdir dist/redaction-observer",
+    "redaction:observer:types": "WRANGLER_SEND_ERROR_REPORTS=false wrangler types src/redaction-observer-configuration.d.ts --config wrangler.redaction-observer.jsonc --env-interface RedactionObserverEnv --include-runtime false",
+    "redaction:observer:types:check": "WRANGLER_SEND_ERROR_REPORTS=false wrangler types src/redaction-observer-configuration.d.ts --config wrangler.redaction-observer.jsonc --env-interface RedactionObserverEnv --include-runtime false --check",
+    "privacy:check": "node scripts/check-production-privacy.mjs",
+    "privacy:account-logpush:check": "bash scripts/check-account-logpush.sh",
+    "privacy:deployed:check": "bash scripts/check-deployed-privacy.sh",
+    "staging:load": "node scripts/test-staging-load.mjs",
+    "staging:lifecycle": "node scripts/test-staging-lifecycle.mjs",
+    "staging:overload": "node scripts/test-staging-overload.mjs",
+    "staging:redaction": "../scripts/test-relay-redaction-staging.sh",
+    "staging:privacy:deployed:check": "HARC_RELAY_WORKER_NAME=harc-remote-relay-staging HARC_RELAY_HEALTH_URL=https://harc-remote-relay-staging.jlworker.workers.dev/health HARC_RELAY_AUDIT_LABEL=Staging bash scripts/check-deployed-privacy.sh",
     "test": "vitest run",
+    "test:redaction-observer": "vitest run --config vitest.redaction.config.ts",
     "typecheck": "tsc --noEmit",
     "types": "WRANGLER_SEND_ERROR_REPORTS=false wrangler types src/worker-configuration.d.ts",
     "types:check": "WRANGLER_SEND_ERROR_REPORTS=false wrangler types src/worker-configuration.d.ts --check"
@@ -16,6 +29,7 @@
     "@types/node": "22.15.17",
     "typescript": "5.9.3",
     "vitest": "4.1.10",
-    "wrangler": "4.120.0"
+    "wrangler": "4.120.0",
+    "ws": "8.21.0"
   }
 }

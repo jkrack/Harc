@@ -1,13 +1,17 @@
 # HarcMobile TestFlight Release Readiness
 
+> Optional beta-distribution guidance. HarcMobile's active release handoff is
+> [App Store Release Readiness](app-store-release-readiness.md); TestFlight is
+> not a release gate.
+
 This runbook is the handoff for the first external HarcMobile TestFlight build.
 It does not turn missing physical evidence or App Store Connect metadata into a
 passing gate.
 
 ## Build and hardware prerequisites
 
-- Use one clean, pushed source commit and record its version/build and archive
-  SHA-256.
+- Use one clean, pushed source commit and record its version/build, archived app
+  executable SHA-256, signature CDHash, and provisioning profile UUID.
 - Keep `TARGETED_DEVICE_FAMILY = 1`; iPad remains outside this release.
 - Complete the physical codec matrix and freeze the selected lossless codec.
 - Complete C1-C7, T1-T7, T2b-T2e, P1, and H1. C1, C2, T1, and T2 require three
@@ -36,11 +40,17 @@ passed.
 
 ## App Privacy and privacy-policy metadata
 
-For the current architecture, select **No, we do not collect data from this
-app**. The only automatic off-device destination is the user's authenticated,
-adopted Host, which the developer and third-party partners cannot access. There
-are no account, advertising, analytics, telemetry, crash-reporting, or
-third-party processing SDKs in the current build.
+Do not carry the prior **No, we do not collect data from this app** answer into
+a relay-capable build without re-review. The recording destination remains the
+user's authenticated adopted Host, and the relay cannot decrypt content, but
+Cloudflare can observe connection metadata. The Account Holder must verify the
+exact production logging and retention behavior and answer App Privacy for the
+exact uploaded build. There are no account, advertising, app-use analytics,
+crash-reporting, or third-party content-processing SDKs in the current source.
+The production read-back currently shows Logpush disabled, no Tail Workers, and
+observability disabled on the single Worker version receiving 100% of traffic.
+Re-run `npm run privacy:deployed:check` from `CloudflareRelay` immediately before
+submission and close the prior-record expiry/account-export checks.
 
 Before submission:
 
@@ -48,7 +58,10 @@ Before submission:
   URL and enter that exact URL in App Store Connect;
 - enter a monitored support/feedback email;
 - re-audit the final dependency graph and `PrivacyInfo.xcprivacy`;
-- confirm the App Privacy answer still matches the exact uploaded build; and
+- confirm the App Privacy answer still matches the exact uploaded build;
+- record whether Harc Remote is configured for the uploaded build and document
+  Cloudflare observability, IP-address, and metadata retention;
+- have the Account Holder publish the resulting App Privacy answer; and
 - re-evaluate the answer if any developer-accessible service or third-party SDK
   is added.
 
@@ -74,8 +87,9 @@ not legal advice and must not be used to bypass an Apple documentation request.
 HarcMobile is a local-first microphone recorder and client for a user-owned Harc
 Host. Recordings remain available on the iPhone while the Host or network is
 offline. When paired, Harc transfers independently verifiable lossless audio,
-stores a signed durable receipt, and presents the permitted Host Library without
-using a Harc-operated cloud service.
+stores a signed durable receipt, and presents the permitted Host Library. The
+optional Harc Remote path uses a content-blind relay while preserving the inner
+pinned-TLS connection to the adopted Host.
 
 ### What to test
 
@@ -91,9 +105,10 @@ using a Harc-operated cloud service.
 
 ### Beta App Review notes
 
-Harc has no cloud account or reviewer-accessible developer server. The app's
-automatic off-device path is a user's locally approved Host computer, so Apple
-reviewers are not expected to reach the developer's LAN. Use Library > Open
+Harc has no cloud account or reviewer-accessible content-processing server. The
+app's automatic content destination is a user's approved Host computer; Harc
+Remote, when enabled, is only a blind connection relay. Apple reviewers are not
+expected to reach the developer's LAN. Use Library > Open
 Offline Review Sample for a permission-free, offline demonstration of the
 completed Library detail experience. Its audio is generated on device and its
 text is fixed bundled content; it does not contain user data or exercise the
@@ -111,5 +126,6 @@ only for discovery and connection to an adopted Host.
 - Public privacy policy URL: **required**
 - Monitored feedback email: **required**
 - Review contact name, phone, and email: **required**
-- Exact uploaded version/build and archive SHA-256: **required**
+- Exact uploaded version/build, archived executable SHA-256, signature CDHash,
+  and profile UUID: **required**
 - Named physical-device evidence bundle: **required**

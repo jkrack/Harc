@@ -62,14 +62,17 @@ final class HarcMobileReviewSampleTests: XCTestCase {
         XCTAssertTrue(identifiers.allSatisfy { $0.hasPrefix("harc.mobile.") })
     }
 
-    func testPrivacyCopyMatchesTheNoDeveloperCollectionArchitecture() {
+    func testPrivacyCopyMatchesTheNoTrackingAndNoContentAccessArchitecture() {
         XCTAssertEqual(
             HarcMobilePrivacyCopy.dataCollectionAnswer,
-            "No, we do not collect data from this app."
+            "No tracking, advertising, app-use analytics, or developer access "
+                + "to recording content."
         )
         XCTAssertTrue(HarcMobilePrivacyCopy.summary.contains("no cloud account"))
+        XCTAssertTrue(HarcMobilePrivacyCopy.summary.contains("does not retain Workers logs or traces"))
         XCTAssertTrue(HarcMobilePrivacyCopy.recording.contains("verified durable receipt"))
         XCTAssertTrue(HarcMobilePrivacyCopy.permissions.contains("Local Network"))
+        XCTAssertTrue(HarcMobilePrivacyCopy.permissions.contains("while servicing the connection"))
         XCTAssertTrue(HarcMobilePrivacyCopy.export.contains("system share sheet"))
     }
 

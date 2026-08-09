@@ -5,6 +5,9 @@
   "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
   "send_metrics": false,
+  "logpush": false,
+  "tail_consumers": [],
+  "streaming_tail_consumers": [],
   "workers_dev": false,
   "routes": [
     {
@@ -48,6 +51,47 @@
     },
     "traces": {
       "enabled": false
+    }
+  },
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "routes": [],
+      "logpush": false,
+      "tail_consumers": [],
+      "streaming_tail_consumers": [],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "HOST_RENDEZVOUS",
+            "class_name": "HostRendezvous"
+          },
+          {
+            "name": "RELAY_SESSION",
+            "class_name": "RelaySession"
+          }
+        ]
+      },
+      "ratelimits": [
+        {
+          "name": "SESSION_RATE_LIMITER",
+          "namespace_id": "10002",
+          "simple": {
+            "limit": 20,
+            "period": 10
+          }
+        }
+      ],
+      "observability": {
+        "enabled": false,
+        "logs": {
+          "enabled": false,
+          "invocation_logs": false
+        },
+        "traces": {
+          "enabled": false
+        }
+      }
     }
   }
 }

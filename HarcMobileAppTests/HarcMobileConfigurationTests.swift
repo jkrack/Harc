@@ -1,5 +1,6 @@
 import AVFoundation
 import HarcAudioMobile
+import HarcClientStore
 import HarcDomain
 import UIKit
 import XCTest
@@ -93,6 +94,37 @@ final class HarcMobileConfigurationTests: XCTestCase {
             ) as? Bool,
             false
         )
+#if targetEnvironment(simulator)
+        // Xcode injects the arm64 requirement into device products, not the
+        // simulator product. The physical-device run below remains the
+        // release-metadata assertion for this key.
+        XCTAssertNil(
+            Bundle.main.object(
+                forInfoDictionaryKey: "UIRequiredDeviceCapabilities"
+            )
+        )
+#else
+        XCTAssertEqual(
+            Bundle.main.object(
+                forInfoDictionaryKey: "UIRequiredDeviceCapabilities"
+            ) as? [String],
+            ["arm64"],
+            "Only Xcode's architecture requirement is allowed; core mobile "
+                + "behavior must not be hidden behind a device-model proxy."
+        )
+#endif
+    }
+
+    func testPublicPolicyLinkIsAPackagedHTTPSURL() throws {
+        let privacyPolicy = try XCTUnwrap(
+            HarcMobilePublicLinks.privacyPolicy
+        )
+
+        XCTAssertEqual(privacyPolicy.scheme, "https")
+        XCTAssertEqual(
+            privacyPolicy.absoluteString,
+            "https://github.com/jkrack/Harc/blob/main/docs/privacy/harc-mobile-privacy-policy.md"
+        )
     }
 
 #if targetEnvironment(simulator)
@@ -116,6 +148,92 @@ final class HarcMobileConfigurationTests: XCTestCase {
                 forKeys: [.isExcludedFromBackupKey]
             ).isExcludedFromBackup,
             true
+        )
+    }
+#else
+    func testPhysicalStoragePoliciesRoundTripProtectionAndBackupExclusion()
+        throws
+    {
+        let fileManager = FileManager.default
+        let applicationSupport = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let root = applicationSupport.appendingPathComponent(
+            "HarcPhysicalProtectionTest-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? fileManager.removeItem(at: root) }
+
+        let captureAttributes =
+            FoundationHarcMobileCaptureStorageAttributes()
+        let activeMaster = root.appendingPathComponent("active.wav.partial")
+        let transferArtifact = root.appendingPathComponent("final.wav")
+        try Data([0, 1]).write(to: activeMaster)
+        try Data([2, 3]).write(to: transferArtifact)
+
+        try captureAttributes.applyAndVerify(
+            .activeMaster,
+            to: activeMaster
+        )
+        try captureAttributes.applyAndVerify(
+            .transferArtifact,
+            to: transferArtifact
+        )
+        try assertPhysicalStorageAttributes(
+            at: activeMaster,
+            protection: .completeUnlessOpen
+        )
+        try assertPhysicalStorageAttributes(
+            at: transferArtifact,
+            protection: .completeUntilFirstUserAuthentication
+        )
+
+        let clientStoreAttributes = FoundationClientStoreStorageAttributes()
+        let transferDatabase = root.appendingPathComponent("transfer.sqlite")
+        let libraryDatabase = root.appendingPathComponent("library.sqlite")
+        try Data([4, 5]).write(to: transferDatabase)
+        try Data([6, 7]).write(to: libraryDatabase)
+
+        try clientStoreAttributes.applyAndVerify(
+            .transfer,
+            to: .database(transferDatabase)
+        )
+        try clientStoreAttributes.applyAndVerify(
+            .libraryCache,
+            to: .database(libraryDatabase)
+        )
+        try assertPhysicalStorageAttributes(
+            at: transferDatabase,
+            protection: .completeUntilFirstUserAuthentication
+        )
+        try assertPhysicalStorageAttributes(
+            at: libraryDatabase,
+            protection: .complete
+        )
+    }
+
+    private func assertPhysicalStorageAttributes(
+        at url: URL,
+        protection: FileProtectionType
+    ) throws {
+        XCTAssertEqual(
+            try url.resourceValues(
+                forKeys: [.isExcludedFromBackupKey]
+            ).isExcludedFromBackup,
+            true
+        )
+        XCTAssertEqual(
+            try FileManager.default.attributesOfItem(atPath: url.path)[
+                .protectionKey
+            ] as? FileProtectionType,
+            protection
         )
     }
 #endif
@@ -188,6 +306,31 @@ final class HarcMobileConfigurationTests: XCTestCase {
                 "HarcMobile", argument, rootID.uuidString,
                 argument, rootID.uuidString,
             ]
+        ))
+    }
+
+    func testUITestRootResetRequiresOneScopedRoot() throws {
+        let rootArgument = HarcMobileUITestConfiguration.rootArgument
+        let resetArgument = HarcMobileUITestConfiguration.resetRootArgument
+        let rootID = UUID()
+
+        XCTAssertFalse(try HarcMobileUITestConfiguration.shouldResetRoot(
+            arguments: ["HarcMobile", rootArgument, rootID.uuidString],
+            rootID: rootID
+        ))
+        XCTAssertTrue(try HarcMobileUITestConfiguration.shouldResetRoot(
+            arguments: [
+                "HarcMobile", rootArgument, rootID.uuidString, resetArgument,
+            ],
+            rootID: rootID
+        ))
+        XCTAssertThrowsError(try HarcMobileUITestConfiguration.shouldResetRoot(
+            arguments: ["HarcMobile", resetArgument],
+            rootID: nil
+        ))
+        XCTAssertThrowsError(try HarcMobileUITestConfiguration.shouldResetRoot(
+            arguments: ["HarcMobile", resetArgument, resetArgument],
+            rootID: rootID
         ))
     }
 

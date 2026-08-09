@@ -26,7 +26,37 @@ metadata, so the script cannot satisfy the physical protection gate.
 
 ## Codec matrix prerequisites
 
-- One named oldest-supported iPhone/OS and one named current iPhone/current OS.
+### Recommended oldest-device target
+
+With the current iOS 18 deployment floor, use a physical **iPhone XR on an iOS
+18 release** as the oldest-device qualification target unless the launch floor
+changes before the archive is frozen. [Apple includes iPhone XR, iPhone XS, and
+iPhone XS Max in the iOS 18 compatibility set](https://support.apple.com/en-us/104985);
+choosing XR exercises an actual oldest eligible model rather than inferring
+support from a newer phone.
+
+This recommendation is about capture, protected storage, lossless encoding,
+background transfer, and UI reliability. Shipping HarcMobile inference remains
+Host-backed, so optional future on-device inference does not justify excluding
+an otherwise capable capture client. The recommendation is not passing
+evidence: the named physical XR/OS still has to complete the codec and scenario
+matrix below. Do not add an unrelated required-device capability merely to hide
+the missing run.
+
+### Required current non-Pro target
+
+The specification separately requires a current non-Pro iPhone on the current
+iOS release so high-end Pro hardware cannot hide queue, memory, thermal, or
+layout failures. For this qualification cycle, use a physical **iPhone 17** on
+the current iOS release. Apple identifies iPhone 17 as the current standard
+model introduced in 2025; record its exact `iPhoneN,M` identifier and OS build
+at test time. Omega, an iPhone 15 Pro Max, remains valuable additional physical
+evidence but does not satisfy this named matrix role.
+
+[Apple iPhone 17 technical specifications](https://support.apple.com/en-us/125089)
+
+- One named oldest-supported iPhone/OS and one named current non-Pro
+  iPhone/current OS.
 - Both exact `iPhoneN,M` hardware identifiers recorded before the run.
 - One clean source commit used for every matrix cell.
 - A signed `HarcMobileSpikes` build with the exact 40-character source commit and
@@ -125,3 +155,61 @@ The Debug HarcMobile app supports the C7 deterministic quota argument documented
 in the release-gate audit. No other manual result should be promoted to passing
 without device/OS/build identity, timestamps, logs, hashes, and the expected
 visible UI outcome.
+
+The checked-in UI qualification harness uses canonical, per-test UUID roots.
+Its Debug-only reset argument is valid only with exactly one such UUID, removes
+only that constructed test root before the first launch, and is ignored by
+Release builds. Preserve the root across relaunch for interruption scenarios
+such as C5. This keeps repeated C5/C7 diagnostics independent without granting
+the harness a path to ordinary application storage.
+
+On 2026-08-09, Omega (`iPhone16,2`, iOS 26.6) passed an additional physical C7
+diagnostic. The isolated copied state proved a playable durable prefix, matching
+canonical PCM hash, `storageExhausted` metadata, explicit discontinuities, and
+no premature receipt or cleanup. See
+`docs/evidence/2026-08-09-omega-c7-storage-exhaustion.md`. The oldest-device and
+exact sealed-build repetitions remain open.
+
+The same device also passed one deterministic C5 force-quit/relaunch diagnostic.
+The UI visibly recovered one durable recording, and isolated state inspection
+proved one playable, hash-matching `recoveredDurablePrefix` without a receipt or
+cleanup intent. See
+`docs/evidence/2026-08-09-omega-c5-force-quit-recovery.md`. Randomized timing,
+oldest-device, and exact sealed-build repetitions remain open.
+
+The complete signed Omega regression also passed a native XCTest
+accessibility audit with no ignored findings on the Record, offline Review
+Sample, and Privacy surfaces. That automated result does not replace the
+manual VoiceOver and physical largest-text traversal required by this runbook,
+and Omega does not replace either the oldest-device or current non-Pro matrix
+device.
+
+## Manual accessibility closeout on each named phone
+
+Run this from the exact candidate build with the device/build identity recorded.
+Do not promote the automated audit or simulator Dynamic Type run as a substitute.
+
+1. Set **Settings > Accessibility > Display & Text Size > Larger Text** to the
+   largest available size, launch Harc, and confirm Record, Library, Host,
+   Offline Review Sample, and Privacy & Data remain reachable without clipped
+   controls or an impossible scroll path.
+2. Enable VoiceOver. Starting from a fresh launch, traverse the three tabs in
+   swipe order. Every actionable element must announce a meaningful label,
+   role, state, and hint where needed; focus must not become trapped or jump
+   behind a presented sheet.
+3. On Record, start a short real capture, confirm the persistent recording
+   state and Stop control are announced, stop it, and confirm **Saved locally**
+   is announced without implying Host receipt.
+4. In Library, open the offline review sample, play and stop the synthetic
+   audio, traverse status/summary/transcript/metadata, open Privacy & Data, and
+   close the sample. Confirm every control is reachable and the reading order
+   follows the visual hierarchy.
+5. On Host, reach Privacy & Data and verify the adopted-Host/optional-relay
+   disclosure is readable without pairing, permissions, or network access.
+6. Record pass/fail per screen, the first failing element and exact spoken text,
+   screenshots or video where useful, tester name, timestamp, device model and
+   `iPhoneN,M`, OS version/build, app version/build, and source/archive identity.
+
+Repeat after any material layout, accessibility-label, release-configuration,
+or archive change. A pass on Omega is useful extra evidence but does not close
+the two named-device requirement.

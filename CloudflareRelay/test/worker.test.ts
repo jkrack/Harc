@@ -284,6 +284,72 @@ describe("Harc Remote Worker", () => {
     expect(replay.status).toBe(401);
     host.close(1000, "done");
   });
+
+  it("revokes a device route and rejects the stale capability after replacement", async () => {
+    const routeID = randomOpaqueToken();
+    const hostCapability = randomOpaqueToken();
+    const host = await connectHost(routeID, hostCapability);
+    const deviceRouteID = randomOpaqueToken();
+    const initialCapability = randomOpaqueToken();
+    const replacementCapability = randomOpaqueToken();
+
+    const initiallyAuthorized = expectMessage(host, "authorized");
+    host.send(JSON.stringify({
+      type: "authorize",
+      routeID: deviceRouteID,
+      capabilityHash: await hashOpaqueToken(initialCapability),
+      kind: "device",
+      expiresAt: Date.now() + 60_000,
+    }));
+    await initiallyAuthorized;
+
+    const initialOffer = expectMessage(host);
+    expect((await requestRelaySession(
+      routeID,
+      deviceRouteID,
+      initialCapability,
+    )).status).toBe(201);
+    expect(JSON.parse(String((await initialOffer).data)).type).toBe("session");
+
+    const revoked = expectMessage(host, "revoked");
+    host.send(JSON.stringify({ type: "revoke", routeID: deviceRouteID }));
+    await revoked;
+
+    const revokedAdmission = await requestRelaySession(
+      routeID,
+      deviceRouteID,
+      initialCapability,
+    );
+    expect(revokedAdmission.status).toBe(401);
+    expect(await revokedAdmission.json()).toEqual({ code: "unauthorized" });
+
+    const replacementAuthorized = expectMessage(host, "authorized");
+    host.send(JSON.stringify({
+      type: "authorize",
+      routeID: deviceRouteID,
+      capabilityHash: await hashOpaqueToken(replacementCapability),
+      kind: "device",
+      expiresAt: Date.now() + 60_000,
+    }));
+    await replacementAuthorized;
+
+    const staleAdmission = await requestRelaySession(
+      routeID,
+      deviceRouteID,
+      initialCapability,
+    );
+    expect(staleAdmission.status).toBe(401);
+    expect(await staleAdmission.json()).toEqual({ code: "unauthorized" });
+
+    const replacementOffer = expectMessage(host);
+    expect((await requestRelaySession(
+      routeID,
+      deviceRouteID,
+      replacementCapability,
+    )).status).toBe(201);
+    expect(JSON.parse(String((await replacementOffer).data)).type).toBe("session");
+    host.close(1000, "done");
+  });
 });
 
 async function connectHost(

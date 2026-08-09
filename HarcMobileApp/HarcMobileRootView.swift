@@ -4,6 +4,11 @@ import Observation
 import SwiftUI
 import UIKit
 
+private enum HarcMobilePalette {
+    // White text on this blue exceeds the 4.5:1 normal-text contrast floor.
+    static let action = Color(red: 0, green: 0.34, blue: 0.72)
+}
+
 struct HarcMobileRootView: View {
     @Environment(HarcMobileAppModel.self) private var model
     @State private var showsPairingScanner = false
@@ -56,6 +61,7 @@ struct HarcMobileRootView: View {
             }
             .tabItem { Label("Host", systemImage: "macmini") }
         }
+        .tint(HarcMobilePalette.action)
         .accessibilityIdentifier(HarcMobileAccessibilityID.root)
         .safeAreaInset(edge: .top, spacing: 0) {
             captureBanner
@@ -478,7 +484,9 @@ struct HarcMobileRootView: View {
             Text(
                 "When you tap Start Recording, Harc records your microphone and keeps a protected copy on this iPhone. It automatically sends audio only to the Host you adopt; recording never waits for a Host or network."
             )
-                .foregroundStyle(.secondary)
+                // This is capture/trust disclosure, not tertiary helper copy.
+                // Keep it at primary contrast for accessibility and consent.
+                .foregroundStyle(.primary)
                 .multilineTextAlignment(.center)
         case .requestingPermission:
             ProgressView("Waiting for microphone permission…")
