@@ -73,3 +73,16 @@ each retained image:
 
 Logo and icon work is intentionally outside this plan; the product-page images
 must be recaptured after the final icon/name are installed if either is visible.
+
+## Current capture status
+
+The Release-configured iPhone 15 Pro Max simulator capture passed for images
+01, 03, and 05. Native dimensions, opaque PNG encoding, visual content, and
+SHA-256 values are recorded under `screenshots/0.14.1-56/`.
+
+Images 02 and 04 remain open by design:
+
+- capture active recording from the exact archived app on physical Omega;
+  simulator RemoteIO initialization aborts before the real recording state;
+- create a purpose-made, non-sensitive recording on an adopted Host and capture
+  its real Library detail rather than exposing personal data or using a mock.
