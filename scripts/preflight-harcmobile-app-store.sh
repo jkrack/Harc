@@ -186,7 +186,7 @@ require_nonempty "$EXPECTED_VERSION" "source marketing version"
 require_nonempty "$EXPECTED_BUILD" "source project build number"
 
 READINESS_EVIDENCE="$REPO_ROOT/docs/evidence/2026-08-09-harcmobile-app-store-readiness.md"
-EXPECTED_CANDIDATE_LINE="**Candidate configuration:** HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD), iOS 18+, iPhone only  "
+EXPECTED_CANDIDATE_LINE="**Candidate configuration:** HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD), iOS 18+, iPhone only"
 if [[ -f "$READINESS_EVIDENCE" ]] && grep -Fxq "$EXPECTED_CANDIDATE_LINE" "$READINESS_EVIDENCE"; then
   pass "App Store evidence candidate matches source version/build"
 else

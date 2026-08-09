@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-08
 
-**Reviewed source:** `main` at `1ef2c8669886c4898e9780d3606810a3ee1523fe`
-plus the active Harc Remote, pairing, mobile-codec, App Store, and privacy
-worktree for 0.14.1 (56)
+**Reviewed source:** `main` implementation candidate
+`bcaba87283d1d9c80315e4e432310da8a04602e6` for Harc Remote, pairing,
+mobile-codec, App Store, and privacy work for 0.14.1 (56)
 
 **Primary contract:**
 [Host/client/mobile implementation specification](../specs/2026-08-02-host-client-mobile-implementation-spec.md)
@@ -101,9 +101,9 @@ Store distribution remain separate release decisions.
 
 ### Mobile and direct Host/client
 
-- Make a clean evidence commit before starting the three-hour codec cells. The
-  current physical checks used a dirty worktree and are diagnostic only; a
-  report from that tree cannot satisfy the sealed-commit qualification rule.
+- The implementation candidate is now sealed at
+  `bcaba87283d1d9c80315e4e432310da8a04602e6`. Use that exact source identity
+  for the three-hour codec cells and preserve the resulting reports.
 - Keep Omega (`iPhone16,2`, iOS 26.6) connected and connect the named
   oldest-supported iPhone. Omega was the only physical iPhone visible to Xcode
   during this audit.
@@ -151,7 +151,7 @@ Store distribution remain separate release decisions.
 | Physical `HarcMobileSpikesTests` on Omega | Passed on the 2026-08-09 retry: 14 codec qualification guard tests, 0 failures. This validates the harness rules and physical XCTest service, not a three-hour codec cell. |
 | App Store configuration/reviewer focused tests on Omega | Passed 17/17 after packaging the public HTTPS privacy-policy link: 13 configuration tests and 4 offline-review/privacy tests |
 | Compact iPhone simulator diagnostic | Passed 25 runnable tests with one physical-microphone skip on an arm64 iPhone SE (3rd generation), iOS 26.5 simulator at 375 x 667 points. A second focused run at `accessibility-extra-extra-extra-large` passed both applicable UI tests with one physical-microphone skip and zero failures after hardening scroll reachability. This validates compact layout/bootstrap and a largest-text diagnostic only; oldest-device, codec, thermal, physical accessibility, and C/T/P/H gates remain open. |
-| Physical storage-policy diagnostic | Passed 1/1 on Omega (`iPhone16,2`, iOS 26.6): active-master, transfer-artifact, transfer-DB, and Library-DB production policies each round-tripped the required Data Protection class and backup exclusion. This is additional Pro-device dirty-build evidence; locked/reboot/first-unlock, upgrade, both named matrix devices, and exact-archive qualification remain open. |
+| Physical storage-policy diagnostic | Passed 1/1 on Omega (`iPhone16,2`, iOS 26.6): active-master, transfer-artifact, transfer-DB, and Library-DB production policies each round-tripped the required Data Protection class and backup exclusion. This is additional Pro-device current-source evidence; locked/reboot/first-unlock, upgrade, both named matrix devices, and exact-archive qualification remain open. |
 | Physical C7 diagnostic | Passed 1/1 on Omega with visible storage-full/durable-prefix UI. Read-only isolated state proved a playable 5.098-second/81,568-frame master, exact canonical PCM hash agreement, `storageExhausted`, explicit writer-failure/recovery discontinuities, one present local-only row, and no receipt or cleanup intent. Oldest-device and sealed-build repetition remain open. |
 | Physical C5 diagnostic | Passed 1/1 on Omega: a real capture was terminated after a durable checkpoint, relaunch visibly recovered one recording, and read-only isolated state proved a playable 5.098-second/81,568-frame master, exact canonical PCM hash agreement, `recoveredDurablePrefix`, an explicit recovery boundary, one present local-only row, and no receipt or cleanup intent. Randomized timing, oldest-device, and sealed-build repetition remain open. |
 | Mobile UI-test repeatability hardening | Debug-only reset is restricted to one canonical UUID-scoped test root, rejects duplicate or unscoped requests, cannot reset normal or Release storage, and is omitted from the C5 relaunch so interrupted state survives. The complete simulator UI suite passed all three applicable tests and correctly skipped three physical-only tests; the complete physical rerun passed 30/30. Read-only C5/C7 copies each contained exactly one finalized capture and local-only outbox row with no upload attempt, receipt, or cleanup intent. |
