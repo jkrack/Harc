@@ -10,8 +10,8 @@
 The relay hardening and HarcMobile 0.14.1 (56) implementation source is sealed
 at the commit above. The current-source validation passed; the product remains
 no-go for iPhone App Store submission and broad Secondary-Mac Client release
-until the explicitly open physical, archive, support-contact, and account-owner
-gates pass.
+until the explicitly open physical, upload, support-contact, and
+account-owner gates pass.
 
 ## Candidate validation
 
@@ -44,8 +44,8 @@ gates pass.
 ## Still open
 
 - Replace `ACCOUNT_HOLDER_MONITORED_SUPPORT_EMAIL` with a monitored address.
-- Capture the five exact-build App Store screenshots and produce, validate,
-  export, upload, and reconcile the exact App Store archive.
+- Capture the five exact-build App Store screenshots, then upload and reconcile
+  the validated distribution export.
 - Complete the named oldest/current non-Pro iPhone codec and C/T/P/H matrix;
   Omega is additional Pro-device evidence and replaces neither named cell.
 - Complete the real Secondary-Mac Client acceptance flow.
