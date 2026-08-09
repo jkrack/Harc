@@ -84,7 +84,11 @@ public enum HarcProtocolLimits {
     public static let pairingTicketBytes = 1_024
     public static let pairingTransportObjectBytes = 768
     public static let pairingEndpoints = 4
-    public static let pairingRequestedScopes = 8
+    // A Mac client needs the three baseline recording/processing scopes plus
+    // four Library scopes and three federated-speaker scopes. Keep this bound
+    // comfortably above that ten-scope production request while remaining
+    // small enough for deterministic bootstrap validation.
+    public static let pairingRequestedScopes = 16
     public static let pairingDeviceLabelBytes = 256
     public static let pairingTranscriptBytes = 4 * 1_024
     public static let sessionTranscriptBytes = 265

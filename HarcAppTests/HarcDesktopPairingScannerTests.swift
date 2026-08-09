@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import HarcProtocol
 import Testing
 @testable import Harc
 
@@ -73,5 +74,16 @@ struct HarcDesktopPairingScannerTests {
                 attempt: 0
             ) == .ready([.qr])
         )
+    }
+
+    @Test("Mac client pairing request fits the bounded wire scope limit")
+    @MainActor
+    func macClientPairingScopeLimit() {
+        let scopes = HarcDesktopClientPairingCoordinator.requestedScopes()
+
+        #expect(scopes.count == 10)
+        #expect(scopes.count <= HarcProtocolLimits.pairingRequestedScopes)
+        #expect(scopes == scopes.sorted())
+        #expect(Set(scopes).count == scopes.count)
     }
 }

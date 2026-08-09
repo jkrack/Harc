@@ -53,7 +53,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         case compareWords(host: String, phrase: String, expiresAt: Date)
         case awaitingHostApproval(host: String, phrase: String)
         case paired(host: String)
-        case failed(String)
+        case failed(title: String, message: String)
     }
 
     private struct ActiveAttempt {
@@ -90,7 +90,10 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         guard attempt == nil else { return }
         reviewedPairingURI = nil
         guard HarcDesktopPairingCodeFilter.accepts(pairingURI) else {
-            state = .failed("Scan a fresh Harc pairing code shown by your Host.")
+            state = .failed(
+                title: "Invalid Pairing Invitation",
+                message: "This is not a Harc pairing invitation. Create a fresh Mac client invitation on the Host, then open or paste it here."
+            )
             return
         }
         state = .connecting
@@ -161,7 +164,17 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
             )
         } catch {
             if let connection { await connection.shutdownImmediately() }
-            state = .failed(error.localizedDescription)
+            if let error = error as? HarcBootstrapClientError {
+                state = .failed(
+                    title: "Pairing Request Rejected",
+                    message: error.localizedDescription
+                )
+            } else {
+                state = .failed(
+                    title: "Host Couldn’t Be Reached",
+                    message: "Harc couldn’t reach the Host directly or through the encrypted relay. Make sure the Host is open, online, and still showing the pairing screen, then create a fresh Mac client invitation."
+                )
+            }
         }
     }
 
@@ -185,7 +198,17 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
             )
         } catch {
             reviewedPairingURI = nil
-            state = .failed(error.localizedDescription)
+            let message: String
+            if let codecError = error as? HarcProtocolCodecError,
+               case .expired = codecError {
+                message = "This invitation has expired. Create a new Mac client invitation on the Host and try again."
+            } else {
+                message = "This invitation is invalid or was created by an unsupported Harc version. Update Harc on both Macs and create a fresh Mac client invitation."
+            }
+            state = .failed(
+                title: "Invitation Can’t Be Used",
+                message: message
+            )
         }
     }
 
@@ -246,7 +269,16 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         } catch {
             await attempt.connection.shutdownImmediately()
             self.attempt = nil
-            state = .failed(error.localizedDescription)
+            let message: String
+            if let pairingError = error as? HarcDesktopClientPairingError {
+                message = pairingError.localizedDescription
+            } else {
+                message = "The secure connection ended before the Host approved this Mac. Make sure the Host is online and still showing the same security words, then create a fresh invitation."
+            }
+            state = .failed(
+                title: "Pairing Wasn’t Approved",
+                message: message
+            )
         }
     }
 
@@ -259,7 +291,8 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         await attempt.connection.shutdownImmediately()
         self.attempt = nil
         state = .failed(
-            "Security words did not match. This Host was not adopted. Create a new pairing code."
+            title: "Security Words Didn’t Match",
+            message: "This Host was not adopted. Do not continue with this invitation; create a new Mac client invitation on the intended Host."
         )
     }
 
@@ -283,7 +316,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         state = .unpaired
     }
 
-    private static func requestedScopes() -> [AuthorizationScope] {
+    static func requestedScopes() -> [AuthorizationScope] {
         var scopes = ScopePolicy.minimalScopes(for: .macClient)
         scopes.append(contentsOf: [
             .libraryMetadataRead,
@@ -393,7 +426,7 @@ private struct HarcDesktopClientPairingView: View {
             } else {
                 VStack(spacing: 12) {
                     Text(
-                        "A saved invite can be transferred between Macs without a shared clipboard. The Host must still be reachable on the same local or private network."
+                        "Move a saved invite between Macs without a shared clipboard. The Host must be online; Harc connects directly when possible and uses its encrypted relay when needed."
                     )
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -430,6 +463,8 @@ private struct HarcDesktopClientPairingView: View {
                     Text(fingerprint)
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -452,7 +487,13 @@ private struct HarcDesktopClientPairingView: View {
                 }
             }
         case .connecting:
-            ProgressView("Opening a pinned local connection…")
+            VStack(spacing: 10) {
+                ProgressView("Opening a secure Host connection…")
+                Text("Harc tries the direct route first, then the encrypted relay when needed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         case .compareWords(let host, let phrase, let expiresAt):
             VStack(spacing: 14) {
                 Text("Compare with \(host)").font(.headline)
@@ -494,19 +535,39 @@ private struct HarcDesktopClientPairingView: View {
                     model.reset()
                 }
             }
-        case .failed(let message):
+        case .failed(let title, let message):
             VStack(spacing: 14) {
                 result(
                     symbol: "exclamationmark.triangle.fill",
                     color: .orange,
-                    title: "Pairing unavailable",
+                    title: title,
                     detail: message
                 )
-                Button("Try Again") {
+                Text("No device was adopted. Use a newly generated invitation for the correct device type.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                HStack {
+                    Button("Open New Invite…") {
+                        showingScanner = false
+                        scannerFailure = nil
+                        model.reset()
+                        showingInvitationImporter = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Paste New Link") {
+                        showingScanner = false
+                        scannerFailure = nil
+                        model.reset()
+                        pastePairingLink()
+                    }
+                }
+                Button("Back") {
                     showingScanner = false
                     scannerFailure = nil
                     model.reset()
                 }
+                .buttonStyle(.link)
             }
         }
     }
@@ -585,7 +646,16 @@ private enum HarcDesktopClientPairingError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .ended(let state):
-            "Pairing ended without approval: \(state)."
+            switch state {
+            case "denied":
+                "The Host denied this Mac. No device was adopted. Create a fresh invitation if you want to try again."
+            case "expired":
+                "The Host invitation expired before approval. Create a fresh Mac client invitation and try again."
+            case "cancelled":
+                "The Host cancelled this pairing invitation. Create a fresh Mac client invitation to try again."
+            default:
+                "Pairing ended without Host approval. Create a fresh invitation and try again."
+            }
         }
     }
 }

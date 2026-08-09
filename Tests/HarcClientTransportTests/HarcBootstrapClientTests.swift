@@ -11,6 +11,20 @@ import HarcRemoteTransport
 
 @Suite("Client bootstrap, pairing, and session application layer")
 struct HarcBootstrapClientTests {
+    @Test("bootstrap failures provide actionable localized descriptions")
+    func localizedErrors() {
+        #expect(
+            HarcBootstrapClientError.invalidRequest(field: "pairingRequest")
+                .localizedDescription
+                .contains("Update Harc on both Macs")
+        )
+        #expect(
+            HarcBootstrapClientError.responseTransportSetMismatch
+                .localizedDescription
+                .contains("fresh pairing invitation")
+        )
+    }
+
     @Test("host info and negotiated capabilities stay bound to authenticated transport")
     func hostInfoAndCapabilityNegotiation() async throws {
         let fixture = try BootstrapClientFixture()

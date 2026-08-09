@@ -4,7 +4,7 @@ import HarcProtocol
 import HarcRemoteTransport
 import HarcTransfer
 
-public enum HarcBootstrapClientError: Error, Equatable, Sendable {
+public enum HarcBootstrapClientError: Error, Equatable, Sendable, LocalizedError {
     case invalidRequest(field: String)
     case invalidResponse(field: String)
     case hostTrustMismatch
@@ -16,6 +16,36 @@ public enum HarcBootstrapClientError: Error, Equatable, Sendable {
     case grantBindingMismatch(field: String)
     case capabilitySelectionNotOffered
     case sessionTrustChanged
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidRequest(let field):
+            if field == "pairingRequest" {
+                return "This Mac could not create a valid pairing request. Update Harc on both Macs, create a fresh Mac client invitation, and try again."
+            }
+            return "Harc could not create a valid Host request (\(field))."
+        case .invalidResponse(let field):
+            return "The Host returned an incomplete or unsupported response (\(field)). Update Harc on both Macs and try again."
+        case .hostTrustMismatch:
+            return "The Host identity does not match this invitation. Do not approve it; create a fresh invitation on the intended Host."
+        case .responseTransportSetMismatch:
+            return "The Host connection changed after this invitation was created. Create a fresh pairing invitation and try again."
+        case .pairingAlreadyInProgress:
+            return "A pairing attempt is already in progress. Cancel it before opening another invitation."
+        case .noPairingInProgress:
+            return "This pairing attempt is no longer active. Create a fresh invitation on the Host."
+        case .pairingClaimMismatch:
+            return "The Host returned a different pairing claim. Do not approve it; create a fresh invitation."
+        case .pairingProofNotPending:
+            return "The Host did not accept this pairing proof as pending. Create a fresh invitation and try again."
+        case .grantBindingMismatch(let field):
+            return "The Host grant does not match this Mac's pairing request (\(field)). Do not use the grant; create a fresh invitation."
+        case .capabilitySelectionNotOffered:
+            return "The Host selected capabilities it did not offer. Update Harc on both Macs and try again."
+        case .sessionTrustChanged:
+            return "The Host identity changed while opening the session. Reconnect using a fresh pairing invitation."
+        }
+    }
 }
 
 public protocol HarcClientBootstrapRandomness: Sendable {

@@ -49,7 +49,9 @@ private final class HostPairingViewModel: ObservableObject {
         case failed(String)
     }
 
-    @Published var selectedKind: AdoptedClientKind = .mobile
+    // Pairing permissions differ materially between iPhone and Mac clients.
+    // Require an explicit choice instead of silently issuing the wrong ticket.
+    @Published var selectedKind: AdoptedClientKind?
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var approvedScopes = Set<AuthorizationScope>()
     @Published private(set) var pairedDevices = [HostPairedDeviceSummary]()
@@ -71,14 +73,18 @@ private final class HostPairingViewModel: ObservableObject {
     }
 
     func begin() {
-        guard task == nil else { return }
+        guard task == nil, let selectedKind else { return }
         phase = .issuing
         task = Task { [weak self] in
-            await self?.runPairingFlow(cancelExistingTicket: false)
+            await self?.runPairingFlow(
+                for: selectedKind,
+                cancelExistingTicket: false
+            )
         }
     }
 
     func restart() {
+        guard let selectedKind else { return }
         let previousTask = task
         previousTask?.cancel()
         pairingLinkCopied = false
@@ -86,7 +92,26 @@ private final class HostPairingViewModel: ObservableObject {
         phase = .issuing
         task = Task { [weak self] in
             await previousTask?.value
-            await self?.runPairingFlow(cancelExistingTicket: true)
+            await self?.runPairingFlow(
+                for: selectedKind,
+                cancelExistingTicket: true
+            )
+        }
+    }
+
+    func changeDeviceType() {
+        let previousTask = task
+        previousTask?.cancel()
+        pairingLinkCopied = false
+        pairingInviteExportStatus = nil
+        phase = .issuing
+        task = Task { [weak self] in
+            await previousTask?.value
+            guard let self else { return }
+            try? await runtime.cancelPairingTicket()
+            selectedKind = nil
+            phase = .idle
+            task = nil
         }
     }
 
@@ -222,7 +247,10 @@ private final class HostPairingViewModel: ObservableObject {
         throw HostPairingPresentationError.ticketExpired
     }
 
-    private func runPairingFlow(cancelExistingTicket: Bool) async {
+    private func runPairingFlow(
+        for selectedKind: AdoptedClientKind,
+        cancelExistingTicket: Bool
+    ) async {
         do {
             if cancelExistingTicket {
                 try await runtime.cancelPairingTicket()
@@ -325,7 +353,7 @@ private struct HostPairingView: View {
                 .foregroundStyle(.tint)
             Text("Pair a Device")
                 .font(.title2.weight(.semibold))
-            Text("The device will trust this Mac as its Harc host. Audio and library traffic stay on your authenticated local connection.")
+            Text("The device will trust this Mac as its Harc Host. Harc uses pinned end-to-end encryption over a direct connection or its content-blind relay.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -337,13 +365,24 @@ private struct HostPairingView: View {
         switch model.phase {
         case .idle:
             VStack(spacing: 16) {
+                Text("Which device are you pairing?")
+                    .font(.headline)
+                Text("The invitation and permissions are specific to the selected device type.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 Picker("Device type", selection: $model.selectedKind) {
-                    Text("iPhone").tag(AdoptedClientKind.mobile)
-                    Text("Mac client").tag(AdoptedClientKind.macClient)
+                    Text("iPhone").tag(AdoptedClientKind.mobile as AdoptedClientKind?)
+                    Text("Mac client").tag(AdoptedClientKind.macClient as AdoptedClientKind?)
                 }
                 .pickerStyle(.segmented)
-                Button("Create Pairing Code") { model.begin() }
+                Button {
+                    model.begin()
+                } label: {
+                    Text(createInvitationButtonTitle)
+                }
                     .buttonStyle(.borderedProminent)
+                    .disabled(model.selectedKind == nil)
                 pairedDevicesSection
             }
         case .issuing:
@@ -376,6 +415,14 @@ private struct HostPairingView: View {
         }
     }
 
+    private var createInvitationButtonTitle: String {
+        switch model.selectedKind {
+        case .macClient: "Create Mac Invitation"
+        case .mobile: "Create iPhone Invitation"
+        case nil: "Select a Device Type"
+        }
+    }
+
     private func ticketContent(
         _ ticket: HarcForegroundPairingTicketV1
     ) -> some View {
@@ -383,6 +430,18 @@ private struct HostPairingView: View {
             Label("Pairing code created", systemImage: "checkmark.circle.fill")
                 .font(.headline)
                 .foregroundStyle(.green)
+            Label(
+                ticket.clientKind == .macClient
+                    ? "Mac client invitation"
+                    : "iPhone invitation",
+                systemImage: ticket.clientKind == .macClient
+                    ? "laptopcomputer"
+                    : "iphone"
+            )
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.tint.opacity(0.12), in: Capsule())
             if let image = HostPairingQRCode.image(for: ticket.pairingURI) {
                 Image(nsImage: image)
                     .interpolation(.none)
@@ -390,7 +449,9 @@ private struct HostPairingView: View {
                     .frame(width: 300, height: 300)
                     .accessibilityLabel("Harc pairing QR code")
             }
-            Text("On the Client, choose Pair with Host, then scan this code, open a saved invite, or paste its pairing link. It can be used only once.")
+            Text(ticket.clientKind == .macClient
+                 ? "On the Mac client, choose Pair with Host, then open, scan, or paste this invitation. It can be used only once."
+                 : "On the iPhone, open Harc and scan this invitation. It can be used only once.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -433,15 +494,22 @@ private struct HostPairingView: View {
                 }
             }
             .buttonStyle(.link)
-            Button("Create a New Code") { model.restart() }
-                .buttonStyle(.link)
+            HStack(spacing: 16) {
+                Button("Create Another \(ticket.clientKind == .macClient ? "Mac" : "iPhone") Code") {
+                    model.restart()
+                }
+                Button("Change Device Type") {
+                    model.changeDeviceType()
+                }
+            }
+            .buttonStyle(.link)
             if let status = model.pairingInviteExportStatus {
                 Text(status)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
-            Text("The invitation contains a temporary pairing secret. Save or Share explicitly exports it outside Harc's adopted-host trust boundary. Use a channel you trust, keep this Host reachable on the same private network, and compare all four security words before approval.")
+            Text("The invitation contains a temporary pairing secret. Save or Share explicitly exports it outside Harc's adopted-host trust boundary. Use a channel you trust, keep this Host online, and compare all four security words before approval.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
