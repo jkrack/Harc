@@ -425,7 +425,7 @@ public final actor HarcRemoteRelayClientTunnel:
     public static func open(
         route: HarcRemoteRelayRouteV1
     ) async throws -> HarcRemoteRelayClientTunnel {
-        let session = makeEphemeralRelaySession()
+        let session = HarcRemoteRelayURLSessionConfiguration.makeEphemeral()
         let offer = try await requestSession(route: route, session: session)
         let webSocket = try await openWebSocket(
             route: route,
@@ -756,7 +756,7 @@ public final actor HarcRemoteRelayHostAgent {
     }
 
     private func connectAndServe() async throws {
-        let session = makeEphemeralRelaySession()
+        let session = HarcRemoteRelayURLSessionConfiguration.makeEphemeral()
         let url = try relayURL(
             origin: configuration.serviceOrigin,
             scheme: "wss",
@@ -917,7 +917,7 @@ private enum HarcRemoteRelayHostTunnel {
         configuration: HarcRemoteRelayHostConfigurationV1,
         offer: HarcRemoteRelayHostSessionOfferV1
     ) async {
-        let session = makeEphemeralRelaySession()
+        let session = HarcRemoteRelayURLSessionConfiguration.makeEphemeral()
         var socket: URLSessionWebSocketTask?
         defer {
             socket?.cancel(with: .goingAway, reason: nil)
@@ -1220,15 +1220,24 @@ private func relayURL(
     return url
 }
 
-private func makeEphemeralRelaySession() -> URLSession {
-    let configuration = URLSessionConfiguration.ephemeral
-    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-    configuration.urlCache = nil
-    configuration.timeoutIntervalForRequest = 10
-    configuration.timeoutIntervalForResource = 30
-    configuration.httpShouldSetCookies = false
-    configuration.httpCookieStorage = nil
-    return URLSession(configuration: configuration)
+enum HarcRemoteRelayURLSessionConfiguration {
+    /// Relay WebSockets are intentionally long-lived. A short resource timeout
+    /// applies to the lifetime of an upgraded WebSocket too, so the previous
+    /// 30-second value disconnected a healthy Host control socket on schedule.
+    /// Reconnect once a day to bound one URLSession resource without disrupting
+    /// normal recordings or idle Host reachability.
+    static let resourceTimeout: TimeInterval = 24 * 60 * 60
+
+    static func makeEphemeral() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
+        configuration.timeoutIntervalForRequest = 10
+        configuration.timeoutIntervalForResource = resourceTimeout
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieStorage = nil
+        return URLSession(configuration: configuration)
+    }
 }
 
 private func completeReadyHandshake(

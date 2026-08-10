@@ -1,7 +1,7 @@
 # HarcMobile App Store readiness evidence
 
 **Date:** 2026-08-09
-**Candidate configuration:** HarcMobile 0.14.1 (56), iOS 18+, iPhone only
+**Candidate configuration:** HarcMobile 0.14.2 (57), iOS 18+, iPhone only
 **Device available:** Omega, iPhone 15 Pro Max (`iPhone16,2`), iOS 26.6
 
 ## Decision
@@ -13,6 +13,29 @@ reviewer-accessible offline path, truthful privacy copy, release settings,
 submission copy, and final icon source are now present. Remaining no-go items
 are measurable physical, archive, privacy-account, screenshot, and
 account-owner gates rather than architectural uncertainty.
+
+## 0.14.2 current-tree refresh
+
+The current clean source is `e0681143e592823c95df19f087831ebaba7c6b72`;
+the shipping macOS 0.14.2 source tag is `v0.14.2` at
+`81261a70fe31b85edc8b065f4e126e08f953f57c`. Project generation and the
+protocol schema guard passed for 0.14.2 (57). A signed physical run on Omega
+passed all 24 hosted HarcMobile app tests, including Data Protection and backup
+exclusion. The independently sealed codec-qualification guard build embedded
+the full current source SHA and team identifier and passed all 14 tests on
+Omega.
+
+The six physical UI tests did not execute in this refresh: both the initial run
+and one warm retry timed out while Xcode enabled device automation mode. Omega
+remained wired, paired, booted, Developer Mode enabled, and unlocked according
+to CoreDevice. Preserve this as an external test-service gate, not an app test
+failure and not a 0.14.2 UI pass. The complete 0.14.1 Omega UI evidence below
+remains valid for that sealed source only.
+
+The current relay source also passed the production/staging fail-closed privacy
+guards, both generated-type checks, TypeScript, 17 Worker unit tests, one
+redaction-observer integration test, and both Wrangler 4.120.0 dry-run bundles.
+No deployment was performed.
 
 ## Pass/open matrix
 

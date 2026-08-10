@@ -120,6 +120,92 @@ struct HarcDesktopOpenedHostConnection: Sendable {
     let negotiated: HarcValidatedNegotiatedCapabilitiesV1
 }
 
+struct HarcDesktopVerifiedHostConnection: Sendable {
+    enum Path: Sendable {
+        case direct
+        case encryptedRelay
+    }
+
+    let connection: HarcPinnedGRPCConnection
+    let path: Path
+}
+
+struct HarcDesktopHostRouteFailure: Error {
+    let directError: any Error
+    let relayError: (any Error)?
+
+    var triedEncryptedRelay: Bool { relayError != nil }
+}
+
+/// Selects a route only after an authenticated, idempotent Host operation has
+/// completed on it. Constructing gRPC's connection owner merely starts its
+/// connection task; the first RPC is where DNS, TLS, HTTP/2, and the relay are
+/// actually proven.
+enum HarcDesktopHostRouteConnector {
+    static func openVerified(
+        route: HarcDesktopHostRoute,
+        trust: HarcTransportTrustCoordinator,
+        verify: @escaping @Sendable (HarcPinnedGRPCConnection) async throws -> Void
+    ) async throws -> HarcDesktopVerifiedHostConnection {
+        var directConnection: HarcPinnedGRPCConnection?
+        do {
+            let connection = try await HarcPinnedGRPCConnection.connect(
+                host: route.host,
+                port: Int(route.port),
+                serverHostname: route.serverHostname,
+                trustCoordinator: trust
+            )
+            directConnection = connection
+            try await verify(connection)
+            return HarcDesktopVerifiedHostConnection(
+                connection: connection,
+                path: .direct
+            )
+        } catch {
+            await directConnection?.shutdownImmediately()
+            let directError = error
+            guard let relay = route.relay else {
+                throw HarcDesktopHostRouteFailure(
+                    directError: directError,
+                    relayError: nil
+                )
+            }
+
+            var relayConnection: HarcPinnedGRPCConnection?
+            var tunnel: HarcRemoteRelayClientTunnel?
+            do {
+                let openedTunnel = try await HarcRemoteRelayClientTunnel.open(
+                    route: relay
+                )
+                tunnel = openedTunnel
+                let connection = try await HarcPinnedGRPCConnection.connect(
+                    host: openedTunnel.localHost,
+                    port: Int(openedTunnel.localPort),
+                    serverHostname: route.serverHostname,
+                    trustCoordinator: trust,
+                    transportLifetime: openedTunnel
+                )
+                relayConnection = connection
+                try await verify(connection)
+                return HarcDesktopVerifiedHostConnection(
+                    connection: connection,
+                    path: .encryptedRelay
+                )
+            } catch {
+                if let relayConnection {
+                    await relayConnection.shutdownImmediately()
+                } else {
+                    await tunnel?.shutdown()
+                }
+                throw HarcDesktopHostRouteFailure(
+                    directError: directError,
+                    relayError: error
+                )
+            }
+        }
+    }
+}
+
 enum HarcDesktopHostSessionConnector {
     static func open(
         identity: InstallationSigningIdentity,
@@ -143,36 +229,24 @@ enum HarcDesktopHostSessionConnector {
             adoptedPersistence:
                 HarcTransferStoreTransportTrustPersistenceV1(store: store)
         )
-        let connection: HarcPinnedGRPCConnection
-        do {
-            connection = try await HarcPinnedGRPCConnection.connect(
-                host: route.host,
-                port: Int(route.port),
-                serverHostname: route.serverHostname,
-                trustCoordinator: trust
+        let policy = try capabilityPolicy()
+        let verified = try await HarcDesktopHostRouteConnector.openVerified(
+            route: route,
+            trust: trust
+        ) { connection in
+            let client = HarcBootstrapClient(
+                rpc: connection,
+                capabilityPolicy: policy,
+                sasDictionary: try HarcSASDictionaryV1.bundled()
             )
-        } catch {
-            guard let relay = route.relay else {
-                throw error
-            }
-            let tunnel = try await HarcRemoteRelayClientTunnel.open(
-                route: relay
-            )
-            do {
-                connection = try await HarcPinnedGRPCConnection.connect(
-                    host: tunnel.localHost,
-                    port: Int(tunnel.localPort),
-                    serverHostname: route.serverHostname,
-                    trustCoordinator: trust,
-                    transportLifetime: tunnel
+            _ = try await client.getHostInfo(
+                expectation: HarcBootstrapTrustExpectation(
+                    adoption: adoption
                 )
-            } catch {
-                await tunnel.shutdown()
-                throw error
-            }
+            )
         }
+        let connection = verified.connection
         do {
-            let policy = try capabilityPolicy()
             let client = HarcBootstrapClient(
                 rpc: connection,
                 capabilityPolicy: policy,

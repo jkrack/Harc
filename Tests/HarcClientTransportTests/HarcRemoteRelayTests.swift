@@ -5,6 +5,21 @@ import Testing
 
 @Suite("Harc Remote relay boundary")
 struct HarcRemoteRelayTests {
+    @Test("relay URLSession keeps upgraded WebSockets alive")
+    func longLivedWebSocketConfiguration() {
+        let session = HarcRemoteRelayURLSessionConfiguration.makeEphemeral()
+        defer { session.invalidateAndCancel() }
+
+        #expect(
+            session.configuration.timeoutIntervalForResource
+                == HarcRemoteRelayURLSessionConfiguration.resourceTimeout
+        )
+        #expect(
+            session.configuration.timeoutIntervalForResource >= 24 * 60 * 60
+        )
+        #expect(session.configuration.timeoutIntervalForRequest == 10)
+    }
+
     @Test("route accepts only HTTPS origins and canonical opaque values")
     func routeValidation() throws {
         let token = String(repeating: "A", count: 43)

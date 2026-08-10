@@ -109,37 +109,26 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                 pairingExactQRTransportSet: ticket.exactTransportObjectBytes,
                 hostAuthorityPublicKey: ticket.hostAuthorityPublicKey
             )
-            let opened: HarcPinnedGRPCConnection
-            do {
-                opened = try await HarcPinnedGRPCConnection.connect(
-                    host: route.host,
-                    port: Int(route.port),
-                    serverHostname: route.serverHostname,
-                    trustCoordinator: trust
+            let policy = try HarcDesktopHostSessionConnector.capabilityPolicy()
+            let expectation = try HarcBootstrapTrustExpectation(
+                pairingTicket: ticket
+            )
+            let verified = try await HarcDesktopHostRouteConnector.openVerified(
+                route: route,
+                trust: trust
+            ) { candidate in
+                let verifier = HarcBootstrapClient(
+                    rpc: candidate,
+                    capabilityPolicy: policy,
+                    sasDictionary: try HarcSASDictionaryV1.bundled()
                 )
-            } catch {
-                guard let relay = route.relay else { throw error }
-                let tunnel = try await HarcRemoteRelayClientTunnel.open(
-                    route: relay
-                )
-                do {
-                    opened = try await HarcPinnedGRPCConnection.connect(
-                        host: tunnel.localHost,
-                        port: Int(tunnel.localPort),
-                        serverHostname: route.serverHostname,
-                        trustCoordinator: trust,
-                        transportLifetime: tunnel
-                    )
-                } catch {
-                    await tunnel.shutdown()
-                    throw error
-                }
+                _ = try await verifier.getHostInfo(expectation: expectation)
             }
+            let opened = verified.connection
             connection = opened
             let client = HarcBootstrapClient(
                 rpc: opened,
-                capabilityPolicy:
-                    try HarcDesktopHostSessionConnector.capabilityPolicy(),
+                capabilityPolicy: policy,
                 sasDictionary: try HarcSASDictionaryV1.bundled()
             )
             let presentation = try await client.beginPairing(
@@ -169,10 +158,18 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                     title: "Pairing Request Rejected",
                     message: error.localizedDescription
                 )
+            } else if let routeFailure = error as? HarcDesktopHostRouteFailure {
+                let relayDetail = routeFailure.triedEncryptedRelay
+                    ? "The direct route and the encrypted relay both failed before Harc could authenticate the Host."
+                    : "The invitation did not include an encrypted relay route, and the direct route failed before Harc could authenticate the Host."
+                state = .failed(
+                    title: "Secure Host Connection Failed",
+                    message: "\(relayDetail) Update Harc on both Macs, keep the Host pairing window open, and create a fresh Mac client invitation. No device was adopted."
+                )
             } else {
                 state = .failed(
-                    title: "Host Couldn’t Be Reached",
-                    message: "Harc couldn’t reach the Host directly or through the encrypted relay. Make sure the Host is open, online, and still showing the pairing screen, then create a fresh Mac client invitation."
+                    title: "Pairing Couldn’t Start",
+                    message: "Harc authenticated a Host connection, but the one-time pairing claim could not be created. Keep the Host pairing window open, create a fresh Mac client invitation, and try again. No device was adopted."
                 )
             }
         }
