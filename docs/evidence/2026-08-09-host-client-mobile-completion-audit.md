@@ -77,9 +77,14 @@ notarization, DMG/ZIP hashes, Sparkle publication, and public GitHub release.
 - The paired device named Omega was identified as an iPhone 15 Pro Max
   (iPhone16,2). The current 0.14.3 (58) source built with automatic development
   signing, installed over 0.14.2 (57), launched successfully, and remained a
-  running process. This is physical install/launch evidence only; it does not
-  substitute for pairing, capture, codec, background, transfer, or Library
-  acceptance evidence.
+  running process.
+- The complete non-UI `HarcMobileAppTests` bundle then ran on Omega: 24 tests
+  passed with zero failures. This includes the real-device data-protection and
+  backup-exclusion round trip, route-change capture policy, bounded handoff,
+  packaged privacy metadata, and deterministic background-batch checks. This
+  is physical install/launch/unit evidence only; it does not substitute for
+  pairing, microphone capture, codec, background-transition, transfer, or
+  Library acceptance evidence.
 
 ## Required completion sequence
 
