@@ -184,6 +184,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             self?.openLibrary()
             NotificationCenter.default.post(name: .harcLibraryShowActivity, object: nil)
         }
+        bridge.onAuthorizeRemoteRelay = { [weak self] in
+            self?.authorizeRemoteRelayIdentity()
+        }
         bridge.onRevealStopRecovery = {
             NSWorkspace.shared.activateFileViewerSelecting([RecordingDestination.cacheDirectory()])
         }
@@ -461,6 +464,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Present only in Host role. It owns the canonical store above; no second
     /// RecordingStore is opened while this runtime is resident.
     private var hostRuntime: HarcResidentHostRuntimeV1?
+    /// Non-fatal relay setup failures are kept separate from Host readiness:
+    /// local capture, Library, LAN pairing, and upload recovery stay online.
+    private var remoteRelayStartupIssue: String?
     private var remoteRelayStatusTask: Task<Void, Never>?
     /// Present only in Desktop Client role. The existing canonical store stays
     /// mounted separately as On This Mac; this runtime owns only ClientState.
@@ -3819,6 +3825,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func bootstrapStore() async {
         bridge.runtimeStartupError = nil
+        remoteRelayStartupIssue = nil
+        bridge.remoteRelayStatusDetail = nil
         bridge.hostRuntimeReady = false
         bridge.clientRuntimeReady = false
         do {
@@ -3856,6 +3864,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func startRemoteRelayStatusUpdates() {
         remoteRelayStatusTask?.cancel()
+        if prefs.runtimeRole == .host,
+           let remoteRelayStartupIssue {
+            bridge.remoteRelayStatusText = "Needs Keychain authorization"
+            bridge.remoteRelayStatusDetail = remoteRelayStartupIssue
+            return
+        }
+        bridge.remoteRelayStatusDetail = nil
         guard prefs.remoteRelayEnabled, bridge.remoteRelayAvailable else {
             bridge.remoteRelayStatusText = bridge.remoteRelayAvailable
                 ? "Off"
@@ -3884,6 +3899,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     self?.bridge.remoteRelayStatusText = text
                 }
                 try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private func authorizeRemoteRelayIdentity() {
+        guard prefs.runtimeRole == .host,
+              !bridge.remoteRelayAuthorizationInProgress else { return }
+        bridge.remoteRelayAuthorizationInProgress = true
+        bridge.remoteRelayStatusDetail =
+            "Choose Always Allow in each Harc Keychain prompt to keep this Host identity and existing route state available after updates."
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { bridge.remoteRelayAuthorizationInProgress = false }
+            do {
+                try await HarcHostRuntimeConfigurationFactory
+                    .authorizeExistingRemoteRelayIdentity()
+                remoteRelayStartupIssue = nil
+                bridge.remoteRelayStatusText = "Authorized — restart Harc"
+                bridge.remoteRelayStatusDetail =
+                    "Quit and reopen Harc to reconnect this Host to Harc Remote."
+            } catch {
+                bridge.remoteRelayStatusText = "Needs Keychain authorization"
+                bridge.remoteRelayStatusDetail = error.localizedDescription
             }
         }
     }
@@ -3926,10 +3964,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // On This Mac source. Client captures never enter this store.
             return try await RecordingStore.onDisk(url: databaseURL)
         case .host:
-            let configuration = try HarcHostRuntimeConfigurationFactory.make(
-                canonicalDatabaseURL: databaseURL,
-                canonicalAudioRoot: prefs.destinationURL
-            )
+            let configurationResult = try await
+                HarcHostRuntimeConfigurationFactory.make(
+                    canonicalDatabaseURL: databaseURL,
+                    canonicalAudioRoot: prefs.destinationURL
+                )
+            remoteRelayStartupIssue =
+                configurationResult.remoteRelayStartupIssue
+            let configuration = configurationResult.configuration
             let workerBox = HarcHostProcessingWorkerBox()
             let mcpServerBox = HarcHostMCPServerBox()
             // Host mode deliberately fails closed in ad-hoc/unsigned builds.

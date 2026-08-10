@@ -233,9 +233,7 @@ extension HarcHostStore {
         guard exactReceipt.kind == .recordingReceiptV1,
               exactReceipt == evidence.exactReceiptObject,
               evidence.uploadID == uploadID,
-              evidence.receiptID == receiptID,
-              Data(SHA256.hash(data: exactReceipt.exactBytes))
-                == exactReceipt.objectSHA256.rawBytes
+              evidence.receiptID == receiptID
         else {
             throw HarcHostError.databaseFailure("Issued receipt evidence is inconsistent.")
         }

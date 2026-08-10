@@ -154,6 +154,27 @@ public struct GeneralSettingsView: View {
                         Text(bridge.remoteRelayStatusText)
                             .foregroundStyle(.secondary)
                     }
+                    if let detail = bridge.remoteRelayStatusDetail {
+                        Label(detail, systemImage: "key.horizontal.fill")
+                            .font(.harcLabel)
+                            .foregroundStyle(Color.orange)
+                            .textSelection(.enabled)
+                        if prefs.runtimeRole == .host,
+                           bridge.remoteRelayStatusText
+                            == "Needs Keychain authorization" {
+                            Button {
+                                bridge.onAuthorizeRemoteRelay()
+                            } label: {
+                                if bridge.remoteRelayAuthorizationInProgress {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Text("Authorize in Keychain…")
+                                }
+                            }
+                            .disabled(bridge.remoteRelayAuthorizationInProgress)
+                        }
+                    }
                 } header: {
                     Text("Harc Remote")
                 } footer: {

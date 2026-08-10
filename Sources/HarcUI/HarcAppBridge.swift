@@ -106,6 +106,10 @@ public final class HarcAppBridge: ObservableObject {
     /// accidentally in an unconfigured build.
     @Published public var remoteRelayAvailable: Bool = false
     @Published public var remoteRelayStatusText: String = "Off"
+    /// A non-fatal explanation when Remote is degraded while the local Host
+    /// remains healthy. Never contains relay credentials or route material.
+    @Published public var remoteRelayStatusDetail: String? = nil
+    @Published public var remoteRelayAuthorizationInProgress: Bool = false
 
     public var onStartStop: () -> Void = {}
     /// Preserve the current recording, then open the chooser. V1 does not
@@ -136,6 +140,9 @@ public final class HarcAppBridge: ObservableObject {
     /// Open the Library's Activity surface (readiness / recovery / jobs) —
     /// the destination behind the panel's single status row.
     public var onOpenActivity: () -> Void = {}
+    /// Explicit user gesture for an upgraded Host identity whose legacy
+    /// Keychain ACL no longer trusts the current signed application.
+    public var onAuthorizeRemoteRelay: () -> Void = {}
     public var onRevealStopRecovery: () -> Void = {}
     public var onRetryStopRecovery: () -> Void = {}
     public var onDismissStopRecovery: () -> Void = {}

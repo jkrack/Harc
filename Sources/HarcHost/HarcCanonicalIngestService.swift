@@ -21,6 +21,66 @@ public struct HostCanonicalRecoveryReport: Equatable, Sendable {
     }
 }
 
+/// Stable, bounded diagnostics stored in the publication journal. These codes
+/// deliberately classify failures without persisting local paths, database
+/// details, upload IDs, or other error-associated values.
+enum HostCanonicalIngestFailureCode: String, Sendable {
+    case destinationExists = "canonical-destination-exists"
+    case contentHashMismatch = "canonical-content-hash-mismatch"
+    case artifactIdentityMismatch = "canonical-artifact-identity-mismatch"
+    case invalidWAV = "canonical-wav-invalid"
+    case publicationPathUnsafe = "canonical-publication-path-unsafe"
+    case publicationIO = "canonical-publication-io"
+    case decoderUnavailable = "canonical-decoder-unavailable"
+    case decodedLengthMismatch = "canonical-decoded-length-mismatch"
+    case invalidFrameCount = "canonical-frame-count-invalid"
+    case classicRIFFSizeExceeded = "canonical-riff-size-exceeded"
+    case sidecarConflict = "canonical-sidecar-conflict"
+    case processingUnavailable = "canonical-processing-unavailable"
+    case publicationStateInvalid = "canonical-publication-state-invalid"
+    case databaseFailure = "canonical-database-failure"
+    case ingestFailed = "canonical-ingest-failed"
+
+    static func classify(_ error: any Error) -> Self {
+        guard let hostError = error as? HarcHostError else {
+            return .ingestFailed
+        }
+        switch hostError {
+        case .canonicalDestinationExists:
+            return .destinationExists
+        case .canonicalHashMismatch:
+            return .contentHashMismatch
+        case .canonicalArtifactIdentityMismatch:
+            return .artifactIdentityMismatch
+        case .invalidCanonicalWAV:
+            return .invalidWAV
+        case .unsafePublicationRoot, .unsafePublicationPath:
+            return .publicationPathUnsafe
+        case .publicationIO:
+            return .publicationIO
+        case .qualifiedDecoderUnavailable, .fixtureDecoderForbidden:
+            return .decoderUnavailable
+        case .decodedLengthMismatch:
+            return .decodedLengthMismatch
+        case .invalidCanonicalFrameCount:
+            return .invalidFrameCount
+        case .classicRIFFSizeExceeded:
+            return .classicRIFFSizeExceeded
+        case .provenanceSidecarConflict:
+            return .sidecarConflict
+        case .processingSchedulerUnavailable:
+            return .processingUnavailable
+        case .publicationRecoveryRequired, .publicationCheckpointConflict,
+             .canonicalPublicationAlreadyInProgress:
+            return .publicationStateInvalid
+        case .databaseOpenFailed, .migrationFailed, .databaseFailure:
+            return .databaseFailure
+        default:
+            return .ingestFailed
+        }
+    }
+}
+
 /// Synchronous claim/release primitive held inside the ingest actor. Claiming
 /// occurs before its first suspension so actor reentrancy cannot start a second
 /// filesystem saga for the same upload.
@@ -241,16 +301,34 @@ public actor HarcCanonicalIngestService {
     public func recoverPublication(uploadID: UploadID) async throws -> OpaqueExactObjectSlot {
         try activityGate.claim(uploadID)
         defer { activityGate.release(uploadID) }
-        if let processing = try await hostStore.receiptProcessingWork(uploadID: uploadID) {
-            return try await deliverReceipt(
-                processing,
-                expectedReceipt: processing.exactReceipt,
-                handoff: .bestEffortSynchronous
-            )
+        let processing: HostReceiptProcessingWork?
+        do {
+            processing = try await hostStore.receiptProcessingWork(uploadID: uploadID)
+        } catch {
+            try? await markRecoverableFailure(uploadID: uploadID, error: error)
+            throw error
         }
-        let preparation = try await hostStore.canonicalPublicationForRecovery(
-            uploadID: uploadID
-        )
+        if let processing {
+            do {
+                return try await deliverReceipt(
+                    processing,
+                    expectedReceipt: processing.exactReceipt,
+                    handoff: .bestEffortSynchronous
+                )
+            } catch {
+                try? await markRecoverableFailure(uploadID: uploadID, error: error)
+                throw error
+            }
+        }
+        let preparation: HostCanonicalPublicationPreparation
+        do {
+            preparation = try await hostStore.canonicalPublicationForRecovery(
+                uploadID: uploadID
+            )
+        } catch {
+            try? await markRecoverableFailure(uploadID: uploadID, error: error)
+            throw error
+        }
         return try await drive(
             preparation,
             uploadID: uploadID,
@@ -411,13 +489,17 @@ private extension HarcCanonicalIngestService {
                 }
             }
         } catch {
-            try? await hostStore.markPublicationFailedRecoverable(
-                uploadID: uploadID,
-                errorCode: "canonical-ingest-failed",
-                at: now()
-            )
+            try? await markRecoverableFailure(uploadID: uploadID, error: error)
             throw error
         }
+    }
+
+    private func markRecoverableFailure(uploadID: UploadID, error: any Error) async throws {
+        try await hostStore.markPublicationFailedRecoverable(
+            uploadID: uploadID,
+            errorCode: HostCanonicalIngestFailureCode.classify(error).rawValue,
+            at: now()
+        )
     }
 
     func assembleCanonicalWAV(_ work: HostCanonicalPublicationWork) async throws {
@@ -469,7 +551,7 @@ private extension HarcCanonicalIngestService {
         let finalExists = try paths.entryExists(at: paths.wavURL)
         if temporaryExists {
             guard !finalExists else { throw HarcHostError.canonicalDestinationExists }
-            try HostCanonicalWAVAssembler.validatePublishedFile(
+            _ = try HostCanonicalWAVAssembler.validatePublishedFile(
                 at: paths.temporaryURL,
                 in: paths,
                 totalFrames: work.capture.capture.totalCanonicalFrames,
@@ -483,7 +565,7 @@ private extension HarcCanonicalIngestService {
                     "The synchronized canonical temporary file is missing."
                 )
             }
-            try HostCanonicalWAVAssembler.validatePublishedFile(
+            _ = try HostCanonicalWAVAssembler.validatePublishedFile(
                 at: paths.wavURL,
                 in: paths,
                 totalFrames: work.capture.capture.totalCanonicalFrames,

@@ -8,11 +8,39 @@ import HarcRemoteTransport
 import LocalAuthentication
 import Security
 
+struct HarcHostRuntimeConfigurationBuildResult: Sendable {
+    let configuration: HarcResidentHostRuntimeConfigurationV1
+    let remoteRelayStartupIssue: String?
+}
+
 enum HarcHostRuntimeConfigurationFactory {
     static func make(
         canonicalDatabaseURL: URL,
         canonicalAudioRoot: URL
-    ) throws -> HarcResidentHostRuntimeConfigurationV1 {
+    ) async throws -> HarcHostRuntimeConfigurationBuildResult {
+        // Security.framework can wait on the login Keychain even when a query
+        // disallows authentication UI. Never run that synchronous boundary on
+        // AppDelegate's MainActor: a locked or migrating Keychain must not
+        // freeze the menu bar, Settings, or the Library error surface.
+        try await Task.detached(priority: .userInitiated) {
+            try makeSynchronously(
+                canonicalDatabaseURL: canonicalDatabaseURL,
+                canonicalAudioRoot: canonicalAudioRoot
+            )
+        }.value
+    }
+
+    static func authorizeExistingRemoteRelayIdentity() async throws {
+        try await Task.detached(priority: .userInitiated) {
+            try HarcRemoteRelayHostConfigurationStore
+                .authorizeExistingIdentity()
+        }.value
+    }
+
+    private static func makeSynchronously(
+        canonicalDatabaseURL: URL,
+        canonicalAudioRoot: URL
+    ) throws -> HarcHostRuntimeConfigurationBuildResult {
         let applicationSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Harc", isDirectory: true)
@@ -41,32 +69,72 @@ enum HarcHostRuntimeConfigurationFactory {
         } else {
             ports = try freshListenerPorts()
         }
-        let remoteRelay = try HarcRemoteRelayHostConfigurationStore
-            .loadOrCreateIfEnabled(localControlPort: ports.controlPort)
+        let remoteRelayResult = boundedRemoteRelayConfiguration(
+            localControlPort: ports.controlPort
+        )
+        let remoteRelay: HarcRemoteRelayHostConfigurationV1?
+        let remoteRelayStartupIssue: String?
+        switch remoteRelayResult {
+        case .success(let configuration):
+            remoteRelay = configuration
+            remoteRelayStartupIssue = nil
+        case .failure(let error):
+            // Harc Remote is optional reachability. A stale, locked, or
+            // migrated Keychain item must never prevent the canonical Host,
+            // Library, direct-LAN pairing, or retained-upload recovery from
+            // coming online.
+            remoteRelay = nil
+            remoteRelayStartupIssue = error.localizedDescription
+        }
         let remoteRelayRouteDeliveryPersistence = remoteRelay == nil
             ? nil
             : HarcRemoteRelayRouteDeliveryKeychainStore()
 
-        return HarcResidentHostRuntimeConfigurationV1(
-            storage: HarcResidentHostStorageConfiguration(
-                canonicalDatabaseURL: canonicalDatabaseURL,
-                hostDatabaseURL: hostDatabaseURL,
-                stagingRoot: HarcHostStore.defaultStagingRoot(),
-                listenerPorts: ports,
-                localOSAuthenticationBoundary:
-                    HarcMacLocalOSAuthenticationBoundary()
+        return HarcHostRuntimeConfigurationBuildResult(
+            configuration: HarcResidentHostRuntimeConfigurationV1(
+                storage: HarcResidentHostStorageConfiguration(
+                    canonicalDatabaseURL: canonicalDatabaseURL,
+                    hostDatabaseURL: hostDatabaseURL,
+                    stagingRoot: HarcHostStore.defaultStagingRoot(),
+                    listenerPorts: ports,
+                    localOSAuthenticationBoundary:
+                        HarcMacLocalOSAuthenticationBoundary()
+                ),
+                canonicalAudioRoot: canonicalAudioRoot,
+                backgroundRollbackRoot: rollbackRoot,
+                temporaryUploadParent: temporaryRoot,
+                displayName: Host.current().localizedName ?? "Harc Host",
+                localDNSTarget: localDNSTarget(),
+                acceptedEdgeEngineRevisions: [
+                    "harc-stt.\(HarcVersion.sttEngineVersion)"
+                ],
+                remoteRelay: remoteRelay,
+                remoteRelayRouteDeliveryPersistence:
+                    remoteRelayRouteDeliveryPersistence
             ),
-            canonicalAudioRoot: canonicalAudioRoot,
-            backgroundRollbackRoot: rollbackRoot,
-            temporaryUploadParent: temporaryRoot,
-            displayName: Host.current().localizedName ?? "Harc Host",
-            localDNSTarget: localDNSTarget(),
-            acceptedEdgeEngineRevisions: [
-                "harc-stt.\(HarcVersion.sttEngineVersion)"
-            ],
-            remoteRelay: remoteRelay,
-            remoteRelayRouteDeliveryPersistence:
-                remoteRelayRouteDeliveryPersistence
+            remoteRelayStartupIssue: remoteRelayStartupIssue
+        )
+    }
+
+    private static func boundedRemoteRelayConfiguration(
+        localControlPort: UInt16
+    ) -> Result<HarcRemoteRelayHostConfigurationV1?, Error> {
+        let box = HarcRemoteRelayConfigurationResultBox()
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result {
+                try HarcRemoteRelayHostConfigurationStore
+                    .loadOrCreateIfEnabled(localControlPort: localControlPort)
+            }
+            box.publish(result)
+            group.leave()
+        }
+        guard group.wait(timeout: .now() + 2) == .success else {
+            return .failure(HarcRemoteRelayHostConfigurationStoreError.timedOut)
+        }
+        return box.result ?? .failure(
+            HarcRemoteRelayHostConfigurationStoreError.timedOut
         )
     }
 
@@ -104,6 +172,148 @@ enum HarcHostRuntimeConfigurationFactory {
     }
 }
 
+private final class HarcRemoteRelayConfigurationResultBox:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var stored: Result<HarcRemoteRelayHostConfigurationV1?, Error>?
+
+    var result: Result<HarcRemoteRelayHostConfigurationV1?, Error>? {
+        lock.withLock { stored }
+    }
+
+    func publish(
+        _ result: Result<HarcRemoteRelayHostConfigurationV1?, Error>
+    ) {
+        lock.withLock { stored = result }
+    }
+}
+
+private enum HarcLegacyKeychainItemAccess: Equatable {
+    case notFound
+    case authorized
+
+    static func inspect(service: String, account: String) throws -> Self {
+        var searchList: CFArray?
+        let searchStatus = SecKeychainCopySearchList(&searchList)
+        guard searchStatus == errSecSuccess, let searchList else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .keychain(searchStatus)
+        }
+
+        var item: SecKeychainItem?
+        let itemStatus = service.withCString { serviceBytes in
+            account.withCString { accountBytes in
+                SecKeychainFindGenericPassword(
+                    searchList,
+                    UInt32(service.utf8.count),
+                    serviceBytes,
+                    UInt32(account.utf8.count),
+                    accountBytes,
+                    nil,
+                    nil,
+                    &item
+                )
+            }
+        }
+        if itemStatus == errSecItemNotFound { return .notFound }
+        guard itemStatus == errSecSuccess, let item else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .keychain(itemStatus)
+        }
+
+        var access: SecAccess?
+        let accessStatus = SecKeychainItemCopyAccess(item, &access)
+        guard accessStatus == errSecSuccess, let access else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .keychain(accessStatus)
+        }
+        guard let decryptACLs = SecAccessCopyMatchingACLList(
+            access,
+            kSecACLAuthorizationDecrypt
+        ) as? [SecACL] else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .authorizationRequired
+        }
+
+        var currentApplication: SecTrustedApplication?
+        let currentStatus = SecTrustedApplicationCreateFromPath(
+            nil,
+            &currentApplication
+        )
+        guard currentStatus == errSecSuccess,
+              let currentApplication else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .keychain(currentStatus)
+        }
+        var currentApplicationData: CFData?
+        let currentDataStatus = SecTrustedApplicationCopyData(
+            currentApplication,
+            &currentApplicationData
+        )
+        guard currentDataStatus == errSecSuccess,
+              let currentApplicationData else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .keychain(currentDataStatus)
+        }
+        let currentData = currentApplicationData as Data
+
+        for acl in decryptACLs {
+            var applications: CFArray?
+            var promptDescription: CFString?
+            var promptSelector = SecKeychainPromptSelector()
+            let aclStatus = SecACLCopyContents(
+                acl,
+                &applications,
+                &promptDescription,
+                &promptSelector
+            )
+            guard aclStatus == errSecSuccess else { continue }
+            let trustedApplications =
+                (applications as? [SecTrustedApplication]) ?? []
+            for trustedApplication in trustedApplications {
+                var trustedData: CFData?
+                let trustedStatus = SecTrustedApplicationCopyData(
+                    trustedApplication,
+                    &trustedData
+                )
+                if trustedStatus == errSecSuccess,
+                   let trustedData,
+                   trustedData as Data == currentData {
+                    return .authorized
+                }
+            }
+        }
+        throw HarcRemoteRelayHostConfigurationStoreError
+            .authorizationRequired
+    }
+
+    static func authorizeIfPresent(
+        service: String,
+        account: String,
+        prompt: String
+    ) throws -> Data? {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnData as String: kCFBooleanTrue as Any,
+            kSecUseOperationPrompt as String: prompt,
+        ] as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw HarcRemoteRelayHostConfigurationStoreError.keychain(status)
+        }
+        guard try inspect(service: service, account: account) == .authorized else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .authorizationRequired
+        }
+        return data
+    }
+}
+
 private actor HarcRemoteRelayRouteDeliveryKeychainStore:
     HarcRemoteRelayRouteDeliveryPersistence
 {
@@ -119,9 +329,9 @@ private actor HarcRemoteRelayRouteDeliveryKeychainStore:
         let expiresAtMilliseconds: UInt64
     }
 
-    private static let service = "com.harc.Harc.remote-relay.host-v1"
-    private static let account = "approved-route-deliveries-v1"
-    private static let bindingAccount = "approved-route-bindings-v1"
+    fileprivate static let service = "com.harc.Harc.remote-relay.host-v1"
+    fileprivate static let account = "approved-route-deliveries-v1"
+    fileprivate static let bindingAccount = "approved-route-bindings-v1"
 
     func save(
         _ route: HarcRemoteRelayRouteV1,
@@ -206,6 +416,10 @@ private actor HarcRemoteRelayRouteDeliveryKeychainStore:
     }
 
     private func loadRecords() throws -> [Record] {
+        guard try HarcLegacyKeychainItemAccess.inspect(
+            service: Self.service,
+            account: Self.account
+        ) == .authorized else { return [] }
         let authenticationContext = LAContext()
         authenticationContext.interactionNotAllowed = true
         var result: CFTypeRef?
@@ -229,13 +443,18 @@ private actor HarcRemoteRelayRouteDeliveryKeychainStore:
     }
 
     private func saveRecords(_ records: [Record]) throws {
-        let query: [String: Any] = [
+        let access = try HarcLegacyKeychainItemAccess.inspect(
+            service: Self.service,
+            account: Self.account
+        )
+        let itemQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: Self.account,
         ]
         guard !records.isEmpty else {
-            let status = SecItemDelete(query as CFDictionary)
+            guard access == .authorized else { return }
+            let status = SecItemDelete(itemQuery as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw HarcRemoteRelayHostConfigurationStoreError
                     .keychain(status)
@@ -245,16 +464,18 @@ private actor HarcRemoteRelayRouteDeliveryKeychainStore:
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(records)
-        let updateStatus = SecItemUpdate(
-            query as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
-        if updateStatus == errSecSuccess { return }
-        guard updateStatus == errSecItemNotFound else {
-            throw HarcRemoteRelayHostConfigurationStoreError
-                .keychain(updateStatus)
+        if access == .authorized {
+            let updateStatus = SecItemUpdate(
+                itemQuery as CFDictionary,
+                [kSecValueData as String: data] as CFDictionary
+            )
+            guard updateStatus == errSecSuccess else {
+                throw HarcRemoteRelayHostConfigurationStoreError
+                    .keychain(updateStatus)
+            }
+            return
         }
-        var attributes = query
+        var attributes = itemQuery
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] =
             kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -267,6 +488,10 @@ private actor HarcRemoteRelayRouteDeliveryKeychainStore:
     }
 
     private func loadBindingRecords() throws -> [BindingRecord] {
+        guard try HarcLegacyKeychainItemAccess.inspect(
+            service: Self.service,
+            account: Self.bindingAccount
+        ) == .authorized else { return [] }
         let authenticationContext = LAContext()
         authenticationContext.interactionNotAllowed = true
         var result: CFTypeRef?
@@ -290,13 +515,18 @@ private actor HarcRemoteRelayRouteDeliveryKeychainStore:
     }
 
     private func saveBindingRecords(_ records: [BindingRecord]) throws {
-        let query: [String: Any] = [
+        let access = try HarcLegacyKeychainItemAccess.inspect(
+            service: Self.service,
+            account: Self.bindingAccount
+        )
+        let itemQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: Self.bindingAccount,
         ]
         guard !records.isEmpty else {
-            let status = SecItemDelete(query as CFDictionary)
+            guard access == .authorized else { return }
+            let status = SecItemDelete(itemQuery as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw HarcRemoteRelayHostConfigurationStoreError.keychain(status)
             }
@@ -305,16 +535,18 @@ private actor HarcRemoteRelayRouteDeliveryKeychainStore:
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(records)
-        let updateStatus = SecItemUpdate(
-            query as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
-        if updateStatus == errSecSuccess { return }
-        guard updateStatus == errSecItemNotFound else {
-            throw HarcRemoteRelayHostConfigurationStoreError
-                .keychain(updateStatus)
+        if access == .authorized {
+            let updateStatus = SecItemUpdate(
+                itemQuery as CFDictionary,
+                [kSecValueData as String: data] as CFDictionary
+            )
+            guard updateStatus == errSecSuccess else {
+                throw HarcRemoteRelayHostConfigurationStoreError
+                    .keychain(updateStatus)
+            }
+            return
         }
-        var attributes = query
+        var attributes = itemQuery
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] =
             kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -380,9 +612,44 @@ private enum HarcRemoteRelayHostConfigurationStore {
         return created
     }
 
+    static func authorizeExistingIdentity() throws {
+        let prompt =
+            "Allow Harc to use its existing Remote Host identity and route state. Choose Always Allow to keep them available after app updates."
+        guard let data = try HarcLegacyKeychainItemAccess.authorizeIfPresent(
+            service: service,
+            account: account,
+            prompt: prompt
+        ) else {
+            throw HarcRemoteRelayHostConfigurationStoreError
+                .keychain(errSecItemNotFound)
+        }
+        do {
+            _ = try JSONDecoder().decode(
+                HarcRemoteRelayHostConfigurationV1.self,
+                from: data
+            )
+        } catch {
+            throw HarcRemoteRelayHostConfigurationStoreError.invalidStoredItem
+        }
+        for routeAccount in [
+            HarcRemoteRelayRouteDeliveryKeychainStore.account,
+            HarcRemoteRelayRouteDeliveryKeychainStore.bindingAccount,
+        ] {
+            _ = try HarcLegacyKeychainItemAccess.authorizeIfPresent(
+                service: HarcRemoteRelayRouteDeliveryKeychainStore.service,
+                account: routeAccount,
+                prompt: prompt
+            )
+        }
+    }
+
     private static func load() throws
         -> HarcRemoteRelayHostConfigurationV1?
     {
+        guard try HarcLegacyKeychainItemAccess.inspect(
+            service: service,
+            account: account
+        ) == .authorized else { return nil }
         let authenticationContext = LAContext()
         authenticationContext.interactionNotAllowed = true
         var result: CFTypeRef?
@@ -415,19 +682,26 @@ private enum HarcRemoteRelayHostConfigurationStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(configuration)
-        let query: [String: Any] = [
+        let itemQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
         let status: OSStatus
         if replacing {
+            guard try HarcLegacyKeychainItemAccess.inspect(
+                service: service,
+                account: account
+            ) == .authorized else {
+                throw HarcRemoteRelayHostConfigurationStoreError
+                    .invalidStoredItem
+            }
             status = SecItemUpdate(
-                query as CFDictionary,
+                itemQuery as CFDictionary,
                 [kSecValueData as String: data] as CFDictionary
             )
         } else {
-            var attributes = query
+            var attributes = itemQuery
             attributes[kSecValueData as String] = data
             attributes[kSecAttrAccessible as String] =
                 kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -443,6 +717,8 @@ private enum HarcRemoteRelayHostConfigurationStore {
 private enum HarcRemoteRelayHostConfigurationStoreError: LocalizedError {
     case keychain(OSStatus)
     case invalidStoredItem
+    case authorizationRequired
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -450,6 +726,10 @@ private enum HarcRemoteRelayHostConfigurationStoreError: LocalizedError {
             "Harc Remote could not access its this-Mac Keychain identity (OSStatus \(status))."
         case .invalidStoredItem:
             "The stored Harc Remote Host identity is invalid."
+        case .authorizationRequired:
+            "Harc Remote needs Keychain authorization for its existing Host identity. The Host, Library, direct-LAN pairing, and local recording remain available."
+        case .timedOut:
+            "Harc Remote could not open its Keychain identity promptly. The Host, Library, direct-LAN pairing, and local recording remain available."
         }
     }
 }

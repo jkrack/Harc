@@ -163,7 +163,6 @@ extension HarcHostStore {
                   storedKind == ExactObjectKind.recordingManifestV1.rawValue,
                   storedHash == boundManifest.objectSHA256.rawBytes,
                   exactBytes == boundManifest.exactBytes,
-                  Data(SHA256.hash(data: exactBytes)) == storedHash,
                   let publicKeyBytes = try Data.fetchOne(
                     db,
                     sql: "SELECT public_key_x963 FROM devices WHERE device_id = ?",
@@ -466,31 +465,36 @@ private extension HarcHostStore {
         try Self.requireRecoverablePublicationRow(row)
         guard let capture = attempt.boundFinalizedCapture,
               let manifest = attempt.boundManifest,
-              let trust = attempt.boundHostTrust,
-              trust.libraryID == expectedMetadata.libraryID,
-              trust.hostAuthorityID == expectedMetadata.hostAuthorityID,
-              manifest.kind == .recordingManifestV1,
-              Data(SHA256.hash(data: manifest.exactBytes)) == manifest.objectSHA256.rawBytes,
-              let canonicalRaw = row["canonical_recording_id"] as String?,
+              let trust = attempt.boundHostTrust
+        else { throw HarcHostError.publicationRecoveryRequired("incomplete accepted upload evidence") }
+        guard trust.libraryID == expectedMetadata.libraryID,
+              trust.hostAuthorityID == expectedMetadata.hostAuthorityID
+        else { throw HarcHostError.publicationRecoveryRequired("host trust drift") }
+        guard manifest.kind == .recordingManifestV1
+        else { throw HarcHostError.publicationRecoveryRequired("manifest evidence drift") }
+        guard let canonicalRaw = row["canonical_recording_id"] as String?,
               let canonicalUUID = UUID(uuidString: canonicalRaw),
               canonicalUUID != Self.zeroUUID,
               let temporaryName = row["host_generated_temporary_name"] as String?,
               Self.isSafePublicationTemporaryName(temporaryName),
-              let relativePath = row["publication_relative_path"] as String?,
-              let rawState = row["state"] as String?,
-              let state = HostUploadJournalState(rawValue: rawState),
-              let storedFrames = row["canonical_frame_count"] as Int64?,
+              let relativePath = row["publication_relative_path"] as String?
+        else { throw HarcHostError.publicationRecoveryRequired("incomplete publication paths") }
+        guard let rawState = row["state"] as String?,
+              let state = HostUploadJournalState(rawValue: rawState)
+        else { throw HarcHostError.publicationRecoveryRequired("invalid publication checkpoint") }
+        guard let storedFrames = row["canonical_frame_count"] as Int64?,
               let storedManifestHash = row["signed_manifest_object_sha256"] as Data?,
               let storedAudioHash = row["canonical_pcm_sha256"] as Data?,
-              let storedWAVLength = row["canonical_wav_byte_length"] as Int64?,
-              let authorizedDeviceBytes = row["authorized_device_id"] as Data?,
+              let storedWAVLength = row["canonical_wav_byte_length"] as Int64?
+        else { throw HarcHostError.publicationRecoveryRequired("incomplete canonical measurements") }
+        guard let authorizedDeviceBytes = row["authorized_device_id"] as Data?,
               let authorizedGrantRaw = row["authorized_grant_id"] as String?,
               let authorizedGrantUUID = UUID(uuidString: authorizedGrantRaw),
               authorizedGrantUUID != Self.zeroUUID,
               let authorizedGrantEpochRaw = row["authorized_grant_epoch"] as Int64?,
               let acceptedGenerationRaw = row["accepted_upload_generation"] as Int64?,
               let authorizationTime = row["authorized_at"] as Double?
-        else { throw HarcHostError.publicationRecoveryRequired("incomplete publication plan") }
+        else { throw HarcHostError.publicationRecoveryRequired("incomplete authorization snapshot") }
 
         let canonicalID = CanonicalRecordingID(canonicalUUID)
         try HostCanonicalPublicationPaths.validatePersistedRelativeWAVPath(
@@ -548,9 +552,6 @@ private extension HarcHostStore {
         switch (receiptBytes, receiptHash) {
         case (nil, nil): exactReceipt = nil
         case let (.some(bytes), .some(hash)):
-            guard Data(SHA256.hash(data: bytes)) == hash else {
-                throw HarcHostError.publicationRecoveryRequired("receipt digest drift")
-            }
             exactReceipt = try OpaqueExactObjectSlot(
                 kind: .recordingReceiptV1,
                 exactBytes: bytes,

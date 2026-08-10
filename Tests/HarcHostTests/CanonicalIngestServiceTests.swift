@@ -13,6 +13,12 @@ private enum InjectedPublicationCrash: Error, Equatable {
     case point(HostPublicationFailurePoint)
 }
 
+private func loopbackExactObjectID(_ exactBytes: Data) throws -> ExactObjectSHA256 {
+    var domainSeparated = Data("HARC-TEST-EXACT-OBJECT-ID\0".utf8)
+    domainSeparated.append(exactBytes)
+    return try ExactObjectSHA256(Data(SHA256.hash(data: domainSeparated)))
+}
+
 private actor OneShotPublicationFailureInjector: HostPublicationFailureInjector {
     private var target: HostPublicationFailurePoint?
     private var triggered = false
@@ -113,7 +119,7 @@ private struct LoopbackRecordingEvidenceCodec: Sendable,
         return try OpaqueExactObjectSlot(
             kind: .recordingReceiptV1,
             exactBytes: exactBytes,
-            objectSHA256: ExactObjectSHA256(Data(SHA256.hash(data: exactBytes)))
+            objectSHA256: loopbackExactObjectID(exactBytes)
         )
     }
 
@@ -132,9 +138,7 @@ private struct LoopbackRecordingEvidenceCodec: Sendable,
         let exactObject = try OpaqueExactObjectSlot(
             kind: .recordingReceiptV1,
             exactBytes: exactSignedReceiptBytes,
-            objectSHA256: ExactObjectSHA256(
-                Data(SHA256.hash(data: exactSignedReceiptBytes))
-            )
+            objectSHA256: loopbackExactObjectID(exactSignedReceiptBytes)
         )
         return try ValidatedRecordingReceiptEvidence(
             hostTrust: hostTrust,
@@ -247,6 +251,71 @@ private struct PreparedCanonicalIngest {
 
 @Suite("Canonical ingest saga and receipt recovery", .serialized)
 struct CanonicalIngestServiceTests {
+    @Test("publication failure codes are stable and omit associated details")
+    func publicationFailureCodesAreStableAndPrivate() {
+        let fixtures: [(any Error, HostCanonicalIngestFailureCode)] = [
+            (HarcHostError.canonicalDestinationExists, .destinationExists),
+            (HarcHostError.canonicalHashMismatch, .contentHashMismatch),
+            (
+                HarcHostError.canonicalArtifactIdentityMismatch,
+                .artifactIdentityMismatch
+            ),
+            (HarcHostError.invalidCanonicalWAV, .invalidWAV),
+            (HarcHostError.unsafePublicationRoot, .publicationPathUnsafe),
+            (HarcHostError.unsafePublicationPath, .publicationPathUnsafe),
+            (
+                HarcHostError.publicationIO("/private/recordings/secret.wav"),
+                .publicationIO
+            ),
+            (
+                HarcHostError.qualifiedDecoderUnavailable(
+                    codec: "private-codec",
+                    container: "private-container"
+                ),
+                .decoderUnavailable
+            ),
+            (
+                HarcHostError.decodedLengthMismatch(expected: 4, actual: 3),
+                .decodedLengthMismatch
+            ),
+            (HarcHostError.invalidCanonicalFrameCount(0), .invalidFrameCount),
+            (
+                HarcHostError.classicRIFFSizeExceeded(
+                    maximumPCMBytes: 4,
+                    requestedPCMBytes: 5
+                ),
+                .classicRIFFSizeExceeded
+            ),
+            (HarcHostError.provenanceSidecarConflict, .sidecarConflict),
+            (
+                HarcHostError.processingSchedulerUnavailable,
+                .processingUnavailable
+            ),
+            (
+                HarcHostError.publicationRecoveryRequired("private-state"),
+                .publicationStateInvalid
+            ),
+            (
+                HarcHostError.databaseFailure("private-sql"),
+                .databaseFailure
+            ),
+        ]
+
+        for (error, expected) in fixtures {
+            let code = HostCanonicalIngestFailureCode.classify(error)
+            #expect(code == expected)
+            #expect(code.rawValue.count <= 128)
+            #expect(!code.rawValue.contains("private"))
+            #expect(!code.rawValue.contains("/"))
+        }
+
+        #expect(
+            HostCanonicalIngestFailureCode.classify(
+                CocoaError(.fileReadUnknown)
+            ) == .ingestFailed
+        )
+    }
+
     @Test("commit disposition distinguishes first publication from exact receipt replay")
     func commitDispositionDistinguishesReplay() async throws {
         let fixture = try await makePreparedIngest()
@@ -622,6 +691,10 @@ struct CanonicalIngestServiceTests {
         await #expect(throws: HarcHostError.canonicalDestinationExists) {
             _ = try await service.recoverPublication(uploadID: fixture.uploadID)
         }
+        #expect(
+            try await publicationFailureCode(fixture.hostStore, fixture.uploadID)
+                == HostCanonicalIngestFailureCode.destinationExists.rawValue
+        )
         #expect(try Data(contentsOf: paths.wavURL) == conflictBytes)
         #expect(try await fixture.recordingStore.fetchAll().isEmpty)
         #expect(try canonicalWAVURLs(in: fixture.canonicalRoot).count == 1)
@@ -632,6 +705,54 @@ struct CanonicalIngestServiceTests {
         #expect(!receipt.exactBytes.isEmpty)
         #expect(try await fixture.recordingStore.fetchAll().count == 1)
         #expect(try canonicalWAVURLs(in: fixture.canonicalRoot).count == 1)
+        try await fixture.recordingStore.disableHostMode(fixture.lease)
+    }
+
+    @Test("recovery preparation failures persist one stable retry classification")
+    func preparationFailureIsClassifiedOnce() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let service = try fixture.service(
+            scheduler: IdempotentProcessingScheduler(),
+            failureInjector: OneShotPublicationFailureInjector(.afterPublicationPlan)
+        )
+        await #expect(throws: InjectedPublicationCrash.point(.afterPublicationPlan)) {
+            _ = try await service.commitUpload(
+                context: fixture.context,
+                uploadID: fixture.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256
+            )
+        }
+
+        let queue = try DatabaseQueue(path: fixture.hostDatabaseURL.path)
+        let retryCountBefore = try await queue.write { db in
+            try db.execute(
+                sql: "UPDATE publication_journal SET signed_manifest_object_sha256 = ? WHERE upload_id = ?",
+                arguments: [Data(repeating: 0xFF, count: 32), fixture.uploadID.description]
+            )
+            return try Int.fetchOne(
+                db,
+                sql: "SELECT retry_count FROM publication_journal WHERE upload_id = ?",
+                arguments: [fixture.uploadID.description]
+            )
+        }
+        await #expect(throws: HarcHostError.self) {
+            _ = try await service.recoverPublication(uploadID: fixture.uploadID)
+        }
+        let persisted = try await queue.read { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT state, last_error_code, retry_count FROM publication_journal WHERE upload_id = ?",
+                arguments: [fixture.uploadID.description]
+            )
+        }
+        #expect(persisted?["state"] as String? == HostUploadJournalState.failedRecoverable.rawValue)
+        #expect(
+            persisted?["last_error_code"] as String?
+                == HostCanonicalIngestFailureCode.publicationStateInvalid.rawValue
+        )
+        #expect(persisted?["retry_count"] as Int? == retryCountBefore.map { $0 + 1 })
         try await fixture.recordingStore.disableHostMode(fixture.lease)
     }
 
@@ -706,6 +827,10 @@ struct CanonicalIngestServiceTests {
             )
         }
         #expect(state == HostUploadJournalState.failedRecoverable.rawValue)
+        #expect(
+            try await publicationFailureCode(reopened.hostStore, fixture.uploadID)
+                == HostCanonicalIngestFailureCode.publicationIO.rawValue
+        )
         try await reopened.recordingStore.disableHostMode(reopened.lease)
     }
 
@@ -1045,7 +1170,7 @@ private extension CanonicalIngestServiceTests {
         let manifestObject = try OpaqueExactObjectSlot(
             kind: .recordingManifestV1,
             exactBytes: manifestBytes,
-            objectSHA256: ExactObjectSHA256(Data(SHA256.hash(data: manifestBytes)))
+            objectSHA256: loopbackExactObjectID(manifestBytes)
         )
         let hostTrust = try RecordingHostTrustBinding(
             libraryID: libraryID,
@@ -1162,6 +1287,19 @@ private extension CanonicalIngestServiceTests {
             try Data.fetchOne(
                 db,
                 sql: "SELECT exact_receipt_bytes FROM publication_journal WHERE upload_id = ?",
+                arguments: [uploadID.description]
+            )
+        }
+    }
+
+    func publicationFailureCode(
+        _ store: HarcHostStore,
+        _ uploadID: UploadID
+    ) async throws -> String? {
+        try await store.dbReader.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT last_error_code FROM publication_journal WHERE upload_id = ?",
                 arguments: [uploadID.description]
             )
         }

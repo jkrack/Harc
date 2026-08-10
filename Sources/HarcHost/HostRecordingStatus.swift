@@ -543,8 +543,7 @@ extension HarcHostStore {
             }
             return nil
         }
-        guard Data(SHA256.hash(data: exactBytes)) == hashBytes,
-              uploadRow["exact_receipt_bytes"] as Data? == exactBytes,
+        guard uploadRow["exact_receipt_bytes"] as Data? == exactBytes,
               uploadRow["receipt_object_sha256"] as Data? == hashBytes,
               let bound = try Row.fetchOne(
                 db,
