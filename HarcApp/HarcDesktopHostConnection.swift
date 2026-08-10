@@ -137,65 +137,47 @@ struct HarcDesktopHostRouteFailure: Error {
     var triedEncryptedRelay: Bool { relayError != nil }
 }
 
-/// Selects a route only after an authenticated, idempotent Host operation has
-/// completed on it. Constructing gRPC's connection owner merely starts its
-/// connection task; the first RPC is where DNS, TLS, HTTP/2, and the relay are
-/// actually proven.
-enum HarcDesktopHostRouteConnector {
-    static func openVerified(
-        route: HarcDesktopHostRoute,
-        trust: HarcTransportTrustCoordinator,
-        verify: @escaping @Sendable (HarcPinnedGRPCConnection) async throws -> Void
-    ) async throws -> HarcDesktopVerifiedHostConnection {
-        var directConnection: HarcPinnedGRPCConnection?
+/// Route-ordering policy kept independent of concrete gRPC and relay types so
+/// the failover boundary can be exercised without a live network. A candidate
+/// route is not selected until `verify` completes, and every rejected
+/// connection is closed before the next route is attempted.
+enum HarcDesktopVerifiedRouteStrategy {
+    static func openVerified<Connection: Sendable>(
+        direct: @escaping @Sendable () async throws -> Connection,
+        relay: (@Sendable () async throws -> Connection)?,
+        verify: @escaping @Sendable (Connection) async throws -> Void,
+        close: @escaping @Sendable (Connection) async -> Void
+    ) async throws -> (
+        connection: Connection,
+        path: HarcDesktopVerifiedHostConnection.Path
+    ) {
+        var directConnection: Connection?
         do {
-            let connection = try await HarcPinnedGRPCConnection.connect(
-                host: route.host,
-                port: Int(route.port),
-                serverHostname: route.serverHostname,
-                trustCoordinator: trust
-            )
+            let connection = try await direct()
             directConnection = connection
             try await verify(connection)
-            return HarcDesktopVerifiedHostConnection(
-                connection: connection,
-                path: .direct
-            )
+            return (connection, .direct)
         } catch {
-            await directConnection?.shutdownImmediately()
+            if let directConnection {
+                await close(directConnection)
+            }
             let directError = error
-            guard let relay = route.relay else {
+            guard let relay else {
                 throw HarcDesktopHostRouteFailure(
                     directError: directError,
                     relayError: nil
                 )
             }
 
-            var relayConnection: HarcPinnedGRPCConnection?
-            var tunnel: HarcRemoteRelayClientTunnel?
+            var relayConnection: Connection?
             do {
-                let openedTunnel = try await HarcRemoteRelayClientTunnel.open(
-                    route: relay
-                )
-                tunnel = openedTunnel
-                let connection = try await HarcPinnedGRPCConnection.connect(
-                    host: openedTunnel.localHost,
-                    port: Int(openedTunnel.localPort),
-                    serverHostname: route.serverHostname,
-                    trustCoordinator: trust,
-                    transportLifetime: openedTunnel
-                )
+                let connection = try await relay()
                 relayConnection = connection
                 try await verify(connection)
-                return HarcDesktopVerifiedHostConnection(
-                    connection: connection,
-                    path: .encryptedRelay
-                )
+                return (connection, .encryptedRelay)
             } catch {
                 if let relayConnection {
-                    await relayConnection.shutdownImmediately()
-                } else {
-                    await tunnel?.shutdown()
+                    await close(relayConnection)
                 }
                 throw HarcDesktopHostRouteFailure(
                     directError: directError,
@@ -203,6 +185,63 @@ enum HarcDesktopHostRouteConnector {
                 )
             }
         }
+    }
+}
+
+/// Selects a route only after an authenticated, idempotent Host operation has
+/// completed on it. Constructing gRPC's connection owner merely starts its
+/// connection task; the first RPC is where DNS, TLS, HTTP/2, and the relay are
+/// actually proven.
+enum HarcDesktopHostRouteConnector {
+    private typealias ConnectionFactory =
+        @Sendable () async throws -> HarcPinnedGRPCConnection
+
+    static func openVerified(
+        route: HarcDesktopHostRoute,
+        trust: HarcTransportTrustCoordinator,
+        verify: @escaping @Sendable (HarcPinnedGRPCConnection) async throws -> Void
+    ) async throws -> HarcDesktopVerifiedHostConnection {
+        let relayConnectionFactory: ConnectionFactory?
+        if let relay = route.relay {
+            relayConnectionFactory = {
+                let tunnel = try await HarcRemoteRelayClientTunnel.open(
+                    route: relay
+                )
+                do {
+                    return try await HarcPinnedGRPCConnection.connect(
+                        host: tunnel.localHost,
+                        port: Int(tunnel.localPort),
+                        serverHostname: route.serverHostname,
+                        trustCoordinator: trust,
+                        transportLifetime: tunnel
+                    )
+                } catch {
+                    await tunnel.shutdown()
+                    throw error
+                }
+            }
+        } else {
+            relayConnectionFactory = nil
+        }
+        let selected = try await HarcDesktopVerifiedRouteStrategy.openVerified(
+            direct: {
+                try await HarcPinnedGRPCConnection.connect(
+                    host: route.host,
+                    port: Int(route.port),
+                    serverHostname: route.serverHostname,
+                    trustCoordinator: trust
+                )
+            },
+            relay: relayConnectionFactory,
+            verify: verify,
+            close: { connection in
+                await connection.shutdownImmediately()
+            }
+        )
+        return HarcDesktopVerifiedHostConnection(
+            connection: selected.connection,
+            path: selected.path
+        )
     }
 }
 
