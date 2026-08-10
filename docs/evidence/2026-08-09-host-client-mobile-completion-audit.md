@@ -32,8 +32,11 @@ edges:
    the protocol requires a long-lived Host/client tunnel.
 
 Harc 0.14.3 verifies an authenticated, idempotent `getHostInfo` RPC before
-selecting either route and uses a 24-hour relay resource lifetime. Failed
-direct and relay candidates are shut down before the next attempt or error.
+selecting either desktop route and uses a 24-hour relay resource lifetime.
+This follow-up moves that verified-route policy into `HarcClientTransport` and
+uses it for iPhone pairing as well. Both clients now verify `getHostInfo` under
+the invitation trust expectation before selecting direct or encrypted relay;
+failed candidates are shut down before the next attempt or error.
 
 This audit adds a transport-independent route strategy seam and deterministic
 tests proving:
@@ -50,10 +53,11 @@ All build/test commands were capped at two workers and retained warm artifacts.
 | Gate | Result |
 | --- | --- |
 | `xcodegen generate` | Passed |
-| Focused `HarcDesktopVerifiedRouteStrategyTests` | 4 tests passed |
+| Focused shared `HarcVerifiedRouteStrategyTests` | 4 tests passed |
 | Complete `HarcAppTests` bundle | 17 tests in 6 suites passed |
-| macOS application compile/link/embed path | Passed as part of both Xcode test runs |
-| Disk floor | 13 GiB available after validation; above the 5 GiB stop floor |
+| iOS simulator compile/link/embed path | Passed for both simulator architectures |
+| macOS application compile/link/embed path | Passed after adopting the shared route policy |
+| Disk floor | Remained above the 5 GiB stop floor throughout validation |
 
 The earlier 0.14.3 release evidence separately records the successful focused
 relay tests, pinned-gRPC loopback integration, Developer ID Release build,

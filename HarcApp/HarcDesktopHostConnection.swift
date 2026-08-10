@@ -121,72 +121,11 @@ struct HarcDesktopOpenedHostConnection: Sendable {
 }
 
 struct HarcDesktopVerifiedHostConnection: Sendable {
-    enum Path: Sendable {
-        case direct
-        case encryptedRelay
-    }
-
     let connection: HarcPinnedGRPCConnection
-    let path: Path
+    let path: HarcVerifiedRoutePath
 }
 
-struct HarcDesktopHostRouteFailure: Error {
-    let directError: any Error
-    let relayError: (any Error)?
-
-    var triedEncryptedRelay: Bool { relayError != nil }
-}
-
-/// Route-ordering policy kept independent of concrete gRPC and relay types so
-/// the failover boundary can be exercised without a live network. A candidate
-/// route is not selected until `verify` completes, and every rejected
-/// connection is closed before the next route is attempted.
-enum HarcDesktopVerifiedRouteStrategy {
-    static func openVerified<Connection: Sendable>(
-        direct: @escaping @Sendable () async throws -> Connection,
-        relay: (@Sendable () async throws -> Connection)?,
-        verify: @escaping @Sendable (Connection) async throws -> Void,
-        close: @escaping @Sendable (Connection) async -> Void
-    ) async throws -> (
-        connection: Connection,
-        path: HarcDesktopVerifiedHostConnection.Path
-    ) {
-        var directConnection: Connection?
-        do {
-            let connection = try await direct()
-            directConnection = connection
-            try await verify(connection)
-            return (connection, .direct)
-        } catch {
-            if let directConnection {
-                await close(directConnection)
-            }
-            let directError = error
-            guard let relay else {
-                throw HarcDesktopHostRouteFailure(
-                    directError: directError,
-                    relayError: nil
-                )
-            }
-
-            var relayConnection: Connection?
-            do {
-                let connection = try await relay()
-                relayConnection = connection
-                try await verify(connection)
-                return (connection, .encryptedRelay)
-            } catch {
-                if let relayConnection {
-                    await close(relayConnection)
-                }
-                throw HarcDesktopHostRouteFailure(
-                    directError: directError,
-                    relayError: error
-                )
-            }
-        }
-    }
-}
+typealias HarcDesktopHostRouteFailure = HarcVerifiedRouteFailure
 
 /// Selects a route only after an authenticated, idempotent Host operation has
 /// completed on it. Constructing gRPC's connection owner merely starts its
@@ -223,7 +162,7 @@ enum HarcDesktopHostRouteConnector {
         } else {
             relayConnectionFactory = nil
         }
-        let selected = try await HarcDesktopVerifiedRouteStrategy.openVerified(
+        let selected = try await HarcVerifiedRouteStrategy.openVerified(
             direct: {
                 try await HarcPinnedGRPCConnection.connect(
                     host: route.host,

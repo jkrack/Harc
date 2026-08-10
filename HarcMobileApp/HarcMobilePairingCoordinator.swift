@@ -13,6 +13,9 @@ import UIKit
 @MainActor
 @Observable
 final class HarcMobilePairingCoordinator {
+    private typealias ConnectionFactory =
+        @Sendable () async throws -> HarcPinnedGRPCConnection
+
     enum State: Equatable {
         case unpaired
         case connecting
@@ -66,36 +69,61 @@ final class HarcMobilePairingCoordinator {
                 pairingExactQRTransportSet: ticket.exactTransportObjectBytes,
                 hostAuthorityPublicKey: ticket.hostAuthorityPublicKey
             )
-            let opened: HarcPinnedGRPCConnection
-            do {
-                opened = try await HarcPinnedGRPCConnection.connect(
-                    host: route.host,
-                    port: Int(route.port),
-                    serverHostname: route.serverHostname,
-                    trustCoordinator: trust
-                )
-            } catch {
-                guard let relay = route.relay else { throw error }
-                let tunnel = try await HarcRemoteRelayClientTunnel.open(
-                    route: relay
-                )
-                do {
-                    opened = try await HarcPinnedGRPCConnection.connect(
-                        host: tunnel.localHost,
-                        port: Int(tunnel.localPort),
-                        serverHostname: route.serverHostname,
-                        trustCoordinator: trust,
-                        transportLifetime: tunnel
+            let policy = try Self.capabilityPolicy()
+            let expectation = try HarcBootstrapTrustExpectation(
+                pairingTicket: ticket
+            )
+            let relayConnectionFactory: ConnectionFactory?
+            if let relay = route.relay {
+                relayConnectionFactory = {
+                    let tunnel = try await HarcRemoteRelayClientTunnel.open(
+                        route: relay
                     )
-                } catch {
-                    await tunnel.shutdown()
-                    throw error
+                    do {
+                        return try await HarcPinnedGRPCConnection.connect(
+                            host: tunnel.localHost,
+                            port: Int(tunnel.localPort),
+                            serverHostname: route.serverHostname,
+                            trustCoordinator: trust,
+                            transportLifetime: tunnel
+                        )
+                    } catch {
+                        await tunnel.shutdown()
+                        throw error
+                    }
                 }
+            } else {
+                relayConnectionFactory = nil
             }
+            let selected = try await HarcVerifiedRouteStrategy.openVerified(
+                direct: {
+                    try await HarcPinnedGRPCConnection.connect(
+                        host: route.host,
+                        port: Int(route.port),
+                        serverHostname: route.serverHostname,
+                        trustCoordinator: trust
+                    )
+                },
+                relay: relayConnectionFactory,
+                verify: { candidate in
+                    let verifier = HarcBootstrapClient(
+                        rpc: candidate,
+                        capabilityPolicy: policy,
+                        sasDictionary: try HarcSASDictionaryV1.bundled()
+                    )
+                    _ = try await verifier.getHostInfo(
+                        expectation: expectation
+                    )
+                },
+                close: { candidate in
+                    await candidate.shutdownImmediately()
+                }
+            )
+            let opened = selected.connection
             connection = opened
             let client = HarcBootstrapClient(
                 rpc: opened,
-                capabilityPolicy: try Self.capabilityPolicy(),
+                capabilityPolicy: policy,
                 sasDictionary: try HarcSASDictionaryV1.bundled()
             )
             let presentation = try await client.beginPairing(
@@ -120,7 +148,16 @@ final class HarcMobilePairingCoordinator {
             )
         } catch {
             if let connection { await connection.shutdownImmediately() }
-            state = .failed(error.localizedDescription)
+            if let routeFailure = error as? HarcVerifiedRouteFailure {
+                let routes = routeFailure.triedEncryptedRelay
+                    ? "the direct route or the encrypted relay"
+                    : "the direct route"
+                state = .failed(
+                    "Harc could not authenticate the Host through \(routes). Keep the Host pairing screen open and create a fresh invitation. No device was adopted."
+                )
+            } else {
+                state = .failed(error.localizedDescription)
+            }
         }
     }
 

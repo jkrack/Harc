@@ -1,9 +1,8 @@
-import Foundation
+import HarcClientTransport
 import Testing
-@testable import Harc
 
-@Suite("Desktop Host route verification")
-struct HarcDesktopVerifiedRouteStrategyTests {
+@Suite("Verified Host route strategy")
+struct HarcVerifiedRouteStrategyTests {
     private enum Failure: Error {
         case direct
         case relay
@@ -24,8 +23,7 @@ struct HarcDesktopVerifiedRouteStrategyTests {
     @Test("direct route wins only after verification")
     func verifiedDirectRouteWins() async throws {
         let events = Events()
-
-        let selected = try await HarcDesktopVerifiedRouteStrategy.openVerified(
+        let selected = try await HarcVerifiedRouteStrategy.openVerified(
             direct: {
                 await events.append("open-direct")
                 return "direct"
@@ -50,8 +48,7 @@ struct HarcDesktopVerifiedRouteStrategyTests {
     @Test("failed first RPC closes direct route and verifies relay")
     func firstRPCFailureFallsBackToRelay() async throws {
         let events = Events()
-
-        let selected = try await HarcDesktopVerifiedRouteStrategy.openVerified(
+        let selected = try await HarcVerifiedRouteStrategy.openVerified(
             direct: {
                 await events.append("open-direct")
                 return "direct"
@@ -84,12 +81,11 @@ struct HarcDesktopVerifiedRouteStrategyTests {
         )
     }
 
-    @Test("rejected relay is closed and reported with direct failure")
+    @Test("rejected relay is closed and reports both route failures")
     func rejectedRelayIsClosed() async {
         let events = Events()
-
         do {
-            _ = try await HarcDesktopVerifiedRouteStrategy.openVerified(
+            _ = try await HarcVerifiedRouteStrategy.openVerified(
                 direct: { "direct" },
                 relay: { "relay" },
                 verify: { connection in
@@ -103,7 +99,7 @@ struct HarcDesktopVerifiedRouteStrategyTests {
                 }
             )
             Issue.record("Expected both routes to fail")
-        } catch let error as HarcDesktopHostRouteFailure {
+        } catch let error as HarcVerifiedRouteFailure {
             #expect(error.triedEncryptedRelay)
             #expect(error.directError is Failure)
             #expect(error.relayError is Failure)
@@ -124,9 +120,8 @@ struct HarcDesktopVerifiedRouteStrategyTests {
     @Test("missing relay reports a direct-only failure")
     func missingRelayReportsDirectFailure() async {
         let events = Events()
-
         do {
-            _ = try await HarcDesktopVerifiedRouteStrategy.openVerified(
+            _ = try await HarcVerifiedRouteStrategy.openVerified(
                 direct: { "direct" },
                 relay: nil,
                 verify: { _ in throw Failure.direct },
@@ -135,7 +130,7 @@ struct HarcDesktopVerifiedRouteStrategyTests {
                 }
             )
             Issue.record("Expected the direct route to fail")
-        } catch let error as HarcDesktopHostRouteFailure {
+        } catch let error as HarcVerifiedRouteFailure {
             #expect(!error.triedEncryptedRelay)
             #expect(error.directError is Failure)
             #expect(error.relayError == nil)
