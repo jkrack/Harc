@@ -63,6 +63,24 @@ The earlier 0.14.3 release evidence separately records the successful focused
 relay tests, pinned-gRPC loopback integration, Developer ID Release build,
 notarization, DMG/ZIP hashes, Sparkle publication, and public GitHub release.
 
+## Physical state advanced after publication
+
+- The local Host completed the real Sparkle update from 0.14.1 (56) to 0.14.3
+  (58). The installed app passed strict signature verification and Gatekeeper
+  assessment as a notarized Developer ID build, relaunched, and reported that
+  the Host listener was running.
+- After relaunch, Harc Remote correctly reported that the updated app still
+  needs interactive Keychain authorization for the existing Host identity.
+  Direct LAN behavior remains available, but cross-network pairing has not
+  been re-tested and must not be claimed until that authorization and the
+  secondary-Mac flow complete.
+- The paired device named Omega was identified as an iPhone 15 Pro Max
+  (iPhone16,2). The current 0.14.3 (58) source built with automatic development
+  signing, installed over 0.14.2 (57), launched successfully, and remained a
+  running process. This is physical install/launch evidence only; it does not
+  substitute for pairing, capture, codec, background, transfer, or Library
+  acceptance evidence.
+
 ## Required completion sequence
 
 1. Install Harc 0.14.3 or newer on both Macs through Sparkle.
