@@ -85,6 +85,13 @@ notarization, DMG/ZIP hashes, Sparkle publication, and public GitHub release.
   is physical install/launch/unit evidence only; it does not substitute for
   pairing, microphone capture, codec, background-transition, transfer, or
   Library acceptance evidence.
+- Two bounded attempts to run the three non-permission UI/accessibility tests
+  stopped before executing any test assertion because XCTest timed out while
+  enabling automation mode. At the time, Omega was wired, paired, unlocked,
+  booted, and had Developer Mode and developer-disk-image services enabled.
+  This is an unresolved physical-test-infrastructure gate, not evidence of an
+  app pass or failure; both `.xcresult` bundles are retained in Xcode's Harc
+  DerivedData test logs.
 
 ## Required completion sequence
 
