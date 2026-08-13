@@ -47,6 +47,7 @@ final class HarcMobileReviewSampleTests: XCTestCase {
             HarcMobileAccessibilityID.stopRecording,
             HarcMobileAccessibilityID.recordingBanner,
             HarcMobileAccessibilityID.recordingBannerStop,
+            HarcMobileAccessibilityID.hostHealth,
             HarcMobileAccessibilityID.openReviewSample,
             HarcMobileAccessibilityID.openReviewSampleToolbar,
             HarcMobileAccessibilityID.reviewSampleRoot,

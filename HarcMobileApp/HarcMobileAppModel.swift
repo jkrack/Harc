@@ -150,6 +150,8 @@ final class HarcMobileAppModel {
     private(set) var pairingCoordinator: HarcMobilePairingCoordinator?
     private(set) var transferCoordinator: HarcMobileTransferCoordinator?
     private(set) var libraryCoordinator: HarcMobileLibraryCoordinator?
+    private(set) var hostHealthCoordinator:
+        HarcMobileHostHealthCoordinator?
     private var transferStore: HarcTransferStore?
     private var backgroundUploadClient:
         HarcBackgroundURLSessionUploadClientV1?
@@ -275,6 +277,12 @@ final class HarcMobileAppModel {
                 routeURL: routeURL
             )
             libraryCoordinator = library
+            let hostHealth = HarcMobileHostHealthCoordinator(
+                identity: identity,
+                store: store,
+                routeURL: routeURL
+            )
+            hostHealthCoordinator = hostHealth
             captureCoordinator = HarcMobileCaptureCoordinator(
                 producingDeviceID: identity.deviceID,
                 locations: captureLocations,
@@ -298,6 +306,7 @@ final class HarcMobileAppModel {
             ) { [weak self] in
                 self?.transferCoordinator?.retryPending()
                 self?.libraryCoordinator?.refresh()
+                Task { await self?.hostHealthCoordinator?.refresh() }
             }
             readiness = .ready(
                 deviceID: identity.deviceID,
@@ -309,6 +318,7 @@ final class HarcMobileAppModel {
             // recording from racing ahead of a persisted security block.
             transfer.reconcileBackgroundUploads()
             library.refresh()
+            hostHealth.startMonitoring()
         } catch {
             readiness = .failed(error.localizedDescription)
         }

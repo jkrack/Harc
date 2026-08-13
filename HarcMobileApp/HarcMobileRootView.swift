@@ -80,6 +80,14 @@ struct HarcMobileRootView: View {
         ) { _ in
             model.transferCoordinator?.reconcileBackgroundUploads()
             model.libraryCoordinator?.refresh()
+            model.hostHealthCoordinator?.startMonitoring()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.didEnterBackgroundNotification
+            )
+        ) { _ in
+            model.hostHealthCoordinator?.stopMonitoring()
         }
         .sheet(isPresented: $showsPairingScanner) {
             NavigationStack {
@@ -325,6 +333,9 @@ struct HarcMobileRootView: View {
         if let coordinator = model.captureCoordinator {
             ScrollView {
                 VStack(spacing: 24) {
+                    if let health = model.hostHealthCoordinator {
+                        hostHealthView(health)
+                    }
                     Image(systemName: "mic.circle.fill")
                         .font(.system(size: 82))
                         .foregroundStyle(.tint)
@@ -349,9 +360,54 @@ struct HarcMobileRootView: View {
             }
             .refreshable {
                 model.transferCoordinator?.refreshLocalRecordings()
+                await model.hostHealthCoordinator?.refresh()
             }
         } else {
             ProgressView("Preparing recorder…")
+        }
+    }
+
+    private func hostHealthView(
+        _ coordinator: HarcMobileHostHealthCoordinator
+    ) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(hostHealthColor(coordinator.status))
+                .frame(width: 11, height: 11)
+                .overlay {
+                    Circle()
+                        .stroke(.primary.opacity(0.18), lineWidth: 1)
+                }
+            Text(coordinator.status.title)
+                .font(.headline)
+            if coordinator.isChecking {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.thinMaterial, in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Desktop connection")
+        .accessibilityValue(coordinator.status.accessibilityValue)
+        .accessibilityIdentifier(
+            HarcMobileAccessibilityID.hostHealth
+        )
+    }
+
+    private func hostHealthColor(
+        _ status: HarcMobileHostHealthStatus
+    ) -> Color {
+        switch status {
+        case .unpaired:
+            .secondary
+        case .checking:
+            .orange
+        case .connected:
+            .green
+        case .unavailable:
+            .red
         }
     }
 
