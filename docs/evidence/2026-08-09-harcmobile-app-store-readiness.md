@@ -1,7 +1,7 @@
 # HarcMobile App Store readiness evidence
 
-**Date:** 2026-08-09
-**Candidate configuration:** HarcMobile 0.14.2 (57), iOS 18+, iPhone only
+**Date:** 2026-08-13
+**Candidate configuration:** HarcMobile 0.14.3 (58), iOS 18+, iPhone only
 **Device available:** Omega, iPhone 15 Pro Max (`iPhone16,2`), iOS 26.6
 
 ## Decision
@@ -14,22 +14,25 @@ submission copy, and final icon source are now present. Remaining no-go items
 are measurable physical, archive, privacy-account, screenshot, and
 account-owner gates rather than architectural uncertainty.
 
-## 0.14.2 current-tree refresh
+## 0.14.3 current-tree refresh
 
-The current clean source is `e0681143e592823c95df19f087831ebaba7c6b72`;
-the shipping macOS 0.14.2 source tag is `v0.14.2` at
-`81261a70fe31b85edc8b065f4e126e08f953f57c`. Project generation and the
-protocol schema guard passed for 0.14.2 (57). A signed physical run on Omega
-passed all 24 hosted HarcMobile app tests, including Data Protection and backup
-exclusion. The independently sealed codec-qualification guard build embedded
-the full current source SHA and team identifier and passed all 14 tests on
-Omega.
+The shipping macOS 0.14.3 source tag is `v0.14.3` at
+`cdc0708f0576eea40b0d2e95d05dd4ff4ffca052`. The local Host completed its
+Sparkle update and passed strict signature and Gatekeeper verification. A
+signed 0.14.3 physical run on Omega passed all 24 hosted HarcMobile app tests,
+including Data Protection, backup exclusion, route-change capture policy,
+bounded handoff, packaged privacy metadata, and deterministic background-batch
+checks. Current source additionally shares verified direct/relay selection
+between desktop and mobile and shows an authenticated Host-health indicator.
+On 2026-08-13, `xcodegen generate` and a bounded arm64 iOS Simulator
+`build-for-testing` compiled and linked the app, hosted tests, and UI tests with
+`TEST BUILD SUCCEEDED`.
 
 The six physical UI tests did not execute in this refresh: both the initial run
 and one warm retry timed out while Xcode enabled device automation mode. Omega
 remained wired, paired, booted, Developer Mode enabled, and unlocked according
 to CoreDevice. Preserve this as an external test-service gate, not an app test
-failure and not a 0.14.2 UI pass. The complete 0.14.1 Omega UI evidence below
+failure and not a 0.14.3 UI pass. The complete 0.14.1 Omega UI evidence below
 remains valid for that sealed source only.
 
 The current relay source also passed the production/staging fail-closed privacy
@@ -50,7 +53,7 @@ No deployment was performed.
 | Reviewer path | **Pass in source and physical UI** | **Library > Open Offline Review Sample** works without an account, Host, permissions, user data, state writes, or networking. |
 | Privacy manifest | **Structurally valid; deployed config aligned; expiry/owner closeout open** | Packaged manifest declares no tracking/collected data and file-timestamp reason `C617.1`. Production read-back proves Logpush off, no Tail Workers, and observability disabled on the single 100% Worker version; dashboard queries found zero relay events/traces after the change, and Account-scoped Logpush shows no jobs. Prior sampled-record expiry on/after 2026-08-16 and Account Holder exact-build confirmation remain gates. |
 | Public privacy-policy surface | **Pass in source, physical UI, and publication** | The packaged HTTPS policy URL is displayed under **Privacy & Data**, copied into the metadata deck, passed the configuration assertion on Omega, and resolves publicly with HTTP 200. |
-| Public support surface | **Published structure ready; contact open, Account Holder** | The stable support-page URL now resolves with HTTP 200 and contains product help, a privacy warning, and issue intake. Replace the explicit email placeholder with an actually monitored address before submission. GitHub Issues alone is not the contact surface. |
+| Public support surface | **Pass in source; publication refresh pending** | The stable support page contains product help, a privacy warning, issue intake, and the Account Holder-provided monitored contact `support@cloudarchitech.com`. Repository preflight verifies that the visible address and `mailto:` target agree. The public URL will carry the contact after this source update is pushed to `main`; GitHub Issues remain a secondary, public intake surface. |
 | Release configuration | **Pass** | Release settings resolve to bundle `com.harc.HarcMobile`, iOS 18.0, iPhone family 1, `SKIP_INSTALL=NO`, `.app`, automatic signing, no Catalyst or Designed-for-iPhone-on-Mac distribution, complete Data Protection, and non-exempt encryption false. |
 | Broad capture versus optional inference tier | **Pass in architecture/source; physical floor open** | The normative contract and packaged metadata prohibit a hidden device-model capability gate for capture/storage/transfer/Library. Optional inference must fall back to the Host. No model identifier or mobile inference dependency exists in the capture path; the oldest declared launch iPhone still requires physical qualification. |
 | App Store metadata/review copy | **Prepared** | Name, subtitle, promotional text, description, keywords, URLs, review path, and background/permission notes are in `docs/app-store/harcmobile-metadata.md`. Account-owner fields remain explicit. |
@@ -113,10 +116,10 @@ the physical-hardware conclusion above.
 | Final relay validation | `npm run check` passed privacy guard, both generated-type checks, TypeScript, 4 files/17 unit tests, 1 Durable Object integration test, and production/observer dry bundles; the staging dry bundle also passed; final deployed production/staging privacy and health read-backs passed after observer cleanup |
 | Raw-tail privacy audit | Found Cloudflare real-time tail exposes request headers and network metadata. Raw tailing is prohibited. The passing replacement is a checked-in staging-only observer that persists fixed aggregate counters, restores staging before deletion, and fails closed if detachment fails. |
 | Focused physical privacy-copy recheck | Passed 4/4 offline-review/privacy tests on Omega after the no-external-telemetry wording and production configuration change |
-| Executable App Store preflight | The fail-closed repository/archive verifier covers disk floor, plists/privacy, release settings, icon properties, metadata limits, support URL/contact, exact archive contents, and a separate exported-app distribution-signing stage. It pins the exact Harc team/application identifier, requires a future profile expiration, and rejects device-bound or enterprise-wide profiles at distribution. Authoritative keychain-enabled runs pass every archive and distribution-app check and leave one repository owner-input open: the monitored support email. |
+| Executable App Store preflight | The fail-closed repository/archive verifier covers disk floor, plists/privacy, release settings, icon properties, metadata limits, support URL/contact, exact archive contents, and a separate exported-app distribution-signing stage. It pins the exact Harc team/application identifier, requires a future profile expiration, and rejects device-bound or enterprise-wide profiles at distribution. The monitored support contact is now resolved in source; authoritative archive/distribution checks remain tied to the next sealed candidate. |
 | Screenshot-set preflight | Added optional validation for the five versioned 1290 by 2796 App Store images, including exact filenames, dimensions, no alpha channel, and printed SHA-256 evidence. Temporary fixtures passed the complete image set, while independent wrong-dimension/alpha and missing-directory paths failed closed; the fixtures were removed. Final exact-build captures remain open. |
 | Partial native screenshot capture | The opt-in Release UI test passed 1/1 on a dedicated iPhone 15 Pro Max/iOS 26.5 simulator and retained native images 01, 03, and 05. Visual inspection confirmed clean status bar, light appearance, no personal/security data, and truthful shipping UI. Each is 1290 by 2796 with no alpha. The first active-recording attempt captured image 01, then produced an AVFoundation RemoteIO simulator abort before the app could enter recording; image 02 therefore remains a physical-device gate rather than a fabricated simulator state. |
-| Public-URL preflight | The optional live HTTPS check passes: current pushed `main` returns HTTP 200 for both the exact privacy-policy and support URLs. The monitored support email remains an explicit owner-input gate. |
+| Public-URL preflight | The optional live HTTPS check passes for the current pushed privacy-policy and support URLs. Re-run it after publishing the support-contact update to prove the monitored address is present on public `main`. |
 | Cloudflare account export audit | Authenticated Account-scoped Logpush showed **No Logpush jobs**. A counts-only API audit was added for repeatability; current Wrangler OAuth lacks the separate Logs permission, so this run used the Account Holder dashboard. Historical sampled-record expiry remains open until 2026-08-16. |
 | Deterministic UI-test state isolation | A Debug-only, exact UUID-scoped reset flag now clears only the selected test root before first launch; duplicate/missing-scope arguments fail closed, ordinary app storage and Release builds cannot be reset, and C5 relaunch intentionally preserves the same root. The full simulator UI suite passed all three applicable tests, including the native accessibility audit, while correctly skipping the three physical-only cases. |
 | Complete Omega app/UI regression | HarcMobile 0.14.1 (56) passed 30/30 on Omega with no skips or failures: 24 hosted app tests and 6 UI tests, including the native accessibility audit, physical storage-class/backup checks, ordinary microphone capture, clean-root C5 recovery, clean-root C7 storage exhaustion, reviewer/privacy, and recording-entry disclosure. Fresh read-only copies of the deterministic C5/C7 roots each contained exactly one finalized capture, one local-only outbox row, one playable 5.098-second WAV, and zero upload attempts, receipts, or cleanup intents. Independently recomputed PCM hashes matched JSON and database metadata in both roots. This does not replace either named matrix phone. |
@@ -126,8 +129,8 @@ the physical-hardware conclusion above.
 
 ## Immediate completion sequence
 
-1. Replace the published support page's monitored-email placeholder with the
-   Account Holder's real support address.
+1. Publish the resolved monitored support contact and re-run the public-URL
+   preflight.
 2. Capture the five screenshots from the exact release build.
 3. Execute the physical qualification matrix with the declared oldest and
    current non-Pro hardware and preserve reports, hashes, logs, and visible

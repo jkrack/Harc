@@ -365,12 +365,13 @@ if [[ -f "$METADATA" ]]; then
   else
     fail "stable public HTTPS support page and metadata URL are not aligned"
   fi
+  SUPPORT_EMAIL='support@cloudarchitech.com'
   if [[ -f "$SUPPORT_PAGE" ]] && \
-    grep -Fq 'mailto:' "$SUPPORT_PAGE" && \
+    grep -Fq "Email [$SUPPORT_EMAIL](mailto:$SUPPORT_EMAIL)." "$SUPPORT_PAGE" && \
     ! grep -Fq 'ACCOUNT_HOLDER_MONITORED_SUPPORT_EMAIL' "$SUPPORT_PAGE"; then
-    pass "support page contains monitored email contact information"
+    pass "support page contains matching monitored email and mailto contact information"
   else
-    fail "replace the support page's monitored-email placeholder"
+    fail "support page must contain the approved monitored email and matching mailto target"
   fi
 else
   fail "App Store metadata deck is missing"
@@ -418,6 +419,7 @@ if [[ "$CHECK_PUBLIC_URLS" -eq 1 ]]; then
   echo "==> Public App Store URL preflight"
   PUBLIC_PRIVACY_URL="https://github.com/jkrack/Harc/blob/main/docs/privacy/harc-mobile-privacy-policy.md"
   PUBLIC_SUPPORT_URL="https://github.com/jkrack/Harc/blob/main/docs/support/harcmobile-support.md"
+  PUBLIC_SUPPORT_RAW_URL="https://raw.githubusercontent.com/jkrack/Harc/main/docs/support/harcmobile-support.md"
   for URL_LABEL in privacy-policy support; do
     if [[ "$URL_LABEL" == "privacy-policy" ]]; then
       PUBLIC_URL="$PUBLIC_PRIVACY_URL"
@@ -431,6 +433,12 @@ if [[ "$CHECK_PUBLIC_URLS" -eq 1 ]]; then
       fail "public $URL_LABEL URL must resolve with HTTP 200 (found ${PUBLIC_STATUS:-unreachable})"
     fi
   done
+  PUBLIC_SUPPORT_BODY="$(curl -L -sS "$PUBLIC_SUPPORT_RAW_URL" 2>/dev/null || true)"
+  if grep -Fq "Email [$SUPPORT_EMAIL](mailto:$SUPPORT_EMAIL)." <<<"$PUBLIC_SUPPORT_BODY"; then
+    pass "published support page contains the approved monitored email and matching mailto target"
+  else
+    fail "published support page must contain the approved monitored email and matching mailto target"
+  fi
 fi
 
 if [[ -n "$ARCHIVE" ]]; then

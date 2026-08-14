@@ -82,8 +82,7 @@ sync, offline Library access, and explicit private export.
 ## URLs
 
 - Support URL: <https://github.com/jkrack/Harc/blob/main/docs/support/harcmobile-support.md>
-  — replace the explicit contact placeholder with the Account Holder's monitored
-  support address before the release commit is published
+  — monitored contact: <support@cloudarchitech.com>
 - Privacy Policy URL: <https://github.com/jkrack/Harc/blob/main/docs/privacy/harc-mobile-privacy-policy.md>
 - Marketing URL, optional: <https://github.com/jkrack/Harc>
 

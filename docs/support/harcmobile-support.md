@@ -44,7 +44,7 @@ the [HarcMobile privacy policy](../privacy/harc-mobile-privacy-policy.md).
 
 ## Contact support
 
-Email [ACCOUNT_HOLDER_MONITORED_SUPPORT_EMAIL](mailto:ACCOUNT_HOLDER_MONITORED_SUPPORT_EMAIL).
+Email [support@cloudarchitech.com](mailto:support@cloudarchitech.com).
 Include the Harc version, iOS version, iPhone model, the visible status message,
 and steps to reproduce. Do not attach private recordings or transcripts unless
 you deliberately choose to share them.

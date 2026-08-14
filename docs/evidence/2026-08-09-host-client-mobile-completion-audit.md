@@ -105,8 +105,8 @@ notarization, DMG/ZIP hashes, Sparkle publication, and public GitHub release.
    Client's prior On This Mac library.
 5. Repeat reconnect, revocation, and transfer across two unrelated networks.
 6. Complete the named-device iPhone codec and C/T/P/H matrices, physical
-   accessibility/upgrade/recovery checks, remaining screenshots, monitored
-   support contact, and App Store account fields.
+   accessibility/upgrade/recovery checks, remaining screenshots, publication
+   of the resolved support contact, and App Store account fields.
 
 Until those steps are evidenced, the architecture and source are ready for
 continued physical acceptance, but the full goal remains open.
