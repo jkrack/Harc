@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import HarcDomain
 import HarcIdentity
+import HarcProtocol
 
 /// Network-neutral pairing application service. It owns no transport state and
 /// never receives a host signing key or a local-approval capability.
@@ -624,7 +625,8 @@ public actor HarcLocalPairingApprovalService {
         let pending = try await pendingClaim(claimID)
         let grantedScopes = explicitGrantedScopes ?? pending.requestedScopes
         guard !grantedScopes.isEmpty,
-              grantedScopes.count <= 8,
+              grantedScopes.count
+                <= HarcProtocolLimits.pairingRequestedScopes,
               grantedScopes == Array(Set(grantedScopes)).sorted(),
               Set(grantedScopes).isSubset(of: Set(pending.requestedScopes)) else {
             throw HarcHostError.pairingGrantMismatch

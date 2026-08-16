@@ -50,6 +50,51 @@ final class HarcMobileHostHealthCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.status.title, "Desktop not paired")
     }
 
+    func testFailedProbePreservesTheLastAuthenticatedTimestamp() async {
+        let priorVerification = Date(timeIntervalSinceReferenceDate: 100)
+        let coordinator = HarcMobileHostHealthCoordinator(
+            hasActiveAdoption: true,
+            lastVerifiedAt: priorVerification
+        ) {
+            throw TestError.unreachable
+        }
+
+        await coordinator.refresh()
+
+        XCTAssertEqual(coordinator.lastVerifiedAt, priorVerification)
+        guard case .unavailable = coordinator.status else {
+            return XCTFail("Expected an unavailable Host")
+        }
+    }
+
+    func testSuccessfulProbePersistsTheAuthenticatedTimestamp() async {
+        var persisted: Date?
+        let coordinator = HarcMobileHostHealthCoordinator(
+            hasActiveAdoption: true,
+            persistLastVerifiedAt: { persisted = $0 }
+        ) {}
+
+        await coordinator.refresh()
+
+        XCTAssertEqual(persisted, coordinator.lastVerifiedAt)
+        XCTAssertNotNil(persisted)
+    }
+
+    func testAuthenticatedProbePersistsActualHostDisplayName() async {
+        var persistedName: String?
+        let coordinator = HarcMobileHostHealthCoordinator(
+            hostIdentityProbe: { "Studio Mac mini" },
+            hasActiveAdoption: true,
+            hostDisplayName: "Previous Host",
+            persistHostDisplayName: { persistedName = $0 }
+        )
+
+        await coordinator.refresh()
+
+        XCTAssertEqual(coordinator.hostDisplayName, "Studio Mac mini")
+        XCTAssertEqual(persistedName, "Studio Mac mini")
+    }
+
     private enum TestError: Error {
         case unreachable
     }

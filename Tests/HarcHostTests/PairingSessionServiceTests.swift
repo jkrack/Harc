@@ -10,6 +10,71 @@ import HarcTransfer
 
 @Suite("Pairing claims and application sessions", .serialized)
 struct PairingSessionServiceTests {
+    @Test("pairing accepts the desktop client's full scope request")
+    func pairingAcceptsDesktopClientScopes() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let clock = LockedHostClock(fixture.beganAt.addingTimeInterval(10))
+        let store = try await HarcHostStore.inMemory(
+            stagingRoot: directory,
+            metadata: fixture.metadata,
+            localOSAuthenticationBoundary:
+                AllowingHostLocalOSAuthenticationBoundary(),
+            capacityProvider: FixedHostVolumeCapacityProvider(),
+            now: clock.read
+        )
+        let service = try HarcPairingClaimService(
+            store: store,
+            protocolBoundary: pairingProtocolBoundary()
+        )
+
+        let begun = try await beginPairing(
+            service: service,
+            store: store,
+            fixture: fixture,
+            clock: clock,
+            label: "Work Mac",
+            scopes: AuthorizationScope.allCases.sorted()
+        )
+
+        #expect(begun.scopes.count == 10)
+        #expect(
+            begun.scopes.count
+                <= HarcProtocolLimits.pairingRequestedScopes
+        )
+        let transcript = try pairingTranscript(for: begun, fixture: fixture)
+        let signature = try transcript.signClientProof(using: fixture.deviceKey)
+        _ = try await service.provePairingClaim(
+            ProveHostPairingClaimRequest(
+                claimID: begun.response.claimID,
+                claimantToken: begun.response.claimantToken,
+                clientSignature: signature
+            )
+        )
+        #expect(
+            try await service.pairingStatus(
+                claimID: begun.response.claimID,
+                claimantToken: begun.response.claimantToken
+            ) == .pending
+        )
+        let approval = HarcLocalPairingApprovalService(
+            store: store,
+            issuer: TestPairingIssuer()
+        )
+        let issued = try await approval.approve(begun.response.claimID)
+        #expect(issued.claims.scopes == begun.scopes)
+        let status = try await service.pairingStatus(
+            claimID: begun.response.claimID,
+            claimantToken: begun.response.claimantToken
+        )
+        guard case .approved(let exactGrantBytes) = status else {
+            Issue.record("Expected the desktop claim to be approved")
+            return
+        }
+        #expect(exactGrantBytes == issued.exactSignedGrantBytes)
+    }
+
     @Test("pairing reserves once, stores only bindings, derives the golden SAS, and cancels mismatches")
     func pairingProofAndCancellation() async throws {
         let fixture = HostTestFixture()

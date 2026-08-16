@@ -368,6 +368,7 @@ let package = Package(
         .testTarget(
             name: "HarcHostTransportTests",
             dependencies: [
+                "HarcClientStore",
                 "HarcClientTransport",
                 "HarcDomain",
                 "HarcHost",

@@ -7,6 +7,114 @@ import Testing
 
 @Suite("HarcTransferStore trust persistence")
 struct TrustPersistenceTests {
+    @Test("forgetting retires authorization but preserves trust history")
+    func forgetActiveHost() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attributes = RecordingStorageAttributes()
+        let tuple = ClientStoreFixtures.tuple(library: 90, authorityByte: 90)
+        let adoptedAt = ClientStoreFixtures.baseDate
+        let forgottenAt = adoptedAt.addingTimeInterval(30)
+        let store = try HarcTransferStore(
+            databaseURL: ClientStoreLocations(rootDirectory: root)
+                .transferDatabase,
+            installationDeviceID: ClientStoreFixtures.device(),
+            storageAttributes: attributes,
+            now: { forgottenAt }
+        )
+        _ = try store.adopt(
+            ClientStoreFixtures.adoption(
+                tuple: tuple,
+                keyByte: 90,
+                transportEpoch: 4,
+                transportByte: 40,
+                grantEpoch: 7,
+                grantByte: 70,
+                adoptedAt: adoptedAt
+            )
+        )
+
+        #expect(try store.forgetActiveHost())
+        #expect(try store.forgetActiveHost() == false)
+        #expect(try store.activeAdoption() == nil)
+        #expect(throws: ClientStoreError.noActiveAdoption) {
+            try store.authorizingAdoption(
+                for: tuple,
+                requiredScope: .recordingUploadOwn
+            )
+        }
+        let history = try store.historicalAdoptions()
+        #expect(history.count == 1)
+        #expect(history[0].tuple == tuple)
+        #expect(history[0].transportEpochAtRead == 4)
+        #expect(history[0].grantEpoch == 7)
+        #expect(history[0].endedAt == forgottenAt)
+        #expect(history[0].isAuthorizing == false)
+
+        let reopened = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: ClientStoreFixtures.device(),
+            storageAttributes: attributes
+        )
+        #expect(try reopened.activeAdoption() == nil)
+        #expect(try reopened.historicalAdoptions().count == 1)
+    }
+
+    @Test("foreground pairing can re-adopt a Host-revoked installation")
+    func foregroundPairingReadoption() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tuple = ClientStoreFixtures.tuple(library: 91, authorityByte: 91)
+        let firstGrantID = GrantID(ClientStoreFixtures.uuid(1_901))
+        let replacementGrantID = GrantID(ClientStoreFixtures.uuid(1_902))
+        let store = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: ClientStoreFixtures.device(),
+            storageAttributes: RecordingStorageAttributes()
+        )
+        _ = try store.adopt(
+            ClientStoreFixtures.adoption(
+                tuple: tuple,
+                keyByte: 91,
+                transportEpoch: 4,
+                transportByte: 41,
+                grantEpoch: 7,
+                grantByte: 71,
+                grantID: firstGrantID
+            )
+        )
+        #expect(try store.forgetActiveHost())
+
+        let replacement = ClientStoreFixtures.adoption(
+            tuple: tuple,
+            keyByte: 91,
+            transportEpoch: 4,
+            transportByte: 41,
+            grantEpoch: 9,
+            grantByte: 72,
+            grantID: replacementGrantID,
+            adoptedAt: ClientStoreFixtures.baseDate.addingTimeInterval(2)
+        )
+        #expect(throws: ClientStoreError.self) {
+            try store.adopt(replacement)
+        }
+        let readopted = try store.adoptApprovedForegroundPairing(replacement)
+        #expect(readopted.grant.grantID == replacementGrantID)
+        #expect(readopted.grant.registryEpoch == 9)
+        #expect(readopted.grant.status == .active)
+        #expect(
+            try store.authorizingAdoption(
+                for: tuple,
+                requiredScope: .recordingUploadOwn
+            ).adoptionID == readopted.adoptionID
+        )
+        #expect(try store.historicalAdoptions().count == 1)
+        #expect(
+            try store.adoptApprovedForegroundPairing(replacement)
+                .adoptionID == readopted.adoptionID
+        )
+    }
+
     @Test("transport high-water and grant-next rules survive reopen")
     func epochsAndReopen() throws {
         let root = temporaryClientStoreDirectory()

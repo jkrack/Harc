@@ -1,4 +1,7 @@
 @preconcurrency import AVFoundation
+import Foundation
+import HarcHost
+import HarcIdentity
 import HarcProtocol
 import Testing
 @testable import Harc
@@ -76,14 +79,56 @@ struct HarcDesktopPairingScannerTests {
         )
     }
 
-    @Test("Mac client pairing request fits the bounded wire scope limit")
+    @Test("Mac client pairing request passes wire and Host claim bounds")
     @MainActor
-    func macClientPairingScopeLimit() {
+    func macClientPairingScopeLimit() throws {
         let scopes = HarcDesktopClientPairingCoordinator.requestedScopes()
 
         #expect(scopes.count == 10)
         #expect(scopes.count <= HarcProtocolLimits.pairingRequestedScopes)
         #expect(scopes == scopes.sorted())
         #expect(Set(scopes).count == scopes.count)
+
+        let hostKey = SoftwareP256SigningKey()
+        let request = try BeginHostPairingClaimRequest(
+            ticketID: UUID(),
+            ticketSecret: Data(repeating: 0x11, count: 24),
+            clientNonce: Data(repeating: 0x22, count: 32),
+            devicePublicKey: SoftwareP256SigningKey().publicKey,
+            requestedScopes: scopes,
+            deviceLabel: "Work Mac",
+            source: try HostPreauthenticationSource(
+                bindingSHA256: Data(repeating: 0x33, count: 32)
+            ),
+            context: try HostPairingClaimContext(
+                hostAuthorityPublicKey: hostKey.publicKey,
+                tlsSPKISHA256: Data(repeating: 0x44, count: 32)
+            )
+        )
+        #expect(request.requestedScopes == scopes)
+    }
+
+    @Test("forgetting a Host removes only the canonical saved route")
+    func removeSavedHostRoute() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "HarcDesktopHostRouteStoreTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let routeURL = root.appendingPathComponent("host-route.json")
+        let route = try HarcDesktopHostRoute(
+            host: "host.example.test",
+            port: 8443
+        )
+
+        try HarcDesktopHostRouteStore.save(route, to: routeURL)
+        #expect(try HarcDesktopHostRouteStore.load(from: routeURL) == route)
+
+        try HarcDesktopHostRouteStore.removeIfPresent(at: routeURL)
+        #expect(!FileManager.default.fileExists(atPath: routeURL.path))
+
+        // Forget is deliberately idempotent so retrying after a partial UI
+        // failure cannot resurrect or strand the client trust state.
+        try HarcDesktopHostRouteStore.removeIfPresent(at: routeURL)
     }
 }

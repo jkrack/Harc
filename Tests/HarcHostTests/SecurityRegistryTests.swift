@@ -72,6 +72,48 @@ struct SecurityRegistryTests {
         }
     }
 
+    @Test("fractional revocation time preserves the canonical pending mutation")
+    func fractionalRevocationTime() async throws {
+        let fixture = HostTestFixture()
+        let directory = try fixture.temporaryDirectory(
+            "security-fractional-revocation-\(UUID())"
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fractionalTime = Date(
+            timeIntervalSince1970: 2_000_000_000.123_456_7
+        )
+        let highWater = InMemorySecurityRegistryHighWaterMarkStore()
+        let store = try await HarcHostStore.inMemory(
+            stagingRoot: directory,
+            metadata: fixture.metadata,
+            highWaterMarkStore: highWater,
+            localOSAuthenticationBoundary:
+                FixedHostLocalOSAuthenticationBoundary(authorized: true),
+            capacityProvider: FixedHostVolumeCapacityProvider(),
+            now: { fractionalTime }
+        )
+
+        let initial = try fixture.grant()
+        try await store.seedDeviceGrantForTesting(
+            initial,
+            exactGrantBytes: Data("fractional-grant".utf8)
+        )
+        try await store.revokeDevice(
+            fixture.deviceID,
+            revocationID: UUID(),
+            reasonCode: "user.revoked",
+            exactRevocationBytes: Data("fractional-revocation".utf8)
+        )
+
+        #expect(try await store.registryRevision() == 2)
+        #expect(await highWater.loadRegistryRevision() == 2)
+        #expect(
+            try await store.deviceRegistryEntry(
+                deviceID: fixture.deviceID
+            )?.status == .revoked
+        )
+    }
+
     @Test("clock rollback clamps session invalidation for scope replacement and revocation")
     func clockRollbackClampsGrantMutationSessionInvalidation() async throws {
         let fixture = HostTestFixture()

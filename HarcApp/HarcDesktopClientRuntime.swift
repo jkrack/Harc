@@ -62,6 +62,9 @@ final class HarcDesktopClientRuntime: ObservableObject {
         ) {
             transferCoordinator.retryPending()
             libraryCoordinator.refresh()
+        } onForgetting: {
+            transferCoordinator.shutdown()
+            libraryCoordinator.shutdown()
         }
         transferCoordinator.objectWillChange
             .sink { [weak self] _ in

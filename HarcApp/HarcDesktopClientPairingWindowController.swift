@@ -69,6 +69,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
     private let store: HarcTransferStore
     private let routeURL: URL
     private let onAdopted: @MainActor () -> Void
+    private let onForgetting: @MainActor () -> Void
     private var attempt: ActiveAttempt?
     private var reviewedPairingURI: String?
 
@@ -77,12 +78,14 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         store: HarcTransferStore,
         routeURL: URL,
         hasActiveAdoption: Bool,
-        onAdopted: @escaping @MainActor () -> Void = {}
+        onAdopted: @escaping @MainActor () -> Void = {},
+        onForgetting: @escaping @MainActor () -> Void = {}
     ) {
         self.identity = identity
         self.store = store
         self.routeURL = routeURL
         self.onAdopted = onAdopted
+        self.onForgetting = onForgetting
         state = hasActiveAdoption ? .paired(host: "Adopted Host") : .unpaired
     }
 
@@ -247,7 +250,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                         adoptedRoute,
                         to: routeURL
                     )
-                    _ = try store.adopt(adoption)
+                    _ = try store.adoptApprovedForegroundPairing(adoption)
                     try await attempt.connection.shutdownGracefully()
                     self.attempt = nil
                     state = .paired(
@@ -297,6 +300,22 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         guard attempt == nil else { return }
         reviewedPairingURI = nil
         state = .unpaired
+    }
+
+    func forgetHost() {
+        guard attempt == nil else { return }
+        reviewedPairingURI = nil
+        onForgetting()
+        do {
+            _ = try store.forgetActiveHost()
+            try HarcDesktopHostRouteStore.removeIfPresent(at: routeURL)
+            state = .unpaired
+        } catch {
+            state = .failed(
+                title: "Host Couldn’t Be Forgotten",
+                message: "Harc could not finish removing this Host from the Mac. No recordings were deleted. Try again before pairing with a different Host."
+            )
+        }
     }
 
     func cancel() {
@@ -349,6 +368,7 @@ private struct HarcDesktopClientPairingView: View {
     @State private var selectedCameraID = ""
     @State private var scannerFailure: String?
     @State private var showingInvitationImporter = false
+    @State private var showingForgetConfirmation = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -376,6 +396,19 @@ private struct HarcDesktopClientPairingView: View {
             allowsMultipleSelection: false
         ) { result in
             importPairingInvitation(result)
+        }
+        .confirmationDialog(
+            "Forget this Host?",
+            isPresented: $showingForgetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Forget Host", role: .destructive) {
+                showingScanner = false
+                model.forgetHost()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This stops this Mac from connecting automatically. Local recordings and queued transfers stay on this Mac. The Host will still list this installation until it is revoked there.")
         }
     }
 
@@ -527,9 +560,8 @@ private struct HarcDesktopClientPairingView: View {
                     title: "Paired with \(host)",
                     detail: "New Client recordings can now resume secure, compressed transfer. Your previous local library remains On This Mac."
                 )
-                Button("Pair with a Different Host") {
-                    showingScanner = false
-                    model.reset()
+                Button("Forget This Host…", role: .destructive) {
+                    showingForgetConfirmation = true
                 }
             }
         case .failed(let title, let message):

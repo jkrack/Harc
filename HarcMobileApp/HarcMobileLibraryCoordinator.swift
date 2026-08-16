@@ -57,6 +57,7 @@ final class HarcMobileLibraryCoordinator {
     private(set) var searchMessage: String?
     private(set) var pendingMutationCount = 0
     private(set) var conflicts: [VisibleLibraryConflict] = []
+    private(set) var lastUpdatedAt: Date?
     private(set) var recognitionPack: SpeakerRecognitionPack?
     private(set) var audioPolicy: HarcLibraryAudioPolicy
 
@@ -970,13 +971,15 @@ final class HarcMobileLibraryCoordinator {
 
     private func loadCachedView() {
         do {
+            let cacheState = try cache.state()
+            lastUpdatedAt = cacheState?.updatedAt
             recordings = try cache.recordings().sorted {
                 if $0.startedAt != $1.startedAt {
                     return $0.startedAt > $1.startedAt
                 }
                 return $0.canonicalID < $1.canonicalID
             }
-            if let libraryID = try cache.state()?.libraryID {
+            if let libraryID = cacheState?.libraryID {
                 recognitionPack = try cache.speakerRecognitionPack(
                     libraryID: libraryID
                 )
@@ -986,6 +989,7 @@ final class HarcMobileLibraryCoordinator {
             loadQueueView()
         } catch {
             recordings = []
+            lastUpdatedAt = nil
             state = .failed(error.localizedDescription)
         }
     }

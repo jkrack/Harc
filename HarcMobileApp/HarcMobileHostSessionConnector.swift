@@ -11,6 +11,7 @@ struct HarcMobileOpenedHostConnection: Sendable {
     let adoption: ValidatedClientAdoptionEvidence
     let session: HarcOpenedClientSession
     let negotiated: HarcValidatedNegotiatedCapabilitiesV1
+    let hostDisplayName: String
 }
 
 enum HarcMobileHostSessionConnector {
@@ -171,7 +172,8 @@ enum HarcMobileHostSessionConnector {
             connection: connection,
             adoption: adoption,
             session: session,
-            negotiated: negotiated.negotiated
+            negotiated: negotiated.negotiated,
+            hostDisplayName: negotiated.hostInfo.displayName
         )
     }
 

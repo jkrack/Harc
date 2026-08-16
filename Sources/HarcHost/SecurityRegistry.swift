@@ -868,6 +868,7 @@ extension HarcHostStore {
     ) async throws {
         let revisionValue = try Self.sqliteInteger(revision, field: "securityRegistryRevision")
         let appliedTime = Self.unixTime(appliedAt)
+        let exactMutationBytes = try Self.encode(mutation)
         try await dbQueue.write { db in
             guard try Int.fetchOne(
                 db,
@@ -882,7 +883,7 @@ extension HarcHostStore {
                 db,
                 sql: "SELECT registry_revision, mutation_json, created_at FROM pending_security_mutations WHERE singleton = 1"
             ), pending["registry_revision"] as Int64 == revisionValue,
-               try Self.decode(SecurityRegistryMutation.self, from: pending["mutation_json"] as Data) == mutation else {
+               pending["mutation_json"] as Data == exactMutationBytes else {
                 throw HarcHostError.securityRegistryPendingMismatch
             }
 

@@ -111,6 +111,21 @@ enum HarcDesktopHostRouteStore {
             throw HarcDesktopHostConnectionError.routePersistenceFailed
         }
     }
+
+    static func removeIfPresent(at url: URL) throws {
+        guard url.isFileURL else {
+            throw HarcDesktopHostConnectionError.unsafeRoutePath
+        }
+        let standardized = url.standardizedFileURL
+        guard standardized == url,
+              standardized.lastPathComponent == "host-route.json" else {
+            throw HarcDesktopHostConnectionError.unsafeRoutePath
+        }
+        guard FileManager.default.fileExists(atPath: standardized.path) else {
+            return
+        }
+        try FileManager.default.removeItem(at: standardized)
+    }
 }
 
 struct HarcDesktopOpenedHostConnection: Sendable {

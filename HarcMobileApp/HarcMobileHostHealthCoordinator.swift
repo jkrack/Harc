@@ -41,6 +41,7 @@ enum HarcMobileHostHealthStatus: Equatable {
 @Observable
 final class HarcMobileHostHealthCoordinator {
     typealias Probe = @MainActor () async throws -> Void
+    typealias HostIdentityProbe = @MainActor () async throws -> String?
 
     private static let logger = Logger(
         subsystem: "com.harc.HarcMobile",
@@ -49,9 +50,13 @@ final class HarcMobileHostHealthCoordinator {
 
     private(set) var status: HarcMobileHostHealthStatus
     private(set) var isChecking = false
+    private(set) var lastVerifiedAt: Date?
+    private(set) var hostDisplayName: String?
 
-    private let probe: Probe
+    private let hostIdentityProbe: HostIdentityProbe
     private let pollingInterval: Duration
+    private let persistLastVerifiedAt: @MainActor (Date) -> Void
+    private let persistHostDisplayName: @MainActor (String) -> Void
     private var monitoringTask: Task<Void, Never>?
 
     convenience init(
@@ -60,33 +65,93 @@ final class HarcMobileHostHealthCoordinator {
         routeURL: URL,
         pollingInterval: Duration = .seconds(30)
     ) {
-        let hasActiveAdoption = (try? store.activeAdoption()) != nil
+        let activeAdoption = try? store.activeAdoption()
+        let hostAuthorityID = activeAdoption?.tuple.hostAuthorityID.description
         self.init(
-            hasActiveAdoption: hasActiveAdoption,
-            pollingInterval: pollingInterval
-        ) {
-            let opened = try await HarcMobileHostSessionConnector.open(
-                identity: identity,
-                store: store,
-                routeURL: routeURL
-            )
-            do {
-                try await opened.connection.shutdownGracefully()
-            } catch {
-                await opened.connection.shutdownImmediately()
-                throw error
+            hostIdentityProbe: {
+                let opened = try await HarcMobileHostSessionConnector.open(
+                    identity: identity,
+                    store: store,
+                    routeURL: routeURL
+                )
+                do {
+                    try await opened.connection.shutdownGracefully()
+                } catch {
+                    await opened.connection.shutdownImmediately()
+                    throw error
+                }
+                return opened.hostDisplayName
+            },
+            hasActiveAdoption: activeAdoption != nil,
+            lastVerifiedAt: hostAuthorityID.flatMap {
+                HarcMobileHostPresentationStore.lastVerifiedAt(
+                    hostAuthorityID: $0
+                )
+            },
+            hostDisplayName: hostAuthorityID.flatMap {
+                HarcMobileHostPresentationStore.displayName(
+                    hostAuthorityID: $0
+                )
+            },
+            pollingInterval: pollingInterval,
+            persistLastVerifiedAt: { date in
+                guard let current = try? store.activeAdoption() else { return }
+                HarcMobileHostPresentationStore.saveLastVerifiedAt(
+                    date,
+                    hostAuthorityID:
+                        current.tuple.hostAuthorityID.description
+                )
+            },
+            persistHostDisplayName: { displayName in
+                guard let current = try? store.activeAdoption() else { return }
+                HarcMobileHostPresentationStore.saveDisplayName(
+                    displayName,
+                    hostAuthorityID:
+                        current.tuple.hostAuthorityID.description
+                )
             }
-        }
+        )
+    }
+
+    convenience init(
+        hasActiveAdoption: Bool,
+        lastVerifiedAt: Date? = nil,
+        hostDisplayName: String? = nil,
+        pollingInterval: Duration = .seconds(30),
+        persistLastVerifiedAt: @escaping @MainActor (Date) -> Void = { _ in },
+        persistHostDisplayName: @escaping @MainActor (String) -> Void = { _ in },
+        probe: @escaping Probe
+    ) {
+        self.init(
+            hostIdentityProbe: {
+                try await probe()
+                return nil
+            },
+            hasActiveAdoption: hasActiveAdoption,
+            lastVerifiedAt: lastVerifiedAt,
+            hostDisplayName: hostDisplayName,
+            pollingInterval: pollingInterval,
+            persistLastVerifiedAt: persistLastVerifiedAt,
+            persistHostDisplayName: persistHostDisplayName
+        )
     }
 
     init(
+        hostIdentityProbe: @escaping HostIdentityProbe,
         hasActiveAdoption: Bool,
+        lastVerifiedAt: Date? = nil,
+        hostDisplayName: String? = nil,
         pollingInterval: Duration = .seconds(30),
-        probe: @escaping Probe
+        persistLastVerifiedAt: @escaping @MainActor (Date) -> Void = { _ in },
+        persistHostDisplayName: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         status = hasActiveAdoption ? .checking : .unpaired
+        self.lastVerifiedAt = hasActiveAdoption ? lastVerifiedAt : nil
+        self.hostDisplayName = hasActiveAdoption ? hostDisplayName : nil
         self.pollingInterval = pollingInterval
-        self.probe = probe
+        self.persistLastVerifiedAt = persistLastVerifiedAt
+        self.persistHostDisplayName = persistHostDisplayName
+        self.hostIdentityProbe = hostIdentityProbe
     }
 
     func startMonitoring() {
@@ -121,9 +186,21 @@ final class HarcMobileHostHealthCoordinator {
         defer { isChecking = false }
 
         do {
-            try await probe()
-            status = .connected(lastVerifiedAt: .now)
+            let probedHostName = try await hostIdentityProbe()
+            let verifiedHostName = probedHostName?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            if let verifiedHostName, !verifiedHostName.isEmpty {
+                hostDisplayName = verifiedHostName
+                persistHostDisplayName(verifiedHostName)
+            }
+            let verifiedAt = Date.now
+            lastVerifiedAt = verifiedAt
+            persistLastVerifiedAt(verifiedAt)
+            status = .connected(lastVerifiedAt: verifiedAt)
         } catch HarcMobileHostSessionConnectorError.notPaired {
+            lastVerifiedAt = nil
+            hostDisplayName = nil
             status = .unpaired
         } catch {
             Self.logger.info(

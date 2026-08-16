@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import HarcDomain
 import HarcIdentity
+import HarcProtocol
 import HarcTransfer
 
 enum HostAuthenticationProtocolV1 {
@@ -103,7 +104,8 @@ public struct BeginHostPairingClaimRequest: Sendable {
     ) throws {
         guard ticketSecret.count == 24,
               clientNonce.count == SHA256.Digest.byteCount,
-              requestedScopes.count <= 8,
+              requestedScopes.count
+                <= HarcProtocolLimits.pairingRequestedScopes,
               requestedScopes == Array(Set(requestedScopes)).sorted() else {
             throw HarcHostError.invalidAuthenticationInput("pairing claim")
         }

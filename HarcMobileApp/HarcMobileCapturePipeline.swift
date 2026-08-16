@@ -84,6 +84,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
     )
     private let available: DispatchSemaphore
     private let writer: HarcMobileDurableMasterWriter
+    private let levelMeter: HarcMobileAudioLevelMeter
     private let completion: Completion
     private let stateLock = NSLock()
     private var finishRequest: (
@@ -111,6 +112,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         tapFrameCapacity: AVAudioFrameCount,
         captureStartedAt: Date,
         captureStartedMonotonicNanoseconds: UInt64,
+        levelMeter: HarcMobileAudioLevelMeter = HarcMobileAudioLevelMeter(),
         storageAttributes: any HarcMobileCaptureStorageAttributeApplying =
             FoundationHarcMobileCaptureStorageAttributes(),
         storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil,
@@ -133,6 +135,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
             storageExhaustionAfterCanonicalBytesForTesting:
                 storageExhaustionAfterCanonicalBytesForTesting
         )
+        self.levelMeter = levelMeter
         self.completion = completion
     }
 
@@ -265,6 +268,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         while let lease = input.handoff.take() {
             defer { input.handoff.release(lease) }
             let observedInputGap = inputGapBefore(lease, input: input)
+            levelMeter.observe(lease.buffer)
             let bytes = try input.converter.convert(lease.buffer)
             input.lastInputHostTime = lease.hostTime
             input.lastInputFrameCount = lease.buffer.frameLength

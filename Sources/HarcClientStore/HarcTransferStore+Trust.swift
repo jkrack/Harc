@@ -330,6 +330,27 @@ public final class HarcTransferStore: @unchecked Sendable {
         return try installAdoption(adoption, grantTransition: .revokedReadoption)
     }
 
+    /// Installs a grant returned by a fresh, user-confirmed foreground pairing
+    /// ceremony. Unlike background registry advancement, that ceremony may
+    /// replace a locally remembered GrantID when the authoritative Host had
+    /// already revoked and re-adopted this same installation. Epoch, device,
+    /// authority, transport, and exact-byte anti-rollback checks still apply.
+    @discardableResult
+    public func adoptApprovedForegroundPairing(
+        _ evidence: ValidatedClientAdoptionEvidence
+    ) throws -> ActiveAdoptionSnapshot {
+        let adoption = try VerifiedAdoption(evidence: evidence)
+        guard adoption.grant.status == .active else {
+            throw ClientStoreError.nonauthorizingGrantStatus(
+                adoption.grant.status.rawValue
+            )
+        }
+        return try installAdoption(
+            adoption,
+            grantTransition: .foregroundPairing
+        )
+    }
+
     /// Explicitly replaces the remembered authority for one LibraryID. The
     /// validator evidence binds the old anchor to the newly verified adoption;
     /// the injected foreground boundary then performs the exact local choice
@@ -362,7 +383,13 @@ public final class HarcTransferStore: @unchecked Sendable {
     private enum GrantTransition: Equatable {
         case ordinary
         case revokedReadoption
+        case foregroundPairing
         case authorityReplacement(replacingHostTrust: RecordingHostTrustBinding)
+
+        var replacesAuthority: Bool {
+            if case .authorityReplacement = self { return true }
+            return false
+        }
     }
 
     private func installAdoption(
@@ -376,7 +403,7 @@ public final class HarcTransferStore: @unchecked Sendable {
             )
         }
         return try database.write { db in
-            if grantTransition == .ordinary,
+            if !grantTransition.replacesAuthority,
                let remembered = try mostRecentlyRememberedAuthority(
                     for: adoption.tuple.libraryID,
                     in: db
@@ -394,6 +421,8 @@ public final class HarcTransferStore: @unchecked Sendable {
                 case .ordinary:
                     break
                 case .revokedReadoption:
+                    break
+                case .foregroundPairing:
                     break
                 case .authorityReplacement(let replacingHostTrust):
                     try validateAuthorityReplacementSelection(
@@ -437,6 +466,20 @@ public final class HarcTransferStore: @unchecked Sendable {
                         == ClientStoreCoding.milliseconds(adoption.adoptedAt) else {
                     throw ClientStoreError.trustEvidenceBindingMismatch(
                         field: "re-adoption replay"
+                    )
+                }
+                return active
+            }
+            if grantTransition == .foregroundPairing,
+               case .exactReplay = grantDisposition,
+               let active = try activeAdoption(in: db) {
+                guard active.tuple == adoption.tuple,
+                      active.authorityPublicKeyX963
+                        == adoption.authorityPublicKeyX963,
+                      active.transportSet == adoption.transportSet,
+                      active.grant == adoption.grant else {
+                    throw ClientStoreError.trustEvidenceBindingMismatch(
+                        field: "foreground pairing replay"
                     )
                 }
                 return active
@@ -527,6 +570,32 @@ public final class HarcTransferStore: @unchecked Sendable {
                 )
             }
             return active
+        }
+    }
+
+    /// Retires the currently selected Host without deleting local captures,
+    /// transfer state, historical grants, or transport high-water evidence.
+    /// Forgetting is local-only: the Host registry remains authoritative until
+    /// its owner separately revokes this installation.
+    @discardableResult
+    public func forgetActiveHost() throws -> Bool {
+        try database.write { db in
+            guard try activeAdoption(in: db) != nil else { return false }
+            let endedAtMS = try ClientStoreCoding.milliseconds(now())
+            try db.execute(
+                sql: """
+                    UPDATE adoption_history
+                    SET ended_at_ms = ?
+                    WHERE ended_at_ms IS NULL
+                    """,
+                arguments: [endedAtMS]
+            )
+            guard db.changesCount == 1 else {
+                throw ClientStoreError.corruptStoredValue(
+                    field: "activeAdoption"
+                )
+            }
+            return true
         }
     }
 
@@ -981,6 +1050,23 @@ public final class HarcTransferStore: @unchecked Sendable {
             }
             return .exactReplay(epoch: grant.registryEpoch)
         }
+        if transition == .foregroundPairing {
+            guard grant.registryEpoch > row.epoch,
+                  grant.deviceID == row.deviceID,
+                  grant.status == .active else {
+                throw ClientStoreError.grantIdentityEquivocation(
+                    epoch: grant.registryEpoch
+                )
+            }
+            if row.status == .revoked,
+               grant.grantID == row.grantID {
+                throw ClientStoreError.grantRevivalRequiresExplicitReadoption
+            }
+            return .advanced(
+                previous: row.epoch,
+                current: grant.registryEpoch
+            )
+        }
         let next = try nextGrantEpoch(after: row.epoch)
         guard grant.registryEpoch == next else {
             throw ClientStoreError.grantEpochNotNext(
@@ -998,6 +1084,10 @@ public final class HarcTransferStore: @unchecked Sendable {
             if row.status == .revoked, grant.status != .revoked {
                 throw ClientStoreError.grantRevivalRequiresExplicitReadoption
             }
+        case .foregroundPairing:
+            throw ClientStoreError.corruptStoredValue(
+                field: "foregroundPairingTransition"
+            )
         case .revokedReadoption:
             guard row.status == .revoked else {
                 throw ClientStoreError.readoptionRequiresRevokedGrant

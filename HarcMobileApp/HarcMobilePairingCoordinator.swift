@@ -51,7 +51,20 @@ final class HarcMobilePairingCoordinator {
         self.store = store
         self.routeURL = routeURL
         self.onAdopted = onAdopted
-        state = hasActiveAdoption ? .paired(host: "Adopted Host") : .unpaired
+        let activeAdoption = try? store.activeAdoption()
+        let storedHostName = activeAdoption.flatMap {
+            HarcMobileHostPresentationStore.displayName(
+                hostAuthorityID: $0.tuple.hostAuthorityID.description
+            )
+        }
+        state = hasActiveAdoption
+            ? .paired(host: storedHostName ?? "Harc Host")
+            : .unpaired
+    }
+
+    var pairedHostDisplayName: String? {
+        guard case .paired(let host) = state else { return nil }
+        return host
     }
 
     func begin(scannedURI: String) async {
@@ -184,7 +197,12 @@ final class HarcMobilePairingCoordinator {
                         adoptedRoute,
                         to: routeURL
                     )
-                    _ = try store.adopt(adoption)
+                    let activeAdoption = try store.adopt(adoption)
+                    HarcMobileHostPresentationStore.saveDisplayName(
+                        attempt.presentation.hostDisplayName,
+                        hostAuthorityID:
+                            activeAdoption.tuple.hostAuthorityID.description
+                    )
                     try await attempt.connection.shutdownGracefully()
                     self.attempt = nil
                     state = .paired(host: attempt.presentation.hostDisplayName)

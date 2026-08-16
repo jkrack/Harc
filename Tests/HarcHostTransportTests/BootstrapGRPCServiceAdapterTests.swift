@@ -93,11 +93,11 @@ struct BootstrapGRPCServiceAdapterTests {
         message.ticketSecret = bytes(0x31, count: 24)
         message.clientNonce = bytes(0x32)
         message.devicePublicKeyX963 = deviceKey.publicKey.rawBytes
-        message.requestedScopes = [
-            .authorizationScopeLibraryMetadataRead,
-            .authorizationScopeRecordingUploadOwn,
-        ]
-        message.deviceLabel = "Work iPhone"
+        let requestedScopes = AuthorizationScope.allCases.sorted()
+        message.requestedScopes = requestedScopes.map {
+            Harc_V1_AuthorizationScopeV1($0)
+        }
+        message.deviceLabel = "Work Mac"
 
         let response = try await adapter.beginPairingClaim(
             request: ServerRequest(metadata: [:], message: message),
@@ -113,10 +113,7 @@ struct BootstrapGRPCServiceAdapterTests {
         #expect(captured.ticketSecret == message.ticketSecret)
         #expect(captured.clientNonce == message.clientNonce)
         #expect(captured.devicePublicKey == deviceKey.publicKey)
-        #expect(captured.requestedScopes == [
-            .libraryMetadataRead,
-            .recordingUploadOwn,
-        ])
+        #expect(captured.requestedScopes == requestedScopes)
         #expect(captured.source.bindingSHA256 == sourceBinding)
         #expect(captured.context.hostAuthorityPublicKey == hostKey.publicKey)
         #expect(captured.context.tlsSPKISHA256 == bytes(0x41))

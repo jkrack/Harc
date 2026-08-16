@@ -20,8 +20,13 @@ final class HarcMobileCaptureCoordinator {
 
     private(set) var state: State = .idle
 
+    var audioActivityLevel: Double {
+        Double(audioLevelMeter.level)
+    }
+
     private let producingDeviceID: DeviceID
     private let locations: HarcMobileCaptureLocations
+    private let audioLevelMeter = HarcMobileAudioLevelMeter()
     private let storageExhaustionAfterCanonicalBytesForTesting: UInt64?
     private let onFinalized: @MainActor (HarcMobileFinalizedMaster) throws -> Void
     private var engine: AVAudioEngine?
@@ -58,6 +63,7 @@ final class HarcMobileCaptureCoordinator {
 
     func start() async {
         guard state == .idle || isTerminalState else { return }
+        audioLevelMeter.reset()
         state = .requestingPermission
         let granted = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { allowed in
@@ -97,6 +103,7 @@ final class HarcMobileCaptureCoordinator {
                 ),
                 captureStartedAt: startedAt,
                 captureStartedMonotonicNanoseconds: startedMonotonic,
+                levelMeter: audioLevelMeter,
                 storageExhaustionAfterCanonicalBytesForTesting:
                     storageExhaustionAfterCanonicalBytesForTesting
             ) { [weak self] result in
@@ -168,6 +175,7 @@ final class HarcMobileCaptureCoordinator {
     private func pipelineCompleted(
         _ result: Result<HarcMobileFinalizedMaster, any Error>
     ) async {
+        audioLevelMeter.reset()
         pipeline = nil
         captureInput = nil
         isReconfiguring = false
