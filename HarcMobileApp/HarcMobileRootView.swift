@@ -22,9 +22,13 @@ struct HarcMobileRootView: View {
         TabView(selection: $selectedTab) {
             NavigationStack {
                 recordingView
-                    .navigationTitle("Harc")
+                    .toolbar(.hidden, for: .navigationBar)
             }
-            .tabItem { Label("Record", systemImage: "waveform") }
+            .tabItem {
+                HarcMobileRecordTabLabel(
+                    startedAt: model.captureCoordinator?.startedAt
+                )
+            }
             .tag(Tab.record)
 
             NavigationStack {
@@ -67,7 +71,7 @@ struct HarcMobileRootView: View {
             .tabItem { Label("Host", systemImage: "macmini") }
             .tag(Tab.host)
         }
-        .tint(HarcMobilePalette.action)
+        .tint(recordTabTint)
         .accessibilityIdentifier(HarcMobileAccessibilityID.root)
         .safeAreaInset(edge: .top, spacing: 0) {
             if selectedTab != .record {
@@ -339,53 +343,73 @@ struct HarcMobileRootView: View {
     @ViewBuilder
     private func readyRecordingView(recovered: Int) -> some View {
         if let coordinator = model.captureCoordinator {
-            ScrollView {
-                VStack(spacing: 22) {
-                    HarcMobileCaptureHeroView(
-                        state: coordinator.state,
-                        audioLevel: { coordinator.audioActivityLevel },
-                        start: { Task { await coordinator.start() } },
-                        stop: { coordinator.stop() },
-                        reset: { coordinator.resetTerminalState() }
-                    )
-                    if recovered > 0 {
-                        Label(
-                            "Recovered \(recovered) durable recording\(recovered == 1 ? "" : "s")",
-                            systemImage: "checkmark.shield"
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        recordHeader(captureState: coordinator.state)
+
+                        Spacer(minLength: 24)
+
+                        HarcMobileCaptureHeroView(
+                            state: coordinator.state,
+                            audioLevel: { coordinator.audioActivityLevel },
+                            start: { Task { await coordinator.start() } },
+                            stop: { coordinator.stop() },
+                            reset: { coordinator.resetTerminalState() }
                         )
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(HarcMobilePalette.success)
-                    }
-                    if let health = model.hostHealthCoordinator,
-                       let transfer = model.transferCoordinator,
-                       let library = model.libraryCoordinator {
-                        HarcMobileCaptureStatusBoard(
-                            host: .host(
-                                status: health.status,
-                                hostName: health.hostDisplayName
-                                    ?? model.pairingCoordinator?
-                                        .pairedHostDisplayName,
-                                lastVerifiedAt: health.lastVerifiedAt
-                            ),
-                            transfer: .transfer(
-                                state: transfer.state,
-                                pendingCount: transfer.pendingCount,
-                                localRecordings: transfer.localRecordings
-                            ),
-                            library: .library(
-                                state: library.state,
-                                recordingCount: library.recordings.count,
-                                lastUpdatedAt: library.lastUpdatedAt
+
+                        if recovered > 0 {
+                            Label(
+                                "Recovered \(recovered) durable recording\(recovered == 1 ? "" : "s")",
+                                systemImage: "checkmark.shield"
                             )
-                        )
-                        transferRecoveryAction(transfer)
-                        localRecordingsButton(transfer)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(HarcMobilePalette.success)
+                            .padding(.top, 12)
+                        }
+
+                        if coordinator.state == .idle,
+                           let transfer = model.transferCoordinator {
+                            let presentation =
+                                HarcMobileCaptureStatusPresentation.transfer(
+                                    state: transfer.state,
+                                    pendingCount: transfer.pendingCount,
+                                    localRecordings: transfer.localRecordings,
+                                    hostName: adoptedHostName
+                                )
+                            if transferSummaryKind(transfer) == .caughtUp {
+                                HarcMobileTransferSummaryView(
+                                    kind: .caughtUp,
+                                    presentation: presentation,
+                                    action: {}
+                                )
+                                .padding(.top, 14)
+                            }
+
+                            Spacer(minLength: 24)
+
+                            if transferSummaryKind(transfer) == .pending {
+                                HarcMobileTransferSummaryView(
+                                    kind: .pending,
+                                    presentation: presentation,
+                                    action: { showsLocalRecordings = true }
+                                )
+                            }
+                        } else {
+                            Spacer(minLength: 24)
+                        }
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    .padding(.bottom, 16)
+                    .frame(
+                        minHeight: geometry.size.height,
+                        alignment: .top
+                    )
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
+                .scrollBounceBehavior(.basedOnSize)
             }
+            .background(Color(uiColor: .systemBackground))
             .refreshable {
                 model.transferCoordinator?.refreshLocalRecordings()
                 model.libraryCoordinator?.refresh()
@@ -417,49 +441,63 @@ struct HarcMobileRootView: View {
     }
 
     @ViewBuilder
-    private func localRecordingsButton(
-        _ coordinator: HarcMobileTransferCoordinator
+    private func recordHeader(
+        captureState: HarcMobileCaptureCoordinator.State
     ) -> some View {
-        if !coordinator.localRecordings.isEmpty
-            || coordinator.localRecordingsError != nil {
-            Button {
-                showsLocalRecordings = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "iphone")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(HarcMobilePalette.indigo)
-                        .frame(width: 34, height: 34)
-                        .background(
-                            HarcMobilePalette.indigo.opacity(0.12),
-                            in: Circle()
-                        )
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("On This iPhone")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text(
-                            "\(coordinator.localRecordings.count) protected recording\(coordinator.localRecordings.count == 1 ? "" : "s")"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+        if case .recording = captureState {
+            HarcMobileRecordingIndicator()
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+        } else {
+            HStack(spacing: 16) {
+                Text("Record")
+                    .font(.title2.weight(.bold))
+                Spacer(minLength: 8)
+                HarcMobileHostPill(
+                    presentation: .make(
+                        status: model.hostHealthCoordinator?.status
+                            ?? .unpaired,
+                        hostName: adoptedHostName
+                    )
+                ) {
+                    selectedTab = .host
                 }
-                .padding(14)
-                .background(
-                    .thinMaterial,
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier(
-                HarcMobileAccessibilityID.localRecordings
-            )
         }
+    }
+
+    private func transferSummaryKind(
+        _ coordinator: HarcMobileTransferCoordinator
+    ) -> HarcMobileTransferSummaryKind {
+        let pending = HarcMobileCaptureStatusPresentation
+            .effectivePendingCount(
+                pendingCount: coordinator.pendingCount,
+                localRecordings: coordinator.localRecordings
+            )
+        if pending > 0 || coordinator.localRecordingsError != nil {
+            return .pending
+        }
+        switch coordinator.state {
+        case .idle, .uploaded:
+            return .caughtUp
+        case .encoding, .waitingForPairing, .connecting, .uploading,
+             .backgroundScheduled, .codecQualificationRequired,
+             .retryNeeded, .securityBlocked:
+            return .pending
+        }
+    }
+
+    private var adoptedHostName: String? {
+        model.hostHealthCoordinator?.hostDisplayName
+            ?? model.pairingCoordinator?.pairedHostDisplayName
+    }
+
+    private var recordTabTint: Color {
+        if selectedTab == .record,
+           model.captureCoordinator?.startedAt != nil {
+            return HarcMobilePalette.coral
+        }
+        return HarcMobilePalette.action
     }
 
     @ViewBuilder
@@ -492,50 +530,6 @@ struct HarcMobileRootView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private func transferRecoveryAction(
-        _ coordinator: HarcMobileTransferCoordinator
-    ) -> some View {
-        switch coordinator.state {
-        case .codecQualificationRequired:
-            EmptyView()
-        case .retryNeeded(_, let message):
-            VStack(spacing: 8) {
-                Label(
-                    "Saved locally; Host transfer will retry",
-                    systemImage: "arrow.clockwise.icloud"
-                )
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry Host Transfer") {
-                    coordinator.retryPending()
-                }
-                .buttonStyle(.bordered)
-            }
-        case .securityBlocked(let recordingUUID, let message):
-            VStack(spacing: 8) {
-                Label(
-                    "Transfer blocked for security",
-                    systemImage: "lock.trianglebadge.exclamationmark"
-                )
-                .foregroundStyle(.red)
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Review and Retry Transfer") {
-                    coordinator.retry(recordingUUID: recordingUUID)
-                }
-                .buttonStyle(.bordered)
-            }
-        case .idle, .encoding, .waitingForPairing, .connecting, .uploading,
-             .backgroundScheduled, .uploaded:
-            EmptyView()
         }
     }
 

@@ -15,14 +15,14 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         recordTab.tap()
 
         XCTAssertTrue(
-            app.staticTexts["Ready to record locally"]
+            app.staticTexts["Tap to record"]
                 .waitForExistence(timeout: 10)
         )
         XCTAssertTrue(
             app.staticTexts.matching(
                 NSPredicate(
                     format: "label CONTAINS %@",
-                    "keeps a protected copy on this iPhone"
+                    "Records to protected storage on this iPhone"
                 )
             ).firstMatch.exists
         )
@@ -80,7 +80,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(recordTab.waitForExistence(timeout: 10))
         recordTab.tap()
         XCTAssertTrue(
-            app.staticTexts["Ready to record locally"]
+            app.staticTexts["Tap to record"]
                 .waitForExistence(timeout: 10)
         )
         try performAccessibilityAudit(in: app, surface: "Record")
@@ -233,7 +233,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             app.staticTexts["Recovered 1 durable recording"]
                 .waitForExistence(timeout: 15)
         )
-        XCTAssertTrue(app.staticTexts["Ready to record locally"].exists)
+        XCTAssertTrue(app.staticTexts["Tap to record"].exists)
         XCTAssertEqual(app.state, .runningForeground)
 #endif
     }

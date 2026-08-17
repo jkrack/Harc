@@ -80,40 +80,50 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
     static func transfer(
         state: HarcMobileTransferCoordinator.State,
         pendingCount: Int,
-        localRecordings: [HarcMobileLocalRecording]
+        localRecordings: [HarcMobileLocalRecording],
+        hostName: String? = nil
     ) -> Self {
         let locallyPending = localRecordings.count {
             $0.transferState != .committed
         }
         let pending = max(pendingCount, locallyPending)
+        let destination = hostName?.nonemptyTrimmed ?? "your Host"
 
         switch state {
         case .encoding:
-            return preparingTransfer("Preparing protected transfer")
+            return preparingTransfer(
+                pending: pending,
+                detail: "Preparing to send to \(destination)…"
+            )
         case .connecting:
-            return preparingTransfer("Connecting securely to Host")
+            return preparingTransfer(
+                pending: pending,
+                detail: "Connecting securely to \(destination)…"
+            )
         case .uploading:
-            return preparingTransfer("Sending lossless audio to Host")
-        case .backgroundScheduled(_, let batches):
-            return Self(
-                title: "Host transfer scheduled",
-                detail: count(batches, singular: "protected batch"),
-                systemImage: "arrow.up.circle",
-                tone: .checking,
-                relativeMoment: nil
+            return preparingTransfer(
+                pending: pending,
+                detail: "Sending to \(destination)…"
+            )
+        case .backgroundScheduled(_, let taskCount):
+            return preparingTransfer(
+                pending: max(pending, taskCount),
+                detail: "Sending to \(destination) in the background…"
             )
         case .uploaded:
             return Self(
-                title: "Saved on Host",
+                title: hostName?.nonemptyTrimmed.map {
+                    "All recordings verified on \($0)"
+                } ?? "All recordings verified on Host",
                 detail: "Verified durable receipt received",
-                systemImage: "checkmark.shield.fill",
+                systemImage: "checkmark",
                 tone: .healthy,
                 relativeMoment: nil
             )
         case .securityBlocked:
             return Self(
-                title: "Transfer paused",
-                detail: "Security review required; audio remains protected",
+                title: "Transfer paused — security review required",
+                detail: protectedTitle(max(pending, 1)),
                 systemImage: "lock.trianglebadge.exclamationmark",
                 tone: .critical,
                 relativeMoment: nil
@@ -121,27 +131,26 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .codecQualificationRequired:
             let protectedCount = max(pending, localRecordings.count)
             return Self(
-                title: "Transfers paused",
-                detail: protectedCount > 0
-                    ? count(protectedCount, singular: "recording")
-                        + " safe on this iPhone"
+                title: protectedCount > 0
+                    ? protectedTitle(protectedCount)
                     : "New recordings stay safe on this iPhone",
-                systemImage: "pause.circle.fill",
-                tone: .caution,
+                detail: "Transfers paused · they move to \(destination) when ready",
+                systemImage: "iphone",
+                tone: .neutral,
                 relativeMoment: nil
             )
         case .retryNeeded:
             return Self(
-                title: count(pending, singular: "recording") + " safe here",
-                detail: "Host transfer will retry",
-                systemImage: "arrow.clockwise",
-                tone: .caution,
+                title: protectedTitle(max(pending, 1)),
+                detail: "Transfers paused · Host transfer will retry",
+                systemImage: "iphone",
+                tone: .neutral,
                 relativeMoment: nil
             )
         case .waitingForPairing(let waiting):
             return Self(
-                title: count(waiting, singular: "recording") + " safe here",
-                detail: "Pair a Host when you are ready",
+                title: protectedTitle(max(max(pending, waiting), 1)),
+                detail: "Transfers paused · pair a Host when ready",
                 systemImage: "iphone",
                 tone: .neutral,
                 relativeMoment: nil
@@ -149,23 +158,21 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .idle:
             if pending > 0 {
                 return Self(
-                    title: count(pending, singular: "recording") + " safe here",
-                    detail: "Waiting for a verified Host receipt",
+                    title: protectedTitle(pending),
+                    detail: "Transfers paused · they move to \(destination) when ready",
                     systemImage: "iphone",
-                    tone: .caution,
+                    tone: .neutral,
                     relativeMoment: nil
                 )
             }
-            let verified = localRecordings.count {
-                $0.transferState == .committed
-            }
             return Self(
-                title: "All caught up",
-                detail: verified > 0
-                    ? count(verified, singular: "local master")
-                        + " verified by Host"
-                    : "Nothing waiting to transfer",
-                systemImage: "checkmark.circle.fill",
+                title: hostName?.nonemptyTrimmed.map {
+                    "All recordings verified on \($0)"
+                } ?? "No recordings waiting to transfer",
+                detail: hostName?.nonemptyTrimmed == nil
+                    ? "New recordings stay protected on this iPhone"
+                    : "Verified durable receipts are up to date",
+                systemImage: "checkmark",
                 tone: .healthy,
                 relativeMoment: nil
             )
@@ -231,18 +238,80 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         }
     }
 
-    private static func preparingTransfer(_ title: String) -> Self {
+    static func effectivePendingCount(
+        pendingCount: Int,
+        localRecordings: [HarcMobileLocalRecording]
+    ) -> Int {
+        max(
+            pendingCount,
+            localRecordings.count { $0.transferState != .committed }
+        )
+    }
+
+    private static func preparingTransfer(
+        pending: Int,
+        detail: String
+    ) -> Self {
         Self(
-            title: title,
-            detail: "The local master stays protected",
-            systemImage: "arrow.up.circle",
+            title: protectedTitle(max(pending, 1)),
+            detail: detail,
+            systemImage: "iphone",
             tone: .checking,
             relativeMoment: nil
         )
     }
 
+    private static func protectedTitle(_ value: Int) -> String {
+        count(value, singular: "recording") + " safe on this iPhone"
+    }
+
     private static func count(_ value: Int, singular: String) -> String {
         "\(value) \(singular)\(value == 1 ? "" : "s")"
+    }
+}
+
+struct HarcMobileHostPillPresentation: Equatable {
+    enum Tone: Equatable {
+        case connected
+        case unavailable
+        case neutral
+    }
+
+    let title: String
+    let accessibilityValue: String
+    let tone: Tone
+
+    static func make(
+        status: HarcMobileHostHealthStatus,
+        hostName: String?
+    ) -> Self {
+        let name = hostName?.nonemptyTrimmed ?? "Harc Host"
+        switch status {
+        case .unpaired:
+            return Self(
+                title: "Pair a Host",
+                accessibilityValue: "No Host paired",
+                tone: .neutral
+            )
+        case .checking:
+            return Self(
+                title: "Checking…",
+                accessibilityValue: "Checking \(name)",
+                tone: .neutral
+            )
+        case .connected:
+            return Self(
+                title: name,
+                accessibilityValue: "\(name), connected",
+                tone: .connected
+            )
+        case .unavailable:
+            return Self(
+                title: name,
+                accessibilityValue: "\(name), unavailable",
+                tone: .unavailable
+            )
+        }
     }
 }
 
@@ -254,11 +323,47 @@ struct HarcMobileCaptureHeroView: View {
     let reset: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
-            control
-            status
+        Group {
+            switch state {
+            case .idle:
+                VStack(spacing: 20) {
+                    control
+                    VStack(spacing: 6) {
+                        Text("Tap to record")
+                            .font(.title3.weight(.semibold))
+                        Text("Records to protected storage on this iPhone")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .multilineTextAlignment(.center)
+                }
+            case .recording(let startedAt):
+                VStack(spacing: 24) {
+                    HarcMobileElapsedTime(
+                        startedAt: startedAt,
+                        presentation: .hero
+                    )
+                    control
+                    VStack(spacing: 6) {
+                        Text("Tap to stop")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Protected on this iPhone")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            default:
+                VStack(spacing: 16) {
+                    control
+                    terminalStatus
+                }
+            }
         }
         .frame(maxWidth: .infinity)
+        .contentTransition(.opacity)
+        .animation(.easeInOut(duration: 0.24), value: state.presentationKey)
     }
 
     @ViewBuilder
@@ -274,7 +379,7 @@ struct HarcMobileCaptureHeroView: View {
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HarcMobileBlobButtonStyle())
             .accessibilityLabel("Start Recording")
             .accessibilityHint(
                 "Starts a protected microphone recording on this iPhone."
@@ -290,7 +395,7 @@ struct HarcMobileCaptureHeroView: View {
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HarcMobileBlobButtonStyle())
             .accessibilityLabel("Stop Recording")
             .accessibilityHint(
                 "Stops and durably saves the recording on this iPhone."
@@ -306,28 +411,12 @@ struct HarcMobileCaptureHeroView: View {
     }
 
     @ViewBuilder
-    private var status: some View {
+    private var terminalStatus: some View {
         switch state {
-        case .idle:
-            Text("Ready to record locally")
-                .font(.title2.weight(.semibold))
-            Text(
-                "Harc keeps a protected copy on this iPhone first. Host transfer happens separately."
-            )
-            .foregroundStyle(.primary)
-            .multilineTextAlignment(.center)
         case .requestingPermission:
             ProgressView("Waiting for microphone permission…")
         case .starting:
             ProgressView("Starting protected recording…")
-        case .recording(let startedAt):
-            Text("Recording")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(HarcMobilePalette.coral)
-            HarcMobileElapsedTime(startedAt: startedAt)
-            Text("Protected on this iPhone")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.primary)
         case .stopping:
             ProgressView("Saving durable recording…")
         case .saved:
@@ -358,92 +447,175 @@ struct HarcMobileCaptureHeroView: View {
                 .multilineTextAlignment(.center)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
-        }
-    }
-}
-
-struct HarcMobileCaptureStatusBoard: View {
-    let host: HarcMobileCaptureStatusPresentation
-    let transfer: HarcMobileCaptureStatusPresentation
-    let library: HarcMobileCaptureStatusPresentation
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HarcMobileCaptureStatusRow(presentation: host)
-                .accessibilityIdentifier(HarcMobileAccessibilityID.hostHealth)
-            Divider().padding(.leading, 52)
-            HarcMobileCaptureStatusRow(presentation: transfer)
-            Divider().padding(.leading, 52)
-            HarcMobileCaptureStatusRow(presentation: library)
-        }
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22)
-                .stroke(.primary.opacity(0.08), lineWidth: 1)
-        }
-    }
-}
-
-private struct HarcMobileCaptureStatusRow: View {
-    let presentation: HarcMobileCaptureStatusPresentation
-
-    var body: some View {
-        HStack(spacing: 13) {
-            Image(systemName: presentation.systemImage)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 32, height: 32)
-                .background(tint.opacity(0.13), in: Circle())
-            VStack(alignment: .leading, spacing: 3) {
-                Text(presentation.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                HStack(spacing: 4) {
-                    Text(presentation.detail)
-                    relativeMoment
-                }
-                .font(.caption)
-                .foregroundStyle(.primary)
-            }
-            Spacer(minLength: 4)
-            if presentation.tone == .checking {
-                ProgressView().controlSize(.small)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder
-    private var relativeMoment: some View {
-        switch presentation.relativeMoment {
-        case .seen(let date):
-            Text("· Seen")
-            Text(date, style: .relative)
-        case .checked(let date):
-            Text("· Checked")
-            Text(date, style: .relative)
-        case .updated(let date):
-            Text("· Updated")
-            Text(date, style: .relative)
-        case nil:
+        case .idle, .recording:
             EmptyView()
         }
     }
+}
 
-    private var tint: Color {
+private struct HarcMobileBlobButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(
+                .easeOut(duration: 0.12),
+                value: configuration.isPressed
+            )
+    }
+}
+
+struct HarcMobileHostPill: View {
+    let presentation: HarcMobileHostPillPresentation
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 8, height: 8)
+                Text(presentation.title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 7)
+            .background(.thinMaterial, in: Capsule())
+            .overlay {
+                Capsule().stroke(.primary.opacity(0.08), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Host")
+        .accessibilityValue(presentation.accessibilityValue)
+        .accessibilityHint("Opens Host status and pairing.")
+        .accessibilityIdentifier(HarcMobileAccessibilityID.hostHealth)
+    }
+
+    private var dotColor: Color {
         switch presentation.tone {
-        case .neutral:
-            HarcMobilePalette.indigo
-        case .checking:
-            HarcMobilePalette.cyan
-        case .healthy:
+        case .connected:
             HarcMobilePalette.success
-        case .caution:
+        case .unavailable:
             HarcMobilePalette.amber
-        case .critical:
-            HarcMobilePalette.coral
+        case .neutral:
+            Color(uiColor: .systemGray)
+        }
+    }
+}
+
+enum HarcMobileTransferSummaryKind: Equatable {
+    case pending
+    case caughtUp
+}
+
+struct HarcMobileTransferSummaryView: View {
+    let kind: HarcMobileTransferSummaryKind
+    let presentation: HarcMobileCaptureStatusPresentation
+    let action: () -> Void
+
+    var body: some View {
+        switch kind {
+        case .pending:
+            pendingCard
+        case .caughtUp:
+            caughtUpLine
+        }
+    }
+
+    private var pendingCard: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: presentation.systemImage)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(iconColor)
+                    .frame(width: 34, height: 34)
+                    .background(iconColor.opacity(0.11), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(presentation.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(presentation.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if presentation.tone == .checking {
+                    ProgressView().controlSize(.small)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 14)
+            .background(cardBackground, in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(cardBorder, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(HarcMobileAccessibilityID.localRecordings)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private var caughtUpLine: some View {
+        HStack(spacing: 13) {
+            Image(systemName: "checkmark")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(HarcMobilePalette.success)
+            Text(presentation.title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var iconColor: Color {
+        presentation.tone == .critical
+            ? HarcMobilePalette.amber
+            : Color.secondary
+    }
+
+    private var cardBackground: AnyShapeStyle {
+        if presentation.tone == .critical {
+            return AnyShapeStyle(HarcMobilePalette.amber.opacity(0.08))
+        }
+        return AnyShapeStyle(.thinMaterial)
+    }
+
+    private var cardBorder: Color {
+        if presentation.tone == .critical {
+            return HarcMobilePalette.amber.opacity(0.28)
+        }
+        return Color.primary.opacity(0.08)
+    }
+}
+
+struct HarcMobileRecordingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(
+            .animation(minimumInterval: 1 / 24, paused: reduceMotion)
+        ) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate * 3.5
+            let pulse = reduceMotion ? 0 : ((sin(phase) + 1) / 2)
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(HarcMobilePalette.coral)
+                    .frame(width: 11, height: 11)
+                    .scaleEffect(0.9 + (pulse * 0.35))
+                    .opacity(0.75 + (pulse * 0.25))
+                Text("Recording")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(HarcMobilePalette.coral)
+            }
         }
     }
 }
@@ -501,19 +673,35 @@ private struct HarcMobileOrganicCaptureCore: View {
                     y: 10
                 )
 
-                Image(systemName: style.symbol)
-                    .font(.system(size: 38, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .symbolEffect(.pulse, options: .repeating, isActive: style.busy && !reduceMotion)
-                    .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                if case .recording = state {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.white)
+                        .frame(width: 34, height: 34)
+                        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                } else {
+                    Image(systemName: style.symbol)
+                        .font(.system(size: 38, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .symbolEffect(
+                            .pulse,
+                            options: .repeating,
+                            isActive: style.busy && !reduceMotion
+                        )
+                        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                }
             }
-            .frame(width: 190, height: 190)
+            .frame(width: diameter, height: diameter)
             .contentShape(Circle())
         }
     }
 
     private var style: HarcMobileCaptureCoreStyle {
         HarcMobileCaptureCoreStyle(state: state)
+    }
+
+    private var diameter: CGFloat {
+        if case .recording = state { return 200 }
+        return 190
     }
 }
 
@@ -653,20 +841,65 @@ private struct HarcMobileOrganicBlobShape: Shape {
     }
 }
 
-private struct HarcMobileElapsedTime: View {
+struct HarcMobileElapsedTime: View {
+    enum Presentation {
+        case hero
+        case compact
+    }
+
     let startedAt: Date
+    var presentation: Presentation = .compact
+
+    @ScaledMetric(relativeTo: .largeTitle) private var heroSize = 56.0
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             Text(Self.text(from: startedAt, to: context.date))
-                .font(.title3.monospacedDigit().weight(.medium))
+                .font(font)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
                 .accessibilityLabel("Recording duration")
         }
     }
 
-    private static func text(from start: Date, to end: Date) -> String {
+    static func text(from start: Date, to end: Date) -> String {
         let seconds = max(0, Int(end.timeIntervalSince(start)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private var font: Font {
+        switch presentation {
+        case .hero:
+            .system(
+                size: heroSize,
+                weight: .ultraLight,
+                design: .monospaced
+            )
+        case .compact:
+            .body.monospacedDigit()
+        }
+    }
+}
+
+struct HarcMobileRecordTabLabel: View {
+    let startedAt: Date?
+
+    var body: some View {
+        if let startedAt {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Label(
+                    HarcMobileElapsedTime.text(
+                        from: startedAt,
+                        to: context.date
+                    ),
+                    systemImage: "mic.fill"
+                )
+            }
+            .foregroundStyle(HarcMobilePalette.coral)
+        } else {
+            Label("Record", systemImage: "mic")
+        }
     }
 }
 
@@ -714,5 +947,20 @@ private extension String {
     var nonemptyTrimmed: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+}
+
+private extension HarcMobileCaptureCoordinator.State {
+    var presentationKey: Int {
+        switch self {
+        case .idle: 0
+        case .requestingPermission: 1
+        case .starting: 2
+        case .recording: 3
+        case .stopping: 4
+        case .saved: 5
+        case .storageExhausted: 6
+        case .failed: 7
+        }
     }
 }

@@ -25,7 +25,7 @@ final class HarcMobileAppStoreScreenshotUITests: XCTestCase {
     let app = XCUIApplication()
     app.launch()
 
-    let ready = app.staticTexts["Ready to record locally"]
+    let ready = app.staticTexts["Tap to record"]
     XCTAssertTrue(ready.waitForExistence(timeout: 15))
     keepScreenshot(named: "01-record")
 

@@ -63,12 +63,19 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         let presentation = HarcMobileCaptureStatusPresentation.transfer(
             state: .idle,
             pendingCount: 2,
-            localRecordings: []
+            localRecordings: [],
+            hostName: "Studio Mac"
         )
 
-        XCTAssertEqual(presentation.title, "2 recordings safe here")
-        XCTAssertEqual(presentation.tone, .caution)
-        XCTAssertTrue(presentation.detail.contains("verified Host receipt"))
+        XCTAssertEqual(
+            presentation.title,
+            "2 recordings safe on this iPhone"
+        )
+        XCTAssertEqual(presentation.tone, .neutral)
+        XCTAssertEqual(
+            presentation.detail,
+            "Transfers paused · they move to Studio Mac when ready"
+        )
     }
 
     func testUploadedTransferRequiresVerifiedReceiptLanguage() {
@@ -78,7 +85,7 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
             localRecordings: []
         )
 
-        XCTAssertEqual(presentation.title, "Saved on Host")
+        XCTAssertEqual(presentation.title, "All recordings verified on Host")
         XCTAssertEqual(
             presentation.detail,
             "Verified durable receipt received"
@@ -101,13 +108,60 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
             localRecordings: [recording]
         )
 
-        XCTAssertEqual(presentation.title, "Transfers paused")
+        XCTAssertEqual(
+            presentation.title,
+            "1 recording safe on this iPhone"
+        )
+        XCTAssertEqual(
+            presentation.detail,
+            "Transfers paused · they move to your Host when ready"
+        )
+        XCTAssertEqual(presentation.tone, .neutral)
+        XCTAssertFalse(presentation.detail.contains("codec"))
+        XCTAssertFalse(presentation.detail.contains("build"))
+    }
+
+    func testHostPillMapsHealthWithoutDashboardCopy() {
+        let connected = HarcMobileHostPillPresentation.make(
+            status: .connected(
+                lastVerifiedAt: Date(timeIntervalSinceReferenceDate: 50)
+            ),
+            hostName: "Studio Mac"
+        )
+        XCTAssertEqual(connected.title, "Studio Mac")
+        XCTAssertEqual(connected.tone, .connected)
+        XCTAssertEqual(
+            connected.accessibilityValue,
+            "Studio Mac, connected"
+        )
+
+        let unpaired = HarcMobileHostPillPresentation.make(
+            status: .unpaired,
+            hostName: nil
+        )
+        XCTAssertEqual(unpaired.title, "Pair a Host")
+        XCTAssertEqual(unpaired.tone, .neutral)
+    }
+
+    func testSecurityBlockedIsTheOnlyCriticalTransferSummary() {
+        let presentation = HarcMobileCaptureStatusPresentation.transfer(
+            state: .securityBlocked(
+                recordingUUID: UUID(),
+                message: "Receipt signature mismatch"
+            ),
+            pendingCount: 1,
+            localRecordings: []
+        )
+
+        XCTAssertEqual(
+            presentation.title,
+            "Transfer paused — security review required"
+        )
+        XCTAssertEqual(presentation.tone, .critical)
         XCTAssertEqual(
             presentation.detail,
             "1 recording safe on this iPhone"
         )
-        XCTAssertFalse(presentation.detail.contains("codec"))
-        XCTAssertFalse(presentation.detail.contains("build"))
     }
 
     func testLibraryPresentationNamesCachedCanonicalRecordingCount() {
