@@ -179,6 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onOpenHostPairing = { [weak self] in
             self?.openRolePairing(nil)
         }
+        bridge.onRecoverAndSyncClient = { [weak self] in
+            self?.recoverAndSyncClient(nil)
+        }
         bridge.onOpenActivity = { [weak self] in
             self?.statusPopover?.performClose(nil)
             self?.openLibrary()
@@ -337,6 +340,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             status.isEnabled = false
             menu.addItem(status)
+            let recover = NSMenuItem(
+                title: bridge.clientRecoverSyncState?.isRunning == true
+                    ? "Recovering & Syncing…"
+                    : "Recover & Sync",
+                action: #selector(recoverAndSyncClient(_:)),
+                keyEquivalent: ""
+            )
+            recover.target = self
+            recover.isEnabled = desktopClientRuntime != nil
+                && bridge.clientRecoverSyncState?.isRunning != true
+            menu.addItem(recover)
             let hostLibrary = NSMenuItem(
                 title: "Host Library…",
                 action: #selector(openDesktopHostLibrary(_:)),
@@ -471,6 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Present only in Desktop Client role. The existing canonical store stays
     /// mounted separately as On This Mac; this runtime owns only ClientState.
     private var desktopClientRuntime: HarcDesktopClientRuntime?
+    private var clientRecoverSyncTask: Task<Void, Never>?
     private let localLibraryReprocessState = LocalLibraryReprocessState()
     private var localLibraryReprocessTask: Task<Void, Never>?
     private var hostProcessingWorker: HarcHostProcessingWorker?
@@ -877,6 +892,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         activeManagedWindows.removeAll()
         desktopClientRuntime?.shutdown()
         desktopClientRuntime = nil
+        clientRecoverSyncTask?.cancel()
+        clientRecoverSyncTask = nil
         localLibraryReprocessTask?.cancel()
         localLibraryReprocessTask = nil
         restoreUITestPreferencesIfNeeded()
@@ -1032,6 +1049,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             hostLibraryItem.keyEquivalentModifierMask = [.command, .option]
             hostLibraryItem.target = self
+            let recoverItem = fileMenu.addItem(
+                withTitle: "Recover & Sync Client Recordings",
+                action: #selector(recoverAndSyncClient(_:)),
+                keyEquivalent: "r"
+            )
+            recoverItem.keyEquivalentModifierMask = [.command, .option]
+            recoverItem.target = self
         }
         let pairItem = fileMenu.addItem(
             withTitle: prefs.runtimeRole == .client
@@ -3968,6 +3992,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         orderManagedWindowFront(window)
     }
 
+    @objc private func recoverAndSyncClient(_ sender: Any?) {
+        guard clientRecoverSyncTask == nil else { return }
+        guard let runtime = desktopClientRuntime else {
+            presentLibraryUnavailable(
+                bridge.runtimeStartupError
+                    ?? "Recover & Sync is available while this Mac is running in Client mode."
+            )
+            return
+        }
+        bridge.clientRecoverSyncState = .running
+        bridge.onOpenActivity()
+        clientRecoverSyncTask = Task { @MainActor [weak self, weak runtime] in
+            guard let self, let runtime else { return }
+            defer { clientRecoverSyncTask = nil }
+            do {
+                let report = try await runtime.recoverAndSync()
+                bridge.clientRecoverSyncState = .completed(report)
+                bridge.clientTransferStatusText = runtime.statusMessage
+            } catch is CancellationError {
+                bridge.clientRecoverSyncState = .ready
+            } catch {
+                bridge.clientRecoverSyncState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
     @objc private func openHostPairing(_ sender: Any?) {
         guard let runtime = hostRuntime else {
             presentLibraryUnavailable(
@@ -4003,6 +4053,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.remoteRelayStatusDetail = nil
         bridge.hostRuntimeReady = false
         bridge.clientRuntimeReady = false
+        bridge.clientRecoverSyncState = nil
+        bridge.clientTransferStatusText = nil
         do {
             let store = try await makeApplicationStore()
             try await finishStoreBootstrap(store)
@@ -4025,6 +4077,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             hostProcessingWorker = nil
             desktopClientRuntime?.shutdown()
             desktopClientRuntime = nil
+            clientRecoverSyncTask?.cancel()
+            clientRecoverSyncTask = nil
             bridge.hostRuntimeReady = false
             bridge.clientRuntimeReady = false
             remoteRelayStatusTask?.cancel()
@@ -4125,6 +4179,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 )
             )
             desktopClientRuntime = runtime
+            bridge.clientRecoverSyncState = runtime.lastRecoverSyncReport.map {
+                .completed($0)
+            } ?? .ready
+            bridge.clientTransferStatusText = runtime.statusMessage
+            runtime.$statusMessage
+                .sink { [weak bridge] status in
+                    bridge?.clientTransferStatusText = status
+                }
+                .store(in: &cancellables)
             prefs.$clientHostAudioDownloadEnabled
                 .combineLatest(prefs.$clientHostAudioRetentionEnabled)
                 .sink { [weak runtime] allowsDownload, retainsAfterPlayback in

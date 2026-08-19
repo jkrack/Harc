@@ -50,6 +50,9 @@ public struct ActivityView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: HarcSpacing.lg) {
                     jobsSection
+                    if let clientState = bridge.clientRecoverSyncState {
+                        clientRecoverSyncSection(clientState)
+                    }
                     if let recovery = bridge.stopRecovery {
                         stopRecoverySection(recovery)
                     }
@@ -66,6 +69,79 @@ public struct ActivityView: View {
             }
         }
         .frame(width: 480, height: 520)
+    }
+
+    // MARK: Client archive recovery
+
+    private func clientRecoverSyncSection(
+        _ state: ClientRecoverSyncState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                Label("Client Recover & Sync", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.harcCaption.weight(.semibold))
+                if let transfer = bridge.clientTransferStatusText {
+                    Text(transfer)
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                }
+                switch state {
+                case .ready:
+                    Text("Inventory protected Client recordings, repair safe local metadata gaps, and retry Host transfer.")
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                case .running:
+                    HStack(spacing: HarcSpacing.sm) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking ClientState/Captures…")
+                            .font(.harcCaption)
+                    }
+                case .completed(let report):
+                    Label(
+                        report.headline,
+                        systemImage: report.issues.isEmpty && report.securityBlocked == 0
+                            ? "checkmark.circle.fill"
+                            : "exclamationmark.triangle.fill"
+                    )
+                    .font(.harcCaption.weight(.semibold))
+                    .foregroundStyle(
+                        report.issues.isEmpty && report.securityBlocked == 0
+                            ? Color.harc(.ready)
+                            : Color.harc(.attention)
+                    )
+                    Text(report.detail)
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(report.issues) { issue in
+                        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                            Text("Recording \(issue.recording)")
+                                .font(.harcCaption.weight(.semibold))
+                            Text(issue.message)
+                                .font(.harcCaption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                case .failed(let message):
+                    Label("Recover & Sync could not finish", systemImage: "exclamationmark.triangle.fill")
+                        .font(.harcCaption.weight(.semibold))
+                        .foregroundStyle(Color.harc(.attention))
+                    Text(message)
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Button(state.isRunning ? "Recovering…" : "Recover & Sync") {
+                    bridge.onRecoverAndSyncClient()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(state.isRunning)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: Jobs

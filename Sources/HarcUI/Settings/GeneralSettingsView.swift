@@ -54,7 +54,29 @@ public struct GeneralSettingsView: View {
                 Section {
                     if bridge.clientRuntimeReady {
                         Label("Client is ready", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(Color.green)
+                            .foregroundStyle(Color.harc(.ready))
+                        if let status = bridge.clientTransferStatusText {
+                            LabeledContent("Transfer") {
+                                Text(status)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        }
+                        Button {
+                            bridge.onRecoverAndSyncClient()
+                        } label: {
+                            if bridge.clientRecoverSyncState?.isRunning == true {
+                                HStack(spacing: HarcSpacing.sm) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Recovering & Syncing…")
+                                }
+                            } else {
+                                Text("Recover & Sync")
+                            }
+                        }
+                        .disabled(bridge.clientRecoverSyncState?.isRunning == true)
+                        .help("Inventory protected Client recordings, repair safe local metadata gaps, and retry Host transfer.")
                         Button("Pair with Host…") {
                             bridge.onOpenHostPairing()
                         }
@@ -63,7 +85,7 @@ public struct GeneralSettingsView: View {
                             "Client could not start",
                             systemImage: "exclamationmark.triangle.fill"
                         )
-                            .foregroundStyle(Color.orange)
+                            .foregroundStyle(Color.harc(.attention))
                         Text(error)
                             .font(.harcLabel)
                             .foregroundStyle(Color.secondary)
@@ -112,7 +134,7 @@ public struct GeneralSettingsView: View {
                 Section {
                     if bridge.hostRuntimeReady {
                         Label("Host is running", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(Color.green)
+                            .foregroundStyle(Color.harc(.ready))
                         Button("Pair a Device…") {
                             bridge.onOpenHostPairing()
                         }
@@ -121,7 +143,7 @@ public struct GeneralSettingsView: View {
                             "Host could not start",
                             systemImage: "exclamationmark.triangle.fill"
                         )
-                            .foregroundStyle(Color.orange)
+                            .foregroundStyle(Color.harc(.attention))
                         Text(error)
                             .font(.harcLabel)
                             .foregroundStyle(Color.secondary)
@@ -157,7 +179,7 @@ public struct GeneralSettingsView: View {
                     if let detail = bridge.remoteRelayStatusDetail {
                         Label(detail, systemImage: "key.horizontal.fill")
                             .font(.harcLabel)
-                            .foregroundStyle(Color.orange)
+                            .foregroundStyle(Color.harc(.attention))
                             .textSelection(.enabled)
                         if prefs.runtimeRole == .host,
                            bridge.remoteRelayStatusText

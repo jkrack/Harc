@@ -98,6 +98,11 @@ public final class HarcAppBridge: ObservableObject {
     /// On This Mac library bootstrap. Settings uses this instead of treating a
     /// configured Client preference as proof that pairing/storage are usable.
     @Published public var clientRuntimeReady: Bool = false
+    /// Present only in Client mode. Holds the latest explicit archive
+    /// reconciliation result so Settings and Activity report the same facts.
+    @Published public var clientRecoverSyncState: ClientRecoverSyncState? = nil
+    /// Live transfer status from the Client outbox coordinator.
+    @Published public var clientTransferStatusText: String? = nil
     /// Persists a launch failure after stderr disappears so Settings cannot
     /// claim "Host" while every Host-only action is absent.
     @Published public var runtimeStartupError: String? = nil
@@ -137,6 +142,9 @@ public final class HarcAppBridge: ObservableObject {
     /// Opens the pairing surface for the configured runtime role. The older
     /// name is retained as source compatibility for existing UI call sites.
     public var onOpenHostPairing: () -> Void = {}
+    /// Inventory ClientState/Captures, repair safe local metadata gaps, and
+    /// retry every non-security-blocked durable outbox.
+    public var onRecoverAndSyncClient: () -> Void = {}
     /// Open the Library's Activity surface (readiness / recovery / jobs) —
     /// the destination behind the panel's single status row.
     public var onOpenActivity: () -> Void = {}

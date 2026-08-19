@@ -9,11 +9,13 @@ import HarcCore
 import HarcDomain
 import HarcIdentity
 import HarcTransfer
+import HarcUI
 
 @MainActor
 final class HarcDesktopClientRuntime: ObservableObject {
     @Published private(set) var pendingCaptureCount = 0
     @Published private(set) var statusMessage = "Client storage ready"
+    @Published private(set) var lastRecoverSyncReport: ClientRecoverSyncReport?
 
     let identity: InstallationSigningIdentity
     let transferStore: HarcTransferStore
@@ -104,7 +106,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
             installationDeviceID: identity.deviceID
         )
         let libraryCache = try HarcLibraryCache(rootDirectory: root)
-        try recoverCaptureSidecars(
+        let startupRecovery = try HarcDesktopClientRecovery.reconcile(
             root: root,
             store: transferStore,
             deviceID: identity.deviceID
@@ -115,6 +117,10 @@ final class HarcDesktopClientRuntime: ObservableObject {
             libraryCache: libraryCache,
             root: root,
             audioPolicy: audioPolicy
+        )
+        runtime.lastRecoverSyncReport = startupRecovery.report
+        runtime.transferCoordinator.setRecoveryBlockedOrigins(
+            startupRecovery.blockedOrigins
         )
         try runtime.libraryCoordinator.applyAudioPolicy(audioPolicy)
         runtime.transferCoordinator.retryPending()
@@ -144,6 +150,28 @@ final class HarcDesktopClientRuntime: ObservableObject {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    /// User-visible, repeat-safe repair pass over the private Client archive.
+    /// Reconciliation runs off the main actor; retry scheduling returns
+    /// immediately while the coordinator reports live transfer progress.
+    func recoverAndSync() async throws -> ClientRecoverSyncReport {
+        let root = root
+        let transferStore = transferStore
+        let deviceID = identity.deviceID
+        let outcome = try await Task.detached(priority: .userInitiated) {
+            try HarcDesktopClientRecovery.reconcile(
+                root: root,
+                store: transferStore,
+                deviceID: deviceID
+            )
+        }.value
+        let report = outcome.report
+        lastRecoverSyncReport = report
+        transferCoordinator.setRecoveryBlockedOrigins(outcome.blockedOrigins)
+        transferCoordinator.retryPending()
+        refreshStatus()
+        return report
     }
 
     func applyAudioPolicy(_ policy: HarcLibraryAudioPolicy) {
@@ -189,40 +217,6 @@ final class HarcDesktopClientRuntime: ObservableObject {
         ).contains { $0.pathExtension == "json" || $0.pathExtension == "wav" }
     }
 
-    private static func recoverCaptureSidecars(
-        root: URL,
-        store: HarcTransferStore,
-        deviceID: DeviceID
-    ) throws {
-        let directory = root.appendingPathComponent(
-            "Captures",
-            isDirectory: true
-        )
-        try HarcDesktopClientFiles.requireDirectory(directory)
-        for sidecarURL in try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ).filter({ $0.lastPathComponent.hasSuffix(".capture.json") }) {
-            let sidecar = try JSONDecoder().decode(
-                HarcDesktopClientCaptureSidecar.self,
-                from: Data(contentsOf: sidecarURL, options: .mappedIfSafe)
-            )
-            guard sidecar.capture.producingDeviceID == deviceID else {
-                throw HarcDesktopClientError.captureIdentityMismatch
-            }
-            let masterURL = directory.appendingPathComponent(
-                "\(sidecar.capture.originRecordingID.recordingUUID.uuidString.lowercased()).wav"
-            )
-            guard FileManager.default.fileExists(atPath: masterURL.path) else {
-                throw HarcDesktopClientError.missingDurableMaster
-            }
-            _ = try store.persistFinalizedCapture(
-                sidecar.capture,
-                masterFileURL: masterURL,
-                persistedAt: sidecar.persistedAt
-            )
-        }
-    }
 }
 
 struct HarcDesktopClientCaptureSidecar: Codable, Sendable {

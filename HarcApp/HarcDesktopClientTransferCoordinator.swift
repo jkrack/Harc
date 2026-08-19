@@ -33,6 +33,9 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private let routeURL: URL
     private var queue: [HarcMobileFinalizedMaster] = []
     private var queuedOrigins = Set<OriginRecordingID>()
+    /// Set by Client archive reconciliation. These origins remain fail-closed
+    /// until a later successful inventory proves their local facts again.
+    private var recoveryBlockedOrigins = Set<OriginRecordingID>()
     private var worker: Task<Void, Never>?
 
     init(
@@ -80,6 +83,9 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     func retryPending() {
         do {
             let pending = try store.recordingOutboxes().filter { outbox in
+                guard !recoveryBlockedOrigins.contains(
+                    outbox.finalizedCapture.capture.originRecordingID
+                ) else { return false }
                 let transferable = outbox.stateMachine.state != .securityBlocked
                     && outbox.integrityBlock == nil
                     && outbox.finalizedCapture.masterFileState == .present
@@ -109,6 +115,12 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         } catch {
             state = .retryNeeded(UUID(), error.localizedDescription)
         }
+    }
+
+    func setRecoveryBlockedOrigins(_ origins: Set<OriginRecordingID>) {
+        recoveryBlockedOrigins = origins
+        queue.removeAll { origins.contains($0.originRecordingID) }
+        queuedOrigins.subtract(origins)
     }
 
     func shutdown() {
