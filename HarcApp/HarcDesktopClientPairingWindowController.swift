@@ -8,6 +8,7 @@ import HarcDomain
 import HarcIdentity
 import HarcProtocol
 import HarcTransfer
+import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -42,6 +43,11 @@ final class HarcDesktopClientPairingWindowController:
 
 @MainActor
 final class HarcDesktopClientPairingCoordinator: ObservableObject {
+    private static let pairingLog = Logger(
+        subsystem: "com.harc.app",
+        category: "DesktopPairing"
+    )
+
     enum State: Equatable {
         case unpaired
         case reviewInvitation(
@@ -101,6 +107,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         }
         state = .connecting
         var connection: HarcPinnedGRPCConnection?
+        var authenticatedPath: HarcVerifiedRoutePath?
         do {
             let nowMS = UInt64(Date().timeIntervalSince1970 * 1_000)
             let ticket = try PairingTicketV1.decodeURI(
@@ -125,10 +132,13 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                     capabilityPolicy: policy,
                     sasDictionary: try HarcSASDictionaryV1.bundled()
                 )
-                _ = try await verifier.getHostInfo(expectation: expectation)
+                return try await verifier.getHostInfo(
+                    expectation: expectation
+                )
             }
             let opened = verified.connection
             connection = opened
+            authenticatedPath = verified.path
             let client = HarcBootstrapClient(
                 rpc: opened,
                 capabilityPolicy: policy,
@@ -138,7 +148,8 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                 ticket: ticket,
                 deviceSigner: identity,
                 requestedScopes: Self.requestedScopes(),
-                deviceLabel: ProcessInfo.processInfo.hostName
+                deviceLabel: ProcessInfo.processInfo.hostName,
+                verifiedHostInfo: verified.verification
             )
             attempt = ActiveAttempt(
                 client: client,
@@ -156,6 +167,9 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
             )
         } catch {
             if let connection { await connection.shutdownImmediately() }
+            Self.pairingLog.error(
+                "Pairing failed after path=\(String(describing: authenticatedPath), privacy: .public) errorType=\(String(reflecting: type(of: error)), privacy: .public) detail=\(String(describing: error), privacy: .private)"
+            )
             if let error = error as? HarcBootstrapClientError {
                 state = .failed(
                     title: "Pairing Request Rejected",
@@ -168,6 +182,21 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                 state = .failed(
                     title: "Secure Host Connection Failed",
                     message: "\(relayDetail) Update Harc on both Macs, keep the Host pairing window open, and create a fresh Mac client invitation. No device was adopted."
+                )
+            } else if let authenticatedPath {
+                let path: String
+                let diagnostic: String
+                switch authenticatedPath {
+                case .direct:
+                    path = "direct Host connection"
+                    diagnostic = "PAIR-DIRECT-AFTER-VERIFY"
+                case .encryptedRelay:
+                    path = "encrypted relay connection"
+                    diagnostic = "PAIR-RELAY-AFTER-VERIFY"
+                }
+                state = .failed(
+                    title: "Pairing Connection Ended",
+                    message: "Harc authenticated the Host, but the \(path) could not continue through claim creation. Keep both Harc apps open and create a fresh Mac client invitation. Diagnostic: \(diagnostic). No device was adopted."
                 )
             } else {
                 state = .failed(

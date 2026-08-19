@@ -10,6 +10,7 @@ import HarcDomain
 @testable import HarcHostTransport
 @testable import HarcIdentity
 import HarcProtocol
+@testable import HarcRemoteTransport
 import HarcStore
 import HarcTransfer
 @preconcurrency import Network
@@ -246,6 +247,7 @@ struct PairingLifecycleLoopbackIntegrationTests {
         ) { _ in }
 
         var connection: HarcPinnedGRPCConnection?
+        var relayTunnel: RelayEmulatorTunnel?
         do {
             let port = try #require(listener.port).rawValue
             let trust = try HarcTransportTrustCoordinator(
@@ -253,11 +255,30 @@ struct PairingLifecycleLoopbackIntegrationTests {
                 hostAuthorityPublicKey:
                     hostState.authorityIdentity.publicKey
             )
+            let connectionHost: String
+            let connectionPort: Int
+            if let originText = ProcessInfo.processInfo.environment[
+                "HARC_RELAY_EMULATOR_ORIGIN"
+            ] {
+                let origin = try #require(URL(string: originText))
+                let tunnel = try await RelayEmulatorTunnel.open(
+                    origin: origin,
+                    hostTLSPort: port,
+                    recorder: RelayFrameRecorder()
+                )
+                relayTunnel = tunnel
+                connectionHost = tunnel.localHost
+                connectionPort = Int(tunnel.localPort)
+            } else {
+                connectionHost = "127.0.0.1"
+                connectionPort = Int(port)
+            }
             let openedConnection = try await HarcPinnedGRPCConnection.connect(
-                host: "127.0.0.1",
-                port: Int(port),
+                host: connectionHost,
+                port: connectionPort,
                 serverHostname: "localhost",
-                trustCoordinator: trust
+                trustCoordinator: trust,
+                transportLifetime: relayTunnel
             )
             connection = openedConnection
             let client = HarcBootstrapClient(
@@ -437,7 +458,11 @@ struct PairingLifecycleLoopbackIntegrationTests {
             await runtime.finishGracefulShutdown()
             #expect(!(await runtime.isRunning))
         } catch {
-            if let connection { await connection.shutdownImmediately() }
+            if let connection {
+                await connection.shutdownImmediately()
+            } else if let relayTunnel {
+                await relayTunnel.shutdown()
+            }
             await runtime.stopImmediately()
             throw error
         }
@@ -492,12 +517,21 @@ struct PairingLifecycleLoopbackIntegrationTests {
                 )
             )
         }
+        let expectation = try HarcBootstrapTrustExpectation(
+            pairingTicket: ticket
+        )
+        let verifiedHostInfo = try await Self.atStage(
+            "authenticated route verification"
+        ) {
+            try await client.getHostInfo(expectation: expectation)
+        }
         let presentation = try await Self.atStage("claim begin") {
             try await client.beginPairing(
                 ticket: ticket,
                 deviceSigner: deviceIdentity,
                 requestedScopes: Self.desktopScopes,
-                deviceLabel: "Loopback Work Mac"
+                deviceLabel: "Loopback Work Mac",
+                verifiedHostInfo: verifiedHostInfo
             )
         }
         let pending = try await approvalService.pendingClaim(

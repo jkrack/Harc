@@ -62,6 +62,7 @@ struct HarcVerifiedRouteStrategyTests {
                 if connection == "direct" {
                     throw Failure.direct
                 }
+                return "authenticated-\(connection)"
             },
             close: { connection in
                 await events.append("close-\(connection)")
@@ -70,6 +71,7 @@ struct HarcVerifiedRouteStrategyTests {
 
         #expect(selected.connection == "relay")
         #expect(selected.path == .encryptedRelay)
+        #expect(selected.verification == "authenticated-relay")
         #expect(
             await events.snapshot() == [
                 "open-direct",

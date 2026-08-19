@@ -71,6 +71,7 @@ final class HarcMobilePairingCoordinator {
         guard attempt == nil else { return }
         state = .connecting
         var connection: HarcPinnedGRPCConnection?
+        var authenticatedPath: HarcVerifiedRoutePath?
         do {
             let nowMS = UInt64(Date().timeIntervalSince1970 * 1_000)
             let ticket = try PairingTicketV1.decodeURI(
@@ -124,7 +125,7 @@ final class HarcMobilePairingCoordinator {
                         capabilityPolicy: policy,
                         sasDictionary: try HarcSASDictionaryV1.bundled()
                     )
-                    _ = try await verifier.getHostInfo(
+                    return try await verifier.getHostInfo(
                         expectation: expectation
                     )
                 },
@@ -134,6 +135,7 @@ final class HarcMobilePairingCoordinator {
             )
             let opened = selected.connection
             connection = opened
+            authenticatedPath = selected.path
             let client = HarcBootstrapClient(
                 rpc: opened,
                 capabilityPolicy: policy,
@@ -143,7 +145,8 @@ final class HarcMobilePairingCoordinator {
                 ticket: ticket,
                 deviceSigner: identity,
                 requestedScopes: Self.requestedScopes(),
-                deviceLabel: UIDevice.current.name
+                deviceLabel: UIDevice.current.name,
+                verifiedHostInfo: selected.verification
             )
             attempt = ActiveAttempt(
                 client: client,
@@ -167,6 +170,16 @@ final class HarcMobilePairingCoordinator {
                     : "the direct route"
                 state = .failed(
                     "Harc could not authenticate the Host through \(routes). Keep the Host pairing screen open and create a fresh invitation. No device was adopted."
+                )
+            } else if let authenticatedPath {
+                let route = authenticatedPath == .direct
+                    ? "direct Host connection"
+                    : "encrypted relay connection"
+                let diagnostic = authenticatedPath == .direct
+                    ? "PAIR-DIRECT-AFTER-VERIFY"
+                    : "PAIR-RELAY-AFTER-VERIFY"
+                state = .failed(
+                    "Harc authenticated the Host, but the \(route) could not continue through claim creation. Keep both Harc apps open and create a fresh invitation. Diagnostic: \(diagnostic). No device was adopted."
                 )
             } else {
                 state = .failed(error.localizedDescription)

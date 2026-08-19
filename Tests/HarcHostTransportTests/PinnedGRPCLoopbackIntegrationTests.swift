@@ -791,7 +791,7 @@ private enum LoopbackPostSessionError: Error {
     case unexpectedCall
 }
 
-private actor RelayFrameRecorder {
+actor RelayFrameRecorder {
     private var frames: [Data] = []
 
     func record(_ data: Data) {
@@ -812,7 +812,7 @@ private extension Array where Element == Data {
 /// Opt-in production-path bridge for `wrangler dev`. The outer emulator uses
 /// loopback HTTP/WebSocket, while the bytes it forwards are the real pinned
 /// TLS 1.3 connection created by `HarcPinnedGRPCConnection` below.
-private final actor RelayEmulatorTunnel:
+final actor RelayEmulatorTunnel:
     HarcPinnedConnectionTransportLifetime
 {
     nonisolated let localHost = "127.0.0.1"

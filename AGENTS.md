@@ -125,6 +125,12 @@ two workers and stop before free disk falls below 5 GiB.
     swift test --filter CustomerExperienceE2ETests
     swift test
 
+Pairing transport changes must also pass the real pinned-TLS lifecycle through
+both the direct socket and local encrypted-relay emulator paths:
+
+    ./scripts/test-pairing-lifecycle.sh
+    ./scripts/test-pairing-lifecycle-relay-emulator.sh
+
 **Known flaky suites — all timing-based, all load-induced.** Under the full
 parallel suite these intermittently fail while Core ML models compile, then pass
 immediately in isolation; that load/no-load contrast is the tell. Observed again

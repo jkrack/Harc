@@ -1,18 +1,30 @@
 /// A client connection path is usable only after an authenticated,
 /// idempotent Host operation succeeds on it. Creating a transport owner is not
 /// proof that DNS, TLS, HTTP/2, or the encrypted relay is usable.
-public enum HarcVerifiedRoutePath: Sendable {
+public enum HarcVerifiedRoutePath: Equatable, Sendable {
     case direct
     case encryptedRelay
 }
 
-public struct HarcVerifiedRouteSelection<Connection: Sendable>: Sendable {
+public struct HarcVerifiedRouteSelection<
+    Connection: Sendable,
+    Verification: Sendable
+>: Sendable {
     public let connection: Connection
     public let path: HarcVerifiedRoutePath
+    /// The authenticated result produced by the operation which selected this
+    /// exact connection. Callers can carry it into the next protocol step
+    /// instead of repeating verification on a potentially changed route.
+    public let verification: Verification
 
-    init(connection: Connection, path: HarcVerifiedRoutePath) {
+    init(
+        connection: Connection,
+        path: HarcVerifiedRoutePath,
+        verification: Verification
+    ) {
         self.connection = connection
         self.path = path
+        self.verification = verification
     }
 }
 
@@ -32,20 +44,24 @@ public struct HarcVerifiedRouteFailure: Error {
 /// Every candidate must pass `verify`; rejected connections are closed before
 /// failover or returning an error.
 public enum HarcVerifiedRouteStrategy {
-    public static func openVerified<Connection: Sendable>(
+    public static func openVerified<
+        Connection: Sendable,
+        Verification: Sendable
+    >(
         direct: @escaping @Sendable () async throws -> Connection,
         relay: (@Sendable () async throws -> Connection)?,
-        verify: @escaping @Sendable (Connection) async throws -> Void,
+        verify: @escaping @Sendable (Connection) async throws -> Verification,
         close: @escaping @Sendable (Connection) async -> Void
-    ) async throws -> HarcVerifiedRouteSelection<Connection> {
+    ) async throws -> HarcVerifiedRouteSelection<Connection, Verification> {
         var directConnection: Connection?
         do {
             let connection = try await direct()
             directConnection = connection
-            try await verify(connection)
+            let verification = try await verify(connection)
             return HarcVerifiedRouteSelection(
                 connection: connection,
-                path: .direct
+                path: .direct,
+                verification: verification
             )
         } catch {
             if let directConnection {
@@ -63,10 +79,11 @@ public enum HarcVerifiedRouteStrategy {
             do {
                 let connection = try await relay()
                 relayConnection = connection
-                try await verify(connection)
+                let verification = try await verify(connection)
                 return HarcVerifiedRouteSelection(
                     connection: connection,
-                    path: .encryptedRelay
+                    path: .encryptedRelay,
+                    verification: verification
                 )
             } catch {
                 if let relayConnection {

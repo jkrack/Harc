@@ -113,6 +113,31 @@ struct HarcBootstrapClientTests {
         }
     }
 
+    @Test("pairing reuses authenticated Host info without a second verification RPC")
+    func pairingReusesVerifiedHostInfo() async throws {
+        let fixture = try BootstrapClientFixture()
+        let rpc = BootstrapClientFakeRPC(fixture: fixture)
+        let client = try fixture.client(rpc: rpc)
+        let expectation = try HarcBootstrapTrustExpectation(
+            pairingTicket: fixture.ticket
+        )
+        let verifiedHostInfo = try await client.getHostInfo(
+            expectation: expectation
+        )
+
+        _ = try await client.beginPairing(
+            ticket: fixture.ticket,
+            deviceSigner: fixture.deviceKey,
+            requestedScopes: fixture.scopes,
+            deviceLabel: "Verified Mac",
+            verifiedHostInfo: verifiedHostInfo
+        )
+
+        #expect(await rpc.hostInfoCallCount() == 1)
+        #expect(await rpc.pairingBeginCallCount() == 1)
+        #expect(await rpc.pairingProofCallCount() == 1)
+    }
+
     @Test("session verifies the current signed grant and signs the exact challenge")
     func sessionChallengeResponse() async throws {
         let fixture = try BootstrapClientFixture()

@@ -135,9 +135,10 @@ struct HarcDesktopOpenedHostConnection: Sendable {
     let negotiated: HarcValidatedNegotiatedCapabilitiesV1
 }
 
-struct HarcDesktopVerifiedHostConnection: Sendable {
+struct HarcDesktopVerifiedHostConnection<Verification: Sendable>: Sendable {
     let connection: HarcPinnedGRPCConnection
     let path: HarcVerifiedRoutePath
+    let verification: Verification
 }
 
 typealias HarcDesktopHostRouteFailure = HarcVerifiedRouteFailure
@@ -150,11 +151,12 @@ enum HarcDesktopHostRouteConnector {
     private typealias ConnectionFactory =
         @Sendable () async throws -> HarcPinnedGRPCConnection
 
-    static func openVerified(
+    static func openVerified<Verification: Sendable>(
         route: HarcDesktopHostRoute,
         trust: HarcTransportTrustCoordinator,
-        verify: @escaping @Sendable (HarcPinnedGRPCConnection) async throws -> Void
-    ) async throws -> HarcDesktopVerifiedHostConnection {
+        verify: @escaping @Sendable (HarcPinnedGRPCConnection) async throws
+            -> Verification
+    ) async throws -> HarcDesktopVerifiedHostConnection<Verification> {
         let relayConnectionFactory: ConnectionFactory?
         if let relay = route.relay {
             relayConnectionFactory = {
@@ -194,7 +196,8 @@ enum HarcDesktopHostRouteConnector {
         )
         return HarcDesktopVerifiedHostConnection(
             connection: selected.connection,
-            path: selected.path
+            path: selected.path,
+            verification: selected.verification
         )
     }
 }

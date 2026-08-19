@@ -292,7 +292,8 @@ public actor HarcBootstrapClient {
         ticket: PairingTicketV1,
         deviceSigner: any P256DigestSigner,
         requestedScopes: [AuthorizationScope],
-        deviceLabel: String
+        deviceLabel: String,
+        verifiedHostInfo: HarcValidatedHostBootstrapInfo? = nil
     ) async throws -> HarcPairingClaimPresentation {
         guard case .idle = pairingState else {
             throw HarcBootstrapClientError.pairingAlreadyInProgress
@@ -313,7 +314,16 @@ public actor HarcBootstrapClient {
         }
 
         let expectation = try HarcBootstrapTrustExpectation(pairingTicket: ticket)
-        let hostInfo = try await getHostInfo(expectation: expectation)
+        let hostInfo: HarcValidatedHostBootstrapInfo
+        if let verifiedHostInfo {
+            try Self.validatePreverifiedHostInfo(
+                verifiedHostInfo,
+                expectation: expectation
+            )
+            hostInfo = verifiedHostInfo
+        } else {
+            hostInfo = try await getHostInfo(expectation: expectation)
+        }
         try requireCurrentPairingOperation(operationID)
         let clientNonce = try randomness.randomBytes(count: 32)
         guard clientNonce.count == 32 else {
@@ -729,6 +739,23 @@ public actor HarcBootstrapClient {
 }
 
 private extension HarcBootstrapClient {
+    /// Accepts only an authenticated result produced for this exact pairing
+    /// invitation. Route selection can therefore carry its successful
+    /// `GetHostInfo` result into claim creation without a second network RPC.
+    static func validatePreverifiedHostInfo(
+        _ hostInfo: HarcValidatedHostBootstrapInfo,
+        expectation: HarcBootstrapTrustExpectation
+    ) throws {
+        guard hostInfo.hostTrust == expectation.hostTrust else {
+            throw HarcBootstrapClientError.hostTrustMismatch
+        }
+        if let requiredTransport = expectation.requiredExactTransportSet,
+           hostInfo.verifiedTransportSet.exactSignedBytes
+                != requiredTransport {
+            throw HarcBootstrapClientError.responseTransportSetMismatch
+        }
+    }
+
     static func validateHostInfo(
         _ response: HarcBootstrapRPCResponse<Harc_V1_GetHostInfoResponseV1>,
         expectation: HarcBootstrapTrustExpectation,
