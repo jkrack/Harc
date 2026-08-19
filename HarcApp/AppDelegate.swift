@@ -761,7 +761,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             controller.startUpdater()
             updaterController = controller
             let check: () -> Void = { [weak controller] in
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
                 controller?.checkForUpdates(nil)
             }
             bridge.onCheckForUpdates = check
@@ -927,10 +927,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func orderManagedWindowFront(_ window: NSWindow) {
         if NSApp.isActive {
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
         } else {
             NSRunningApplication.current.activate(
-                options: [.activateAllWindows, .activateIgnoringOtherApps]
+                options: [.activateAllWindows]
             )
             window.makeKeyAndOrderFront(nil)
             // Activation is asynchronous and may still be denied; regardless,
@@ -955,7 +955,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 // us up.
                 NSApp.deactivate()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.activate()
                     NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
                         .makeKeyAndOrderFront(nil)
                 }
@@ -966,7 +966,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 // cooperative activation then DENIES the activate() that
                 // follows — the library window ends up floating over the
                 // previous app with that app's menu bar still installed.
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
                 NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
                     .makeKeyAndOrderFront(nil)
             }
@@ -1417,7 +1417,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         dictationHistoryWindow?.showWindow(nil)
         dictationHistoryWindow?.window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
     }
 
     // MARK: - Deep links and pairing invitations
@@ -3712,7 +3712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         controller.window?.makeKeyAndOrderFront(nil)
         trackManagedWindow(controller.window)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
     }
 
     @objc private func openRolePairing(_ sender: Any?) {

@@ -11,7 +11,7 @@ summarize with local models, and dictate into any Mac app. Use one Mac as your
 private Host when you want the same canonical library from an iPhone or another
 Mac—without moving speech recognition or your library into a SaaS account.
 
-[Download Harc 0.14.0](https://github.com/jkrack/Harc/releases/latest) ·
+[Download Harc 0.14.3](https://github.com/jkrack/Harc/releases/latest) ·
 [See the product](#the-product) ·
 [Host and clients](#one-host-your-clients) ·
 [Privacy](#privacy-boundary) ·
@@ -46,10 +46,10 @@ Host:
 
 | Surface | Public status |
 | --- | --- |
-| **macOS standalone recording, Library, dictation, local AI, and MCP** | Released in Harc 0.14.0 |
-| **Mac Host and secondary-Mac Client** | Available in Harc 0.14.0 with direct-LAN pairing and durable transfer |
+| **macOS standalone recording, Library, dictation, local AI, and MCP** | Current release: Harc 0.14.3 |
+| **Mac Host and secondary-Mac Client** | Available in Harc 0.14.3 with direct-LAN/relay pairing and durable transfer; the real two-Mac acceptance matrix remains open |
 | **HarcMobile for iPhone** | Implemented in the current source; App Store distribution is tracked separately |
-| **Harc Remote** | Available in Harc 0.14.0 through `relay.adaptcontext.com`; opt-in and off until the Host owner enables it |
+| **Harc Remote** | Available in Harc 0.14.3 through `relay.adaptcontext.com`; opt-in and off until the Host owner enables it |
 
 Harc Remote is a production feature, not a beta service. It remains opt-in so a
 Host owner explicitly chooses when remote clients may use the relay.

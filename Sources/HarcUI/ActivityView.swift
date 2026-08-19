@@ -200,7 +200,7 @@ public struct ActivityView: View {
             openSystemSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
         case .destination, .stt, .summarizer, .speakerID, .recovery:
             NSApp.sendAction(Selector(("harcShowSettingsWindow:")), to: nil, from: nil)
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
         }
     }
 

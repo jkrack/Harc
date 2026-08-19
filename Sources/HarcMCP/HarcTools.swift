@@ -186,7 +186,7 @@ struct HarcTools {
                 arguments: try arguments?.mapValues(Self.toolValue(from:))
             ))
             return CallTool.Result(
-                content: [.text(response.text)],
+                content: [.text(text: response.text, annotations: nil, _meta: nil)],
                 isError: response.isError
             )
         } catch {
@@ -212,11 +212,17 @@ struct HarcTools {
     }
 
     private func success(_ text: String) -> CallTool.Result {
-        CallTool.Result(content: [.text(text)], isError: false)
+        CallTool.Result(
+            content: [.text(text: text, annotations: nil, _meta: nil)],
+            isError: false
+        )
     }
 
     private func failure(_ text: String) -> CallTool.Result {
-        CallTool.Result(content: [.text(text)], isError: true)
+        CallTool.Result(
+            content: [.text(text: text, annotations: nil, _meta: nil)],
+            isError: true
+        )
     }
 
     static func date(fromDayKey key: String) -> Date? {

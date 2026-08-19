@@ -69,18 +69,20 @@ mode is `docs/specs/2026-08-02-host-client-mobile-implementation-spec.md`. The
 short architecture and ordered PR plan live beside it under `docs/architecture/`
 and `docs/plans/`. The spec wins if planning prose drifts.
 
-`HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcClientStore`, and the
-transport-free `HarcHost` core are active, focused-tested modules.
-`HarcProtocolWire` and `HarcProtocol` are active, completed PR 4 targets: the
-former is generated only from the seven schemas in `Protos/`, while the latter
-owns the validated domain boundary, exact binary/security codecs, signed-object
-authentication, capability policy, and container validation. PR 5 is the active
-slice for codec-neutral canonical host ingest, durable publication, receipts,
-and recovery. Do not infer that a passing protocol target closes the
-physical-device codec qualification gate. `HarcHostTransport`, `HarcClientTransport`,
-`HarcAudioMobile`, `HarcAudioMac`, and `HarcInference` remain documentation-only
-boundaries until their ordered vertical slice has implementation and focused
-tests. Do not add a placeholder module to `Package.swift` or `project.yml`.
+`HarcDomain`, `HarcIdentity`, `HarcTransfer`, `HarcClientStore`, the
+transport-free `HarcHost` core, `HarcProtocolWire`, `HarcProtocol`,
+`HarcHostTransport`, `HarcClientTransport`, `HarcRemoteTransport`, and
+`HarcAudioMobile` are active, focused-tested modules. `HarcProtocolWire` is
+generated only from the seven schemas in `Protos/`; `HarcProtocol` owns the
+validated domain boundary, exact binary/security codecs, signed-object
+authentication, capability policy, and container validation. The ordered PR
+slices through Host ingest, transport, mobile capture/transfer, secondary-Mac
+Client mode, and the optional blind relay are implemented in the current
+SwiftPM/Xcode project. Do not infer that their unit or integration tests close
+the named physical-device codec, two-network, App Store, or real secondary-Mac
+qualification gates. `HarcAudioMac` and `HarcInference` remain
+documentation-only boundaries; do not add either as a placeholder module to
+`Package.swift` or `project.yml`.
 Keep the V1 host in the resident Mac app, keep the existing daemon, issue the
 audio-safety receipt before derived processing, and do not expose local paths
 or GRDB records as network DTOs. In Host mode, `harc-mcp` must route through

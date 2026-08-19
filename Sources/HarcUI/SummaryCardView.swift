@@ -102,7 +102,7 @@ public struct SummaryCardView: View {
                     actionTitle: "Open Models Settings",
                     action: {
                         NSApp.sendAction(Selector(("harcShowSettingsWindow:")), to: nil, from: nil)
-                        NSApp.activate(ignoringOtherApps: true)
+                        NSApp.activate()
                     }
                 )
             } else {

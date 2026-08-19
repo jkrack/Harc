@@ -360,8 +360,6 @@ public struct MenuBarPanelView: View {
     /// mic being open is a fact the user should be able to see without opening
     /// Settings — and "Clear" is the escape hatch for the moment they say
     /// something they don't want kept.
-    @ViewBuilder
-
     public static func formatBanked(_ seconds: TimeInterval) -> String {
         let whole = Int(seconds.rounded())
         if whole < 60 { return "\(whole)s" }
@@ -468,12 +466,12 @@ public struct MenuBarPanelView: View {
             }
             MenuPanelRowButton(icon: "gearshape", title: "Settings…", detail: "⌘,") {
                 NSApp.sendAction(Selector(("harcShowSettingsWindow:")), to: nil, from: nil)
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
             }
             .keyboardShortcut(",", modifiers: .command)
             MenuPanelRowButton(icon: "hand.wave", title: "Welcome Guide") {
                 NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
             }
             MenuPanelRowButton(icon: "power", title: "Quit Harc", detail: "⌘Q") {
                 NSApplication.shared.terminate(nil)
