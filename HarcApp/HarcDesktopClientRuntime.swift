@@ -232,6 +232,23 @@ struct HarcDesktopClientCaptureSidecar: Codable, Sendable {
     /// federated speaker identity synchronization.
     let speakerEmbeddings: [SpeakerEmbeddingRow]?
     let persistedAt: Date
+    /// Stable link back to the pre-Client On This Mac row that produced this
+    /// outbox item. Nil for recordings captured directly in Client mode.
+    let sourceLocalCanonicalID: CanonicalRecordingID?
+
+    init(
+        capture: FinalizedCapture,
+        transcript: SessionTranscript?,
+        speakerEmbeddings: [SpeakerEmbeddingRow]?,
+        persistedAt: Date,
+        sourceLocalCanonicalID: CanonicalRecordingID? = nil
+    ) {
+        self.capture = capture
+        self.transcript = transcript
+        self.speakerEmbeddings = speakerEmbeddings
+        self.persistedAt = persistedAt
+        self.sourceLocalCanonicalID = sourceLocalCanonicalID
+    }
 }
 
 private struct HarcDesktopClientRecordingCommitter: RecordingCommitter {
@@ -402,7 +419,60 @@ enum HarcDesktopClientFiles {
         )
     }
 
-    fileprivate static func writeSidecar(
+    /// Validate and hash an existing canonical WAV without publishing a copy.
+    /// Used only to recover a Reprocess staging file left between the durable
+    /// master write and its sidecar/outbox transaction.
+    static func inspectCanonicalWAV(_ source: URL) throws -> PreparedWAV {
+        guard source.isFileURL else { throw HarcDesktopClientError.unsafePath }
+        let input = Darwin.open(source.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard input >= 0 else { throw HarcDesktopClientError.invalidWAV }
+        defer { Darwin.close(input) }
+        var statBuffer = stat()
+        guard fstat(input, &statBuffer) == 0,
+              statBuffer.st_mode & S_IFMT == S_IFREG,
+              statBuffer.st_size >= 44 else {
+            throw HarcDesktopClientError.invalidWAV
+        }
+        let headerCount = min(Int(statBuffer.st_size), 64 * 1_024)
+        var header = Data(count: headerCount)
+        let headerRead = header.withUnsafeMutableBytes {
+            pread(input, $0.baseAddress, headerCount, 0)
+        }
+        guard headerRead == headerCount,
+              header.prefix(4) == Data("RIFF".utf8),
+              header[8..<12] == Data("WAVE".utf8) else {
+            throw HarcDesktopClientError.invalidWAV
+        }
+        let layout = try wavLayout(header)
+        guard layout.dataBytes > 0, layout.dataBytes % 2 == 0,
+              UInt64(layout.dataOffset) + UInt64(layout.dataBytes)
+                <= UInt64(statBuffer.st_size) else {
+            throw HarcDesktopClientError.invalidWAV
+        }
+        var hasher = SHA256()
+        var offset = 0
+        while offset < layout.dataBytes {
+            let count = min(1 * 1_024 * 1_024, layout.dataBytes - offset)
+            var bytes = Data(count: count)
+            let readCount = bytes.withUnsafeMutableBytes {
+                pread(
+                    input,
+                    $0.baseAddress,
+                    count,
+                    off_t(layout.dataOffset + offset)
+                )
+            }
+            guard readCount == count else { throw HarcDesktopClientError.invalidWAV }
+            hasher.update(data: bytes)
+            offset += count
+        }
+        return PreparedWAV(
+            frames: UInt64(layout.dataBytes / 2),
+            pcmSHA256: Data(hasher.finalize())
+        )
+    }
+
+    static func writeSidecar(
         _ sidecar: HarcDesktopClientCaptureSidecar,
         to destination: URL
     ) throws {

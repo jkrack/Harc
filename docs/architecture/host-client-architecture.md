@@ -129,7 +129,12 @@ whether to accept compatible complete results or reprocess them.
 
 If the Mac already has a local library, Client mode preserves it as a distinct
 **On This Mac** source with its own `LibraryID`. Host cache and new Client-mode
-captures remain separate; no implicit merge, move, or bulk upload occurs.
+captures remain separate; no implicit merge, move, or bulk upload occurs. An
+explicit **Reprocess for Host** action may locally complete or refresh derived
+artifacts, then place a private canonical copy in the Client outbox. Its origin
+identity is deterministic per local recording and Client identity, so retries
+are idempotent. The source master remains in **On This Mac** even after a
+verified Host receipt; receipt cleanup applies only to the private staged copy.
 
 ### HarcMobile
 

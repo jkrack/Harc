@@ -52,7 +52,11 @@ differs. Possessing the QR ticket alone never grants access.
    the exact scopes on the Host.
 6. Use **Host Library…** for the scoped canonical Library. The Client's earlier
    library remains separately available as **On This Mac**; Harc never merges,
-   moves, or uploads it implicitly.
+   moves, or uploads it implicitly. To publish selected recordings (or the
+   entire local library) deliberately, use **Reprocess for Host** in the
+   **On This Mac** Library. Harc fills in missing or stale processing locally,
+   queues a protected private copy for the adopted Host, and leaves the local
+   master untouched. Repeating the action does not create another Host record.
 
 New Client-mode recordings capture and transcribe locally with `harc-stt` while
 lossless upload proceeds concurrently. The Host either accepts a compatible,

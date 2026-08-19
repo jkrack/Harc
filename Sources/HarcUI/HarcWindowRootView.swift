@@ -47,6 +47,10 @@ public struct HarcWindowRootView: View {
     /// the Summarize affordances in the session detail pane.
     let onSummarizeSession: ((Int64) -> Void)?
     @ObservedObject var importState: MediaImportState
+    @ObservedObject var reprocessState: LocalLibraryReprocessState
+    /// Present only for the distinct On This Mac library in Client mode.
+    let onReprocessRecording: ((Recording) -> Void)?
+    let onReprocessAll: (() -> Void)?
 
     // MARK: View state
 
@@ -128,6 +132,7 @@ public struct HarcWindowRootView: View {
     @State var exportDraft = RecordingExportDraft(includeSummary: true)
     /// True while a drag with file URLs hovers over the window.
     @State var importDropTargeted = false
+    @State var confirmingReprocessAll = false
 
     // MARK: Environment
 
@@ -149,7 +154,10 @@ public struct HarcWindowRootView: View {
         onImportFiles: (([URL]) -> Void)? = nil,
         onCancelImport: (() -> Void)? = nil,
         importState: MediaImportState = MediaImportState(),
-        onSummarizeSession: ((Int64) -> Void)? = nil
+        onSummarizeSession: ((Int64) -> Void)? = nil,
+        reprocessState: LocalLibraryReprocessState = LocalLibraryReprocessState(),
+        onReprocessRecording: ((Recording) -> Void)? = nil,
+        onReprocessAll: (() -> Void)? = nil
     ) {
         self.libraryVM = libraryVM
         self.recordingState = recordingState
@@ -163,6 +171,9 @@ public struct HarcWindowRootView: View {
         self.onCancelImport = onCancelImport
         self.importState = importState
         self.onSummarizeSession = onSummarizeSession
+        self.reprocessState = reprocessState
+        self.onReprocessRecording = onReprocessRecording
+        self.onReprocessAll = onReprocessAll
     }
 
     // MARK: Body
@@ -320,6 +331,27 @@ public struct HarcWindowRootView: View {
         } message: { session in
             Text("\u{201C}\(session.displayTitle)\u{201D} will be removed. The recordings it groups stay in the library, untouched.")
         }
+        .confirmationDialog(
+            "Reprocess every recording on this Mac?",
+            isPresented: $confirmingReprocessAll,
+            titleVisibility: .visible
+        ) {
+            Button("Reprocess All") { onReprocessAll?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Harc will process each recording locally, then send a protected copy to your adopted Host when it is available. Originals stay in On This Mac.")
+        }
+        .alert(
+            "Some recordings need attention",
+            isPresented: Binding(
+                get: { reprocessState.failureMessage != nil },
+                set: { if !$0 { reprocessState.clearFailure() } }
+            )
+        ) {
+            Button("OK") { reprocessState.clearFailure() }
+        } message: {
+            Text(reprocessState.failureMessage ?? "Reprocessing did not finish.")
+        }
     }
 
     func handleAppear() {
@@ -374,14 +406,31 @@ public struct HarcWindowRootView: View {
                     Button("Copy Transcript Only") {
                         if let rec = currentRecording { copyTranscript(rec) }
                     }
+                    .disabled(currentRecording == nil)
                     Divider()
                     Button("Export…") {
                         if let rec = currentRecording { presentExport(rec) }
                     }
+                    .disabled(currentRecording == nil)
+                    if let onReprocessRecording {
+                        Divider()
+                        Button("Reprocess for Host") {
+                            if let rec = currentRecording {
+                                onReprocessRecording(rec)
+                            }
+                        }
+                        .disabled(currentRecording == nil || reprocessState.isRunning)
+                        if onReprocessAll != nil {
+                            Button("Reprocess All for Host…") {
+                                confirmingReprocessAll = true
+                            }
+                            .disabled(reprocessState.isRunning)
+                        }
+                    }
                 } label: {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
-                .disabled(currentRecording == nil)
+                .disabled(currentRecording == nil && onReprocessAll == nil)
 
                 Button {
                     inspectorOpen.toggle()
@@ -469,20 +518,17 @@ public struct HarcWindowRootView: View {
     var footerStatus: some View {
         HStack(spacing: HarcSpacing.sm) {
             if let live = footerLiveStatusText {
-                Button {
-                    showActivity = true
-                } label: {
-                    HStack(spacing: HarcSpacing.sm) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text(live)
-                            .font(.harcCaption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                if footerStatusOpensActivity {
+                    Button {
+                        showActivity = true
+                    } label: {
+                        footerStatusLabel(live)
                     }
+                    .buttonStyle(.plain)
+                    .help("Open Activity")
+                } else {
+                    footerStatusLabel(live)
                 }
-                .buttonStyle(.plain)
-                .help("Open Activity")
                 Text("·").foregroundStyle(Color(nsColor: .quaternaryLabelColor))
             }
             Text("LOCAL")
@@ -493,7 +539,23 @@ public struct HarcWindowRootView: View {
         }
     }
 
+    @ViewBuilder
+    func footerStatusLabel(_ text: String) -> some View {
+        HStack(spacing: HarcSpacing.sm) {
+            if footerStatusIsRunning {
+                ProgressView()
+                    .controlSize(.mini)
+            }
+            Text(text)
+                .font(.harcCaption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
     var footerLiveStatusText: String? {
+        if reprocessState.isRunning,
+           let status = reprocessState.statusText { return status }
         if let job = importState.current {
             let queued = importState.queuedCount > 0 ? " (+\(importState.queuedCount))" : ""
             return "\(job.phaseText.isEmpty ? "Importing" : job.phaseText) \(job.filename)\(queued)"
@@ -501,7 +563,25 @@ public struct HarcWindowRootView: View {
         if case .identifying = postProcessing.current?.phase {
             return "Identifying speakers…"
         }
-        return nil
+        return reprocessState.statusText
+    }
+
+    var footerStatusIsRunning: Bool {
+        if reprocessState.isRunning || importState.current != nil { return true }
+        if case .identifying = postProcessing.current?.phase { return true }
+        return false
+    }
+
+    var footerStatusOpensActivity: Bool {
+        !reprocessState.isRunning && (
+            importState.current != nil
+                || postProcessingIsIdentifying
+        )
+    }
+
+    var postProcessingIsIdentifying: Bool {
+        if case .identifying = postProcessing.current?.phase { return true }
+        return false
     }
 
     var footerCountAndStorage: String {
@@ -1020,6 +1100,10 @@ public struct HarcWindowRootView: View {
     @ViewBuilder
     func contextMenu(for rec: Recording) -> some View {
         Button("Copy transcript") { copyTranscript(rec) }
+        if let onReprocessRecording {
+            Button("Reprocess for Host") { onReprocessRecording(rec) }
+                .disabled(reprocessState.isRunning)
+        }
         Divider()
         Button(rec.pinned ? "Unpin" : "Pin") {
             guard let id = rec.id else { return }

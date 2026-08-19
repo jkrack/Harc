@@ -167,7 +167,15 @@ or deletes its existing library implicitly. V1 preserves that library under a
 clearly separate **On This Mac** source with its own `LibraryID`; adopted-host
 cache data stays in `HarcClientStore`. New captures in Client mode default to the
 host outbox. Switching roles requires an explicit confirmation describing the
-two sources. Bulk migration of the old local library is a separate future flow.
+two sources.
+
+The **On This Mac** Library exposes an explicit **Reprocess for Host** action
+for one recording or the full local library. It completes missing or stale
+processing on the Client, copies the canonical master into Client-owned staging,
+and creates a durable adopted-Host outbox item. The origin ID is stable for the
+local canonical recording and producing Client identity, so retries cannot
+create duplicate Host recordings. The original local master is never moved or
+deleted; verified-receipt cleanup is limited to the staged copy.
 
 ### 5.4 HarcMobile
 
@@ -2267,7 +2275,9 @@ controls.
 Add Standalone/Host/Client modes, Mac pairing, client outbox, local daemon
 processing, signed provenance, host acceptance policy, cache controls, and
 managed-work-device restrictions. Preserve a pre-existing local library as a
-separate **On This Mac** source; never merge or upload it implicitly.
+separate **On This Mac** source; never merge or upload it implicitly. Provide an
+explicit, idempotent **Reprocess for Host** path that locally processes selected
+or all existing recordings, queues private copies, and preserves source masters.
 
 ### PR 10 — Optional inference extraction and host agent
 

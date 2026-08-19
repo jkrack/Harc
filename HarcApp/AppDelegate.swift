@@ -471,6 +471,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Present only in Desktop Client role. The existing canonical store stays
     /// mounted separately as On This Mac; this runtime owns only ClientState.
     private var desktopClientRuntime: HarcDesktopClientRuntime?
+    private let localLibraryReprocessState = LocalLibraryReprocessState()
+    private var localLibraryReprocessTask: Task<Void, Never>?
     private var hostProcessingWorker: HarcHostProcessingWorker?
     /// Same-UID, same-team, designated-requirement-validated local boundary
     /// used by the bundled MCP helper while this process owns the Host writer.
@@ -875,6 +877,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         activeManagedWindows.removeAll()
         desktopClientRuntime?.shutdown()
         desktopClientRuntime = nil
+        localLibraryReprocessTask?.cancel()
+        localLibraryReprocessTask = nil
         restoreUITestPreferencesIfNeeded()
     }
 
@@ -3703,7 +3707,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             onDelete: { [weak self] rec in self?.deleteRecording(recording: rec) },
             onImportFiles: { [weak self] urls in self?.importMediaFiles(urls) },
             onCancelImport: { [weak self] in self?.cancelImport() },
-            onSummarizeSession: { [weak self] id in self?.enqueueSessionSummary(sessionID: id) }
+            onSummarizeSession: { [weak self] id in self?.enqueueSessionSummary(sessionID: id) },
+            reprocessState: localLibraryReprocessState,
+            onReprocessRecording: desktopClientRuntime == nil ? nil : { [weak self] recording in
+                self?.reprocessLocalLibrary([recording])
+            },
+            onReprocessAll: desktopClientRuntime == nil ? nil : { [weak self] in
+                self?.reprocessEntireLocalLibrary()
+            }
         )
         harcWindow = controller
         controller.showWindow(nil)
@@ -3713,6 +3724,169 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         controller.window?.makeKeyAndOrderFront(nil)
         trackManagedWindow(controller.window)
         NSApp.activate()
+    }
+
+    /// Rebuilds any missing/stale local transcript data, then stages a durable
+    /// copy for the adopted Host. The On This Mac source is never consumed.
+    private func reprocessLocalLibrary(_ recordings: [Recording]) {
+        guard localLibraryReprocessTask == nil,
+              let runtime = desktopClientRuntime,
+              let store else { return }
+        let work = recordings.filter { $0.deletedAt == nil }
+        guard !work.isEmpty else { return }
+
+        localLibraryReprocessState.begin(total: work.count)
+        localLibraryReprocessTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var queued = 0
+            var alreadyQueued = 0
+            var failed = 0
+            var firstFailure: String?
+
+            for (index, recording) in work.enumerated() {
+                guard !Task.isCancelled else { break }
+                localLibraryReprocessState.advance(
+                    completed: index,
+                    total: work.count,
+                    currentTitle: recording.displayTitle
+                )
+                do {
+                    if try runtime.localLibraryRecordingIsQueued(recording) {
+                        alreadyQueued += 1
+                        continue
+                    }
+                    guard FileManager.default.fileExists(atPath: recording.wavPath) else {
+                        throw HarcDesktopLocalLibraryReprocessError.missingAudio
+                    }
+                    let payload = try await localReprocessPayload(
+                        for: recording,
+                        store: store
+                    )
+                    switch try await runtime.enqueueLocalLibraryRecording(
+                        recording,
+                        transcript: payload.transcript,
+                        speakerEmbeddings: payload.speakerEmbeddings
+                    ) {
+                    case .queued: queued += 1
+                    case .alreadyQueued: alreadyQueued += 1
+                    }
+                } catch {
+                    failed += 1
+                    if firstFailure == nil {
+                        firstFailure = "\(recording.displayTitle): \(error.localizedDescription)"
+                    }
+                }
+            }
+
+            runtime.transferCoordinator.retryPending()
+            runtime.refreshStatus()
+            localLibraryReprocessState.finish(
+                .init(
+                    readyForHost: queued,
+                    alreadyQueued: alreadyQueued,
+                    failed: failed
+                ),
+                firstFailure: firstFailure
+            )
+            localLibraryReprocessTask = nil
+        }
+    }
+
+    private func reprocessEntireLocalLibrary() {
+        guard localLibraryReprocessTask == nil, let store else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                reprocessLocalLibrary(try await store.fetchAll())
+            } catch {
+                localLibraryReprocessState.begin(total: 0)
+                localLibraryReprocessState.finish(
+                    .init(readyForHost: 0, alreadyQueued: 0, failed: 1),
+                    firstFailure: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func localReprocessPayload(
+        for recording: Recording,
+        store: RecordingStore
+    ) async throws -> (
+        transcript: SessionTranscript,
+        speakerEmbeddings: [SpeakerEmbeddingRow]
+    ) {
+        let currentModelID = HarcDesktopLocalLibraryReprocessPlanner.currentModelID(
+            diarize: prefs.diarize,
+            vad: prefs.vadEnabled
+        )
+        let existing = HarcDesktopLocalLibraryReprocessPlanner
+            .loadStructuredTranscript(for: recording)
+
+        if HarcDesktopLocalLibraryReprocessPlanner.shouldTranscribe(
+            recording: recording,
+            structuredTranscript: existing,
+            currentModelID: currentModelID
+        ) {
+            _ = try await launcher.ensureRunning()
+            let result = try await HarcSTTClient().transcribe(
+                audioPath: recording.wavPath,
+                diarize: prefs.diarize,
+                vad: prefs.vadEnabled
+            )
+            let endedAt = recording.endedAt ?? recording.startedAt
+            let transcript = SessionTranscript(
+                startedAt: recording.startedAt,
+                endedAt: max(endedAt, recording.startedAt),
+                audioPath: recording.wavPath,
+                joinedText: result.text,
+                words: result.words,
+                speakers: result.speakers,
+                chunks: []
+            )
+            if let id = recording.id {
+                try await store.applyReprocessedTranscript(
+                    recordingID: id,
+                    text: result.text,
+                    modelID: currentModelID
+                )
+                if !result.speakerEmbeddings.isEmpty {
+                    try await store.upsertSpeakerEmbeddings(
+                        recordingID: id,
+                        rows: result.speakerEmbeddings.map {
+                            RecordingStore.SpeakerEmbeddingRow(
+                                recordingID: id,
+                                speakerIndex: $0.speakerIndex,
+                                embedding: HarcStore.EmbeddingBlob.pack($0.vector),
+                                segmentCount: $0.segmentCount,
+                                totalMs: $0.totalMs,
+                                embedderKind: "wespeaker_v2"
+                            )
+                        }
+                    )
+                }
+            }
+            return (transcript, result.speakerEmbeddings)
+        }
+
+        guard let existing else {
+            throw HarcDesktopLocalLibraryReprocessError.stagingConflict
+        }
+        let embeddings: [SpeakerEmbeddingRow]
+        if let id = recording.id {
+            embeddings = try await store.allSpeakerEmbeddings(
+                embedderKind: "wespeaker_v2"
+            ).filter { $0.recordingID == id }.map {
+                SpeakerEmbeddingRow(
+                    speakerIndex: $0.speakerIndex,
+                    vector: HarcStore.EmbeddingBlob.unpack($0.embedding),
+                    totalMs: $0.totalMs,
+                    segmentCount: $0.segmentCount
+                )
+            }
+        } else {
+            embeddings = []
+        }
+        return (existing, embeddings)
     }
 
     @objc private func openRolePairing(_ sender: Any?) {

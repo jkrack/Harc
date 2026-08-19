@@ -22,7 +22,10 @@ final class HarcWindowController: NSWindowController {
         onDelete: @escaping (Recording) -> Void,
         onImportFiles: @escaping ([URL]) -> Void,
         onCancelImport: @escaping () -> Void,
-        onSummarizeSession: ((Int64) -> Void)? = nil
+        onSummarizeSession: ((Int64) -> Void)? = nil,
+        reprocessState: LocalLibraryReprocessState = LocalLibraryReprocessState(),
+        onReprocessRecording: ((Recording) -> Void)? = nil,
+        onReprocessAll: (() -> Void)? = nil
     ) {
         let peopleVM = PeopleViewModel(store: store)
         let root = HarcWindowRootView(
@@ -37,7 +40,10 @@ final class HarcWindowController: NSWindowController {
             onImportFiles: onImportFiles,
             onCancelImport: onCancelImport,
             importState: importState,
-            onSummarizeSession: onSummarizeSession
+            onSummarizeSession: onSummarizeSession,
+            reprocessState: reprocessState,
+            onReprocessRecording: onReprocessRecording,
+            onReprocessAll: onReprocessAll
         )
         .environmentObject(prefs)
         .environmentObject(postProcessingState)

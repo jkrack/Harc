@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.14.4"
-    CURRENT_PROJECT_VERSION: "59"
+    MARKETING_VERSION: "0.14.5"
+    CURRENT_PROJECT_VERSION: "60"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
   configs:
