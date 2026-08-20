@@ -140,12 +140,16 @@ public enum HarcForegroundRecordingOutboxError: Error, Equatable, Sendable {
 /// and resumes from host reconciliation plus the durable client store.
 public actor HarcForegroundRecordingOutboxCoordinator {
     public typealias Clock = @Sendable () -> Date
+    public typealias DiagnosticSink = @Sendable (
+        HarcForegroundUploadDiagnosticEvent
+    ) async -> Void
 
     private let store: HarcTransferStore
     private let transport: any HarcRecordingTransferRPCTransport
     private let compatibility: HarcProtobufCompatibilityPolicy
     private let evidenceCodec: HarcRecordingEvidenceCodecV1
     private let now: Clock
+    private let diagnosticSink: DiagnosticSink
     private var runningUploads = Set<UploadID>()
     private var runningOrigins = Set<OriginRecordingID>()
 
@@ -153,13 +157,15 @@ public actor HarcForegroundRecordingOutboxCoordinator {
         store: HarcTransferStore,
         transport: any HarcRecordingTransferRPCTransport,
         compatibility: HarcProtobufCompatibilityPolicy = .currentV1,
-        now: @escaping Clock = Date.init
+        now: @escaping Clock = Date.init,
+        diagnosticSink: @escaping DiagnosticSink = { _ in }
     ) {
         self.store = store
         self.transport = transport
         self.compatibility = compatibility
         self.evidenceCodec = HarcRecordingEvidenceCodecV1()
         self.now = now
+        self.diagnosticSink = diagnosticSink
     }
 
     public func drive(
@@ -416,7 +422,17 @@ public actor HarcForegroundRecordingOutboxCoordinator {
             )
         }
 
+        await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+            stage: .beginUpload,
+            message: "Opening or resuming the Host upload",
+            chunkCount: plan.chunks.count
+        ))
         let beginResponse = try await rpc.beginUpload(durableBeginRequest)
+        await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+            stage: .beginAccepted,
+            message: "Host accepted the upload identity",
+            chunkCount: plan.chunks.count
+        ))
         switch beginResponse.disposition {
         case .created:
             try validatedBeginRequest.validateInitialSessionCapabilities(
@@ -781,7 +797,17 @@ public actor HarcForegroundRecordingOutboxCoordinator {
             protocolVersion: protocolVersion,
             rpc: rpc
         )
+        await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+            stage: .chunksDeclared,
+            message: "Host accepted the chunk declarations",
+            chunkCount: plan.chunks.count
+        ))
 
+        await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+            stage: .reconcileBeforeUpload,
+            message: "Checking which chunks are already durable",
+            chunkCount: plan.chunks.count
+        ))
         let beforeUpload = try await reconcile(
             attempt: activeAttempt,
             plan: plan,
@@ -815,6 +841,11 @@ public actor HarcForegroundRecordingOutboxCoordinator {
             rpc: rpc
         )
 
+        await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+            stage: .reconcileAfterUpload,
+            message: "Verifying uploaded chunks with Host",
+            chunkCount: plan.chunks.count
+        ))
         let afterUpload = try await reconcile(
             attempt: activeAttempt,
             plan: plan,
@@ -873,12 +904,23 @@ public actor HarcForegroundRecordingOutboxCoordinator {
         )
 
         do {
+            await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+                stage: .commitUpload,
+                message: "Committing the verified recording manifest",
+                chunkCount: plan.chunks.count
+            ))
             let committed = try await rpc.commitUpload(commitRequest)
-            return try validateAndPersistReceipt(
+            let receipt = try validateAndPersistReceipt(
                 committed.receipt.exactBytes,
                 manifest: manifest,
                 hostTrust: hostTrust
             )
+            await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+                stage: .receiptDurable,
+                message: "Verified Host receipt stored locally",
+                chunkCount: plan.chunks.count
+            ))
+            return receipt
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as HarcProtobufConversionError {
@@ -1358,6 +1400,13 @@ public actor HarcForegroundRecordingOutboxCoordinator {
             do {
                 try Task.checkCancellation()
                 let bytes = try readAndValidateChunk(planned)
+                await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+                    stage: .uploadChunk,
+                    message: "Sending an encoded audio chunk",
+                    chunkIndex: index,
+                    chunkCount: plan.chunks.count,
+                    encodedByteCount: planned.descriptor.encodedByteLength
+                ))
                 var request = Harc_V1_UploadChunkRequestV1()
                 request.protocol = protocolVersion.protobufV1()
                 request.uploadID = Harc_V1_UploadIDV1(attempt.uploadID)
@@ -1392,6 +1441,16 @@ public actor HarcForegroundRecordingOutboxCoordinator {
                                 try machine.markDurableAtHost()
                             }
                         }
+                        await self.diagnosticSink(
+                            HarcForegroundUploadDiagnosticEvent(
+                                stage: .chunkDurable,
+                                message: "Host acknowledged the durable chunk",
+                                chunkIndex: index,
+                                chunkCount: plan.chunks.count,
+                                encodedByteCount:
+                                    planned.descriptor.encodedByteLength
+                            )
+                        )
                     case .rejection(let rejection):
                         _ = try store.updateChunkOutbox(
                             uploadID: uploadID,

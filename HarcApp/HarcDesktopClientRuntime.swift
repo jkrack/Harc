@@ -25,6 +25,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
     let libraryCoordinator: HarcMobileLibraryCoordinator
     let root: URL
     let routeURL: URL
+    let diagnosticLog: HarcDiagnosticLogStore
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -39,13 +40,31 @@ final class HarcDesktopClientRuntime: ObservableObject {
         self.transferStore = transferStore
         self.libraryCache = libraryCache
         self.root = root
+        diagnosticLog = try HarcDiagnosticLogStore(
+            fileURL: root
+                .appendingPathComponent("Logs", isDirectory: true)
+                .appendingPathComponent("client-diagnostics.jsonl")
+        )
+        diagnosticLog.append(
+            severity: .info,
+            area: "runtime",
+            stage: "start",
+            message: "Desktop Client runtime started",
+            context: [
+                "version": HarcVersion.current,
+                "build": Bundle.main.object(
+                    forInfoDictionaryKey: "CFBundleVersion"
+                ) as? String ?? "unknown",
+            ]
+        )
         let routeURL = root.appendingPathComponent("host-route.json")
         self.routeURL = routeURL
         let transferCoordinator = try HarcDesktopClientTransferCoordinator(
             identity: identity,
             store: transferStore,
             clientRoot: root,
-            routeURL: routeURL
+            routeURL: routeURL,
+            diagnosticLog: diagnosticLog
         )
         self.transferCoordinator = transferCoordinator
         let libraryCoordinator = HarcMobileLibraryCoordinator(
@@ -119,6 +138,14 @@ final class HarcDesktopClientRuntime: ObservableObject {
             audioPolicy: audioPolicy
         )
         runtime.lastRecoverSyncReport = startupRecovery.report
+        runtime.diagnosticLog.append(
+            severity: startupRecovery.report.securityBlocked == 0
+                ? .success : .warning,
+            area: "recovery",
+            stage: "startup-inventory",
+            message: "Client archive inventory completed",
+            context: Self.recoveryContext(startupRecovery.report)
+        )
         runtime.transferCoordinator.setRecoveryBlockedOrigins(
             startupRecovery.blockedOrigins
         )
@@ -156,18 +183,45 @@ final class HarcDesktopClientRuntime: ObservableObject {
     /// Reconciliation runs off the main actor; retry scheduling returns
     /// immediately while the coordinator reports live transfer progress.
     func recoverAndSync() async throws -> ClientRecoverSyncReport {
+        diagnosticLog.append(
+            severity: .info,
+            area: "recovery",
+            stage: "manual-start",
+            message: "Recover & Sync requested"
+        )
         let root = root
         let transferStore = transferStore
         let deviceID = identity.deviceID
-        let outcome = try await Task.detached(priority: .userInitiated) {
-            try HarcDesktopClientRecovery.reconcile(
-                root: root,
-                store: transferStore,
-                deviceID: deviceID
+        let outcome: HarcDesktopClientRecovery.Outcome
+        do {
+            outcome = try await Task.detached(priority: .userInitiated) {
+                try HarcDesktopClientRecovery.reconcile(
+                    root: root,
+                    store: transferStore,
+                    deviceID: deviceID
+                )
+            }.value
+        } catch {
+            diagnosticLog.append(
+                severity: .error,
+                area: "recovery",
+                stage: "inventory-failed",
+                message: "Client archive inventory failed",
+                context: [
+                    "error_type": String(reflecting: Swift.type(of: error)),
+                ]
             )
-        }.value
+            throw error
+        }
         let report = outcome.report
         lastRecoverSyncReport = report
+        diagnosticLog.append(
+            severity: report.securityBlocked == 0 ? .success : .warning,
+            area: "recovery",
+            stage: "inventory-complete",
+            message: "Recover & Sync inventory completed",
+            context: Self.recoveryContext(report)
+        )
         transferCoordinator.setRecoveryBlockedOrigins(outcome.blockedOrigins)
         transferCoordinator.retryPending()
         refreshStatus()
@@ -215,6 +269,21 @@ final class HarcDesktopClientRuntime: ObservableObject {
             at: directory,
             includingPropertiesForKeys: nil
         ).contains { $0.pathExtension == "json" || $0.pathExtension == "wav" }
+    }
+
+    private static func recoveryContext(
+        _ report: ClientRecoverSyncReport
+    ) -> [String: String] {
+        [
+            "masters": String(report.mastersFound),
+            "sidecars": String(report.sidecarsFound),
+            "sidecars_rebuilt": String(report.sidecarsRebuilt),
+            "outboxes_repaired": String(report.outboxesRepaired),
+            "retry_requested": String(report.retryRequested),
+            "already_on_host": String(report.alreadyOnHost),
+            "security_blocked": String(report.securityBlocked),
+            "issues": String(report.issues.count),
+        ]
     }
 
 }

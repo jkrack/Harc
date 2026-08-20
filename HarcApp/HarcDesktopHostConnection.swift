@@ -130,6 +130,7 @@ enum HarcDesktopHostRouteStore {
 
 struct HarcDesktopOpenedHostConnection: Sendable {
     let connection: HarcPinnedGRPCConnection
+    let path: HarcVerifiedRoutePath
     let adoption: ValidatedClientAdoptionEvidence
     let session: HarcOpenedClientSession
     let negotiated: HarcValidatedNegotiatedCapabilitiesV1
@@ -261,6 +262,7 @@ enum HarcDesktopHostSessionConnector {
             )
             return HarcDesktopOpenedHostConnection(
                 connection: connection,
+                path: verified.path,
                 adoption: adoption,
                 session: session,
                 negotiated: negotiated.negotiated

@@ -182,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onRecoverAndSyncClient = { [weak self] in
             self?.recoverAndSyncClient(nil)
         }
+        bridge.onClearClientDiagnosticLog = { [weak self] in
+            self?.desktopClientRuntime?.diagnosticLog.clear()
+        }
         bridge.onOpenActivity = { [weak self] in
             self?.statusPopover?.performClose(nil)
             self?.openLibrary()
@@ -4055,6 +4058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.clientRuntimeReady = false
         bridge.clientRecoverSyncState = nil
         bridge.clientTransferStatusText = nil
+        bridge.clientDiagnosticLogEntries = []
         do {
             let store = try await makeApplicationStore()
             try await finishStoreBootstrap(store)
@@ -4183,6 +4187,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 .completed($0)
             } ?? .ready
             bridge.clientTransferStatusText = runtime.statusMessage
+            bridge.clientDiagnosticLogEntries = runtime.diagnosticLog.entries
+            runtime.diagnosticLog.$entries
+                .sink { [weak bridge] entries in
+                    bridge?.clientDiagnosticLogEntries = entries
+                }
+                .store(in: &cancellables)
             runtime.$statusMessage
                 .sink { [weak bridge] status in
                     bridge?.clientTransferStatusText = status

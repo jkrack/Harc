@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
+import HarcCore
 import KeyboardShortcuts
+import UniformTypeIdentifiers
 
 public extension NSNotification.Name {
     /// Posted by AppDelegate when the menu-bar panel's status row asks for
@@ -23,6 +25,8 @@ public struct ActivityView: View {
     let onDismiss: () -> Void
 
     @EnvironmentObject private var postProcessing: RecordingPostProcessingState
+    @State private var developerLogExpanded = false
+    @State private var developerLogExportError: String?
 
     public init(
         bridge: HarcAppBridge,
@@ -52,6 +56,7 @@ public struct ActivityView: View {
                     jobsSection
                     if let clientState = bridge.clientRecoverSyncState {
                         clientRecoverSyncSection(clientState)
+                        clientDeveloperLogSection
                     }
                     if let recovery = bridge.stopRecovery {
                         stopRecoverySection(recovery)
@@ -69,6 +74,152 @@ public struct ActivityView: View {
             }
         }
         .frame(width: 480, height: 520)
+    }
+
+    // MARK: Client developer log
+
+    private var clientDeveloperLogSection: some View {
+        GroupBox {
+            DisclosureGroup(isExpanded: $developerLogExpanded) {
+                VStack(alignment: .leading, spacing: HarcSpacing.md) {
+                    Text("Operational facts only — no audio, transcript text, credentials, pairing secrets, or full file paths are recorded.")
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: HarcSpacing.sm) {
+                        Button("Copy Log") { copyDeveloperLog() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(bridge.clientDiagnosticLogEntries.isEmpty)
+                        Button("Save…") { saveDeveloperLog() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(bridge.clientDiagnosticLogEntries.isEmpty)
+                        Button("Clear") {
+                            bridge.onClearClientDiagnosticLog()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(bridge.clientDiagnosticLogEntries.isEmpty)
+                    }
+
+                    if let developerLogExportError {
+                        Text(developerLogExportError)
+                            .font(.harcCaption)
+                            .foregroundStyle(Color.harc(.failure))
+                            .textSelection(.enabled)
+                    }
+
+                    if bridge.clientDiagnosticLogEntries.isEmpty {
+                        Text("No Client diagnostic events yet.")
+                            .font(.harcCaption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(
+                            Array(bridge.clientDiagnosticLogEntries.suffix(60).reversed())
+                        ) { entry in
+                            developerLogRow(entry)
+                        }
+                    }
+                }
+                .padding(.top, HarcSpacing.sm)
+            } label: {
+                HStack(spacing: HarcSpacing.sm) {
+                    Label("Developer Log", systemImage: "terminal")
+                        .font(.harcCaption.weight(.semibold))
+                    Spacer()
+                    Text("\(bridge.clientDiagnosticLogEntries.count) events")
+                        .font(.harcMono)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func developerLogRow(
+        _ entry: HarcDiagnosticLogEntry
+    ) -> some View {
+        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
+                Image(systemName: developerLogIcon(entry.severity))
+                    .foregroundStyle(developerLogColor(entry.severity))
+                Text("\(entry.area) · \(entry.stage)")
+                    .font(.harcCaption.weight(.semibold))
+                Spacer()
+                Text(entry.timestamp, style: .time)
+                    .font(.harcMono)
+                    .foregroundStyle(.secondary)
+            }
+            Text(entry.message)
+                .font(.harcCaption)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if !entry.context.isEmpty {
+                Text(entry.context.keys.sorted().map {
+                    "\($0)=\(entry.context[$0] ?? "")"
+                }.joined(separator: "  "))
+                    .font(.harcMono)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, HarcSpacing.xs)
+    }
+
+    private func developerLogIcon(_ severity: HarcDiagnosticSeverity) -> String {
+        switch severity {
+        case .info: "info.circle"
+        case .success: "checkmark.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .error: "xmark.octagon.fill"
+        }
+    }
+
+    private func developerLogColor(_ severity: HarcDiagnosticSeverity) -> Color {
+        switch severity {
+        case .info: Color.harc(.working)
+        case .success: Color.harc(.ready)
+        case .warning: Color.harc(.attention)
+        case .error: Color.harc(.failure)
+        }
+    }
+
+    private func developerLogText() -> String {
+        HarcDiagnosticLogStore.formattedText(
+            entries: bridge.clientDiagnosticLogEntries
+        )
+    }
+
+    private func copyDeveloperLog() {
+        developerLogExportError = nil
+        NSPasteboard.general.clearContents()
+        guard NSPasteboard.general.setString(
+            developerLogText(),
+            forType: .string
+        ) else {
+            developerLogExportError = "The diagnostic log could not be copied."
+            return
+        }
+    }
+
+    private func saveDeveloperLog() {
+        developerLogExportError = nil
+        let panel = NSSavePanel()
+        panel.title = "Save Client Diagnostic Log"
+        panel.nameFieldStringValue = "Harc-Client-Diagnostic-Log.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try developerLogText().write(
+                to: url,
+                atomically: true,
+                encoding: .utf8
+            )
+        } catch {
+            developerLogExportError = error.localizedDescription
+        }
     }
 
     // MARK: Client archive recovery

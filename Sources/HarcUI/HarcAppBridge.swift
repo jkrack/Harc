@@ -1,5 +1,6 @@
 import SwiftUI
 import HarcAudio
+import HarcCore
 import HarcStore
 
 /// Glue between AppDelegate (which owns the recording lifecycle, daemon
@@ -103,6 +104,9 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var clientRecoverSyncState: ClientRecoverSyncState? = nil
     /// Live transfer status from the Client outbox coordinator.
     @Published public var clientTransferStatusText: String? = nil
+    /// Privacy-bounded, persistent Client transport events. The Activity
+    /// surface renders these without reading private application files itself.
+    @Published public var clientDiagnosticLogEntries: [HarcDiagnosticLogEntry] = []
     /// Persists a launch failure after stderr disappears so Settings cannot
     /// claim "Host" while every Host-only action is absent.
     @Published public var runtimeStartupError: String? = nil
@@ -145,6 +149,9 @@ public final class HarcAppBridge: ObservableObject {
     /// Inventory ClientState/Captures, repair safe local metadata gaps, and
     /// retry every non-security-blocked durable outbox.
     public var onRecoverAndSyncClient: () -> Void = {}
+    /// Clear only the diagnostic history. Captures, outboxes, pairing, and
+    /// Host trust state are deliberately outside this action.
+    public var onClearClientDiagnosticLog: () -> Void = {}
     /// Open the Library's Activity surface (readiness / recovery / jobs) —
     /// the destination behind the panel's single status row.
     public var onOpenActivity: () -> Void = {}

@@ -4,6 +4,7 @@ import Foundation
 import HarcAudioMobile
 import HarcClientStore
 import HarcClientTransport
+import HarcCore
 import HarcDomain
 import HarcIdentity
 import HarcProtocol
@@ -31,18 +32,21 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private let locations: HarcMobileCaptureLocations
     private let clientRoot: URL
     private let routeURL: URL
+    private let diagnosticLog: HarcDiagnosticLogStore
     private var queue: [HarcMobileFinalizedMaster] = []
     private var queuedOrigins = Set<OriginRecordingID>()
     /// Set by Client archive reconciliation. These origins remain fail-closed
     /// until a later successful inventory proves their local facts again.
     private var recoveryBlockedOrigins = Set<OriginRecordingID>()
+    private var activeStages: [UUID: String] = [:]
     private var worker: Task<Void, Never>?
 
     init(
         identity: InstallationSigningIdentity,
         store: HarcTransferStore,
         clientRoot: URL,
-        routeURL: URL
+        routeURL: URL,
+        diagnosticLog: HarcDiagnosticLogStore
     ) throws {
         self.identity = identity
         self.store = store
@@ -51,6 +55,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             applicationSupportRoot: clientRoot
         )
         self.routeURL = routeURL
+        self.diagnosticLog = diagnosticLog
     }
 
     var statusMessage: String {
@@ -104,6 +109,15 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 )
             }
             pendingCount = pending.count
+            diagnosticLog.append(
+                severity: pending.isEmpty ? .success : .info,
+                area: "transfer",
+                stage: "queue-inventory",
+                message: pending.isEmpty
+                    ? "No recordings need Host transfer"
+                    : "Queued recoverable recordings for Host transfer",
+                context: ["pending": String(pending.count)]
+            )
             for outbox in pending {
                 let master = try Self.master(from: outbox.finalizedCapture)
                 guard queuedOrigins.insert(master.originRecordingID).inserted
@@ -113,6 +127,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             if pending.isEmpty { state = .idle }
             startWorkerIfNeeded()
         } catch {
+            logFailure(error, stage: "queue-inventory", recording: nil)
             state = .retryNeeded(UUID(), error.localizedDescription)
         }
     }
@@ -145,6 +160,9 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             let master = queue.removeFirst()
             do {
                 let artifactFailure = try await transfer(master)
+                activeStages.removeValue(
+                    forKey: master.originRecordingID.recordingUUID
+                )
                 queuedOrigins.remove(master.originRecordingID)
                 pendingCount = max(0, pendingCount - 1)
                 if let artifactFailure {
@@ -158,14 +176,30 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     )
                 }
             } catch HarcDesktopClientTransferError.notPaired {
+                activeStages.removeValue(
+                    forKey: master.originRecordingID.recordingUUID
+                )
                 queuedOrigins.remove(master.originRecordingID)
                 pendingCount = max(pendingCount, queue.count + 1)
                 state = .waitingForPairing(pending: pendingCount)
                 return
             } catch is CancellationError {
+                activeStages.removeValue(
+                    forKey: master.originRecordingID.recordingUUID
+                )
                 queuedOrigins.remove(master.originRecordingID)
                 return
             } catch {
+                logFailure(
+                    error,
+                    stage: activeStages[
+                        master.originRecordingID.recordingUUID
+                    ] ?? "transfer",
+                    recording: master.originRecordingID.recordingUUID
+                )
+                activeStages.removeValue(
+                    forKey: master.originRecordingID.recordingUUID
+                )
                 queuedOrigins.remove(master.originRecordingID)
                 let outbox = try? store.recordingOutbox(
                     for: master.originRecordingID
@@ -199,6 +233,14 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             artifacts = []
         } else {
             state = .encoding(master.originRecordingID.recordingUUID)
+            activeStages[master.originRecordingID.recordingUUID] = "encode"
+            diagnosticLog.append(
+                severity: .info,
+                area: "transfer",
+                stage: "encode",
+                message: "Preparing lossless chunks from the protected master",
+                context: recordingContext(master.originRecordingID.recordingUUID)
+            )
             let locations = locations
             artifacts = try await Task.detached(priority: .utility) {
                 try HarcMobileALACChunkEncoder().encode(
@@ -206,9 +248,34 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     locations: locations
                 )
             }.value
+            diagnosticLog.append(
+                severity: .success,
+                area: "transfer",
+                stage: "encode",
+                message: "Lossless chunks are ready",
+                context: recordingContext(
+                    master.originRecordingID.recordingUUID,
+                    extra: [
+                        "chunks": String(artifacts.count),
+                        "bytes": String(
+                            artifacts.reduce(UInt64(0)) {
+                                $0 + $1.encodedByteLength
+                            }
+                        ),
+                    ]
+                )
+            )
         }
 
         state = .connecting(master.originRecordingID.recordingUUID)
+        activeStages[master.originRecordingID.recordingUUID] = "connection-open"
+        diagnosticLog.append(
+            severity: .info,
+            area: "connection",
+            stage: "open",
+            message: "Authenticating an adopted Host route",
+            context: recordingContext(master.originRecordingID.recordingUUID)
+        )
         let opened: HarcDesktopOpenedHostConnection
         do {
             opened = try await HarcDesktopHostSessionConnector.open(
@@ -219,6 +286,16 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         } catch HarcDesktopHostConnectionError.notPaired {
             throw HarcDesktopClientTransferError.notPaired
         }
+        diagnosticLog.append(
+            severity: .success,
+            area: "connection",
+            stage: "authenticated",
+            message: "Pinned Host session is ready",
+            context: recordingContext(
+                master.originRecordingID.recordingUUID,
+                extra: ["route": Self.routeName(opened.path)]
+            )
+        )
         let connection = opened.connection
         do {
             if alreadyCommitted {
@@ -294,7 +371,15 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             state = .uploading(master.originRecordingID.recordingUUID)
             let uploader = HarcForegroundRecordingOutboxCoordinator(
                 store: store,
-                transport: connection
+                transport: connection,
+                diagnosticSink: { [weak self] event in
+                    await self?.record(
+                        event,
+                        recording: master.originRecordingID.recordingUUID,
+                        uploadID: uploadID,
+                        route: opened.path
+                    )
+                }
             )
             let receipt = try await uploader.drive(
                 plan,
@@ -311,6 +396,19 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 opened: opened
             )
             try await connection.shutdownGracefully()
+            diagnosticLog.append(
+                severity: .success,
+                area: "transfer",
+                stage: "complete",
+                message: "Recording transfer and verified receipt completed",
+                context: recordingContext(
+                    master.originRecordingID.recordingUUID,
+                    extra: [
+                        "route": Self.routeName(opened.path),
+                        "upload": Self.short(uploadID.rawValue.uuidString),
+                    ]
+                )
+            )
             return Self.combinedDeferredMessage(
                 artifactFailure,
                 speakerFailure
@@ -318,6 +416,101 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         } catch {
             await connection.shutdownImmediately()
             throw error
+        }
+    }
+
+    private func record(
+        _ event: HarcForegroundUploadDiagnosticEvent,
+        recording: UUID,
+        uploadID: UploadID,
+        route: HarcVerifiedRoutePath
+    ) {
+        activeStages[recording] = event.stage.rawValue
+        var extra = [
+            "route": Self.routeName(route),
+            "upload": Self.short(uploadID.rawValue.uuidString),
+            "chunks": String(event.chunkCount),
+        ]
+        if let index = event.chunkIndex {
+            extra["chunk"] = "\(index + 1)/\(event.chunkCount)"
+        }
+        if let bytes = event.encodedByteCount {
+            extra["bytes"] = String(bytes)
+        }
+        diagnosticLog.append(
+            severity: event.stage == .chunkDurable
+                || event.stage == .receiptDurable ? .success : .info,
+            area: "transfer",
+            stage: event.stage.rawValue,
+            message: event.message,
+            context: recordingContext(recording, extra: extra)
+        )
+    }
+
+    private func logFailure(
+        _ error: any Error,
+        stage: String,
+        recording: UUID?
+    ) {
+        let diagnostic = HarcTransportErrorDiagnostic.describe(error)
+        var context = ["error_type": diagnostic.type]
+        if let recording {
+            context["recording"] = Self.short(recording.uuidString)
+        }
+        if let code = diagnostic.rpcCode { context["rpc_code"] = code }
+        if let number = diagnostic.rpcCodeNumber {
+            context["rpc_number"] = String(number)
+        }
+        if let cause = diagnostic.cause {
+            context["cause"] = privacyBounded(cause)
+        }
+        if let routeFailure = error as? HarcDesktopHostRouteFailure {
+            context["direct_error"] = privacyBounded(
+                HarcTransportErrorDiagnostic.describe(
+                    routeFailure.directError
+                ).summary
+            )
+            if let relayError = routeFailure.relayError {
+                context["relay_error"] = privacyBounded(
+                    HarcTransportErrorDiagnostic.describe(relayError).summary
+                )
+            }
+        }
+        diagnosticLog.append(
+            severity: .error,
+            area: "transfer",
+            stage: stage,
+            message: privacyBounded(diagnostic.summary),
+            context: context
+        )
+    }
+
+    private func recordingContext(
+        _ recording: UUID,
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var result = extra
+        result["recording"] = Self.short(recording.uuidString)
+        return result
+    }
+
+    private func privacyBounded(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: clientRoot.path, with: "<ClientState>")
+            .replacingOccurrences(
+                of: FileManager.default.homeDirectoryForCurrentUser.path,
+                with: "<Home>"
+            )
+    }
+
+    private static func short(_ value: String) -> String {
+        String(value.lowercased().prefix(8))
+    }
+
+    private static func routeName(_ path: HarcVerifiedRoutePath) -> String {
+        switch path {
+        case .direct: "direct"
+        case .encryptedRelay: "encrypted-relay"
         }
     }
 
