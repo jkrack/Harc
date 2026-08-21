@@ -307,6 +307,34 @@ enum HarcDesktopClientRecovery {
     }
 }
 
+/// Coalesces recovery requests without losing one that arrives while a pass is
+/// active. Multiple overlapping requests become exactly one follow-up pass.
+struct HarcDesktopClientRecoveryRequestGate {
+    private(set) var isRunning = false
+    private var followUpRequested = false
+
+    mutating func request() -> Bool {
+        guard !isRunning else {
+            followUpRequested = true
+            return false
+        }
+        isRunning = true
+        return true
+    }
+
+    mutating func finish() -> Bool {
+        isRunning = false
+        let shouldRunAgain = followUpRequested
+        followUpRequested = false
+        return shouldRunAgain
+    }
+
+    mutating func reset() {
+        isRunning = false
+        followUpRequested = false
+    }
+}
+
 private enum RecoveryError: LocalizedError {
     case missingMaster
     case invalidSidecar

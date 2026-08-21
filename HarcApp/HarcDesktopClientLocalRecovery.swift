@@ -27,6 +27,7 @@ enum HarcDesktopClientLocalRecovery {
         _ candidates: [HarcDesktopClientRecovery.LocalCandidate],
         store: RecordingStore,
         currentModelID: String,
+        onLibraryChange: @MainActor () async -> Void = {},
         transcribe: @MainActor (HarcDesktopClientRecovery.LocalCandidate) async throws
             -> HarcDesktopClientLocalTranscription
     ) async -> Outcome {
@@ -51,39 +52,28 @@ enum HarcDesktopClientLocalRecovery {
                         transcribe: transcribe,
                         outcome: &outcome
                     )
+                    await onLibraryChange()
                     continue
                 }
 
                 var sidecar = candidate.sidecar
-                let artifacts = try sidecar.transcript.map {
-                    try writeTranscript($0, nextTo: candidate.masterURL)
-                }
-                let initial = try await store.reconcileClientCapture(
-                    originID: capture.originRecordingID,
-                    canonicalPCMHash: capture.canonicalPCMSHA256,
-                    canonicalPCMFrames: capture.totalCanonicalFrames,
-                    masterURL: candidate.masterURL,
-                    startedAt: capture.captureStartedAt,
-                    endedAt: capture.captureEndedAt,
-                    transcriptText: sidecar.transcript?.joinedText,
-                    transcriptJSONURL: artifacts?.json,
-                    transcriptMarkdownURL: artifacts?.markdown,
-                    sttModelID: sidecar.transcript == nil ? nil : currentModelID,
-                    transcribedAt: sidecar.transcript == nil ? nil : sidecar.persistedAt
+                let initial = try await reconcilePersistedCapture(
+                    candidate,
+                    store: store,
+                    currentModelID: currentModelID
                 )
                 if initial.inserted {
                     outcome.added += 1
                 } else {
                     outcome.alreadyVisible += 1
                 }
+                // The row is useful immediately, even when this master still
+                // needs local STT. Do not make the Library wait for every
+                // older archive item to finish transcribing.
+                await onLibraryChange()
 
                 if sidecar.transcript != nil {
                     outcome.transcriptReused += 1
-                    try await persistEmbeddings(
-                        sidecar.speakerEmbeddings ?? [],
-                        recording: initial.recording,
-                        store: store
-                    )
                     continue
                 }
 
@@ -124,6 +114,7 @@ enum HarcDesktopClientLocalRecovery {
                     at: candidate.sidecarURL
                 )
                 outcome.transcribed += 1
+                await onLibraryChange()
             } catch {
                 outcome.failed += 1
                 outcome.issues.append(ClientRecoverSyncIssue(
@@ -135,6 +126,40 @@ enum HarcDesktopClientLocalRecovery {
         }
 
         return outcome
+    }
+
+    /// Mirror a capture whose protected master and sidecar are already
+    /// durable. This is the fast path used directly by tray recording commit:
+    /// it never waits for an archive scan or Host connectivity.
+    static func reconcilePersistedCapture(
+        _ candidate: HarcDesktopClientRecovery.LocalCandidate,
+        store: RecordingStore,
+        currentModelID: String
+    ) async throws -> ClientCaptureLibraryResult {
+        let sidecar = candidate.sidecar
+        let capture = sidecar.capture
+        let artifacts = try sidecar.transcript.map {
+            try writeTranscript($0, nextTo: candidate.masterURL)
+        }
+        let result = try await store.reconcileClientCapture(
+            originID: capture.originRecordingID,
+            canonicalPCMHash: capture.canonicalPCMSHA256,
+            canonicalPCMFrames: capture.totalCanonicalFrames,
+            masterURL: candidate.masterURL,
+            startedAt: capture.captureStartedAt,
+            endedAt: capture.captureEndedAt,
+            transcriptText: sidecar.transcript?.joinedText,
+            transcriptJSONURL: artifacts?.json,
+            transcriptMarkdownURL: artifacts?.markdown,
+            sttModelID: sidecar.transcript == nil ? nil : currentModelID,
+            transcribedAt: sidecar.transcript == nil ? nil : sidecar.persistedAt
+        )
+        try await persistEmbeddings(
+            sidecar.speakerEmbeddings ?? [],
+            recording: result.recording,
+            store: store
+        )
+        return result
     }
 
     @MainActor

@@ -157,13 +157,34 @@ final class HarcDesktopClientRuntime: ObservableObject {
         return runtime
     }
 
-    func makeRecordingCommitter() throws -> any RecordingCommitter {
+    func makeRecordingCommitter(
+        localStore: RecordingStore,
+        currentModelID: String
+    ) throws -> any RecordingCommitter {
         try HarcDesktopClientRecordingCommitter(
             identity: identity,
             transferStore: transferStore,
-            root: root
-        ) { [weak self] in
+            root: root,
+            localStore: localStore,
+            currentModelID: currentModelID
+        ) { [weak self] localMirrorError in
             Task { @MainActor in
+                if let localMirrorError {
+                    self?.diagnosticLog.append(
+                        severity: .warning,
+                        area: "recovery",
+                        stage: "tray-local-mirror-failed",
+                        message: "The tray recording is protected but its immediate local Library mirror failed",
+                        context: ["error": localMirrorError]
+                    )
+                } else {
+                    self?.diagnosticLog.append(
+                        severity: .success,
+                        area: "recovery",
+                        stage: "tray-local-mirror-complete",
+                        message: "Tray recording added to the local Library"
+                    )
+                }
                 self?.refreshStatus()
                 self?.transferCoordinator.retryPending()
             }
@@ -237,6 +258,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
     func recoverAndSync(
         localStore: RecordingStore,
         currentModelID: String,
+        onLocalLibraryChange: @MainActor @escaping () async -> Void = {},
         transcribe: @MainActor @escaping (HarcDesktopClientRecovery.LocalCandidate) async throws
             -> HarcDesktopClientLocalTranscription
     ) async throws -> ClientRecoverSyncReport {
@@ -274,6 +296,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
             outcome.localCandidates,
             store: localStore,
             currentModelID: currentModelID,
+            onLibraryChange: onLocalLibraryChange,
             transcribe: transcribe
         )
         let report = outcome.report.includingLocalRecovery(
@@ -395,17 +418,23 @@ private struct HarcDesktopClientRecordingCommitter: RecordingCommitter {
     let identity: InstallationSigningIdentity
     let transferStore: HarcTransferStore
     let root: URL
-    let onAccepted: @Sendable () -> Void
+    let localStore: RecordingStore
+    let currentModelID: String
+    let onAccepted: @Sendable (String?) -> Void
 
     init(
         identity: InstallationSigningIdentity,
         transferStore: HarcTransferStore,
         root: URL,
-        onAccepted: @escaping @Sendable () -> Void
+        localStore: RecordingStore,
+        currentModelID: String,
+        onAccepted: @escaping @Sendable (String?) -> Void
     ) throws {
         self.identity = identity
         self.transferStore = transferStore
         self.root = root
+        self.localStore = localStore
+        self.currentModelID = currentModelID
         self.onAccepted = onAccepted
     }
 
@@ -457,11 +486,29 @@ private struct HarcDesktopClientRecordingCommitter: RecordingCommitter {
             masterFileURL: finalURL,
             persistedAt: sidecar.persistedAt
         )
+        let localMirrorError: String?
+        do {
+            _ = try await HarcDesktopClientLocalRecovery.reconcilePersistedCapture(
+                HarcDesktopClientRecovery.LocalCandidate(
+                    masterURL: finalURL,
+                    sidecarURL: sidecarURL,
+                    sidecar: sidecar
+                ),
+                store: localStore,
+                currentModelID: currentModelID
+            )
+            localMirrorError = nil
+        } catch {
+            // ClientState already owns a durable master and outbox. A local
+            // Library mirror failure must not turn successful capture into a
+            // false recording failure; the coalesced archive pass retries it.
+            localMirrorError = error.localizedDescription
+        }
         // The canonical ClientState master and sidecar are durable and the
         // outbox transaction owns recovery before the ephemeral capture cache
         // is consumed.
         try? FileManager.default.removeItem(at: captured.localMasterURL)
-        onAccepted()
+        onAccepted(localMirrorError)
         return .acceptedForDeferredPublication(localMasterURL: finalURL)
     }
 }

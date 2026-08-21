@@ -12,6 +12,7 @@ import Testing
 @Suite("Desktop Client Recover & Sync")
 struct HarcDesktopClientRecoveryTests {
     @Test("local recovery publishes and transcribes before Host delivery")
+    @MainActor
     func publishesIntoLocalLibraryFirst() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -24,12 +25,19 @@ struct HarcDesktopClientRecoveryTests {
         )
         let store = try await RecordingStore.inMemory()
         let firstInventory = try fixture.recoveryOutcome()
+        var refreshCount = 0
+        var visibleBeforeTranscription = false
 
         let first = await HarcDesktopClientLocalRecovery.reconcile(
             firstInventory.localCandidates,
             store: store,
-            currentModelID: "parakeet-test"
+            currentModelID: "parakeet-test",
+            onLibraryChange: {
+                refreshCount += 1
+                visibleBeforeTranscription = (try? await store.fetchAll().count) == 1
+            }
         ) { candidate in
+            #expect(visibleBeforeTranscription)
             let capture = candidate.sidecar.capture
             return HarcDesktopClientLocalTranscription(
                 transcript: SessionTranscript(
@@ -48,6 +56,7 @@ struct HarcDesktopClientRecoveryTests {
         #expect(first.added == 1)
         #expect(first.transcribed == 1)
         #expect(first.failed == 0)
+        #expect(refreshCount == 2)
         let rows = try await store.fetchAll()
         #expect(rows.count == 1)
         #expect(rows[0].transcriptText == "recovered locally")
@@ -66,6 +75,26 @@ struct HarcDesktopClientRecoveryTests {
         #expect(repeated.transcriptReused == 1)
         #expect(repeated.failed == 0)
         #expect(try await store.fetchAll().count == 1)
+    }
+
+    @Test("overlapping recovery requests guarantee one follow-up pass")
+    func coalescesOverlappingRequests() {
+        var gate = HarcDesktopClientRecoveryRequestGate()
+
+        let firstStarts = gate.request()
+        let secondCoalesces = !gate.request()
+        let thirdCoalesces = !gate.request()
+        let followUpRequested = gate.finish()
+        #expect(firstStarts)
+        #expect(secondCoalesces)
+        #expect(thirdCoalesces)
+        #expect(followUpRequested)
+
+        let followUpStarts = gate.request()
+        let noThirdPass = !gate.finish()
+        #expect(followUpStarts)
+        #expect(noThirdPass)
+        #expect(!gate.isRunning)
     }
 
     @Test("sidecar repairs a missing outbox and repeat runs are idempotent")

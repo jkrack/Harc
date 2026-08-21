@@ -489,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// mounted separately as On This Mac; this runtime owns only ClientState.
     private var desktopClientRuntime: HarcDesktopClientRuntime?
     private var clientRecoverSyncTask: Task<Void, Never>?
+    private var clientRecoverSyncRequestGate = HarcDesktopClientRecoveryRequestGate()
     private let localLibraryReprocessState = LocalLibraryReprocessState()
     private var localLibraryReprocessTask: Task<Void, Never>?
     private var hostProcessingWorker: HarcHostProcessingWorker?
@@ -897,6 +898,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         desktopClientRuntime = nil
         clientRecoverSyncTask?.cancel()
         clientRecoverSyncTask = nil
+        clientRecoverSyncRequestGate.reset()
         localLibraryReprocessTask?.cancel()
         localLibraryReprocessTask = nil
         restoreUITestPreferencesIfNeeded()
@@ -1926,7 +1928,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // whose readiness check allowed it to start.
             let committer: any RecordingCommitter
             if let desktopClientRuntime {
-                committer = try desktopClientRuntime.makeRecordingCommitter()
+                guard let localStore = store else {
+                    throw MissingRecordingCommitter.CommitterMissingError()
+                }
+                committer = try desktopClientRuntime.makeRecordingCommitter(
+                    localStore: localStore,
+                    currentModelID: HarcDesktopLocalLibraryReprocessPlanner.currentModelID(
+                        diarize: prefs.diarize,
+                        vad: prefs.vadEnabled
+                    )
+                )
             } else {
                 committer = StandaloneRecordingCommitter(
                     destination: RecordingDestination(
@@ -2216,6 +2227,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 late: late
             )
         case .acceptedForDeferredPublication:
+            // The Client committer mirrors this exact capture before returning.
+            // Refresh now so a tray stop appears immediately even while an
+            // older archive recovery pass continues in the background.
+            await recordingsVM?.refresh()
             // This repeat-safe pass also covers a crash between durable
             // ClientState acceptance and local Library reconciliation.
             startClientRecoverAndSync(openActivity: false)
@@ -4001,12 +4016,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func startClientRecoverAndSync(openActivity: Bool) {
-        guard clientRecoverSyncTask == nil else { return }
         guard let runtime = desktopClientRuntime, let store else {
             presentLibraryUnavailable(
                 bridge.runtimeStartupError
                     ?? "Recover & Sync is available while this Mac is running in Client mode."
             )
+            return
+        }
+        guard clientRecoverSyncRequestGate.request() else {
+            if openActivity {
+                bridge.onOpenActivity()
+            }
             return
         }
         bridge.clientRecoverSyncState = .running
@@ -4020,12 +4040,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             vad: vad
         )
         clientRecoverSyncTask = Task { @MainActor [weak self, weak runtime] in
-            guard let self, let runtime else { return }
-            defer { clientRecoverSyncTask = nil }
+            guard let self else { return }
+            defer {
+                clientRecoverSyncTask = nil
+                if clientRecoverSyncRequestGate.finish() {
+                    startClientRecoverAndSync(openActivity: false)
+                }
+            }
+            guard let runtime else { return }
             do {
                 let report = try await runtime.recoverAndSync(
                     localStore: store,
-                    currentModelID: currentModelID
+                    currentModelID: currentModelID,
+                    onLocalLibraryChange: { [weak self] in
+                        await self?.recordingsVM?.refresh()
+                    }
                 ) { [launcher] candidate in
                     _ = try await launcher.ensureRunning()
                     let capture = candidate.sidecar.capture
@@ -4097,6 +4126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.hostRuntimeReady = false
         bridge.clientRuntimeReady = false
         bridge.clientRecoverSyncState = nil
+        clientRecoverSyncRequestGate.reset()
         bridge.clientTransferStatusText = nil
         bridge.clientHostConnectionState = nil
         bridge.clientDiagnosticLogEntries = []
@@ -4124,6 +4154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             desktopClientRuntime = nil
             clientRecoverSyncTask?.cancel()
             clientRecoverSyncTask = nil
+            clientRecoverSyncRequestGate.reset()
             bridge.hostRuntimeReady = false
             bridge.clientRuntimeReady = false
             remoteRelayStatusTask?.cancel()
