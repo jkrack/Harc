@@ -4,6 +4,7 @@ import SwiftUI
 /// everyday configuration first, reference and troubleshooting last.
 public enum SettingsPane: String, CaseIterable, Identifiable, Hashable, Sendable {
     case general
+    case hostSync
     case recording
     case transcription
     case dictation
@@ -17,6 +18,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Hashable, Sendable
     var title: String {
         switch self {
         case .general: return "General"
+        case .hostSync: return "Host & Sync"
         case .recording: return "Recording"
         case .transcription: return "Transcription"
         case .dictation: return "Dictation"
@@ -30,6 +32,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Hashable, Sendable
     var symbolName: String {
         switch self {
         case .general: return "gearshape"
+        case .hostSync: return "network"
         case .recording: return "record.circle"
         case .transcription: return "text.quote"
         case .dictation: return "mic"
@@ -74,6 +77,18 @@ enum SettingsSearchIndex {
               keywords: ["theme", "dark mode", "light", "system"]),
         .init(pane: .general, label: "Launch at login",
               keywords: ["startup", "start", "boot", "login item"]),
+
+        // Host & Sync
+        .init(pane: .hostSync, label: "This Mac’s role",
+              keywords: ["standalone", "host", "client", "mode", "role"]),
+        .init(pane: .hostSync, label: "Host connection",
+              keywords: ["connected", "paired", "pairing", "online", "offline", "last seen", "authenticated"]),
+        .init(pane: .hostSync, label: "Recover & Sync",
+              keywords: ["recover", "retry", "archive", "outbox", "missing recordings", "transfer"]),
+        .init(pane: .hostSync, label: "Developer Log",
+              keywords: ["diagnostic", "debug", "grpc", "error", "troubleshoot", "copy log"]),
+        .init(pane: .hostSync, label: "Harc Remote",
+              keywords: ["relay", "vpn", "other networks", "cloudflare", "tunnel"]),
 
         // Recording
         .init(pane: .recording, label: "Destination folder",

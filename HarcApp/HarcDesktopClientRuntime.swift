@@ -8,6 +8,7 @@ import HarcClientStore
 import HarcCore
 import HarcDomain
 import HarcIdentity
+import HarcStore
 import HarcTransfer
 import HarcUI
 
@@ -16,6 +17,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
     @Published private(set) var pendingCaptureCount = 0
     @Published private(set) var statusMessage = "Client storage ready"
     @Published private(set) var lastRecoverSyncReport: ClientRecoverSyncReport?
+    @Published private(set) var hostConnectionState: ClientHostConnectionState = .starting
 
     let identity: InstallationSigningIdentity
     let transferStore: HarcTransferStore
@@ -174,15 +176,70 @@ final class HarcDesktopClientRuntime: ObservableObject {
                 $0.stateMachine.state != .committed
             }.count
             statusMessage = transferCoordinator.statusMessage
+            hostConnectionState = try makeHostConnectionState()
         } catch {
             statusMessage = error.localizedDescription
+            hostConnectionState = .needsAttention(
+                message: error.localizedDescription,
+                lastContact: lastAuthenticatedHostContact,
+                pending: pendingCaptureCount
+            )
         }
     }
 
+    private func makeHostConnectionState() throws -> ClientHostConnectionState {
+        let pending = transferCoordinator.pendingCount
+        guard try transferStore.activeAdoption() != nil else {
+            return .notPaired(pending: pending)
+        }
+        let lastContact = lastAuthenticatedHostContact
+        switch transferCoordinator.state {
+        case .waitingForPairing:
+            // The durable adoption record is authoritative. The coordinator
+            // can briefly retain its pre-adoption display state while retry
+            // work is being scheduled, but that must not make Settings claim
+            // the Host is no longer paired.
+            return .paired(lastContact: lastContact, pending: pending)
+        case .connecting:
+            return .connecting(lastContact: lastContact, pending: pending)
+        case .uploading:
+            return .connected(
+                lastContact: lastContact ?? Date(),
+                pending: pending
+            )
+        case .retryNeeded(_, let message):
+            return .needsAttention(
+                message: message,
+                lastContact: lastContact,
+                pending: pending
+            )
+        case .securityBlocked(_, let message):
+            return .securityBlocked(
+                message: message,
+                lastContact: lastContact,
+                pending: pending
+            )
+        case .idle, .encoding, .uploaded, .edgeArtifactDeferred:
+            return .paired(lastContact: lastContact, pending: pending)
+        }
+    }
+
+    private var lastAuthenticatedHostContact: Date? {
+        diagnosticLog.entries.last {
+            $0.area == "connection" && $0.stage == "authenticated"
+        }?.timestamp
+    }
+
     /// User-visible, repeat-safe repair pass over the private Client archive.
-    /// Reconciliation runs off the main actor; retry scheduling returns
-    /// immediately while the coordinator reports live transfer progress.
-    func recoverAndSync() async throws -> ClientRecoverSyncReport {
+    /// Archive inventory runs off the main actor. Local reconciliation awaits
+    /// database and transcription work while retry scheduling returns
+    /// immediately and the coordinator reports live transfer progress.
+    func recoverAndSync(
+        localStore: RecordingStore,
+        currentModelID: String,
+        transcribe: @MainActor @escaping (HarcDesktopClientRecovery.LocalCandidate) async throws
+            -> HarcDesktopClientLocalTranscription
+    ) async throws -> ClientRecoverSyncReport {
         diagnosticLog.append(
             severity: .info,
             area: "recovery",
@@ -213,10 +270,26 @@ final class HarcDesktopClientRuntime: ObservableObject {
             )
             throw error
         }
-        let report = outcome.report
+        let localOutcome = await HarcDesktopClientLocalRecovery.reconcile(
+            outcome.localCandidates,
+            store: localStore,
+            currentModelID: currentModelID,
+            transcribe: transcribe
+        )
+        let report = outcome.report.includingLocalRecovery(
+            added: localOutcome.added,
+            alreadyVisible: localOutcome.alreadyVisible,
+            transcribed: localOutcome.transcribed,
+            transcriptReused: localOutcome.transcriptReused,
+            failed: localOutcome.failed,
+            issues: localOutcome.issues
+        )
         lastRecoverSyncReport = report
         diagnosticLog.append(
-            severity: report.securityBlocked == 0 ? .success : .warning,
+            severity: report.securityBlocked == 0
+                    && report.localRecoveryFailed == 0
+                    && report.issues.isEmpty
+                ? .success : .warning,
             area: "recovery",
             stage: "inventory-complete",
             message: "Recover & Sync inventory completed",
@@ -279,6 +352,10 @@ final class HarcDesktopClientRuntime: ObservableObject {
             "sidecars": String(report.sidecarsFound),
             "sidecars_rebuilt": String(report.sidecarsRebuilt),
             "outboxes_repaired": String(report.outboxesRepaired),
+            "local_library_added": String(report.localLibraryAdded),
+            "local_library_existing": String(report.alreadyInLocalLibrary),
+            "locally_transcribed": String(report.transcribedLocally),
+            "local_transcription_failed": String(report.localRecoveryFailed),
             "retry_requested": String(report.retryRequested),
             "already_on_host": String(report.alreadyOnHost),
             "security_blocked": String(report.securityBlocked),
@@ -544,18 +621,56 @@ enum HarcDesktopClientFiles {
         try writeProtectedData(encoder.encode(sidecar), to: destination)
     }
 
+    static func replaceSidecar(
+        _ sidecar: HarcDesktopClientCaptureSidecar,
+        at destination: URL
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try writeProtectedData(
+            encoder.encode(sidecar),
+            to: destination,
+            replacingExistingRegularFile: true
+        )
+    }
+
     static func writeProtectedData(
         _ data: Data,
-        to destination: URL
+        to destination: URL,
+        replacingExistingRegularFile: Bool = false
     ) throws {
+        try validateOwnedDirectory(destination.deletingLastPathComponent())
+        if replacingExistingRegularFile {
+            var information = stat()
+            let result = lstat(destination.path, &information)
+            guard (result == 0
+                    && information.st_mode & S_IFMT == S_IFREG
+                    && information.st_uid == geteuid())
+                    || (result != 0 && errno == ENOENT) else {
+                throw HarcDesktopClientError.unsafePath
+            }
+        }
         let temporary = destination.deletingLastPathComponent()
             .appendingPathComponent(".\(UUID().uuidString).partial")
+        var published = false
+        defer {
+            if !published {
+                try? FileManager.default.removeItem(at: temporary)
+            }
+        }
         try data.write(to: temporary, options: .atomic)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: temporary.path
         )
-        try FileManager.default.moveItem(at: temporary, to: destination)
+        if replacingExistingRegularFile {
+            guard Darwin.rename(temporary.path, destination.path) == 0 else {
+                throw HarcDesktopClientError.storageFailure
+            }
+        } else {
+            try FileManager.default.moveItem(at: temporary, to: destination)
+        }
+        published = true
         let directory = Darwin.open(
             destination.deletingLastPathComponent().path,
             O_RDONLY | O_CLOEXEC

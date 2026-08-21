@@ -35,6 +35,9 @@ struct SettingsSearchIndexTests {
             ("tcc", SettingsPane.about),
             ("zoom", SettingsPane.recording),
             ("login item", SettingsPane.general),
+            ("last seen", SettingsPane.hostSync),
+            ("grpc", SettingsPane.hostSync),
+            ("missing recordings", SettingsPane.hostSync),
         ]
     )
     func findsByKeyword(query: String, expected: SettingsPane) {

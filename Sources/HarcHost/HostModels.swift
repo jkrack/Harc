@@ -755,6 +755,9 @@ public struct FileSystemHostVolumeCapacityProvider: HostVolumeCapacityProvider {
 public struct HostStagingQuotaPolicy: Equatable, Sendable {
     public static let gibibyte: UInt64 = 1_024 * 1_024 * 1_024
 
+    /// Production staging is bounded by the Host volume itself, not by an
+    /// arbitrary Harc storage allowance. Finite values remain injectable for
+    /// deterministic admission and crash-recovery tests.
     public let perDeviceBytes: UInt64
     public let globalBytes: UInt64
     public let minimumFreeBytes: UInt64
@@ -762,10 +765,10 @@ public struct HostStagingQuotaPolicy: Equatable, Sendable {
     public let minimumFreePermille: UInt16
 
     public init(
-        perDeviceBytes: UInt64 = 20 * Self.gibibyte,
-        globalBytes: UInt64 = 100 * Self.gibibyte,
-        minimumFreeBytes: UInt64 = 10 * Self.gibibyte,
-        minimumFreePermille: UInt16 = 50
+        perDeviceBytes: UInt64 = .max,
+        globalBytes: UInt64 = .max,
+        minimumFreeBytes: UInt64 = 0,
+        minimumFreePermille: UInt16 = 0
     ) {
         precondition(perDeviceBytes > 0)
         precondition(globalBytes > 0)
@@ -885,7 +888,7 @@ public enum HarcHostError: Error, Equatable, Sendable {
     case bodyFragmentTooLarge(limit: Int, actual: Int)
     case activeStagingStreamLimitExceeded(limit: Int)
     case quotaExceeded(scope: String, limit: UInt64, requestedTotal: UInt64)
-    case insufficientFreeSpace(requiredRemaining: UInt64, projectedRemaining: UInt64)
+    case insufficientFreeSpace(requiredBytes: UInt64, availableBytes: UInt64)
     case volumeCapacityUnavailable
     case unsafeStagingRoot
     case unsafeStagingPath
@@ -982,7 +985,7 @@ extension HarcHostError: LocalizedError {
         case .bodyFragmentTooLarge(let limit, let actual): "A streaming body fragment exceeds \(limit) bytes; received \(actual)."
         case .activeStagingStreamLimitExceeded(let limit): "An authenticated device may have at most \(limit) active staging streams."
         case .quotaExceeded(let scope, let limit, let total): "The \(scope) staging quota of \(limit) bytes would be exceeded by \(total) bytes."
-        case .insufficientFreeSpace(let required, let projected): "Staging would leave \(projected) free bytes; at least \(required) are required."
+        case .insufficientFreeSpace(let required, let available): "Staging requires \(required) available bytes; \(available) are available."
         case .volumeCapacityUnavailable: "The host volume capacity could not be determined."
         case .unsafeStagingRoot: "The host staging root is missing, a symlink, or has unsafe ownership/type."
         case .unsafeStagingPath: "A staged path escaped the host-generated staging namespace or traversed a symlink."

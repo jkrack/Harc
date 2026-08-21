@@ -2192,8 +2192,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     /// Mode-neutral handoff after a committer has accepted a capture.
     /// Standalone publication deliberately retains the mature local ingest
-    /// pipeline. Deferred publication has transferred durable ownership to an
-    /// outbox and must not masquerade as a row in this Mac's canonical library.
+    /// pipeline. Deferred publication transfers durable ownership to the
+    /// Client outbox, then local-first recovery mirrors the protected master
+    /// into this Mac's Library independently of Host delivery.
     private func handleRecordingCommitOutcome(
         _ outcome: RecordingCommitOutcome,
         captureTitle: String?,
@@ -2215,9 +2216,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 late: late
             )
         case .acceptedForDeferredPublication:
-            // The accepting committer owns all durable outbox/UI state. In
-            // particular, do not persist a local canonical row, run local
-            // projections, paste, summarize, or show a "saved locally" tray.
+            // This repeat-safe pass also covers a crash between durable
+            // ClientState acceptance and local Library reconciliation.
+            startClientRecoverAndSync(openActivity: false)
             if !late {
                 state.markDeferredStop()
                 autoStop.end(autoStopReason: autoStopReason)
@@ -3996,8 +3997,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     @objc private func recoverAndSyncClient(_ sender: Any?) {
+        startClientRecoverAndSync(openActivity: true)
+    }
+
+    private func startClientRecoverAndSync(openActivity: Bool) {
         guard clientRecoverSyncTask == nil else { return }
-        guard let runtime = desktopClientRuntime else {
+        guard let runtime = desktopClientRuntime, let store else {
             presentLibraryUnavailable(
                 bridge.runtimeStartupError
                     ?? "Recover & Sync is available while this Mac is running in Client mode."
@@ -4005,14 +4010,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         bridge.clientRecoverSyncState = .running
-        bridge.onOpenActivity()
+        if openActivity {
+            bridge.onOpenActivity()
+        }
+        let diarize = prefs.diarize
+        let vad = prefs.vadEnabled
+        let currentModelID = HarcDesktopLocalLibraryReprocessPlanner.currentModelID(
+            diarize: diarize,
+            vad: vad
+        )
         clientRecoverSyncTask = Task { @MainActor [weak self, weak runtime] in
             guard let self, let runtime else { return }
             defer { clientRecoverSyncTask = nil }
             do {
-                let report = try await runtime.recoverAndSync()
+                let report = try await runtime.recoverAndSync(
+                    localStore: store,
+                    currentModelID: currentModelID
+                ) { [launcher] candidate in
+                    _ = try await launcher.ensureRunning()
+                    let capture = candidate.sidecar.capture
+                    let result = try await HarcSTTClient().transcribe(
+                        audioPath: candidate.masterURL.path,
+                        diarize: diarize,
+                        vad: vad
+                    )
+                    return HarcDesktopClientLocalTranscription(
+                        transcript: SessionTranscript(
+                            startedAt: capture.captureStartedAt,
+                            endedAt: max(
+                                capture.captureEndedAt,
+                                capture.captureStartedAt
+                            ),
+                            audioPath: candidate.masterURL.path,
+                            joinedText: result.text,
+                            words: result.words,
+                            speakers: result.speakers,
+                            chunks: []
+                        ),
+                        speakerEmbeddings: result.speakerEmbeddings
+                    )
+                }
                 bridge.clientRecoverSyncState = .completed(report)
                 bridge.clientTransferStatusText = runtime.statusMessage
+                await recordingsVM?.refresh()
             } catch is CancellationError {
                 bridge.clientRecoverSyncState = .ready
             } catch {
@@ -4058,6 +4098,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.clientRuntimeReady = false
         bridge.clientRecoverSyncState = nil
         bridge.clientTransferStatusText = nil
+        bridge.clientHostConnectionState = nil
         bridge.clientDiagnosticLogEntries = []
         do {
             let store = try await makeApplicationStore()
@@ -4187,6 +4228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 .completed($0)
             } ?? .ready
             bridge.clientTransferStatusText = runtime.statusMessage
+            bridge.clientHostConnectionState = runtime.hostConnectionState
             bridge.clientDiagnosticLogEntries = runtime.diagnosticLog.entries
             runtime.diagnosticLog.$entries
                 .sink { [weak bridge] entries in
@@ -4196,6 +4238,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             runtime.$statusMessage
                 .sink { [weak bridge] status in
                     bridge?.clientTransferStatusText = status
+                }
+                .store(in: &cancellables)
+            runtime.$hostConnectionState
+                .sink { [weak bridge] state in
+                    bridge?.clientHostConnectionState = state
                 }
                 .store(in: &cancellables)
             prefs.$clientHostAudioDownloadEnabled
@@ -4208,7 +4255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 }
                 .store(in: &cancellables)
             // The pre-existing local Library remains a distinct, fully local
-            // On This Mac source. Client captures never enter this store.
+            // On This Mac source. Verified Client captures are reconciled into
+            // it locally; Host delivery remains a separate state.
             return try await RecordingStore.onDisk(url: databaseURL)
         case .host:
             let configurationResult = try await
@@ -4407,6 +4455,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             observeDestinationChanges()
             if shouldOpenLibraryForUITest {
                 openLibrary()
+            }
+            if desktopClientRuntime != nil, !isUITesting {
+                // Startup recovery is silent but complete: verified masters
+                // become locally visible/transcribed even with no Host route.
+                startClientRecoverAndSync(openActivity: false)
             }
     }
 

@@ -1,3 +1,5 @@
+import Foundation
+
 /// A client connection path is usable only after an authenticated,
 /// idempotent Host operation succeeds on it. Creating a transport owner is not
 /// proof that DNS, TLS, HTTP/2, or the encrypted relay is usable.
@@ -28,15 +30,40 @@ public struct HarcVerifiedRouteSelection<
     }
 }
 
-public struct HarcVerifiedRouteFailure: Error {
+public struct HarcVerifiedRouteFailure: Error, LocalizedError {
     public let directError: any Error
     public let relayError: (any Error)?
 
     public var triedEncryptedRelay: Bool { relayError != nil }
 
+    public var errorDescription: String? {
+        let direct = HarcTransportErrorDiagnostic.describe(directError)
+        let directMessage = Self.userMessage(direct)
+        guard let relayError else {
+            return "The direct Host route failed: \(directMessage)"
+        }
+        let relay = HarcTransportErrorDiagnostic.describe(relayError)
+        return "The direct Host route failed: \(directMessage). The encrypted relay also failed: \(Self.userMessage(relay))"
+    }
+
     init(directError: any Error, relayError: (any Error)?) {
         self.directError = directError
         self.relayError = relayError
+    }
+
+    private static func userMessage(
+        _ diagnostic: HarcTransportErrorDiagnostic
+    ) -> String {
+        if let code = diagnostic.rpcCode {
+            var detail = "gRPC \(code)"
+            if let message = diagnostic.rpcMessage, !message.isEmpty {
+                detail += ": \(message)"
+            } else if let cause = diagnostic.cause, !cause.isEmpty {
+                detail += ": \(cause)"
+            }
+            return detail
+        }
+        return diagnostic.summary
     }
 }
 

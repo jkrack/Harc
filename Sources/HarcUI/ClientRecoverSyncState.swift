@@ -21,6 +21,11 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
     public let sidecarsRebuilt: Int
     public let outboxesRepaired: Int
     public let alreadyTracked: Int
+    public let localLibraryAdded: Int
+    public let alreadyInLocalLibrary: Int
+    public let transcribedLocally: Int
+    public let localTranscriptReused: Int
+    public let localRecoveryFailed: Int
     public let retryRequested: Int
     public let alreadyOnHost: Int
     public let securityBlocked: Int
@@ -32,6 +37,11 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
         sidecarsRebuilt: Int,
         outboxesRepaired: Int,
         alreadyTracked: Int,
+        localLibraryAdded: Int = 0,
+        alreadyInLocalLibrary: Int = 0,
+        transcribedLocally: Int = 0,
+        localTranscriptReused: Int = 0,
+        localRecoveryFailed: Int = 0,
         retryRequested: Int,
         alreadyOnHost: Int,
         securityBlocked: Int,
@@ -42,6 +52,11 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
         self.sidecarsRebuilt = sidecarsRebuilt
         self.outboxesRepaired = outboxesRepaired
         self.alreadyTracked = alreadyTracked
+        self.localLibraryAdded = localLibraryAdded
+        self.alreadyInLocalLibrary = alreadyInLocalLibrary
+        self.transcribedLocally = transcribedLocally
+        self.localTranscriptReused = localTranscriptReused
+        self.localRecoveryFailed = localRecoveryFailed
         self.retryRequested = retryRequested
         self.alreadyOnHost = alreadyOnHost
         self.securityBlocked = securityBlocked
@@ -49,11 +64,13 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
     }
 
     public var headline: String {
-        if !issues.isEmpty || securityBlocked > 0 {
+        if localRecoveryFailed > 0 || !issues.isEmpty || securityBlocked > 0 {
             return "Recovery finished with items needing attention"
         }
-        if retryRequested > 0 {
-            return "Retrying \(retryRequested) recording\(retryRequested == 1 ? "" : "s")"
+        if localLibraryAdded > 0 || transcribedLocally > 0 {
+            let recovered = localLibraryAdded > 0
+                ? localLibraryAdded : transcribedLocally
+            return "Recovered \(recovered) recording\(recovered == 1 ? "" : "s") on this Mac"
         }
         if mastersFound > 0, alreadyOnHost == mastersFound {
             return "All Client recordings are on the Host"
@@ -67,11 +84,48 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
         var parts = ["Found \(mastersFound) master\(mastersFound == 1 ? "" : "s")"]
         let repaired = sidecarsRebuilt + outboxesRepaired
         if repaired > 0 { parts.append("repaired \(repaired)") }
+        let localTotal = localLibraryAdded + alreadyInLocalLibrary
+        if localTotal > 0 { parts.append("\(localTotal) in local Library") }
+        if transcribedLocally > 0 {
+            parts.append("transcribed \(transcribedLocally) locally")
+        }
+        if localTranscriptReused > 0 {
+            parts.append("reused \(localTranscriptReused) transcript\(localTranscriptReused == 1 ? "" : "s")")
+        }
+        if localRecoveryFailed > 0 {
+            parts.append("\(localRecoveryFailed) local recover\(localRecoveryFailed == 1 ? "y" : "ies") failed")
+        }
         if alreadyOnHost > 0 { parts.append("\(alreadyOnHost) on Host") }
-        if retryRequested > 0 { parts.append("retry started for \(retryRequested)") }
+        if retryRequested > 0 { parts.append("Host delivery queued for \(retryRequested)") }
         if securityBlocked > 0 { parts.append("\(securityBlocked) security blocked") }
         if !issues.isEmpty { parts.append("\(issues.count) need attention") }
         return parts.joined(separator: " • ")
+    }
+
+    public func includingLocalRecovery(
+        added: Int,
+        alreadyVisible: Int,
+        transcribed: Int,
+        transcriptReused: Int,
+        failed: Int,
+        issues localIssues: [ClientRecoverSyncIssue]
+    ) -> ClientRecoverSyncReport {
+        ClientRecoverSyncReport(
+            mastersFound: mastersFound,
+            sidecarsFound: sidecarsFound,
+            sidecarsRebuilt: sidecarsRebuilt,
+            outboxesRepaired: outboxesRepaired,
+            alreadyTracked: alreadyTracked,
+            localLibraryAdded: added,
+            alreadyInLocalLibrary: alreadyVisible,
+            transcribedLocally: transcribed,
+            localTranscriptReused: transcriptReused,
+            localRecoveryFailed: failed,
+            retryRequested: retryRequested,
+            alreadyOnHost: alreadyOnHost,
+            securityBlocked: securityBlocked,
+            issues: issues + localIssues
+        )
     }
 }
 

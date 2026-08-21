@@ -8,9 +8,16 @@ import HarcUI
 /// It repairs only facts Harc can prove from an owned canonical WAV, a valid
 /// sidecar, or an existing immutable outbox. Conflicts stay untouched.
 enum HarcDesktopClientRecovery {
+    struct LocalCandidate: Sendable {
+        let masterURL: URL
+        let sidecarURL: URL
+        let sidecar: HarcDesktopClientCaptureSidecar
+    }
+
     struct Outcome: Sendable {
         let report: ClientRecoverSyncReport
         let blockedOrigins: Set<OriginRecordingID>
+        let localCandidates: [LocalCandidate]
     }
 
     static func reconcile(
@@ -47,6 +54,7 @@ enum HarcDesktopClientRecovery {
         var outboxesRepaired = 0
         var alreadyTracked = 0
         var blockedOrigins = Set<OriginRecordingID>()
+        var localCandidates: [LocalCandidate] = []
         var issues: [ClientRecoverSyncIssue] = []
 
         for stem in Set(masters.keys).union(sidecars.keys).sorted() {
@@ -76,6 +84,11 @@ enum HarcDesktopClientRecovery {
                         masterFileURL: masterURL,
                         persistedAt: sidecar.persistedAt
                     )
+                    localCandidates.append(LocalCandidate(
+                        masterURL: masterURL,
+                        sidecarURL: sidecarURL,
+                        sidecar: sidecar
+                    ))
                     if existed { alreadyTracked += 1 } else { outboxesRepaired += 1 }
                     continue
                 }
@@ -93,6 +106,11 @@ enum HarcDesktopClientRecovery {
                         rebuilt,
                         to: directory.appendingPathComponent("\(stem).capture.json")
                     )
+                    localCandidates.append(LocalCandidate(
+                        masterURL: masterURL,
+                        sidecarURL: directory.appendingPathComponent("\(stem).capture.json"),
+                        sidecar: rebuilt
+                    ))
                     sidecarsRebuilt += 1
                     alreadyTracked += 1
                 } else {
@@ -108,6 +126,11 @@ enum HarcDesktopClientRecovery {
                         masterFileURL: masterURL,
                         persistedAt: rebuilt.persistedAt
                     )
+                    localCandidates.append(LocalCandidate(
+                        masterURL: masterURL,
+                        sidecarURL: rebuiltURL,
+                        sidecar: rebuilt
+                    ))
                     sidecarsRebuilt += 1
                     outboxesRepaired += 1
                 }
@@ -158,7 +181,11 @@ enum HarcDesktopClientRecovery {
                 securityBlocked: securityBlocked,
                 issues: deduplicated(issues)
             ),
-            blockedOrigins: blockedOrigins
+            blockedOrigins: blockedOrigins,
+            localCandidates: localCandidates.sorted {
+                $0.sidecar.capture.captureStartedAt
+                    < $1.sidecar.capture.captureStartedAt
+            }
         )
     }
 

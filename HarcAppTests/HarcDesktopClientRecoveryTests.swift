@@ -1,6 +1,9 @@
 import Foundation
+import HarcClient
 import HarcClientStore
+import HarcCore
 import HarcDomain
+import HarcStore
 import HarcTransfer
 import HarcUI
 import Testing
@@ -8,6 +11,63 @@ import Testing
 
 @Suite("Desktop Client Recover & Sync")
 struct HarcDesktopClientRecoveryTests {
+    @Test("local recovery publishes and transcribes before Host delivery")
+    func publishesIntoLocalLibraryFirst() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let recording = UUID(
+            uuidString: "12121212-3434-4567-8899-aaaaaaaaaaaa"
+        )!
+        try fixture.writeCapture(
+            recording: recording,
+            deviceID: fixture.deviceID
+        )
+        let store = try await RecordingStore.inMemory()
+        let firstInventory = try fixture.recoveryOutcome()
+
+        let first = await HarcDesktopClientLocalRecovery.reconcile(
+            firstInventory.localCandidates,
+            store: store,
+            currentModelID: "parakeet-test"
+        ) { candidate in
+            let capture = candidate.sidecar.capture
+            return HarcDesktopClientLocalTranscription(
+                transcript: SessionTranscript(
+                    startedAt: capture.captureStartedAt,
+                    endedAt: capture.captureEndedAt,
+                    audioPath: candidate.masterURL.path,
+                    joinedText: "recovered locally",
+                    words: [],
+                    speakers: [],
+                    chunks: []
+                ),
+                speakerEmbeddings: []
+            )
+        }
+
+        #expect(first.added == 1)
+        #expect(first.transcribed == 1)
+        #expect(first.failed == 0)
+        let rows = try await store.fetchAll()
+        #expect(rows.count == 1)
+        #expect(rows[0].transcriptText == "recovered locally")
+        #expect(rows[0].originID?.recordingUUID == recording)
+        #expect(try fixture.readSidecar(recording).transcript?.joinedText == "recovered locally")
+
+        let repeated = await HarcDesktopClientLocalRecovery.reconcile(
+            try fixture.recoveryOutcome().localCandidates,
+            store: store,
+            currentModelID: "parakeet-test"
+        ) { _ in
+            throw StoreError.invalidData("repeat recovery must reuse transcript")
+        }
+        #expect(repeated.added == 0)
+        #expect(repeated.alreadyVisible == 1)
+        #expect(repeated.transcriptReused == 1)
+        #expect(repeated.failed == 0)
+        #expect(try await store.fetchAll().count == 1)
+    }
+
     @Test("sidecar repairs a missing outbox and repeat runs are idempotent")
     func repairsMissingOutbox() throws {
         let fixture = try Fixture()
@@ -21,6 +81,7 @@ struct HarcDesktopClientRecoveryTests {
         #expect(first.outboxesRepaired == 1)
         #expect(first.retryRequested == 1)
         #expect(first.issues.isEmpty)
+        #expect(try fixture.recoveryOutcome().localCandidates.count == 1)
         #expect(try fixture.store.recordingOutboxes().count == 1)
 
         let repeatRun = try fixture.reconcile()
@@ -46,6 +107,7 @@ struct HarcDesktopClientRecoveryTests {
         #expect(report.outboxesRepaired == 1)
         #expect(report.retryRequested == 1)
         #expect(report.issues.isEmpty)
+        #expect(try fixture.recoveryOutcome().localCandidates.count == 1)
         let sidecar = try fixture.readSidecar(recording)
         #expect(sidecar.capture.finalizationReason == .recoveredDurablePrefix)
         #expect(sidecar.capture.producingDeviceID == fixture.deviceID)

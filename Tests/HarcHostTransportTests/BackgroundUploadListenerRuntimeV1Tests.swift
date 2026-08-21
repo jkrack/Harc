@@ -18,8 +18,8 @@ struct BackgroundUploadListenerRuntimeV1Tests {
         #expect(
             HarcBackgroundUploadConnectionHandlerV1.ingestFailureStatus(
                 HarcHostError.insufficientFreeSpace(
-                    requiredRemaining: 20,
-                    projectedRemaining: 10
+                    requiredBytes: 20,
+                    availableBytes: 10
                 )
             ) == .insufficientStorage
         )

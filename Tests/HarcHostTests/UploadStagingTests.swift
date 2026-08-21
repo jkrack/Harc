@@ -9,11 +9,13 @@ import HarcTransfer
 
 @Suite("HarcHost upload state and bounded staging")
 struct UploadStagingTests {
-    @Test("default staging reserve keeps ten GiB and five percent free")
-    func defaultStagingReserve() {
+    @Test("production staging has no Harc-imposed storage allowance or reserve")
+    func defaultStagingPolicyUsesOnlyVolumeCapacity() {
         let policy = HostStagingQuotaPolicy()
-        #expect(policy.minimumFreeBytes == 10 * HostStagingQuotaPolicy.gibibyte)
-        #expect(policy.minimumFreePermille == 50)
+        #expect(policy.perDeviceBytes == .max)
+        #expect(policy.globalBytes == .max)
+        #expect(policy.minimumFreeBytes == 0)
+        #expect(policy.minimumFreePermille == 0)
     }
 
     private struct AuthorizingHostLocalOSAuthenticationBoundary: HostLocalOSAuthenticationBoundary {
@@ -67,6 +69,7 @@ struct UploadStagingTests {
         localOSAuthenticationBoundary: any HostLocalOSAuthenticationBoundary = RejectingHostLocalOSAuthenticationBoundary(),
         stagingInjector: any StagingFailureInjector = NoStagingFailureInjector(),
         quota: HostStagingQuotaPolicy = HostStagingQuotaPolicy(),
+        capacityProvider: any HostVolumeCapacityProvider = FixedHostVolumeCapacityProvider(),
         grantExpiresAt: Date? = nil,
         now: @escaping @Sendable () -> Date = Date.init,
         bytes: Data = Data([0, 1, 2, 3, 4, 5, 6, 7])
@@ -81,7 +84,7 @@ struct UploadStagingTests {
                 localOSAuthenticationBoundary: localOSAuthenticationBoundary,
                 stagingFailureInjector: stagingInjector,
                 quotaPolicy: quota,
-                capacityProvider: FixedHostVolumeCapacityProvider(),
+                capacityProvider: capacityProvider,
                 now: now
             )
         } else {
@@ -92,7 +95,7 @@ struct UploadStagingTests {
                 localOSAuthenticationBoundary: localOSAuthenticationBoundary,
                 stagingFailureInjector: stagingInjector,
                 quotaPolicy: quota,
-                capacityProvider: FixedHostVolumeCapacityProvider(),
+                capacityProvider: capacityProvider,
                 now: now
             )
         }
@@ -136,6 +139,68 @@ struct UploadStagingTests {
             descriptor: descriptor,
             bytes: bytes
         )
+    }
+
+    @Test("production staging uses actual chunk capacity without an application reserve")
+    func productionStagingUsesActualVolumeCapacity() async throws {
+        let fixture = HostTestFixture()
+        let bytes = Data([0, 1, 2, 3, 4, 5, 6, 7])
+
+        let fittingDirectory = try fixture.temporaryDirectory("exact-capacity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: fittingDirectory) }
+        let fittingUpload = try await startUpload(
+            fixture: fixture,
+            directory: fittingDirectory,
+            capacityProvider: FixedHostVolumeCapacityProvider(
+                available: UInt64(bytes.count),
+                total: 1_000_000_000_000
+            ),
+            bytes: bytes
+        )
+        guard case .durablyAccepted = try await fittingUpload.store.stageChunk(
+            context: fittingUpload.context,
+            uploadID: fittingUpload.uploadID,
+            generation: .initial,
+            expectedUploadProfileSHA256: fittingUpload.profile.profileSHA256,
+            chunkIndex: 0,
+            claimedChunkID: fittingUpload.descriptor.chunkID,
+            declaredEncodedLength: UInt64(bytes.count),
+            claimedEncodedSHA256: fittingUpload.descriptor.encodedSHA256,
+            bodyFragments: [bytes],
+            at: fixture.beganAt.addingTimeInterval(3)
+        ) else {
+            Issue.record("Expected exact available capacity to accept the chunk")
+            return
+        }
+
+        let shortDirectory = try fixture.temporaryDirectory("short-capacity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: shortDirectory) }
+        let shortUpload = try await startUpload(
+            fixture: fixture,
+            directory: shortDirectory,
+            capacityProvider: FixedHostVolumeCapacityProvider(
+                available: UInt64(bytes.count - 1),
+                total: 1_000_000_000_000
+            ),
+            bytes: bytes
+        )
+        await #expect(throws: HarcHostError.insufficientFreeSpace(
+            requiredBytes: UInt64(bytes.count),
+            availableBytes: UInt64(bytes.count - 1)
+        )) {
+            _ = try await shortUpload.store.stageChunk(
+                context: shortUpload.context,
+                uploadID: shortUpload.uploadID,
+                generation: .initial,
+                expectedUploadProfileSHA256: shortUpload.profile.profileSHA256,
+                chunkIndex: 0,
+                claimedChunkID: shortUpload.descriptor.chunkID,
+                declaredEncodedLength: UInt64(bytes.count),
+                claimedEncodedSHA256: shortUpload.descriptor.encodedSHA256,
+                bodyFragments: [bytes],
+                at: fixture.beganAt.addingTimeInterval(3)
+            )
+        }
     }
 
     @Test("begin and declaration are exact-idempotent; gaps reject and immutable conflicts block")

@@ -142,4 +142,27 @@ struct HarcVerifiedRouteStrategyTests {
 
         #expect(await events.snapshot() == ["close-direct"])
     }
+
+    @Test("route failure exposes the underlying cause to the recovery UI")
+    func routeFailureHasUsefulDescription() async {
+        do {
+            _ = try await HarcVerifiedRouteStrategy.openVerified(
+                direct: { "direct" },
+                relay: { "relay" },
+                verify: { connection in
+                    throw connection == "direct"
+                        ? Failure.direct
+                        : Failure.relay
+                },
+                close: { _ in }
+            )
+            Issue.record("Expected both routes to fail")
+        } catch let error as HarcVerifiedRouteFailure {
+            #expect(error.localizedDescription.contains("direct"))
+            #expect(error.localizedDescription.contains("relay"))
+            #expect(!error.localizedDescription.contains("error 1"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
 }

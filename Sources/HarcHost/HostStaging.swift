@@ -378,13 +378,16 @@ extension HarcHostStore {
                 self.quotaPolicy.minimumFreeBytes,
                 percentageFloor.partialValue / 1_000
             )
-            let projectedRemaining = capacity.availableBytes >= declaredEncodedLength
-                ? capacity.availableBytes - declaredEncodedLength
-                : 0
-            guard projectedRemaining >= requiredRemaining else {
+            let requiredCapacity = declaredEncodedLength.addingReportingOverflow(
+                requiredRemaining
+            )
+            guard !requiredCapacity.overflow,
+                  capacity.availableBytes >= requiredCapacity.partialValue else {
                 throw HarcHostError.insufficientFreeSpace(
-                    requiredRemaining: requiredRemaining,
-                    projectedRemaining: projectedRemaining
+                    requiredBytes: requiredCapacity.overflow
+                        ? .max
+                        : requiredCapacity.partialValue,
+                    availableBytes: capacity.availableBytes
                 )
             }
 

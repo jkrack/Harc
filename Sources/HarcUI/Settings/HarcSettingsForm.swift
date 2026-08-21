@@ -77,6 +77,8 @@ public struct HarcSettingsForm: View {
             switch pane {
             case .general:
                 GeneralSettingsView()
+            case .hostSync:
+                HostSyncSettingsView()
             case .recording:
                 RecordingSettingsView()
             case .transcription:

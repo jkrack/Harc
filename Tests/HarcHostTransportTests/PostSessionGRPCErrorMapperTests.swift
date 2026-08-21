@@ -59,8 +59,8 @@ struct PostSessionGRPCErrorMapperTests {
                     requestedTotal: 11
                 ),
                 HarcHostError.insufficientFreeSpace(
-                    requiredRemaining: 10,
-                    projectedRemaining: 9
+                    requiredBytes: 10,
+                    availableBytes: 9
                 ),
                 HarcBootstrapPreauthenticationAdmissionError
                     .malformedRequestCooldown,
