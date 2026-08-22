@@ -235,8 +235,8 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
 
 /// The timestamp gutter (audit P1-6): one quiet stamp per speaker-turn
 /// paragraph, derived from the same WordIndex that powers ⌘-click-to-seek,
-/// drawn in the margin the reading measure already creates. Presentation
-/// only — nothing enters the text storage.
+/// drawn in the transcript margin. Presentation only — nothing enters the
+/// text storage.
 final class TranscriptTimestampRuler: NSRulerView {
     weak var textView: NSTextView?
     var timestampForOffset: ((Int) -> Int?)?

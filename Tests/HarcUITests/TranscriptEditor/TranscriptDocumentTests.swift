@@ -77,6 +77,44 @@ struct TranscriptDocumentTests {
         #expect(doc.initialText == "from the json")
     }
 
+    @Test("flat legacy Client text recovers speaker turns from structured JSON")
+    func flatLegacyTextRecoversSpeakerTurns() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let wavURL = dir.appendingPathComponent("client.wav")
+        let mdURL = dir.appendingPathComponent("client.md")
+        let jsonURL = dir.appendingPathComponent("client.json")
+        try Data().write(to: wavURL)
+        try OKFMarkdown.render(OKFMarkdown.Fields(
+            title: "Client capture",
+            transcript: "hello there"
+        )).write(to: mdURL, atomically: true, encoding: .utf8)
+        try writeJSON(SessionTranscript(
+            startedAt: Date(), endedAt: Date(), audioPath: wavURL.path,
+            joinedText: "hello there",
+            words: [
+                Word(text: "hello", startMs: 0, endMs: 500),
+                Word(text: "there", startMs: 500, endMs: 1_000),
+            ],
+            speakers: [
+                SpeakerSegment(speaker: 0, startMs: 0, endMs: 500),
+                SpeakerSegment(speaker: 1, startMs: 500, endMs: 1_000),
+            ],
+            chunks: []
+        ), to: jsonURL)
+
+        let rec = Recording(
+            wavPath: wavURL.path,
+            txtPath: mdURL.path,
+            jsonPath: jsonURL.path,
+            startedAt: Date(),
+            transcriptText: "hello there"
+        )
+        let doc = TranscriptDocument.load(recording: rec)
+        #expect(doc.initialText == "Speaker 1: hello\n\nSpeaker 2: there")
+    }
+
     @Test("missing audio → audioAvailable false, wavURL nil")
     func missingAudio() throws {
         let dir = try makeTempDir()

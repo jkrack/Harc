@@ -141,9 +141,7 @@ extension HarcWindowRootView {
                 // Summary card — requires SummarizationQueueStore and
                 // ModelManagerStore injected as environment objects by the
                 // window controller. Scrolls internally past a bound so a
-                // long summary can't push the transcript off screen, and
-                // capped to the reading measure: comfortable prose is 60–75
-                // characters, not 140.
+                // long summary can't push the transcript off screen.
                 ScrollView {
                     SummaryCardView(
                         recording: recording,
@@ -162,7 +160,7 @@ extension HarcWindowRootView {
                         }
                     )
                 }
-                .frame(maxWidth: 680, maxHeight: 280, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: 280, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
 
                 if let recID = recording.id {
@@ -173,22 +171,20 @@ extension HarcWindowRootView {
                             try await store.updateNotes(id: recID, markdown: text)
                         }
                     )
-                    .frame(maxWidth: 680, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if transcriptFindVisible {
                     transcriptFindBar()
-                        .frame(maxWidth: 680)
+                        .frame(maxWidth: .infinity)
                 }
 
                 vocabularySuggestionBar
             }
-            // Same reading measure as the transcript below, centered the
-            // same way — the header (title, player, summary) and the
-            // transcript are one document, not a left-hugging control strip
-            // above a floating text column.
-            .frame(maxWidth: 680, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            // The header and transcript share the available detail width so
+            // the document responds continuously as the split view or window
+            // is resized.
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding([.horizontal, .top])
             .padding(.bottom, HarcSpacing.sm)
 
@@ -278,29 +274,22 @@ extension HarcWindowRootView {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // The reading column: capped at 680pt and centered once the
-                // pane is wider than that. The single cheapest legibility
-                // win in the app, per the audit.
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    TranscriptDetailEditor(
-                        text: $editorText,
-                        highlightRange: editorHighlight,
-                        onCommandClick: { offset in seekToWord(atCharOffset: offset) },
-                        timestampForOffset: { offset in
-                            // Dirty edits shift offsets under the index —
-                            // no stamp beats a wrong stamp.
-                            guard !editorDirty else { return nil }
-                            return detailDocument?.wordIndex.wordAt(charOffset: offset)?.word.startMs
-                        }
-                    )
-                    .frame(maxWidth: 680)
-                    // AppKit rulers may otherwise draw outside the frame
-                    // SwiftUI assigns during split-view relayout, producing
-                    // a full-height hairline through the header.
-                    .clipped()
-                    Spacer(minLength: 0)
-                }
+                TranscriptDetailEditor(
+                    text: $editorText,
+                    highlightRange: editorHighlight,
+                    onCommandClick: { offset in seekToWord(atCharOffset: offset) },
+                    timestampForOffset: { offset in
+                        // Dirty edits shift offsets under the index —
+                        // no stamp beats a wrong stamp.
+                        guard !editorDirty else { return nil }
+                        return detailDocument?.wordIndex.wordAt(charOffset: offset)?.word.startMs
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // AppKit rulers may otherwise draw outside the frame
+                // SwiftUI assigns during split-view relayout, producing
+                // a full-height hairline through the header.
+                .clipped()
             }
         }
     }

@@ -68,8 +68,7 @@ struct SessionDetailView: View {
                 .controlSize(.small)
                 .help("Remove the grouping. The recordings stay in the library.")
             }
-            .frame(maxWidth: 680, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding([.horizontal, .top])
             .padding(.bottom, HarcSpacing.lg)
         }

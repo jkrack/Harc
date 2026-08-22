@@ -45,8 +45,14 @@ struct HarcDesktopClientRecoveryTests {
                     endedAt: capture.captureEndedAt,
                     audioPath: candidate.masterURL.path,
                     joinedText: "recovered locally",
-                    words: [],
-                    speakers: [],
+                    words: [
+                        Word(text: "recovered", startMs: 0, endMs: 500),
+                        Word(text: "locally", startMs: 500, endMs: 1_000),
+                    ],
+                    speakers: [
+                        SpeakerSegment(speaker: 0, startMs: 0, endMs: 500),
+                        SpeakerSegment(speaker: 1, startMs: 500, endMs: 1_000),
+                    ],
                     chunks: []
                 ),
                 speakerEmbeddings: []
@@ -59,9 +65,32 @@ struct HarcDesktopClientRecoveryTests {
         #expect(refreshCount == 2)
         let rows = try await store.fetchAll()
         #expect(rows.count == 1)
-        #expect(rows[0].transcriptText == "recovered locally")
+        let rendered = "Speaker 1: recovered\n\nSpeaker 2: locally"
+        #expect(rows[0].transcriptText == rendered)
         #expect(rows[0].originID?.recordingUUID == recording)
         #expect(try fixture.readSidecar(recording).transcript?.joinedText == "recovered locally")
+
+        // Any later metadata mutation reprojects the canonical Markdown from
+        // the DB row. Speaker turns must survive that round trip instead of
+        // collapsing back to SessionTranscript.joinedText.
+        let recordingID = try #require(rows[0].id)
+        try await store.updateSummary(
+            id: recordingID,
+            markdown: "Summary",
+            actionItemsMarkdown: "",
+            modelID: "summarizer-test",
+            generatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            sourceWordCount: 2
+        )
+        let projected = TranscriptDocument.load(recording: try #require(
+            await store.fetch(id: recordingID)
+        ))
+        #expect(projected.initialText == rendered)
+
+        // Simulate the pre-fix persisted state. A repeat recovery pass may
+        // repair the exact generated flat text, but must not overwrite any
+        // other divergent transcript value.
+        try await store.updateTranscriptText(id: recordingID, text: "recovered locally")
 
         let repeated = await HarcDesktopClientLocalRecovery.reconcile(
             try fixture.recoveryOutcome().localCandidates,
@@ -74,7 +103,9 @@ struct HarcDesktopClientRecoveryTests {
         #expect(repeated.alreadyVisible == 1)
         #expect(repeated.transcriptReused == 1)
         #expect(repeated.failed == 0)
-        #expect(try await store.fetchAll().count == 1)
+        let repairedRows = try await store.fetchAll()
+        #expect(repairedRows.count == 1)
+        #expect(repairedRows[0].transcriptText == rendered)
     }
 
     @Test("overlapping recovery requests guarantee one follow-up pass")

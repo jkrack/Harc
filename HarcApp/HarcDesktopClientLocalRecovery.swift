@@ -91,7 +91,7 @@ enum HarcDesktopClientLocalRecovery {
                     masterURL: candidate.masterURL,
                     startedAt: capture.captureStartedAt,
                     endedAt: capture.captureEndedAt,
-                    transcriptText: transcript.joinedText,
+                    transcriptText: persistedTranscriptText(transcript),
                     transcriptJSONURL: generatedArtifacts.json,
                     transcriptMarkdownURL: generatedArtifacts.markdown,
                     sttModelID: currentModelID,
@@ -141,19 +141,46 @@ enum HarcDesktopClientLocalRecovery {
         let artifacts = try sidecar.transcript.map {
             try writeTranscript($0, nextTo: candidate.masterURL)
         }
-        let result = try await store.reconcileClientCapture(
+        var result = try await store.reconcileClientCapture(
             originID: capture.originRecordingID,
             canonicalPCMHash: capture.canonicalPCMSHA256,
             canonicalPCMFrames: capture.totalCanonicalFrames,
             masterURL: candidate.masterURL,
             startedAt: capture.captureStartedAt,
             endedAt: capture.captureEndedAt,
-            transcriptText: sidecar.transcript?.joinedText,
+            transcriptText: sidecar.transcript.map {
+                persistedTranscriptText($0)
+            },
             transcriptJSONURL: artifacts?.json,
             transcriptMarkdownURL: artifacts?.markdown,
             sttModelID: sidecar.transcript == nil ? nil : currentModelID,
             transcribedAt: sidecar.transcript == nil ? nil : sidecar.persistedAt
         )
+        // v0.14.9 and earlier mirrored SessionTranscript.joinedText into the
+        // DB even though TranscriptWriter had produced a speaker-labeled
+        // Markdown sibling. Repair only that exact untouched flat value. A
+        // divergent DB transcript or a manually edited sidecar is user data
+        // and must never be replaced automatically.
+        if let transcript = sidecar.transcript,
+           transcript.manualEditAt == nil {
+            let rendered = persistedTranscriptText(transcript)
+            if rendered != transcript.joinedText,
+               result.recording.transcriptText == transcript.joinedText,
+               let recordingID = result.recording.id {
+                try await store.applyReprocessedTranscript(
+                    recordingID: recordingID,
+                    text: rendered,
+                    modelID: currentModelID,
+                    now: sidecar.persistedAt
+                )
+                if let refreshed = try await store.fetch(id: recordingID) {
+                    result = ClientCaptureLibraryResult(
+                        recording: refreshed,
+                        inserted: result.inserted
+                    )
+                }
+            }
+        }
         try await persistEmbeddings(
             sidecar.speakerEmbeddings ?? [],
             recording: result.recording,
@@ -174,10 +201,15 @@ enum HarcDesktopClientLocalRecovery {
     ) async throws {
         guard source.deletedAt == nil else { return }
         if let existing = candidate.sidecar.transcript {
-            if source.transcriptText == nil, let id = source.id {
+            let rendered = persistedTranscriptText(existing)
+            let isRepairableLegacyFlatText = existing.manualEditAt == nil
+                && source.transcriptText == existing.joinedText
+                && rendered != existing.joinedText
+            if source.transcriptText == nil || isRepairableLegacyFlatText,
+               let id = source.id {
                 try await store.applyReprocessedTranscript(
                     recordingID: id,
-                    text: existing.joinedText,
+                    text: rendered,
                     modelID: currentModelID,
                     now: candidate.sidecar.persistedAt
                 )
@@ -199,7 +231,7 @@ enum HarcDesktopClientLocalRecovery {
         }
         try await store.applyReprocessedTranscript(
             recordingID: recordingID,
-            text: generated.transcript.joinedText,
+            text: persistedTranscriptText(generated.transcript),
             modelID: currentModelID
         )
         try await persistEmbeddings(
@@ -239,6 +271,16 @@ enum HarcDesktopClientLocalRecovery {
             parent.appendingPathComponent("\(stem).json"),
             parent.appendingPathComponent("\(stem).md")
         )
+    }
+
+    /// Structured word/speaker timing is the source for generated display
+    /// text. Once a user has edited joinedText, preserve that exact text: word
+    /// offsets and diarization turns no longer describe its structure safely.
+    private static func persistedTranscriptText(
+        _ transcript: SessionTranscript
+    ) -> String {
+        guard transcript.manualEditAt == nil else { return transcript.joinedText }
+        return TranscriptPlainTextRenderer.render(transcript)
     }
 
     private static func persistEmbeddings(

@@ -64,30 +64,48 @@ public struct TranscriptDocument: Sendable {
         var words: [Word] = []
         var speakers: [SpeakerSegment] = []
         var jsonJoinedText: String?
+        var structuredTranscript: SessionTranscript?
 
         if let jsonURL, jsonAvailable,
            let data = try? Data(contentsOf: jsonURL) {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .secondsSince1970
             if let transcript = try? decoder.decode(SessionTranscript.self, from: data) {
+                structuredTranscript = transcript
                 words = transcript.words
                 speakers = transcript.speakers
                 jsonJoinedText = transcript.joinedText
             }
         }
 
-        let text: String
+        let artifactText: String
         if let data = try? Data(contentsOf: txtURL),
            let s = String(data: data, encoding: .utf8) {
             // OKF documents carry frontmatter + summary; the editor operates
             // on the transcript section only.
-            text = OKFMarkdown.extractTranscript(from: s) ?? s
+            artifactText = OKFMarkdown.extractTranscript(from: s) ?? s
         } else if let joined = jsonJoinedText {
-            text = joined
+            artifactText = joined
         } else if let stored = recording.transcriptText {
-            text = stored
+            artifactText = stored
         } else {
-            text = ""
+            artifactText = ""
+        }
+
+        // Older Client-local rows stored joinedText in the DB, so a later
+        // metadata projection could replace an initially diarized Markdown
+        // transcript with one flat paragraph. Recover the generated turn
+        // labels from the still-structured sidecar. Never do this after a
+        // manual edit: its words/timing no longer safely describe the text.
+        let text: String
+        if let transcript = structuredTranscript,
+           transcript.manualEditAt == nil,
+           !transcript.words.isEmpty,
+           !transcript.speakers.isEmpty,
+           !Self.containsSpeakerTurn(in: artifactText, recording: recording) {
+            text = TranscriptPlainTextRenderer.render(transcript)
+        } else {
+            text = artifactText
         }
 
         return TranscriptDocument(
@@ -101,6 +119,20 @@ public struct TranscriptDocument: Sendable {
             audioAvailable: audioAvailable,
             jsonAvailable: jsonAvailable
         )
+    }
+
+    private static func containsSpeakerTurn(
+        in text: String,
+        recording: Recording
+    ) -> Bool {
+        var labels = Set(recording.speakerNames.values)
+        labels.formUnion((1...12).map { "Speaker \($0)" })
+        return text.split(separator: "\n", omittingEmptySubsequences: true)
+            .contains { line in
+                guard let colon = line.firstIndex(of: ":") else { return false }
+                let head = line[..<colon].trimmingCharacters(in: .whitespaces)
+                return labels.contains(head)
+            }
     }
 
     /// Return the same document metadata with a different presentation text
