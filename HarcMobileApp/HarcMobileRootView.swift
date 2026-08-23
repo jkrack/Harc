@@ -16,6 +16,7 @@ struct HarcMobileRootView: View {
     @State private var showsPairingScanner = false
     @State private var showsReviewSample = false
     @State private var showsLocalRecordings = false
+    @State private var showsForgetHostConfirmation = false
     @State private var libraryQuery = ""
 
     var body: some View {
@@ -122,7 +123,11 @@ struct HarcMobileRootView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { showsPairingScanner = false }
+                        Button("Cancel") {
+                            showsPairingScanner = false
+                            model.pairingCoordinator?
+                                .pairingScannerCancelled()
+                        }
                     }
                 }
             }
@@ -610,6 +615,20 @@ struct HarcMobileRootView: View {
                 }
                 pairingContent(coordinator)
             }
+            .confirmationDialog(
+                "Forget this Host?",
+                isPresented: $showsForgetHostConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Forget This Host", role: .destructive) {
+                    coordinator.forgetActiveHost()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This removes the saved pairing from this iPhone. Local recordings stay protected. Revoke this iPhone separately on the Host if it should no longer be trusted."
+                )
+            }
         } else {
             ProgressView("Preparing secure pairing…")
         }
@@ -674,14 +693,17 @@ struct HarcMobileRootView: View {
             Section {
                 Label(host, systemImage: "checkmark.shield.fill")
                     .foregroundStyle(.green)
-                Button("Pair a Different Host") {
+                Button("Repair or Re-pair This Host") {
                     coordinator.beginReplacement()
                     showsPairingScanner = true
+                }
+                Button("Forget This Host", role: .destructive) {
+                    showsForgetHostConfirmation = true
                 }
             } header: {
                 Text("Adopted Host")
             } footer: {
-                Text("Reconnects revalidate the signed Host transport and device grant before opening a session.")
+                Text("Reconnects revalidate the signed Host transport and device grant before opening a session. Forgetting is local-only and never deletes recordings.")
             }
         case .failed(let message):
             Section("Pairing Failed") {

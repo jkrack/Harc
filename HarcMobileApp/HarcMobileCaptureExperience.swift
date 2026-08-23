@@ -74,6 +74,15 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
                 relativeMoment: lastVerifiedAt.map(RelativeMoment.seen)
                     ?? .checked(attemptedAt)
             )
+        case .pairingRepairRequired(let attemptedAt):
+            return Self(
+                title: "Pairing with \(name) needs repair",
+                detail: "Recordings are safe · forget this Host and pair again",
+                systemImage: "lock.trianglebadge.exclamationmark",
+                tone: .critical,
+                relativeMoment: lastVerifiedAt.map(RelativeMoment.seen)
+                    ?? .checked(attemptedAt)
+            )
         }
     }
 
@@ -311,6 +320,13 @@ struct HarcMobileHostPillPresentation: Equatable {
                 accessibilityValue: "\(name), unavailable",
                 tone: .unavailable
             )
+        case .pairingRepairRequired:
+            return Self(
+                title: "Repair pairing",
+                accessibilityValue:
+                    "Pairing with \(name) needs repair; recordings remain safe",
+                tone: .unavailable
+            )
         }
     }
 }
@@ -333,7 +349,7 @@ struct HarcMobileCaptureHeroView: View {
                             .font(.title3.weight(.semibold))
                         Text("Records to protected storage on this iPhone")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .multilineTextAlignment(.center)
@@ -570,7 +586,7 @@ struct HarcMobileTransferSummaryView: View {
                 .foregroundStyle(HarcMobilePalette.success)
             Text(presentation.title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
                 .multilineTextAlignment(.center)
         }
         .accessibilityElement(children: .combine)

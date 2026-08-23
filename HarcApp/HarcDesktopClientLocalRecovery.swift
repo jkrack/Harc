@@ -72,7 +72,8 @@ enum HarcDesktopClientLocalRecovery {
                 // older archive item to finish transcribing.
                 await onLibraryChange()
 
-                if sidecar.transcript != nil {
+                if sidecar.transcript != nil,
+                   !sidecar.speakerProcessingNeedsRetry {
                     outcome.transcriptReused += 1
                     continue
                 }
@@ -106,6 +107,7 @@ enum HarcDesktopClientLocalRecovery {
                     capture: sidecar.capture,
                     transcript: transcript,
                     speakerEmbeddings: generated.speakerEmbeddings,
+                    speakerProcessingStatus: .ready,
                     persistedAt: sidecar.persistedAt,
                     sourceLocalCanonicalID: sidecar.sourceLocalCanonicalID
                 )
@@ -200,7 +202,8 @@ enum HarcDesktopClientLocalRecovery {
         outcome: inout Outcome
     ) async throws {
         guard source.deletedAt == nil else { return }
-        if let existing = candidate.sidecar.transcript {
+        if let existing = candidate.sidecar.transcript,
+           !candidate.sidecar.speakerProcessingNeedsRetry {
             let rendered = persistedTranscriptText(existing)
             let isRepairableLegacyFlatText = existing.manualEditAt == nil
                 && source.transcriptText == existing.joinedText
@@ -245,6 +248,7 @@ enum HarcDesktopClientLocalRecovery {
             capture: candidate.sidecar.capture,
             transcript: transcript,
             speakerEmbeddings: generated.speakerEmbeddings,
+            speakerProcessingStatus: .ready,
             persistedAt: candidate.sidecar.persistedAt,
             sourceLocalCanonicalID: candidate.sidecar.sourceLocalCanonicalID
         )

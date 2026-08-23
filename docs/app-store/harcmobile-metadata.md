@@ -134,7 +134,6 @@ Host; the relay cannot decrypt recordings or library content.
 ## Account-holder decisions still required
 
 - Review contact name, monitored email, and phone number
-- Public support page and monitored customer-support contact
 - App record creation: exact name availability, immutable SKU, user access,
   content-rights answer, DSA status, and seller identity
 - Final category selection, age rating, price, regions, and release mode

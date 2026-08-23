@@ -8,10 +8,9 @@ import HarcAudio
 public final class RecordingState: ObservableObject {
     @Published public private(set) var isRecording: Bool = false
     /// True from the moment a recording start is requested until the session
-    /// actually starts (or fails). The start path awaits daemon launch and
-    /// audio-engine spin-up for whole seconds; any guard that reads only
-    /// `isRecording` has a hole exactly that wide — dictation, imports, and
-    /// the pre-roll ring all used to slip through it.
+    /// actually starts (or fails). Capture no longer waits for speech-model
+    /// launch, but audio-engine spin-up still suspends; any guard that reads
+    /// only `isRecording` has a hole exactly that wide.
     @Published public private(set) var isPreparing: Bool = false
     @Published public private(set) var recordingStartedAt: Date? = nil
     @Published public var livePreviewText: String = ""

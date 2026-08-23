@@ -163,6 +163,37 @@ Release builds. Preserve the root across relaunch for interruption scenarios
 such as C5. This keeps repeated C5/C7 diagnostics independent without granting
 the harness a path to ordinary application storage.
 
+Run the complete UI bundle through the provenance wrapper instead of an ad-hoc
+`xcodebuild` invocation:
+
+```bash
+./scripts/qualify-harcmobile-ui.sh \
+  --destination-id <physical-device-udid> \
+  --platform physical \
+  --development-team <10-character-team-id> \
+  --output-dir build/qualification/<unique-run-name>
+```
+
+The wrapper refuses to overwrite evidence, enforces two workers and requires
+8 GiB of starting headroom to preserve the 5 GiB operational floor, requires a
+clean tree for release evidence, and retains the
+source-file manifest/fingerprint, source status, destination details, build
+log, test summary, and a SHA-256-stamped zipped result bundle. The explicit
+`--allow-dirty-diagnostic` escape hatch labels current-tree engineering runs;
+it is never release evidence. Simulator runs use `--platform simulator` and
+remain diagnostic only. Physical runs make up to three bounded launch attempts
+by default because CoreDevice can time out while enabling automation before a
+Harc test method executes. Every attempt is retained. `xcresulttool` represents
+that runner bootstrap error as one failed pseudo-test, so the wrapper recognizes
+it only when every reported failure is the HarcMobile UI runner's exact
+automation-mode timeout. A zero-test or runner-only result never passes; only
+an attempt with executed Harc tests, zero failures, and a successful
+`xcodebuild` status is selected. Signing, compilation, real test, and other
+deterministic failures stop immediately. Physical runs require the explicit
+Apple team ID used to sign the candidate. The wrapper embeds the recorded
+source commit in the Debug app. Use `--attempts 1` to diagnose the first-launch
+failure itself, not to weaken the release gate.
+
 On 2026-08-09, Omega (`iPhone16,2`, iOS 26.6) passed an additional physical C7
 diagnostic. The isolated copied state proved a playable durable prefix, matching
 canonical PCM hash, `storageExhausted` metadata, explicit discontinuities, and

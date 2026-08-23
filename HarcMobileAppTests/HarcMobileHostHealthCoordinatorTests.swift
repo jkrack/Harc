@@ -1,4 +1,5 @@
 import XCTest
+import HarcClientTransport
 @testable import HarcMobile
 
 @MainActor
@@ -67,6 +68,62 @@ final class HarcMobileHostHealthCoordinatorTests: XCTestCase {
         }
     }
 
+    func testPairingRejectionIsNotReportedAsReachabilityFailure() async {
+        let coordinator = HarcMobileHostHealthCoordinator(
+            hasActiveAdoption: true
+        ) {
+            throw HarcMobileHostSessionConnectorError
+                .pairingRepairRequired
+        }
+
+        await coordinator.refresh()
+
+        guard case .pairingRepairRequired = coordinator.status else {
+            return XCTFail("Expected explicit pairing repair")
+        }
+        XCTAssertEqual(coordinator.status.title, "Pairing needs repair")
+        XCTAssertTrue(
+            coordinator.status.accessibilityValue.contains("pair again")
+        )
+    }
+
+    func testOnlyDurableTrustFailuresRequirePairingRepair() {
+        XCTAssertTrue(
+            HarcMobileHostSessionConnector.requiresPairingRepair(
+                HarcBootstrapClientError.sessionGrantUnavailable
+            )
+        )
+        XCTAssertFalse(
+            HarcMobileHostSessionConnector.requiresPairingRepair(
+                TestError.unreachable
+            )
+        )
+    }
+
+    func testPairingRepairPausesProbesUntilAdoptionChanges() async {
+        let probe = PairingProbeControl()
+        let coordinator = HarcMobileHostHealthCoordinator(
+            hasActiveAdoption: true
+        ) {
+            probe.count += 1
+            if probe.rejectPairing {
+                throw HarcMobileHostSessionConnectorError
+                    .pairingRepairRequired
+            }
+        }
+
+        await coordinator.refresh()
+        await coordinator.refresh()
+        XCTAssertEqual(probe.count, 1)
+
+        probe.rejectPairing = false
+        await coordinator.hostAdoptionDidChange(hasActiveAdoption: true)
+        XCTAssertEqual(probe.count, 2)
+        guard case .connected = coordinator.status else {
+            return XCTFail("Expected repaired pairing to reconnect")
+        }
+    }
+
     func testSuccessfulProbePersistsTheAuthenticatedTimestamp() async {
         var persisted: Date?
         let coordinator = HarcMobileHostHealthCoordinator(
@@ -97,5 +154,10 @@ final class HarcMobileHostHealthCoordinatorTests: XCTestCase {
 
     private enum TestError: Error {
         case unreachable
+    }
+
+    private final class PairingProbeControl {
+        var count = 0
+        var rejectPairing = true
     }
 }

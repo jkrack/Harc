@@ -208,6 +208,7 @@ targets:
         CFBundleDisplayName: Harc
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        HarcBuildSHA: "$(HARC_BUILD_SHA)"
         ITSAppUsesNonExemptEncryption: false
         NSMicrophoneUsageDescription: "Harc records microphone audio only when you explicitly start a recording."
         NSCameraUsageDescription: "Harc uses the camera to scan a short-lived pairing code shown by your Harc host."
@@ -236,6 +237,7 @@ targets:
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         ENABLE_HARDENED_RUNTIME: NO
+        HARC_BUILD_SHA: unrecorded
 
   HarcMobileAppTests:
     type: bundle.unit-test

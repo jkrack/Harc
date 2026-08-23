@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import HarcClient
 import HarcCore
@@ -7,34 +8,135 @@ import HarcHost
 import HarcStore
 import HarcVoiceprint
 
+struct HarcHostWorkAdmissionSnapshot: Equatable, Sendable {
+    enum ThermalPressure: Equatable, Sendable {
+        case nominal
+        case fair
+        case serious
+        case critical
+    }
+
+    let thermalPressure: ThermalPressure
+    let lowPowerModeEnabled: Bool
+    let oneMinuteLoad: Double
+    let activeProcessorCount: Int
+    let harcCaptureActive: Bool
+
+    static func current(
+        harcCaptureActive: Bool = false
+    ) -> HarcHostWorkAdmissionSnapshot {
+        let process = ProcessInfo.processInfo
+        let pressure: ThermalPressure = switch process.thermalState {
+        case .nominal: .nominal
+        case .fair: .fair
+        case .serious: .serious
+        case .critical: .critical
+        @unknown default: .serious
+        }
+        var loadAverages = [Double](repeating: 0, count: 3)
+        let loaded = loadAverages.withUnsafeMutableBufferPointer {
+            getloadavg($0.baseAddress, Int32($0.count))
+        }
+        return HarcHostWorkAdmissionSnapshot(
+            thermalPressure: pressure,
+            lowPowerModeEnabled: process.isLowPowerModeEnabled,
+            oneMinuteLoad: loaded > 0 ? loadAverages[0] : 0,
+            activeProcessorCount: max(1, process.activeProcessorCount),
+            harcCaptureActive: harcCaptureActive
+        )
+    }
+}
+
+enum HarcHostWorkAdmissionDecision: Equatable, Sendable {
+    case run
+    case deferFor(TimeInterval, reason: String)
+}
+
+struct HarcHostWorkAdmissionPolicy {
+    static func decide(
+        _ snapshot: HarcHostWorkAdmissionSnapshot
+    ) -> HarcHostWorkAdmissionDecision {
+        switch snapshot.thermalPressure {
+        case .serious, .critical:
+            return .deferFor(60, reason: "thermal-pressure")
+        case .nominal, .fair:
+            break
+        }
+        if snapshot.lowPowerModeEnabled {
+            return .deferFor(60, reason: "low-power-mode")
+        }
+        if snapshot.harcCaptureActive {
+            return .deferFor(30, reason: "active-recording")
+        }
+        let normalizedLoad = snapshot.oneMinuteLoad
+            / Double(max(1, snapshot.activeProcessorCount))
+        if normalizedLoad >= 0.75 {
+            return .deferFor(30, reason: "host-load")
+        }
+        return .run
+    }
+}
+
+struct HarcHostProcessingRetryPolicy {
+    private static let delays: [TimeInterval] = [
+        5, 15, 30, 60, 300, 900, 3_600,
+    ]
+
+    nonisolated static func delay(afterFailureCount count: Int) -> TimeInterval {
+        delays[min(max(1, count), delays.count) - 1]
+    }
+}
+
 /// Serial daemon-backed worker for canonical recordings received by Host.
 /// Its queue of record IDs is the canonical database; this actor only retains
 /// validated artifact requests while the current process is alive.
 actor HarcHostProcessingWorker {
+    typealias AdmissionSnapshot = @Sendable () async
+        -> HarcHostWorkAdmissionSnapshot
+
     private let store: RecordingStore
     private let launcher: DaemonLauncher
     private let diarize: Bool
     private let vad: Bool
+    private let clientArtifactGrace: TimeInterval
+    private let admissionSnapshot: AdmissionSnapshot
 
     private var pending: [CanonicalRecordingID: HostDurableProcessingRequest] = [:]
+    private var eligibleAt: [CanonicalRecordingID: Date] = [:]
+    private var failureCounts: [CanonicalRecordingID: Int] = [:]
     private var wakeGeneration: UInt64 = 0
     private var drainTask: Task<Void, Never>?
+    private var delayTask: Task<Void, Error>?
 
     init(
         store: RecordingStore,
         launcher: DaemonLauncher,
         diarize: Bool,
-        vad: Bool
+        vad: Bool,
+        clientArtifactGrace: TimeInterval = 15,
+        admissionSnapshot: @escaping AdmissionSnapshot = {
+            HarcHostWorkAdmissionSnapshot.current()
+        }
     ) {
         self.store = store
         self.launcher = launcher
         self.diarize = diarize
         self.vad = vad
+        self.clientArtifactGrace = max(0, clientArtifactGrace)
+        self.admissionSnapshot = admissionSnapshot
     }
 
     func signal(_ request: HostDurableProcessingRequest) {
         pending[request.canonicalRecordingID] = request
+        if eligibleAt[request.canonicalRecordingID] == nil {
+            eligibleAt[request.canonicalRecordingID] = Date()
+                .addingTimeInterval(clientArtifactGrace)
+        }
         wakeGeneration &+= 1
+        // Wake a drain that may be waiting behind a longer admission or retry
+        // deadline. New Client work must not inherit another recording's sleep.
+        delayTask?.cancel()
+        delayTask = nil
         guard drainTask == nil else { return }
         drainTask = Task { await self.drain() }
     }
@@ -43,13 +145,49 @@ actor HarcHostProcessingWorker {
         while let task = drainTask { await task.value }
     }
 
+    /// Cancels only in-memory execution. Every request remains reconstructible
+    /// from the Host processing journal on the next launch.
+    func shutdown() async {
+        let task = drainTask
+        delayTask?.cancel()
+        delayTask = nil
+        drainTask?.cancel()
+        if let task { await task.value }
+        drainTask = nil
+        pending.removeAll()
+        eligibleAt.removeAll()
+        failureCounts.removeAll()
+    }
+
     private func drain() async {
         while !Task.isCancelled {
             let observedGeneration = wakeGeneration
-            let batch = pending.values.sorted {
+            let now = Date()
+            let eligibleIDs = pending.keys.filter {
+                (eligibleAt[$0] ?? .distantPast) <= now
+            }
+            if eligibleIDs.isEmpty, let next = eligibleAt.values.min() {
+                let delay = max(0.05, next.timeIntervalSince(now))
+                let sleeper = Task {
+                    try await Task.sleep(for: .seconds(delay))
+                }
+                delayTask = sleeper
+                do {
+                    try await sleeper.value
+                } catch {
+                    // `signal` cancels only this delay so the actor can
+                    // immediately recalculate the earliest eligible work.
+                }
+                delayTask = nil
+                continue
+            }
+            let batch = eligibleIDs.compactMap { pending[$0] }.sorted {
                 $0.canonicalRecordingID < $1.canonicalRecordingID
             }
-            pending.removeAll(keepingCapacity: true)
+            for request in batch {
+                pending.removeValue(forKey: request.canonicalRecordingID)
+                eligibleAt.removeValue(forKey: request.canonicalRecordingID)
+            }
             for request in batch where !Task.isCancelled {
                 await process(request)
             }
@@ -77,6 +215,21 @@ actor HarcHostProcessingWorker {
                 at: request.canonicalWAVURL
             )
             if recording.processing.state == .ready { return }
+
+            switch HarcHostWorkAdmissionPolicy.decide(
+                await admissionSnapshot()
+            ) {
+            case .run:
+                break
+            case .deferFor(let delay, let reason):
+                pending[request.canonicalRecordingID] = request
+                eligibleAt[request.canonicalRecordingID] = Date()
+                    .addingTimeInterval(delay)
+                FileHandle.standardError.write(Data(
+                    "harc-host: deferred canonical processing (\(reason))\n".utf8
+                ))
+                return
+            }
 
             guard try await store.beginHostProcessingIfNotReady(
                 id: recordingID
@@ -153,35 +306,64 @@ actor HarcHostProcessingWorker {
             _ = try await store.publishHostProcessedProjectionIfNotReady(
                 recordingID: recordingID
             )
+            failureCounts.removeValue(forKey: request.canonicalRecordingID)
         } catch {
-            await persistRecoverableFailure(
+            let remainsPending = await persistRecoverableFailure(
                 canonicalRecordingID: request.canonicalRecordingID,
                 underlyingError: error
             )
+            guard remainsPending,
+                  Self.isAutomaticallyRetryable(error) else { return }
+            let count = min(
+                (failureCounts[request.canonicalRecordingID] ?? 0) + 1,
+                7
+            )
+            failureCounts[request.canonicalRecordingID] = count
+            pending[request.canonicalRecordingID] = request
+            eligibleAt[request.canonicalRecordingID] = Date()
+                .addingTimeInterval(
+                    HarcHostProcessingRetryPolicy.delay(
+                        afterFailureCount: count
+                    )
+                )
         }
     }
 
     private func persistRecoverableFailure(
         canonicalRecordingID: CanonicalRecordingID,
         underlyingError: Error
-    ) async {
+    ) async -> Bool {
         FileHandle.standardError.write(Data(
             "harc-host: canonical processing failed for \(canonicalRecordingID): \(underlyingError.localizedDescription)\n".utf8
         ))
         guard let recording = try? await store.fetch(
             canonicalID: canonicalRecordingID
-        ), let recordingID = recording.id else { return }
+        ), let recordingID = recording.id else { return false }
 
         let failure = try? ProcessingFailure(
             code: "host.processing_retry",
             message: "Local processing did not finish and can be retried."
         )
         if let failure {
-            _ = try? await store.markHostProcessingFailureIfNotReady(
+            return (try? await store.markHostProcessingFailureIfNotReady(
                 recordingID: recordingID,
                 failure: failure
-            )
+            )) == true
         }
+        return false
+    }
+
+    private nonisolated static func isAutomaticallyRetryable(
+        _ error: Error
+    ) -> Bool {
+        if let workerError = error as? HostProcessingWorkerError {
+            if case .canonicalBindingChanged = workerError { return false }
+        }
+        if let storeError = error as? StoreError,
+           storeError == .canonicalArtifactIdentityMismatch {
+            return false
+        }
+        return true
     }
 
     private static func observationOperationID(

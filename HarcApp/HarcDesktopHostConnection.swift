@@ -201,6 +201,90 @@ enum HarcDesktopHostRouteConnector {
             verification: selected.verification
         )
     }
+
+    /// Repairs a stale adopted direct route before falling back to the relay.
+    /// Bonjour candidates carry no authority: the supplied verification must
+    /// authenticate the exact persisted Host adoption before a replacement is
+    /// saved or selected.
+    static func openRecoveringVerified<Verification: Sendable>(
+        route: HarcDesktopHostRoute,
+        routeURL: URL,
+        trust: HarcTransportTrustCoordinator,
+        verify: @escaping @Sendable (HarcPinnedGRPCConnection) async throws
+            -> Verification
+    ) async throws -> HarcDesktopVerifiedHostConnection<Verification> {
+        let relayConnectionFactory: ConnectionFactory?
+        if let relay = route.relay {
+            relayConnectionFactory = {
+                let tunnel = try await HarcRemoteRelayClientTunnel.open(
+                    route: relay
+                )
+                do {
+                    return try await HarcPinnedGRPCConnection.connect(
+                        host: tunnel.localHost,
+                        port: Int(tunnel.localPort),
+                        serverHostname: route.serverHostname,
+                        trustCoordinator: trust,
+                        transportLifetime: tunnel
+                    )
+                } catch {
+                    await tunnel.shutdown()
+                    throw error
+                }
+            }
+        } else {
+            relayConnectionFactory = nil
+        }
+        let selected = try await HarcVerifiedRouteStrategy
+            .openRecoveringVerified(
+                direct: {
+                    try await HarcPinnedGRPCConnection.connect(
+                        host: route.host,
+                        port: Int(route.port),
+                        serverHostname: route.serverHostname,
+                        trustCoordinator: trust
+                    )
+                },
+                recoveryCandidates: {
+                    await HarcMobileBonjourHostRouteResolver.discover()
+                        .filter {
+                            $0.host != route.host || $0.port != route.port
+                        }
+                        .compactMap { candidate in
+                            try? HarcDesktopHostRoute(
+                                host: candidate.host,
+                                port: candidate.port,
+                                serverHostname: route.serverHostname,
+                                relay: route.relay
+                            )
+                        }
+                },
+                recoveredDirect: { candidate in
+                    try await HarcPinnedGRPCConnection.connect(
+                        host: candidate.host,
+                        port: Int(candidate.port),
+                        serverHostname: candidate.serverHostname,
+                        trustCoordinator: trust
+                    )
+                },
+                relay: relayConnectionFactory,
+                verify: verify,
+                acceptRecovered: { candidate in
+                    try HarcDesktopHostRouteStore.save(
+                        candidate,
+                        to: routeURL
+                    )
+                },
+                close: { connection in
+                    await connection.shutdownImmediately()
+                }
+            )
+        return HarcDesktopVerifiedHostConnection(
+            connection: selected.connection,
+            path: selected.path,
+            verification: selected.verification
+        )
+    }
 }
 
 enum HarcDesktopHostSessionConnector {
@@ -212,10 +296,18 @@ enum HarcDesktopHostSessionConnector {
         guard let snapshot = try store.activeAdoption() else {
             throw HarcDesktopHostConnectionError.notPaired
         }
-        let adoption = try HarcPersistedAdoptionValidatorV1.validate(
-            snapshot,
-            devicePublicKey: identity.publicKey
-        )
+        let adoption: ValidatedClientAdoptionEvidence
+        do {
+            adoption = try HarcPersistedAdoptionValidatorV1.validate(
+                snapshot,
+                devicePublicKey: identity.publicKey
+            )
+        } catch {
+            if requiresPairingRepair(error) {
+                throw HarcDesktopHostConnectionError.pairingRepairRequired
+            }
+            throw error
+        }
         let route: HarcDesktopHostRoute
         do {
             route = try HarcDesktopHostRouteStore.load(from: routeURL)
@@ -227,10 +319,8 @@ enum HarcDesktopHostSessionConnector {
                 HarcTransferStoreTransportTrustPersistenceV1(store: store)
         )
         let policy = try capabilityPolicy()
-        let verified = try await HarcDesktopHostRouteConnector.openVerified(
-            route: route,
-            trust: trust
-        ) { connection in
+        let verify: @Sendable (HarcPinnedGRPCConnection) async throws -> Void = {
+            connection in
             let client = HarcBootstrapClient(
                 rpc: connection,
                 capabilityPolicy: policy,
@@ -242,6 +332,16 @@ enum HarcDesktopHostSessionConnector {
                 )
             )
         }
+        // A stale direct address is repaired through authenticated Bonjour
+        // before relay fallback, so an available relay cannot leave this Mac
+        // permanently pinned to an obsolete LAN route.
+        let verified = try await HarcDesktopHostRouteConnector
+            .openRecoveringVerified(
+                route: route,
+                routeURL: routeURL,
+                trust: trust,
+                verify: verify
+            )
         let connection = verified.connection
         do {
             let client = HarcBootstrapClient(
@@ -255,11 +355,20 @@ enum HarcDesktopHostSessionConnector {
                     adoption: adoption
                 )
             )
-            let session = try await client.openSession(
-                adoption: adoption,
-                negotiatedCapabilities: negotiated.negotiated,
-                deviceSigner: identity
-            )
+            let session: HarcOpenedClientSession
+            do {
+                session = try await client.openSession(
+                    adoption: adoption,
+                    negotiatedCapabilities: negotiated.negotiated,
+                    deviceSigner: identity
+                )
+            } catch {
+                if requiresPairingRepair(error) {
+                    throw HarcDesktopHostConnectionError
+                        .pairingRepairRequired
+                }
+                throw error
+            }
             return HarcDesktopOpenedHostConnection(
                 connection: connection,
                 path: verified.path,
@@ -281,6 +390,25 @@ enum HarcDesktopHostSessionConnector {
             ],
             supportedEncodings: [.cafALAC]
         )
+    }
+
+    /// Distinguishes durable trust/adoption rejection from ordinary route and
+    /// service availability failures. The Host intentionally does not reveal
+    /// whether a device is revoked versus unknown, so the UI asks for pairing
+    /// repair without making a more specific registry claim.
+    static func requiresPairingRepair(_ error: any Error) -> Bool {
+        if error is HarcPersistedAdoptionValidationError { return true }
+        guard let bootstrap = error as? HarcBootstrapClientError else {
+            return false
+        }
+        switch bootstrap {
+        case .sessionGrantUnavailable,
+             .grantBindingMismatch,
+             .sessionTrustChanged:
+            return true
+        default:
+            return false
+        }
     }
 
     static func capabilityOffer(
@@ -308,6 +436,7 @@ enum HarcDesktopHostConnectionError: LocalizedError {
     case unsafeRoutePath
     case routePersistenceFailed
     case notPaired
+    case pairingRepairRequired
 
     var errorDescription: String? {
         switch self {
@@ -319,6 +448,8 @@ enum HarcDesktopHostConnectionError: LocalizedError {
             "The paired Host route could not be stored durably."
         case .notPaired:
             "This Mac is not paired with a Harc Host."
+        case .pairingRepairRequired:
+            "The Host no longer accepts this Mac’s saved pairing. Recordings are safe on this Mac. Forget this Host, create a new Mac client invitation, and pair again."
         }
     }
 }

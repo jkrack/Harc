@@ -67,6 +67,7 @@ public actor HarcResidentHostRuntimeV1 {
     private let remoteRelayHostAgent: HarcRemoteRelayHostAgent?
     private let remoteRelayRouteDeliveryBox:
         HarcRemoteRelayRouteDeliveryBox
+    private let stagingMaintenance: HarcHostStagingMaintenanceScheduler
     private var transportStopped = false
     private var hostModeDisabled = false
 
@@ -290,6 +291,10 @@ public actor HarcResidentHostRuntimeV1 {
                 remoteRelayRouteDeliveryBox:
                     remoteRelayRouteDeliveryBox
             )
+            let stagingMaintenance = HarcHostStagingMaintenanceScheduler(
+                reap: { try await storage.hostStore.reapEligibleStaging() }
+            )
+            await stagingMaintenance.start()
             return HarcResidentHostRuntimeV1(
                 storageRuntime: storage,
                 transportRuntime: transport,
@@ -299,6 +304,7 @@ public actor HarcResidentHostRuntimeV1 {
                 remoteRelayHostAgent: remoteRelayHostAgent,
                 remoteRelayRouteDeliveryBox:
                     remoteRelayRouteDeliveryBox,
+                stagingMaintenance: stagingMaintenance,
                 startupRecoveryReport: recovery
             )
         } catch {
@@ -325,6 +331,7 @@ public actor HarcResidentHostRuntimeV1 {
         pairingApproval: HarcLocalPairingApprovalService,
         remoteRelayHostAgent: HarcRemoteRelayHostAgent?,
         remoteRelayRouteDeliveryBox: HarcRemoteRelayRouteDeliveryBox,
+        stagingMaintenance: HarcHostStagingMaintenanceScheduler,
         startupRecoveryReport: HostCanonicalRecoveryReport
     ) {
         self.storageRuntime = storageRuntime
@@ -334,6 +341,7 @@ public actor HarcResidentHostRuntimeV1 {
         self.pairingApproval = pairingApproval
         self.remoteRelayHostAgent = remoteRelayHostAgent
         self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
+        self.stagingMaintenance = stagingMaintenance
         self.startupRecoveryReport = startupRecoveryReport
         tuple = storageRuntime.tuple
         listenerPorts = storageRuntime.listenerPorts
@@ -471,6 +479,13 @@ public actor HarcResidentHostRuntimeV1 {
         guard !transportStopped else { return }
         await transportRuntime.handleSystemWake()
         await remoteRelayHostAgent?.handleSystemWake()
+        await stagingMaintenance.handleSystemWake()
+    }
+
+    public func stagingMaintenanceStatus() async
+        -> HarcHostStagingMaintenanceStatus
+    {
+        await stagingMaintenance.status()
     }
 
     /// Stops advertisement and both listeners while preserving the durable
@@ -480,6 +495,7 @@ public actor HarcResidentHostRuntimeV1 {
         guard !transportStopped else { return }
         transportStopped = true
         try? await pairingTickets.cancel()
+        await stagingMaintenance.stop()
         await remoteRelayHostAgent?.shutdown()
         await transportRuntime.shutdown()
     }

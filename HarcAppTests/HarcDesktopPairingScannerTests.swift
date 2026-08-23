@@ -131,4 +131,53 @@ struct HarcDesktopPairingScannerTests {
         // failure cannot resurrect or strand the client trust state.
         try HarcDesktopHostRouteStore.removeIfPresent(at: routeURL)
     }
+
+    @Test("late pairing continuations cannot survive cancellation or replacement")
+    @MainActor
+    func pairingOperationIdentity() {
+        let first = UUID()
+        let replacement = UUID()
+
+        #expect(HarcDesktopClientPairingCoordinator.operationIsCurrent(
+            currentGeneration: 4,
+            expectedGeneration: 4,
+            currentAttemptID: first,
+            expectedAttemptID: first
+        ))
+        #expect(!HarcDesktopClientPairingCoordinator.operationIsCurrent(
+            currentGeneration: 5,
+            expectedGeneration: 4,
+            currentAttemptID: first,
+            expectedAttemptID: first
+        ))
+        #expect(!HarcDesktopClientPairingCoordinator.operationIsCurrent(
+            currentGeneration: 4,
+            expectedGeneration: 4,
+            currentAttemptID: replacement,
+            expectedAttemptID: first
+        ))
+        #expect(!HarcDesktopClientPairingCoordinator.operationIsCurrent(
+            currentGeneration: 4,
+            expectedGeneration: 4,
+            currentAttemptID: nil,
+            expectedAttemptID: first
+        ))
+    }
+
+    @Test("closing a completed pairing window preserves the paired state")
+    @MainActor
+    func passiveClosePreservesPairing() {
+        let paired = HarcDesktopClientPairingCoordinator.State.paired(
+            host: "Home Host"
+        )
+        #expect(
+            HarcDesktopClientPairingCoordinator.stateAfterPassiveClose(paired)
+                == paired
+        )
+        #expect(
+            HarcDesktopClientPairingCoordinator.stateAfterPassiveClose(
+                .connecting
+            ) == .unpaired
+        )
+    }
 }

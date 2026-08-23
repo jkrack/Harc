@@ -26,8 +26,10 @@ final class HarcMobilePairingCoordinator {
     }
 
     private struct ActiveAttempt {
+        let id: UUID
         let client: HarcBootstrapClient
         let connection: HarcPinnedGRPCConnection
+        let ticket: PairingTicketV1
         let route: HarcMobileHostRoute
         let presentation: HarcPairingClaimPresentation
     }
@@ -39,6 +41,11 @@ final class HarcMobilePairingCoordinator {
     private let routeURL: URL
     private let onAdopted: @MainActor () -> Void
     private var attempt: ActiveAttempt?
+    /// Invalidates async continuations after rejection, reset, or forgetting.
+    /// A late RPC can close its own connection but cannot adopt a Host after
+    /// the user has ended that pairing attempt.
+    private var operationGeneration: UInt64 = 0
+    private var confirmingAttemptID: UUID?
 
     init(
         identity: InstallationSigningIdentity,
@@ -69,6 +76,8 @@ final class HarcMobilePairingCoordinator {
 
     func begin(scannedURI: String) async {
         guard attempt == nil else { return }
+        operationGeneration &+= 1
+        let generation = operationGeneration
         state = .connecting
         var connection: HarcPinnedGRPCConnection?
         var authenticatedPath: HarcVerifiedRoutePath?
@@ -133,6 +142,10 @@ final class HarcMobilePairingCoordinator {
                     await candidate.shutdownImmediately()
                 }
             )
+            guard operationGeneration == generation else {
+                await selected.connection.shutdownImmediately()
+                return
+            }
             let opened = selected.connection
             connection = opened
             authenticatedPath = selected.path
@@ -148,9 +161,15 @@ final class HarcMobilePairingCoordinator {
                 deviceLabel: UIDevice.current.name,
                 verifiedHostInfo: selected.verification
             )
+            guard operationGeneration == generation else {
+                await opened.shutdownImmediately()
+                return
+            }
             attempt = ActiveAttempt(
+                id: UUID(),
                 client: client,
                 connection: opened,
+                ticket: ticket,
                 route: route,
                 presentation: presentation
             )
@@ -164,6 +183,7 @@ final class HarcMobilePairingCoordinator {
             )
         } catch {
             if let connection { await connection.shutdownImmediately() }
+            guard operationGeneration == generation else { return }
             if let routeFailure = error as? HarcVerifiedRouteFailure {
                 let routes = routeFailure.triedEncryptedRelay
                     ? "the direct route or the encrypted relay"
@@ -188,7 +208,17 @@ final class HarcMobilePairingCoordinator {
     }
 
     func confirmWordsMatch() async {
-        guard let attempt else { return }
+        guard let attempt, confirmingAttemptID == nil else { return }
+        let attemptID = attempt.id
+        let generation = operationGeneration
+        confirmingAttemptID = attemptID
+        defer {
+            if confirmingAttemptID == attemptID {
+                confirmingAttemptID = nil
+            }
+        }
+        var active = attempt
+        var reconnectFailures = 0
         state = .awaitingHostApproval(
             host: attempt.presentation.hostDisplayName,
             phrase: attempt.presentation.sas.displayedPhrase
@@ -196,30 +226,119 @@ final class HarcMobilePairingCoordinator {
         do {
             while true {
                 try Task.checkCancellation()
-                switch try await attempt.client.getPairingStatus() {
+                guard isCurrent(
+                    attemptID: attemptID,
+                    generation: generation
+                ) else {
+                    throw HarcMobilePairingError.ended("cancelled")
+                }
+                let now = UInt64(Date().timeIntervalSince1970 * 1_000)
+                guard !active.presentation.isExpired(
+                    atUnixMilliseconds: now
+                )
+                else { throw HarcMobilePairingError.ended("expired") }
+                let result: HarcPairingClaimResult
+                do {
+                    result = try await active.client.getPairingStatus()
+                    guard isCurrent(
+                        attemptID: attemptID,
+                        generation: generation
+                    ) else {
+                        await active.connection.shutdownImmediately()
+                        return
+                    }
+                    reconnectFailures = 0
+                } catch {
+                    guard isCurrent(
+                        attemptID: attemptID,
+                        generation: generation
+                    ) else {
+                        await active.connection.shutdownImmediately()
+                        return
+                    }
+                    let reconnectNow = UInt64(
+                        Date().timeIntervalSince1970 * 1_000
+                    )
+                    guard !active.presentation.isExpired(
+                        atUnixMilliseconds: reconnectNow
+                    ) else { throw error }
+                    do {
+                        let reconnected = try await reconnect(active)
+                        guard isCurrent(
+                            attemptID: attemptID,
+                            generation: generation
+                        ) else {
+                            await reconnected.connection.shutdownImmediately()
+                            return
+                        }
+                        active = reconnected
+                        self.attempt = reconnected
+                        reconnectFailures = 0
+                    } catch {
+                        guard isCurrent(
+                            attemptID: attemptID,
+                            generation: generation
+                        ) else { return }
+                        reconnectFailures = min(reconnectFailures + 1, 4)
+                        let delayMS = [500, 1_000, 2_000, 5_000][
+                            reconnectFailures - 1
+                        ]
+                        try await Task.sleep(for: .milliseconds(delayMS))
+                    }
+                    continue
+                }
+                switch result {
                 case .pending:
                     try await Task.sleep(for: .milliseconds(500))
                 case .approved(let adoption, let remoteRelayRoute):
+                    guard isCurrent(
+                        attemptID: attemptID,
+                        generation: generation
+                    ) else {
+                        await active.connection.shutdownImmediately()
+                        return
+                    }
                     let adoptedRoute = try HarcMobileHostRoute(
-                        host: attempt.route.host,
-                        port: attempt.route.port,
-                        serverHostname: attempt.route.serverHostname,
+                        host: active.route.host,
+                        port: active.route.port,
+                        serverHostname: active.route.serverHostname,
                         relay: remoteRelayRoute
+                    )
+                    let priorRoute = try? HarcMobileHostRouteStore.load(
+                        from: routeURL
                     )
                     try HarcMobileHostRouteStore.save(
                         adoptedRoute,
                         to: routeURL
                     )
-                    let activeAdoption = try store.adopt(adoption)
-                    HarcMobileHostPresentationStore.saveDisplayName(
-                        attempt.presentation.hostDisplayName,
-                        hostAuthorityID:
-                            activeAdoption.tuple.hostAuthorityID.description
-                    )
-                    try await attempt.connection.shutdownGracefully()
+                    do {
+                        let activeAdoption = try store
+                            .adoptApprovedForegroundPairing(adoption)
+                        HarcMobileHostPresentationStore.saveDisplayName(
+                            active.presentation.hostDisplayName,
+                            hostAuthorityID:
+                                activeAdoption.tuple.hostAuthorityID.description
+                        )
+                    } catch {
+                        // Route evidence is useful only with the matching
+                        // durable adoption. A rejected re-pair must not leave
+                        // a new endpoint attached to the prior trust state.
+                        if let priorRoute {
+                            try? HarcMobileHostRouteStore.save(
+                                priorRoute,
+                                to: routeURL
+                            )
+                        } else {
+                            try? HarcMobileHostRouteStore.removeIfPresent(
+                                at: routeURL
+                            )
+                        }
+                        throw error
+                    }
                     self.attempt = nil
-                    state = .paired(host: attempt.presentation.hostDisplayName)
+                    state = .paired(host: active.presentation.hostDisplayName)
                     onAdopted()
+                    try await active.connection.shutdownGracefully()
                     return
                 case .denied:
                     throw HarcMobilePairingError.ended("denied")
@@ -230,10 +349,165 @@ final class HarcMobilePairingCoordinator {
                 }
             }
         } catch {
-            await attempt.connection.shutdownImmediately()
+            await active.connection.shutdownImmediately()
+            guard isCurrent(
+                attemptID: attemptID,
+                generation: generation
+            ) else { return }
             self.attempt = nil
-            state = .failed(error.localizedDescription)
+            let message: String
+            if let pairingError = error as? HarcMobilePairingError {
+                message = pairingError.localizedDescription
+            } else {
+                message = "The pairing claim expired before Harc could reconnect and receive Host approval. Create a fresh invitation and try again."
+            }
+            state = .failed(message)
         }
+    }
+
+    /// Re-authenticates the original ticket route and transfers the proved
+    /// claimant state to a fresh RPC client. Neither Bonjour nor the relay can
+    /// alter the Host authority or security words already shown to the user.
+    private func reconnect(_ attempt: ActiveAttempt) async throws
+        -> ActiveAttempt
+    {
+        let trust = try HarcTransportTrustCoordinator(
+            pairingExactQRTransportSet:
+                attempt.ticket.exactTransportObjectBytes,
+            hostAuthorityPublicKey: attempt.ticket.hostAuthorityPublicKey
+        )
+        let policy = try Self.capabilityPolicy()
+        let expectation = try HarcBootstrapTrustExpectation(
+            pairingTicket: attempt.ticket
+        )
+        let verify: @Sendable (HarcPinnedGRPCConnection) async throws
+            -> HarcValidatedHostBootstrapInfo = { candidate in
+            let verifier = HarcBootstrapClient(
+                rpc: candidate,
+                capabilityPolicy: policy,
+                sasDictionary: try HarcSASDictionaryV1.bundled()
+            )
+            return try await verifier.getHostInfo(expectation: expectation)
+        }
+
+        let verified: HarcVerifiedRouteSelection<
+            HarcPinnedGRPCConnection,
+            HarcValidatedHostBootstrapInfo
+        >
+        let reconnectedRoute: HarcMobileHostRoute
+        do {
+            verified = try await openVerified(
+                route: attempt.route,
+                trust: trust,
+                verify: verify
+            )
+            reconnectedRoute = attempt.route
+        } catch let originalError {
+            // A pairing ticket binds Host identity, not an IP address. DHCP,
+            // Wi-Fi, or a dock may change while approval is pending, so every
+            // Bonjour hint is authenticated against the exact original ticket.
+            var repaired: HarcVerifiedRouteSelection<
+                HarcPinnedGRPCConnection,
+                HarcValidatedHostBootstrapInfo
+            >?
+            var repairedRoute: HarcMobileHostRoute?
+            for candidate in await HarcMobileBonjourHostRouteResolver.discover()
+            where candidate.host != attempt.route.host
+                || candidate.port != attempt.route.port {
+                let directCandidate = try HarcMobileHostRoute(
+                    host: candidate.host,
+                    port: candidate.port,
+                    serverHostname: attempt.route.serverHostname
+                )
+                do {
+                    repaired = try await openVerified(
+                        route: directCandidate,
+                        trust: trust,
+                        verify: verify
+                    )
+                    repairedRoute = try HarcMobileHostRoute(
+                        host: candidate.host,
+                        port: candidate.port,
+                        serverHostname: attempt.route.serverHostname,
+                        relay: attempt.route.relay
+                    )
+                    break
+                } catch {
+                    continue
+                }
+            }
+            guard let repaired, let repairedRoute else {
+                throw originalError
+            }
+            verified = repaired
+            reconnectedRoute = repairedRoute
+        }
+
+        do {
+            let client = try await attempt.client.resumingPairing(
+                on: verified.connection
+            )
+            await attempt.connection.shutdownImmediately()
+            return ActiveAttempt(
+                id: attempt.id,
+                client: client,
+                connection: verified.connection,
+                ticket: attempt.ticket,
+                route: reconnectedRoute,
+                presentation: attempt.presentation
+            )
+        } catch {
+            await verified.connection.shutdownImmediately()
+            throw error
+        }
+    }
+
+    private func openVerified(
+        route: HarcMobileHostRoute,
+        trust: HarcTransportTrustCoordinator,
+        verify: @escaping @Sendable (HarcPinnedGRPCConnection) async throws
+            -> HarcValidatedHostBootstrapInfo
+    ) async throws -> HarcVerifiedRouteSelection<
+        HarcPinnedGRPCConnection,
+        HarcValidatedHostBootstrapInfo
+    > {
+        let relayConnectionFactory: ConnectionFactory?
+        if let relay = route.relay {
+            relayConnectionFactory = {
+                let tunnel = try await HarcRemoteRelayClientTunnel.open(
+                    route: relay
+                )
+                do {
+                    return try await HarcPinnedGRPCConnection.connect(
+                        host: tunnel.localHost,
+                        port: Int(tunnel.localPort),
+                        serverHostname: route.serverHostname,
+                        trustCoordinator: trust,
+                        transportLifetime: tunnel
+                    )
+                } catch {
+                    await tunnel.shutdown()
+                    throw error
+                }
+            }
+        } else {
+            relayConnectionFactory = nil
+        }
+        return try await HarcVerifiedRouteStrategy.openVerified(
+            direct: {
+                try await HarcPinnedGRPCConnection.connect(
+                    host: route.host,
+                    port: Int(route.port),
+                    serverHostname: route.serverHostname,
+                    trustCoordinator: trust
+                )
+            },
+            relay: relayConnectionFactory,
+            verify: verify,
+            close: { connection in
+                await connection.shutdownImmediately()
+            }
+        )
     }
 
     func wordsDoNotMatch() async {
@@ -241,9 +515,10 @@ final class HarcMobilePairingCoordinator {
             state = .unpaired
             return
         }
+        operationGeneration &+= 1
+        self.attempt = nil
         await attempt.client.abandonLocalPairingState()
         await attempt.connection.shutdownImmediately()
-        self.attempt = nil
         state = .failed(
             "Security words did not match. The Host was not adopted. Create a new pairing code."
         )
@@ -251,6 +526,7 @@ final class HarcMobilePairingCoordinator {
 
     func resetFailure() {
         guard case .failed = state else { return }
+        operationGeneration &+= 1
         state = .unpaired
     }
 
@@ -261,7 +537,48 @@ final class HarcMobilePairingCoordinator {
 
     func beginReplacement() {
         guard attempt == nil else { return }
-        state = .unpaired
+        // The existing adoption remains active until a new foreground pairing
+        // succeeds. The scanner sheet owns this transient presentation, so a
+        // cancellation cannot make a healthy pairing appear lost.
+    }
+
+    func pairingScannerCancelled() {
+        guard attempt == nil else { return }
+        restorePersistedPairingPresentation()
+    }
+
+    /// Local trust retirement never deletes protected captures or durable
+    /// transfer state. Host-side revocation remains a separate authoritative
+    /// action, as stated in the confirmation UI.
+    func forgetActiveHost() {
+        guard attempt == nil else { return }
+        operationGeneration &+= 1
+        do {
+            _ = try store.forgetActiveHost()
+            try HarcMobileHostRouteStore.removeIfPresent(at: routeURL)
+            state = .unpaired
+            onAdopted()
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    private func restorePersistedPairingPresentation() {
+        guard let adoption = try? store.activeAdoption() else {
+            state = .unpaired
+            return
+        }
+        let host = HarcMobileHostPresentationStore.displayName(
+            hostAuthorityID: adoption.tuple.hostAuthorityID.description
+        ) ?? "Harc Host"
+        state = .paired(host: host)
+    }
+
+    private func isCurrent(
+        attemptID: UUID,
+        generation: UInt64
+    ) -> Bool {
+        operationGeneration == generation && attempt?.id == attemptID
     }
 
     private static func capabilityPolicy() throws -> HarcCapabilityPolicyV1 {

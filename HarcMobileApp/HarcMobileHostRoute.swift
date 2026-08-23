@@ -237,4 +237,17 @@ enum HarcMobileHostRouteStore {
             to: url
         )
     }
+
+    static func removeIfPresent(at url: URL) throws {
+        let standardized = url.standardizedFileURL
+        guard url.isFileURL,
+              standardized == url,
+              standardized.lastPathComponent == "host-route.json" else {
+            throw HarcMobileHostRouteError.invalidResolvedRoute
+        }
+        guard FileManager.default.fileExists(atPath: standardized.path) else {
+            return
+        }
+        try FileManager.default.removeItem(at: standardized)
+    }
 }

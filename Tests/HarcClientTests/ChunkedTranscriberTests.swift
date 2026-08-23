@@ -308,6 +308,16 @@ struct ChunkedTranscriberRetryTests {
         #expect(!failed.isEmpty)
         #expect(result.transcript.joinedText.contains("could not be transcribed"))
         #expect(result.transcript.joinedText.contains("Re-transcribe"))
+        #expect(
+            result.transcript.processingCoverage?.failedRanges
+                == failed.map {
+                    TranscriptCoverageIssue(
+                        startMs: $0.startMs,
+                        endMs: $0.endMs,
+                        reasonCode: "stt.chunk_failed"
+                    )
+                }
+        )
     }
 
     @Test("an energetic chunk that comes back empty under VAD is retried without VAD")
@@ -354,6 +364,7 @@ struct ChunkedTranscriberRetryTests {
         let calls = await fake.calls
         #expect(calls.contains { $0.vad == false }, "expected a no-VAD retry for the energetic empty chunk")
         #expect(await transcriber.failedRanges.isEmpty)
+        #expect(result.transcript.processingCoverage == .complete)
     }
 
     @Test("a shredded-but-nonempty VAD result is also retried, and the longer text wins")

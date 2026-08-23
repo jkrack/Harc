@@ -63,8 +63,10 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
     }
 
     private struct ActiveAttempt {
+        let id: UUID
         let client: HarcBootstrapClient
         let connection: HarcPinnedGRPCConnection
+        let ticket: PairingTicketV1
         let route: HarcDesktopHostRoute
         let presentation: HarcPairingClaimPresentation
     }
@@ -78,6 +80,11 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
     private let onForgetting: @MainActor () -> Void
     private var attempt: ActiveAttempt?
     private var reviewedPairingURI: String?
+    /// Invalidates async continuations after close, rejection, or reset. An
+    /// RPC that returns late can close its transport but cannot resurrect or
+    /// approve an attempt the user has ended.
+    private var operationGeneration: UInt64 = 0
+    private var confirmingAttemptID: UUID?
 
     init(
         identity: InstallationSigningIdentity,
@@ -97,6 +104,8 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
 
     func begin(pairingURI: String) async {
         guard attempt == nil else { return }
+        operationGeneration &+= 1
+        let generation = operationGeneration
         reviewedPairingURI = nil
         guard HarcDesktopPairingCodeFilter.accepts(pairingURI) else {
             state = .failed(
@@ -136,6 +145,10 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                     expectation: expectation
                 )
             }
+            guard operationGeneration == generation else {
+                await verified.connection.shutdownImmediately()
+                return
+            }
             let opened = verified.connection
             connection = opened
             authenticatedPath = verified.path
@@ -151,9 +164,15 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                 deviceLabel: ProcessInfo.processInfo.hostName,
                 verifiedHostInfo: verified.verification
             )
+            guard operationGeneration == generation else {
+                await opened.shutdownImmediately()
+                return
+            }
             attempt = ActiveAttempt(
+                id: UUID(),
                 client: client,
                 connection: opened,
+                ticket: ticket,
                 route: route,
                 presentation: presentation
             )
@@ -167,6 +186,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
             )
         } catch {
             if let connection { await connection.shutdownImmediately() }
+            guard operationGeneration == generation else { return }
             Self.pairingLog.error(
                 "Pairing failed after path=\(String(describing: authenticatedPath), privacy: .public) errorType=\(String(reflecting: type(of: error)), privacy: .public) detail=\(String(describing: error), privacy: .private)"
             )
@@ -209,6 +229,7 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
 
     func review(pairingURI: String) {
         guard attempt == nil else { return }
+        operationGeneration &+= 1
         do {
             let nowMS = UInt64(Date().timeIntervalSince1970 * 1_000)
             let ticket = try PairingTicketV1.decodeURI(
@@ -252,12 +273,23 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
 
     func declineReviewedInvitation() {
         guard attempt == nil else { return }
+        operationGeneration &+= 1
         reviewedPairingURI = nil
         state = .unpaired
     }
 
     func confirmWordsMatch() async {
-        guard let attempt else { return }
+        guard let attempt, confirmingAttemptID == nil else { return }
+        let attemptID = attempt.id
+        let generation = operationGeneration
+        confirmingAttemptID = attemptID
+        defer {
+            if confirmingAttemptID == attemptID {
+                confirmingAttemptID = nil
+            }
+        }
+        var active = attempt
+        var reconnectFailures = 0
         state = .awaitingHostApproval(
             host: attempt.presentation.hostDisplayName,
             phrase: attempt.presentation.sas.displayedPhrase
@@ -265,27 +297,116 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         do {
             while true {
                 try Task.checkCancellation()
-                switch try await attempt.client.getPairingStatus() {
+                guard isCurrent(attemptID: attemptID, generation: generation)
+                else {
+                    throw HarcDesktopClientPairingError.ended("cancelled")
+                }
+                let now = UInt64(Date().timeIntervalSince1970 * 1_000)
+                guard !active.presentation.isExpired(
+                    atUnixMilliseconds: now
+                )
+                else { throw HarcDesktopClientPairingError.ended("expired") }
+                let result: HarcPairingClaimResult
+                do {
+                    result = try await active.client.getPairingStatus()
+                    guard isCurrent(
+                        attemptID: attemptID,
+                        generation: generation
+                    ) else {
+                        await active.connection.shutdownImmediately()
+                        return
+                    }
+                    reconnectFailures = 0
+                } catch {
+                    guard isCurrent(
+                        attemptID: attemptID,
+                        generation: generation
+                    ) else {
+                        await active.connection.shutdownImmediately()
+                        return
+                    }
+                    let reconnectNow = UInt64(
+                        Date().timeIntervalSince1970 * 1_000
+                    )
+                    guard !active.presentation.isExpired(
+                        atUnixMilliseconds: reconnectNow
+                    )
+                    else { throw error }
+                    do {
+                        let reconnected = try await reconnect(active)
+                        guard isCurrent(
+                            attemptID: attemptID,
+                            generation: generation
+                        ) else {
+                            await reconnected.connection.shutdownImmediately()
+                            return
+                        }
+                        active = reconnected
+                        self.attempt = reconnected
+                        reconnectFailures = 0
+                    } catch {
+                        guard isCurrent(
+                            attemptID: attemptID,
+                            generation: generation
+                        ) else { return }
+                        reconnectFailures = min(reconnectFailures + 1, 4)
+                        let delayMS = [500, 1_000, 2_000, 5_000][
+                            reconnectFailures - 1
+                        ]
+                        try await Task.sleep(
+                            for: .milliseconds(delayMS)
+                        )
+                    }
+                    continue
+                }
+                switch result {
                 case .pending:
                     try await Task.sleep(for: .milliseconds(500))
                 case .approved(let adoption, let remoteRelayRoute):
+                    guard isCurrent(
+                        attemptID: attemptID,
+                        generation: generation
+                    ) else {
+                        await active.connection.shutdownImmediately()
+                        return
+                    }
                     let adoptedRoute = try HarcDesktopHostRoute(
-                        host: attempt.route.host,
-                        port: attempt.route.port,
-                        serverHostname: attempt.route.serverHostname,
+                        host: active.route.host,
+                        port: active.route.port,
+                        serverHostname: active.route.serverHostname,
                         relay: remoteRelayRoute
+                    )
+                    let priorRoute = try? HarcDesktopHostRouteStore.load(
+                        from: routeURL
                     )
                     try HarcDesktopHostRouteStore.save(
                         adoptedRoute,
                         to: routeURL
                     )
-                    _ = try store.adoptApprovedForegroundPairing(adoption)
-                    try await attempt.connection.shutdownGracefully()
+                    do {
+                        _ = try store.adoptApprovedForegroundPairing(adoption)
+                    } catch {
+                        // Route evidence is useful only with the matching
+                        // durable adoption. Do not leave an orphaned endpoint
+                        // behind when the atomic trust adoption rejects.
+                        if let priorRoute {
+                            try? HarcDesktopHostRouteStore.save(
+                                priorRoute,
+                                to: routeURL
+                            )
+                        } else {
+                            try? HarcDesktopHostRouteStore.removeIfPresent(
+                                at: routeURL
+                            )
+                        }
+                        throw error
+                    }
                     self.attempt = nil
                     state = .paired(
-                        host: attempt.presentation.hostDisplayName
+                        host: active.presentation.hostDisplayName
                     )
                     onAdopted()
+                    try await active.connection.shutdownGracefully()
                     return
                 case .denied:
                     throw HarcDesktopClientPairingError.ended("denied")
@@ -296,13 +417,17 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
                 }
             }
         } catch {
-            await attempt.connection.shutdownImmediately()
+            await active.connection.shutdownImmediately()
+            guard isCurrent(
+                attemptID: attemptID,
+                generation: generation
+            ) else { return }
             self.attempt = nil
             let message: String
             if let pairingError = error as? HarcDesktopClientPairingError {
                 message = pairingError.localizedDescription
             } else {
-                message = "The secure connection ended before the Host approved this Mac. Make sure the Host is online and still showing the same security words, then create a fresh invitation."
+                message = "The pairing claim expired before Harc could reconnect and receive Host approval. Create a fresh invitation and try again."
             }
             state = .failed(
                 title: "Pairing Wasn’t Approved",
@@ -311,33 +436,130 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
         }
     }
 
+    /// Re-authenticates the original ticket route and transfers the proved
+    /// claimant state to a fresh RPC client. A route reconnect can never alter
+    /// the Host authority or security words already shown to the user.
+    private func reconnect(_ attempt: ActiveAttempt) async throws -> ActiveAttempt {
+        let trust = try HarcTransportTrustCoordinator(
+            pairingExactQRTransportSet:
+                attempt.ticket.exactTransportObjectBytes,
+            hostAuthorityPublicKey: attempt.ticket.hostAuthorityPublicKey
+        )
+        let policy = try HarcDesktopHostSessionConnector.capabilityPolicy()
+        let expectation = try HarcBootstrapTrustExpectation(
+            pairingTicket: attempt.ticket
+        )
+        let verify: @Sendable (HarcPinnedGRPCConnection) async throws
+            -> HarcValidatedHostBootstrapInfo = { candidate in
+            let verifier = HarcBootstrapClient(
+                rpc: candidate,
+                capabilityPolicy: policy,
+                sasDictionary: try HarcSASDictionaryV1.bundled()
+            )
+            return try await verifier.getHostInfo(expectation: expectation)
+        }
+        let verified: HarcDesktopVerifiedHostConnection<
+            HarcValidatedHostBootstrapInfo
+        >
+        let reconnectedRoute: HarcDesktopHostRoute
+        do {
+            verified = try await HarcDesktopHostRouteConnector.openVerified(
+                route: attempt.route,
+                trust: trust,
+                verify: verify
+            )
+            reconnectedRoute = attempt.route
+        } catch let originalError {
+            // A short-lived pairing ticket still binds identity, not an IP
+            // address. If DHCP or a dock changes during Host approval, try
+            // Bonjour candidates and authenticate each one against the exact
+            // original ticket before resuming the proved claim.
+            var repairedConnection: HarcDesktopVerifiedHostConnection<
+                HarcValidatedHostBootstrapInfo
+            >?
+            var repairedRoute: HarcDesktopHostRoute?
+            for candidate in await HarcMobileBonjourHostRouteResolver.discover() {
+                guard candidate.host != attempt.route.host
+                        || candidate.port != attempt.route.port else { continue }
+                let directCandidate = try HarcDesktopHostRoute(
+                    host: candidate.host,
+                    port: candidate.port,
+                    serverHostname: attempt.route.serverHostname,
+                    relay: nil
+                )
+                do {
+                    repairedConnection = try await
+                        HarcDesktopHostRouteConnector.openVerified(
+                            route: directCandidate,
+                            trust: trust,
+                            verify: verify
+                        )
+                    repairedRoute = try HarcDesktopHostRoute(
+                        host: candidate.host,
+                        port: candidate.port,
+                        serverHostname: attempt.route.serverHostname,
+                        relay: attempt.route.relay
+                    )
+                    break
+                } catch {
+                    continue
+                }
+            }
+            guard let repairedConnection, let repairedRoute else {
+                throw originalError
+            }
+            verified = repairedConnection
+            reconnectedRoute = repairedRoute
+        }
+        do {
+            let client = try await attempt.client.resumingPairing(
+                on: verified.connection
+            )
+            await attempt.connection.shutdownImmediately()
+            return ActiveAttempt(
+                id: attempt.id,
+                client: client,
+                connection: verified.connection,
+                ticket: attempt.ticket,
+                route: reconnectedRoute,
+                presentation: attempt.presentation
+            )
+        } catch {
+            await verified.connection.shutdownImmediately()
+            throw error
+        }
+    }
+
     func wordsDoNotMatch() async {
         guard let attempt else {
             state = .unpaired
             return
         }
-        await attempt.client.abandonLocalPairingState()
-        await attempt.connection.shutdownImmediately()
+        operationGeneration &+= 1
         self.attempt = nil
         state = .failed(
             title: "Security Words Didn’t Match",
             message: "This Host was not adopted. Do not continue with this invitation; create a new Mac client invitation on the intended Host."
         )
+        await attempt.client.abandonLocalPairingState()
+        await attempt.connection.shutdownImmediately()
     }
 
     func reset() {
         guard attempt == nil else { return }
+        operationGeneration &+= 1
         reviewedPairingURI = nil
         state = .unpaired
     }
 
     func forgetHost() {
         guard attempt == nil else { return }
+        operationGeneration &+= 1
         reviewedPairingURI = nil
-        onForgetting()
         do {
             _ = try store.forgetActiveHost()
             try HarcDesktopHostRouteStore.removeIfPresent(at: routeURL)
+            onForgetting()
             state = .unpaired
         } catch {
             state = .failed(
@@ -348,9 +570,10 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
     }
 
     func cancel() {
+        operationGeneration &+= 1
         reviewedPairingURI = nil
         guard let attempt else {
-            state = .unpaired
+            state = Self.stateAfterPassiveClose(state)
             return
         }
         self.attempt = nil
@@ -359,6 +582,30 @@ final class HarcDesktopClientPairingCoordinator: ObservableObject {
             await attempt.connection.shutdownImmediately()
         }
         state = .unpaired
+    }
+
+    private func isCurrent(attemptID: UUID, generation: UInt64) -> Bool {
+        Self.operationIsCurrent(
+            currentGeneration: operationGeneration,
+            expectedGeneration: generation,
+            currentAttemptID: attempt?.id,
+            expectedAttemptID: attemptID
+        )
+    }
+
+    static func operationIsCurrent(
+        currentGeneration: UInt64,
+        expectedGeneration: UInt64,
+        currentAttemptID: UUID?,
+        expectedAttemptID: UUID
+    ) -> Bool {
+        currentGeneration == expectedGeneration
+            && currentAttemptID == expectedAttemptID
+    }
+
+    static func stateAfterPassiveClose(_ current: State) -> State {
+        if case .paired = current { return current }
+        return .unpaired
     }
 
     static func requestedScopes() -> [AuthorizationScope] {

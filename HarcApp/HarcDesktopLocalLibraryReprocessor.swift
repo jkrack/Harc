@@ -57,7 +57,8 @@ enum HarcDesktopLocalLibraryReprocessPlanner {
         structuredTranscript: SessionTranscript?,
         currentModelID: String
     ) -> Bool {
-        structuredTranscript == nil || recording.sttModelID != currentModelID
+        structuredTranscript?.processingCoverage == nil
+            || recording.sttModelID != currentModelID
     }
 }
 
@@ -192,6 +193,7 @@ enum HarcDesktopLocalLibraryStager {
                 capture: capture,
                 transcript: transcript,
                 speakerEmbeddings: speakerEmbeddings,
+                speakerProcessingStatus: .ready,
                 persistedAt: Date(),
                 sourceLocalCanonicalID: recording.canonicalID
             )

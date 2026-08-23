@@ -95,6 +95,9 @@ public struct HostSyncSettingsView: View {
                 runtimeStartingOrFailed(role: "Client")
             } else {
                 connectionStatusRow(bridge.clientHostConnectionState ?? .starting)
+                if let snapshot = bridge.clientHostHealthSnapshot {
+                    hostHealthAxes(snapshot)
+                }
                 Button(connectionActionTitle) {
                     bridge.onOpenHostPairing()
                 }
@@ -105,6 +108,133 @@ public struct HostSyncSettingsView: View {
             Text("Paired means this Mac trusts a Host. Connected means Harc authenticated that Host during a live operation. The connection closes when work is finished.")
                 .font(.harcLabel)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func hostHealthAxes(
+        _ snapshot: ClientHostHealthSnapshot
+    ) -> some View {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+            ForEach(healthLines(snapshot)) { line in
+                HStack(alignment: .firstTextBaseline, spacing: HarcSpacing.sm) {
+                    Image(systemName: line.symbol)
+                        .foregroundStyle(line.color)
+                        .frame(width: 18) // token-exempt: fixed health-axis icon column.
+                    Text(line.title)
+                        .font(.harcLabel.weight(.semibold))
+                        .frame(width: 82, alignment: .leading) // token-exempt: scan-friendly status labels.
+                    Text(line.detail)
+                        .font(.harcLabel)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.vertical, HarcSpacing.xs)
+    }
+
+    private func healthLines(
+        _ snapshot: ClientHostHealthSnapshot
+    ) -> [HostHealthLine] {
+        [
+            trustLine(snapshot.trust),
+            routeLine(snapshot.route),
+            sessionLine(snapshot.session),
+            workLine("Recordings", snapshot.recordings),
+            workLine("Processing", snapshot.processing),
+            speakerLine(snapshot.speakers),
+        ]
+    }
+
+    private func trustLine(
+        _ trust: ClientHostHealthSnapshot.Trust
+    ) -> HostHealthLine {
+        switch trust {
+        case .checking:
+            HostHealthLine("Trust", "Checking adoption", .working)
+        case .notPaired:
+            HostHealthLine("Trust", "No Host adopted", .neutral)
+        case .adopted:
+            HostHealthLine("Trust", "Host identity adopted", .ready)
+        case .securityBlocked(let message):
+            HostHealthLine("Trust", message, .failure)
+        }
+    }
+
+    private func routeLine(
+        _ route: ClientHostHealthSnapshot.Route
+    ) -> HostHealthLine {
+        switch route {
+        case .unknown:
+            HostHealthLine("Route", "No authenticated route yet", .neutral)
+        case .discovering:
+            HostHealthLine("Route", "Discovering direct and relay routes", .working)
+        case .direct:
+            HostHealthLine("Route", "Last authenticated directly", .ready)
+        case .encryptedRelay:
+            HostHealthLine("Route", "Last authenticated by encrypted relay", .ready)
+        case .unavailable(let message):
+            HostHealthLine("Route", message, .attention)
+        }
+    }
+
+    private func sessionLine(
+        _ session: ClientHostHealthSnapshot.Session
+    ) -> HostHealthLine {
+        switch session {
+        case .idle:
+            HostHealthLine("Session", "Idle; opens only when work exists", .neutral)
+        case .authenticating:
+            HostHealthLine("Session", "Authenticating Host", .working)
+        case .authenticated:
+            HostHealthLine("Session", "Authenticated operation active", .ready)
+        case .failed(let message):
+            HostHealthLine("Session", message, .attention)
+        }
+    }
+
+    private func workLine(
+        _ title: String,
+        _ work: ClientHostHealthSnapshot.Work
+    ) -> HostHealthLine {
+        switch work {
+        case .current:
+            HostHealthLine(title, "Current", .ready)
+        case .pending(let count):
+            HostHealthLine(title, "\(count) waiting safely on this Mac", .attention)
+        case .syncing(let count):
+            HostHealthLine(title, "Syncing \(count)", .working)
+        case .retrying(let count, _):
+            HostHealthLine(title, "\(count) queued for automatic retry", .attention)
+        case .blocked(let count, let message):
+            HostHealthLine(title, "\(count) blocked: \(message)", .failure)
+        }
+    }
+
+    private func speakerLine(
+        _ speakers: ClientHostHealthSnapshot.SpeakerSync
+    ) -> HostHealthLine {
+        switch speakers {
+        case .current:
+            return HostHealthLine("Speakers", "Observations current", .ready)
+        case .pending(let count):
+            return HostHealthLine(
+                "Speakers",
+                "\(count) waiting to sync",
+                .attention
+            )
+        case .needsAttention(let repairing, let review):
+            let repairText = repairing == 0
+                ? nil : "\(repairing) retrying locally"
+            let reviewText = review == 0 ? nil : "\(review) need review"
+            return HostHealthLine(
+                "Speakers",
+                [repairText, reviewText].compactMap { $0 }
+                    .joined(separator: "; "),
+                review > 0 ? .failure : .attention
+            )
+        case .unknown:
+            return HostHealthLine("Speakers", "Not checked yet", .neutral)
         }
     }
 
@@ -360,5 +490,46 @@ public struct HostSyncSettingsView: View {
         count == 0
             ? "No recordings waiting to sync"
             : "\(count) recording\(count == 1 ? "" : "s") waiting to sync"
+    }
+}
+
+private struct HostHealthLine: Identifiable {
+    enum Tone {
+        case neutral
+        case ready
+        case working
+        case attention
+        case failure
+    }
+
+    let title: String
+    let detail: String
+    let tone: Tone
+
+    init(_ title: String, _ detail: String, _ tone: Tone) {
+        self.title = title
+        self.detail = detail
+        self.tone = tone
+    }
+
+    var id: String { title }
+    var symbol: String {
+        switch tone {
+        case .neutral: "circle"
+        case .ready: "checkmark.circle.fill"
+        case .working: "arrow.triangle.2.circlepath"
+        case .attention: "exclamationmark.triangle.fill"
+        case .failure: "xmark.shield.fill"
+        }
+    }
+
+    var color: Color {
+        switch tone {
+        case .neutral: .secondary
+        case .ready: Color.harc(.ready)
+        case .working: Color.harc(.working)
+        case .attention: Color.harc(.attention)
+        case .failure: Color.harc(.failure)
+        }
     }
 }

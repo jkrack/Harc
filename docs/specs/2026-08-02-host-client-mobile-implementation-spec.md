@@ -1615,6 +1615,10 @@ for deterministic replay and provenance; a future compaction may remove bulky
 detail only if it preserves those identities and decisions. Reaping immediately
 frees the attempt from the four-active-session quota. Quota exhaustion first
 reaps eligible staging bytes and otherwise returns a visible recoverable error.
+The resident Host schedules ordinary reaping after startup, every six hours,
+and after system wake. A maintenance failure does not stop authenticated Host
+service, but its latest attempt, success, and error remain observable; later
+passes retry automatically, and overlapping triggers never reap concurrently.
 
 ### 16.2 Client outbox
 
@@ -1841,6 +1845,41 @@ Mac Client mode retains current microphone and ScreenCaptureKit capture and the
 local `harc-stt` daemon. Capture and upload run concurrently, so local transcript
 latency and model-cache reuse do not depend on the host.
 
+Durable audio capture starts without waiting for daemon or model warmup. The
+Client records request-to-capture and inference-ready latency separately; an
+inference failure degrades processing but cannot retroactively fail a protected
+recording. Recoverable Host work uses a persisted bounded retry schedule and is
+re-inventoried after launch, network recovery, and system wake. After a saved
+direct or relay route fails, LAN discovery may repair the address only after the
+candidate proves the already adopted Host authority. A proved pairing claim may
+resume over a freshly authenticated connection until its original expiry; it
+must not create a replacement claim or change the security words. Closing,
+rejecting, resetting, or replacing the foreground attempt invalidates every
+suspended continuation before it may persist route or adoption state. During
+that same unexpired attempt, Bonjour may repair a DHCP/dock address change only
+after the candidate authenticates against the exact original ticket authority.
+Both macOS and iOS clients independently enforce the claim expiry while polling;
+a Host that continues returning `pending` cannot extend the signed deadline or
+hold the approval UI indefinitely.
+
+Client status is multi-axis: adoption trust, discovered route, current
+authenticated session, recording delivery, processing delivery, and speaker
+profile synchronization are independent facts. “Paired” alone never implies a
+reachable Host or completed work, and persisted last-contact evidence is bound
+to the exact `LibraryID` and `HostAuthorityID` so it cannot survive as evidence
+for a replacement Host.
+
+Durable processing and speaker-observation completion markers carry the same
+Library and Host-authority binding. Missing legacy bindings or a binding to a
+different adoption cannot suppress resubmission after forget/re-pair.
+
+A failed local diarization pass is persisted independently from transcript
+coverage. It remains a visible speaker-sync concern and the Client retries it
+from the protected master with bounded backoff, including after relaunch. A
+valid complete transcript may still be accepted by Host, but its artifact must
+describe diarization as retry-needed rather than claiming a completed local
+speaker pass.
+
 A signed `ProcessingArtifactV1` is provenance metadata, not a self-containing
 result. It includes protocol version, `LibraryID`, host authority ID, artifact
 ID, origin recording ID and canonical audio hash, producing device, current
@@ -1893,6 +1932,26 @@ The signature establishes origin and integrity, not trustworthy execution. V1
 does not send other devices' audio to a client for shared work. Library audio
 download and retention are separately configurable, especially on managed work
 computers.
+
+For a desktop-produced recording, Host gives a short grace period for the
+Client artifact that normally arrives with the audio receipt. Host processing
+then runs only when the Client artifact is absent, incompatible, degraded, or
+incomplete, and only when thermal pressure, Low Power Mode, normalized system
+load, and active Harc recording indicate spare cycles. Deferral remains durable
+Host work rather than a processing failure. Transient daemon or inference
+failures remain in the in-process queue with bounded backoff and do not require
+an app relaunch to retry. A newly eligible request interrupts an older request's
+longer deferral sleep; canonical path/identity changes remain fail-closed and
+are never automatically retried as ordinary inference failures.
+
+The Client caches speaker-recognition packs by library revision, submits local
+speaker observations, and durably records every Host decision with both the
+source and returned pack revisions. `no_match` and `pending_review` decisions
+remain visible synchronization concerns; an accepted transport response alone
+must never be presented as “speakers current.” Unresolved decisions are
+reconsidered on a bounded schedule, and a newer recognition-pack revision uses
+a new idempotent observation operation so updated canonical profiles can heal
+old nonmatches.
 
 ## 21. Host migration and loss
 

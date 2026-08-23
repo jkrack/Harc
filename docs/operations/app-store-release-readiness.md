@@ -90,7 +90,7 @@ npm run privacy:deployed:check
 npm run privacy:account-logpush:check
 ```
 
-The 2026-08-09 check passed against Worker version
+The check passed again on 2026-08-23 at 17:33 UTC against Worker version
 `6aee297a-49ea-4f92-8dab-3bdad4037976` at 100%, with Logpush disabled, no Tail
 Workers, observability disabled, and live health OK. This check does not prove
 that records from the superseded sampled configuration have expired; retain
@@ -108,11 +108,16 @@ privacy, health, and overload. A delayed post-exercise query returned zero
 staging Worker events and zero traces. The checked-in staging lifecycle harness
 also passed Host-offline behavior, same-route reconnect, a fresh replacement
 session, revocation, stale-capability rejection, reauthorization, and final
-privacy/health read-back. Records from the
-superseded Paid-plan sampled configuration must still be confirmed absent by
-2026-08-16. The authenticated Account Holder dashboard showed **No Logpush
+privacy/health read-back. Confirmation that records from the superseded
+Paid-plan sampled configuration expired after 2026-08-16 is now overdue and
+remains an Account Holder dashboard gate. The authenticated Account Holder
+dashboard showed **No Logpush
 jobs** under Account-scoped Logpush on 2026-08-09, closing the current broader
-account-export check.
+account-export check for that date. On 2026-08-23 the counts-only API audit
+again failed closed with HTTP 403 because the available Wrangler OAuth token
+lacks account Logs permission, and the available browser sessions were signed
+out. Reconfirm the dashboard immediately before freezing the exact-build
+privacy answer.
 The account audit uses Cloudflare's account Logpush job-list API and deliberately
 prints counts only; it fails if any `workers_trace_events` job exists so the
 destination's retention must be inspected rather than guessed.
@@ -187,8 +192,10 @@ After creating the exact candidate archive, run it against those bytes:
 
 The archive check verifies the bundle identity and minimum OS, packaged privacy
 URL and manifest contents, relay/export declarations, exact version/build,
-iPhone-only platform metadata, final icon name and compiled assets, arm64-only
-binary, a valid archive signature/profile, and required entitlements. It does
+iPhone-only platform metadata, the embedded 40-character source commit matching
+the current checkout, a checkout clean except for Xcode's expected
+`Package.resolved` Sparkle churn, final icon name and compiled assets,
+arm64-only binary, a valid archive signature/profile, and required entitlements. It does
 not require an Apple Distribution identity or reject `get-task-allow` at this
 stage: Xcode may repackage and distribution-sign the app during export or
 upload.
@@ -237,13 +244,16 @@ xcodebuild \
   -scheme HarcMobile \
   -configuration Release \
   -destination 'generic/platform=iOS' \
+  HARC_BUILD_SHA="$(git rev-parse HEAD)" \
   -showBuildSettings
 ```
 
 The inspected candidate must report `SKIP_INSTALL = NO`, `WRAPPER_EXTENSION =
 app`, `TARGETED_DEVICE_FAMILY = 1`, bundle ID `com.harc.HarcMobile`, the intended
 version/build, and the final `AppIcon`. Treat any mismatch as a stop, not an
-upload warning.
+upload warning. Pass the same `HARC_BUILD_SHA` setting to the `archive` action;
+the App Store preflight rejects `unrecorded`, a stale commit, or an export whose
+embedded source identity differs from the checkout being qualified.
 
 ## Values requiring account-owner input
 

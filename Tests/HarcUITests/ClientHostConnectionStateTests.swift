@@ -42,4 +42,26 @@ struct ClientHostConnectionStateTests {
         #expect(state.lastContact == contact)
         #expect(state.pendingCount == 15)
     }
+
+    @Test("health axes preserve mixed states without a false all-green summary")
+    func independentHealthAxes() {
+        let contact = Date(timeIntervalSince1970: 1_700_000_000)
+        let snapshot = ClientHostHealthSnapshot(
+            trust: .adopted,
+            route: .direct,
+            session: .idle,
+            recordings: .current,
+            processing: .retrying(2, "Host busy"),
+            speakers: .needsAttention(repairing: 0, review: 1),
+            lastAuthenticatedAt: contact
+        )
+
+        #expect(snapshot.trust == .adopted)
+        #expect(snapshot.route == .direct)
+        #expect(snapshot.session == .idle)
+        #expect(snapshot.recordings == .current)
+        #expect(snapshot.processing == .retrying(2, "Host busy"))
+        #expect(snapshot.speakers == .needsAttention(repairing: 0, review: 1))
+        #expect(snapshot.lastAuthenticatedAt == contact)
+    }
 }

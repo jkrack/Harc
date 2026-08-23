@@ -24,6 +24,7 @@ CHECK_PUBLIC_URLS=0
 REPORT_ONLY=0
 FAILURES=0
 EXPECTED_TEAM_ID="63TNU5M7P4"
+EXPECTED_SOURCE_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -184,6 +185,47 @@ EXPECTED_BUILD="$(awk -F': ' '
 ' "$REPO_ROOT/project.yml")"
 require_nonempty "$EXPECTED_VERSION" "source marketing version"
 require_nonempty "$EXPECTED_BUILD" "source project build number"
+if [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  pass "source commit is a full Git object ID"
+else
+  fail "source commit must be a full 40-character Git object ID"
+fi
+if [[ -n "$ARCHIVE" || -n "$DISTRIBUTION_APP" ]]; then
+  ARTIFACT_SOURCE_STATUS="$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all)"
+  NON_RESOLVED_STATUS="$(grep -Ev '^ M Package\.resolved$' <<<"$ARTIFACT_SOURCE_STATUS" || true)"
+  PACKAGE_STATUS="$(grep -E 'Package\.resolved$' <<<"$ARTIFACT_SOURCE_STATUS" || true)"
+  PACKAGE_CHURN_VALID=1
+  if [[ -n "$PACKAGE_STATUS" ]]; then
+    if [[ "$PACKAGE_STATUS" != " M Package.resolved" ]] || ! \
+      /usr/bin/python3 -c '
+import json, pathlib, sys
+committed = json.loads(pathlib.Path(sys.argv[1]).read_text())
+working = json.loads(pathlib.Path(sys.argv[2]).read_text())
+sparkle = [pin for pin in working.get("pins", []) if pin.get("identity") == "sparkle"]
+working_without_sparkle = dict(working)
+working_without_sparkle["pins"] = [
+    pin for pin in working.get("pins", []) if pin.get("identity") != "sparkle"
+]
+committed_without_origin = dict(committed)
+working_without_origin = dict(working_without_sparkle)
+committed_without_origin.pop("originHash", None)
+working_without_origin.pop("originHash", None)
+valid_sparkle = (
+    len(sparkle) == 1
+    and sparkle[0].get("location") == "https://github.com/sparkle-project/Sparkle"
+    and sparkle[0].get("state", {}).get("version") == "2.9.6"
+)
+raise SystemExit(0 if valid_sparkle and working_without_origin == committed_without_origin else 1)
+' <(git -C "$REPO_ROOT" show HEAD:Package.resolved) "$REPO_ROOT/Package.resolved"; then
+      PACKAGE_CHURN_VALID=0
+    fi
+  fi
+  if [[ -z "$NON_RESOLVED_STATUS" && "$PACKAGE_CHURN_VALID" -eq 1 ]]; then
+    pass "artifact checkout is clean except optional verified Xcode Package.resolved Sparkle churn"
+  else
+    fail "artifact checkout contains source changes beyond optional verified Xcode Package.resolved Sparkle churn"
+  fi
+fi
 
 READINESS_EVIDENCE="$REPO_ROOT/docs/evidence/2026-08-09-harcmobile-app-store-readiness.md"
 EXPECTED_CANDIDATE_LINE="**Candidate configuration:** HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD), iOS 18+, iPhone only"
@@ -211,6 +253,10 @@ for PLIST in \
   fi
 done
 
+require_equal \
+  "$(plutil -extract HarcBuildSHA raw -o - "$REPO_ROOT/HarcMobileApp/Info.plist" 2>/dev/null || true)" \
+  '$(HARC_BUILD_SHA)' \
+  "packaged source-commit build setting"
 require_equal \
   "$(plutil -extract HarcPrivacyPolicyURL raw -o - "$REPO_ROOT/HarcMobileApp/Info.plist" 2>/dev/null || true)" \
   "https://github.com/jkrack/Harc/blob/main/docs/privacy/harc-mobile-privacy-policy.md" \
@@ -289,10 +335,12 @@ if [[ "$MOBILE_TARGET" == *'deploymentTarget: "18.0"'* ]] && \
   [[ "$MOBILE_TARGET" == *'TARGETED_DEVICE_FAMILY: 1'* ]] && \
   [[ "$MOBILE_TARGET" == *'SUPPORTS_MACCATALYST: NO'* ]] && \
   [[ "$MOBILE_TARGET" == *'SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO'* ]] && \
+  [[ "$MOBILE_TARGET" == *'HarcBuildSHA: "$(HARC_BUILD_SHA)"'* ]] && \
+  [[ "$MOBILE_TARGET" == *'HARC_BUILD_SHA: unrecorded'* ]] && \
   [[ "$MOBILE_TARGET" != *'SKIP_INSTALL: YES'* ]]; then
-  pass "iOS 18, iPhone-only, installable Release source settings"
+  pass "iOS 18, iPhone-only, installable, source-identified Release settings"
 else
-  fail "expected iOS 18, iPhone-only, installable settings are incomplete in project.yml"
+  fail "expected iOS 18, iPhone-only, installable, source-identified settings are incomplete in project.yml"
 fi
 
 ICON_SET="$REPO_ROOT/HarcMobileApp/Assets.xcassets/AppIcon.appiconset"
@@ -493,6 +541,11 @@ if [[ -n "$ARCHIVE" ]]; then
         "$EXPECTED_BUILD" \
         "archived build number"
       require_equal \
+        "$(plutil -extract HarcBuildSHA raw -o - "$APP_INFO" 2>/dev/null || true)" \
+        "$EXPECTED_SOURCE_COMMIT" \
+        "archived source commit"
+      evidence "expected source commit: $EXPECTED_SOURCE_COMMIT"
+      require_equal \
         "$(plutil -extract CFBundleSupportedPlatforms json -o - "$APP_INFO" 2>/dev/null || true)" \
         '["iPhoneOS"]' \
         "archived platform is iPhoneOS only"
@@ -643,6 +696,10 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
         "$(plutil -extract CFBundleVersion raw -o - "$DISTRIBUTION_INFO" 2>/dev/null || true)" \
         "$EXPECTED_BUILD" \
         "distribution build number"
+      require_equal \
+        "$(plutil -extract HarcBuildSHA raw -o - "$DISTRIBUTION_INFO" 2>/dev/null || true)" \
+        "$EXPECTED_SOURCE_COMMIT" \
+        "distribution source commit"
       require_equal \
         "$(plutil -extract MinimumOSVersion raw -o - "$DISTRIBUTION_INFO" 2>/dev/null || true)" \
         "18.0" \

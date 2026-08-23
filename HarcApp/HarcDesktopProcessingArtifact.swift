@@ -40,6 +40,7 @@ enum HarcDesktopProcessingArtifactBuilder {
         guard sidecar.capture.originRecordingID == origin,
               sidecar.capture.producingDeviceID == identity.deviceID,
               let transcript = sidecar.transcript,
+              let processingCoverage = transcript.processingCoverage,
               !transcript.joinedText.trimmingCharacters(
                 in: .whitespacesAndNewlines
               ).isEmpty else {
@@ -49,7 +50,10 @@ enum HarcDesktopProcessingArtifactBuilder {
         let totalFrames = sidecar.capture.totalCanonicalFrames
         let artifactID = UUID()
         let operationID = OperationID(UUID())
-        let coverage = completeCoverage(totalFrames: totalFrames)
+        let coverage = try makeCoverage(
+            totalFrames: totalFrames,
+            evidence: processingCoverage
+        )
         let transcriptPayload = try transcriptPayload(
             transcript,
             totalFrames: totalFrames
@@ -111,7 +115,13 @@ enum HarcDesktopProcessingArtifactBuilder {
             ? "harc-stt.\(HarcVersion.sttEngineVersion)"
             : "harc-user-edited.v1"
         metadata.buildRevision = "harc-macos-client.v1"
-        metadata.diarizationRevision = "harc-diarization.local.v1"
+        if sidecar.speakerProcessingNeedsRetry {
+            metadata.diarizationRevision = "harc-diarization.retry-needed.v1"
+        } else if (sidecar.speakerEmbeddings ?? []).isEmpty {
+            metadata.diarizationRevision = "harc-diarization.no-observations.v1"
+        } else {
+            metadata.diarizationRevision = "harc-diarization.local.v1"
+        }
         metadata.vadRevision = "harc-vad.local.v1"
         metadata.vocabularyRevision = "harc-vocabulary.default.v1"
         metadata.promptRevision = "harc-transcript.none.v1"
@@ -207,15 +217,125 @@ enum HarcDesktopProcessingArtifactBuilder {
         return value
     }
 
-    private static func completeCoverage(
-        totalFrames: UInt64
-    ) -> Harc_V1_ArtifactCoverageV1 {
+    static func makeCoverage(
+        totalFrames: UInt64,
+        evidence: TranscriptProcessingCoverage
+    ) throws -> Harc_V1_ArtifactCoverageV1 {
+        guard totalFrames > 0 else {
+            throw HarcDesktopProcessingArtifactError.invalidCoverage
+        }
+        let degraded = try normalize(
+            evidence.degradedRanges,
+            totalFrames: totalFrames,
+            combinedReason: "stt.multiple_degradations"
+        )
+        let failed = try normalize(
+            evidence.failedRanges,
+            totalFrames: totalFrames,
+            combinedReason: "stt.multiple_failures"
+        )
+        let categorized = (
+            degraded.map { (start: $0.start, end: $0.end) }
+                + failed.map { (start: $0.start, end: $0.end) }
+        ).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        var priorEnd: UInt64 = 0
+        for range in categorized {
+            guard range.start >= priorEnd else {
+                throw HarcDesktopProcessingArtifactError.invalidCoverage
+            }
+            priorEnd = range.end
+        }
+
         var coverage = Harc_V1_ArtifactCoverageV1()
-        var range = Harc_V1_CanonicalFrameRangeV1()
-        range.startFrame = 0
-        range.endFrameExclusive = totalFrames
-        coverage.coveredRanges = [range]
+        coverage.degradedRanges = degraded.map { value in
+            var range = Harc_V1_ExplainedFrameRangeV1()
+            range.frames.startFrame = value.start
+            range.frames.endFrameExclusive = value.end
+            range.reasonCode = value.reasonCode
+            return range
+        }
+        coverage.failedRanges = failed.map { value in
+            var range = Harc_V1_ExplainedFrameRangeV1()
+            range.frames.startFrame = value.start
+            range.frames.endFrameExclusive = value.end
+            range.reasonCode = value.reasonCode
+            return range
+        }
+
+        var cursor: UInt64 = 0
+        for issue in categorized {
+            if cursor < issue.start {
+                var covered = Harc_V1_CanonicalFrameRangeV1()
+                covered.startFrame = cursor
+                covered.endFrameExclusive = issue.start
+                coverage.coveredRanges.append(covered)
+            }
+            cursor = issue.end
+        }
+        if cursor < totalFrames {
+            var covered = Harc_V1_CanonicalFrameRangeV1()
+            covered.startFrame = cursor
+            covered.endFrameExclusive = totalFrames
+            coverage.coveredRanges.append(covered)
+        }
         return coverage
+    }
+
+    private struct NormalizedCoverageIssue {
+        var start: UInt64
+        var end: UInt64
+        var reasonCode: String
+    }
+
+    private static func normalize(
+        _ issues: [TranscriptCoverageIssue],
+        totalFrames: UInt64,
+        combinedReason: String
+    ) throws -> [NormalizedCoverageIssue] {
+        let normalized = try issues.map { issue -> NormalizedCoverageIssue in
+            guard issue.startMs >= 0,
+                  issue.endMs > issue.startMs,
+                  isProtocolIdentifier(issue.reasonCode) else {
+                throw HarcDesktopProcessingArtifactError.invalidCoverage
+            }
+            let start = min(totalFrames, frames(milliseconds: issue.startMs))
+            let end = min(totalFrames, frames(milliseconds: issue.endMs))
+            guard end > start else {
+                throw HarcDesktopProcessingArtifactError.invalidCoverage
+            }
+            return NormalizedCoverageIssue(
+                start: start,
+                end: end,
+                reasonCode: issue.reasonCode
+            )
+        }.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+
+        var merged: [NormalizedCoverageIssue] = []
+        for issue in normalized {
+            guard var last = merged.last else {
+                merged.append(issue)
+                continue
+            }
+            if issue.start <= last.end {
+                last.end = max(last.end, issue.end)
+                if last.reasonCode != issue.reasonCode {
+                    last.reasonCode = combinedReason
+                }
+                merged[merged.count - 1] = last
+            } else {
+                merged.append(issue)
+            }
+        }
+        return merged
+    }
+
+    private static func isProtocolIdentifier(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 128 else { return false }
+        return value.utf8.allSatisfy { byte in
+            (byte >= 0x61 && byte <= 0x7a)
+                || (byte >= 0x30 && byte <= 0x39)
+                || byte == 0x2d || byte == 0x2e || byte == 0x5f
+        }
     }
 
     private static func frames(milliseconds: Int) -> UInt64 {
@@ -242,4 +362,5 @@ enum HarcDesktopProcessingArtifactBuilder {
 
 private enum HarcDesktopProcessingArtifactError: Error {
     case invalidTime
+    case invalidCoverage
 }

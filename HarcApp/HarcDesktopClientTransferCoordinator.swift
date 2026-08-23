@@ -10,8 +10,89 @@ import HarcIdentity
 import HarcProtocol
 import HarcTransfer
 
+/// Durable exponential retry state for recoverable Client-to-Host work.
+/// The recording outbox remains the source of truth; this only controls when
+/// the next self-healing inventory pass should run.
+struct HarcDesktopRetrySchedule: Codable, Equatable {
+    private static let delays: [TimeInterval] = [
+        1, 2, 5, 10, 30, 60, 120, 300,
+    ]
+
+    private(set) var consecutiveFailures = 0
+    private(set) var nextRetryAt: Date?
+
+    mutating func recordFailure(
+        now: Date,
+        jitterMultiplier: Double = 1
+    ) -> TimeInterval {
+        consecutiveFailures = min(
+            consecutiveFailures + 1,
+            Self.delays.count
+        )
+        let base = Self.delays[consecutiveFailures - 1]
+        let delay = base * min(1.15, max(0.85, jitterMultiplier))
+        nextRetryAt = now.addingTimeInterval(delay)
+        return delay
+    }
+
+    mutating func reset() {
+        consecutiveFailures = 0
+        nextRetryAt = nil
+    }
+
+    func remainingDelay(at now: Date) -> TimeInterval? {
+        nextRetryAt.map { max(0, $0.timeIntervalSince(now)) }
+    }
+}
+
+struct HarcDesktopHostContactEvidence: Codable, Equatable {
+    enum Route: String, Codable {
+        case direct
+        case encryptedRelay = "encrypted-relay"
+    }
+
+    let authenticatedAt: Date
+    let route: Route
+    /// Binds display-only contact history to the exact adopted authority.
+    /// Optional solely so pre-upgrade evidence decodes and is then ignored.
+    let libraryID: String?
+    let hostAuthorityID: String?
+}
+
+/// Binds a durable Client-side completion marker to the exact adopted Host.
+/// A missing binding is intentionally not trusted: pre-upgrade markers remain
+/// decodable, but are resubmitted after the next authenticated adoption.
+struct HarcDesktopHostEvidenceBinding: Codable, Equatable, Sendable {
+    let libraryID: String
+    let hostAuthorityID: String
+
+    init(trust: AdoptedTrustTuple) {
+        libraryID = trust.libraryID.description
+        hostAuthorityID = trust.hostAuthorityID.description
+    }
+
+    init(adoption: ValidatedClientAdoptionEvidence) {
+        libraryID = adoption.hostTrust.libraryID.description
+        hostAuthorityID = adoption.hostTrust.hostAuthorityID.description
+    }
+
+    func matches(_ trust: AdoptedTrustTuple?) -> Bool {
+        guard let trust else { return false }
+        return libraryID == trust.libraryID.description
+            && hostAuthorityID == trust.hostAuthorityID.description
+    }
+}
+
 @MainActor
 final class HarcDesktopClientTransferCoordinator: ObservableObject {
+    enum HostProbeState: Equatable, Sendable {
+        case notChecked
+        case checking
+        case reachable
+        case unavailable(String)
+        case pairingRepairRequired(String)
+    }
+
     enum State: Equatable {
         case idle
         case encoding(UUID)
@@ -26,12 +107,22 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
     @Published private(set) var state: State = .idle
     @Published private(set) var pendingCount = 0
+    @Published private(set) var pendingProcessingCount = 0
+    @Published private(set) var pendingSpeakerCount = 0
+    @Published private(set) var speakerRepairCount = 0
+    @Published private(set) var speakerReviewCount = 0
+    @Published private(set) var hostProbeState: HostProbeState = .notChecked
+    @Published private(set) var lastAuthenticatedContact:
+        HarcDesktopHostContactEvidence?
 
     private let identity: InstallationSigningIdentity
     private let store: HarcTransferStore
+    private let libraryCache: HarcLibraryCache
     private let locations: HarcMobileCaptureLocations
     private let clientRoot: URL
     private let routeURL: URL
+    private let retryURL: URL
+    private let contactURL: URL
     private let diagnosticLog: HarcDiagnosticLogStore
     private var queue: [HarcMobileFinalizedMaster] = []
     private var queuedOrigins = Set<OriginRecordingID>()
@@ -40,42 +131,85 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private var recoveryBlockedOrigins = Set<OriginRecordingID>()
     private var activeStages: [UUID: String] = [:]
     private var worker: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
+    private var hostProbeTask: Task<Void, Never>?
+    private var retrySchedule = HarcDesktopRetrySchedule()
 
     init(
         identity: InstallationSigningIdentity,
         store: HarcTransferStore,
+        libraryCache: HarcLibraryCache,
         clientRoot: URL,
         routeURL: URL,
         diagnosticLog: HarcDiagnosticLogStore
     ) throws {
         self.identity = identity
         self.store = store
+        self.libraryCache = libraryCache
         self.clientRoot = clientRoot
         locations = try HarcMobileCaptureLocations(
             applicationSupportRoot: clientRoot
         )
         self.routeURL = routeURL
+        retryURL = clientRoot.appendingPathComponent("host-retry.json")
+        contactURL = clientRoot.appendingPathComponent("host-contact.json")
         self.diagnosticLog = diagnosticLog
+        if let data = try? Data(contentsOf: retryURL, options: .mappedIfSafe),
+           let persisted = try? JSONDecoder().decode(
+               HarcDesktopRetrySchedule.self,
+               from: data
+           ) {
+            retrySchedule = persisted
+        }
+        if let data = try? Data(
+            contentsOf: contactURL,
+            options: .mappedIfSafe
+        ) {
+            lastAuthenticatedContact = try? JSONDecoder().decode(
+                HarcDesktopHostContactEvidence.self,
+                from: data
+            )
+        }
     }
 
     var statusMessage: String {
         switch state {
         case .idle:
-            pendingCount == 0
-                ? "Client storage ready"
-                : "\(pendingCount) recording(s) waiting for Host"
+            if case .pairingRepairRequired(let message) = hostProbeState {
+                message
+            } else if case .unavailable = hostProbeState {
+                "Host is unavailable; local capture remains ready"
+            } else if pendingCount > 0 {
+                "\(pendingCount) recording(s) waiting for Host"
+            } else if pendingProcessingCount + pendingSpeakerCount > 0 {
+                "\(pendingProcessingCount + pendingSpeakerCount) Host update(s) waiting"
+            } else if speakerRepairCount > 0 {
+                "\(speakerRepairCount) local speaker pass(es) retrying"
+            } else if speakerReviewCount > 0 {
+                "\(speakerReviewCount) speaker match(es) need review"
+            } else {
+                "Client storage ready"
+            }
         case .encoding:
             "Compressing a recording for Host"
         case .waitingForPairing(let pending):
-            "\(pending) recording(s) waiting for Host pairing"
+            if pendingCount > 0 {
+                "\(pendingCount) recording(s) waiting for Host pairing"
+            } else {
+                "\(pending) processing or speaker update(s) waiting for Host pairing"
+            }
         case .connecting:
             "Connecting securely to Host"
         case .uploading:
             "Uploading a recording to Host"
         case .uploaded:
-            pendingCount == 0
-                ? "All Client recordings are on Host"
-                : "\(pendingCount) recording(s) still waiting for Host"
+            if pendingCount > 0 {
+                "\(pendingCount) recording(s) still waiting for Host"
+            } else if pendingProcessingCount + pendingSpeakerCount > 0 {
+                "Audio is safe on Host; local updates are still syncing"
+            } else {
+                "All Client recordings and updates are on Host"
+            }
         case .edgeArtifactDeferred(_, let message):
             "Audio is safe on Host; local metadata handoff will retry: \(message)"
         case .retryNeeded(_, let message):
@@ -86,29 +220,179 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     }
 
     func retryPending() {
+        hostProbeTask?.cancel()
+        hostProbeTask = nil
+        retryTask?.cancel()
+        retryTask = nil
+        retrySchedule.reset()
+        persistRetrySchedule()
+        inventoryPending()
+    }
+
+    /// A newly persisted adoption is the only event allowed to clear a
+    /// terminal pairing-repair probe result.
+    func hostAdoptionDidChange() {
+        hostProbeState = .notChecked
+        retryPending()
+    }
+
+    /// Restores pending work at launch without erasing the durable failure
+    /// count. A failed first attempt therefore continues the bounded backoff
+    /// instead of restarting a tight retry loop after every app relaunch.
+    func resumePending() {
+        retryTask?.cancel()
+        retryTask = nil
+        if let delay = retrySchedule.remainingDelay(at: Date()), delay > 0 {
+            diagnosticLog.append(
+                severity: .info,
+                area: "transfer",
+                stage: "retry-restored",
+                message: "Saved Host retry backoff remains active",
+                context: [
+                    "attempt": String(retrySchedule.consecutiveFailures),
+                    "delay_seconds": String(Int(delay.rounded(.up))),
+                ]
+            )
+            scheduleInventory(after: delay)
+            return
+        }
+        inventoryPending()
+    }
+
+    /// Performs a lightweight authenticated session check only while no
+    /// transfer is active. It verifies trust, repairs a stale direct route, and
+    /// closes immediately; capture and durable outbox work always take
+    /// precedence over this presentation/health signal.
+    func probeHostIfIdle() {
+        guard hostProbeTask == nil,
+              worker == nil,
+              queue.isEmpty,
+              !Self.hasPendingWork(
+                  recordings: pendingCount,
+                  processing: pendingProcessingCount,
+                  speakers: pendingSpeakerCount
+              ),
+              !Self.probeIsTerminal(hostProbeState) else { return }
+        hostProbeState = .checking
+        hostProbeTask = Task { [weak self] in
+            await self?.performHostProbe()
+        }
+    }
+
+    nonisolated static func probeIsTerminal(_ state: HostProbeState) -> Bool {
+        if case .pairingRepairRequired = state { return true }
+        return false
+    }
+
+    private func performHostProbe() async {
+        defer { hostProbeTask = nil }
         do {
-            let pending = try store.recordingOutboxes().filter { outbox in
-                guard !recoveryBlockedOrigins.contains(
+            let opened = try await HarcDesktopHostSessionConnector.open(
+                identity: identity,
+                store: store,
+                routeURL: routeURL
+            )
+            do {
+                recordAuthenticatedContact(
+                    route: opened.path,
+                    adoption: opened.adoption
+                )
+                try await opened.connection.shutdownGracefully()
+                hostProbeState = .reachable
+                diagnosticLog.append(
+                    severity: .success,
+                    area: "connection",
+                    stage: "idle-health-authenticated",
+                    message: "Idle Host health check authenticated",
+                    context: ["route": Self.routeName(opened.path)]
+                )
+            } catch {
+                await opened.connection.shutdownImmediately()
+                throw error
+            }
+        } catch is CancellationError {
+            hostProbeState = .notChecked
+        } catch HarcDesktopHostConnectionError.notPaired {
+            hostProbeState = .notChecked
+        } catch HarcDesktopHostConnectionError.pairingRepairRequired {
+            let message = HarcDesktopHostConnectionError
+                .pairingRepairRequired.localizedDescription
+            hostProbeState = .pairingRepairRequired(message)
+            diagnosticLog.append(
+                severity: .warning,
+                area: "connection",
+                stage: "idle-health-pairing-repair",
+                message: message
+            )
+        } catch {
+            let message = privacyBounded(
+                HarcTransportErrorDiagnostic.describe(error).summary
+            )
+            hostProbeState = .unavailable(message)
+            diagnosticLog.append(
+                severity: .info,
+                area: "connection",
+                stage: "idle-health-unavailable",
+                message: message
+            )
+        }
+    }
+
+    private func inventoryPending() {
+        do {
+            let activeTrust = try store.activeAdoption()?.tuple
+            let outboxes = try store.recordingOutboxes()
+            let eligibleOutboxes = outboxes.filter { outbox in
+                !recoveryBlockedOrigins.contains(
                     outbox.finalizedCapture.capture.originRecordingID
-                ) else { return false }
-                let transferable = outbox.stateMachine.state != .securityBlocked
+                )
+                    && outbox.stateMachine.state != .securityBlocked
                     && outbox.integrityBlock == nil
                     && outbox.finalizedCapture.masterFileState == .present
-                return transferable && (
+            }
+            let pending = eligibleOutboxes.filter { outbox in
+                outbox.stateMachine.state != .securityBlocked && (
                     outbox.stateMachine.state != .committed
                         || Self.needsProcessingArtifact(
                             origin: outbox.finalizedCapture.capture
                                 .originRecordingID,
-                            clientRoot: clientRoot
+                            clientRoot: clientRoot,
+                            expectedTrust: activeTrust
                         )
                         || Self.needsSpeakerObservations(
                             origin: outbox.finalizedCapture.capture
                                 .originRecordingID,
-                            clientRoot: clientRoot
+                            clientRoot: clientRoot,
+                            expectedTrust: activeTrust
                         )
                 )
             }
-            pendingCount = pending.count
+            pendingCount = pending.filter {
+                $0.stateMachine.state != .committed
+            }.count
+            pendingProcessingCount = pending.filter {
+                Self.needsProcessingArtifact(
+                    origin: $0.finalizedCapture.capture.originRecordingID,
+                    clientRoot: clientRoot,
+                    expectedTrust: activeTrust
+                )
+            }.count
+            pendingSpeakerCount = pending.filter {
+                Self.needsSpeakerObservations(
+                    origin: $0.finalizedCapture.capture.originRecordingID,
+                    clientRoot: clientRoot,
+                    expectedTrust: activeTrust
+                )
+            }.count
+            speakerRepairCount = Self.speakerRepairCount(
+                outboxes: eligibleOutboxes,
+                clientRoot: clientRoot
+            )
+            speakerReviewCount = Self.speakerReviewCount(
+                outboxes: eligibleOutboxes,
+                clientRoot: clientRoot,
+                expectedTrust: activeTrust
+            )
             diagnosticLog.append(
                 severity: pending.isEmpty ? .success : .info,
                 area: "transfer",
@@ -124,11 +408,15 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 else { continue }
                 queue.append(master)
             }
-            if pending.isEmpty { state = .idle }
+            if pending.isEmpty {
+                state = .idle
+                clearAutomaticRetry()
+            }
             startWorkerIfNeeded()
         } catch {
             logFailure(error, stage: "queue-inventory", recording: nil)
             state = .retryNeeded(UUID(), error.localizedDescription)
+            scheduleAutomaticRetry(reason: "queue-inventory")
         }
     }
 
@@ -141,9 +429,44 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     func shutdown() {
         worker?.cancel()
         worker = nil
+        hostProbeTask?.cancel()
+        hostProbeTask = nil
+        retryTask?.cancel()
+        retryTask = nil
         queue.removeAll()
         queuedOrigins.removeAll()
         state = .idle
+        hostProbeState = .notChecked
+    }
+
+    /// Clears display and retry state only after the adoption and route have
+    /// been removed. Durable recordings and their outboxes are untouched.
+    func forgetHostState() {
+        shutdown()
+        lastAuthenticatedContact = nil
+        retrySchedule.reset()
+        pendingProcessingCount = 0
+        pendingSpeakerCount = 0
+        speakerRepairCount = 0
+        speakerReviewCount = 0
+        hostProbeState = .notChecked
+        for url in [contactURL, retryURL] {
+            do {
+                try HarcDesktopClientFiles.removeProtectedRegularFileIfPresent(
+                    url
+                )
+            } catch {
+                diagnosticLog.append(
+                    severity: .warning,
+                    area: "connection",
+                    stage: "forget-local-state",
+                    message: "Forgotten Host display state could not be removed",
+                    context: [
+                        "error_type": String(reflecting: Swift.type(of: error)),
+                    ]
+                )
+            }
+        }
     }
 
     private func startWorkerIfNeeded() {
@@ -164,12 +487,13 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     forKey: master.originRecordingID.recordingUUID
                 )
                 queuedOrigins.remove(master.originRecordingID)
-                pendingCount = max(0, pendingCount - 1)
+                refreshPendingBreakdown()
                 if let artifactFailure {
                     state = .edgeArtifactDeferred(
                         master.originRecordingID.recordingUUID,
                         artifactFailure
                     )
+                    scheduleAutomaticRetry(reason: "derived-artifact")
                 } else {
                     state = .uploaded(
                         master.originRecordingID.recordingUUID
@@ -180,14 +504,42 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     forKey: master.originRecordingID.recordingUUID
                 )
                 queuedOrigins.remove(master.originRecordingID)
-                pendingCount = max(pendingCount, queue.count + 1)
-                state = .waitingForPairing(pending: pendingCount)
+                refreshPendingBreakdown()
+                state = .waitingForPairing(
+                    pending: max(
+                        1,
+                        pendingCount + pendingProcessingCount
+                            + pendingSpeakerCount
+                    )
+                )
                 return
             } catch is CancellationError {
                 activeStages.removeValue(
                     forKey: master.originRecordingID.recordingUUID
                 )
                 queuedOrigins.remove(master.originRecordingID)
+                return
+            } catch HarcDesktopHostConnectionError.pairingRepairRequired {
+                activeStages.removeValue(
+                    forKey: master.originRecordingID.recordingUUID
+                )
+                queuedOrigins.remove(master.originRecordingID)
+                refreshPendingBreakdown()
+                let message = HarcDesktopHostConnectionError
+                    .pairingRepairRequired.localizedDescription
+                logFailure(
+                    HarcDesktopHostConnectionError.pairingRepairRequired,
+                    stage: "pairing-repair-required",
+                    recording: master.originRecordingID.recordingUUID
+                )
+                state = .securityBlocked(
+                    master.originRecordingID.recordingUUID,
+                    message
+                )
+                // This cannot heal by hammering the same rejected grant.
+                // Durable outboxes remain untouched and a successful re-pair
+                // explicitly restarts their inventory.
+                clearAutomaticRetry()
                 return
             } catch {
                 logFailure(
@@ -214,9 +566,131 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                         master.originRecordingID.recordingUUID,
                         error.localizedDescription
                     )
+                    scheduleAutomaticRetry(reason: "transfer")
                 }
                 return
             }
+        }
+        if !Self.hasPendingWork(
+            recordings: pendingCount,
+            processing: pendingProcessingCount,
+            speakers: pendingSpeakerCount
+        ) {
+            clearAutomaticRetry()
+        }
+    }
+
+    private func refreshPendingBreakdown() {
+        guard let outboxes = try? store.recordingOutboxes() else { return }
+        let activeAdoption = try? store.activeAdoption()
+        let activeTrust = activeAdoption?.tuple
+        let transferable = outboxes.filter { outbox in
+            !recoveryBlockedOrigins.contains(
+                outbox.finalizedCapture.capture.originRecordingID
+            )
+                && outbox.stateMachine.state != .securityBlocked
+                && outbox.integrityBlock == nil
+                && outbox.finalizedCapture.masterFileState == .present
+        }
+        pendingCount = transferable.filter {
+            $0.stateMachine.state != .committed
+        }.count
+        pendingProcessingCount = transferable.filter {
+            Self.needsProcessingArtifact(
+                origin: $0.finalizedCapture.capture.originRecordingID,
+                clientRoot: clientRoot,
+                expectedTrust: activeTrust
+            )
+        }.count
+        pendingSpeakerCount = transferable.filter {
+            Self.needsSpeakerObservations(
+                origin: $0.finalizedCapture.capture.originRecordingID,
+                clientRoot: clientRoot,
+                expectedTrust: activeTrust
+            )
+        }.count
+        speakerRepairCount = Self.speakerRepairCount(
+            outboxes: outboxes,
+            clientRoot: clientRoot
+        )
+        speakerReviewCount = Self.speakerReviewCount(
+            outboxes: outboxes,
+            clientRoot: clientRoot,
+            expectedTrust: activeTrust
+        )
+    }
+
+    nonisolated static func hasPendingWork(
+        recordings: Int,
+        processing: Int,
+        speakers: Int
+    ) -> Bool {
+        recordings > 0 || processing > 0 || speakers > 0
+    }
+
+    private func scheduleAutomaticRetry(reason: String) {
+        retryTask?.cancel()
+        let delay = retrySchedule.recordFailure(
+            now: Date(),
+            jitterMultiplier: Double.random(in: 0.85...1.15)
+        )
+        persistRetrySchedule()
+        diagnosticLog.append(
+            severity: .info,
+            area: "transfer",
+            stage: "retry-scheduled",
+            message: "Recoverable Host work will retry automatically",
+            context: [
+                "attempt": String(retrySchedule.consecutiveFailures),
+                "delay_seconds": String(Int(delay.rounded())),
+                "reason": reason,
+            ]
+        )
+        scheduleInventory(after: delay)
+    }
+
+    private func scheduleInventory(after delay: TimeInterval) {
+        let nanoseconds = UInt64(max(0, delay) * 1_000_000_000)
+        retryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.retryTask = nil
+            self.inventoryPending()
+        }
+    }
+
+    private func clearAutomaticRetry() {
+        retryTask?.cancel()
+        retryTask = nil
+        guard retrySchedule.consecutiveFailures != 0
+                || retrySchedule.nextRetryAt != nil else { return }
+        retrySchedule.reset()
+        persistRetrySchedule()
+    }
+
+    private func persistRetrySchedule() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            try HarcDesktopClientFiles.writeProtectedData(
+                encoder.encode(retrySchedule),
+                to: retryURL,
+                replacingExistingRegularFile: true
+            )
+        } catch {
+            diagnosticLog.append(
+                severity: .warning,
+                area: "transfer",
+                stage: "retry-persistence",
+                message: "Automatic retry state could not be saved",
+                context: [
+                    "error_type": String(reflecting: Swift.type(of: error)),
+                ]
+            )
         }
     }
 
@@ -295,6 +769,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 master.originRecordingID.recordingUUID,
                 extra: ["route": Self.routeName(opened.path)]
             )
+        )
+        recordAuthenticatedContact(
+            route: opened.path,
+            adoption: opened.adoption
         )
         let connection = opened.connection
         do {
@@ -514,6 +992,38 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         }
     }
 
+    private func recordAuthenticatedContact(
+        route: HarcVerifiedRoutePath,
+        adoption: ValidatedClientAdoptionEvidence
+    ) {
+        let evidence = HarcDesktopHostContactEvidence(
+            authenticatedAt: Date(),
+            route: route == .direct ? .direct : .encryptedRelay,
+            libraryID: adoption.hostTrust.libraryID.description,
+            hostAuthorityID: adoption.hostTrust.hostAuthorityID.description
+        )
+        lastAuthenticatedContact = evidence
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            try HarcDesktopClientFiles.writeProtectedData(
+                encoder.encode(evidence),
+                to: contactURL,
+                replacingExistingRegularFile: true
+            )
+        } catch {
+            diagnosticLog.append(
+                severity: .warning,
+                area: "connection",
+                stage: "contact-persistence",
+                message: "Authenticated Host contact could not be saved",
+                context: [
+                    "error_type": String(reflecting: Swift.type(of: error)),
+                ]
+            )
+        }
+    }
+
     private func submitSpeakerObservationsIfPresent(
         origin: OriginRecordingID,
         canonicalID: CanonicalRecordingID,
@@ -539,10 +1049,16 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             let authorization = try HarcLibraryAuthorization(
                 openedSession: opened.session
             )
-            var pack: SpeakerRecognitionPack?
+            var pack: SpeakerRecognitionPack? = try libraryCache
+                .speakerRecognitionPack(
+                    libraryID: opened.adoption.hostTrust.libraryID
+                )
             if opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
                 var packRequest = Harc_V1_GetSpeakerRecognitionPackRequestV1()
                 packRequest.protocol = HarcProtocolVersion.v1.protobufV1()
+                if let pack {
+                    packRequest.afterRevision = pack.revision.rawValue
+                }
                 let response = try await opened.connection
                     .getSpeakerRecognitionPack(
                         packRequest,
@@ -556,9 +1072,17 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     throw HarcDesktopClientTransferError
                         .malformedSpeakerResponse
                 }
-                if response.hasPack { pack = try response.pack.domainValue() }
+                if response.hasPack {
+                    let refreshed = try response.pack.domainValue()
+                    try libraryCache.persistSpeakerRecognitionPack(
+                        refreshed,
+                        libraryID: opened.adoption.hostTrust.libraryID
+                    )
+                    pack = refreshed
+                }
             }
 
+            var decisions: [HarcDesktopSpeakerDecisionRecord] = []
             for row in embeddings {
                 guard row.speakerIndex >= 0,
                       row.totalMs > 0,
@@ -576,7 +1100,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 let observation = try SpeakerEmbeddingObservation(
                     operationID: Self.observationOperationID(
                         origin: origin,
-                        speakerIndex: row.speakerIndex
+                        speakerIndex: row.speakerIndex,
+                        packRevision: pack?.revision
                     ),
                     canonicalRecordingID: canonicalID,
                     speakerIndex: UInt32(row.speakerIndex),
@@ -602,17 +1127,39 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     response.hasProtocol,
                     response.protocol
                 )
-                guard response.hasDecision,
-                      try response.decision.domainValue().operationID
-                        == observation.operationID else {
+                guard response.hasDecision else {
                     throw HarcDesktopClientTransferError
                         .malformedSpeakerResponse
                 }
+                let decision = try response.decision.domainValue()
+                guard decision.operationID == observation.operationID,
+                      decision.recognitionPackRevision
+                        >= (observation.sourcePackRevision
+                            ?? decision.recognitionPackRevision) else {
+                    throw HarcDesktopClientTransferError
+                        .malformedSpeakerResponse
+                }
+                decisions.append(HarcDesktopSpeakerDecisionRecord(
+                    speakerIndex: row.speakerIndex,
+                    decision: decision
+                ))
             }
 
+            let acceptedAt = Date()
+            let hasConcerns = decisions.contains {
+                $0.decision.disposition != .matched
+            }
             let marker = HarcDesktopSpeakerObservationMarker(
                 canonicalRecordingID: canonicalID,
-                acceptedAt: Date()
+                sourcePackRevision: pack?.revision,
+                decisions: decisions,
+                acceptedAt: acceptedAt,
+                nextReviewAt: hasConcerns
+                    ? acceptedAt.addingTimeInterval(6 * 60 * 60)
+                    : nil,
+                hostBinding: HarcDesktopHostEvidenceBinding(
+                    adoption: opened.adoption
+                )
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -621,7 +1168,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 to: Self.speakerObservationMarkerURL(
                     origin: origin,
                     clientRoot: clientRoot
-                )
+                ),
+                replacingExistingRegularFile: true
             )
             return nil
         } catch is CancellationError {
@@ -669,7 +1217,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     SHA256.hash(data: submission.exactSignedMetadata)
                 ),
                 disposition: response.disposition.rawValue,
-                acceptedAt: Date()
+                acceptedAt: Date(),
+                hostBinding: HarcDesktopHostEvidenceBinding(
+                    adoption: opened.adoption
+                )
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -678,7 +1229,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 to: Self.processingMarkerURL(
                     origin: origin,
                     clientRoot: clientRoot
-                )
+                ),
+                replacingExistingRegularFile: true
             )
             return nil
         } catch is CancellationError {
@@ -732,10 +1284,15 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
     private static func needsProcessingArtifact(
         origin: OriginRecordingID,
-        clientRoot: URL
+        clientRoot: URL,
+        expectedTrust: AdoptedTrustTuple?
     ) -> Bool {
         let marker = processingMarkerURL(origin: origin, clientRoot: clientRoot)
-        guard !FileManager.default.fileExists(atPath: marker.path) else {
+        if let data = try? Data(contentsOf: marker, options: .mappedIfSafe),
+           let decoded = try? JSONDecoder().decode(
+               HarcDesktopProcessingMarker.self,
+               from: data
+           ), decoded.hostBinding?.matches(expectedTrust) == true {
             return false
         }
         let sidecar = clientRoot
@@ -753,14 +1310,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
     private static func needsSpeakerObservations(
         origin: OriginRecordingID,
-        clientRoot: URL
+        clientRoot: URL,
+        expectedTrust: AdoptedTrustTuple?,
+        now: Date = Date()
     ) -> Bool {
-        guard !FileManager.default.fileExists(
-            atPath: speakerObservationMarkerURL(
-                origin: origin,
-                clientRoot: clientRoot
-            ).path
-        ) else { return false }
         guard let data = try? Data(
             contentsOf: captureSidecarURL(
                 origin: origin,
@@ -771,7 +1324,68 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             HarcDesktopClientCaptureSidecar.self,
             from: data
         ) else { return false }
-        return !(sidecar.speakerEmbeddings ?? []).isEmpty
+        guard !(sidecar.speakerEmbeddings ?? []).isEmpty else { return false }
+
+        let markerURL = speakerObservationMarkerURL(
+            origin: origin,
+            clientRoot: clientRoot
+        )
+        guard let markerData = try? Data(
+            contentsOf: markerURL,
+            options: .mappedIfSafe
+        ), let marker = try? JSONDecoder().decode(
+            HarcDesktopSpeakerObservationMarker.self,
+            from: markerData
+        ) else {
+            return true
+        }
+        guard marker.hostBinding?.matches(expectedTrust) == true else {
+            return true
+        }
+        return marker.needsReview(at: now)
+    }
+
+    private static func speakerReviewCount(
+        outboxes: [StoredRecordingOutbox],
+        clientRoot: URL,
+        expectedTrust: AdoptedTrustTuple?
+    ) -> Int {
+        outboxes.reduce(into: 0) { count, outbox in
+            let markerURL = speakerObservationMarkerURL(
+                origin: outbox.finalizedCapture.capture.originRecordingID,
+                clientRoot: clientRoot
+            )
+            guard let data = try? Data(
+                contentsOf: markerURL,
+                options: .mappedIfSafe
+            ), let marker = try? JSONDecoder().decode(
+                HarcDesktopSpeakerObservationMarker.self,
+                from: data
+            ), marker.hostBinding?.matches(expectedTrust) == true else {
+                return
+            }
+            count += marker.concernCount
+        }
+    }
+
+    private static func speakerRepairCount(
+        outboxes: [StoredRecordingOutbox],
+        clientRoot: URL
+    ) -> Int {
+        outboxes.reduce(into: 0) { count, outbox in
+            let sidecarURL = captureSidecarURL(
+                origin: outbox.finalizedCapture.capture.originRecordingID,
+                clientRoot: clientRoot
+            )
+            guard let data = try? Data(
+                contentsOf: sidecarURL,
+                options: .mappedIfSafe
+            ), let sidecar = try? JSONDecoder().decode(
+                HarcDesktopClientCaptureSidecar.self,
+                from: data
+            ), sidecar.speakerProcessingNeedsRetry else { return }
+            count += 1
+        }
     }
 
     private static func captureSidecarURL(
@@ -878,13 +1492,16 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
     private static func observationOperationID(
         origin: OriginRecordingID,
-        speakerIndex: Int
+        speakerIndex: Int,
+        packRevision: EntityRevision?
     ) -> OperationID {
-        var input = Data("harc-desktop-speaker-observation-v1".utf8)
+        var input = Data("harc-desktop-speaker-observation-v2".utf8)
         input.append(origin.deviceID.rawBytes)
         input.append(Data(origin.recordingUUID.uuidString.lowercased().utf8))
         var index = Int64(speakerIndex).bigEndian
         withUnsafeBytes(of: &index) { input.append(contentsOf: $0) }
+        var revision = (packRevision?.rawValue ?? 0).bigEndian
+        withUnsafeBytes(of: &revision) { input.append(contentsOf: $0) }
         var bytes = Array(SHA256.hash(data: input).prefix(16))
         bytes[6] = (bytes[6] & 0x0f) | 0x50
         bytes[8] = (bytes[8] & 0x3f) | 0x80
@@ -973,11 +1590,48 @@ private struct HarcDesktopProcessingMarker: Codable, Sendable {
     let exactSignedMetadataSHA256: Data
     let disposition: Int
     let acceptedAt: Date
+    let hostBinding: HarcDesktopHostEvidenceBinding?
 }
 
-private struct HarcDesktopSpeakerObservationMarker: Codable, Sendable {
+struct HarcDesktopSpeakerObservationMarker: Codable, Sendable {
     let canonicalRecordingID: CanonicalRecordingID
+    let sourcePackRevision: EntityRevision?
+    let decisions: [HarcDesktopSpeakerDecisionRecord]?
     let acceptedAt: Date
+    let nextReviewAt: Date?
+    let hostBinding: HarcDesktopHostEvidenceBinding?
+
+    init(
+        canonicalRecordingID: CanonicalRecordingID,
+        sourcePackRevision: EntityRevision?,
+        decisions: [HarcDesktopSpeakerDecisionRecord]?,
+        acceptedAt: Date,
+        nextReviewAt: Date? = nil,
+        hostBinding: HarcDesktopHostEvidenceBinding? = nil
+    ) {
+        self.canonicalRecordingID = canonicalRecordingID
+        self.sourcePackRevision = sourcePackRevision
+        self.decisions = decisions
+        self.acceptedAt = acceptedAt
+        self.nextReviewAt = nextReviewAt
+        self.hostBinding = hostBinding
+    }
+
+    var concernCount: Int {
+        decisions?.filter {
+            $0.decision.disposition != .matched
+        }.count ?? 0
+    }
+
+    func needsReview(at now: Date) -> Bool {
+        guard concernCount > 0 else { return false }
+        return (nextReviewAt ?? acceptedAt) <= now
+    }
+}
+
+struct HarcDesktopSpeakerDecisionRecord: Codable, Sendable {
+    let speakerIndex: Int
+    let decision: SpeakerObservationDecision
 }
 
 private extension Array {

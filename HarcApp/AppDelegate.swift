@@ -476,6 +476,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private let postProcessingState = RecordingPostProcessingState()
     /// Retained so runIdentifySpeakers can call diarize() outside of a recording session.
     private var sttClient: HarcSTTClient?
+    /// Capture never waits for inference. This best-effort warmup normally
+    /// finishes before the first long-form chunk becomes eligible.
+    private var recordingDaemonWarmupTask: Task<Void, Never>?
     private var speakerReIDService: SpeakerReIDService?
     private var store: RecordingStore?
     /// Present only in Host role. It owns the canonical store above; no second
@@ -489,6 +492,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// mounted separately as On This Mac; this runtime owns only ClientState.
     private var desktopClientRuntime: HarcDesktopClientRuntime?
     private var clientRecoverSyncTask: Task<Void, Never>?
+    private var clientRecoverSyncRetryTask: Task<Void, Never>?
+    private var clientRecoverSyncFailureCount = 0
     private var clientRecoverSyncRequestGate = HarcDesktopClientRecoveryRequestGate()
     private let localLibraryReprocessState = LocalLibraryReprocessState()
     private var localLibraryReprocessTask: Task<Void, Never>?
@@ -829,8 +834,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let runtime = self?.hostRuntime else { return }
-                await runtime.handleSystemWake()
+                self?.desktopClientRuntime?.handleConnectivityRestored()
+                if let runtime = self?.hostRuntime {
+                    await runtime.handleSystemWake()
+                }
             }
         }
     }
@@ -849,7 +856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 self.remoteRelayStatusTask?.cancel()
                 await self.hostMCPServer?.shutdown()
                 self.hostMCPServer = nil
-                await self.hostProcessingWorker?.waitUntilIdle()
+                await self.hostProcessingWorker?.shutdown()
                 await runtime.shutdown()
             }
 
@@ -898,6 +905,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         desktopClientRuntime = nil
         clientRecoverSyncTask?.cancel()
         clientRecoverSyncTask = nil
+        clientRecoverSyncRetryTask?.cancel()
+        clientRecoverSyncRetryTask = nil
+        clientRecoverSyncFailureCount = 0
         clientRecoverSyncRequestGate.reset()
         localLibraryReprocessTask?.cancel()
         localLibraryReprocessTask = nil
@@ -1904,7 +1914,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
 
         do {
-            _ = try await launcher.ensureRunning()
+            let warmupBeganAt = Date()
+            recordingDaemonWarmupTask?.cancel()
+            recordingDaemonWarmupTask = Task { [weak self, launcher] in
+                do {
+                    _ = try await launcher.ensureRunning()
+                    let elapsed = Int(
+                        Date().timeIntervalSince(warmupBeganAt) * 1_000
+                    )
+                    FileHandle.standardError.write(Data(
+                        "harc-recording: inference_ready_ms=\(elapsed)\n".utf8
+                    ))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "harc-recording: inference_warmup_failed type=\(String(reflecting: Swift.type(of: error)))\n".utf8
+                    ))
+                    self?.bridge.captureReadinessText =
+                        "Recording safely; transcription will retry after the speech engine recovers"
+                    self?.bridge.captureReadinessWarning = true
+                }
+                self?.recordingDaemonWarmupTask = nil
+            }
             let client = HarcSTTClient()
             self.sttClient = client
             let transcriber = ChunkedTranscriber(
@@ -1985,6 +2017,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             preRollCapture = nil
             try await session.start(at: startedAt, preRoll: preRoll)
+            let captureStartMS = Int(
+                Date().timeIntervalSince(startedAt) * 1_000
+            )
+            FileHandle.standardError.write(Data(
+                "harc-recording: request_to_capture_ms=\(captureStartMS) pre_roll_frames=\(preRoll.count)\n".utf8
+            ))
             state.markStarted(at: startedAt)
             bridge.activeMicrophoneName = bridge.selectedMicrophoneName
             bridge.activeCaptureTitle = pendingCaptureTitle
@@ -2024,6 +2062,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // near-empty junk WAV into the user's destination folder, where
             // launch-time ingest would resurrect it as a phantom row.
             stopRequestedDuringStart = false
+            recordingDaemonWarmupTask?.cancel()
+            recordingDaemonWarmupTask = nil
             await self.session?.abort()
             self.session = nil
             self.sessionCommitter = nil
@@ -3884,7 +3924,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 joinedText: result.text,
                 words: result.words,
                 speakers: result.speakers,
-                chunks: []
+                chunks: [],
+                processingCoverage: .complete
             )
             if let id = recording.id {
                 try await store.applyReprocessedTranscript(
@@ -4023,6 +4064,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             return
         }
+        clientRecoverSyncRetryTask?.cancel()
+        clientRecoverSyncRetryTask = nil
         guard clientRecoverSyncRequestGate.request() else {
             if openActivity {
                 bridge.onOpenActivity()
@@ -4074,7 +4117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                             joinedText: result.text,
                             words: result.words,
                             speakers: result.speakers,
-                            chunks: []
+                            chunks: [],
+                            processingCoverage: .complete
                         ),
                         speakerEmbeddings: result.speakerEmbeddings
                     )
@@ -4082,11 +4126,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 bridge.clientRecoverSyncState = .completed(report)
                 bridge.clientTransferStatusText = runtime.statusMessage
                 await recordingsVM?.refresh()
+                if report.localRecoveryFailed > 0 {
+                    scheduleClientRecoverAndSyncRetry()
+                } else {
+                    clientRecoverSyncFailureCount = 0
+                }
             } catch is CancellationError {
                 bridge.clientRecoverSyncState = .ready
             } catch {
                 bridge.clientRecoverSyncState = .failed(error.localizedDescription)
+                scheduleClientRecoverAndSyncRetry()
             }
+        }
+    }
+
+    /// Local masters and sidecars are the durable queue. This timer merely
+    /// wakes repeat-safe reconciliation after transient daemon, model, or disk
+    /// failures; it never discards or rewrites a failed artifact in place.
+    private func scheduleClientRecoverAndSyncRetry(
+        recordFailure: Bool = true
+    ) {
+        clientRecoverSyncRetryTask?.cancel()
+        if recordFailure {
+            clientRecoverSyncFailureCount = min(
+                clientRecoverSyncFailureCount + 1,
+                5
+            )
+        }
+        let delays: [TimeInterval] = [30, 60, 120, 300, 900]
+        let delay = recordFailure
+            ? delays[max(0, clientRecoverSyncFailureCount - 1)]
+            : 30
+        clientRecoverSyncRetryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            clientRecoverSyncRetryTask = nil
+            if state.isActiveOrPreparing {
+                // Capture smoothness wins over archive repair. Keep the same
+                // durable work and try again after the recording settles.
+                scheduleClientRecoverAndSyncRetry(recordFailure: false)
+                return
+            }
+            startClientRecoverAndSync(openActivity: false)
         }
     }
 
@@ -4126,9 +4211,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.hostRuntimeReady = false
         bridge.clientRuntimeReady = false
         bridge.clientRecoverSyncState = nil
+        clientRecoverSyncRetryTask?.cancel()
+        clientRecoverSyncRetryTask = nil
+        clientRecoverSyncFailureCount = 0
         clientRecoverSyncRequestGate.reset()
         bridge.clientTransferStatusText = nil
         bridge.clientHostConnectionState = nil
+        bridge.clientHostHealthSnapshot = nil
         bridge.clientDiagnosticLogEntries = []
         do {
             let store = try await makeApplicationStore()
@@ -4144,7 +4233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // listeners, or local socket behind a UI graph that never opened.
             await hostMCPServer?.shutdown()
             hostMCPServer = nil
-            await hostProcessingWorker?.waitUntilIdle()
+            await hostProcessingWorker?.shutdown()
             if let hostRuntime {
                 await hostRuntime.shutdown()
             }
@@ -4154,6 +4243,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             desktopClientRuntime = nil
             clientRecoverSyncTask?.cancel()
             clientRecoverSyncTask = nil
+            clientRecoverSyncRetryTask?.cancel()
+            clientRecoverSyncRetryTask = nil
+            clientRecoverSyncFailureCount = 0
             clientRecoverSyncRequestGate.reset()
             bridge.hostRuntimeReady = false
             bridge.clientRuntimeReady = false
@@ -4260,6 +4352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             } ?? .ready
             bridge.clientTransferStatusText = runtime.statusMessage
             bridge.clientHostConnectionState = runtime.hostConnectionState
+            bridge.clientHostHealthSnapshot = runtime.hostHealthSnapshot
             bridge.clientDiagnosticLogEntries = runtime.diagnosticLog.entries
             runtime.diagnosticLog.$entries
                 .sink { [weak bridge] entries in
@@ -4274,6 +4367,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             runtime.$hostConnectionState
                 .sink { [weak bridge] state in
                     bridge?.clientHostConnectionState = state
+                }
+                .store(in: &cancellables)
+            runtime.$hostHealthSnapshot
+                .sink { [weak bridge] snapshot in
+                    bridge?.clientHostHealthSnapshot = snapshot
                 }
                 .store(in: &cancellables)
             prefs.$clientHostAudioDownloadEnabled
@@ -4331,7 +4429,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                                 store: storage.recordingStore,
                                 launcher: launcher,
                                 diarize: diarize,
-                                vad: vad
+                                vad: vad,
+                                admissionSnapshot: { [weak self] in
+                                    let captureActive = await MainActor.run {
+                                        self?.state.isActiveOrPreparing ?? false
+                                    }
+                                    return HarcHostWorkAdmissionSnapshot.current(
+                                        harcCaptureActive: captureActive
+                                    )
+                                }
                             )
                             try await workerBox.install(worker)
                             return HarcCanonicalLibraryProcessingScheduler(

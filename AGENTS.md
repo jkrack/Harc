@@ -89,6 +89,29 @@ or GRDB records as network DTOs. In Host mode, `harc-mcp` must route through
 authenticated local IPC and must never fall back to direct database writes when
 the resident host is unavailable.
 
+Desktop Client reliability is fail-closed and self-healing. Recoverable Host
+work has persisted bounded backoff and retries after launch, network recovery,
+and wake. LAN route repair must authenticate a discovered candidate against the
+existing adoption. A proved pairing claim may reconnect only until its original
+expiry, both clients enforce that deadline even if a Host keeps returning
+pending, and a resumed claim must retain its original authority and SAS.
+Settings renders trust,
+route, session, recording delivery, processing delivery, and speaker sync as
+separate axes; last-contact evidence is valid only for its bound Library and
+Host authority. Processing and speaker completion markers are bound the same
+way; unbound legacy or differently bound markers must be resubmitted. Host gives
+desktop edge artifacts a short grace period and
+performs derived work only when system load, power, thermal state, and active
+Harc capture indicate spare cycles. Speaker-pack revisions and every Host
+observation decision are durable; nonmatches remain visible review concerns.
+Unresolved speakers are retried on a bounded schedule and on recognition-pack
+revision changes. A local diarization failure is durable and visible separately
+from transcript coverage; Client recovery retries it from the protected master.
+Host transient processing failures retry in-process with bounded backoff, while
+canonical artifact binding changes remain fail-closed. Closing or rejecting a
+pairing window must invalidate every suspended continuation before it can save
+route or adoption state.
+
 ## Reliability Rules
 
 - Recording starts in `~/Library/Caches/Harc/recordings/` and finalizes into the
@@ -98,10 +121,18 @@ the resident host is unavailable.
 - A recovery artifact's source path is its durable scan identity. Do not recreate
   duplicate pending rows for the same cache file after metadata changes,
   especially if the user already discarded or failed it.
+- Host upload staging is maintained by the resident runtime: reap once after
+  startup, every six hours, and after system wake. Reaping is fail-soft and
+  observable, must coalesce overlapping passes, and must preserve the seven-day
+  post-expiry/abandonment resume window plus permanent attempt provenance.
 - Capture readiness should distinguish blocked recording requirements from
-  degraded quality and optional AI features. Missing destination/microphone/STT
-  can block recording; missing summaries/search/paste helpers must not make core
-  capture look broken.
+  degraded quality and optional AI features. Missing destination/microphone can
+  block recording; missing or cold STT degrades processing but must not block
+  durable audio capture. Missing summaries/search/paste helpers must not make
+  core capture look broken.
+- Durable recording start must not wait for daemon/model warmup. Measure
+  request-to-capture and inference-ready latency independently; inference
+  failure degrades later processing rather than discarding or aborting audio.
 - System audio denial is degraded "mic only" capture, not a hard block.
 - **Never silently drop transcript audio.** Chunk failures retry with
   backoff (all errors, not just model_not_loaded); exhausted chunks become
@@ -124,6 +155,11 @@ two workers and stop before free disk falls below 5 GiB.
     swift test --filter LocalStackHealthTests
     swift test --filter CustomerExperienceE2ETests
     swift test
+
+Run HarcMobile UI qualification through
+`scripts/qualify-harcmobile-ui.sh` so the destination, exact source manifest,
+logs, result bundle, and artifact digest stay together. A dirty-tree run must be
+explicitly labeled diagnostic and cannot qualify a release.
 
 Pairing transport changes must also pass the real pinned-TLS lifecycle through
 both the direct socket and local encrypted-relay emulator paths:

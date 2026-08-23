@@ -9,6 +9,7 @@ enum HarcMobileHostHealthStatus: Equatable {
     case checking
     case connected(lastVerifiedAt: Date)
     case unavailable(lastAttemptedAt: Date)
+    case pairingRepairRequired(lastAttemptedAt: Date)
 
     var title: String {
         switch self {
@@ -20,6 +21,8 @@ enum HarcMobileHostHealthStatus: Equatable {
             "Desktop connected"
         case .unavailable:
             "Desktop unavailable"
+        case .pairingRepairRequired:
+            "Pairing needs repair"
         }
     }
 
@@ -33,6 +36,8 @@ enum HarcMobileHostHealthStatus: Equatable {
             "The adopted Host desktop is authenticated and reachable."
         case .unavailable:
             "The adopted Host desktop could not be reached. Local recording remains available and transfer will retry."
+        case .pairingRepairRequired:
+            "The adopted Host no longer accepts this iPhone’s saved pairing. Local recordings remain safe. Forget this Host and pair again."
         }
     }
 }
@@ -179,6 +184,26 @@ final class HarcMobileHostHealthCoordinator {
 
     func refresh() async {
         guard !isChecking else { return }
+        if case .pairingRepairRequired = status { return }
+        await performRefresh()
+    }
+
+    /// A durable pairing rejection is terminal for automatic probes. Only an
+    /// explicit adoption change (successful re-pair or local forget) clears
+    /// it, preventing a 30-second authentication retry storm.
+    func hostAdoptionDidChange(hasActiveAdoption: Bool) async {
+        if hasActiveAdoption {
+            status = .checking
+            await performRefresh()
+        } else {
+            lastVerifiedAt = nil
+            hostDisplayName = nil
+            status = .unpaired
+        }
+    }
+
+    private func performRefresh() async {
+        guard !isChecking else { return }
         isChecking = true
         if case .unpaired = status {
             status = .checking
@@ -202,6 +227,11 @@ final class HarcMobileHostHealthCoordinator {
             lastVerifiedAt = nil
             hostDisplayName = nil
             status = .unpaired
+        } catch HarcMobileHostSessionConnectorError.pairingRepairRequired {
+            Self.logger.error(
+                "Authenticated Host rejected the saved pairing; automatic health retries are paused"
+            )
+            status = .pairingRepairRequired(lastAttemptedAt: .now)
         } catch {
             Self.logger.info(
                 "Authenticated Host health check failed: \(String(reflecting: error), privacy: .public)"

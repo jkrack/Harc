@@ -13,6 +13,11 @@ public enum HarcBootstrapClientError: Error, Equatable, Sendable, LocalizedError
     case noPairingInProgress
     case pairingClaimMismatch
     case pairingProofNotPending
+    /// The authenticated Host did not return a grant valid for this persisted
+    /// adoption. Hosts intentionally use an indistinguishable dummy grant for
+    /// revoked and unknown devices, so the Client must require pairing repair
+    /// without claiming which registry condition occurred.
+    case sessionGrantUnavailable
     case grantBindingMismatch(field: String)
     case capabilitySelectionNotOffered
     case sessionTrustChanged
@@ -38,6 +43,8 @@ public enum HarcBootstrapClientError: Error, Equatable, Sendable, LocalizedError
             return "The Host returned a different pairing claim. Do not approve it; create a fresh invitation."
         case .pairingProofNotPending:
             return "The Host did not accept this pairing proof as pending. Create a fresh invitation and try again."
+        case .sessionGrantUnavailable:
+            return "The Host no longer authorizes this Mac’s saved pairing. Recordings remain safe on this Mac; forget this Host and pair again."
         case .grantBindingMismatch(let field):
             return "The Host grant does not match this Mac's pairing request (\(field)). Do not use the grant; create a fresh invitation."
         case .capabilitySelectionNotOffered:
@@ -120,6 +127,12 @@ public struct HarcPairingClaimPresentation: Equatable, Sendable {
     public let sas: HarcSASPhraseV1
     public let expiresAtUnixMilliseconds: UInt64
     public let hostDisplayName: String
+
+    /// The Client enforces the signed claim deadline locally so a broken or
+    /// malicious Host cannot hold a pairing UI in `pending` forever.
+    public func isExpired(atUnixMilliseconds now: UInt64) -> Bool {
+        now >= expiresAtUnixMilliseconds
+    }
 }
 
 public enum HarcPairingClaimResult: Equatable, Sendable {
@@ -189,6 +202,22 @@ public actor HarcBootstrapClient {
         self.randomness = randomness
         self.sasDictionary = sasDictionary
         self.clock = clock
+    }
+
+    private init(
+        rpc: any HarcBootstrapRPCTransport,
+        capabilityPolicy: HarcCapabilityPolicyV1,
+        randomness: any HarcClientBootstrapRandomness,
+        sasDictionary: HarcSASDictionaryV1,
+        clock: @escaping UnixMillisecondsClock,
+        activePairing: ActivePairing
+    ) {
+        self.rpc = rpc
+        self.capabilityPolicy = capabilityPolicy
+        self.randomness = randomness
+        self.sasDictionary = sasDictionary
+        self.clock = clock
+        pairingState = .active(activePairing)
     }
 
     public func getHostInfo(
@@ -563,6 +592,34 @@ public actor HarcBootstrapClient {
         }
     }
 
+    /// Moves an already-proved, still-pending claim onto a newly authenticated
+    /// transport. The claimant token never leaves this actor boundary and the
+    /// new RPC still validates every Host response against the original ticket.
+    public func resumingPairing(
+        on rpc: any HarcBootstrapRPCTransport
+    ) throws -> HarcBootstrapClient {
+        let activePairing: ActivePairing
+        switch pairingState {
+        case .active(let active):
+            activePairing = active
+        case .idle:
+            throw HarcBootstrapClientError.noPairingInProgress
+        case .beginning, .polling:
+            throw HarcBootstrapClientError.pairingClaimMismatch
+        }
+        guard clock() < activePairing.expiresAtUnixMilliseconds else {
+            throw HarcProtocolCodecError.expired(field: "pairingClaim")
+        }
+        return HarcBootstrapClient(
+            rpc: rpc,
+            capabilityPolicy: capabilityPolicy,
+            randomness: randomness,
+            sasDictionary: sasDictionary,
+            clock: clock,
+            activePairing: activePairing
+        )
+    }
+
     /// Drops only local ephemeral claim state. It does not claim to cancel the
     /// host reservation because V1 intentionally has no remote cancel RPC.
     public func abandonLocalPairingState() {
@@ -634,14 +691,22 @@ public actor HarcBootstrapClient {
             throw HarcBootstrapClientError.invalidResponse(field: "beginSession")
         }
         let challengeID = try beginMessage.challengeID.validatedUUID()
-        let grant = try Self.validateGrant(
-            beginMessage.exactSignedDeviceGrant.framedBytes,
-            hostTrust: adoption.hostTrust,
-            expectedDevicePublicKey: deviceSigner.publicKey,
-            allowedScopes: nil,
-            atUnixMilliseconds: beginMessage.serverTimeUnixMs,
-            compatibility: capabilityPolicy.compatibility
-        )
+        let grant: ValidatedDeviceGrantEvidence
+        do {
+            grant = try Self.validateGrant(
+                beginMessage.exactSignedDeviceGrant.framedBytes,
+                hostTrust: adoption.hostTrust,
+                expectedDevicePublicKey: deviceSigner.publicKey,
+                allowedScopes: nil,
+                atUnixMilliseconds: beginMessage.serverTimeUnixMs,
+                compatibility: capabilityPolicy.compatibility
+            )
+        } catch {
+            // The Host is already authenticated by pinned TLS and HostInfo.
+            // An invalid current-grant body is therefore an authorization
+            // repair signal, not a generic reachability failure.
+            throw HarcBootstrapClientError.sessionGrantUnavailable
+        }
         guard grant.grantID == adoption.grant.grantID,
               grant.registryEpoch >= adoption.grant.registryEpoch else {
             throw HarcBootstrapClientError.grantBindingMismatch(

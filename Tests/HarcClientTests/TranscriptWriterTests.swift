@@ -29,7 +29,16 @@ struct TranscriptWriterTests {
                 Word(text: "world", startMs: 500, endMs: 1000),
             ],
             speakers: [],
-            chunks: []
+            chunks: [],
+            processingCoverage: TranscriptProcessingCoverage(
+                failedRanges: [
+                    TranscriptCoverageIssue(
+                        startMs: 1_000,
+                        endMs: 1_500,
+                        reasonCode: "stt.chunk_failed"
+                    ),
+                ]
+            )
         )
 
         try TranscriptWriter.writeSiblings(transcript: transcript, nextTo: wavURL)
@@ -49,6 +58,28 @@ struct TranscriptWriterTests {
         decoder.dateDecodingStrategy = .secondsSince1970
         let decoded = try decoder.decode(SessionTranscript.self, from: json)
         #expect(decoded == transcript)
+    }
+
+    @Test("legacy JSON without processing coverage stays explicitly unknown")
+    func legacyCoverageIsUnknown() throws {
+        let transcript = SessionTranscript(
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_001),
+            audioPath: "/tmp/legacy.wav",
+            joinedText: "legacy",
+            words: [],
+            speakers: [],
+            chunks: []
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        let encoded = try encoder.encode(transcript)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("processingCoverage"))
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let decoded = try decoder.decode(SessionTranscript.self, from: encoded)
+        #expect(decoded.processingCoverage == nil)
     }
 
     @Test("writeSiblings regenerates the day index listing the new document")

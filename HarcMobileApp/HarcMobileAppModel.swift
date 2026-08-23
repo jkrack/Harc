@@ -306,7 +306,14 @@ final class HarcMobileAppModel {
             ) { [weak self] in
                 self?.transferCoordinator?.retryPending()
                 self?.libraryCoordinator?.refresh()
-                Task { await self?.hostHealthCoordinator?.refresh() }
+                let hasActiveAdoption =
+                    (try? store.activeAdoption()) != nil
+                Task {
+                    await self?.hostHealthCoordinator?
+                        .hostAdoptionDidChange(
+                            hasActiveAdoption: hasActiveAdoption
+                        )
+                }
             }
             readiness = .ready(
                 deviceID: identity.deviceID,

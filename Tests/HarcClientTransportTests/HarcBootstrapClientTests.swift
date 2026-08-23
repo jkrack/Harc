@@ -11,6 +11,25 @@ import HarcRemoteTransport
 
 @Suite("Client bootstrap, pairing, and session application layer")
 struct HarcBootstrapClientTests {
+    @Test("pairing claim presentation expires at its exact signed deadline")
+    func pairingClaimDeadline() async throws {
+        let fixture = try BootstrapClientFixture()
+        let client = try fixture.client(
+            rpc: BootstrapClientFakeRPC(fixture: fixture)
+        )
+        let presentation = try await client.beginPairing(
+            ticket: fixture.ticket,
+            deviceSigner: fixture.deviceKey,
+            requestedScopes: fixture.scopes,
+            deviceLabel: "Deadline Test"
+        )
+        let deadline = presentation.expiresAtUnixMilliseconds
+
+        #expect(!presentation.isExpired(atUnixMilliseconds: deadline - 1))
+        #expect(presentation.isExpired(atUnixMilliseconds: deadline))
+        #expect(presentation.isExpired(atUnixMilliseconds: deadline + 1))
+    }
+
     @Test("bootstrap failures provide actionable localized descriptions")
     func localizedErrors() {
         #expect(
@@ -110,6 +129,35 @@ struct HarcBootstrapClientTests {
 
         await #expect(throws: HarcBootstrapClientError.noPairingInProgress) {
             try await client.getPairingStatus()
+        }
+    }
+
+    @Test("a proved pairing claim resumes on a replacement transport client")
+    func pairingClaimResumesAfterReconnect() async throws {
+        let fixture = try BootstrapClientFixture()
+        let rpc = BootstrapClientFakeRPC(fixture: fixture)
+        let original = try fixture.client(rpc: rpc)
+
+        _ = try await original.beginPairing(
+            ticket: fixture.ticket,
+            deviceSigner: fixture.deviceKey,
+            requestedScopes: fixture.scopes,
+            deviceLabel: "Reconnect Mac"
+        )
+        let resumed = try await original.resumingPairing(on: rpc)
+        await original.abandonLocalPairingState()
+
+        guard case .approved(let adoption, _) = try await resumed
+            .getPairingStatus() else {
+            Issue.record("Expected resumed claim approval")
+            return
+        }
+        #expect(adoption.hostTrust == fixture.hostTrust)
+        #expect(await rpc.pairingBeginCallCount() == 1)
+        #expect(await rpc.pairingProofCallCount() == 1)
+        #expect(await rpc.pairingStatusCallCount() == 1)
+        await #expect(throws: HarcBootstrapClientError.noPairingInProgress) {
+            try await original.getPairingStatus()
         }
     }
 
@@ -306,6 +354,30 @@ struct HarcBootstrapClientTests {
                 deviceSigner: fixture.deviceKey
             )
         }
+    }
+
+    @Test("an authenticated Host dummy grant requires pairing repair")
+    func sessionDummyGrantRequiresRepair() async throws {
+        let fixture = try BootstrapClientFixture()
+        let rpc = BootstrapClientFakeRPC(
+            fixture: fixture,
+            beginSessionGrantOverride: Data(repeating: 0xA5, count: 512)
+        )
+        let client = try fixture.client(rpc: rpc)
+        let adoption = try await approvedAdoption(
+            fixture: fixture,
+            client: client
+        )
+
+        await #expect(throws: HarcBootstrapClientError.sessionGrantUnavailable) {
+            try await client.openSession(
+                adoption: adoption,
+                negotiatedCapabilities: fixture.negotiated,
+                deviceSigner: fixture.deviceKey
+            )
+        }
+        #expect(await rpc.sessionBeginCallCount() == 1)
+        #expect(await rpc.sessionOpenCallCount() == 0)
     }
 
     @Test("already-cancelled bootstrap operations emit no RPCs")

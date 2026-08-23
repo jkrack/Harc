@@ -11,6 +11,7 @@ import HarcIdentity
 import HarcStore
 import HarcTransfer
 import HarcUI
+import Network
 
 @MainActor
 final class HarcDesktopClientRuntime: ObservableObject {
@@ -18,6 +19,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
     @Published private(set) var statusMessage = "Client storage ready"
     @Published private(set) var lastRecoverSyncReport: ClientRecoverSyncReport?
     @Published private(set) var hostConnectionState: ClientHostConnectionState = .starting
+    @Published private(set) var hostHealthSnapshot: ClientHostHealthSnapshot = .starting
 
     let identity: InstallationSigningIdentity
     let transferStore: HarcTransferStore
@@ -30,6 +32,14 @@ final class HarcDesktopClientRuntime: ObservableObject {
     let diagnosticLog: HarcDiagnosticLogStore
 
     private var cancellables = Set<AnyCancellable>()
+    private let networkMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(
+        label: "com.harc.desktop-client.network-monitor",
+        qos: .utility
+    )
+    private var networkWasSatisfied: Bool?
+    private var hostHealthMonitoringTask: Task<Void, Never>?
+    private static let hostHealthPollingInterval: Duration = .seconds(60)
 
     private init(
         identity: InstallationSigningIdentity,
@@ -64,6 +74,7 @@ final class HarcDesktopClientRuntime: ObservableObject {
         let transferCoordinator = try HarcDesktopClientTransferCoordinator(
             identity: identity,
             store: transferStore,
+            libraryCache: libraryCache,
             clientRoot: root,
             routeURL: routeURL,
             diagnosticLog: diagnosticLog
@@ -83,10 +94,10 @@ final class HarcDesktopClientRuntime: ObservableObject {
             routeURL: routeURL,
             hasActiveAdoption: try transferStore.activeAdoption() != nil
         ) {
-            transferCoordinator.retryPending()
+            transferCoordinator.hostAdoptionDidChange()
             libraryCoordinator.refresh()
         } onForgetting: {
-            transferCoordinator.shutdown()
+            transferCoordinator.forgetHostState()
             libraryCoordinator.shutdown()
         }
         transferCoordinator.objectWillChange
@@ -94,6 +105,13 @@ final class HarcDesktopClientRuntime: ObservableObject {
                 Task { @MainActor in self?.refreshStatus() }
             }
             .store(in: &cancellables)
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.handleNetworkPath(satisfied: satisfied)
+            }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
         refreshStatus()
     }
 
@@ -152,8 +170,9 @@ final class HarcDesktopClientRuntime: ObservableObject {
             startupRecovery.blockedOrigins
         )
         try runtime.libraryCoordinator.applyAudioPolicy(audioPolicy)
-        runtime.transferCoordinator.retryPending()
+        runtime.transferCoordinator.resumePending()
         runtime.libraryCoordinator.refresh()
+        runtime.startHostHealthMonitoring()
         return runtime
     }
 
@@ -198,12 +217,28 @@ final class HarcDesktopClientRuntime: ObservableObject {
             }.count
             statusMessage = transferCoordinator.statusMessage
             hostConnectionState = try makeHostConnectionState()
+            hostHealthSnapshot = try makeHostHealthSnapshot()
         } catch {
             statusMessage = error.localizedDescription
             hostConnectionState = .needsAttention(
                 message: error.localizedDescription,
                 lastContact: lastAuthenticatedHostContact,
                 pending: pendingCaptureCount
+            )
+            hostHealthSnapshot = ClientHostHealthSnapshot(
+                trust: .securityBlocked(error.localizedDescription),
+                route: .unknown,
+                session: .failed(error.localizedDescription),
+                recordings: .blocked(
+                    pendingCaptureCount,
+                    error.localizedDescription
+                ),
+                processing: .blocked(
+                    transferCoordinator.pendingProcessingCount,
+                    error.localizedDescription
+                ),
+                speakers: .unknown,
+                lastAuthenticatedAt: lastAuthenticatedHostContact
             )
         }
     }
@@ -214,6 +249,31 @@ final class HarcDesktopClientRuntime: ObservableObject {
             return .notPaired(pending: pending)
         }
         let lastContact = lastAuthenticatedHostContact
+        if case .pairingRepairRequired(let message) = transferCoordinator
+            .hostProbeState {
+            return .securityBlocked(
+                message: message,
+                lastContact: lastContact,
+                pending: pending
+            )
+        }
+        if Self.transferIsIdle(transferCoordinator.state) {
+            switch transferCoordinator.hostProbeState {
+            case .checking:
+                return .connecting(
+                    lastContact: lastContact,
+                    pending: pending
+                )
+            case .unavailable(let message):
+                return .needsAttention(
+                    message: message,
+                    lastContact: lastContact,
+                    pending: pending
+                )
+            case .notChecked, .reachable, .pairingRepairRequired:
+                break
+            }
+        }
         switch transferCoordinator.state {
         case .waitingForPairing:
             // The durable adoption record is authoritative. The coordinator
@@ -245,10 +305,149 @@ final class HarcDesktopClientRuntime: ObservableObject {
         }
     }
 
+    private func makeHostHealthSnapshot() throws -> ClientHostHealthSnapshot {
+        let coordinator = transferCoordinator
+        let pending = coordinator.pendingCount
+        let processingPending = coordinator.pendingProcessingCount
+        let speakerPending = coordinator.pendingSpeakerCount
+        let speakerRepair = coordinator.speakerRepairCount
+        let speakerReview = coordinator.speakerReviewCount
+        let adoption = try transferStore.activeAdoption()
+        let adopted = adoption != nil
+        let contact = validatedContact(for: adoption)
+        let lastContact = contact?.authenticatedAt
+
+        let trust: ClientHostHealthSnapshot.Trust
+        if !adopted {
+            trust = .notPaired
+        } else if case .securityBlocked(_, let message) = coordinator.state {
+            trust = .securityBlocked(message)
+        } else if case .pairingRepairRequired(let message) = coordinator
+            .hostProbeState {
+            trust = .securityBlocked(message)
+        } else {
+            trust = .adopted
+        }
+
+        let route: ClientHostHealthSnapshot.Route
+        switch coordinator.state {
+        case .connecting:
+            route = .discovering
+        case .retryNeeded(_, let message):
+            route = .unavailable(message)
+        default:
+            switch coordinator.hostProbeState {
+            case .checking:
+                route = .discovering
+            case .unavailable(let message),
+                 .pairingRepairRequired(let message):
+                route = .unavailable(message)
+            case .notChecked, .reachable:
+                switch contact?.route {
+                case .direct: route = .direct
+                case .encryptedRelay: route = .encryptedRelay
+                case nil: route = .unknown
+                }
+            }
+        }
+
+        let session: ClientHostHealthSnapshot.Session
+        switch coordinator.state {
+        case .connecting:
+            session = .authenticating
+        case .uploading:
+            session = .authenticated
+        case .retryNeeded(_, let message),
+             .securityBlocked(_, let message):
+            session = .failed(message)
+        default:
+            switch coordinator.hostProbeState {
+            case .checking:
+                session = .authenticating
+            case .unavailable(let message),
+                 .pairingRepairRequired(let message):
+                session = .failed(message)
+            case .notChecked, .reachable:
+                session = .idle
+            }
+        }
+
+        let recordings = Self.workHealth(
+            count: pending,
+            state: coordinator.state
+        )
+        let processing = Self.workHealth(
+            count: processingPending,
+            state: coordinator.state
+        )
+        let speakers: ClientHostHealthSnapshot.SpeakerSync
+        if speakerRepair > 0 || speakerReview > 0 {
+            speakers = .needsAttention(
+                repairing: speakerRepair,
+                review: speakerReview
+            )
+        } else if speakerPending > 0 {
+            speakers = .pending(speakerPending)
+        } else {
+            speakers = .current
+        }
+        return ClientHostHealthSnapshot(
+            trust: trust,
+            route: route,
+            session: session,
+            recordings: recordings,
+            processing: processing,
+            speakers: speakers,
+            lastAuthenticatedAt: lastContact
+        )
+    }
+
+    private static func workHealth(
+        count: Int,
+        state: HarcDesktopClientTransferCoordinator.State
+    ) -> ClientHostHealthSnapshot.Work {
+        guard count > 0 else { return .current }
+        switch state {
+        case .encoding, .connecting, .uploading:
+            return .syncing(count)
+        case .retryNeeded(_, let message),
+             .edgeArtifactDeferred(_, let message):
+            return .retrying(count, message)
+        case .securityBlocked(_, let message):
+            return .blocked(count, message)
+        default:
+            return .pending(count)
+        }
+    }
+
+    private static func transferIsIdle(
+        _ state: HarcDesktopClientTransferCoordinator.State
+    ) -> Bool {
+        switch state {
+        case .idle, .uploaded:
+            true
+        case .encoding, .waitingForPairing, .connecting, .uploading,
+             .edgeArtifactDeferred, .retryNeeded, .securityBlocked:
+            false
+        }
+    }
+
     private var lastAuthenticatedHostContact: Date? {
-        diagnosticLog.entries.last {
-            $0.area == "connection" && $0.stage == "authenticated"
-        }?.timestamp
+        let adoption = try? transferStore.activeAdoption()
+        return validatedContact(for: adoption)?.authenticatedAt
+    }
+
+    private func validatedContact(
+        for adoption: ActiveAdoptionSnapshot?
+    ) -> HarcDesktopHostContactEvidence? {
+        guard let adoption,
+              let evidence = transferCoordinator.lastAuthenticatedContact,
+              evidence.libraryID == adoption.tuple.libraryID.description,
+              evidence.hostAuthorityID
+                == adoption.tuple.hostAuthorityID.description else {
+            return nil
+        }
+        return evidence
     }
 
     /// User-visible, repeat-safe repair pass over the private Client archive.
@@ -334,7 +533,50 @@ final class HarcDesktopClientRuntime: ObservableObject {
         }
     }
 
+    /// Wake and network restoration are route hints, never trust events. The
+    /// subsequent connection still has to authenticate against the persisted
+    /// Host authority before any queue work can advance.
+    func handleConnectivityRestored() {
+        transferCoordinator.retryPending()
+        libraryCoordinator.refresh()
+        transferCoordinator.probeHostIfIdle()
+        refreshStatus()
+    }
+
+    private func startHostHealthMonitoring() {
+        guard hostHealthMonitoringTask == nil else { return }
+        hostHealthMonitoringTask = Task { [weak self] in
+            self?.transferCoordinator.probeHostIfIdle()
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(
+                        for: Self.hostHealthPollingInterval
+                    )
+                } catch {
+                    return
+                }
+                self?.transferCoordinator.probeHostIfIdle()
+            }
+        }
+    }
+
+    private func handleNetworkPath(satisfied: Bool) {
+        let wasSatisfied = networkWasSatisfied
+        networkWasSatisfied = satisfied
+        guard satisfied, wasSatisfied == false else { return }
+        diagnosticLog.append(
+            severity: .info,
+            area: "connection",
+            stage: "network-restored",
+            message: "Network connectivity returned; pending Host work will retry"
+        )
+        handleConnectivityRestored()
+    }
+
     func shutdown() {
+        networkMonitor.cancel()
+        hostHealthMonitoringTask?.cancel()
+        hostHealthMonitoringTask = nil
         pairingCoordinator.cancel()
         transferCoordinator.shutdown()
         libraryCoordinator.shutdown()
@@ -388,12 +630,25 @@ final class HarcDesktopClientRuntime: ObservableObject {
 
 }
 
+enum HarcDesktopSpeakerProcessingStatus: String, Codable, Sendable {
+    /// No local speaker-processing failure is known. There may legitimately be
+    /// no observations when diarization is disabled or no speech is present.
+    case ready
+    /// Transcript audio is safe, but the local diarization pass failed and the
+    /// Client recovery loop must retry it from the protected master.
+    case retryNeeded = "retry-needed"
+}
+
 struct HarcDesktopClientCaptureSidecar: Codable, Sendable {
     let capture: FinalizedCapture
     let transcript: SessionTranscript?
     /// Optional for backward compatibility with captures created before
     /// federated speaker identity synchronization.
     let speakerEmbeddings: [SpeakerEmbeddingRow]?
+    /// Optional for backward compatibility. A missing value does not claim a
+    /// failure; only an explicitly persisted retry-needed state raises a local
+    /// speaker-sync concern.
+    let speakerProcessingStatus: HarcDesktopSpeakerProcessingStatus?
     let persistedAt: Date
     /// Stable link back to the pre-Client On This Mac row that produced this
     /// outbox item. Nil for recordings captured directly in Client mode.
@@ -403,14 +658,20 @@ struct HarcDesktopClientCaptureSidecar: Codable, Sendable {
         capture: FinalizedCapture,
         transcript: SessionTranscript?,
         speakerEmbeddings: [SpeakerEmbeddingRow]?,
+        speakerProcessingStatus: HarcDesktopSpeakerProcessingStatus? = nil,
         persistedAt: Date,
         sourceLocalCanonicalID: CanonicalRecordingID? = nil
     ) {
         self.capture = capture
         self.transcript = transcript
         self.speakerEmbeddings = speakerEmbeddings
+        self.speakerProcessingStatus = speakerProcessingStatus
         self.persistedAt = persistedAt
         self.sourceLocalCanonicalID = sourceLocalCanonicalID
+    }
+
+    var speakerProcessingNeedsRetry: Bool {
+        speakerProcessingStatus == .retryNeeded
     }
 }
 
@@ -475,6 +736,10 @@ private struct HarcDesktopClientRecordingCommitter: RecordingCommitter {
             capture: capture,
             transcript: transcript,
             speakerEmbeddings: captured.speakerEmbeddings,
+            speakerProcessingStatus: captured.warnings.contains { warning in
+                if case .diarizationFailed = warning { return true }
+                return false
+            } ? .retryNeeded : .ready,
             persistedAt: Date()
         )
         let sidecarURL = directory.appendingPathComponent(
@@ -723,6 +988,36 @@ enum HarcDesktopClientFiles {
             O_RDONLY | O_CLOEXEC
         )
         guard directory >= 0 else { throw HarcDesktopClientError.storageFailure }
+        defer { Darwin.close(directory) }
+        guard fsync(directory) == 0 else {
+            throw HarcDesktopClientError.storageFailure
+        }
+    }
+
+    static func removeProtectedRegularFileIfPresent(_ url: URL) throws {
+        guard url.isFileURL,
+              url.standardizedFileURL == url,
+              url.deletingLastPathComponent().standardizedFileURL
+                == url.deletingLastPathComponent() else {
+            throw HarcDesktopClientError.unsafePath
+        }
+        try validateOwnedDirectory(url.deletingLastPathComponent())
+        var information = stat()
+        let result = lstat(url.path, &information)
+        if result != 0, errno == ENOENT { return }
+        guard result == 0,
+              information.st_mode & S_IFMT == S_IFREG,
+              information.st_uid == geteuid() else {
+            throw HarcDesktopClientError.unsafePath
+        }
+        try FileManager.default.removeItem(at: url)
+        let directory = Darwin.open(
+            url.deletingLastPathComponent().path,
+            O_RDONLY | O_CLOEXEC
+        )
+        guard directory >= 0 else {
+            throw HarcDesktopClientError.storageFailure
+        }
         defer { Darwin.close(directory) }
         guard fsync(directory) == 0 else {
             throw HarcDesktopClientError.storageFailure

@@ -5,6 +5,8 @@ import Testing
 struct HarcVerifiedRouteStrategyTests {
     private enum Failure: Error {
         case direct
+        case recovered
+        case persistence
         case relay
     }
 
@@ -164,5 +166,152 @@ struct HarcVerifiedRouteStrategyTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+    }
+
+    @Test("authenticated recovered direct route wins before relay")
+    func recoveredDirectWinsBeforeRelay() async throws {
+        let events = Events()
+        let selected = try await HarcVerifiedRouteStrategy
+            .openRecoveringVerified(
+                direct: {
+                    await events.append("open-stale")
+                    return "stale"
+                },
+                recoveryCandidates: {
+                    await events.append("discover")
+                    return ["impostor", "moved-host"]
+                },
+                recoveredDirect: { candidate in
+                    await events.append("open-\(candidate)")
+                    return candidate
+                },
+                relay: {
+                    await events.append("open-relay")
+                    return "relay"
+                },
+                verify: { connection in
+                    await events.append("verify-\(connection)")
+                    if connection == "stale" { throw Failure.direct }
+                    if connection == "impostor" { throw Failure.recovered }
+                    return "authenticated-\(connection)"
+                },
+                acceptRecovered: { candidate in
+                    await events.append("persist-\(candidate)")
+                },
+                close: { connection in
+                    await events.append("close-\(connection)")
+                }
+            )
+
+        #expect(selected.connection == "moved-host")
+        #expect(selected.path == .direct)
+        #expect(selected.verification == "authenticated-moved-host")
+        #expect(
+            await events.snapshot() == [
+                "open-stale",
+                "verify-stale",
+                "close-stale",
+                "discover",
+                "open-impostor",
+                "verify-impostor",
+                "close-impostor",
+                "open-moved-host",
+                "verify-moved-host",
+                "persist-moved-host",
+            ]
+        )
+    }
+
+    @Test("relay is used only after every recovered direct route is rejected")
+    func relayFollowsRecoveredDirectFailures() async throws {
+        let events = Events()
+        let selected = try await HarcVerifiedRouteStrategy
+            .openRecoveringVerified(
+                direct: { "stale" },
+                recoveryCandidates: { ["wrong-host"] },
+                recoveredDirect: { $0 },
+                relay: {
+                    await events.append("open-relay")
+                    return "relay"
+                },
+                verify: { connection in
+                    await events.append("verify-\(connection)")
+                    if connection != "relay" { throw Failure.recovered }
+                    return connection
+                },
+                acceptRecovered: { candidate in
+                    await events.append("persist-\(candidate)")
+                },
+                close: { connection in
+                    await events.append("close-\(connection)")
+                }
+            )
+
+        #expect(selected.path == .encryptedRelay)
+        #expect(selected.connection == "relay")
+        #expect(
+            await events.snapshot() == [
+                "verify-stale",
+                "close-stale",
+                "verify-wrong-host",
+                "close-wrong-host",
+                "open-relay",
+                "verify-relay",
+            ]
+        )
+    }
+
+    @Test("a recovered route is closed when durable acceptance fails")
+    func persistenceFailureDoesNotSelectRecoveredRoute() async throws {
+        let events = Events()
+        let selected = try await HarcVerifiedRouteStrategy
+            .openRecoveringVerified(
+                direct: { "stale" },
+                recoveryCandidates: { ["moved-host"] },
+                recoveredDirect: { $0 },
+                relay: { "relay" },
+                verify: { connection in
+                    await events.append("verify-\(connection)")
+                    if connection == "stale" { throw Failure.direct }
+                    return connection
+                },
+                acceptRecovered: { _ in throw Failure.persistence },
+                close: { connection in
+                    await events.append("close-\(connection)")
+                }
+            )
+
+        #expect(selected.path == .encryptedRelay)
+        #expect(selected.connection == "relay")
+        #expect(
+            await events.snapshot() == [
+                "verify-stale",
+                "close-stale",
+                "verify-moved-host",
+                "close-moved-host",
+                "verify-relay",
+            ]
+        )
+    }
+
+    @Test("healthy persisted direct route does not start discovery")
+    func healthyDirectSkipsRecovery() async throws {
+        let events = Events()
+        let selected = try await HarcVerifiedRouteStrategy
+            .openRecoveringVerified(
+                direct: { "direct" },
+                recoveryCandidates: {
+                    await events.append("discover")
+                    return ["unused"]
+                },
+                recoveredDirect: { $0 },
+                relay: { "relay" },
+                verify: { $0 },
+                acceptRecovered: { _ in },
+                close: { _ in }
+            )
+
+        #expect(selected.path == .direct)
+        #expect(await events.snapshot().isEmpty)
     }
 }

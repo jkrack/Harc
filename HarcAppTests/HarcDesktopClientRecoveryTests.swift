@@ -108,6 +108,82 @@ struct HarcDesktopClientRecoveryTests {
         #expect(repairedRows[0].transcriptText == rendered)
     }
 
+    @Test("a persisted diarization failure is retried from the protected master")
+    @MainActor
+    func retriesSpeakerProcessingFailure() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let recording = UUID(
+            uuidString: "abababab-3434-4567-8899-bbbbbbbbbbbb"
+        )!
+        try fixture.writeCapture(
+            recording: recording,
+            deviceID: fixture.deviceID
+        )
+        let original = try fixture.readSidecar(recording)
+        let failed = HarcDesktopClientCaptureSidecar(
+            capture: original.capture,
+            transcript: SessionTranscript(
+                startedAt: original.capture.captureStartedAt,
+                endedAt: original.capture.captureEndedAt,
+                audioPath: fixture.masterURL(recording).path,
+                joinedText: "transcript survived",
+                words: [],
+                speakers: [],
+                chunks: [],
+                processingCoverage: .complete
+            ),
+            speakerEmbeddings: [],
+            speakerProcessingStatus: .retryNeeded,
+            persistedAt: original.persistedAt
+        )
+        try HarcDesktopClientFiles.replaceSidecar(
+            failed,
+            at: fixture.sidecarURL(recording)
+        )
+        let store = try await RecordingStore.inMemory()
+        var attempts = 0
+
+        let first = await HarcDesktopClientLocalRecovery.reconcile(
+            try fixture.recoveryOutcome().localCandidates,
+            store: store,
+            currentModelID: "parakeet-test"
+        ) { candidate in
+            attempts += 1
+            return HarcDesktopClientLocalTranscription(
+                transcript: SessionTranscript(
+                    startedAt: candidate.sidecar.capture.captureStartedAt,
+                    endedAt: candidate.sidecar.capture.captureEndedAt,
+                    audioPath: candidate.masterURL.path,
+                    joinedText: "speaker pass repaired",
+                    words: [],
+                    speakers: [],
+                    chunks: [],
+                    processingCoverage: .complete
+                ),
+                speakerEmbeddings: []
+            )
+        }
+
+        #expect(first.transcribed == 1)
+        #expect(first.transcriptReused == 0)
+        #expect(attempts == 1)
+        let repaired = try fixture.readSidecar(recording)
+        #expect(repaired.speakerProcessingStatus == .ready)
+        #expect(repaired.transcript?.joinedText == "speaker pass repaired")
+
+        let repeated = await HarcDesktopClientLocalRecovery.reconcile(
+            try fixture.recoveryOutcome().localCandidates,
+            store: store,
+            currentModelID: "parakeet-test"
+        ) { _ in
+            attempts += 1
+            throw StoreError.invalidData("repaired speaker pass must be reused")
+        }
+        #expect(repeated.transcriptReused == 1)
+        #expect(attempts == 1)
+    }
+
     @Test("overlapping recovery requests guarantee one follow-up pass")
     func coalescesOverlappingRequests() {
         var gate = HarcDesktopClientRecoveryRequestGate()
@@ -237,7 +313,7 @@ private final class Fixture {
     let root: URL
     let captures: URL
     let deviceID: DeviceID
-    let store: HarcTransferStore
+    var store: HarcTransferStore!
 
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -258,6 +334,10 @@ private final class Fixture {
     }
 
     func cleanup() {
+        // Release GRDB before unlinking its WAL-backed temporary directory.
+        // Deleting an open SQLite vnode is an API violation on macOS and can
+        // hide real storage failures behind noisy test-process diagnostics.
+        store = nil
         try? FileManager.default.removeItem(at: root)
     }
 

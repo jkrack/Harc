@@ -108,6 +108,9 @@ public final class HarcAppBridge: ObservableObject {
     /// `clientRuntimeReady`, which proves only that local Client storage is
     /// usable. Settings must never turn that local fact into a green Host dot.
     @Published public var clientHostConnectionState: ClientHostConnectionState? = nil
+    /// Multi-axis truth for Client mode. This is the authoritative Settings
+    /// model; the legacy connection state remains as a compact projection.
+    @Published public var clientHostHealthSnapshot: ClientHostHealthSnapshot? = nil
     /// Privacy-bounded, persistent Client transport events. The Activity
     /// surface renders these without reading private application files itself.
     @Published public var clientDiagnosticLogEntries: [HarcDiagnosticLogEntry] = []

@@ -177,7 +177,10 @@ public enum CaptureReadinessResolver {
                 id: .localSTT,
                 title: "STT",
                 detail: input.localSTTText,
-                level: input.localSTTReady ? .ready : .blocked,
+                // The WAV is the product-critical artifact. A cold or
+                // recovering speech engine is a visible processing
+                // degradation, never a reason to miss the meeting audio.
+                level: input.localSTTReady ? .ready : .degraded,
                 action: input.localSTTReady ? nil : .installSTTModel
             ),
             optionalItem(
@@ -428,7 +431,7 @@ enum LocalStackHealthModel {
     }
 
     static func summary(for items: [LocalStackHealthItem]) -> String {
-        if items.contains(where: { ($0.id == .destination || $0.id == .capture || $0.id == .stt) && $0.state == .warning }) {
+        if items.contains(where: { ($0.id == .destination || $0.id == .capture) && $0.state == .warning }) {
             return "Recording blocked"
         }
         if items.contains(where: { $0.id == .recovery && $0.state == .warning }) {
@@ -448,9 +451,9 @@ enum LocalStackHealthModel {
 
     static func group(for item: LocalStackHealthItem) -> Group {
         switch item.id {
-        case .destination, .capture, .stt:
+        case .destination, .capture:
             return .required
-        case .systemAudio, .speakerID:
+        case .systemAudio, .stt, .speakerID:
             return .quality
         case .summarizer, .notifications, .accessibility:
             return .afterRecording

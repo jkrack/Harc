@@ -140,7 +140,15 @@ final class HarcMobileTransferCoordinator {
             recordingUUID: recordingUUID
         )
         do {
-            _ = try store.resumeSecurityBlockedBackgroundUpload(for: origin)
+            let resumedBackground = try store
+                .resumeSecurityBlockedBackgroundUpload(for: origin)
+            if !resumedBackground,
+               let outbox = try store.recordingOutbox(for: origin),
+               outbox.stateMachine.state == .securityBlocked {
+                _ = try store.updateRecordingOutbox(for: origin) { machine in
+                    try machine.resumeAfterUserSecurityAction()
+                }
+            }
             retryPending()
         } catch {
             state = .securityBlocked(
@@ -282,6 +290,25 @@ final class HarcMobileTransferCoordinator {
                 pendingCount = max(pendingCount, queue.count + 1)
                 state = .codecQualificationRequired(
                     recordingUUID: master.originRecordingID.recordingUUID
+                )
+                refreshLocalRecordings()
+                return
+            } catch HarcMobileHostSessionConnectorError
+                .pairingRepairRequired {
+                Self.logger.error(
+                    "Host transfer stopped because saved pairing requires repair"
+                )
+                queuedOrigins.remove(master.originRecordingID)
+                pendingCount = max(pendingCount, queue.count + 1)
+                Self.persistPairingRepairBlock(
+                    origin: master.originRecordingID,
+                    store: store
+                )
+                state = .securityBlocked(
+                    recordingUUID:
+                        master.originRecordingID.recordingUUID,
+                    message: HarcMobileHostSessionConnectorError
+                        .pairingRepairRequired.localizedDescription
                 )
                 refreshLocalRecordings()
                 return
@@ -512,6 +539,41 @@ final class HarcMobileTransferCoordinator {
     private static func diagnosticMessage(_ error: any Error) -> String {
         let reflected = String(reflecting: error)
         return reflected.isEmpty ? error.localizedDescription : reflected
+    }
+
+    /// Pairing rejection is a durable security stop, not a reachability
+    /// failure. Automatic durable-outbox scans exclude this recording until
+    /// the user explicitly reviews and retries it after repairing pairing.
+    private static func persistPairingRepairBlock(
+        origin: OriginRecordingID,
+        store: HarcTransferStore
+    ) {
+        do {
+            _ = try store.updateRecordingOutbox(for: origin) { machine in
+                switch machine.state {
+                case .localOnly:
+                    try machine.queue()
+                    try machine.beginAuthorization()
+                    try machine.blockForSecurity(.grantRevoked)
+                case .queued:
+                    try machine.beginAuthorization()
+                    try machine.blockForSecurity(.grantRevoked)
+                case .failedRecoverable:
+                    try machine.retryRecoverable()
+                    try machine.beginAuthorization()
+                    try machine.blockForSecurity(.grantRevoked)
+                case .authorizing, .activeUpload, .backgroundScheduled,
+                     .hostCommitPending:
+                    try machine.blockForSecurity(.grantRevoked)
+                case .securityBlocked, .committed:
+                    break
+                }
+            }
+        } catch {
+            Self.logger.error(
+                "Could not persist pairing-repair security stop: \(String(reflecting: error), privacy: .public)"
+            )
+        }
     }
 
     private static func master(

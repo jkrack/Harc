@@ -65,6 +65,20 @@ struct LocalStackHealthTests {
         #expect(CaptureReadinessResolver.summary(for: items) == "Mic only")
     }
 
+    @Test("a cold speech engine never blocks durable audio capture")
+    func readinessResolverDegradesSTT() {
+        var input = fullyReadyCaptureInput
+        input.localSTTReady = false
+
+        let items = CaptureReadinessResolver.resolve(input)
+        let stt = items.first { $0.id == .localSTT }
+
+        #expect(stt?.level == .degraded)
+        #expect(stt?.action == .installSTTModel)
+        #expect(CaptureReadinessResolver.summary(for: items) == "Capture degraded")
+        #expect(LocalStackHealthModel.summary(for: localItems(for: input)) == "Capture degraded")
+    }
+
     @Test("optional AI features do not make capture look broken")
     func optionalAIStaysCaptureReady() {
         var input = fullyReadyCaptureInput
@@ -132,8 +146,8 @@ struct LocalStackHealthTests {
             .dictation,
             .recovery,
         ])
-        #expect(groupIDs[.required] == [.destination, .capture, .stt])
-        #expect(groupIDs[.quality] == [.systemAudio, .speakerID])
+        #expect(groupIDs[.required] == [.destination, .capture])
+        #expect(groupIDs[.quality] == [.systemAudio, .stt, .speakerID])
         #expect(groupIDs[.afterRecording] == [.summarizer, .notifications, .accessibility])
         #expect(groupIDs[.dictation] == [.dictation])
         #expect(groupIDs[.recovery] == [.recovery])

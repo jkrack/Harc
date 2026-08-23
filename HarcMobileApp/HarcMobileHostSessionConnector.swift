@@ -23,10 +23,19 @@ enum HarcMobileHostSessionConnector {
         guard let snapshot = try store.activeAdoption() else {
             throw HarcMobileHostSessionConnectorError.notPaired
         }
-        let adoption = try HarcPersistedAdoptionValidatorV1.validate(
-            snapshot,
-            devicePublicKey: identity.publicKey
-        )
+        let adoption: ValidatedClientAdoptionEvidence
+        do {
+            adoption = try HarcPersistedAdoptionValidatorV1.validate(
+                snapshot,
+                devicePublicKey: identity.publicKey
+            )
+        } catch {
+            if requiresPairingRepair(error) {
+                throw HarcMobileHostSessionConnectorError
+                    .pairingRepairRequired
+            }
+            throw error
+        }
         let persistedRoute: HarcMobileHostRoute
         do {
             persistedRoute = try HarcMobileHostRouteStore.load(from: routeURL)
@@ -42,6 +51,10 @@ enum HarcMobileHostSessionConnector {
                 store: store
             )
         } catch {
+            if requiresPairingRepair(error) {
+                throw HarcMobileHostSessionConnectorError
+                    .pairingRepairRequired
+            }
             let persistedRouteError = error
             let recoveredRoutes = await HarcMobileBonjourHostRouteResolver
                 .discover()
@@ -68,16 +81,29 @@ enum HarcMobileHostSessionConnector {
                     } catch {
                         await opened.connection.shutdownImmediately()
                     }
-                } catch {}
+                } catch {
+                    if requiresPairingRepair(error) {
+                        throw HarcMobileHostSessionConnectorError
+                            .pairingRepairRequired
+                    }
+                }
             }
             if let relay = persistedRoute.relay {
-                return try await openViaRelay(
-                    route: persistedRoute,
-                    relay: relay,
-                    adoption: adoption,
-                    identity: identity,
-                    store: store
-                )
+                do {
+                    return try await openViaRelay(
+                        route: persistedRoute,
+                        relay: relay,
+                        adoption: adoption,
+                        identity: identity,
+                        store: store
+                    )
+                } catch {
+                    if requiresPairingRepair(error) {
+                        throw HarcMobileHostSessionConnectorError
+                            .pairingRepairRequired
+                    }
+                    throw error
+                }
             }
             throw persistedRouteError
         }
@@ -187,6 +213,24 @@ enum HarcMobileHostSessionConnector {
         )
     }
 
+    /// The Host deliberately returns indistinguishable rejection evidence for
+    /// revoked and unknown clients. Both require explicit pairing repair; an
+    /// ordinary route or service failure remains retryable.
+    static func requiresPairingRepair(_ error: any Error) -> Bool {
+        if error is HarcPersistedAdoptionValidationError { return true }
+        guard let bootstrap = error as? HarcBootstrapClientError else {
+            return false
+        }
+        switch bootstrap {
+        case .sessionGrantUnavailable,
+             .grantBindingMismatch,
+             .sessionTrustChanged:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func capabilityOffer(
         policy: HarcCapabilityPolicyV1
     ) throws -> HarcValidatedCapabilityOfferV1 {
@@ -207,6 +251,16 @@ enum HarcMobileHostSessionConnector {
     }
 }
 
-enum HarcMobileHostSessionConnectorError: Error {
+enum HarcMobileHostSessionConnectorError: LocalizedError {
     case notPaired
+    case pairingRepairRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .notPaired:
+            "This iPhone is not paired with a Harc Host."
+        case .pairingRepairRequired:
+            "The Host no longer accepts this iPhone’s saved pairing. Recordings are safe on this iPhone. Forget this Host, create a new invitation, and pair again."
+        }
+    }
 }

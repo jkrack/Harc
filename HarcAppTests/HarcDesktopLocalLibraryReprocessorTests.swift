@@ -42,7 +42,7 @@ struct HarcDesktopLocalLibraryReprocessorTests {
             wavPath: "/tmp/source.wav",
             startedAt: Date(timeIntervalSince1970: 100)
         )
-        let transcript = SessionTranscript(
+        let legacyTranscript = SessionTranscript(
             startedAt: recording.startedAt,
             endedAt: recording.startedAt.addingTimeInterval(1),
             audioPath: recording.wavPath,
@@ -54,13 +54,20 @@ struct HarcDesktopLocalLibraryReprocessorTests {
 
         #expect(HarcDesktopLocalLibraryReprocessPlanner.shouldTranscribe(
             recording: recording,
-            structuredTranscript: transcript,
+            structuredTranscript: legacyTranscript,
             currentModelID: current
         ))
         recording.sttModelID = current
+        #expect(HarcDesktopLocalLibraryReprocessPlanner.shouldTranscribe(
+            recording: recording,
+            structuredTranscript: legacyTranscript,
+            currentModelID: current
+        ))
+        var provenTranscript = legacyTranscript
+        provenTranscript.processingCoverage = .complete
         #expect(!HarcDesktopLocalLibraryReprocessPlanner.shouldTranscribe(
             recording: recording,
-            structuredTranscript: transcript,
+            structuredTranscript: provenTranscript,
             currentModelID: current
         ))
         #expect(HarcDesktopLocalLibraryReprocessPlanner.shouldTranscribe(

@@ -28,7 +28,9 @@ name, and rotatable TLS leaf.
    and recovery do not wait for the Host; queued work resumes when it returns.
 
 Reject the claim and create a new ticket if any word, label, or requested scope
-differs. Possessing the QR ticket alone never grants access.
+differs. Possessing the QR ticket alone never grants access. HarcMobile enforces
+the signed claim expiry locally, so a Host that remains stuck at pending cannot
+leave the approval screen spinning beyond the invitation deadline.
 
 ## Pair a secondary Mac
 
@@ -57,6 +59,10 @@ differs. Possessing the QR ticket alone never grants access.
    **On This Mac** Library. Harc fills in missing or stale processing locally,
    queues a protected private copy for the adopted Host, and leaves the local
    master untouched. Repeating the action does not create another Host record.
+
+The Client enforces the original signed claim deadline locally while waiting
+for approval. A transient connection may resume the proved claim only before
+that deadline and without changing the Host authority or four security words.
 
 New Client-mode recordings capture and transcribe locally with `harc-stt` while
 lossless upload proceeds concurrently. The Host either accepts a compatible,
@@ -95,4 +101,7 @@ Before calling the mobile or secondary-Mac flow release-ready, complete the
 open gates in the
 [implementation status](../evidence/2026-08-03-host-client-mobile-implementation-status.md):
 the bounded clean Mac/iOS builds, the C1/C2/T1/T2 physical-device matrix, and a
-real two-Mac end-to-end run.
+real two-Mac end-to-end run. Use the fail-closed
+[secondary Mac and two-network qualification](secondary-mac-qualification.md)
+for that physical evidence; loopback and relay-emulator tests remain software
+evidence only.

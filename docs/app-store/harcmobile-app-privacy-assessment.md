@@ -19,6 +19,14 @@ zero Workers events and zero traces for `scriptName = "harc-remote-relay"` over
 the preceding hour. The query ran more than two minutes after the post-change
 health requests, covering Cloudflare's stated dashboard ingestion delay.
 
+The read-only deployment audit was repeated on 2026-08-23 at 17:33 UTC against
+the same 100% production version. It again proved Logpush disabled, no Tail
+Workers, observability disabled, and live health OK. The counts-only account
+Logpush API audit still fails closed with HTTP 403 because the current Wrangler
+OAuth token lacks Cloudflare's separate account Logs permission; both available
+browser sessions were signed out, so historical-retention/account-export
+closeout remains an Account Holder dashboard action.
+
 This closes the deployed-configuration mismatch. **No, we do not collect data
 from this app** still requires the remaining operator checks below, expiration
 of records retained by the superseded sampled configuration, and Account Holder
@@ -38,6 +46,7 @@ such as coarse location, device ID, or diagnostics.
   Tail Workers, and streaming Tail Workers off/empty.
 - **Passed:** the deployed version ID and settings inspection are reproducible
   with `npm run privacy:deployed:check`; the command also verifies `/health`.
+  The most recent pass was 2026-08-23 at 17:33 UTC.
 - **Passed for the post-change health interval:** authenticated dashboard
   queries returned zero Workers events and zero traces for
   `harc-remote-relay`.

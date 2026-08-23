@@ -235,6 +235,15 @@ public actor ChunkedTranscriber {
             audioPath: audioURL?.path ?? ""
         )
         assembled.joinedText = VocabularyReplacer.apply(assembled.joinedText, using: vocabulary)
+        assembled.processingCoverage = TranscriptProcessingCoverage(
+            failedRanges: failedRanges.map {
+                TranscriptCoverageIssue(
+                    startMs: $0.startMs,
+                    endMs: $0.endMs,
+                    reasonCode: "stt.chunk_failed"
+                )
+            }
+        )
 
         // Full-WAV diarization pass. On failure, return text + words and
         // surface the error string so UI layers can offer a retry.
