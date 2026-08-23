@@ -55,6 +55,18 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
+SOURCE_SHA="$(git rev-parse HEAD)"
+SOURCE_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
+if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "error: release source commit is not a full 40-character SHA" >&2
+  exit 1
+fi
+if [[ -n "$SOURCE_STATUS" ]]; then
+  echo "error: release builds require a clean source tree" >&2
+  printf '%s\n' "$SOURCE_STATUS" >&2
+  exit 1
+fi
+
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
@@ -76,6 +88,7 @@ xcodebuild \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$IDENTITY" \
   DEVELOPMENT_TEAM="$TEAM_ID" \
+  HARC_BUILD_SHA="$SOURCE_SHA" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=NO \
   ARCHS=arm64 \
@@ -88,6 +101,12 @@ APP_DST="$STAGING/$APP_NAME"
 
 if [[ ! -d "$APP_SRC" ]]; then
   echo "error: build succeeded but $APP_SRC is missing" >&2
+  exit 1
+fi
+
+PACKAGED_SOURCE_SHA="$(plutil -extract HarcBuildSHA raw -o - "$APP_SRC/Contents/Info.plist" 2>/dev/null || true)"
+if [[ "$PACKAGED_SOURCE_SHA" != "$SOURCE_SHA" ]]; then
+  echo "error: built app source commit '$PACKAGED_SOURCE_SHA' does not match '$SOURCE_SHA'" >&2
   exit 1
 fi
 
@@ -208,6 +227,7 @@ VERIFY_MOUNT=""
 echo ""
 echo "Built: $APP_DST (packaged in DMG)"
 echo "DMG:   $DMG_PATH"
+echo "Source: $SOURCE_SHA"
 echo ""
 echo "Next:"
 echo "  xcrun notarytool submit $DMG_PATH --keychain-profile harc-notary --wait"

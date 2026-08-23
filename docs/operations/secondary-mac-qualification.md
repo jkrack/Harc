@@ -22,8 +22,11 @@ signed Harc application bytes on both Macs.
 
 ## Candidate controls
 
-1. Install the same signed build on both Macs. Record the sealed commit,
-   version/build, Developer ID identity, and executable SHA-256.
+1. Install the same signed build on both Macs. The app must embed the sealed
+   40-character source commit, and the collector requires it to match the
+   reviewed checkout. Record the version/build, Developer ID identity, Team
+   Identifier, hardened-runtime status, Gatekeeper result, and executable
+   SHA-256.
 2. Use one Mac in **Host** role and one in **Client** role. Do not reuse evidence
    from Standalone mode or from an earlier build.
 3. Start with at least 5 GiB free on each machine. Keep Swift/Xcode work to two
@@ -101,8 +104,10 @@ Before signing the gate:
 
 1. Both machines must report the same source manifest and app executable
    SHA-256 for every scenario.
-2. `configured_role_matches=true`, `codesign_status=0`, and a present Client
-   diagnostic log/Host state identity are mandatory.
+2. `configured_role_matches=true`, `codesign_status=0`,
+   `gatekeeper_status=0`, `app_build_sha=<sealed commit>`, the Harc Developer
+   ID team, hardened runtime, and a present Client diagnostic log/Host state
+   identity are mandatory.
 3. Review Client diagnostics for authenticated contact, recovered route,
    bounded retry, upload receipt, processing receipt, and speaker convergence.
 4. Review failures without deleting state. Fixes require a new sealed candidate

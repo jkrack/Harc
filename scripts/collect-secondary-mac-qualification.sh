@@ -129,6 +129,7 @@ APP_EXECUTABLE="$APP_PATH/Contents/MacOS/Harc"
 APP_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$APP_PLIST" 2>/dev/null || true)"
 APP_BUILD="$(plutil -extract CFBundleVersion raw -o - "$APP_PLIST" 2>/dev/null || true)"
 APP_BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw -o - "$APP_PLIST" 2>/dev/null || true)"
+APP_BUILD_SHA="$(plutil -extract HarcBuildSHA raw -o - "$APP_PLIST" 2>/dev/null || true)"
 APP_EXECUTABLE_SHA256="$(shasum -a 256 "$APP_EXECUTABLE" | awk '{ print $1 }')"
 CONFIGURED_ROLE="$(defaults read "$APP_BUNDLE_ID" harc.runtimeRole 2>/dev/null || echo unset)"
 
@@ -141,6 +142,12 @@ spctl --assess --type execute --verbose=4 "$APP_PATH" \
 GATEKEEPER_STATUS=$?
 set -e
 codesign -dvvv "$APP_PATH" > "$OUTPUT_DIR/codesign-details.txt" 2>&1 || true
+APP_SIGNING_AUTHORITY="$(sed -n 's/^Authority=//p' "$OUTPUT_DIR/codesign-details.txt" | head -n 1)"
+APP_TEAM_ID="$(sed -n 's/^TeamIdentifier=//p' "$OUTPUT_DIR/codesign-details.txt" | head -n 1)"
+APP_HARDENED_RUNTIME=false
+if grep -Eq '^flags=.*\(runtime\)' "$OUTPUT_DIR/codesign-details.txt"; then
+  APP_HARDENED_RUNTIME=true
+fi
 
 {
   sw_vers
@@ -211,7 +218,11 @@ fi
   echo "app_bundle_id=$APP_BUNDLE_ID"
   echo "app_version=$APP_VERSION"
   echo "app_build=$APP_BUILD"
+  echo "app_build_sha=$APP_BUILD_SHA"
   echo "app_executable_sha256=$APP_EXECUTABLE_SHA256"
+  echo "app_signing_authority=$APP_SIGNING_AUTHORITY"
+  echo "app_team_id=$APP_TEAM_ID"
+  echo "app_hardened_runtime=$APP_HARDENED_RUNTIME"
   echo "codesign_status=$CODESIGN_STATUS"
   echo "gatekeeper_status=$GATEKEEPER_STATUS"
   echo "available_gib=$AVAILABLE_GIB"
@@ -225,6 +236,26 @@ if [[ "$ROLE_MATCH" != true ]]; then
 fi
 if [[ "$CODESIGN_STATUS" -ne 0 ]]; then
   echo "error: app signature verification failed" >&2
+  exit 1
+fi
+if [[ "$GATEKEEPER_STATUS" -ne 0 ]]; then
+  echo "error: Gatekeeper rejected the installed Harc app" >&2
+  exit 1
+fi
+if [[ "$APP_BUILD_SHA" != "$SOURCE_HEAD" ]]; then
+  echo "error: app source commit '$APP_BUILD_SHA' does not match reviewed source '$SOURCE_HEAD'" >&2
+  exit 1
+fi
+if [[ "$APP_SIGNING_AUTHORITY" != Developer\ ID\ Application:* ]]; then
+  echo "error: app is not signed with a Developer ID Application identity" >&2
+  exit 1
+fi
+if [[ "$APP_TEAM_ID" != "63TNU5M7P4" ]]; then
+  echo "error: app Team Identifier '$APP_TEAM_ID' is not the Harc release team" >&2
+  exit 1
+fi
+if [[ "$APP_HARDENED_RUNTIME" != true ]]; then
+  echo "error: app signature does not enable the hardened runtime" >&2
   exit 1
 fi
 if [[ "$ROLE" == "client" && ! -f "$OUTPUT_DIR/client-diagnostics.jsonl" ]]; then

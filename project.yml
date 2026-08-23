@@ -83,6 +83,7 @@ targets:
         CFBundleDisplayName: Harc
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        HarcBuildSHA: "$(HARC_BUILD_SHA)"
         LSUIElement: true
         NSHumanReadableCopyright: "Copyright © 2026 CloudArchitech LLC. All rights reserved."
         NSMicrophoneUsageDescription: "Harc uses the microphone to record meetings for transcription."
@@ -136,6 +137,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.harc.Harc
         CODE_SIGN_ENTITLEMENTS: HarcApp/Harc.entitlements
         ENABLE_HARDENED_RUNTIME: YES
+        HARC_BUILD_SHA: unrecorded
         ARCHS: arm64
     postCompileScripts:
       - name: Embed harc-stt daemon

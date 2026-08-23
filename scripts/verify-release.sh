@@ -15,6 +15,12 @@ fi
 EXPECTED_VERSION="$1"
 EXPECTED_BUILD="$2"
 DMG_INPUT="$3"
+EXPECTED_SOURCE_SHA="${HARC_EXPECTED_BUILD_SHA:-$(git rev-parse HEAD)}"
+
+if [[ ! "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "error: expected source commit must be a full 40-character SHA" >&2
+  exit 1
+fi
 
 if [[ ! -f "$DMG_INPUT" ]]; then
   echo "error: no such DMG: $DMG_INPUT" >&2
@@ -62,6 +68,7 @@ ACTUAL_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$INFO_PLI
 ACTUAL_BUILD="$(plutil -extract CFBundleVersion raw -o - "$INFO_PLIST")"
 ACTUAL_BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw -o - "$INFO_PLIST")"
 ACTUAL_RELAY_ORIGIN="$(plutil -extract HarcRemoteRelayOrigin raw -o - "$INFO_PLIST")"
+ACTUAL_SOURCE_SHA="$(plutil -extract HarcBuildSHA raw -o - "$INFO_PLIST")"
 
 if [[ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]]; then
   echo "error: expected version $EXPECTED_VERSION, got $ACTUAL_VERSION" >&2
@@ -77,6 +84,10 @@ if [[ "$ACTUAL_BUNDLE_ID" != "com.harc.Harc" ]]; then
 fi
 if [[ "$ACTUAL_RELAY_ORIGIN" != "https://relay.adaptcontext.com" ]]; then
   echo "error: expected relay origin https://relay.adaptcontext.com, got $ACTUAL_RELAY_ORIGIN" >&2
+  exit 1
+fi
+if [[ "$ACTUAL_SOURCE_SHA" != "$EXPECTED_SOURCE_SHA" ]]; then
+  echo "error: expected source commit $EXPECTED_SOURCE_SHA, got $ACTUAL_SOURCE_SHA" >&2
   exit 1
 fi
 
@@ -96,6 +107,7 @@ echo "Release candidate verified:"
 echo "  Version: $ACTUAL_VERSION ($ACTUAL_BUILD)"
 echo "  Bundle:  $ACTUAL_BUNDLE_ID"
 echo "  Relay:   $ACTUAL_RELAY_ORIGIN"
+echo "  Source:  $ACTUAL_SOURCE_SHA"
 echo "  Arch:    arm64"
 echo "  Bytes:   $BYTE_COUNT"
 echo "  SHA-256: $SHA256"

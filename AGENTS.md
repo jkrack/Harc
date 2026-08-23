@@ -238,7 +238,9 @@ signed entry for every release — in this order:
    then `xcrun stapler staple build/release-dist/Harc-<version>.dmg`.
    Confirm the exact candidate with
    `./scripts/verify-release.sh <version> <build> build/release-dist/Harc-<version>.dmg`.
-   The verifier checks the DMG signature and checksum, stapled ticket,
+   The release build refuses a dirty tree and embeds the exact 40-character
+   source commit as `HarcBuildSHA`. The verifier checks that value against the
+   checked-out commit, plus the DMG signature and checksum, stapled ticket,
    Gatekeeper assessment, mounted app and nested signatures, version/build,
    bundle ID, and arm64 application/helper architecture. Run it from a normal
    terminal session with access to macOS trust services; a restricted sandbox
