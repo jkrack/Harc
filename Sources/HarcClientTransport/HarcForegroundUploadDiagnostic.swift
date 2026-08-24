@@ -54,9 +54,11 @@ public struct HarcTransportErrorDiagnostic: Equatable, Sendable {
                 cause: rpc.cause.map { String(describing: $0) }
             )
         }
+        let summary = (error as? any LocalizedError)?.errorDescription
+            ?? String(describing: error)
         return Self(
             type: String(reflecting: Swift.type(of: error)),
-            summary: String(describing: error),
+            summary: summary,
             rpcCode: nil,
             rpcCodeNumber: nil,
             rpcMessage: nil,

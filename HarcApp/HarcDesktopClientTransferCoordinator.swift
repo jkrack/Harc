@@ -114,6 +114,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     @Published private(set) var hostProbeState: HostProbeState = .notChecked
     @Published private(set) var lastAuthenticatedContact:
         HarcDesktopHostContactEvidence?
+    @Published private(set) var nextAutomaticRetryAt: Date? = nil
 
     private let identity: InstallationSigningIdentity
     private let store: HarcTransferStore
@@ -160,6 +161,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                from: data
            ) {
             retrySchedule = persisted
+            nextAutomaticRetryAt = persisted.nextRetryAt
         }
         if let data = try? Data(
             contentsOf: contactURL,
@@ -225,6 +227,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         retrySchedule.reset()
+        nextAutomaticRetryAt = nil
         persistRetrySchedule()
         inventoryPending()
     }
@@ -243,6 +246,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         if let delay = retrySchedule.remainingDelay(at: Date()), delay > 0 {
+            nextAutomaticRetryAt = retrySchedule.nextRetryAt
             diagnosticLog.append(
                 severity: .info,
                 area: "transfer",
@@ -256,6 +260,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             scheduleInventory(after: delay)
             return
         }
+        nextAutomaticRetryAt = nil
         inventoryPending()
     }
 
@@ -445,6 +450,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         shutdown()
         lastAuthenticatedContact = nil
         retrySchedule.reset()
+        nextAutomaticRetryAt = nil
         pendingProcessingCount = 0
         pendingSpeakerCount = 0
         speakerRepairCount = 0
@@ -634,6 +640,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             now: Date(),
             jitterMultiplier: Double.random(in: 0.85...1.15)
         )
+        nextAutomaticRetryAt = retrySchedule.nextRetryAt
         persistRetrySchedule()
         diagnosticLog.append(
             severity: .info,
@@ -659,6 +666,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             }
             guard let self else { return }
             self.retryTask = nil
+            self.nextAutomaticRetryAt = nil
             self.inventoryPending()
         }
     }
@@ -666,6 +674,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private func clearAutomaticRetry() {
         retryTask?.cancel()
         retryTask = nil
+        nextAutomaticRetryAt = nil
         guard retrySchedule.consecutiveFailures != 0
                 || retrySchedule.nextRetryAt != nil else { return }
         retrySchedule.reset()

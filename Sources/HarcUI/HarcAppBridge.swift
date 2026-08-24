@@ -153,6 +153,9 @@ public final class HarcAppBridge: ObservableObject {
     /// Opens the pairing surface for the configured runtime role. The older
     /// name is retained as source compatibility for existing UI call sites.
     public var onOpenHostPairing: () -> Void = {}
+    /// Retry the current adopted Host over authenticated direct discovery and
+    /// Harc Remote without discarding trust or rebuilding the local archive.
+    public var onRetryClientHostConnection: () -> Void = {}
     /// Inventory ClientState/Captures, repair safe local metadata gaps, and
     /// retry every non-security-blocked durable outbox.
     public var onRecoverAndSyncClient: () -> Void = {}

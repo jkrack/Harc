@@ -197,5 +197,48 @@ struct HarcRemoteRelayTests {
             userDefaults: defaults
         ))
     }
+
+    @Test("relay service failures distinguish an offline Host from relay outage")
+    func relayServiceFailureDescriptions() {
+        #expect(
+            HarcRemoteRelayError.serviceRejected(
+                status: 503,
+                code: "host_offline"
+            ).localizedDescription
+                == "The adopted Host is not connected to Harc Remote right now."
+        )
+        #expect(
+            HarcRemoteRelayError.serviceRejected(
+                status: 503,
+                code: "relay_unavailable"
+            ).localizedDescription
+                == "Harc Remote is temporarily unavailable."
+        )
+        #expect(
+            HarcRemoteRelayError.serviceRejected(
+                status: 503,
+                code: nil
+            ).localizedDescription
+                == "Harc Remote could not open a Host connection (HTTP 503)."
+        )
+    }
+
+    @Test("relay service failure decoder accepts only its bounded exact schema")
+    func relayServiceFailureDecoding() {
+        #expect(
+            relayServiceErrorCode(Data(#"{"code":"host_offline"}"#.utf8))
+                == "host_offline"
+        )
+        #expect(
+            relayServiceErrorCode(
+                Data(#"{"code":"host_offline","detail":"must-not-cross"}"#.utf8)
+            ) == nil
+        )
+        #expect(
+            relayServiceErrorCode(Data(#"{"code":"Host Offline"}"#.utf8))
+                == nil
+        )
+        #expect(relayServiceErrorCode(Data("not-json".utf8)) == nil)
+    }
 }
 #endif

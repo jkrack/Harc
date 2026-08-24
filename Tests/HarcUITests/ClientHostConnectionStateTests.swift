@@ -41,11 +41,20 @@ struct ClientHostConnectionStateTests {
         #expect(!state.isConnected)
         #expect(state.lastContact == contact)
         #expect(state.pendingCount == 15)
+        #expect(state.canRetryConnection)
+
+        let blocked = ClientHostConnectionState.securityBlocked(
+            message: "Pair again",
+            lastContact: contact,
+            pending: 15
+        )
+        #expect(!blocked.canRetryConnection)
     }
 
     @Test("health axes preserve mixed states without a false all-green summary")
     func independentHealthAxes() {
         let contact = Date(timeIntervalSince1970: 1_700_000_000)
+        let retryAt = contact.addingTimeInterval(300)
         let snapshot = ClientHostHealthSnapshot(
             trust: .adopted,
             route: .direct,
@@ -53,7 +62,8 @@ struct ClientHostConnectionStateTests {
             recordings: .current,
             processing: .retrying(2, "Host busy"),
             speakers: .needsAttention(repairing: 0, review: 1),
-            lastAuthenticatedAt: contact
+            lastAuthenticatedAt: contact,
+            nextAutomaticRetryAt: retryAt
         )
 
         #expect(snapshot.trust == .adopted)
@@ -63,5 +73,6 @@ struct ClientHostConnectionStateTests {
         #expect(snapshot.processing == .retrying(2, "Host busy"))
         #expect(snapshot.speakers == .needsAttention(repairing: 0, review: 1))
         #expect(snapshot.lastAuthenticatedAt == contact)
+        #expect(snapshot.nextAutomaticRetryAt == retryAt)
     }
 }

@@ -398,7 +398,8 @@ final class HarcDesktopClientRuntime: ObservableObject {
             recordings: recordings,
             processing: processing,
             speakers: speakers,
-            lastAuthenticatedAt: lastContact
+            lastAuthenticatedAt: lastContact,
+            nextAutomaticRetryAt: coordinator.nextAutomaticRetryAt
         )
     }
 

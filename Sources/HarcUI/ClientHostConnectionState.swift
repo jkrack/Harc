@@ -54,6 +54,13 @@ public enum ClientHostConnectionState: Equatable, Sendable {
         if case .connected = self { return true }
         return false
     }
+
+    /// Recoverable reachability failures may be retried without changing the
+    /// adopted Host or touching durable Client recordings.
+    public var canRetryConnection: Bool {
+        if case .needsAttention = self { return true }
+        return false
+    }
 }
 
 /// Independent Client-to-Host health axes. No single green label is allowed
@@ -106,6 +113,7 @@ public struct ClientHostHealthSnapshot: Equatable, Sendable {
     public let processing: Work
     public let speakers: SpeakerSync
     public let lastAuthenticatedAt: Date?
+    public let nextAutomaticRetryAt: Date?
 
     public init(
         trust: Trust,
@@ -114,7 +122,8 @@ public struct ClientHostHealthSnapshot: Equatable, Sendable {
         recordings: Work,
         processing: Work,
         speakers: SpeakerSync,
-        lastAuthenticatedAt: Date?
+        lastAuthenticatedAt: Date?,
+        nextAutomaticRetryAt: Date? = nil
     ) {
         self.trust = trust
         self.route = route
@@ -123,6 +132,7 @@ public struct ClientHostHealthSnapshot: Equatable, Sendable {
         self.processing = processing
         self.speakers = speakers
         self.lastAuthenticatedAt = lastAuthenticatedAt
+        self.nextAutomaticRetryAt = nextAutomaticRetryAt
     }
 
     public static let starting = ClientHostHealthSnapshot(

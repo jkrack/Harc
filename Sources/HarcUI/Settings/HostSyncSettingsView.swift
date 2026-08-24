@@ -94,12 +94,30 @@ public struct HostSyncSettingsView: View {
             if !bridge.clientRuntimeReady {
                 runtimeStartingOrFailed(role: "Client")
             } else {
-                connectionStatusRow(bridge.clientHostConnectionState ?? .starting)
+                let state = bridge.clientHostConnectionState ?? .starting
+                connectionStatusRow(state)
                 if let snapshot = bridge.clientHostHealthSnapshot {
                     hostHealthAxes(snapshot)
+                    if let retryAt = snapshot.nextAutomaticRetryAt {
+                        HStack(spacing: HarcSpacing.xs) {
+                            Text("Automatic retry")
+                            Text(retryAt, style: .relative)
+                        }
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityElement(children: .combine)
+                    }
                 }
-                Button(connectionActionTitle) {
-                    bridge.onOpenHostPairing()
+                HStack(spacing: HarcSpacing.sm) {
+                    if state.canRetryConnection {
+                        Button("Retry Connection") {
+                            bridge.onRetryClientHostConnection()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button(connectionActionTitle) {
+                        bridge.onOpenHostPairing()
+                    }
                 }
             }
         } header: {
@@ -460,8 +478,11 @@ public struct HostSyncSettingsView: View {
             "Harc is opening a pinned, authenticated Host session."
         case .connected:
             "A live authenticated Host operation is in progress."
-        case .needsAttention(let message, _, _),
-             .securityBlocked(let message, _, _):
+        case .needsAttention(let message, _, let pending):
+            pending == 0
+                ? "\(message) Harc will keep retrying automatically."
+                : "\(message) The \(pending) pending recording\(pending == 1 ? " is" : "s are") protected on this Mac, and Harc will keep retrying automatically."
+        case .securityBlocked(let message, _, _):
             message
         }
     }

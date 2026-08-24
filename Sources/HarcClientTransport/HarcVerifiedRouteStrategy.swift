@@ -37,13 +37,11 @@ public struct HarcVerifiedRouteFailure: Error, LocalizedError {
     public var triedEncryptedRelay: Bool { relayError != nil }
 
     public var errorDescription: String? {
-        let direct = HarcTransportErrorDiagnostic.describe(directError)
-        let directMessage = Self.userMessage(direct)
         guard let relayError else {
-            return "The direct Host route failed: \(directMessage)"
+            return "The adopted Host could not be reached on its saved direct route."
         }
         let relay = HarcTransportErrorDiagnostic.describe(relayError)
-        return "The direct Host route failed: \(directMessage). The encrypted relay also failed: \(Self.userMessage(relay))"
+        return "The adopted Host could not be reached directly. Harc Remote also could not connect: \(Self.userMessage(relay))"
     }
 
     init(directError: any Error, relayError: (any Error)?) {

@@ -353,6 +353,7 @@ public enum HarcRemoteRelayError: Error, Equatable, Sendable {
     case invalidOpaqueValue(field: String)
     case invalidSessionOffer
     case unexpectedHTTPStatus(Int)
+    case serviceRejected(status: Int, code: String?)
     case responseTooLarge
     case invalidWebSocketReady
     case listenerFailed(String)
@@ -378,6 +379,19 @@ extension HarcRemoteRelayError: LocalizedError {
             "The Harc Remote service returned an invalid session."
         case .unexpectedHTTPStatus(let status):
             "The Harc Remote service returned HTTP \(status)."
+        case .serviceRejected(let status, let code):
+            switch code {
+            case "host_offline":
+                "The adopted Host is not connected to Harc Remote right now."
+            case "relay_unavailable":
+                "Harc Remote is temporarily unavailable."
+            case "rate_limited":
+                "Harc Remote is busy and will accept another connection shortly."
+            case "unauthorized":
+                "Harc Remote rejected the saved route. Pairing repair may be required."
+            default:
+                "Harc Remote could not open a Host connection (HTTP \(status))."
+            }
         case .responseTooLarge:
             "The Harc Remote control response exceeded its safety limit."
         case .invalidWebSocketReady:
@@ -531,9 +545,6 @@ public final actor HarcRemoteRelayClientTunnel:
         guard let http = response as? HTTPURLResponse else {
             throw HarcRemoteRelayError.invalidSessionOffer
         }
-        guard http.statusCode == 201 else {
-            throw HarcRemoteRelayError.unexpectedHTTPStatus(http.statusCode)
-        }
         var data = Data()
         data.reserveCapacity(512)
         for try await byte in bytes {
@@ -541,6 +552,12 @@ public final actor HarcRemoteRelayClientTunnel:
                 throw HarcRemoteRelayError.responseTooLarge
             }
             data.append(byte)
+        }
+        guard http.statusCode == 201 else {
+            throw HarcRemoteRelayError.serviceRejected(
+                status: http.statusCode,
+                code: relayServiceErrorCode(data)
+            )
         }
         return try HarcRemoteRelaySessionOfferV1.decode(
             data,
@@ -574,6 +591,22 @@ public final actor HarcRemoteRelayClientTunnel:
             throw error
         }
     }
+}
+
+/// Accept only the Relay Worker's intentionally tiny public error envelope.
+/// Details, leaked identifiers, and unbounded strings never cross into UI.
+func relayServiceErrorCode(_ data: Data) -> String? {
+    guard !data.isEmpty,
+          let object = try? JSONSerialization.jsonObject(with: data)
+            as? [String: Any],
+          Set(object.keys) == ["code"],
+          let code = object["code"] as? String,
+          !code.isEmpty,
+          code.count <= 64,
+          code.unicodeScalars.allSatisfy({
+              ($0.value >= 97 && $0.value <= 122) || $0.value == 95
+          }) else { return nil }
+    return code
 }
 
 public enum HarcRemoteRelayHostConnectionState: Equatable, Sendable {

@@ -1,4 +1,5 @@
 import HarcClientTransport
+import HarcRemoteTransport
 import Testing
 
 @Suite("Verified Host route strategy")
@@ -160,9 +161,35 @@ struct HarcVerifiedRouteStrategyTests {
             )
             Issue.record("Expected both routes to fail")
         } catch let error as HarcVerifiedRouteFailure {
-            #expect(error.localizedDescription.contains("direct"))
-            #expect(error.localizedDescription.contains("relay"))
+            #expect(error.localizedDescription.contains("directly"))
+            #expect(error.localizedDescription.contains("Harc Remote"))
             #expect(!error.localizedDescription.contains("error 1"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("offline relay produces an actionable route summary")
+    func offlineRelayProducesActionableSummary() async {
+        do {
+            _ = try await HarcVerifiedRouteStrategy.openVerified(
+                direct: { "direct" },
+                relay: { "relay" },
+                verify: { connection in
+                    if connection == "direct" { throw Failure.direct }
+                    throw HarcRemoteRelayError.serviceRejected(
+                        status: 503,
+                        code: "host_offline"
+                    )
+                },
+                close: { _ in }
+            )
+            Issue.record("Expected both routes to fail")
+        } catch let error as HarcVerifiedRouteFailure {
+            #expect(
+                error.localizedDescription
+                    == "The adopted Host could not be reached directly. Harc Remote also could not connect: The adopted Host is not connected to Harc Remote right now."
+            )
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

@@ -179,6 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onOpenHostPairing = { [weak self] in
             self?.openRolePairing(nil)
         }
+        bridge.onRetryClientHostConnection = { [weak self] in
+            self?.desktopClientRuntime?.handleConnectivityRestored()
+        }
         bridge.onRecoverAndSyncClient = { [weak self] in
             self?.recoverAndSyncClient(nil)
         }
