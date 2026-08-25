@@ -127,9 +127,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let start = app.buttons["harc.mobile.record.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 10))
         start.tap()
-        // Triggers the interruption monitor when this installation has not
-        // granted microphone access yet; otherwise it is a harmless tap.
-        app.tap()
+        triggerMicrophonePermissionMonitor(in: app)
 
         XCTAssertTrue(
             app.descendants(matching: .any)["harc.mobile.record.banner"]
@@ -171,7 +169,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let start = app.buttons["harc.mobile.record.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 10))
         start.tap()
-        app.tap()
+        triggerMicrophonePermissionMonitor(in: app)
 
         XCTAssertTrue(
             app.descendants(matching: .any)["harc.mobile.record.banner"]
@@ -209,7 +207,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let start = app.buttons["harc.mobile.record.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 10))
         start.tap()
-        app.tap()
+        triggerMicrophonePermissionMonitor(in: app)
         XCTAssertTrue(
             app.descendants(matching: .any)["harc.mobile.record.banner"]
                 .waitForExistence(timeout: 15)
@@ -272,6 +270,17 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         var arguments = ["--harc-ui-test-root-id", rootID]
         if resetRoot { arguments.append("--harc-ui-test-reset-root") }
         return arguments
+    }
+
+    private func triggerMicrophonePermissionMonitor(
+        in app: XCUIApplication
+    ) {
+        // XCTest needs an app interaction before it invokes interruption
+        // monitors. Keep the fallback tap away from the central recording
+        // control so an already-authorized device does not stop capture.
+        app.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.05, dy: 0.12)
+        ).tap()
     }
 
     private func scrollUntilExists(
