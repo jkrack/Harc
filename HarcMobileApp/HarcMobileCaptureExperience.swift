@@ -655,6 +655,10 @@ private struct HarcMobileOrganicCaptureCore: View {
                 ? min(max(audioLevel(), 0), 1)
                 : 0
             let activity = reduceMotion ? 0 : sensedLevel
+            let breath = reduceMotion || !style.animates
+                ? 0
+                : sin(elapsed * style.breathSpeed)
+            let breathScale = 1 + (breath * style.breathAmplitude)
 
             ZStack {
                 HarcMobileOrganicBlobShape(
@@ -663,7 +667,9 @@ private struct HarcMobileOrganicCaptureCore: View {
                 )
                 .fill(style.haloColor.opacity(0.28))
                 .blur(radius: 18)
-                .scaleEffect(1.08 + (activity * 0.05))
+                .scaleEffect(
+                    (1.08 + (activity * 0.05)) * breathScale
+                )
 
                 HarcMobileOrganicBlobShape(
                     phase: phase,
@@ -673,7 +679,11 @@ private struct HarcMobileOrganicCaptureCore: View {
                     AngularGradient(
                         colors: style.colors,
                         center: .center,
-                        angle: .degrees(phase * 8)
+                        angle: .degrees(
+                            reduceMotion
+                                ? 0
+                                : elapsed * style.gradientDegreesPerSecond
+                        )
                     )
                 )
                 .overlay {
@@ -688,6 +698,7 @@ private struct HarcMobileOrganicCaptureCore: View {
                     radius: 22,
                     y: 10
                 )
+                .scaleEffect(breathScale)
 
                 if case .recording = state {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -726,6 +737,9 @@ private struct HarcMobileCaptureCoreStyle {
     let haloColor: Color
     let symbol: String
     let phaseSpeed: Double
+    let gradientDegreesPerSecond: Double
+    let breathSpeed: Double
+    let breathAmplitude: Double
     let restingActivity: Double
     let animates: Bool
     let respondsToAudio: Bool
@@ -742,8 +756,11 @@ private struct HarcMobileCaptureCoreStyle {
             ]
             haloColor = HarcMobilePalette.violet
             symbol = "mic.fill"
-            phaseSpeed = 0.16
-            restingActivity = 0.08
+            phaseSpeed = 0.56
+            gradientDegreesPerSecond = 7
+            breathSpeed = 0.85
+            breathAmplitude = 0.022
+            restingActivity = 0.12
             animates = true
             respondsToAudio = false
             busy = false
@@ -757,6 +774,9 @@ private struct HarcMobileCaptureCoreStyle {
             haloColor = HarcMobilePalette.coral
             symbol = "stop.fill"
             phaseSpeed = 0.58
+            gradientDegreesPerSecond = 14
+            breathSpeed = 1.4
+            breathAmplitude = 0.012
             restingActivity = 0.10
             animates = true
             respondsToAudio = true
@@ -770,6 +790,9 @@ private struct HarcMobileCaptureCoreStyle {
             haloColor = HarcMobilePalette.success
             symbol = "checkmark"
             phaseSpeed = 0
+            gradientDegreesPerSecond = 0
+            breathSpeed = 0
+            breathAmplitude = 0
             restingActivity = 0
             animates = false
             respondsToAudio = false
@@ -783,6 +806,9 @@ private struct HarcMobileCaptureCoreStyle {
             haloColor = HarcMobilePalette.amber
             symbol = "exclamationmark"
             phaseSpeed = 0
+            gradientDegreesPerSecond = 0
+            breathSpeed = 0
+            breathAmplitude = 0
             restingActivity = 0
             animates = false
             respondsToAudio = false
@@ -796,6 +822,9 @@ private struct HarcMobileCaptureCoreStyle {
             haloColor = HarcMobilePalette.cyan
             symbol = "ellipsis"
             phaseSpeed = 0.34
+            gradientDegreesPerSecond = 10
+            breathSpeed = 1.1
+            breathAmplitude = 0.014
             restingActivity = 0.06
             animates = true
             respondsToAudio = false
