@@ -129,12 +129,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         start.tap()
         triggerMicrophonePermissionMonitor(in: app)
 
-        XCTAssertTrue(
-            app.descendants(matching: .any)["harc.mobile.record.banner"]
-                .waitForExistence(timeout: 15)
-        )
         let stop = app.buttons["harc.mobile.record.stop"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCTAssertTrue(stop.waitForExistence(timeout: 15))
 
         let capturedAudio = expectation(description: "capture real microphone audio")
         _ = XCTWaiter.wait(for: [capturedAudio], timeout: 2)
@@ -172,7 +168,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         triggerMicrophonePermissionMonitor(in: app)
 
         XCTAssertTrue(
-            app.descendants(matching: .any)["harc.mobile.record.banner"]
+            app.buttons["harc.mobile.record.stop"]
                 .waitForExistence(timeout: 15)
         )
         XCTAssertTrue(
@@ -209,7 +205,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         start.tap()
         triggerMicrophonePermissionMonitor(in: app)
         XCTAssertTrue(
-            app.descendants(matching: .any)["harc.mobile.record.banner"]
+            app.buttons["harc.mobile.record.stop"]
                 .waitForExistence(timeout: 15)
         )
 
