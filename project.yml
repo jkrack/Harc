@@ -59,6 +59,8 @@ targets:
       - package: HarcCore
         product: HarcTransfer
       - package: HarcCore
+        product: HarcPresenceUI
+      - package: HarcCore
         product: HarcAudioMobile
       - package: HarcCore
         product: HarcHost
@@ -203,6 +205,8 @@ targets:
         product: HarcRemoteTransport
       - package: HarcCore
         product: HarcTransfer
+      - package: HarcCore
+        product: HarcPresenceUI
     info:
       path: HarcMobileApp/Info.plist
       properties:

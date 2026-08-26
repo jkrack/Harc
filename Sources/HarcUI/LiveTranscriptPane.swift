@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// The transcript as it accumulates during a recording.
 ///
@@ -37,9 +38,12 @@ struct LiveTranscriptPane: View {
 
     private var header: some View {
         HStack(spacing: HarcSpacing.sm) {
-            Circle()
-                .fill(HarcBrand.live)
-                .frame(width: 8, height: 8)
+            HarcPresenceBlob(
+                state: .recording,
+                size: .mini,
+                showsSymbol: false
+            )
+            .accessibilityHidden(true)
             Text("Recording")
                 .font(.harcTitle)
             // TimelineView rather than a Timer: the pane only exists while
@@ -68,9 +72,11 @@ struct LiveTranscriptPane: View {
     private var waitingState: some View {
         VStack(spacing: HarcSpacing.md) {
             Spacer()
-            Image(systemName: "waveform")
-                .font(.system(size: 34))
-                .foregroundStyle(.secondary)
+            HarcPresenceBlob(
+                state: .recording,
+                size: .standard
+            )
+            .accessibilityHidden(true)
             Text("Transcribing as you record")
                 .font(.harcTitle.weight(.semibold))
             Text("Text appears within a few seconds and firms up as each chunk finishes. The full transcript is saved when you stop.")

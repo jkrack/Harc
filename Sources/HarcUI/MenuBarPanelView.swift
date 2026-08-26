@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import KeyboardShortcuts
 import HarcCore
+import HarcPresenceUI
 import HarcStore
 
 /// Slim MenuBarExtra panel: recording state + level bars + Start/Stop + Open + post-stop tray.
@@ -370,11 +371,11 @@ public struct MenuBarPanelView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: HarcSpacing.lg) {
-                // Hero: state + waveform + the two primary actions.
+                // Hero: Harc's presence, capture state, and the two primary
+                // actions. The level meter stays diagnostic rather than
+                // carrying the app's personality by itself.
                 VStack(alignment: .leading, spacing: HarcSpacing.md) {
-                    stateLine
-                    LiveWaveformView(history: amplitudeHistory, size: .panel, isActive: recordingState.isRecording)
-                        .frame(height: 28)
+                    presenceHero
                     primaryControls
                     if onStartDictation != nil, dictationActive || dictationStatusText != nil {
                         dictationStatusRow
@@ -428,12 +429,56 @@ public struct MenuBarPanelView: View {
 
     // MARK: - Sub-views
 
+    private var presenceHero: some View {
+        HStack(spacing: HarcSpacing.md) {
+            Button {
+                onStartStop()
+            } label: {
+                HarcPresenceBlob(
+                    state: presenceState,
+                    size: .standard,
+                    audioLevel: { currentAmplitude }
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                recordingState.isRecording
+                    ? "Stop recording"
+                    : "Start recording"
+            )
+            .help(
+                recordingState.isRecording
+                    ? "Stop and save"
+                    : "Start recording"
+            )
+
+            VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                stateLine
+                if recordingState.isRecording {
+                    LiveWaveformView(
+                        history: amplitudeHistory,
+                        size: .panel,
+                        isActive: true,
+                        tint: microphoneIsSilent
+                            ? Color.harc(.attention)
+                            : HarcBrand.live
+                    )
+                    .frame(height: 22)
+                } else {
+                    Text(presenceSubtitle)
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var stateLine: some View {
         HStack(spacing: HarcSpacing.sm) {
-            Circle()
-                .fill(recordingState.isRecording ? HarcBrand.live : Color.secondary.opacity(0.4))
-                .frame(width: 8, height: 8)
-            Text(recordingState.isRecording ? "Recording" : "Idle")
+            Text(presenceTitle)
                 .font(.harcLabel)
             Spacer()
             if recordingState.isRecording {
@@ -442,6 +487,54 @@ public struct MenuBarPanelView: View {
                     .monospacedDigit()
             }
         }
+    }
+
+    private var presenceState: HarcPresenceState {
+        if recordingState.isRecording {
+            return microphoneIsSilent
+                ? .recordingAttention
+                : .recording
+        }
+        if recordingState.isPreparing { return .preparing }
+        switch statusTone {
+        case .ready: return .ready
+        case .attention: return .attention
+        case .broken: return .failure
+        }
+    }
+
+    private var presenceTitle: String {
+        if recordingState.isRecording {
+            return microphoneIsSilent ? "Mic is silent" : "Recording"
+        }
+        if recordingState.isPreparing { return "Starting…" }
+        switch statusTone {
+        case .ready: return "Ready"
+        case .attention: return "Ready with attention"
+        case .broken: return "Recording unavailable"
+        }
+    }
+
+    private var presenceSubtitle: String {
+        switch presenceState {
+        case .ready:
+            "Here when you're ready"
+        case .preparing:
+            "Opening a durable capture"
+        case .attention, .failure:
+            statusSummary
+        case .recording, .recordingAttention, .saving, .saved:
+            statusSummary
+        }
+    }
+
+    private var currentAmplitude: Double {
+        Double(amplitudeHistory.last ?? 0)
+    }
+
+    private var microphoneIsSilent: Bool {
+        guard amplitudeHistory.count >= 24 else { return false }
+        return amplitudeHistory.suffix(24).allSatisfy { $0 < 0.02 }
     }
 
 

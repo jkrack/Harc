@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// The recording island — a floating pill that exists only while a
 /// recording does. One state at a time, by design:
@@ -73,10 +74,13 @@ public struct RecordingIslandView: View {
 
     private var restingPill: some View {
         HStack(spacing: 9) {
-            Circle()
-                .fill(micIsSilent ? Color.harc(.attention) : HarcBrand.live)
-                .frame(width: 7, height: 7)
-                .modifier(PulseWhile(active: !micIsSilent))
+            HarcPresenceBlob(
+                state: micIsSilent ? .recordingAttention : .recording,
+                size: .mini,
+                showsSymbol: false,
+                audioLevel: { microphoneLevel }
+            )
+            .accessibilityHidden(true)
             elapsedText(font: .system(size: 12, weight: .semibold))
             if micIsSilent {
                 Text("Mic is silent")
@@ -100,9 +104,13 @@ public struct RecordingIslandView: View {
 
     private var expandedPill: some View {
         HStack(spacing: 12) {
-            Circle()
-                .fill(HarcBrand.live)
-                .frame(width: 8, height: 8)
+            HarcPresenceBlob(
+                state: micIsSilent ? .recordingAttention : .recording,
+                size: .mini,
+                showsSymbol: false,
+                audioLevel: { microphoneLevel }
+            )
+            .accessibilityHidden(true)
             elapsedText(font: .system(size: 15, weight: .semibold))
             Text(bridge.activeMicrophoneName ?? bridge.selectedMicrophoneName)
                 .font(.harcCaption)
@@ -158,8 +166,12 @@ public struct RecordingIslandView: View {
 
     private var startingPill: some View {
         HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
+            HarcPresenceBlob(
+                state: .preparing,
+                size: .mini,
+                showsSymbol: false
+            )
+            .accessibilityHidden(true)
             Text("Starting…")
                 .font(.harcCaption)
                 .foregroundStyle(.white.opacity(0.85))
@@ -172,8 +184,12 @@ public struct RecordingIslandView: View {
 
     private var stoppingPill: some View {
         HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
+            HarcPresenceBlob(
+                state: .saving,
+                size: .mini,
+                showsSymbol: false
+            )
+            .accessibilityHidden(true)
             Text("Saving \(elapsedString) → Library")
                 .font(.harcCaption)
                 .foregroundStyle(.white.opacity(0.85))
@@ -218,6 +234,10 @@ public struct RecordingIslandView: View {
         return ElapsedFormatter.string(since: startedAt)
     }
 
+    private var microphoneLevel: Double {
+        Double(bridge.microphoneAmplitudeHistory.last ?? 0)
+    }
+
     @ViewBuilder
     private func elapsedText(font: Font) -> some View {
         if let startedAt = recordingState.recordingStartedAt {
@@ -255,24 +275,6 @@ public struct RecordingIslandView: View {
             .fill(Color.black.opacity(0.82))
             .overlay(Capsule().strokeBorder(borderTint.opacity(0.55), lineWidth: 1))
             .shadow(color: .black.opacity(0.55), radius: 15, y: 10)
-    }
-}
-
-/// The resting dot's slow pulse — suspended when the amber silent state has
-/// the stage, so the two signals never blend.
-private struct PulseWhile: ViewModifier {
-    let active: Bool
-    @State private var pulsing = false
-
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(active && pulsing ? 1.25 : 0.9)
-            .opacity(active && pulsing ? 1 : 0.75)
-            .animation(
-                active ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default,
-                value: pulsing
-            )
-            .onAppear { pulsing = true }
     }
 }
 

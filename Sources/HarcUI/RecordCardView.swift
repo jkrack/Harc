@@ -1,5 +1,6 @@
 import SwiftUI
 import KeyboardShortcuts
+import HarcPresenceUI
 
 /// The permanent record panel at the top of the Library sidebar — design
 /// 3e's four states in one card. This replaced the toolbar Record control:
@@ -43,9 +44,13 @@ struct RecordCardView: View {
                 bridge.onStartStop()
             } label: {
                 HStack(spacing: HarcSpacing.sm) {
-                    Image(systemName: "record.circle")
-                        .font(.system(size: 16))
-                        .foregroundStyle(HarcBrand.live)
+                    HarcPresenceBlob(
+                        state: bridge.selectedMicrophoneAvailable
+                            ? .ready
+                            : .attention,
+                        size: .compact
+                    )
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Record")
                             .font(.harcBody.weight(.semibold))
@@ -126,9 +131,15 @@ struct RecordCardView: View {
     private var recordingCard: some View {
         VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             HStack(spacing: HarcSpacing.sm) {
-                Circle()
-                    .fill(HarcBrand.live)
-                    .frame(width: 8, height: 8)
+                HarcPresenceBlob(
+                    state: microphoneIsSilent
+                        ? .recordingAttention
+                        : .recording,
+                    size: .mini,
+                    showsSymbol: false,
+                    audioLevel: { microphoneLevel }
+                )
+                .accessibilityHidden(true)
                 Text(bridge.activeCaptureTitle ?? "Recording")
                     .font(.harcBody.weight(.semibold))
                     .lineLimit(1)
@@ -216,8 +227,12 @@ struct RecordCardView: View {
 
     private var finishingCard: some View {
         HStack(spacing: HarcSpacing.sm) {
-            ProgressView()
-                .controlSize(.small)
+            HarcPresenceBlob(
+                state: .saving,
+                size: .compact,
+                showsSymbol: false
+            )
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(bridge.recordingStopInFlight ? "Saving…" : "Identifying speakers…")
                     .font(.harcBody)
@@ -236,5 +251,9 @@ struct RecordCardView: View {
                 .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
         )
         .accessibilityIdentifier("harc.library.capture.recordButton")
+    }
+
+    private var microphoneLevel: Double {
+        Double(bridge.microphoneAmplitudeHistory.last ?? 0)
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import HarcPresenceUI
 import SwiftUI
 import UIKit
 
@@ -390,8 +391,9 @@ struct HarcMobileCaptureHeroView: View {
                 UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                 start()
             } label: {
-                HarcMobileOrganicCaptureCore(
-                    state: state,
+                HarcPresenceBlob(
+                    state: state.harcPresenceState,
+                    size: .hero,
                     audioLevel: audioLevel
                 )
             }
@@ -406,8 +408,9 @@ struct HarcMobileCaptureHeroView: View {
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 stop()
             } label: {
-                HarcMobileOrganicCaptureCore(
-                    state: state,
+                HarcPresenceBlob(
+                    state: state.harcPresenceState,
+                    size: .hero,
                     audioLevel: audioLevel
                 )
             }
@@ -418,8 +421,9 @@ struct HarcMobileCaptureHeroView: View {
             )
             .accessibilityIdentifier(HarcMobileAccessibilityID.stopRecording)
         default:
-            HarcMobileOrganicCaptureCore(
-                state: state,
+            HarcPresenceBlob(
+                state: state.harcPresenceState,
+                size: .hero,
                 audioLevel: audioLevel
             )
             .accessibilityHidden(true)
@@ -636,253 +640,24 @@ struct HarcMobileRecordingIndicator: View {
     }
 }
 
-private struct HarcMobileOrganicCaptureCore: View {
-    let state: HarcMobileCaptureCoordinator.State
-    let audioLevel: () -> Double
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        TimelineView(
-            .animation(
-                minimumInterval: 1 / 24,
-                paused: reduceMotion || !style.animates
-            )
-        ) { context in
-            let elapsed = context.date.timeIntervalSinceReferenceDate
-            let phase = reduceMotion ? 0 : elapsed * style.phaseSpeed
-            let sensedLevel = style.respondsToAudio
-                ? min(max(audioLevel(), 0), 1)
-                : 0
-            let activity = reduceMotion ? 0 : sensedLevel
-            let breath = reduceMotion || !style.animates
-                ? 0
-                : sin(elapsed * style.breathSpeed)
-            let breathScale = 1 + (breath * style.breathAmplitude)
-
-            ZStack {
-                HarcMobileOrganicBlobShape(
-                    phase: phase,
-                    activity: activity + style.restingActivity
-                )
-                .fill(style.haloColor.opacity(0.28))
-                .blur(radius: 18)
-                .scaleEffect(
-                    (1.08 + (activity * 0.05)) * breathScale
-                )
-
-                HarcMobileOrganicBlobShape(
-                    phase: phase,
-                    activity: activity + style.restingActivity
-                )
-                .fill(
-                    AngularGradient(
-                        colors: style.colors,
-                        center: .center,
-                        angle: .degrees(
-                            reduceMotion
-                                ? 0
-                                : elapsed * style.gradientDegreesPerSecond
-                        )
-                    )
-                )
-                .overlay {
-                    HarcMobileOrganicBlobShape(
-                        phase: phase,
-                        activity: activity + style.restingActivity
-                    )
-                    .stroke(.white.opacity(0.20), lineWidth: 1)
-                }
-                .shadow(
-                    color: style.haloColor.opacity(0.24),
-                    radius: 22,
-                    y: 10
-                )
-                .scaleEffect(breathScale)
-
-                if case .recording = state {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.white)
-                        .frame(width: 34, height: 34)
-                        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
-                } else {
-                    Image(systemName: style.symbol)
-                        .font(.system(size: 38, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .symbolEffect(
-                            .pulse,
-                            options: .repeating,
-                            isActive: style.busy && !reduceMotion
-                        )
-                        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
-                }
-            }
-            .frame(width: diameter, height: diameter)
-            .contentShape(Circle())
-        }
-    }
-
-    private var style: HarcMobileCaptureCoreStyle {
-        HarcMobileCaptureCoreStyle(state: state)
-    }
-
-    private var diameter: CGFloat {
-        if case .recording = state { return 200 }
-        return 190
-    }
-}
-
-private struct HarcMobileCaptureCoreStyle {
-    let colors: [Color]
-    let haloColor: Color
-    let symbol: String
-    let phaseSpeed: Double
-    let gradientDegreesPerSecond: Double
-    let breathSpeed: Double
-    let breathAmplitude: Double
-    let restingActivity: Double
-    let animates: Bool
-    let respondsToAudio: Bool
-    let busy: Bool
-
-    init(state: HarcMobileCaptureCoordinator.State) {
-        switch state {
+private extension HarcMobileCaptureCoordinator.State {
+    var harcPresenceState: HarcPresenceState {
+        switch self {
         case .idle:
-            colors = [
-                HarcMobilePalette.indigo,
-                HarcMobilePalette.violet,
-                HarcMobilePalette.cyan,
-                HarcMobilePalette.indigo,
-            ]
-            haloColor = HarcMobilePalette.violet
-            symbol = "mic.fill"
-            phaseSpeed = 0.56
-            gradientDegreesPerSecond = 7
-            breathSpeed = 0.85
-            breathAmplitude = 0.022
-            restingActivity = 0.12
-            animates = true
-            respondsToAudio = false
-            busy = false
+            .ready
+        case .requestingPermission, .starting:
+            .preparing
         case .recording:
-            colors = [
-                HarcMobilePalette.coral,
-                HarcMobilePalette.violet,
-                Color(red: 0.96, green: 0.35, blue: 0.28),
-                HarcMobilePalette.coral,
-            ]
-            haloColor = HarcMobilePalette.coral
-            symbol = "stop.fill"
-            phaseSpeed = 0.58
-            gradientDegreesPerSecond = 14
-            breathSpeed = 1.4
-            breathAmplitude = 0.012
-            restingActivity = 0.10
-            animates = true
-            respondsToAudio = true
-            busy = false
+            .recording
+        case .stopping:
+            .saving
         case .saved:
-            colors = [
-                HarcMobilePalette.success,
-                HarcMobilePalette.cyan,
-                HarcMobilePalette.success,
-            ]
-            haloColor = HarcMobilePalette.success
-            symbol = "checkmark"
-            phaseSpeed = 0
-            gradientDegreesPerSecond = 0
-            breathSpeed = 0
-            breathAmplitude = 0
-            restingActivity = 0
-            animates = false
-            respondsToAudio = false
-            busy = false
-        case .storageExhausted, .failed:
-            colors = [
-                HarcMobilePalette.amber,
-                HarcMobilePalette.coral,
-                HarcMobilePalette.amber,
-            ]
-            haloColor = HarcMobilePalette.amber
-            symbol = "exclamationmark"
-            phaseSpeed = 0
-            gradientDegreesPerSecond = 0
-            breathSpeed = 0
-            breathAmplitude = 0
-            restingActivity = 0
-            animates = false
-            respondsToAudio = false
-            busy = false
-        case .requestingPermission, .starting, .stopping:
-            colors = [
-                HarcMobilePalette.indigo,
-                HarcMobilePalette.cyan,
-                HarcMobilePalette.violet,
-            ]
-            haloColor = HarcMobilePalette.cyan
-            symbol = "ellipsis"
-            phaseSpeed = 0.34
-            gradientDegreesPerSecond = 10
-            breathSpeed = 1.1
-            breathAmplitude = 0.014
-            restingActivity = 0.06
-            animates = true
-            respondsToAudio = false
-            busy = true
+            .saved
+        case .storageExhausted:
+            .attention
+        case .failed:
+            .failure
         }
-    }
-}
-
-private struct HarcMobileOrganicBlobShape: Shape {
-    var phase: Double
-    var activity: Double
-
-    var animatableData: AnimatablePair<Double, Double> {
-        get { AnimatablePair(phase, activity) }
-        set {
-            phase = newValue.first
-            activity = newValue.second
-        }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let pointCount = 36
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let baseRadius = min(rect.width, rect.height) * 0.40
-        let deformation = min(max(activity, 0), 1.1)
-        var points: [CGPoint] = []
-        points.reserveCapacity(pointCount)
-
-        for index in 0 ..< pointCount {
-            let angle = (Double(index) / Double(pointCount)) * (.pi * 2)
-            let organic = sin((angle * 3) + phase) * 0.045
-                + sin((angle * 5) - (phase * 1.31)) * 0.025
-            let voice = deformation * (
-                0.060 + (sin((angle * 4) + (phase * 1.7)) * 0.035)
-            )
-            let radius = baseRadius * (1 + organic + voice)
-            points.append(CGPoint(
-                x: center.x + CGFloat(cos(angle) * radius),
-                y: center.y + CGFloat(sin(angle) * radius)
-            ))
-        }
-
-        guard let first = points.first, let last = points.last else {
-            return Path()
-        }
-        var path = Path()
-        path.move(to: midpoint(last, first))
-        for index in points.indices {
-            let point = points[index]
-            let next = points[(index + 1) % points.count]
-            path.addQuadCurve(to: midpoint(point, next), control: point)
-        }
-        path.closeSubpath()
-        return path
-    }
-
-    private func midpoint(_ lhs: CGPoint, _ rhs: CGPoint) -> CGPoint {
-        CGPoint(x: (lhs.x + rhs.x) / 2, y: (lhs.y + rhs.y) / 2)
     }
 }
 

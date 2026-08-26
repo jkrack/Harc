@@ -42,6 +42,10 @@ Flag the user before violating these product decisions.
   vocabulary replacement.
 - `Sources/HarcAudio/` captures microphone/system audio, mixes levels, writes
   WAV files, and manages recording destinations.
+- `Sources/HarcPresenceUI/` owns the shared iOS/macOS organic presence blob,
+  its semantic capture states, cross-platform palette, and Reduce Motion
+  behavior. Use it for Harc's persistent capture presence instead of creating
+  platform-specific blob renderers.
 - `Sources/HarcStore/` owns the GRDB-backed library, people, recovery queue,
   cache recovery, and migrations.
 - `Sources/HarcUI/` contains SwiftUI/AppKit-facing state and views, including

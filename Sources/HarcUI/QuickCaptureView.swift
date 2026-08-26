@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// Quick Capture (⌘⇧R) — the name-it-first start sheet. One keystroke from
 /// any app, with the two decisions that actually matter — what's being
@@ -54,9 +55,13 @@ public struct QuickCaptureView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "record.circle")
-                .font(.system(size: 20))
-                .foregroundStyle(HarcBrand.live)
+            HarcPresenceBlob(
+                state: bridge.selectedMicrophoneAvailable
+                    ? .ready
+                    : .attention,
+                size: .compact
+            )
+            .accessibilityHidden(true)
             TextField("Name this recording…", text: $title)
                 .textFieldStyle(.plain)
                 .font(.system(size: 20, weight: .medium))
