@@ -128,6 +128,10 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var remoteRelayAuthorizationInProgress: Bool = false
 
     public var onStartStop: () -> Void = {}
+    /// Stop from the recording island. Kept separate from the general toggle
+    /// so the app can publish saving feedback synchronously with the click,
+    /// before the asynchronous capture-finalization pipeline begins.
+    public var onStopRecording: () -> Void = {}
     /// Preserve the current recording, then open the chooser. V1 does not
     /// hot-swap the engine inside one file because that needs a durable
     /// discontinuity boundary and rollback path.

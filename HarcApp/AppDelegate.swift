@@ -140,6 +140,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onStartStop = { [weak self] in
             Task { await self?.toggleRecording() }
         }
+        bridge.onStopRecording = { [weak self] in
+            guard let self,
+                  self.state.isRecording,
+                  !self.bridge.recordingStopInFlight else {
+                return
+            }
+            // Publish the saving state in the button's own event turn. If the
+            // flag is first set inside the Task below, a busy main actor can
+            // leave the live controls on screen after the click appears to do
+            // nothing.
+            self.bridge.beginRecordingStop()
+            Task { [weak self] in
+                await self?.stopRecording(
+                    autoStopReason: nil,
+                    feedbackAlreadyStarted: true
+                )
+            }
+        }
         bridge.onSelectMicrophone = { [weak self] uid in
             self?.selectMicrophone(uid: uid)
         }
@@ -2075,8 +2093,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
     }
 
-    private func stopRecording(autoStopReason: AutoStopController.StopReason?) async {
-        guard !bridge.recordingStopInFlight else { return }
+    private func stopRecording(
+        autoStopReason: AutoStopController.StopReason?,
+        feedbackAlreadyStarted: Bool = false
+    ) async {
+        if feedbackAlreadyStarted {
+            guard bridge.recordingStopInFlight else { return }
+        } else {
+            guard !bridge.recordingStopInFlight else { return }
+        }
         // Stop pressed while the start is still in flight: stopping now
         // would interleave with `session.start()` at its suspension points
         // and close the writer under the live session — the UI would show
@@ -2086,7 +2111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             stopRequestedDuringStart = true
             return
         }
-        bridge.beginRecordingStop()
+        if !feedbackAlreadyStarted {
+            bridge.beginRecordingStop()
+        }
         defer {
             bridge.endRecordingStop()
             // Every exit path, not just the happy one. stopRecording returns

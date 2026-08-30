@@ -24,6 +24,11 @@ final class RecordingIslandPanel {
     init(rootView: some View, isLibraryFrontmost: @escaping () -> Bool) {
         self.isLibraryFrontmost = isLibraryFrontmost
         hosting = NSHostingController(rootView: AnyView(rootView))
+        // NSHostingView can otherwise inherit an opaque control background
+        // even though the window itself is clear, leaving a faint rectangular
+        // plate visible behind the capsule.
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
         hosting.view.layoutSubtreeIfNeeded()
 
         panel = NSPanel(contentViewController: hosting)
@@ -35,7 +40,10 @@ final class RecordingIslandPanel {
         panel.isMovableByWindowBackground = true
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = false  // the SwiftUI capsule draws its own
+        // Let WindowServer form the shadow from the transparent window's
+        // alpha mask. A SwiftUI shadow was clipped to the hosting window's
+        // rectangular bounds, which exposed a square outline behind the pill.
+        panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.setContentSize(hosting.view.fittingSize)
 
@@ -101,6 +109,7 @@ final class RecordingIslandPanel {
             y: anchored.maxY - size.height
         )
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.invalidateShadow()
     }
 
     private func position() {

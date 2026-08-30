@@ -54,13 +54,16 @@ public struct RecordingIslandView: View {
                 hoverDwellTask = Task {
                     try? await Task.sleep(for: .milliseconds(120))
                     guard !Task.isCancelled, hovering else { return }
-                    withAnimation(.spring(duration: 0.22)) { model.expanded = true }
+                    // This state changes the hosting window's intrinsic size.
+                    // Animating that layout made the panel chase the pointer:
+                    // the old window clipped the growing controls, emitted a
+                    // hover exit, collapsed, then entered again.
+                    model.expanded = true
                 }
             } else {
-                withAnimation(.spring(duration: 0.22)) { model.expanded = false }
+                model.expanded = false
             }
         }
-        .animation(.spring(duration: 0.22), value: bridge.recordingStopInFlight)
     }
 
     // MARK: - States
@@ -141,7 +144,7 @@ public struct RecordingIslandView: View {
                 .fill(Color.white.opacity(0.14))
                 .frame(width: 1, height: 24)
             islandButton(background: HarcBrand.live, help: "Stop and save") {
-                bridge.onStartStop()
+                bridge.onStopRecording()
             } label: {
                 RoundedRectangle(cornerRadius: 2.4)
                     .fill(.white)
@@ -274,7 +277,6 @@ public struct RecordingIslandView: View {
         Capsule()
             .fill(Color.black.opacity(0.82))
             .overlay(Capsule().strokeBorder(borderTint.opacity(0.55), lineWidth: 1))
-            .shadow(color: .black.opacity(0.55), radius: 15, y: 10)
     }
 }
 
