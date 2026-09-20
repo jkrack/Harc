@@ -349,3 +349,8 @@ permissions and length, and full signed receipt/audio validation. Preserve origi
 publication identity and append an immutable receipt-bound repair chain atomically.
 Incoming RPCs never authorize repair. Validate with
 `swift test --jobs 2 --filter CanonicalIngestServiceTests`.
+
+Embedded helper scripts resolve executables with `swift build --show-bin-path`
+using the same product, architecture, configuration and scratch path as the build.
+Do not hard-code SwiftPM output directories; Xcode 27 changes the default engine.
+The release build verifies that both embedded helpers are arm64 and signed.
