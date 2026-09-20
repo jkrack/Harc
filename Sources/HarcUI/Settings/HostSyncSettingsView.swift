@@ -379,6 +379,17 @@ public struct HostSyncSettingsView: View {
                 Label("Host is available to paired devices", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(Color.harc(.ready))
                 Button("Pair a Device…") { bridge.onOpenHostPairing() }
+                Button("Verify and Repair Recording Receipts…") { bridge.onRepairHostReceipts() }
+                    .disabled(bridge.hostReceiptRepairInProgress)
+                if bridge.hostReceiptRepairInProgress {
+                    ProgressView("Verifying recordings…")
+                        .font(.harcLabel)
+                }
+                if let status = bridge.hostReceiptRepairStatus {
+                    Text(status)
+                        .font(.harcLabel)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 runtimeStartingOrFailed(role: "Host")
             }

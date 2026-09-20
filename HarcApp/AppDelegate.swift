@@ -197,6 +197,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onOpenHostPairing = { [weak self] in
             self?.openRolePairing(nil)
         }
+        bridge.onRepairHostReceipts = { [weak self] in
+            guard let self, let runtime = self.hostRuntime,
+                  !self.bridge.hostReceiptRepairInProgress else { return }
+            self.bridge.hostReceiptRepairInProgress = true
+            self.bridge.hostReceiptRepairStatus = nil
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.bridge.hostReceiptRepairInProgress = false }
+                do {
+                    let result = try await runtime.repairReceiptBindings()
+                    self.bridge.hostReceiptRepairStatus = "Checked \(result.checked) recording(s); repaired \(result.repaired); \(result.failed) still need attention. Clients will retry automatically."
+                } catch HarcHostError.localOSAuthenticationRequired {
+                    self.bridge.hostReceiptRepairStatus = "Repair requires approval from this Mac's owner. Recording copies remain protected."
+                } catch {
+                    self.bridge.hostReceiptRepairStatus = "Receipt verification could not finish. Recording copies remain protected."
+                }
+            }
+        }
         bridge.onRetryClientHostConnection = { [weak self] in
             self?.desktopClientRuntime?.handleConnectivityRestored()
         }

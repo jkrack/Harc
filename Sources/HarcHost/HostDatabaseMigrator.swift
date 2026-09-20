@@ -1413,6 +1413,28 @@ public extension DatabaseMigrator {
                 """)
         }
 
+        migrator.registerMigration("v7_canonical_receipt_repairs") { db in
+            try db.execute(sql: """
+                CREATE TABLE canonical_receipt_repairs (
+                    repair_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repair_id TEXT NOT NULL UNIQUE,
+                    upload_id TEXT NOT NULL REFERENCES uploads(upload_id),
+                    receipt_sha256 BLOB NOT NULL CHECK(length(receipt_sha256) = 32),
+                    old_identity_json BLOB NOT NULL,
+                    new_identity_json BLOB NOT NULL,
+                    repaired_at REAL NOT NULL
+                );
+                CREATE TRIGGER canonical_receipt_repairs_no_update
+                BEFORE UPDATE ON canonical_receipt_repairs BEGIN
+                    SELECT RAISE(ABORT, 'receipt repair provenance is immutable');
+                END;
+                CREATE TRIGGER canonical_receipt_repairs_no_delete
+                BEFORE DELETE ON canonical_receipt_repairs BEGIN
+                    SELECT RAISE(ABORT, 'receipt repair provenance is immutable');
+                END;
+                """)
+        }
+
         return migrator
     }
 }

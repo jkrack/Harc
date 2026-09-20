@@ -487,7 +487,7 @@ extension HarcHostStore {
                   let temporaryName: String = row["host_generated_temporary_name"],
                   let canonicalPCMHashBytes: Data = row["canonical_pcm_sha256"],
                   let canonicalPCMFramesValue: Int64 = row["canonical_frame_count"],
-                  let artifactIdentity = try Self.canonicalArtifactIdentity(from: row),
+                  let artifactIdentity = try Self.receiptArtifactIdentity(in: db, row: row),
                   row["exact_receipt_bytes"] as Data? == exactReceipt.exactBytes,
                   row["receipt_object_sha256"] as Data?
                     == exactReceipt.objectSHA256.rawBytes
@@ -736,6 +736,77 @@ extension HarcHostStore {
             true
         default:
             false
+        }
+    }
+}
+
+
+extension HarcHostStore {
+    /// Keep the original publication journal immutable. Local repairs form an
+    /// append-only chain bound to its exact receipt; gaps or drift fail closed.
+    static func receiptArtifactIdentity(in db: Database, row: Row) throws -> HostCanonicalArtifactIdentity? {
+        guard var identity = try canonicalArtifactIdentity(from: row) else { return nil }
+        let repairs = try Row.fetchAll(db, sql: "SELECT * FROM canonical_receipt_repairs WHERE upload_id = ? ORDER BY repair_sequence",
+            arguments: [row["upload_id"] as String])
+        let decoder = JSONDecoder()
+        for repair in repairs {
+            let old = try decoder.decode(HostCanonicalArtifactIdentity.self, from: repair["old_identity_json"] as Data)
+            let new = try decoder.decode(HostCanonicalArtifactIdentity.self, from: repair["new_identity_json"] as Data)
+            guard old == identity,
+                  repair["receipt_sha256"] as Data? == row["receipt_object_sha256"] as Data?,
+                  old.inodeNumber == new.inodeNumber, old.ownerUserID == new.ownerUserID,
+                  old.posixMode == new.posixMode, old.linkCount == new.linkCount,
+                  old.fileByteCount == new.fileByteCount else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            identity = new
+        }
+        return identity
+    }
+
+    public func committedReceiptRecordingIDs() async throws -> [CanonicalRecordingID] {
+        try await dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT canonical_recording_id FROM publication_journal WHERE state IN ('receipted', 'processing', 'complete') ORDER BY created_at").map {
+                guard let uuid = UUID(uuidString: $0) else { throw HarcHostError.databaseFailure("Invalid canonical identity.") }
+                return CanonicalRecordingID(uuid)
+            }
+        }
+    }
+
+    /// Identity and immutable repair provenance commit in one FULL-sync DB
+    /// transaction. An interrupted transaction leaves the original binding.
+    func commitReceiptBindingRepair(
+        work: HostReceiptProcessingWork, identity: HostCanonicalArtifactIdentity,
+        at date: Date, validateArtifact: @escaping @Sendable () throws -> Void
+    ) async throws {
+        guard date.timeIntervalSince1970.isFinite else { throw HarcHostError.databaseFailure("Invalid repair time.") }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let oldJSON = try encoder.encode(work.canonicalArtifactIdentity)
+        let newJSON = try encoder.encode(identity)
+        try await dbQueue.write { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM publication_journal WHERE upload_id = ?", arguments: [work.uploadID.description]),
+                  ["receipted", "processing", "complete"].contains(row["state"] as String),
+                  try Self.receiptArtifactIdentity(in: db, row: row) == work.canonicalArtifactIdentity,
+                  row["exact_receipt_bytes"] as Data? == work.exactReceipt.exactBytes,
+                  row["canonical_recording_id"] as String? == work.canonicalRecordingID.description,
+                  row["publication_relative_path"] as String? == work.publicationRelativePath,
+                  row["canonical_pcm_sha256"] as Data? == work.canonicalPCMHash.rawBytes,
+                  row["canonical_frame_count"] as Int64? == Int64(exactly: work.canonicalPCMFrames),
+                  row["receipt_object_sha256"] as Data? == work.exactReceipt.objectSHA256.rawBytes,
+                  let attempt = try self.fetchUploadAttempt(in: db, uploadID: work.uploadID),
+                  attempt.status == .committed, attempt.exactReceipt == work.exactReceipt else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            try validateArtifact()
+            try db.execute(sql: """
+                INSERT INTO canonical_receipt_repairs
+                (repair_id, upload_id, receipt_sha256, old_identity_json, new_identity_json, repaired_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: [UUID().uuidString.lowercased(), work.uploadID.description,
+                    work.exactReceipt.objectSHA256.rawBytes, oldJSON, newJSON, Self.unixTime(date)])
+            // A replaced pathname after the first check rolls back both writes.
+            try validateArtifact()
         }
     }
 }

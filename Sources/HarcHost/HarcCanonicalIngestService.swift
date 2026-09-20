@@ -358,6 +358,58 @@ public actor HarcCanonicalIngestService {
         )
     }
 
+    /// Explicit local administration only. Incoming transfer RPCs never call this.
+    /// A changed inode is still a replacement, even if its bytes happen to match.
+    public func repairReceiptBinding(canonicalRecordingID: CanonicalRecordingID) async throws -> Bool {
+        guard let work = try await hostStore.receiptProcessingWork(canonicalRecordingID: canonicalRecordingID) else {
+            throw HarcHostError.publicationRecoveryRequired("No committed receipt is available to repair.")
+        }
+        try activityGate.claim(work.uploadID)
+        defer { activityGate.release(work.uploadID) }
+        let paths = try HostCanonicalPublicationPaths.make(
+            rootAnchor: canonicalRootAnchor, canonicalRecordingID: work.canonicalRecordingID,
+            persistedRelativeWAVPath: work.publicationRelativePath, temporaryName: work.temporaryName
+        )
+        // Capture a fresh descriptor and validate all bytes before considering
+        // any metadata transition. Retain it through authentication and commit.
+        let artifact = try HostValidatedCanonicalArtifact(
+            at: paths.wavURL, in: paths, totalFrames: work.canonicalPCMFrames,
+            expectedPCMHash: work.canonicalPCMHash
+        )
+        let old = work.canonicalArtifactIdentity
+        let fresh = artifact.identity
+        if old == fresh { return false }
+        guard old.inodeNumber == fresh.inodeNumber,
+              old.ownerUserID == fresh.ownerUserID,
+              old.posixMode == fresh.posixMode,
+              old.linkCount == fresh.linkCount,
+              old.fileByteCount == fresh.fileByteCount else {
+            throw HarcHostError.canonicalArtifactIdentityMismatch
+        }
+        let manifest = try await hostStore.validateBoundManifest(uploadID: work.uploadID, using: manifestValidator)
+        let receipt = try receiptValidator.validateRecordingReceipt(
+            exactSignedReceiptBytes: work.exactReceipt.exactBytes,
+            validatedManifest: manifest, hostTrust: hostTrust
+        )
+        guard receipt.exactReceiptObject == work.exactReceipt,
+              receipt.canonicalRecordingID == work.canonicalRecordingID,
+              receipt.canonicalPCMSHA256 == work.canonicalPCMHash,
+              receipt.totalCanonicalFrames == work.canonicalPCMFrames else {
+            throw HarcHostError.canonicalArtifactIdentityMismatch
+        }
+        guard try await hostStore.localOSAuthenticationBoundary.authorizeCanonicalReceiptRepair(for: canonicalRecordingID) else {
+            throw HarcHostError.localOSAuthenticationRequired
+        }
+        try Task.checkCancellation()
+        try artifact.validateCanonicalContent()
+        let capability = canonicalCommitCapability
+        try await hostStore.commitReceiptBindingRepair(work: work, identity: fresh, at: now()) {
+            guard capability.isActive else { throw StoreError.hostWriterCapabilityRequired }
+            try artifact.validateBinding()
+        }
+        return true
+    }
+
     /// Reconstructs and revalidates the exact durable processing request for a
     /// canonical row. App startup uses this after scanning the canonical
     /// processing backlog; the Host journal supplies the original inode and

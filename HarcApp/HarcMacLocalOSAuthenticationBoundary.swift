@@ -54,4 +54,8 @@ struct HarcMacLocalOSAuthenticationBoundary:
             return false
         }
     }
+
+    func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool {
+        await evaluate(reason: "Repair this Harc recording's delivery receipt after verifying its original audio.")
+    }
 }

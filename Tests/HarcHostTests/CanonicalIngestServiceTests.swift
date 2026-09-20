@@ -638,6 +638,144 @@ struct CanonicalIngestServiceTests {
         }
     }
 
+    @Test("local owner repair restores exact receipt replay after metadata drift and survives reopen")
+    func receiptRepairRestoresReplay() async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        let receipt = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        // Model an older boot's persisted device number only in this disposable
+        // fixture. Restore the immutable-journal trigger before invoking repair.
+        try await fixture.hostStore.dbQueue.write { db in
+            let trigger = try #require(try String.fetchOne(db, sql: "SELECT sql FROM sqlite_master WHERE name = 'publication_journal_v3_artifact_identity_update'"))
+            try db.execute(sql: "DROP TRIGGER publication_journal_v3_artifact_identity_update")
+            try db.execute(sql: "UPDATE publication_journal SET canonical_artifact_device_number = ? WHERE upload_id = ?",
+                arguments: [HarcHostStore.canonicalArtifactUInt64Bytes(work.canonicalArtifactIdentity.deviceNumber + 1), fixture.uploadID.description])
+            try db.execute(sql: trigger)
+        }
+        try await Task.sleep(for: .milliseconds(2))
+        #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        await #expect(throws: (any Error).self) {
+            _ = try await service.validatedProcessingRequest(canonicalRecordingID: work.canonicalRecordingID)
+        }
+        #expect(try await service.repairReceiptBinding(canonicalRecordingID: work.canonicalRecordingID))
+        #expect(try await exactReceiptBytes(fixture.hostStore, fixture.uploadID) == receipt.exactBytes)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canonical_receipt_repairs")
+        } == 1)
+        #expect(try await service.repairReceiptBinding(canonicalRecordingID: work.canonicalRecordingID) == false)
+        #expect(await auth.calls == 1)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Data.fetchOne(db, sql: "SELECT canonical_artifact_device_number FROM publication_journal WHERE upload_id = ?", arguments: [fixture.uploadID.description])
+        } == HarcHostStore.canonicalArtifactUInt64Bytes(work.canonicalArtifactIdentity.deviceNumber + 1))
+        await #expect(throws: (any Error).self) {
+            try await fixture.hostStore.dbQueue.write { db in
+                try db.execute(sql: "DELETE FROM canonical_receipt_repairs")
+            }
+        }
+        await #expect(throws: (any Error).self) {
+            try await fixture.hostStore.dbQueue.write { db in
+                try db.execute(sql: "UPDATE canonical_receipt_repairs SET repaired_at = 0")
+            }
+        }
+        let reopened = try await fixture.reopen(scheduler: IdempotentProcessingScheduler())
+        _ = try await reopened.service.validatedProcessingRequest(canonicalRecordingID: work.canonicalRecordingID)
+        let replay = try await reopened.service.beginUpload(context: fixture.context,
+            sessionCapabilities: fixtureSessionCapabilities(), request: BeginHostUploadRequest(
+                uploadID: fixture.uploadID, originRecordingID: fixture.origin,
+                frozenProfile: fixtureProfile(), beganAt: fixture.clock.read()))
+        guard case .alreadyCommitted(let replayed) = replay else { Issue.record("Expected receipt replay"); return }
+        #expect(replayed == receipt)
+    }
+
+    @Test("receipt repair rejects denial, changed audio and same-byte replacement")
+    func receiptRepairRejectsUnsafeChanges() async throws {
+        for mode in ["denied", "audio", "replacement"] {
+            let fixture = try await makePreparedIngest(repairAuthorization: ReceiptRepairAuthorization(allowed: mode != "denied"))
+            defer { fixture.cleanup() }
+            let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+            _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+                generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+            let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+            let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+            try await Task.sleep(for: .milliseconds(2))
+            if mode == "replacement" {
+                let bytes = try Data(contentsOf: paths.wavURL)
+                // Retain the old inode so the filesystem cannot immediately reuse it.
+                try FileManager.default.moveItem(at: paths.wavURL, to: paths.wavURL.appendingPathExtension("old"))
+                try bytes.write(to: paths.wavURL, options: .withoutOverwriting)
+            } else if mode == "audio" {
+                let handle = try FileHandle(forWritingTo: paths.wavURL)
+                try handle.seek(toOffset: 44)
+                try handle.write(contentsOf: Data([0xff]))
+                try handle.close()
+            }
+            #expect(chmod(paths.wavURL.path, 0o600) == 0)
+            await #expect(throws: (any Error).self) {
+                _ = try await service.repairReceiptBinding(canonicalRecordingID: work.canonicalRecordingID)
+            }
+            let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+            #expect(after.canonicalArtifactIdentity == work.canonicalArtifactIdentity)
+            #expect(after.exactReceipt == work.exactReceipt)
+            #expect(try await fixture.hostStore.dbQueue.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canonical_receipt_repairs")
+            } == 0)
+        }
+    }
+
+    @Test("file changes during owner approval cannot authorize receipt repair")
+    func receiptRepairRechecksAfterApproval() async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        try await Task.sleep(for: .milliseconds(2))
+        #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        let url = paths.wavURL
+        await auth.setAction {
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.seek(toOffset: 44)
+            try handle.write(contentsOf: Data([0xff]))
+            try handle.close()
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await service.repairReceiptBinding(canonicalRecordingID: work.canonicalRecordingID)
+        }
+        #expect(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID)?.canonicalArtifactIdentity == work.canonicalArtifactIdentity)
+    }
+
+    @Test("repair provenance and identity roll back together if final file validation fails")
+    func receiptRepairTransactionRollsBack() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let old = work.canonicalArtifactIdentity
+        let changed = try HostCanonicalArtifactIdentity(deviceNumber: old.deviceNumber + 1,
+            inodeNumber: old.inodeNumber, ownerUserID: old.ownerUserID, posixMode: old.posixMode,
+            linkCount: old.linkCount, fileByteCount: old.fileByteCount,
+            changeTimeSeconds: old.changeTimeSeconds, changeTimeNanoseconds: old.changeTimeNanoseconds)
+        let validation = RepairValidationFailure()
+        await #expect(throws: (any Error).self) {
+            try await fixture.hostStore.commitReceiptBindingRepair(work: work, identity: changed,
+                at: fixture.clock.read(), validateArtifact: { try validation.check() })
+        }
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canonical_receipt_repairs")
+        } == 0)
+        #expect(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID)?.canonicalArtifactIdentity == work.canonicalArtifactIdentity)
+    }
+
     @Test("processing failure never retracts playable committed audio or its receipt")
     func processingFailureLeavesReceiptedPlayableAudio() async throws {
         let fixture = try await makePreparedIngest()
@@ -1040,7 +1178,7 @@ struct CanonicalIngestServiceTests {
 }
 
 private extension CanonicalIngestServiceTests {
-    func makePreparedIngest() async throws -> PreparedCanonicalIngest {
+    func makePreparedIngest(repairAuthorization: any HostLocalOSAuthenticationBoundary = RejectingHostLocalOSAuthenticationBoundary()) async throws -> PreparedCanonicalIngest {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "harc-canonical-ingest-\(UUID().uuidString)",
             isDirectory: true
@@ -1072,6 +1210,7 @@ private extension CanonicalIngestServiceTests {
             stagingRoot: stagingRoot,
             metadata: metadata,
             highWaterMarkStore: highWater,
+            localOSAuthenticationBoundary: repairAuthorization,
             capacityProvider: FixedHostVolumeCapacityProvider(),
             now: { clock.read() }
         )
@@ -1409,5 +1548,33 @@ private extension CanonicalIngestServiceTests {
             guard let url = item as? URL, url.pathExtension == "wav" else { return nil }
             return url
         }
+    }
+}
+
+
+private actor ReceiptRepairAuthorization: HostLocalOSAuthenticationBoundary {
+    let allowed: Bool
+    private(set) var calls = 0
+    private var action: (@Sendable () async throws -> Void)?
+    init(allowed: Bool) { self.allowed = allowed }
+    func setAction(_ action: @escaping @Sendable () async throws -> Void) { self.action = action }
+    func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool {
+        calls += 1
+        try await action?()
+        return allowed
+    }
+    func authorizeInitialGrantExpansion(for deviceID: DeviceID, clientKind: AdoptedClientKind, requestedScopes: [AuthorizationScope]) async throws -> Bool { false }
+    func authorizeGrantScopeChange(for deviceID: DeviceID, currentScopes: [AuthorizationScope], requestedScopes: [AuthorizationScope]) async throws -> Bool { false }
+    func authorizeSameKeyReadoption(for deviceID: DeviceID) async throws -> Bool { false }
+}
+
+private final class RepairValidationFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func check() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        if count == 2 { throw HarcHostError.canonicalArtifactIdentityMismatch }
     }
 }

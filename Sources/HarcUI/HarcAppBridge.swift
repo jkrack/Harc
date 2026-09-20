@@ -95,6 +95,9 @@ public final class HarcAppBridge: ObservableObject {
     /// The configured role is only a preference; this reports whether the
     /// resident Host graph actually completed startup.
     @Published public var hostRuntimeReady: Bool = false
+    @Published public var hostReceiptRepairInProgress = false
+    @Published public var hostReceiptRepairStatus: String?
+    public var onRepairHostReceipts: () -> Void = {}
     /// Mirrors completion of the desktop Client graph and the preserved
     /// On This Mac library bootstrap. Settings uses this instead of treating a
     /// configured Client preference as proof that pairing/storage are usable.

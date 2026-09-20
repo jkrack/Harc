@@ -231,6 +231,7 @@ public struct NoSecurityRegistryFailureInjector: SecurityRegistryFailureInjector
 /// not a caller-supplied Boolean. The resident host app will bridge this to
 /// LocalAuthentication; transport adapters never receive this capability.
 public protocol HostLocalOSAuthenticationBoundary: Sendable {
+    func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool
     func authorizeInitialGrantExpansion(
         for deviceID: DeviceID,
         clientKind: AdoptedClientKind,
@@ -244,6 +245,12 @@ public protocol HostLocalOSAuthenticationBoundary: Sendable {
     ) async throws -> Bool
 
     func authorizeSameKeyReadoption(for deviceID: DeviceID) async throws -> Bool
+}
+
+extension HostLocalOSAuthenticationBoundary {
+    public func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool {
+        false
+    }
 }
 
 /// Fail closed until the resident host app supplies its interactive

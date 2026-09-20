@@ -565,12 +565,12 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 if outbox?.stateMachine.state == .securityBlocked {
                     state = .securityBlocked(
                         master.originRecordingID.recordingUUID,
-                        error.localizedDescription
+                        HarcTransportErrorDiagnostic.describe(error).userFacingMessage
                     )
                 } else {
                     state = .retryNeeded(
                         master.originRecordingID.recordingUUID,
-                        error.localizedDescription
+                        HarcTransportErrorDiagnostic.describe(error).userFacingMessage
                     )
                     scheduleAutomaticRetry(reason: "transfer")
                 }
