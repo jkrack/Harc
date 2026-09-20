@@ -1551,7 +1551,6 @@ private extension CanonicalIngestServiceTests {
     }
 }
 
-
 private actor ReceiptRepairAuthorization: HostLocalOSAuthenticationBoundary {
     let allowed: Bool
     private(set) var calls = 0

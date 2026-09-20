@@ -341,3 +341,11 @@ Keep this file current when repository structure, build tooling, validation
 commands, or non-negotiable product constraints change. Prefer documenting the
 behavioral invariant and the validation command over copying implementation
 details that will drift quickly.
+
+## Explicit local receipt repair
+
+Receipt repair requires local macOS owner authentication, unchanged inode, owner,
+permissions and length, and full signed receipt/audio validation. Preserve original
+publication identity and append an immutable receipt-bound repair chain atomically.
+Incoming RPCs never authorize repair. Validate with
+`swift test --jobs 2 --filter CanonicalIngestServiceTests`.
