@@ -17,8 +17,12 @@ bash scripts/test-mobile-configuration.sh
 The command caps Xcode at two workers, disables parallel testing, uses one
 simulator, and enforces a 30-minute process deadline. CI adds a 32-minute test
 step limit and 45-minute job limit. Apple Silicon and 5 GiB free disk are
-required. The existing bounded runner preserves task-owned process stacks and
-cleans up owned children on timeout. GitHub uploads destination.json, console
+required. The bounded runner samples owned xcodebuild, xctest and SwiftPM test
+processes after rechecking their process identity, and cleans up owned children
+on timeout. Shared CoreSimulator services and simulator-launched test hosts
+outside the owned process tree/group are not sampled. The xcodebuild sample
+captures its cold-install wait; console logs, process inventory and any xcresult
+provide the remaining evidence. GitHub uploads destination.json, console
 logs, runner diagnostics and configuration.xcresult with `always()`, retaining
 them for three days. The selected runtime, device, destination, exact checked-out
 SHA and dirty-tree status are recorded; the SHA is embedded as HarcBuildSHA.

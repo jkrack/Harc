@@ -48,8 +48,14 @@ def capture_stacks(owned, diagnostics_dir):
     if sys.platform != 'darwin':
         return
     for pid, process in owned.items():
+        # Recheck identity immediately before sampling: an exited owned process
+        # must not turn into permission to inspect a reused unrelated PID.
+        live = process_table().get(pid)
+        if not live or (live['group'], live['started']) != (process['group'], process['started']):
+            continue
         executable = Path(process['command'].split()[0]).name
-        if executable in ('swiftpm-testing', 'swiftpm-testing-helper', 'HarcPackageTests'):
+        if executable in ('swiftpm-testing', 'swiftpm-testing-helper', 'HarcPackageTests',
+                          'xcodebuild', 'xctest'):
             try:
                 subprocess.run(['sample', str(pid), '3', '-file',
                                 str(diagnostics_dir / f'sample-{pid}.txt')],
