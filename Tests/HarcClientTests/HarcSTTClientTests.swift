@@ -19,27 +19,20 @@ struct HarcSTTClientTests {
     @Test("status() sends an IPC status request and decodes the response")
     func statusRoundTrip() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd) }
+        defer { close(serverFd); close(clientFd) }
 
         let expected = DaemonStatus(version: "0.1.0", modelLoaded: true, uptimeSeconds: 42)
 
-        // Use a dedicated OS thread so the fake daemon preserves the real
-        // request-then-response ordering even while unrelated Core ML work
-        // saturates Swift's cooperative executor.
-        let fakeDaemon = Thread {
-            do {
-                let request: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
-                #expect(request == .status)
-                try HarcSTTClientTests.writeOnly(IPCResponse.status(expected), to: serverFd)
-            } catch {
-                Issue.record("fake status daemon failed: \(error)")
-            }
+        let fakeDaemon = SocketTestResponder {
+            let request: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
+            #expect(request == .status)
+            try HarcSTTClientTests.writeOnly(IPCResponse.status(expected), to: serverFd)
         }
-        fakeDaemon.start()
 
         let client = HarcSTTClient(connectedFd: clientFd)
         let status = try await client.status()
         #expect(status == expected)
+        try await fakeDaemon.wait()
     }
 
     /// Regression: the old racing-task-group "timeout" could never actually
@@ -51,7 +44,7 @@ struct HarcSTTClientTests {
     @Test("a silent daemon trips the timeout instead of blocking forever")
     func silentPeerTimesOut() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd) }   // held open, never written to: a wedged daemon
+        defer { close(serverFd); close(clientFd) }   // held open, never written to: a wedged daemon
 
         let client = HarcSTTClient(connectedFd: clientFd)
         let began = Date()
@@ -66,7 +59,7 @@ struct HarcSTTClientTests {
     @Test("transcribe() sends a transcribe request and decodes a result")
     func transcribeRoundTrip() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd) }
+        defer { close(serverFd); close(clientFd) }
 
         let result = TranscribeResult(
             text: "hello world",
@@ -75,8 +68,8 @@ struct HarcSTTClientTests {
             processingMs: 42
         )
 
-        let fakeTask = Task.detached { [serverFd] in
-            let req: IPCRequest = try await HarcSTTClientTests.readOnly(fd: serverFd)
+        let fakeTask = SocketTestResponder { [serverFd] in
+            let req: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
             if case .transcribe(let r) = req {
                 #expect(r.audioPath == "/tmp/x.wav")
                 #expect(r.diarize == false)
@@ -89,16 +82,16 @@ struct HarcSTTClientTests {
         let client = HarcSTTClient(connectedFd: clientFd)
         let out = try await client.transcribe(audioPath: "/tmp/x.wav", diarize: false)
         #expect(out == result)
-        try await fakeTask.value
+        try await fakeTask.wait()
     }
 
     @Test("transcribe() maps .error responses to ClientError.transcribeFailed")
     func transcribeErrorMapping() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd) }
+        defer { close(serverFd); close(clientFd) }
 
-        let fakeTask = Task.detached { [serverFd] in
-            _ = try await HarcSTTClientTests.readOnly(fd: serverFd) as IPCRequest
+        let fakeTask = SocketTestResponder { [serverFd] in
+            _ = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd) as IPCRequest
             try HarcSTTClientTests.writeOnly(
                 IPCResponse.error(IPCError(code: "audio_load_failed", message: "no such file")),
                 to: serverFd
@@ -112,16 +105,16 @@ struct HarcSTTClientTests {
             if case ClientError.transcribeFailed(let code, _) = error { return code == "audio_load_failed" }
             return false
         }
-        try await fakeTask.value
+        try await fakeTask.wait()
     }
 
     @Test("termination shuts down a healthy daemon not spawned by this launcher")
     func shutdownInheritedDaemon() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd) }
+        defer { close(serverFd); close(clientFd) }
 
-        let fakeDaemon = Task.detached { [serverFd] in
-            let request: IPCRequest = try await HarcSTTClientTests.readOnly(fd: serverFd)
+        let fakeDaemon = SocketTestResponder { [serverFd] in
+            let request: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
             #expect(request == .shutdown)
             try HarcSTTClientTests.writeOnly(
                 IPCResponse.status(DaemonStatus(
@@ -137,15 +130,13 @@ struct HarcSTTClientTests {
         // the inherited healthy daemon through its socket connection.
         let launcher = DaemonLauncher()
         await launcher.shutdownDaemon(client: HarcSTTClient(connectedFd: clientFd))
-        try await fakeDaemon.value
+        try await fakeDaemon.wait()
     }
 
-    // Helpers reachable from the detached fake tasks.
-    static func readOnly<T: Decodable>(fd: Int32) async throws -> T {
-        try readOnlyBlocking(fd: fd)
-    }
-
+    // Helpers run on dedicated fixture threads.
     static func readOnlyBlocking<T: Decodable>(fd: Int32) throws -> T {
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var buf = Data()
         let scratch = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
         defer { scratch.deallocate() }
@@ -166,7 +157,7 @@ struct HarcSTTClientTests {
     @Test("diarize sends DiarizeRequest and returns DiarizeResult")
     func diarizeRoundTrip() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd) }
+        defer { close(serverFd); close(clientFd) }
 
         let expectedResult = DiarizeResult(
             segments: [SpeakerSegment(speaker: 0, startMs: 0, endMs: 1500)],
@@ -179,8 +170,8 @@ struct HarcSTTClientTests {
             processingMs: 42
         )
 
-        let fakeTask = Task.detached { [serverFd] in
-            let req: IPCRequest = try await HarcSTTClientTests.readOnly(fd: serverFd)
+        let fakeTask = SocketTestResponder { [serverFd] in
+            let req: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
             if case .diarize(let dreq) = req {
                 #expect(dreq.audioPath == "/tmp/dx.wav")
             } else {
@@ -195,6 +186,29 @@ struct HarcSTTClientTests {
         #expect(result.speakers.count == 1)
         #expect(result.speakers[0].vector.count == 256)
         #expect(result.processingMs == 42)
-        try await fakeTask.value
+        try await fakeTask.wait()
+    }
+}
+
+/// Start the peer immediately, before the client can block its executor thread,
+/// and retain a completion stream so failures and lifetime stay within the test.
+private struct SocketTestResponder: Sendable {
+    private let completion: AsyncThrowingStream<Void, Error>
+
+    init(_ operation: @escaping @Sendable () throws -> Void) {
+        let (stream, continuation) = AsyncThrowingStream<Void, Error>.makeStream()
+        completion = stream
+        Thread {
+            do {
+                try operation()
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }.start()
+    }
+
+    func wait() async throws {
+        for try await _ in completion { }
     }
 }

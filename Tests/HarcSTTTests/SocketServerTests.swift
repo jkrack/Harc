@@ -47,7 +47,31 @@ struct SocketServerTests {
 
         let acceptedFd = try await acceptTask.value
         #expect(acceptedFd >= 0)
+        #expect(fcntl(acceptedFd, F_GETFL) & O_NONBLOCK == 0)
         close(acceptedFd)
+    }
+
+    @Test("an idle listener leaves the executor available and shutdown finishes its stream")
+    func idleListenerDoesNotStarveExecutor() async throws {
+        let path = tempSocketPath()
+        let server = try SocketServer(socketPath: path)
+        defer {
+            server.shutdown()
+            try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+        }
+
+        // Under LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 the old detached accept
+        // loop takes the only worker and this suspended task never resumes.
+        await Task.yield()
+        server.shutdown()
+        server.shutdown() // Repeated shutdown must not close a reused descriptor.
+        var iterator = server.clients.makeAsyncIterator()
+        #expect(await iterator.next() == nil)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !server.listenerHasClosedForTesting, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(server.listenerHasClosedForTesting, "shutdown must also release the accept thread and listener fd")
     }
 
     @Test("shutdown removes the socket file")

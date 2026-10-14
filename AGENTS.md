@@ -160,6 +160,14 @@ two workers and stop before free disk falls below 5 GiB.
     swift test --filter CustomerExperienceE2ETests
     swift test
 
+Socket fixtures must keep blocking POSIX I/O off Swift's cooperative executor.
+`Task.detached` uses that same executor. The STT listener accepts on a dedicated
+thread, and socket test peers use dedicated threads with kernel deadlines.
+CI builds tests separately, bounds their execution, and runs this deterministic
+single-worker regression before the full suite:
+
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests'
+
 Run HarcMobile UI qualification through
 `scripts/qualify-harcmobile-ui.sh` so the destination, exact source manifest,
 logs, result bundle, and artifact digest stay together. A dirty-tree run must be

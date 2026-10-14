@@ -34,7 +34,7 @@ struct DaemonIdleClockTests {
         try await Task.sleep(nanoseconds: 200_000_000)
 
         // Plain status ping — no transcription, no model requirement.
-        let response = try roundTrip(.status, socketPath: socketPath)
+        let response = try await roundTrip(.status, socketPath: socketPath)
         guard case .status = response else {
             Issue.record("expected status response, got \(response)")
             return
@@ -48,12 +48,18 @@ struct DaemonIdleClockTests {
         #expect(after.timeIntervalSince(before) >= 0.2)
 
         // Shut the daemon down cleanly.
-        _ = try? roundTrip(.shutdown, socketPath: socketPath)
+        _ = try? await roundTrip(.shutdown, socketPath: socketPath)
         _ = try await withTimeout(seconds: 5) { try await daemonTask.value }
     }
 
     /// Open a connected socket, send one NDJSON request, read one NDJSON response.
-    private func roundTrip(_ request: IPCRequest, socketPath: String) throws -> IPCResponse {
+    private func roundTrip(_ request: IPCRequest, socketPath: String) async throws -> IPCResponse {
+        try await onSocketTestThread {
+            try Self.roundTripBlocking(request, socketPath: socketPath)
+        }
+    }
+
+    private static func roundTripBlocking(_ request: IPCRequest, socketPath: String) throws -> IPCResponse {
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
@@ -66,6 +72,8 @@ struct DaemonIdleClockTests {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw DaemonError.socketCreationFailed(errno) }
         defer { close(fd) }
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
         let connResult = withUnsafePointer(to: &addr) { ap in
             ap.withMemoryRebound(to: sockaddr.self, capacity: 1) { sp in

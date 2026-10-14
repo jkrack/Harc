@@ -18,11 +18,29 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Check build prerequisites
+        run: |
+          test "$(uname -m)" = arm64
+          df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { exit ($4 < 5242880) }'
+
       - name: Protocol schema contract
         run: ./scripts/check-harc-protocol-schemas.sh
 
+      - name: Build package tests
+        timeout-minutes: 30
+        run: swift build --build-tests --jobs 2
+
+      # A single cooperative worker makes blocking socket fixtures deterministic.
+      # Detached Swift tasks share this pool; they are not blocking-I/O threads.
+      - name: Socket executor regression
+        timeout-minutes: 3
+        env:
+          LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
+        run: swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests'
+
       - name: swift test
-        run: swift test
+        timeout-minutes: 10
+        run: swift test --skip-build --jobs 2
 
       - name: Protocol external construction boundaries
         run: ./scripts/test-external-trust-evidence-boundary.sh
@@ -36,6 +54,9 @@ jobs:
       - name: Build Harc.app
         run: |
           xcodebuild \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            -jobs 2 \
             -project Harc.xcodeproj \
             -scheme Harc \
             -configuration Debug \
@@ -44,7 +65,11 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Verify embedded harc-stt
+      - name: Verify embedded helpers
         run: |
           APP=$(xcodebuild -project Harc.xcodeproj -scheme Harc -configuration Debug -showBuildSettings | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2}' | head -1)/Harc.app
           "$APP/Contents/MacOS/harc-stt" --version
+          for helper in harc-stt harc-mcp; do
+            lipo -verify_arch arm64 "$APP/Contents/MacOS/$helper"
+            codesign --verify --strict "$APP/Contents/MacOS/$helper"
+          done
