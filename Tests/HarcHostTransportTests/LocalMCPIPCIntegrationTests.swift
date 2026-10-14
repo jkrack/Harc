@@ -41,6 +41,55 @@ struct LocalMCPIPCIntegrationTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.socketURL.path))
     }
 
+    @Test("idle listener leaves the executor available and shutdown permits immediate restart")
+    func idleListenerAndRestart() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let server = try HarcLocalMCPIPCServer.start(
+            socketURL: fixture.socketURL,
+            service: CapturingToolService(),
+            authorizer: AcceptingPeerAuthorizer()
+        )
+        defer { Task { await server.shutdown() } }
+        await Task.yield()
+        await server.shutdown()
+        let replacement = try HarcLocalMCPIPCServer.start(
+            socketURL: fixture.socketURL,
+            service: CapturingToolService(),
+            authorizer: AcceptingPeerAuthorizer()
+        )
+        await server.shutdown()
+        #expect(FileManager.default.fileExists(atPath: fixture.socketURL.path))
+        await replacement.shutdown()
+        #expect(!FileManager.default.fileExists(atPath: fixture.socketURL.path))
+    }
+
+    @Test("shutdown interrupts a silent accepted peer instead of waiting on its frame deadline")
+    func shutdownInterruptsSilentPeer() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let authorizer = AcceptingPeerAuthorizer()
+        let server = try HarcLocalMCPIPCServer.start(
+            socketURL: fixture.socketURL,
+            service: CapturingToolService(),
+            authorizer: authorizer
+        )
+        defer { Task { await server.shutdown() } }
+        var descriptor = Int32(-1)
+        try #require(fixture.socketURL.path.withCString {
+            harc_ipc_connect($0, &descriptor)
+        } == 0)
+        defer { Darwin.close(descriptor) }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while authorizer.expectedIdentifiers().isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(authorizer.expectedIdentifiers() == ["com.harc.Harc.mcp"])
+        let began = ContinuousClock.now
+        await server.shutdown()
+        #expect(ContinuousClock.now - began < .seconds(2))
+    }
+
     @Test("a live resident listener owns the socket path exclusively")
     func rejectsLiveDuplicate() async throws {
         let fixture = try Fixture()

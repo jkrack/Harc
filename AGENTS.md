@@ -166,7 +166,7 @@ thread, and socket test peers use dedicated threads with kernel deadlines.
 CI builds tests separately, bounds their execution, and runs this deterministic
 single-worker regression before the full suite:
 
-    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests'
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests'
 
 Run HarcMobile UI qualification through
 `scripts/qualify-harcmobile-ui.sh` so the destination, exact source manifest,

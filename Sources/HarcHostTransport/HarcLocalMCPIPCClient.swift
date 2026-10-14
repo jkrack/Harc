@@ -19,20 +19,26 @@ public actor HarcLocalMCPIPCClient: HarcMCPToolCalling {
     public func call(_ request: HarcMCPToolRequest) async -> HarcMCPToolResponse {
         let socketURL = socketURL
         let authorizer = authorizer
-        return await Task.detached {
-            do {
-                return try Self.perform(
-                    request,
-                    socketURL: socketURL,
-                    authorizer: authorizer
-                )
-            } catch {
-                return HarcMCPToolResponse(
-                    text: "Host-mode MCP is unavailable. Open the signed Harc app and try again.",
-                    isError: true
-                )
-            }
-        }.value
+        // The kernel-bounded socket exchange cannot occupy a cooperative
+        // worker: the Host response is produced by async work on that pool.
+        return await withCheckedContinuation { continuation in
+            Thread {
+                let response: HarcMCPToolResponse
+                do {
+                    response = try Self.perform(
+                        request,
+                        socketURL: socketURL,
+                        authorizer: authorizer
+                    )
+                } catch {
+                    response = HarcMCPToolResponse(
+                        text: "Host-mode MCP is unavailable. Open the signed Harc app and try again.",
+                        isError: true
+                    )
+                }
+                continuation.resume(returning: response)
+            }.start()
+        }
     }
 
     private static func perform(

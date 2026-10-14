@@ -17,8 +17,11 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
     private let listenerDescriptor: Int32
     private let socketIdentity: HarcIPCSocketIdentity
     private let stateLock = NSLock()
-    private var acceptTask: Task<Void, Never>?
+    private let acceptCompletion: AsyncStream<Void>
+    private let acceptCompletionContinuation: AsyncStream<Void>.Continuation
+    private var activeClientDescriptor: Int32?
     private var stopped = false
+    private var socketCleanupCompleted = false
 
     public static func start(
         socketURL: URL = defaultSocketURL(),
@@ -42,6 +45,16 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
                 code: errno
             )
         }
+        let listenerFlags = fcntl(descriptor, F_GETFL)
+        guard listenerFlags >= 0,
+              fcntl(descriptor, F_SETFL, listenerFlags | O_NONBLOCK) == 0 else {
+            let code = errno
+            Darwin.close(descriptor)
+            _ = socketURL.path.withCString {
+                harc_ipc_unlink_socket_if_matches($0, geteuid(), identity)
+            }
+            throw HarcLocalMCPIPCError.systemCall(operation: "fcntl", code: code)
+        }
         let server = HarcLocalMCPIPCServer(
             socketURL: socketURL,
             service: service,
@@ -49,9 +62,16 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
             listenerDescriptor: descriptor,
             socketIdentity: identity
         )
-        server.acceptTask = Task.detached { [weak server] in
-            server?.acceptLoop()
-        }
+        let completion = server.acceptCompletionContinuation
+        Thread { [weak server, descriptor] in
+            defer {
+                Darwin.close(descriptor)
+                completion.finish()
+            }
+            // Each bounded iteration releases its strong server reference so
+            // dropping an idle server still runs deinit and stops its worker.
+            while server?.acceptNextConnection() == true { }
+        }.start()
         return server
     }
 
@@ -67,47 +87,68 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
         self.authorizer = authorizer
         self.listenerDescriptor = listenerDescriptor
         self.socketIdentity = socketIdentity
+        let (completion, continuation) = AsyncStream<Void>.makeStream()
+        self.acceptCompletion = completion
+        self.acceptCompletionContinuation = continuation
     }
 
     public func shutdown() async {
-        let task = stateLock.withLock { () -> Task<Void, Never>? in
-            if !stopped {
-                stopped = true
-                _ = Darwin.shutdown(listenerDescriptor, SHUT_RDWR)
-                Darwin.close(listenerDescriptor)
-            }
-            return acceptTask
+        requestStop()
+        for await _ in acceptCompletion { }
+        let shouldUnlink = stateLock.withLock {
+            guard !socketCleanupCompleted else { return false }
+            socketCleanupCompleted = true
+            return true
         }
-        await task?.value
+        guard shouldUnlink else { return }
         _ = socketURL.path.withCString {
-            harc_ipc_unlink_socket_if_matches(
-                $0,
-                geteuid(),
-                socketIdentity
-            )
+            harc_ipc_unlink_socket_if_matches($0, geteuid(), socketIdentity)
         }
     }
 
-    deinit {
+    deinit { requestStop() }
+
+    private func requestStop() {
         stateLock.withLock {
-            if !stopped {
-                stopped = true
-                _ = Darwin.shutdown(listenerDescriptor, SHUT_RDWR)
-                Darwin.close(listenerDescriptor)
+            stopped = true
+            if let descriptor = activeClientDescriptor {
+                _ = Darwin.shutdown(descriptor, SHUT_RDWR)
             }
         }
+        // macOS cannot shutdown a listening socket. The worker's bounded poll
+        // notices stop and closes its own fd before releasing shutdown waiters.
     }
 
-    private func acceptLoop() {
-        while true {
-            var descriptor = Int32(-1)
-            guard harc_ipc_accept(listenerDescriptor, &descriptor) == 0 else {
-                if errno == EINTR { continue }
-                return
-            }
-            handleConnection(descriptor)
+    private var isStopped: Bool { stateLock.withLock { stopped } }
+
+    private func acceptNextConnection() -> Bool {
+        guard !isStopped else { return false }
+        var readiness = pollfd(fd: listenerDescriptor, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&readiness, 1, 250)
+        if ready == 0 { return true }
+        if ready < 0 { return errno == EINTR }
+        guard !isStopped else { return false }
+
+        var descriptor = Int32(-1)
+        guard harc_ipc_accept(listenerDescriptor, &descriptor) == 0 else {
+            return errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK
+        }
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags & ~O_NONBLOCK) == 0 else {
+            Darwin.close(descriptor)
+            return !isStopped
+        }
+        let shouldHandle = stateLock.withLock {
+            guard !stopped else { return false }
+            activeClientDescriptor = descriptor
+            return true
+        }
+        if shouldHandle { handleConnection(descriptor) }
+        stateLock.withLock {
+            activeClientDescriptor = nil
             Darwin.close(descriptor)
         }
+        return !isStopped
     }
 
     private func handleConnection(_ descriptor: Int32) {
