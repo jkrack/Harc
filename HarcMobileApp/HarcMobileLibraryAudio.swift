@@ -296,6 +296,10 @@ final class HarcMobileRecordingAudioController: NSObject {
     private let coordinator: HarcMobileLibraryCoordinator
     private let summary: LibraryRecordingSummary
     private var player: AVAudioPlayer?
+    #if os(iOS)
+    private var sessionOwner: UUID?
+    #endif
+    private var playbackGeneration: UInt64 = 0
 
     init(
         coordinator: HarcMobileLibraryCoordinator,
@@ -310,24 +314,37 @@ final class HarcMobileRecordingAudioController: NSObject {
             if player.isPlaying {
                 player.pause()
                 state = .paused
-            } else {
-                player.play()
+            } else if player.play() {
                 state = .playing
+            } else {
+                stopAndRelease()
+                state = .failed("Harc could not resume audio playback.")
             }
             return
         }
+        playbackGeneration &+= 1
+        let generation = playbackGeneration
+        #if os(iOS)
+        let captureGeneration = HarcMobilePlaybackSession.shared.captureGeneration
+        #endif
         state = .downloading
         do {
             let url = try await coordinator.downloadCanonicalAudio(
                 summary: summary
             )
+            guard generation == playbackGeneration else { return }
             #if os(iOS)
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spokenAudio)
-            try session.setActive(true)
+            guard captureGeneration == HarcMobilePlaybackSession.shared.captureGeneration else {
+                if generation == playbackGeneration { stopAndRelease() }
+                return
+            }
+            sessionOwner = try HarcMobilePlaybackSession.shared.acquire {
+                [weak self] in self?.stopAndRelease()
+            }
             #endif
             let player = try AVAudioPlayer(contentsOf: url)
             player.delegate = self
+            self.player = player
             player.prepareToPlay()
             guard player.play() else {
                 throw HarcMobileLibraryAudioError.playbackFailed
@@ -335,19 +352,34 @@ final class HarcMobileRecordingAudioController: NSObject {
             self.player = player
             state = .playing
         } catch {
+            guard generation == playbackGeneration else { return }
+            player?.stop()
+            player = nil
+            releaseSession()
             try? await coordinator.releaseDownloadedAudio(summary: summary)
             state = .failed(error.localizedDescription)
         }
     }
 
     func stopAndRelease() {
+        playbackGeneration &+= 1
         player?.stop()
         player = nil
+        releaseSession()
         state = .idle
         Task {
             try? await coordinator.releaseDownloadedAudio(summary: summary)
         }
     }
+
+    private func releaseSession() {
+        #if os(iOS)
+        guard let owner = sessionOwner else { return }
+        sessionOwner = nil
+        HarcMobilePlaybackSession.shared.release(owner)
+        #endif
+    }
+
 }
 
 extension HarcMobileRecordingAudioController: @preconcurrency AVAudioPlayerDelegate {
@@ -355,7 +387,9 @@ extension HarcMobileRecordingAudioController: @preconcurrency AVAudioPlayerDeleg
         _ player: AVAudioPlayer,
         successfully flag: Bool
     ) {
+        guard self.player === player else { return }
         self.player = nil
+        releaseSession()
         state = flag ? .idle : .failed("Playback ended unexpectedly.")
         Task {
             try? await coordinator.releaseDownloadedAudio(summary: summary)

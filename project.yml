@@ -251,6 +251,9 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: HarcMobileAppTests
+      # Reuse socket-free, signed bootstrap fixtures; never weaken evidence access.
+      - path: Tests/HarcClientTransportTests/BootstrapClientFixture.swift
+      - path: Tests/HarcClientTransportTests/TransportTrustFixtures.swift
     dependencies:
       - target: HarcMobile
     settings:

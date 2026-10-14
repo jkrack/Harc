@@ -21,6 +21,12 @@ protected local master directly. **Host Library** is a separate cached/remote
 section; its failures must not hide local audio. Forgetting a Host retires trust
 and the saved route, without deleting captures or their durable outbox records.
 
+Playback surfaces share explicit session ownership. Only the current owner may
+deactivate playback, and capture claims priority before requesting microphone
+permission through finalization. Row teardown and stale player callbacks must
+never deactivate a newer player or the recorder. Test with
+`HarcMobilePlaybackSessionTests`; the injected players/session hooks use no audio.
+
 For external review without access to a developer LAN, the Library exposes a
 bundled, read-only offline sample. Its synthetic audio is generated on device;
 it contains no user data, requests no permission, performs no network operation,

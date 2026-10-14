@@ -64,6 +64,7 @@ final class HarcMobileCaptureCoordinator {
     func start() async {
         guard state == .idle || isTerminalState else { return }
         audioLevelMeter.reset()
+        HarcMobilePlaybackSession.shared.beginCapture()
         state = .requestingPermission
         let granted = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { allowed in
@@ -71,6 +72,7 @@ final class HarcMobileCaptureCoordinator {
             }
         }
         guard granted else {
+            HarcMobilePlaybackSession.shared.endCapture()
             state = .failed("Microphone access is required to record.")
             return
         }
@@ -139,6 +141,7 @@ final class HarcMobileCaptureCoordinator {
                 false,
                 options: .notifyOthersOnDeactivation
             )
+            HarcMobilePlaybackSession.shared.endCapture()
             state = .failed(error.localizedDescription)
         }
     }
@@ -175,6 +178,7 @@ final class HarcMobileCaptureCoordinator {
     private func pipelineCompleted(
         _ result: Result<HarcMobileFinalizedMaster, any Error>
     ) async {
+        defer { HarcMobilePlaybackSession.shared.endCapture() }
         audioLevelMeter.reset()
         pipeline = nil
         captureInput = nil

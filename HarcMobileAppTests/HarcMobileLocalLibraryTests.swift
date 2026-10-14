@@ -2,15 +2,20 @@ import AVFoundation
 import Foundation
 import HarcClientStore
 import HarcDomain
+import HarcIdentity
+import HarcProtocol
+import HarcClientTransport
 import HarcTransfer
 import XCTest
 @testable import HarcMobile
 
 @MainActor
 final class HarcMobileLocalLibraryTests: XCTestCase {
+    private let deviceKey = SoftwareP256SigningKey()
+
     private var origin: OriginRecordingID {
         OriginRecordingID(
-            deviceID: try! DeviceID(Data(repeating: 1, count: 32)),
+            deviceID: deviceKey.publicKey.deviceID,
             recordingUUID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
         )
     }
@@ -22,9 +27,11 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
         }
     }
 
-    func testOfflineHostAndPendingOrFailedSyncDoNotHideLocalMaster() throws {
+    func testOfflineHostAndPendingOrFailedSyncDoNotHideLocalMaster() async throws {
+        let adoption = try await validatedOfflineAdoption()
         try withRecording { store, url in
-            // There is deliberately no Host route or live transport in this fixture.
+            // Adoption is persisted, but there is no Host route or live transport.
+            _ = try store.adopt(adoption)
             try assertLocalPlaybackSource(store, url: url, state: .localOnly)
             _ = try store.updateRecordingOutbox(for: origin) {
                 try $0.queue()
@@ -37,8 +44,10 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
         }
     }
 
-    func testSecurityBlockedSyncDoesNotPreventLocalPlayback() throws {
+    func testSecurityBlockedSyncDoesNotPreventLocalPlayback() async throws {
+        let adoption = try await validatedOfflineAdoption()
         try withRecording { store, url in
+            _ = try store.adopt(adoption)
             _ = try store.updateRecordingOutbox(for: origin) {
                 try $0.queue()
                 try $0.beginAuthorization()
@@ -53,6 +62,36 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
             try FileManager.default.removeItem(at: url)
             XCTAssertTrue(try HarcMobileLocalRecording.load(from: store).isEmpty)
         }
+    }
+
+    private func validatedOfflineAdoption() async throws -> ValidatedClientAdoptionEvidence {
+        let fixture = try BootstrapClientFixture(deviceKey: deviceKey)
+        let rpc = BootstrapClientFakeRPC(fixture: fixture)
+        let client = try fixture.client(rpc: rpc)
+        _ = try await client.beginPairing(
+            ticket: fixture.ticket, deviceSigner: deviceKey,
+            requestedScopes: fixture.scopes, deviceLabel: "Synthetic local library fixture"
+        )
+        let result = try await client.getPairingStatus()
+        guard case .approved(let adoption, _) = result else {
+            throw BootstrapClientFakeError.invalidRequest
+        }
+        let proofVerified = await rpc.proofWasVerified()
+        XCTAssertTrue(proofVerified)
+        XCTAssertEqual(adoption.grant.deviceID, origin.deviceID)
+        XCTAssertTrue(adoption.grant.scopes.contains(.recordingUploadOwn))
+        await rpc.disconnect()
+        let disconnected = await rpc.isDisconnected()
+        XCTAssertTrue(disconnected)
+        var request = Harc_V1_GetHostInfoRequestV1()
+        request.protocol = HarcProtocolVersion.v1.protobufV1()
+        do {
+            _ = try await rpc.getHostInfo(request)
+            XCTFail("Disconnected fixture transport must reject requests")
+        } catch {
+            XCTAssertEqual(error as? BootstrapClientFakeError, .disconnected)
+        }
+        return adoption
     }
 
     private func assertLocalPlaybackSource(
@@ -87,7 +126,8 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
         let store = try HarcTransferStore(
             rootDirectory: root,
             installationDeviceID: origin.deviceID,
-            storageAttributes: LocalLibraryStorageAttributes()
+            storageAttributes: LocalLibraryStorageAttributes(),
+            now: { Date(timeIntervalSince1970: Double(TransportTrustFixtures.nowMilliseconds) / 1_000) }
         )
         _ = try store.persistFinalizedCapture(
             FinalizedCapture(

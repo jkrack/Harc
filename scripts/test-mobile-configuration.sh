@@ -18,5 +18,6 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
   -only-testing:HarcMobileAppTests/HarcMobileConfigurationTests \
   -only-testing:HarcMobileAppTests/HarcMobileLocalLibraryTests \
+  -only-testing:HarcMobileAppTests/HarcMobilePlaybackSessionTests \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLocalLibraryIsReachableWithoutHost \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA" test

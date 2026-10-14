@@ -86,7 +86,7 @@ enum TransportTrustFixtures {
             expectedRevision: nil,
             payloadSHA256: HarcSignedEnvelopeV1.payloadDigest(payloadBytes)
         )
-        let signed = try HarcSignedObjectV1.signRegistered(
+        let signed = try signBootstrapFixtureObject(
             header: header,
             exactPayloadBytes: payloadBytes,
             payloadBindings: HarcSignedPayloadBindingsV1(
