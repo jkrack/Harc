@@ -15,6 +15,12 @@ status, and the scoped Host Library cache. Library sync supports snapshots,
 deltas, search, detail, verified audio playback, signed metadata mutations, and
 explicit conflict handling.
 
+Library always presents device-owned masters in **On This iPhone**, independently
+of Host adoption, reachability, search, and transfer progress. Playback uses the
+protected local master directly. **Host Library** is a separate cached/remote
+section; its failures must not hide local audio. Forgetting a Host retires trust
+and the saved route, without deleting captures or their durable outbox records.
+
 For external review without access to a developer LAN, the Library exposes a
 bundled, read-only offline sample. Its synthetic audio is generated on device;
 it contains no user data, requests no permission, performs no network operation,

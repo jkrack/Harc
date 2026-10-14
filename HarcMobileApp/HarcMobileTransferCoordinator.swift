@@ -30,6 +30,46 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
     let masterFileURL: URL
     let transferState: TransferState
     let discontinuities: [CaptureDiscontinuity]
+
+    /// Reads device-owned masters independently of Host adoption, route, or cache.
+    /// Transfer state is a badge, never a prerequisite for local playback.
+    static func load(from store: HarcTransferStore) throws -> [Self] {
+        try store.recordingOutboxes()
+            .compactMap { outbox in
+                guard outbox.finalizedCapture.masterFileState == .present,
+                      FileManager.default.fileExists(
+                        atPath: outbox.finalizedCapture.masterFileURL.path
+                      ) else {
+                    return nil
+                }
+                let capture = outbox.finalizedCapture.capture
+                let transferState: HarcMobileLocalRecording.TransferState =
+                    switch outbox.stateMachine.state {
+                    case .localOnly:
+                        .localOnly
+                    case .failedRecoverable:
+                        .retryNeeded
+                    case .securityBlocked:
+                        .securityBlocked
+                    case .committed:
+                        .committed
+                    default:
+                        .transferring
+                    }
+                return HarcMobileLocalRecording(
+                    id: capture.originRecordingID.recordingUUID,
+                    startedAt: capture.captureStartedAt,
+                    duration: capture.captureEndedAt.timeIntervalSince(
+                        capture.captureStartedAt
+                    ),
+                    masterFileURL:
+                        outbox.finalizedCapture.masterFileURL,
+                    transferState: transferState,
+                    discontinuities: capture.discontinuities
+                )
+            }
+            .sorted { $0.startedAt > $1.startedAt }
+    }
 }
 
 @MainActor
@@ -161,41 +201,7 @@ final class HarcMobileTransferCoordinator {
 
     func refreshLocalRecordings() {
         do {
-            localRecordings = try store.recordingOutboxes()
-                .compactMap { outbox in
-                    guard outbox.finalizedCapture.masterFileState == .present,
-                          FileManager.default.fileExists(
-                            atPath: outbox.finalizedCapture.masterFileURL.path
-                          ) else {
-                        return nil
-                    }
-                    let capture = outbox.finalizedCapture.capture
-                    let transferState: HarcMobileLocalRecording.TransferState =
-                        switch outbox.stateMachine.state {
-                        case .localOnly:
-                            .localOnly
-                        case .failedRecoverable:
-                            .retryNeeded
-                        case .securityBlocked:
-                            .securityBlocked
-                        case .committed:
-                            .committed
-                        default:
-                            .transferring
-                        }
-                    return HarcMobileLocalRecording(
-                        id: capture.originRecordingID.recordingUUID,
-                        startedAt: capture.captureStartedAt,
-                        duration: capture.captureEndedAt.timeIntervalSince(
-                            capture.captureStartedAt
-                        ),
-                        masterFileURL:
-                            outbox.finalizedCapture.masterFileURL,
-                        transferState: transferState,
-                        discontinuities: capture.discontinuities
-                    )
-                }
-                .sorted { $0.startedAt > $1.startedAt }
+            localRecordings = try HarcMobileLocalRecording.load(from: store)
             localRecordingsError = nil
         } catch {
             localRecordingsError = error.localizedDescription

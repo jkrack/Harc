@@ -31,6 +31,18 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         )
     }
 
+    func testLocalLibraryIsReachableWithoutHost() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        let library = app.tabBars.buttons["Library"]
+        XCTAssertTrue(library.waitForExistence(timeout: 10))
+        library.tap()
+        XCTAssertTrue(app.staticTexts["On This iPhone"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[
+            "Recordings saved on this iPhone appear here, even without a Host."
+        ].exists)
+    }
+
     func testOfflineReviewSampleAndPrivacyAreReachableWithoutHost() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()
