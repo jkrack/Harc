@@ -7,6 +7,40 @@ import Testing
 
 @Suite("HarcTransferStore trust persistence")
 struct TrustPersistenceTests {
+    @Test("forgetting and reopening preserves local captures and their files")
+    func forgettingPreservesLocalCapture() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: ClientStoreFixtures.device(),
+            storageAttributes: RecordingStorageAttributes()
+        )
+        let tuple = ClientStoreFixtures.tuple(library: 90, authorityByte: 90)
+        _ = try store.adopt(ClientStoreFixtures.adoption(
+            tuple: tuple, keyByte: 90, transportEpoch: 1, transportByte: 1,
+            grantEpoch: 1, grantByte: 1
+        ))
+        let url = root.appendingPathComponent("synthetic-master.wav")
+        let fixtureBytes = Data(repeating: 0, count: 2_000)
+        try fixtureBytes.write(to: url)
+        _ = try store.persistFinalizedCapture(
+            ClientStoreFixtures.capture(), masterFileURL: url
+        )
+        #expect(try store.forgetActiveHost())
+        let reopened = try HarcTransferStore(
+            rootDirectory: root,
+            installationDeviceID: ClientStoreFixtures.device(),
+            storageAttributes: RecordingStorageAttributes()
+        )
+        #expect(try reopened.activeAdoption() == nil)
+        let rows = try reopened.recordingOutboxes()
+        #expect(rows.count == 1)
+        #expect(rows.first?.finalizedCapture.masterFileState == .present)
+        #expect(rows.first?.finalizedCapture.masterFileURL == url)
+        #expect(try Data(contentsOf: url) == fixtureBytes)
+    }
+
     @Test("forgetting retires authorization but preserves trust history")
     func forgetActiveHost() throws {
         let root = temporaryClientStoreDirectory()

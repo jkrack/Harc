@@ -251,7 +251,6 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: HarcMobileAppTests
-      - path: Tests/HarcClientStoreTests/ClientStoreFixtures.swift
     dependencies:
       - target: HarcMobile
     settings:
