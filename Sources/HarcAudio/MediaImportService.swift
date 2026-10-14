@@ -229,6 +229,30 @@ public actor MediaImportService {
 
         let assetDuration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
 
+        let cancellation = MediaImportCancellation()
+        return try await withTaskCancellationHandler {
+            try await HarcBlockingIO.run {
+                try Self.decodeToCacheWAV(
+                    asset: asset, tracks: tracks, assetDuration: assetDuration,
+                    cacheURL: cacheURL, cancellation: cancellation, progress: progress
+                )
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    /// AVAssetReader synchronously waits for Core Media decoder work. Keep the
+    /// entire reader/writer lifecycle off Swift's cooperative executor.
+    private static func decodeToCacheWAV(
+        asset: AVURLAsset,
+        tracks: [AVAssetTrack],
+        assetDuration: Double,
+        cacheURL: URL,
+        cancellation: MediaImportCancellation,
+        progress: @escaping @Sendable (Double) -> Void
+    ) throws -> Double {
+        try cancellation.check()
         let reader: AVAssetReader
         do {
             reader = try AVAssetReader(asset: asset)
@@ -262,7 +286,7 @@ public actor MediaImportService {
         while let sample = output.copyNextSampleBuffer() {
             // Cooperative cancel: stop decoding promptly and release the
             // reader; the caller removes the partial cache WAV.
-            if Task.isCancelled {
+            if cancellation.isCancelled {
                 reader.cancelReading()
                 try? writer.close()
                 throw CancellationError()
@@ -276,6 +300,7 @@ public actor MediaImportService {
             }
         }
         try writer.close()
+        try cancellation.check()
 
         if reader.status == .failed {
             throw MediaImportError.conversionFailed(
@@ -431,5 +456,17 @@ public actor MediaImportService {
             ))
             return nil
         }
+    }
+}
+
+/// Dedicated I/O threads do not inherit Task.isCancelled. Carry the importing
+/// task's cancellation explicitly while preserving between-buffer cleanup.
+private final class MediaImportCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    var isCancelled: Bool { lock.withLock { cancelled } }
+    func cancel() { lock.withLock { cancelled = true } }
+    func check() throws {
+        if isCancelled { throw CancellationError() }
     }
 }

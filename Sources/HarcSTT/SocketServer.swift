@@ -2,15 +2,16 @@ import Foundation
 import Darwin
 
 /// Unix domain socket server. Binds to `socketPath`, listens, and yields
-/// accepted client file descriptors through `clients`. Not itself an actor —
-/// all state mutation happens on a single internal `Task` so the type is
-/// `Sendable` by construction of the async stream.
+/// accepted client file descriptors through `clients`. Not itself an actor.
+/// Blocking accept runs on a dedicated thread, never Swift's cooperative
+/// executor. A lock protects listener shutdown; the accept thread owns close.
 public final class SocketServer: @unchecked Sendable {
     public let socketPath: String
     public let clients: AsyncStream<Int32>
     private let continuation: AsyncStream<Int32>.Continuation
     private var serverFd: Int32
-    private var acceptTask: Task<Void, Never>?
+    private let listenerLock = NSLock()
+    private var shutdownRequested = false
 
     public init(socketPath: String) throws {
         self.socketPath = socketPath
@@ -66,47 +67,95 @@ public final class SocketServer: @unchecked Sendable {
             throw DaemonError.socketListenFailed(err)
         }
 
+        // poll readiness must never turn into a blocking accept after a race.
+        guard fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else {
+            let err = errno
+            close(fd)
+            throw DaemonError.socketListenFailed(err)
+        }
+
         self.serverFd = fd
         let (stream, cont) = AsyncStream<Int32>.makeStream()
         self.clients = stream
         self.continuation = cont
 
-        self.acceptTask = Task.detached { [weak self] in
-            await self?.runAcceptLoop()
-        }
+        Thread { [self] in
+            runAcceptLoop(fd: fd)
+        }.start()
     }
 
-    private func runAcceptLoop() async {
-        while !Task.isCancelled {
+    private func runAcceptLoop(fd: Int32) {
+        defer {
+            listenerLock.lock()
+            close(fd)
+            serverFd = -1
+            listenerLock.unlock()
+            continuation.finish()
+        }
+        while isListening {
+            var readiness = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&readiness, 1, 250)
+            if ready == 0 { continue }
+            if ready < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            guard isListening else { break }
             var clientAddr = sockaddr_un()
             var clientAddrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
             let clientFd = withUnsafeMutablePointer(to: &clientAddr) { ap in
                 ap.withMemoryRebound(to: sockaddr.self, capacity: 1) { sp in
-                    accept(serverFd, sp, &clientAddrLen)
+                    accept(fd, sp, &clientAddrLen)
                 }
             }
             if clientFd >= 0 {
-                if Self.isAuthorizedPeer(clientFd) {
-                    continuation.yield(clientFd)
+                // ClientConnection owns blocking reads. Do not let listener
+                // nonblocking flags leak into a newly accepted connection.
+                let clientFlags = fcntl(clientFd, F_GETFL)
+                guard clientFlags >= 0,
+                      fcntl(clientFd, F_SETFL, clientFlags & ~O_NONBLOCK) == 0 else {
+                    close(clientFd)
+                    continue
+                }
+                if Self.isAuthorizedPeer(clientFd), isListening {
+                    if case .terminated = continuation.yield(clientFd) {
+                        close(clientFd)
+                    }
                 } else {
                     close(clientFd)
                 }
-            } else if errno == EINTR {
+            } else if errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK {
                 continue
             } else {
-                // EBADF after shutdown() — normal exit.
                 break
             }
         }
-        continuation.finish()
+    }
+
+    private var isListening: Bool {
+        listenerLock.lock()
+        defer { listenerLock.unlock() }
+        return !shutdownRequested && serverFd >= 0
+    }
+
+    /// Confirms that the accept thread released its listener, not merely that
+    /// the consumer stream finished. Used by the shutdown resource regression.
+    var listenerHasClosedForTesting: Bool {
+        listenerLock.lock()
+        defer { listenerLock.unlock() }
+        return serverFd < 0
     }
 
     public func shutdown() {
-        acceptTask?.cancel()
-        if serverFd >= 0 {
-            close(serverFd)
-            serverFd = -1
+        listenerLock.lock()
+        guard !shutdownRequested else {
+            listenerLock.unlock()
+            return
         }
+        shutdownRequested = true
+        // macOS rejects shutdown() on a listening socket with ENOTCONN.
+        // The bounded poll wakes the owner to close it without racing fd reuse.
+        listenerLock.unlock()
         continuation.finish()
         try? FileManager.default.removeItem(atPath: socketPath)
     }

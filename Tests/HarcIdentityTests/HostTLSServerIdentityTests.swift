@@ -4,6 +4,7 @@ import Security
 import Testing
 @testable import HarcIdentity
 
+extension LegacyMacOSKeychainIntegrationTests {
 // These tests install and remove process-global Security.framework keys and
 // certificates. Serial execution keeps one fixture's cleanup from racing
 // another fixture's SecIdentity/key lookup under a heavily parallel full run.
@@ -508,6 +509,8 @@ struct HostTLSServerIdentityTests {
             certificateDER: der
         )
     }
+}
+
 }
 
 private actor ConcurrentStageHostRecordBackend: HostCryptographicStateRecordBackend {

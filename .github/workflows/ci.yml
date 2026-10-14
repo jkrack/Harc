@@ -18,11 +18,42 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Check build prerequisites
+        run: |
+          test "$(uname -m)" = arm64
+          df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { exit ($4 < 5242880) }'
+
       - name: Protocol schema contract
         run: ./scripts/check-harc-protocol-schemas.sh
 
+      - name: Bounded runner lifecycle regression
+        timeout-minutes: 1
+        run: python3 -B -m unittest discover -s scripts/tests -p test_run_package_tests.py
+
+      - name: Build package tests
+        timeout-minutes: 30
+        run: swift build --build-tests --jobs 2
+
+      # A single cooperative worker makes blocking socket fixtures deterministic.
+      # Detached Swift tasks share this pool; they are not blocking-I/O threads.
+      - name: Blocking I/O executor regression
+        timeout-minutes: 3
+        env:
+          LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
+        run: python3 scripts/run-package-tests.py --timeout-seconds 120 --diagnostics-dir .build/test-diagnostics/ipc -- swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests|MediaImportServiceTests'
+
       - name: swift test
-        run: swift test
+        timeout-minutes: 10
+        run: python3 scripts/run-package-tests.py --diagnostics-dir .build/test-diagnostics/full
+
+      - name: Preserve package test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-test-diagnostics
+          path: .build/test-diagnostics
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Protocol external construction boundaries
         run: ./scripts/test-external-trust-evidence-boundary.sh
@@ -36,6 +67,9 @@ jobs:
       - name: Build Harc.app
         run: |
           xcodebuild \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            -jobs 2 \
             -project Harc.xcodeproj \
             -scheme Harc \
             -configuration Debug \
@@ -44,7 +78,11 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Verify embedded harc-stt
+      - name: Verify embedded helpers
         run: |
           APP=$(xcodebuild -project Harc.xcodeproj -scheme Harc -configuration Debug -showBuildSettings | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2}' | head -1)/Harc.app
           "$APP/Contents/MacOS/harc-stt" --version
+          for helper in harc-stt harc-mcp; do
+            lipo "$APP/Contents/MacOS/$helper" -verify_arch arm64
+            codesign --verify --strict "$APP/Contents/MacOS/$helper"
+          done

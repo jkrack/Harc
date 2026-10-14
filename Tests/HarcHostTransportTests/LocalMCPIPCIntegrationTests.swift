@@ -41,6 +41,101 @@ struct LocalMCPIPCIntegrationTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.socketURL.path))
     }
 
+    @Test("idle listener leaves the executor available and shutdown permits immediate restart")
+    func idleListenerAndRestart() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let server = try HarcLocalMCPIPCServer.start(
+            socketURL: fixture.socketURL,
+            service: CapturingToolService(),
+            authorizer: AcceptingPeerAuthorizer()
+        )
+        defer { Task { await server.shutdown() } }
+        await Task.yield()
+        await server.shutdown()
+        let replacement = try HarcLocalMCPIPCServer.start(
+            socketURL: fixture.socketURL,
+            service: CapturingToolService(),
+            authorizer: AcceptingPeerAuthorizer()
+        )
+        await server.shutdown()
+        #expect(FileManager.default.fileExists(atPath: fixture.socketURL.path))
+        await replacement.shutdown()
+        #expect(!FileManager.default.fileExists(atPath: fixture.socketURL.path))
+    }
+
+    @Test("shutdown interrupts a silent accepted peer instead of waiting on its frame deadline")
+    func shutdownInterruptsSilentPeer() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let authorizer = AcceptingPeerAuthorizer()
+        let server = try HarcLocalMCPIPCServer.start(
+            socketURL: fixture.socketURL,
+            service: CapturingToolService(),
+            authorizer: authorizer
+        )
+        defer { Task { await server.shutdown() } }
+        var descriptor = Int32(-1)
+        try #require(fixture.socketURL.path.withCString {
+            harc_ipc_connect($0, &descriptor)
+        } == 0)
+        defer { Darwin.close(descriptor) }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while authorizer.expectedIdentifiers().isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(authorizer.expectedIdentifiers() == ["com.harc.Harc.mcp"])
+        let began = ContinuousClock.now
+        await server.shutdown()
+        #expect(ContinuousClock.now - began < .seconds(2))
+    }
+
+    @Test("cancelled and concurrent shutdown callers join an in-flight service before unlinking")
+    func cancelledShutdownJoinsWorker() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let service = GatedToolService()
+        let server = try HarcLocalMCPIPCServer.start(
+            socketURL: fixture.socketURL, service: service,
+            authorizer: AcceptingPeerAuthorizer()
+        )
+        defer { Task { await service.release(); await server.shutdown() } }
+        let client = HarcLocalMCPIPCClient(
+            socketURL: fixture.socketURL,
+            authorizer: AcceptingPeerAuthorizer()
+        )
+        let request = Task { await client.call(HarcMCPToolRequest(name: "list_recent", arguments: nil)) }
+        var entered = service.entered.stream.makeAsyncIterator()
+        _ = await entered.next()
+        final class Completions: @unchecked Sendable {
+            private let lock = NSLock()
+            private var count = 0
+            func record() { lock.withLock { count += 1 } }
+            var value: Int { lock.withLock { count } }
+        }
+        let completions = Completions()
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await server.shutdown()
+            completions.record()
+        }
+        let concurrent = Task {
+            await server.shutdown()
+            completions.record()
+        }
+        // The failed client proves requestStop has interrupted its socket;
+        // the service remains gated, so the accept worker cannot be finished.
+        #expect((await request.value).isError)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(completions.value == 0)
+        #expect(FileManager.default.fileExists(atPath: fixture.socketURL.path))
+        await service.release()
+        await cancelled.value
+        await concurrent.value
+        #expect(completions.value == 2)
+        #expect(!FileManager.default.fileExists(atPath: fixture.socketURL.path))
+    }
+
     @Test("a live resident listener owns the socket path exclusively")
     func rejectsLiveDuplicate() async throws {
         let fixture = try Fixture()
@@ -159,6 +254,21 @@ private struct Fixture {
 
     func remove() {
         try? FileManager.default.removeItem(at: root)
+    }
+}
+
+private actor GatedToolService: HarcMCPToolCalling {
+    nonisolated let entered = AsyncStream<Void>.makeStream()
+    private var continuation: CheckedContinuation<HarcMCPToolResponse, Never>?
+    func call(_ request: HarcMCPToolRequest) async -> HarcMCPToolResponse {
+        await withCheckedContinuation {
+            continuation = $0
+            entered.continuation.yield()
+        }
+    }
+    func release() {
+        continuation?.resume(returning: HarcMCPToolResponse(text: "released", isError: false))
+        continuation = nil
     }
 }
 

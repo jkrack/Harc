@@ -160,6 +160,17 @@ two workers and stop before free disk falls below 5 GiB.
     swift test --filter CustomerExperienceE2ETests
     swift test
 
+Socket fixtures must keep blocking POSIX I/O off Swift's cooperative executor.
+`Task.detached` uses that same executor. The STT listener accepts on a dedicated
+thread, and socket test peers use dedicated threads with kernel deadlines.
+AVAssetReader conversion also uses a dedicated thread: its synchronous sample
+reads can exhaust the same executor on hosted Macs. Carry task cancellation
+explicitly into that thread.
+CI builds tests separately, bounds their execution, and runs this deterministic
+single-worker regression before the full suite:
+
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests|MediaImportServiceTests'
+
 Run HarcMobile UI qualification through
 `scripts/qualify-harcmobile-ui.sh` so the destination, exact source manifest,
 logs, result bundle, and artifact digest stay together. A dirty-tree run must be
@@ -170,6 +181,18 @@ both the direct socket and local encrypted-relay emulator paths:
 
     ./scripts/test-pairing-lifecycle.sh
     ./scripts/test-pairing-lifecycle-relay-emulator.sh
+
+MCP shutdown joins a cancellation-independent broadcast completion. The accept
+worker owns descriptor close and inode-checked socket unlink before releasing
+any shutdown caller. Runner cleanup tracks the owned process group even when
+its immediate parent exits; verify its lifecycle fixtures with:
+
+    python3 -B -m unittest discover -s scripts/tests -p test_run_package_tests.py
+
+Physical legacy Keychain fixtures share the serialized parent
+`LegacyMacOSKeychainIntegrationTests`. A serialized child suite alone does not
+isolate its Security.framework mutations from sibling suites. Preserve the real
+persistence/identity assertions and concurrency within individual tests.
 
 **Known flaky suites — all timing-based, all load-induced.** Under the full
 parallel suite these intermittently fail while Core ML models compile, then pass

@@ -78,10 +78,16 @@ struct TranscriptAudioPlayerTests {
 
         let player = TranscriptAudioPlayer()
         try await player.load(url: url)
-        await player.play()
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        #expect(await player.isPlaying)
-        await player.pause()
-        #expect(!(await player.isPlaying))
+        // Keep the playback assertions in one player-actor turn. A resumed sleep
+        // can arrive after this short fixture has already finished under load.
+        let states = await Self.playbackStates(player)
+        #expect(states.0)
+        #expect(!states.1)
+    }
+    private static func playbackStates(_ player: isolated TranscriptAudioPlayer) -> (Bool, Bool) {
+        player.play()
+        let started = player.isPlaying
+        player.pause()
+        return (started, player.isPlaying)
     }
 }
