@@ -119,5 +119,35 @@ class RunnerCleanupTests(unittest.TestCase):
                     self.assertEqual(result.returncode, status)
 
 
+class RunnerStackCaptureTests(unittest.TestCase):
+    def test_owned_xcode_is_sampled_without_shared_simulator_or_reused_pid(self):
+        def process(command, group=42, started=('same',)):
+            return dict(command=command, group=group, started=started)
+        owned = {42: process('/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test'),
+                 44: process('/usr/bin/xctest fixture'),
+                 45: process('/usr/bin/python3 fixture')}
+        live = dict(owned)
+        live[44] = process('/usr/bin/xctest unrelated', group=999, started=('new',))
+        live[99] = process('/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild unrelated', group=999)
+        live[100] = process('/Library/Developer/CoreSimulator/Simulator.app/Harc', group=999)
+        with mock.patch.object(runner.sys, 'platform', 'darwin'), \
+             mock.patch.object(runner, 'process_table', return_value=live), \
+             mock.patch.object(runner.subprocess, 'run') as sample:
+            runner.capture_stacks(owned, Path('/task-diagnostics'))
+        sample.assert_called_once_with(
+            ['sample', '42', '3', '-file', '/task-diagnostics/sample-42.txt'],
+            timeout=90, check=False)
+
+    def test_owned_xctest_is_sampled_and_exited_process_is_skipped(self):
+        owned = {42: dict(command='/usr/bin/xctest fixture', group=42, started=('same',)),
+                 43: dict(command='/usr/bin/xcodebuild exited', group=42, started=('old',))}
+        with mock.patch.object(runner.sys, 'platform', 'darwin'), \
+             mock.patch.object(runner, 'process_table', return_value={42: owned[42]}), \
+             mock.patch.object(runner.subprocess, 'run') as sample:
+            runner.capture_stacks(owned, Path('/task-diagnostics'))
+        self.assertEqual(sample.call_args.args[0][1], '42')
+        self.assertEqual(sample.call_count, 1)
+
+
 if __name__ == '__main__':
     unittest.main()
