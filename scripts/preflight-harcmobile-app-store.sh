@@ -91,6 +91,42 @@ require_equal() {
   fi
 }
 
+# Keep source, archive, and exported-app declarations equally strict.
+# CA92.1 covers the app-local Host presentation cache and relay preference.
+# Apple reasons: https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitypereasons
+require_mobile_required_reason_apis() {
+  local manifest="$1"
+  local label="$2"
+  local index
+  local category
+  local reason
+  require_equal \
+    "$(plutil -extract NSPrivacyAccessedAPITypes raw -o - "$manifest" 2>/dev/null || true)" \
+    "2" \
+    "$label contains exactly two required-reason API declarations"
+  for index in 0 1; do
+    if [[ "$index" == "0" ]]; then
+      category="NSPrivacyAccessedAPICategoryFileTimestamp"
+      reason="C617.1"
+    else
+      category="NSPrivacyAccessedAPICategoryUserDefaults"
+      reason="CA92.1"
+    fi
+    require_equal \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPIType raw -o - "$manifest" 2>/dev/null || true)" \
+      "$category" \
+      "$label category $index"
+    require_equal \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons raw -o - "$manifest" 2>/dev/null || true)" \
+      "1" \
+      "$label category $index reason count"
+    require_equal \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$manifest" 2>/dev/null || true)" \
+      "$reason" \
+      "$label category $index reason"
+  done
+}
+
 require_nonempty() {
   local actual="$1"
   local label="$2"
@@ -304,22 +340,9 @@ if [[ -z "$SOURCE_TRACKING_DOMAIN_COUNT" || "$SOURCE_TRACKING_DOMAIN_COUNT" == "
 else
   fail "privacy manifest tracking-domain list must be absent or empty"
 fi
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "1" \
-  "privacy manifest contains one required-reason API declaration"
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "NSPrivacyAccessedAPICategoryFileTimestamp" \
-  "privacy manifest file-timestamp category"
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "1" \
-  "privacy manifest file-timestamp reason count"
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "C617.1" \
-  "privacy manifest file-timestamp reason"
+require_mobile_required_reason_apis \
+  "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" \
+  "privacy manifest"
 require_equal \
   "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.default-data-protection' "$REPO_ROOT/HarcMobileApp/HarcMobile.entitlements" 2>/dev/null || true)" \
   "NSFileProtectionComplete" \
@@ -599,14 +622,9 @@ if [[ -n "$ARCHIVE" ]]; then
         else
           fail "archived privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "NSPrivacyAccessedAPICategoryFileTimestamp" \
-          "archived privacy manifest file-timestamp category"
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "C617.1" \
-          "archived privacy manifest file-timestamp reason"
+        require_mobile_required_reason_apis \
+          "$APP/PrivacyInfo.xcprivacy" \
+          "archived privacy manifest"
       else
         fail "privacy manifest is missing from the archived app"
       fi
@@ -758,14 +776,9 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
         else
           fail "distribution privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "NSPrivacyAccessedAPICategoryFileTimestamp" \
-          "distribution privacy manifest file-timestamp category"
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "C617.1" \
-          "distribution privacy manifest file-timestamp reason"
+        require_mobile_required_reason_apis \
+          "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" \
+          "distribution privacy manifest"
       else
         fail "privacy manifest is missing from the distribution app"
       fi
