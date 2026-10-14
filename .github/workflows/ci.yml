@@ -79,6 +79,6 @@ jobs:
           APP=$(xcodebuild -project Harc.xcodeproj -scheme Harc -configuration Debug -showBuildSettings | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2}' | head -1)/Harc.app
           "$APP/Contents/MacOS/harc-stt" --version
           for helper in harc-stt harc-mcp; do
-            lipo -verify_arch arm64 "$APP/Contents/MacOS/$helper"
+            lipo "$APP/Contents/MacOS/$helper" -verify_arch arm64
             codesign --verify --strict "$APP/Contents/MacOS/$helper"
           done
