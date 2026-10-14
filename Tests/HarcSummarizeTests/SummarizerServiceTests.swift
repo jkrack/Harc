@@ -244,6 +244,29 @@ final class SummarizerServiceTests: XCTestCase {
     }
 
     func test_idleUnloadPolicy_clearsLoadedModelAfterDelay() async throws {
+        let released = expectation(description: "post-generation idle policy releases the container")
+        let service = SummarizerService(loader: { _ in
+            StubContainer(id: "m", onRelease: { released.fulfill() })
+        })
+        // With no container yet, this setter cannot schedule an unload. Only
+        // the summarize completion path can start the real idle timer.
+        await service.setIdleUnloadDelay(0.01)
+        _ = try await service.summarize(
+            transcript: PromptTranscript(utterances: [
+                .init(speaker: nil, text: "hello")
+            ]),
+            modelID: "m",
+            modelDirectory: URL(fileURLWithPath: "/tmp"),
+            budgetWords: 100
+        )
+        // The timer may already have fired by the caller's continuation. Check
+        // actual release and cleared state, not an intermediate warm window.
+        await fulfillment(of: [released], timeout: 5)
+        let loaded = await service.loadedModelID
+        XCTAssertNil(loaded, "Post-generation idle policy must unload the summarizer.")
+    }
+
+    func test_idleUnloadPolicy_releasesWarmModelAfterPolicyChange() async throws {
         let released = expectation(description: "idle policy releases the warm container")
         let service = SummarizerService(loader: { _ in
             StubContainer(id: "m", onRelease: { released.fulfill() })
