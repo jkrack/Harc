@@ -263,6 +263,58 @@ struct MediaImportServiceTests {
         #expect(!MediaImportService.isSupported(URL(fileURLWithPath: "/a/b")))
     }
 
+    @Test("conversion yields the executor and preserves cancellation before transcription")
+    func conversionCancellationYieldsExecutor() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = try makeWAVFixture(seconds: 2.0, in: dir)
+        let base = dir.appendingPathComponent("library")
+        let client = MockTranscribingClient()
+        final class ConversionGate: @unchecked Sendable {
+            let reached = AsyncStream<Void>.makeStream()
+            let release = DispatchSemaphore(value: 0)
+            let lock = NSLock()
+            var entered = false
+            func pauseOnce() {
+                let first = lock.withLock {
+                    if entered { return false }
+                    entered = true
+                    return true
+                }
+                guard first else { return }
+                reached.continuation.yield()
+                // Bound fixture waits even if an executor regression returns.
+                #expect(release.wait(timeout: .now() + 10) == .success)
+            }
+        }
+        let gate = ConversionGate()
+        defer { gate.release.signal() }
+        let importer = Task {
+            try await MediaImportService(
+                client: client, diarizer: nil,
+                destination: RecordingDestination(baseDirectory: base)
+            ).importFile(source: source) { tick in
+                if tick.phase == .converting && tick.fraction > 0 {
+                    gate.pauseOnce()
+                }
+            }
+        }
+        var iterator = gate.reached.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        // On one cooperative worker this continuation must run while the
+        // decoder's progress callback is synchronously waiting on its thread.
+        importer.cancel()
+        gate.release.signal()
+        switch await importer.result {
+        case .success:
+            Issue.record("conversion completed despite cancellation")
+        case .failure(let error):
+            #expect(error is CancellationError)
+        }
+        #expect(client.callCount == 0)
+        #expect(!FileManager.default.fileExists(atPath: base.path))
+    }
+
     @Test("cancelling mid-transcription throws CancellationError and leaves no artifacts")
     func cancellationCleansUp() async throws {
         let dir = try makeTempDir()

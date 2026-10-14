@@ -32,11 +32,11 @@ jobs:
 
       # A single cooperative worker makes blocking socket fixtures deterministic.
       # Detached Swift tasks share this pool; they are not blocking-I/O threads.
-      - name: Socket executor regression
+      - name: Blocking I/O executor regression
         timeout-minutes: 3
         env:
           LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
-        run: python3 scripts/run-package-tests.py --timeout-seconds 120 --diagnostics-dir .build/test-diagnostics/ipc -- swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests'
+        run: python3 scripts/run-package-tests.py --timeout-seconds 120 --diagnostics-dir .build/test-diagnostics/ipc -- swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests|MediaImportServiceTests'
 
       - name: swift test
         timeout-minutes: 10

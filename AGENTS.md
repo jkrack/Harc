@@ -163,10 +163,13 @@ two workers and stop before free disk falls below 5 GiB.
 Socket fixtures must keep blocking POSIX I/O off Swift's cooperative executor.
 `Task.detached` uses that same executor. The STT listener accepts on a dedicated
 thread, and socket test peers use dedicated threads with kernel deadlines.
+AVAssetReader conversion also uses a dedicated thread: its synchronous sample
+reads can exhaust the same executor on hosted Macs. Carry task cancellation
+explicitly into that thread.
 CI builds tests separately, bounds their execution, and runs this deterministic
 single-worker regression before the full suite:
 
-    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests'
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests|MediaImportServiceTests'
 
 Run HarcMobile UI qualification through
 `scripts/qualify-harcmobile-ui.sh` so the destination, exact source manifest,
