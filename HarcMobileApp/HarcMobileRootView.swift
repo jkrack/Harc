@@ -91,6 +91,7 @@ struct HarcMobileRootView: View {
                 for: UIApplication.didBecomeActiveNotification
             )
         ) { _ in
+            model.transferCoordinator?.refreshLocalRecordings()
             model.transferCoordinator?.reconcileBackgroundUploads()
             model.libraryCoordinator?.refresh()
             model.hostHealthCoordinator?.startMonitoring()
@@ -139,18 +140,38 @@ struct HarcMobileRootView: View {
         }
     }
 
-    @ViewBuilder
     private var libraryView: some View {
-        if let coordinator = model.libraryCoordinator {
-            Group {
-                if !libraryQuery.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                ).isEmpty {
-                    librarySearchView(coordinator)
-                } else if coordinator.recordings.isEmpty {
-                    emptyLibraryView(coordinator)
+        List {
+            Section("On This iPhone") {
+                if let transfer = model.transferCoordinator {
+                    if let error = transfer.localRecordingsError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                    }
+                    if transfer.localRecordings.isEmpty {
+                        Text("Recordings saved on this iPhone appear here, even without a Host.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(transfer.localRecordings) { recording in
+                        HarcMobileLocalRecordingRow(
+                            recording: recording,
+                            captureIsActive: model.captureCoordinator?.isRecording ?? false,
+                            retryTransfer: transfer.retry(recordingUUID:)
+                        )
+                    }
                 } else {
-                    List {
+                    Text("Unlock iPhone to open protected local recordings.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("harc.mobile.library.local")
+
+            Section("Host Library") {
+                if let coordinator = model.libraryCoordinator {
+                    if !libraryQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        librarySearchView(coordinator)
+                    } else if coordinator.recordings.isEmpty {
+                        emptyLibraryView(coordinator)
+                    } else {
                         libraryStateRow(coordinator)
                         if coordinator.pendingMutationCount > 0 {
                             Label(
@@ -177,40 +198,46 @@ struct HarcMobileRootView: View {
                             }
                         }
                     }
-                    .refreshable { coordinator.refresh() }
+                } else {
+                    ProgressView("Opening protected Host Library cache…")
                 }
             }
-            .searchable(
-                text: $libraryQuery,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Titles, tags, and transcripts"
-            )
-            .task(id: libraryQuery) {
-                do {
-                    try await Task.sleep(for: .milliseconds(300))
-                    await coordinator.search(libraryQuery)
-                } catch {}
-            }
-            .toolbar {
+        }
+        .refreshable {
+            model.transferCoordinator?.refreshLocalRecordings()
+            model.libraryCoordinator?.refresh()
+        }
+        .onAppear { model.transferCoordinator?.refreshLocalRecordings() }
+        .searchable(
+            text: $libraryQuery,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search Host titles, tags, and transcripts"
+        )
+        .task(id: libraryQuery) {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+                await model.libraryCoordinator?.search(libraryQuery)
+            } catch {}
+        }
+        .toolbar {
+            if let coordinator = model.libraryCoordinator {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu("Library cache", systemImage: "externaldrive") {
+                    Menu("Host Library cache", systemImage: "externaldrive") {
                         Button("Clear downloaded audio") {
                             try? coordinator.clearDownloadedAudio()
                         }
-                        Button("Rebuild Library cache") {
+                        Button("Rebuild Host Library cache") {
                             try? coordinator.resetLibraryCache()
                         }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Refresh Library", systemImage: "arrow.clockwise") {
+                        model.transferCoordinator?.refreshLocalRecordings()
                         coordinator.refresh()
                     }
-                    .disabled(coordinator.isRefreshing)
                 }
             }
-        } else {
-            ProgressView("Opening protected Library cache…")
         }
     }
 
@@ -223,7 +250,7 @@ struct HarcMobileRootView: View {
         } else if coordinator.searchResults.isEmpty {
             ContentUnavailableView.search(text: libraryQuery)
         } else {
-            List {
+            Group {
                 if let message = coordinator.searchMessage {
                     Label(message, systemImage: "wifi.slash")
                         .font(.footnote)
@@ -770,6 +797,7 @@ private struct HarcMobileLocalRecordingRow: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(captureIsActive)
+                .accessibilityIdentifier("harc.mobile.local.play.\(recording.id)")
 
                 Button("Export…", systemImage: "square.and.arrow.up") {
                     audio.stop()
