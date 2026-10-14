@@ -13,7 +13,9 @@ jobs:
 
       - name: Select Xcode
         run: |
-          xcode_path=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
           sudo xcode-select -s "$xcode_path"
           xcodebuild -version
           swift --version
@@ -86,3 +88,42 @@ jobs:
             lipo "$APP/Contents/MacOS/$helper" -verify_arch arm64
             codesign --verify --strict "$APP/Contents/MacOS/$helper"
           done
+
+  mobile-configuration:
+    # Sequential validation: do not overlap the Mac build job.
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version
+      - name: Simulator selection regression
+        run: python3 -B -m unittest discover -s scripts/tests -p test_ios_configuration_simulator.py
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Bounded mobile configuration tests
+        shell: bash
+        timeout-minutes: 32
+        run: |
+          mkdir -p .build/mobile-configuration
+          bash scripts/test-mobile-configuration.sh 2>&1 | tee .build/mobile-configuration/console.log
+      - name: Preserve mobile configuration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-configuration-evidence
+          path: |
+            .build/mobile-configuration/destination.json
+            .build/mobile-configuration/console.log
+            .build/mobile-configuration/configuration.xcresult
+            .build/mobile-configuration/diagnostics
+          if-no-files-found: warn
+          retention-days: 3

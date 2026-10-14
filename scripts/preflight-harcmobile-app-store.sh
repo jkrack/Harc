@@ -263,12 +263,13 @@ raise SystemExit(0 if valid_sparkle and working_without_origin == committed_with
   fi
 fi
 
-READINESS_EVIDENCE="$REPO_ROOT/docs/evidence/2026-08-09-harcmobile-app-store-readiness.md"
+READINESS_EVIDENCE="$REPO_ROOT/docs/evidence/harcmobile-current-candidate-readiness.md"
 EXPECTED_CANDIDATE_LINE="**Candidate configuration:** HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD), iOS 18+, iPhone only"
-if [[ -f "$READINESS_EVIDENCE" ]] && grep -Fxq "$EXPECTED_CANDIDATE_LINE" "$READINESS_EVIDENCE"; then
-  pass "App Store evidence candidate matches source version/build"
+ACTUAL_CANDIDATE_LINE="$(grep -E '^\*\*Candidate configuration:\*\*' "$READINESS_EVIDENCE" 2>/dev/null || true)"
+if [[ -f "$READINESS_EVIDENCE" && "$ACTUAL_CANDIDATE_LINE" == "$EXPECTED_CANDIDATE_LINE" ]]; then
+  pass "current candidate record matches source version/build (identification only)"
 else
-  fail "App Store evidence candidate must match HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD)"
+  fail "current candidate record must match HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD)"
 fi
 
 AVAILABLE_GIB="$(df -Pk "$REPO_ROOT" | awk 'NR == 2 { print int($4 / 1024 / 1024) }')"
@@ -871,11 +872,13 @@ fi
 
 echo ""
 if [[ "$FAILURES" -eq 0 ]]; then
-  echo "Local HarcMobile App Store preflight passed."
+  echo "Repository-side HarcMobile inputs passed; submission readiness is not implied."
 else
   echo "Local HarcMobile App Store preflight has $FAILURES open item(s)."
 fi
-echo "External release evidence remains authoritative in:"
+echo "Current candidate and open qualification gates:"
+echo "  docs/evidence/harcmobile-current-candidate-readiness.md"
+echo "Historical evidence retains its original source/artifact scope:"
 echo "  docs/evidence/2026-08-09-harcmobile-app-store-readiness.md"
 
 if [[ "$FAILURES" -ne 0 && "$REPORT_ONLY" -ne 1 ]]; then
