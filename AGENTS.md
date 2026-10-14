@@ -182,6 +182,13 @@ both the direct socket and local encrypted-relay emulator paths:
     ./scripts/test-pairing-lifecycle.sh
     ./scripts/test-pairing-lifecycle-relay-emulator.sh
 
+MCP shutdown joins a cancellation-independent broadcast completion. The accept
+worker owns descriptor close and inode-checked socket unlink before releasing
+any shutdown caller. Runner cleanup tracks the owned process group even when
+its immediate parent exits; verify its lifecycle fixtures with:
+
+    python3 -B -m unittest discover -s scripts/tests -p test_run_package_tests.py
+
 Physical legacy Keychain fixtures share the serialized parent
 `LegacyMacOSKeychainIntegrationTests`. A serialized child suite alone does not
 isolate its Security.framework mutations from sibling suites. Preserve the real

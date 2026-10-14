@@ -11,17 +11,13 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
             .appendingPathComponent("Harc/IPC/host.sock")
     }
 
-    private let socketURL: URL
     private let service: any HarcMCPToolCalling
     private let authorizer: any MCPPeerAuthorizing
     private let listenerDescriptor: Int32
-    private let socketIdentity: HarcIPCSocketIdentity
     private let stateLock = NSLock()
-    private let acceptCompletion: AsyncStream<Void>
-    private let acceptCompletionContinuation: AsyncStream<Void>.Continuation
+    private let acceptCompletion = HarcLocalMCPAcceptCompletion()
     private var activeClientDescriptor: Int32?
     private var stopped = false
-    private var socketCleanupCompleted = false
 
     public static func start(
         socketURL: URL = defaultSocketURL(),
@@ -56,16 +52,17 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
             throw HarcLocalMCPIPCError.systemCall(operation: "fcntl", code: code)
         }
         let server = HarcLocalMCPIPCServer(
-            socketURL: socketURL,
             service: service,
             authorizer: authorizer,
-            listenerDescriptor: descriptor,
-            socketIdentity: identity
+            listenerDescriptor: descriptor
         )
-        let completion = server.acceptCompletionContinuation
-        Thread { [weak server, descriptor] in
+        let completion = server.acceptCompletion
+        Thread { [weak server, descriptor, socketURL, socketIdentity = identity] in
             defer {
                 Darwin.close(descriptor)
+                _ = socketURL.path.withCString {
+                    harc_ipc_unlink_socket_if_matches($0, geteuid(), socketIdentity)
+                }
                 completion.finish()
             }
             // Each bounded iteration releases its strong server reference so
@@ -76,34 +73,20 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
     }
 
     private init(
-        socketURL: URL,
         service: any HarcMCPToolCalling,
         authorizer: any MCPPeerAuthorizing,
-        listenerDescriptor: Int32,
-        socketIdentity: HarcIPCSocketIdentity
+        listenerDescriptor: Int32
     ) {
-        self.socketURL = socketURL
         self.service = service
         self.authorizer = authorizer
         self.listenerDescriptor = listenerDescriptor
-        self.socketIdentity = socketIdentity
-        let (completion, continuation) = AsyncStream<Void>.makeStream()
-        self.acceptCompletion = completion
-        self.acceptCompletionContinuation = continuation
     }
 
     public func shutdown() async {
         requestStop()
-        for await _ in acceptCompletion { }
-        let shouldUnlink = stateLock.withLock {
-            guard !socketCleanupCompleted else { return false }
-            socketCleanupCompleted = true
-            return true
-        }
-        guard shouldUnlink else { return }
-        _ = socketURL.path.withCString {
-            harc_ipc_unlink_socket_if_matches($0, geteuid(), socketIdentity)
-        }
+        // Caller cancellation cannot release resources still owned by the
+        // accept worker, or terminate the join for other shutdown callers.
+        await acceptCompletion.wait()
     }
 
     deinit { requestStop() }
@@ -212,6 +195,35 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
             text: "The local Host did not produce an MCP response.",
             isError: true
         )
+    }
+}
+
+/// A broadcast join, independent of any waiting task's cancellation. Only
+/// the accept thread finishes it, after closing and unlinking its listener.
+private final class HarcLocalMCPAcceptCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let ready = lock.withLock {
+                if completed { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if ready { continuation.resume() }
+        }
+    }
+
+    func finish() {
+        let pending = lock.withLock {
+            completed = true
+            let pending = waiters
+            waiters.removeAll()
+            return pending
+        }
+        for waiter in pending { waiter.resume() }
     }
 }
 

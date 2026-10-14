@@ -26,6 +26,10 @@ jobs:
       - name: Protocol schema contract
         run: ./scripts/check-harc-protocol-schemas.sh
 
+      - name: Bounded runner lifecycle regression
+        timeout-minutes: 1
+        run: python3 -B -m unittest discover -s scripts/tests -p test_run_package_tests.py
+
       - name: Build package tests
         timeout-minutes: 30
         run: swift build --build-tests --jobs 2
