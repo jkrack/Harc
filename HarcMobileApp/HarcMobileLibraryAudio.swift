@@ -296,7 +296,9 @@ final class HarcMobileRecordingAudioController: NSObject {
     private let coordinator: HarcMobileLibraryCoordinator
     private let summary: LibraryRecordingSummary
     private var player: AVAudioPlayer?
+    #if os(iOS)
     private var sessionOwner: UUID?
+    #endif
     private var playbackGeneration: UInt64 = 0
 
     init(
@@ -322,20 +324,24 @@ final class HarcMobileRecordingAudioController: NSObject {
         }
         playbackGeneration &+= 1
         let generation = playbackGeneration
+        #if os(iOS)
         let captureGeneration = HarcMobilePlaybackSession.shared.captureGeneration
+        #endif
         state = .downloading
         do {
             let url = try await coordinator.downloadCanonicalAudio(
                 summary: summary
             )
-            guard generation == playbackGeneration,
-                  captureGeneration == HarcMobilePlaybackSession.shared.captureGeneration else {
+            guard generation == playbackGeneration else { return }
+            #if os(iOS)
+            guard captureGeneration == HarcMobilePlaybackSession.shared.captureGeneration else {
                 if generation == playbackGeneration { stopAndRelease() }
                 return
             }
             sessionOwner = try HarcMobilePlaybackSession.shared.acquire {
                 [weak self] in self?.stopAndRelease()
             }
+            #endif
             let player = try AVAudioPlayer(contentsOf: url)
             player.delegate = self
             self.player = player
@@ -367,9 +373,11 @@ final class HarcMobileRecordingAudioController: NSObject {
     }
 
     private func releaseSession() {
+        #if os(iOS)
         guard let owner = sessionOwner else { return }
         sessionOwner = nil
         HarcMobilePlaybackSession.shared.release(owner)
+        #endif
     }
 
 }
