@@ -21,32 +21,24 @@ public struct ClientConnection: Sendable {
         defer { close(fd) }
 
         var buffer = Data()
-        let chunkSize = 64 * 1024
-        let readBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: chunkSize)
-        defer { readBuf.deallocate() }
-
-        let encoder = JSONEncoder()
         let decoder = JSONDecoder()
 
         while true {
-            let n = read(fd, readBuf, chunkSize)
-            if n > 0 {
-                buffer.append(readBuf, count: n)
-                if buffer.count > Self.maxRequestBytes {
-                    try? writeResponse(
-                        .error(IPCError(
-                            code: "request_too_large",
-                            message: "IPC request exceeded \(Self.maxRequestBytes) bytes."
-                        )),
-                        encoder: encoder
-                    )
+            let chunk: Data
+            do {
+                guard let next = try await HarcBlockingIO.run({ try readChunk() }) else {
                     return false
                 }
-            } else if n == 0 {
-                return false // EOF
-            } else if errno == EINTR {
-                continue
-            } else {
+                chunk = next
+            } catch { return false }
+            buffer.append(chunk)
+            if buffer.count > Self.maxRequestBytes {
+                try? await HarcBlockingIO.run {
+                    try writeResponse(.error(IPCError(
+                        code: "request_too_large",
+                        message: "IPC request exceeded \(Self.maxRequestBytes) bytes."
+                    )))
+                }
                 return false
             }
 
@@ -70,7 +62,7 @@ public struct ClientConnection: Sendable {
                 }
 
                 do {
-                    try writeResponse(response, encoder: encoder)
+                    try await HarcBlockingIO.run { try writeResponse(response) }
                 } catch {
                     // Can't encode response — nothing to do but drop it.
                 }
@@ -80,8 +72,22 @@ public struct ClientConnection: Sendable {
         }
     }
 
-    private func writeResponse(_ response: IPCResponse, encoder: JSONEncoder) throws {
-        var payload = try encoder.encode(response)
+    private func readChunk() throws -> Data? {
+        var chunk = Data(count: 64 * 1024)
+        while true {
+            let count = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+            if count > 0 {
+                chunk.count = count
+                return chunk
+            }
+            if count == 0 { return nil }
+            if errno == EINTR { continue }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    private func writeResponse(_ response: IPCResponse) throws {
+        var payload = try JSONEncoder().encode(response)
         payload.append(0x0A)
         payload.withUnsafeBytes { raw in
             var written = 0

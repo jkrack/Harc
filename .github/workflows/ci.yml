@@ -36,11 +36,20 @@ jobs:
         timeout-minutes: 3
         env:
           LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
-        run: swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests'
+        run: python3 scripts/run-package-tests.py --timeout-seconds 120 --diagnostics-dir .build/test-diagnostics/ipc -- swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests'
 
       - name: swift test
         timeout-minutes: 10
-        run: swift test --skip-build --jobs 2
+        run: python3 scripts/run-package-tests.py --diagnostics-dir .build/test-diagnostics/full
+
+      - name: Preserve package test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-test-diagnostics
+          path: .build/test-diagnostics
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Protocol external construction boundaries
         run: ./scripts/test-external-trust-evidence-boundary.sh

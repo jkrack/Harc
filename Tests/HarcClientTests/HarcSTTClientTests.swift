@@ -13,17 +13,21 @@ struct HarcSTTClientTests {
             socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
         }
         try #require(ok == 0, "socketpair failed")
+        var enabled: Int32 = 1
+        for fd in pair {
+            _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
+        }
         return (pair[0], pair[1])
     }
 
     @Test("status() sends an IPC status request and decodes the response")
     func statusRoundTrip() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd); close(clientFd) }
+        defer { close(clientFd) }
 
         let expected = DaemonStatus(version: "0.1.0", modelLoaded: true, uptimeSeconds: 42)
 
-        let fakeDaemon = SocketTestResponder {
+        let fakeDaemon = SocketTestResponder(fd: serverFd) {
             let request: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
             #expect(request == .status)
             try HarcSTTClientTests.writeOnly(IPCResponse.status(expected), to: serverFd)
@@ -47,19 +51,36 @@ struct HarcSTTClientTests {
         defer { close(serverFd); close(clientFd) }   // held open, never written to: a wedged daemon
 
         let client = HarcSTTClient(connectedFd: clientFd)
-        let began = Date()
-        await #expect(throws: ClientError.self) {
+        await #expect {
             _ = try await client.roundTripWithTimeout(.status, seconds: 1)
+        } throws: { error in
+            if case ClientError.timeout(let seconds) = error { return seconds == 1 }
+            return false
         }
-        // Must return promptly after the 1 s deadline — not whenever the
-        // peer deigns to close.
-        #expect(Date().timeIntervalSince(began) < 5)
+        // Measure the actual I/O deadline inside its worker. Caller resumption
+        // can be delayed by unrelated CPU work in a full single-worker suite.
+        let measured = try await HarcBlockingIO.run { () -> (TimeInterval, ClientError?) in
+            let began = Date()
+            do {
+                _ = try client.roundTripBlocking(.status, timeoutSeconds: 1)
+                return (Date().timeIntervalSince(began), nil)
+            } catch let error as ClientError {
+                return (Date().timeIntervalSince(began), error)
+            }
+        }
+        if case .timeout(let seconds)? = measured.1 {
+            #expect(seconds == 1)
+        } else {
+            Issue.record("silent socket must fail with the exact kernel timeout")
+        }
+        #expect(measured.0 < 5)
+
     }
 
     @Test("transcribe() sends a transcribe request and decodes a result")
     func transcribeRoundTrip() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd); close(clientFd) }
+        defer { close(clientFd) }
 
         let result = TranscribeResult(
             text: "hello world",
@@ -68,7 +89,7 @@ struct HarcSTTClientTests {
             processingMs: 42
         )
 
-        let fakeTask = SocketTestResponder { [serverFd] in
+        let fakeTask = SocketTestResponder(fd: serverFd) { [serverFd] in
             let req: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
             if case .transcribe(let r) = req {
                 #expect(r.audioPath == "/tmp/x.wav")
@@ -88,9 +109,9 @@ struct HarcSTTClientTests {
     @Test("transcribe() maps .error responses to ClientError.transcribeFailed")
     func transcribeErrorMapping() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd); close(clientFd) }
+        defer { close(clientFd) }
 
-        let fakeTask = SocketTestResponder { [serverFd] in
+        let fakeTask = SocketTestResponder(fd: serverFd) { [serverFd] in
             _ = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd) as IPCRequest
             try HarcSTTClientTests.writeOnly(
                 IPCResponse.error(IPCError(code: "audio_load_failed", message: "no such file")),
@@ -111,9 +132,9 @@ struct HarcSTTClientTests {
     @Test("termination shuts down a healthy daemon not spawned by this launcher")
     func shutdownInheritedDaemon() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd); close(clientFd) }
+        defer { close(clientFd) }
 
-        let fakeDaemon = SocketTestResponder { [serverFd] in
+        let fakeDaemon = SocketTestResponder(fd: serverFd) { [serverFd] in
             let request: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
             #expect(request == .shutdown)
             try HarcSTTClientTests.writeOnly(
@@ -135,7 +156,7 @@ struct HarcSTTClientTests {
 
     // Helpers run on dedicated fixture threads.
     static func readOnlyBlocking<T: Decodable>(fd: Int32) throws -> T {
-        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        var timeout = timeval(tv_sec: 30, tv_usec: 0)
         _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var buf = Data()
         let scratch = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
@@ -157,7 +178,7 @@ struct HarcSTTClientTests {
     @Test("diarize sends DiarizeRequest and returns DiarizeResult")
     func diarizeRoundTrip() async throws {
         let (serverFd, clientFd) = try makePair()
-        defer { close(serverFd); close(clientFd) }
+        defer { close(clientFd) }
 
         let expectedResult = DiarizeResult(
             segments: [SpeakerSegment(speaker: 0, startMs: 0, endMs: 1500)],
@@ -170,7 +191,7 @@ struct HarcSTTClientTests {
             processingMs: 42
         )
 
-        let fakeTask = SocketTestResponder { [serverFd] in
+        let fakeTask = SocketTestResponder(fd: serverFd) { [serverFd] in
             let req: IPCRequest = try HarcSTTClientTests.readOnlyBlocking(fd: serverFd)
             if case .diarize(let dreq) = req {
                 #expect(dreq.audioPath == "/tmp/dx.wav")
@@ -195,10 +216,11 @@ struct HarcSTTClientTests {
 private struct SocketTestResponder: Sendable {
     private let completion: AsyncThrowingStream<Void, Error>
 
-    init(_ operation: @escaping @Sendable () throws -> Void) {
+    init(fd: Int32, _ operation: @escaping @Sendable () throws -> Void) {
         let (stream, continuation) = AsyncThrowingStream<Void, Error>.makeStream()
         completion = stream
         Thread {
+            defer { close(fd) }
             do {
                 try operation()
                 continuation.finish()

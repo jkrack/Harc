@@ -17,7 +17,7 @@ func onSocketTestThread<T: Sendable>(
 func socketTestRoundTrip(fd: Int32, request: Data) async throws -> IPCResponse {
     try await onSocketTestThread {
         defer { shutdown(fd, SHUT_RDWR) }
-        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        var timeout = timeval(tv_sec: 30, tv_usec: 0)
         guard setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
                          socklen_t(MemoryLayout<timeval>.size)) == 0,
               setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
