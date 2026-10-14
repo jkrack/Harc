@@ -10,6 +10,16 @@ software gates are strong, but Simulator, one available Pro iPhone, and local
 transport emulators cannot qualify the oldest/current-non-Pro device matrix,
 real secondary Mac, two-network operation, or App Store distribution service.
 
+## Current launch scope — 2026-10-14
+
+The agreed first store release is the iPhone companion app, with the Mac remaining
+on direct Sparkle distribution. The [iPhone companion launch plan](2026-10-14-iphone-companion-launch.md)
+records the review baseline, implemented foundation, remaining evidence, milestones,
+effort assumptions, and submission authority. Mac App Store and independent phone AI
+are deferred. Preserve this plan's dated evidence; the newer plan separates
+secondary-Mac Client qualification and issue #105 from the phone critical path
+unless evidence establishes a dependency.
+
 ## Product operating model
 
 Harc should feel like one local recording utility even when a Host exists:
