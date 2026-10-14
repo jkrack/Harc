@@ -91,6 +91,42 @@ require_equal() {
   fi
 }
 
+# Keep source, archive, and exported-app declarations equally strict.
+# CA92.1 covers the app-local Host presentation cache and relay preference.
+# Apple reasons: https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitypereasons
+require_mobile_required_reason_apis() {
+  local manifest="$1"
+  local label="$2"
+  local index
+  local category
+  local reason
+  require_equal \
+    "$(plutil -extract NSPrivacyAccessedAPITypes raw -o - "$manifest" 2>/dev/null || true)" \
+    "2" \
+    "$label contains exactly two required-reason API declarations"
+  for index in 0 1; do
+    if [[ "$index" == "0" ]]; then
+      category="NSPrivacyAccessedAPICategoryFileTimestamp"
+      reason="C617.1"
+    else
+      category="NSPrivacyAccessedAPICategoryUserDefaults"
+      reason="CA92.1"
+    fi
+    require_equal \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPIType raw -o - "$manifest" 2>/dev/null || true)" \
+      "$category" \
+      "$label category $index"
+    require_equal \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons raw -o - "$manifest" 2>/dev/null || true)" \
+      "1" \
+      "$label category $index reason count"
+    require_equal \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$manifest" 2>/dev/null || true)" \
+      "$reason" \
+      "$label category $index reason"
+  done
+}
+
 require_nonempty() {
   local actual="$1"
   local label="$2"
@@ -227,12 +263,13 @@ raise SystemExit(0 if valid_sparkle and working_without_origin == committed_with
   fi
 fi
 
-READINESS_EVIDENCE="$REPO_ROOT/docs/evidence/2026-08-09-harcmobile-app-store-readiness.md"
+READINESS_EVIDENCE="$REPO_ROOT/docs/evidence/harcmobile-current-candidate-readiness.md"
 EXPECTED_CANDIDATE_LINE="**Candidate configuration:** HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD), iOS 18+, iPhone only"
-if [[ -f "$READINESS_EVIDENCE" ]] && grep -Fxq "$EXPECTED_CANDIDATE_LINE" "$READINESS_EVIDENCE"; then
-  pass "App Store evidence candidate matches source version/build"
+ACTUAL_CANDIDATE_LINE="$(grep -E '^\*\*Candidate configuration:\*\*' "$READINESS_EVIDENCE" 2>/dev/null || true)"
+if [[ -f "$READINESS_EVIDENCE" && "$ACTUAL_CANDIDATE_LINE" == "$EXPECTED_CANDIDATE_LINE" ]]; then
+  pass "current candidate record matches source version/build (identification only)"
 else
-  fail "App Store evidence candidate must match HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD)"
+  fail "current candidate record must match HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD)"
 fi
 
 AVAILABLE_GIB="$(df -Pk "$REPO_ROOT" | awk 'NR == 2 { print int($4 / 1024 / 1024) }')"
@@ -304,22 +341,9 @@ if [[ -z "$SOURCE_TRACKING_DOMAIN_COUNT" || "$SOURCE_TRACKING_DOMAIN_COUNT" == "
 else
   fail "privacy manifest tracking-domain list must be absent or empty"
 fi
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "1" \
-  "privacy manifest contains one required-reason API declaration"
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "NSPrivacyAccessedAPICategoryFileTimestamp" \
-  "privacy manifest file-timestamp category"
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "1" \
-  "privacy manifest file-timestamp reason count"
-require_equal \
-  "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-  "C617.1" \
-  "privacy manifest file-timestamp reason"
+require_mobile_required_reason_apis \
+  "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" \
+  "privacy manifest"
 require_equal \
   "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.default-data-protection' "$REPO_ROOT/HarcMobileApp/HarcMobile.entitlements" 2>/dev/null || true)" \
   "NSFileProtectionComplete" \
@@ -599,14 +623,9 @@ if [[ -n "$ARCHIVE" ]]; then
         else
           fail "archived privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "NSPrivacyAccessedAPICategoryFileTimestamp" \
-          "archived privacy manifest file-timestamp category"
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "C617.1" \
-          "archived privacy manifest file-timestamp reason"
+        require_mobile_required_reason_apis \
+          "$APP/PrivacyInfo.xcprivacy" \
+          "archived privacy manifest"
       else
         fail "privacy manifest is missing from the archived app"
       fi
@@ -758,14 +777,9 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
         else
           fail "distribution privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPIType raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "NSPrivacyAccessedAPICategoryFileTimestamp" \
-          "distribution privacy manifest file-timestamp category"
-        require_equal \
-          "$(plutil -extract NSPrivacyAccessedAPITypes.0.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
-          "C617.1" \
-          "distribution privacy manifest file-timestamp reason"
+        require_mobile_required_reason_apis \
+          "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" \
+          "distribution privacy manifest"
       else
         fail "privacy manifest is missing from the distribution app"
       fi
@@ -858,11 +872,13 @@ fi
 
 echo ""
 if [[ "$FAILURES" -eq 0 ]]; then
-  echo "Local HarcMobile App Store preflight passed."
+  echo "Repository-side HarcMobile inputs passed; submission readiness is not implied."
 else
   echo "Local HarcMobile App Store preflight has $FAILURES open item(s)."
 fi
-echo "External release evidence remains authoritative in:"
+echo "Current candidate and open qualification gates:"
+echo "  docs/evidence/harcmobile-current-candidate-readiness.md"
+echo "Historical evidence retains its original source/artifact scope:"
 echo "  docs/evidence/2026-08-09-harcmobile-app-store-readiness.md"
 
 if [[ "$FAILURES" -ne 0 && "$REPORT_ONLY" -ne 1 ]]; then
