@@ -179,6 +179,11 @@ both the direct socket and local encrypted-relay emulator paths:
     ./scripts/test-pairing-lifecycle.sh
     ./scripts/test-pairing-lifecycle-relay-emulator.sh
 
+Physical legacy Keychain fixtures share the serialized parent
+`LegacyMacOSKeychainIntegrationTests`. A serialized child suite alone does not
+isolate its Security.framework mutations from sibling suites. Preserve the real
+persistence/identity assertions and concurrency within individual tests.
+
 **Known flaky suites — all timing-based, all load-induced.** Under the full
 parallel suite these intermittently fail while Core ML models compile, then pass
 immediately in isolation; that load/no-load contrast is the tell. Observed again
