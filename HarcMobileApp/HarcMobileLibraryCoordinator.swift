@@ -22,6 +22,53 @@ struct HarcLibraryAudioPolicy: Equatable, Sendable {
     )
 }
 
+enum HarcMobileLibraryRefreshOperation: String, Sendable {
+    case openingSession = "Host connection"
+    case protectedEdits = "Protected edit sync"
+    case metadata = "Library metadata refresh"
+    case speakerProfiles = "Speaker profile update"
+    case finishing = "Completing Host refresh"
+}
+
+enum HarcMobileLibraryRefreshPresentation {
+    static func failureMessage(
+        _ error: any Error,
+        operation: HarcMobileLibraryRefreshOperation,
+        hasCachedRows: Bool
+    ) -> String {
+        // RPC messages, localized descriptions, and nested causes are untrusted:
+        // they can contain credentials or user content. Only expose the typed
+        // status and fixed app-owned labels or allowlisted repair guidance.
+        let detail: String
+        if let connectorError = error as? HarcMobileHostSessionConnectorError,
+           case .pairingRepairRequired = connectorError {
+            detail = HarcMobileHostSessionConnectorError.pairingRepairGuidance
+        } else {
+            let status = HarcTransportErrorDiagnostic.describe(error).rpcCode
+            detail = status.map { "Host request failed (\($0))." }
+                ?? "Host request failed."
+        }
+        let prefix = hasCachedRows ? "Showing cached Host Library. " : ""
+        return "\(prefix)\(operation.rawValue): \(detail)"
+    }
+}
+
+/// The refresh lifecycle accepts an opened session so its stage ordering and
+/// cancellation ownership can be exercised without real credentials or sockets.
+/// Production sessions are always opened by the authenticated Host connector.
+@MainActor
+struct HarcMobileLibraryRefreshSession {
+    typealias Operation = @MainActor () async throws -> Void
+    typealias Opener = @MainActor () async throws -> Self
+
+    let protectedEdits: Operation?
+    /// Absent when the adopted grant does not allow metadata reads.
+    let metadata: Operation?
+    let speakerProfiles: Operation?
+    let finish: Operation
+    let abort: @MainActor () async -> Void
+}
+
 @MainActor
 @Observable
 final class HarcMobileLibraryCoordinator {
@@ -38,6 +85,7 @@ final class HarcMobileLibraryCoordinator {
         case unpaired
         case accessNotGranted
         case refreshing
+        case cancelled
         case ready(lastUpdated: Date?)
         case offline(message: String)
         case failed(String)
@@ -66,6 +114,8 @@ final class HarcMobileLibraryCoordinator {
     private let cache: HarcLibraryCache
     private let routeURL: URL
     private var refreshTask: Task<Void, Never>?
+    private var activeRefreshID: UUID?
+    private let refreshSessionOpener: HarcMobileLibraryRefreshSession.Opener?
     private var activeSearchID: UUID?
 
     init(
@@ -73,13 +123,15 @@ final class HarcMobileLibraryCoordinator {
         transferStore: HarcTransferStore,
         cache: HarcLibraryCache,
         routeURL: URL,
-        audioPolicy: HarcLibraryAudioPolicy = .retainedDownloads
+        audioPolicy: HarcLibraryAudioPolicy = .retainedDownloads,
+        refreshSessionOpener: HarcMobileLibraryRefreshSession.Opener? = nil
     ) {
         self.identity = identity
         self.transferStore = transferStore
         self.cache = cache
         self.routeURL = routeURL
         self.audioPolicy = audioPolicy
+        self.refreshSessionOpener = refreshSessionOpener
         loadCachedView()
     }
 
@@ -92,14 +144,18 @@ final class HarcMobileLibraryCoordinator {
 
     func refresh() {
         guard refreshTask == nil else { return }
+        let refreshID = UUID()
+        activeRefreshID = refreshID
         isRefreshing = true
-        if recordings.isEmpty { state = .refreshing }
+        state = .refreshing
         refreshTask = Task { [weak self] in
-            await self?.performRefresh()
+            await self?.performRefresh(id: refreshID)
         }
     }
 
     func shutdown() {
+        if isRefreshing { state = .cancelled }
+        activeRefreshID = nil
         refreshTask?.cancel()
         refreshTask = nil
         activeSearchID = nil
@@ -478,57 +534,128 @@ final class HarcMobileLibraryCoordinator {
         }
     }
 
-    private func performRefresh() async {
+    private func performRefresh(id: UUID) async {
         defer {
-            isRefreshing = false
-            refreshTask = nil
+            // A cancelled request may finish after shutdown and another refresh.
+            // It owns neither the new task handle nor its visible progress.
+            if activeRefreshID == id {
+                isRefreshing = false
+                refreshTask = nil
+                activeRefreshID = nil
+            }
         }
+        var operation = HarcMobileLibraryRefreshOperation.openingSession
         do {
-            let opened = try await HarcMobileHostSessionConnector.open(
-                identity: identity,
-                store: transferStore,
-                routeURL: routeURL
-            )
+            try checkCurrentRefresh(id)
+            let session = try await openRefreshSession()
             do {
-                guard opened.adoption.grant.scopes.contains(
-                    .libraryMetadataRead
-                ) else {
+                try checkCurrentRefresh(id)
+                guard let metadata = session.metadata else {
                     state = .accessNotGranted
-                    try await opened.connection.shutdownGracefully()
+                    try await session.finish()
+                    try checkCurrentRefresh(id)
                     return
                 }
-                let authorization = try HarcLibraryAuthorization(
-                    openedSession: opened.session
-                )
-                if opened.adoption.grant.scopes.contains(
-                    .libraryMetadataWrite
-                ) {
-                    try await drainOfflineMutations(
-                        opened: opened,
-                        authorization: authorization
-                    )
+                if let protectedEdits = session.protectedEdits {
+                    operation = .protectedEdits
+                    try await protectedEdits()
+                    try checkCurrentRefresh(id)
                 }
-                try await synchronize(
-                    opened: opened,
-                    authorization: authorization,
-                    mayRestartSnapshot: true
-                )
-                try await opened.connection.shutdownGracefully()
+                operation = .metadata
+                try await metadata()
+                try checkCurrentRefresh(id)
+                if let speakerProfiles = session.speakerProfiles {
+                    operation = .speakerProfiles
+                    try await speakerProfiles()
+                    try checkCurrentRefresh(id)
+                }
+                operation = .finishing
+                try await session.finish()
+                try checkCurrentRefresh(id)
                 loadCachedView()
                 state = .ready(lastUpdated: try cache.state()?.updatedAt)
             } catch {
-                await opened.connection.shutdownImmediately()
+                await session.abort()
                 throw error
             }
         } catch HarcMobileHostSessionConnectorError.notPaired {
+            guard activeRefreshID == id, !Task.isCancelled else { return }
             state = recordings.isEmpty ? .unpaired : .offline(
                 message: "Showing the protected local cache. Pair a Host to refresh."
             )
         } catch {
+            guard activeRefreshID == id, !Task.isCancelled else { return }
             loadCachedView()
+            let message = HarcMobileLibraryRefreshPresentation.failureMessage(
+                error,
+                operation: operation,
+                hasCachedRows: !recordings.isEmpty
+            )
             state = recordings.isEmpty
-                ? .failed(error.localizedDescription)
-                : .offline(message: error.localizedDescription)
+                ? .failed(message)
+                : .offline(message: message)
+        }
+    }
+
+    private func checkCurrentRefresh(_ id: UUID) throws {
+        try Task.checkCancellation()
+        guard activeRefreshID == id else { throw CancellationError() }
+    }
+
+    private func openRefreshSession() async throws -> HarcMobileLibraryRefreshSession {
+        if let refreshSessionOpener { return try await refreshSessionOpener() }
+        let opened = try await HarcMobileHostSessionConnector.open(
+            identity: identity, store: transferStore, routeURL: routeURL
+        )
+        let finish: HarcMobileLibraryRefreshSession.Operation = {
+            try await opened.connection.shutdownGracefully()
+        }
+        let abort: @MainActor () async -> Void = {
+            await opened.connection.shutdownImmediately()
+        }
+        guard opened.adoption.grant.scopes.contains(.libraryMetadataRead) else {
+            return HarcMobileLibraryRefreshSession(
+                protectedEdits: nil, metadata: nil, speakerProfiles: nil,
+                finish: finish, abort: abort
+            )
+        }
+        do {
+            let authorization = try HarcLibraryAuthorization(
+                openedSession: opened.session
+            )
+            let protectedEdits: HarcMobileLibraryRefreshSession.Operation?
+            if opened.adoption.grant.scopes.contains(.libraryMetadataWrite) {
+                protectedEdits = {
+                    try await self.drainOfflineMutations(
+                        opened: opened, authorization: authorization
+                    )
+                }
+            } else {
+                protectedEdits = nil
+            }
+            let speakerProfiles: HarcMobileLibraryRefreshSession.Operation?
+            if opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
+                speakerProfiles = {
+                    try await self.refreshRecognitionPack(
+                        opened: opened, authorization: authorization
+                    )
+                }
+            } else {
+                speakerProfiles = nil
+            }
+            return HarcMobileLibraryRefreshSession(
+                protectedEdits: protectedEdits,
+                metadata: {
+                    try await self.synchronize(
+                        opened: opened, authorization: authorization,
+                        mayRestartSnapshot: true, includeSpeakerProfiles: false
+                    )
+                },
+                speakerProfiles: speakerProfiles, finish: finish, abort: abort
+            )
+        } catch {
+            await abort()
+            throw error
         }
     }
 
@@ -641,7 +768,8 @@ final class HarcMobileLibraryCoordinator {
     private func synchronize(
         opened: HarcMobileOpenedHostConnection,
         authorization: HarcLibraryAuthorization,
-        mayRestartSnapshot: Bool
+        mayRestartSnapshot: Bool,
+        includeSpeakerProfiles: Bool = true
     ) async throws {
         let current = try cache.state()
         if current?.libraryID != opened.adoption.hostTrust.libraryID {
@@ -657,7 +785,8 @@ final class HarcMobileLibraryCoordinator {
             libraryID: opened.adoption.hostTrust.libraryID,
             mayRestartSnapshot: mayRestartSnapshot
         )
-        if opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
+        if includeSpeakerProfiles,
+           opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
             try await refreshRecognitionPack(
                 opened: opened,
                 authorization: authorization
@@ -678,6 +807,7 @@ final class HarcMobileLibraryCoordinator {
             request,
             authorization: authorization
         )
+        try Task.checkCancellation()
         try Self.validateLibraryProtocol(
             response.hasProtocol,
             response.protocol
@@ -813,6 +943,7 @@ final class HarcMobileLibraryCoordinator {
             begin,
             authorization: authorization
         )
+        try Task.checkCancellation()
         try Self.validateLibraryProtocol(started.hasProtocol, started.protocol)
         guard started.snapshotToken.count == 32 else {
             throw HarcMobileLibraryError.malformedResponse
@@ -836,6 +967,7 @@ final class HarcMobileLibraryCoordinator {
                 request,
                 authorization: authorization
             )
+            try Task.checkCancellation()
             try Self.validateLibraryProtocol(page.hasProtocol, page.protocol)
             guard page.snapshotAnchor == started.snapshotAnchor else {
                 throw HarcMobileLibraryError.malformedResponse
@@ -909,6 +1041,7 @@ final class HarcMobileLibraryCoordinator {
                 request,
                 authorization: authorization
             )
+            try Task.checkCancellation()
             try Self.validateLibraryProtocol(
                 response.hasProtocol,
                 response.protocol
@@ -990,7 +1123,7 @@ final class HarcMobileLibraryCoordinator {
         } catch {
             recordings = []
             lastUpdatedAt = nil
-            state = .failed(error.localizedDescription)
+            state = .failed("Protected Library cache could not be read.")
         }
     }
 

@@ -219,6 +219,16 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
                 tone: .caution,
                 relativeMoment: nil
             )
+        case .cancelled:
+            return Self(
+                title: "Library refresh cancelled",
+                detail: recordingCount > 0
+                    ? "Showing cached recordings · Refresh Library to try again"
+                    : "Refresh Library to try again",
+                systemImage: "arrow.clockwise",
+                tone: .neutral,
+                relativeMoment: lastUpdatedAt.map(RelativeMoment.updated)
+            )
         case .ready:
             return Self(
                 title: "Library",

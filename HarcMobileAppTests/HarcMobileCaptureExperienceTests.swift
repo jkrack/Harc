@@ -164,6 +164,19 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         )
     }
 
+    func testCancelledLibraryIsTerminalAndDoesNotClaimSyncSuccess() {
+        let updatedAt = Date(timeIntervalSinceReferenceDate: 300)
+        for count in [0, 2] {
+            let presentation = HarcMobileCaptureStatusPresentation.library(
+                state: .cancelled, recordingCount: count, lastUpdatedAt: updatedAt
+            )
+            XCTAssertEqual(presentation.title, "Library refresh cancelled")
+            XCTAssertEqual(presentation.tone, .neutral)
+            XCTAssertTrue(presentation.detail.contains("Refresh Library to try again"))
+            XCTAssertEqual(presentation.relativeMoment, .updated(updatedAt))
+        }
+    }
+
     func testLibraryPresentationNamesCachedCanonicalRecordingCount() {
         let updatedAt = Date(timeIntervalSinceReferenceDate: 300)
         let presentation = HarcMobileCaptureStatusPresentation.library(
