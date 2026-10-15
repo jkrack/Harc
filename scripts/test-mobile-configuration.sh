@@ -20,5 +20,6 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -only-testing:HarcMobileAppTests/HarcMobileLocalLibraryTests \
   -only-testing:HarcMobileAppTests/HarcMobilePlaybackSessionTests \
   -only-testing:HarcMobileAppTests/HarcMobileFinalizationRecoveryTests \
+  -only-testing:HarcMobileAppTests/HarcMobileUploadPreparationTests \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLocalLibraryIsReachableWithoutHost \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA" test
