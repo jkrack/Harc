@@ -54,7 +54,7 @@ build-for-testing passed with signing disabled and two workers. The hosted test
 fixtures use the existing test-only transport import for synthetic session
 construction; no production initializer was exposed. Hosted iOS execution awaits
 CI because the local simulator runtime is unavailable. Parsing, shell syntax,
-and diff checks passed, with at least 12.21 GiB free during final validation.
+and diff checks passed, with at least 12.15 GiB free during final validation.
 
 Diagnostics are under `/tmp/harc-sync-evidence`, including
 `upload-composition-baseline.log`, `upload-preparation-baseline.swift`, focused
