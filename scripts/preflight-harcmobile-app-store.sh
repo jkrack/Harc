@@ -233,26 +233,9 @@ if [[ -n "$ARCHIVE" || -n "$DISTRIBUTION_APP" ]]; then
   PACKAGE_CHURN_VALID=1
   if [[ -n "$PACKAGE_STATUS" ]]; then
     if [[ "$PACKAGE_STATUS" != " M Package.resolved" ]] || ! \
-      /usr/bin/python3 -c '
-import json, pathlib, sys
-committed = json.loads(pathlib.Path(sys.argv[1]).read_text())
-working = json.loads(pathlib.Path(sys.argv[2]).read_text())
-sparkle = [pin for pin in working.get("pins", []) if pin.get("identity") == "sparkle"]
-working_without_sparkle = dict(working)
-working_without_sparkle["pins"] = [
-    pin for pin in working.get("pins", []) if pin.get("identity") != "sparkle"
-]
-committed_without_origin = dict(committed)
-working_without_origin = dict(working_without_sparkle)
-committed_without_origin.pop("originHash", None)
-working_without_origin.pop("originHash", None)
-valid_sparkle = (
-    len(sparkle) == 1
-    and sparkle[0].get("location") == "https://github.com/sparkle-project/Sparkle"
-    and sparkle[0].get("state", {}).get("version") == "2.9.6"
-)
-raise SystemExit(0 if valid_sparkle and working_without_origin == committed_without_origin else 1)
-' <(git -C "$REPO_ROOT" show HEAD:Package.resolved) "$REPO_ROOT/Package.resolved"; then
+      /usr/bin/python3 "$REPO_ROOT/scripts/validate-xcode-package-resolution.py" \
+        <(git -C "$REPO_ROOT" show HEAD:Package.resolved) \
+        "$REPO_ROOT/Package.resolved" "$REPO_ROOT/project.yml"; then
       PACKAGE_CHURN_VALID=0
     fi
   fi
