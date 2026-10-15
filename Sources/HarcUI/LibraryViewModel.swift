@@ -60,18 +60,25 @@ public final class LibraryViewModel: ObservableObject {
     public let store: RecordingStore
     private var observationTask: Task<Void, Never>?
     private var sessionObservationTask: Task<Void, Never>?
-    private var searchTask: Task<Void, Never>?
+    private(set) var searchTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
     private var fullList: [Recording] = []
+    private var observedListRevision: UInt64 = 0
+    private let fetchAllRecordings: @Sendable () async throws -> [Recording]
 
     /// Embedder used to blend chunk-level vector hits into search. Nil keeps
     /// search purely lexical — which is also the behaviour when the library has
     /// never been indexed, since hybridSearch falls back on its own.
     public var searchEmbedder: (any TextEmbedder)?
 
-    public init(store: RecordingStore) {
+    public convenience init(store: RecordingStore) {
+        self.init(store: store, fetchAllRecordings: { try await store.fetchAll() })
+    }
+
+    init(store: RecordingStore, fetchAllRecordings: @escaping @Sendable () async throws -> [Recording]) {
         self.store = store
+        self.fetchAllRecordings = fetchAllRecordings
     }
 
     public func start() {
@@ -88,12 +95,7 @@ public final class LibraryViewModel: ObservableObject {
             for await list in store.observeAll(pinnedFirst: true) {
                 let totalBytes = await Self.storageBytes(for: list)
                 await MainActor.run {
-                    self.fullList = list
-                    self.totalBytes = totalBytes
-                    if self.searchText.isEmpty {
-                        self.recordings = self.apply(filter: self.filter, to: list)
-                    }
-                    self.alignCalendarToNewestRecordingIfNeeded(list)
+                    self.publishObservedRecordings(list, totalBytes: totalBytes)
                 }
             }
         }
@@ -120,9 +122,20 @@ public final class LibraryViewModel: ObservableObject {
         Task { [weak self] in await self?.refreshDaysWithRecordings() }
     }
 
+    /// Applies one complete snapshot emitted by the store observation.
+    func publishObservedRecordings(_ list: [Recording], totalBytes: Int64) {
+        observedListRevision &+= 1
+        self.fullList = list
+        self.totalBytes = totalBytes
+        if self.searchText.isEmpty {
+            self.recordings = self.apply(filter: self.filter, to: list)
+        }
+        self.alignCalendarToNewestRecordingIfNeeded(list)
+    }
+
     /// Refetch everything the observations would have delivered had the
     /// write happened in-process.
-    private func refreshAfterExternalChange() {
+    func refreshAfterExternalChange() {
         performSearch(searchText)
         Task { [weak self, store] in
             guard let self else { return }
@@ -191,18 +204,25 @@ public final class LibraryViewModel: ObservableObject {
     private func performSearch(_ query: String) {
         searchTask?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        searchTask = Task { [weak self, store, filter] in
+        searchTask = Task { [weak self, store] in
             guard let self else { return }
             do {
                 if trimmed.isEmpty {
-                    let all = try await store.fetchAll()
-                    let totalBytes = await Self.storageBytes(for: all)
-                    await MainActor.run {
+                    while !Task.isCancelled {
+                        let revision = self.observedListRevision
+                        let all = try await fetchAllRecordings()
+                        let totalBytes = await Self.storageBytes(for: all)
+                        // Store reads and file metadata checks suspend. A newer
+                        // observation must not be replaced by this older snapshot.
+                        try Task.checkCancellation()
+                        guard self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        guard revision == self.observedListRevision else { continue }
                         self.fullList = all
                         self.totalBytes = totalBytes
-                        self.recordings = self.apply(filter: filter, to: all)
+                        self.recordings = self.apply(filter: self.filter, to: all)
                         self.hits = []
                         self.searchError = nil
+                        break
                     }
                 } else {
                     // Hybrid when an embedder is configured: keyword and vector
@@ -216,7 +236,9 @@ public final class LibraryViewModel: ObservableObject {
                     } else {
                         results = try await store.search(query: trimmed)
                     }
+                    try Task.checkCancellation()
                     await MainActor.run {
+                        guard self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
                         self.hits = results
                         self.searchError = nil
                         // `recordings` stays populated with the unfiltered list so
@@ -226,7 +248,9 @@ public final class LibraryViewModel: ObservableObject {
                     }
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
+                    guard self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
                     self.hits = []
                     self.searchError = Self.searchErrorMessage(from: error)
                 }
