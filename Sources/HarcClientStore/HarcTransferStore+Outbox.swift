@@ -277,6 +277,13 @@ public enum BackgroundTaskMappingState: String, CaseIterable, Sendable {
     case failedRecoverable
     case securityBlocked
     case completed
+    /// Historical task, superseded by a replacement or no longer authorized.
+    /// Its callbacks cannot change the current batch or recording state.
+    case retired
+
+    public var isActive: Bool {
+        self == .persistedBeforeResume || self == .observedBySystem
+    }
 }
 
 public enum BackgroundTaskFailureDisposition: String, Equatable, Sendable {
@@ -1382,6 +1389,9 @@ extension HarcTransferStore {
                 guard activeTaskCount == 0 else {
                     throw ClientStoreError.exactObjectEquivocation
                 }
+                try retireInactiveBackgroundMappings(
+                    batchID: descriptor.batchID, timestampMS: timestampMS, in: db
+                )
                 try db.execute(
                     sql: """
                         UPDATE upload_batches
@@ -1573,19 +1583,31 @@ extension HarcTransferStore {
             if let row = try Row.fetchOne(
                 db,
                 sql: """
-                    SELECT batch_id FROM background_task_mappings
+                    SELECT batch_id, state FROM background_task_mappings
                     WHERE session_identifier = ? AND task_identifier = ?
                     """,
                 arguments: [identity.sessionIdentifier, identity.taskIdentifier]
             ) {
-                guard (row["batch_id"] as String) == batchID.description else {
+                guard (row["batch_id"] as String) == batchID.description,
+                      batch.state != .securityBlocked,
+                      let state = BackgroundTaskMappingState(rawValue: row["state"]),
+                      state.isActive || state == .completed else {
                     throw ClientStoreError.exactObjectEquivocation
                 }
                 return
             }
-            guard batch.state != .completed, batch.durableACK == nil else {
+            guard batch.state != .completed, batch.state != .securityBlocked,
+                  batch.durableACK == nil else {
                 throw ClientStoreError.exactObjectEquivocation
             }
+            let activeCount = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM background_task_mappings
+                WHERE batch_id = ? AND state IN ('persistedBeforeResume', 'observedBySystem')
+                """, arguments: [batchID.description]) ?? 0
+            guard activeCount == 0 else { throw ClientStoreError.exactObjectEquivocation }
+            try retireInactiveBackgroundMappings(
+                batchID: batchID, timestampMS: timestampMS, in: db
+            )
             try db.execute(
                 sql: """
                     INSERT INTO background_task_mappings (
@@ -1660,7 +1682,11 @@ extension HarcTransferStore {
                 )
                 return
             }
-            guard mappingState != .completed else { return }
+            guard mappingState.isActive || mappingState == .securityBlocked else { return }
+            guard try backgroundBatchIsCurrentlyAuthorized(batch, in: db) else {
+                try retireStaleBackgroundMappings(timestampMS: timestampMS, in: db)
+                return
+            }
 
             let securityBlocked =
                 disposition == .securityBlocked
@@ -1764,6 +1790,78 @@ extension HarcTransferStore {
         }
     }
 
+    /// Retires nonauthorizing work before transport reads jobs or callbacks.
+    /// Database corruption/I/O errors still surface; only known authorization
+    /// and upload-lifecycle failures are isolated from unrelated tasks.
+    package func backgroundTaskMappingsForTransport() throws -> [StoredBackgroundTaskMapping] {
+        try database.write { db in
+            try retireStaleBackgroundMappings(
+                timestampMS: ClientStoreCoding.milliseconds(now()), in: db
+            )
+            return try taskMappings(in: db)
+        }
+    }
+
+    private func retireInactiveBackgroundMappings(
+        batchID: AudioBatchID, timestampMS: Int64, in db: Database
+    ) throws {
+        try db.execute(sql: """
+            UPDATE background_task_mappings SET state = 'retired', updated_at_ms = ?
+            WHERE batch_id = ? AND state IN ('missingFromSystem', 'failedRecoverable')
+            """, arguments: [timestampMS, batchID.description])
+    }
+
+    private func backgroundBatchIsCurrentlyAuthorized(
+        _ batch: StoredBackgroundBatch, in db: Database
+    ) throws -> Bool {
+        do {
+            try requireCurrentUploadWithoutIntegrityBlock(batch.descriptor.uploadID, in: db)
+            return true
+        } catch let error as ClientStoreError {
+            switch error {
+            case .noActiveAdoption, .inactiveTrustTuple, .nonauthorizingGrantStatus,
+                 .grantExpired, .grantMissingRequiredScope, .grantProtocolIncompatible,
+                 .uploadAttemptSuperseded, .uploadAlreadyExistsWithDifferentFacts,
+                 .localArtifactIntegrityBlocked, .captureDeviceMismatch:
+                return false
+            default:
+                throw error
+            }
+        }
+    }
+
+    private func retireStaleBackgroundMappings(
+        timestampMS: Int64, in db: Database
+    ) throws {
+        // Upgrade historical rows created before task retirement existed.
+        try db.execute(sql: """
+            UPDATE background_task_mappings AS old SET state = 'retired', updated_at_ms = ?
+            WHERE old.state IN ('missingFromSystem', 'failedRecoverable')
+              AND EXISTS (
+                  SELECT 1 FROM background_task_mappings AS current
+                  WHERE current.batch_id = old.batch_id
+                    AND current.state IN ('persistedBeforeResume', 'observedBySystem')
+              )
+            """, arguments: [timestampMS])
+        for mapping in try taskMappings(in: db)
+        where mapping.state != .completed && mapping.state != .retired {
+            guard let batch = try backgroundBatch(id: mapping.batchID, in: db) else {
+                throw ClientStoreError.missingRow(entity: "background batch")
+            }
+            guard try !backgroundBatchIsCurrentlyAuthorized(batch, in: db) else { continue }
+            try db.execute(sql: """
+                UPDATE background_task_mappings SET state = 'retired', updated_at_ms = ?
+                WHERE session_identifier = ? AND task_identifier = ?
+                """, arguments: [timestampMS, mapping.identity.sessionIdentifier, mapping.identity.taskIdentifier])
+            // Retain the immutable batch/body for a future explicitly authorized
+            // retry, while keeping permanent security blocks and ACKs intact.
+            try db.execute(sql: """
+                UPDATE upload_batches SET state = 'needsReschedule', updated_at_ms = ?
+                WHERE batch_id = ? AND state NOT IN ('completed', 'securityBlocked')
+                """, arguments: [timestampMS, mapping.batchID.description])
+        }
+    }
+
     /// Compares persisted mappings with the operating system's task list. It
     /// never deletes a mapping, credential, body, or capture during launch.
     public func reconcileBackgroundTasks(
@@ -1771,10 +1869,11 @@ extension HarcTransferStore {
         reconciledAt: Date? = nil
     ) throws -> BackgroundTaskReconciliation {
         try database.write { db in
-            let persisted = try taskMappings(in: db)
             let timestampMS = try ClientStoreCoding.milliseconds(
                 reconciledAt ?? now()
             )
+            try retireStaleBackgroundMappings(timestampMS: timestampMS, in: db)
+            let persisted = try taskMappings(in: db)
             for mapping in persisted {
                 guard mapping.state == .failedRecoverable
                         || mapping.state == .securityBlocked,
@@ -1791,17 +1890,6 @@ extension HarcTransferStore {
                     in: db
                 )
             }
-            for mapping in persisted
-            where mapping.state != .completed
-                && mapping.state != .securityBlocked {
-                guard let batch = try backgroundBatch(id: mapping.batchID, in: db) else {
-                    throw ClientStoreError.missingRow(entity: "background batch")
-                }
-                try requireCurrentUploadWithoutIntegrityBlock(
-                    batch.descriptor.uploadID,
-                    in: db
-                )
-            }
             let persistedByIdentity = Dictionary(uniqueKeysWithValues: persisted.map { ($0.identity, $0) })
             var missingBatchCandidates = Set<AudioBatchID>()
             var observedBatchIDs = Set<AudioBatchID>()
@@ -1810,6 +1898,7 @@ extension HarcTransferStore {
             for mapping in persisted {
                 let mayRun = mapping.state != .completed
                     && mapping.state != .securityBlocked
+                    && mapping.state != .retired
                 if observedSystemTasks.contains(mapping.identity), mayRun {
                     matched.append(mapping.identity)
                     observedBatchIDs.insert(mapping.batchID)
@@ -1858,7 +1947,9 @@ extension HarcTransferStore {
                 }
             }
 
-            let orphaned = observedSystemTasks.filter { persistedByIdentity[$0] == nil }
+            let orphaned = observedSystemTasks.filter {
+                persistedByIdentity[$0] == nil || persistedByIdentity[$0]?.state == .retired
+            }
             return BackgroundTaskReconciliation(
                 batchesToReschedule: batchesToReschedule,
                 orphanedSystemTasks: orphaned.sorted { lhs, rhs in
