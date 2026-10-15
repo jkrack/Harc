@@ -69,6 +69,82 @@ final class HarcMobileFinalizationRecoveryTests: XCTestCase {
         }
     }
 
+    func testMixedOrphansPreserveHealthyLibraryAndCaptureReadiness() throws {
+        try withFinalized { root, locations, healthy in
+            let store = try self.openStore(root, device: healthy.producingDeviceID)
+            _ = try store.persistFinalizedCapture(
+                try HarcMobileAppModel.finalizedCapture(healthy), masterFileURL: healthy.masterFileURL
+            )
+            let orphan = try self.finalize(locations, device: healthy.producingDeviceID)
+            var rejected: [URL] = []
+            // Each invalid artifact is preserved and excluded independently.
+            for mutation in 0 ..< 4 {
+                let device = mutation == 3
+                    ? try DeviceID(Data(repeating: 0x52, count: 32))
+                    : healthy.producingDeviceID
+                let bad = try self.finalize(locations, device: device)
+                let metadata = locations.finalized.appendingPathComponent(
+                    bad.originRecordingID.recordingUUID.uuidString.lowercased() + ".capture.json"
+                )
+                if mutation == 0 {
+                    try Data("malformed".utf8).write(to: metadata)
+                } else if mutation == 1 {
+                    try FileManager.default.removeItem(at: bad.masterFileURL)
+                } else if mutation == 2 {
+                    var bytes = try Data(contentsOf: bad.masterFileURL)
+                    bytes[44] ^= 1
+                    try bytes.write(to: bad.masterFileURL)
+                }
+                rejected.append(metadata)
+            }
+            let filesBefore = try self.captureFileBytes(locations)
+            let model = HarcMobileAppModel()
+            let recovered = try model.prepareLocalCapture(
+                store: store, locations: locations, attributes: SyntheticStorageAttributes()
+            )
+            XCTAssertTrue(recovered.contains(orphan))
+            XCTAssertEqual(Set(model.rejectedCaptureMetadataFiles.map { $0.resolvingSymlinksInPath() }),
+                           Set(rejected.map { $0.resolvingSymlinksInPath() }))
+            XCTAssertEqual(model.captureCoordinator?.state, .idle)
+            let local = try HarcMobileLocalRecording.load(from: store)
+            XCTAssertTrue(local.contains { $0.masterFileURL == healthy.masterFileURL })
+            XCTAssertTrue(local.contains { $0.masterFileURL == orphan.masterFileURL })
+            XCTAssertEqual(local.count, 2)
+            XCTAssertEqual(try self.captureFileBytes(locations), filesBefore)
+            for metadata in rejected {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: metadata.path))
+            }
+            let before = try store.recordingOutboxes().count
+            XCTAssertTrue(try model.prepareLocalCapture(
+                store: store, locations: locations, attributes: SyntheticStorageAttributes()
+            ).isEmpty)
+            XCTAssertEqual(try store.recordingOutboxes().count, before)
+            XCTAssertEqual(model.captureCoordinator?.state, .idle)
+        }
+    }
+
+    private func captureFileBytes(_ locations: HarcMobileCaptureLocations) throws -> [URL: Data] {
+        let files = try FileManager.default.contentsOfDirectory(
+            at: locations.finalized, includingPropertiesForKeys: nil
+        )
+        return try Dictionary(uniqueKeysWithValues: files.map { ($0, try Data(contentsOf: $0)) })
+    }
+
+    private func finalize(
+        _ locations: HarcMobileCaptureLocations, device: DeviceID
+    ) throws -> HarcMobileFinalizedMaster {
+        let started = Date(timeIntervalSince1970: 1_900_000_000)
+        let writer = try HarcMobileDurableMasterWriter(
+            locations: locations, producingDeviceID: device,
+            captureStartedAt: started, captureStartedMonotonicNanoseconds: 1_000,
+            attributes: SyntheticStorageAttributes()
+        )
+        try writer.appendCanonicalPCM(Data([1, 2, 3, 4, 5, 6, 7, 8]),
+                                      endedAt: started.addingTimeInterval(1),
+                                      endedMonotonicNanoseconds: 2_000)
+        return try writer.finalize(reason: .userStopped)
+    }
+
     private enum Failure: Error { case store, audioSession }
 
     private func openStore(_ root: URL, device: DeviceID) throws -> HarcTransferStore {

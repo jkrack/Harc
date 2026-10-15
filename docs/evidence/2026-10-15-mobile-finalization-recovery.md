@@ -20,14 +20,22 @@ bytes in isolated temporary directories. No phone recordings were inspected.
 - The baseline reproduction finalized a synthetic master, omitted the app
   callback, and asked the old checkpoint scanner to recover it. Its single
   assertion failed because recovery returned an empty array.
-- All 10 durable-master tests passed with the fix, including four new tests for
-  the handoff window, corruption, unsafe metadata, relocation, and cleanup.
+- The review regression reproduced a second failure: one malformed orphan
+  threw through the scanner and aborted recovery of a healthy finalized master.
+  The corrected scanner reports each rejected artifact and preserves its bytes
+  while admitting only independently validated masters. Directory setup and
+  store errors still surface. The app shows a recovery warning and prepares
+  capture independently of these orphan failures.
+- All 12 durable-master tests passed with the corrected fix, including tests for
+  mixed valid/invalid orphans, fatal setup failures, the handoff window,
+  corruption, unsafe metadata, relocation, and cleanup.
   This focused macOS harness copied the exact `HarcDomain`, `HarcAudioMobile`,
   and writer-test sources into a minimal temporary package; it did not run the
   repository's complete package suite.
 - Generic iOS `HarcMobile` build-for-testing passed with signing disabled and
-  two workers. It compiled three new app tests for missing callback recovery,
-  a throwing store callback, and throwing audio-session deactivation. Local
+  two workers. It compiled four new app tests for missing callback recovery,
+  a throwing store callback, throwing audio-session deactivation, and mixed
+  orphan recovery with an existing healthy Library and idle capture coordinator. Local
   execution remains pending because this Mac has no available simulator runtime.
   The mobile configuration CI script now selects these tests.
 - Swift parsing, shell syntax, and `git diff --check` passed. The disk watchdog

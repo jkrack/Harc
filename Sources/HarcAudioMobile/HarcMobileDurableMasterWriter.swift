@@ -419,6 +419,17 @@ public final class HarcMobileDurableMasterWriter {
     }
 }
 
+public struct HarcMobileFinalizedMasterRecovery: Equatable, Sendable {
+    public let masters: [HarcMobileFinalizedMaster]
+    /// Artifacts are excluded from admission and preserved in place for repair.
+    public let rejectedMetadataFiles: [URL]
+
+    public init(masters: [HarcMobileFinalizedMaster], rejectedMetadataFiles: [URL]) {
+        self.masters = masters
+        self.rejectedMetadataFiles = rejectedMetadataFiles
+    }
+}
+
 public enum HarcMobileCaptureRecovery {
     /// Reconnects finalized, protected masters to the durable outbox after a
     /// process/SQLite failure between filesystem finalization and store insert.
@@ -430,72 +441,100 @@ public enum HarcMobileCaptureRecovery {
         registeredOrigins: Set<OriginRecordingID>,
         attributes: any HarcMobileCaptureStorageAttributeApplying =
             FoundationHarcMobileCaptureStorageAttributes()
-    ) throws -> [HarcMobileFinalizedMaster] {
+    ) throws -> HarcMobileFinalizedMasterRecovery {
+        // Directory setup/enumeration failures remain fatal. Individual orphan
+        // failures must not disable healthy local audio or a fresh capture.
         try locations.prepare(attributes: attributes)
         let metadataFiles = try FileManager.default.contentsOfDirectory(
             at: locations.finalized, includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         ).filter { $0.lastPathComponent.hasSuffix(".capture.json") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        return try metadataFiles.compactMap { metadataURL in
-            let name = metadataURL.lastPathComponent
-            guard let uuid = UUID(uuidString: String(name.dropLast(".capture.json".count))),
-                  name == uuid.uuidString.lowercased() + ".capture.json" else {
-                throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
+        var masters: [HarcMobileFinalizedMaster] = []
+        var rejected: [URL] = []
+        for metadataURL in metadataFiles {
+            do {
+                if let master = try recoverFinalizedMaster(
+                    metadataURL: metadataURL, locations: locations,
+                    producingDeviceID: producingDeviceID,
+                    registeredOrigins: registeredOrigins, attributes: attributes
+                ) {
+                    masters.append(master)
+                }
+            } catch {
+                // Logical quarantine only: leave every rejected byte in place.
+                rejected.append(metadataURL)
             }
-            let origin = OriginRecordingID(deviceID: producingDeviceID, recordingUUID: uuid)
-            guard !registeredOrigins.contains(origin) else { return nil }
-            let descriptor = try HarcMobileCaptureFileSystem.openExistingRegularFile(
-                metadataURL, flags: O_RDONLY
-            )
-            defer { Darwin.close(descriptor) }
-            var info = stat()
-            guard fstat(descriptor, &info) == 0,
-                  info.st_size > 0, info.st_size <= 1_048_576 else {
-                throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
-            }
-            let data = try FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-                .read(upToCount: 1_048_577) ?? Data()
-            guard data.count == Int(info.st_size) else {
-                throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
-            }
-            try HarcMobileCaptureFileSystem.validateRegularFile(descriptor, expectedURL: metadataURL)
-            let decoded = try JSONDecoder().decode(HarcMobileFinalizedMaster.self, from: data)
-            let currentURL = locations.finalizedMasterURL(recordingUUID: uuid)
-            guard decoded.originRecordingID == origin,
-                  decoded.producingDeviceID == producingDeviceID,
-                  decoded.masterFileURL.isFileURL,
-                  decoded.masterFileURL.lastPathComponent == currentURL.lastPathComponent,
-                  decoded.discontinuities.count <= 4_096 else {
-                throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
-            }
-            // Re-run construction invariants; synthesized Codable decoding does
-            // not call this initializer. Derive the path from the current safe
-            // container, never from the persisted absolute URL after an update.
-            let master = try HarcMobileFinalizedMaster(
-                producingDeviceID: decoded.producingDeviceID,
-                originRecordingID: decoded.originRecordingID,
-                masterFileURL: currentURL,
-                captureStartedAt: decoded.captureStartedAt,
-                captureEndedAt: decoded.captureEndedAt,
-                captureStartedMonotonicNanoseconds: decoded.captureStartedMonotonicNanoseconds,
-                captureEndedMonotonicNanoseconds: decoded.captureEndedMonotonicNanoseconds,
-                finalizationReason: decoded.finalizationReason,
-                totalCanonicalFrames: decoded.totalCanonicalFrames,
-                canonicalPCMSHA256: decoded.canonicalPCMSHA256,
-                discontinuities: decoded.discontinuities
-            )
-            let hash = try canonicalHash(
-                at: currentURL, expectedLength: 44 + master.totalCanonicalBytes,
-                expectedHeader: HarcMobileDurableMasterWriter.wavHeader(totalFrames: master.totalCanonicalFrames)
-            )
-            guard hash == master.canonicalPCMSHA256 else {
-                throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
-            }
-            try attributes.applyAndVerify(.transferArtifact, to: currentURL)
-            try attributes.applyAndVerify(.transferArtifact, to: metadataURL)
-            return master
         }
+        return HarcMobileFinalizedMasterRecovery(
+            masters: masters, rejectedMetadataFiles: rejected
+        )
+    }
+
+    private static func recoverFinalizedMaster(
+        metadataURL: URL,
+        locations: HarcMobileCaptureLocations,
+        producingDeviceID: DeviceID,
+        registeredOrigins: Set<OriginRecordingID>,
+        attributes: any HarcMobileCaptureStorageAttributeApplying
+    ) throws -> HarcMobileFinalizedMaster? {
+        let name = metadataURL.lastPathComponent
+        guard let uuid = UUID(uuidString: String(name.dropLast(".capture.json".count))),
+              name == uuid.uuidString.lowercased() + ".capture.json" else {
+            throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
+        }
+        let origin = OriginRecordingID(deviceID: producingDeviceID, recordingUUID: uuid)
+        guard !registeredOrigins.contains(origin) else { return nil }
+        let descriptor = try HarcMobileCaptureFileSystem.openExistingRegularFile(
+            metadataURL, flags: O_RDONLY
+        )
+        defer { Darwin.close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0,
+              info.st_size > 0, info.st_size <= 1_048_576 else {
+            throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
+        }
+        let data = try FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+            .read(upToCount: 1_048_577) ?? Data()
+        guard data.count == Int(info.st_size) else {
+            throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
+        }
+        try HarcMobileCaptureFileSystem.validateRegularFile(descriptor, expectedURL: metadataURL)
+        let decoded = try JSONDecoder().decode(HarcMobileFinalizedMaster.self, from: data)
+        let currentURL = locations.finalizedMasterURL(recordingUUID: uuid)
+        guard decoded.originRecordingID == origin,
+              decoded.producingDeviceID == producingDeviceID,
+              decoded.masterFileURL.isFileURL,
+              decoded.masterFileURL.lastPathComponent == currentURL.lastPathComponent,
+              decoded.discontinuities.count <= 4_096 else {
+            throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
+        }
+        // Re-run construction invariants; synthesized Codable decoding does
+        // not call this initializer. Derive the path from the current safe
+        // container, never from the persisted absolute URL after an update.
+        let master = try HarcMobileFinalizedMaster(
+            producingDeviceID: decoded.producingDeviceID,
+            originRecordingID: decoded.originRecordingID,
+            masterFileURL: currentURL,
+            captureStartedAt: decoded.captureStartedAt,
+            captureEndedAt: decoded.captureEndedAt,
+            captureStartedMonotonicNanoseconds: decoded.captureStartedMonotonicNanoseconds,
+            captureEndedMonotonicNanoseconds: decoded.captureEndedMonotonicNanoseconds,
+            finalizationReason: decoded.finalizationReason,
+            totalCanonicalFrames: decoded.totalCanonicalFrames,
+            canonicalPCMSHA256: decoded.canonicalPCMSHA256,
+            discontinuities: decoded.discontinuities
+        )
+        let hash = try canonicalHash(
+            at: currentURL, expectedLength: 44 + master.totalCanonicalBytes,
+            expectedHeader: HarcMobileDurableMasterWriter.wavHeader(totalFrames: master.totalCanonicalFrames)
+        )
+        guard hash == master.canonicalPCMSHA256 else {
+            throw HarcMobileCaptureStorageError.corruptCheckpoint(name)
+        }
+        try attributes.applyAndVerify(.transferArtifact, to: currentURL)
+        try attributes.applyAndVerify(.transferArtifact, to: metadataURL)
+        return master
     }
 
     public static func recoverDurablePrefixes(

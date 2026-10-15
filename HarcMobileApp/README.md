@@ -24,7 +24,9 @@ and the saved route, without deleting captures or their durable outbox records.
 Finalization registers the protected master in the outbox before audio-session
 deactivation. If the process stops or the store callback fails between file
 publication and registration, launch recovery validates the finalized metadata
-and WAV and registers one local Library entry. The existing outbox remains the
+and WAV and registers one local Library entry. Invalid orphans are reported and
+preserved in place without blocking healthy Library entries or new capture;
+directory setup and database failures still surface. The existing outbox remains the
 idempotency boundary; recovery never manufactures a Host receipt or cleanup
 permission. Synthetic fault tests live in `HarcMobileFinalizationRecoveryTests`
 and `HarcMobileDurableMasterWriterTests`.

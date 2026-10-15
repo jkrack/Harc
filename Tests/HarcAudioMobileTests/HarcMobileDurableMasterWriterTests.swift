@@ -20,11 +20,12 @@ struct HarcMobileDurableMasterWriterTests {
             locations: fixture.locations, producingDeviceID: fixture.deviceID,
             registeredOrigins: [], attributes: NoopStorageAttributes()
         )
-        #expect(recovered == [master])
+        #expect(recovered.masters == [master])
+        #expect(recovered.rejectedMetadataFiles.isEmpty)
         #expect(try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
             locations: fixture.locations, producingDeviceID: fixture.deviceID,
             registeredOrigins: [master.originRecordingID], attributes: NoopStorageAttributes()
-        ).isEmpty)
+        ).masters.isEmpty)
     }
 
     @Test("orphan recovery rejects modified PCM, headers, missing masters and foreign identities")
@@ -41,12 +42,12 @@ struct HarcMobileDurableMasterWriterTests {
                 try data.write(to: master.masterFileURL)
             }
             let device = mutation == 3 ? try DeviceID(Data(repeating: 0x43, count: 32)) : fixture.deviceID
-            #expect(throws: (any Error).self) {
-                try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
-                    locations: fixture.locations, producingDeviceID: device,
-                    registeredOrigins: [], attributes: NoopStorageAttributes()
-                )
-            }
+            let result = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+                locations: fixture.locations, producingDeviceID: device,
+                registeredOrigins: [], attributes: NoopStorageAttributes()
+            )
+            #expect(result.masters.isEmpty)
+            #expect(result.rejectedMetadataFiles.map(\.lastPathComponent) == [fixture.metadataURL(master).lastPathComponent])
             #expect(FileManager.default.fileExists(atPath: fixture.metadataURL(master).path))
         }
     }
@@ -72,12 +73,12 @@ struct HarcMobileDurableMasterWriterTests {
             } else {
                 try FileManager.default.moveItem(at: metadata, to: metadata.deletingLastPathComponent().appendingPathComponent("not-a-uuid.capture.json"))
             }
-            #expect(throws: (any Error).self) {
-                try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
-                    locations: fixture.locations, producingDeviceID: fixture.deviceID,
-                    registeredOrigins: [], attributes: NoopStorageAttributes()
-                )
-            }
+            let result = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+                locations: fixture.locations, producingDeviceID: fixture.deviceID,
+                registeredOrigins: [], attributes: NoopStorageAttributes()
+            )
+            #expect(result.masters.isEmpty)
+            #expect(result.rejectedMetadataFiles.count == 1)
         }
     }
 
@@ -93,12 +94,44 @@ struct HarcMobileDurableMasterWriterTests {
             locations: fixture.locations, producingDeviceID: fixture.deviceID,
             registeredOrigins: [], attributes: NoopStorageAttributes()
         )
-        #expect(recovered.first?.masterFileURL == master.masterFileURL)
+        #expect(recovered.masters.first?.masterFileURL == master.masterFileURL)
         try FileManager.default.removeItem(at: master.masterFileURL)
         #expect(try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
             locations: fixture.locations, producingDeviceID: fixture.deviceID,
             registeredOrigins: [master.originRecordingID], attributes: NoopStorageAttributes()
-        ).isEmpty)
+        ).masters.isEmpty)
+    }
+
+    @Test("one invalid orphan cannot hide a valid finalized master")
+    func mixedOrphansAreIsolated() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let good = try fixture.finalized()
+        let bad = try fixture.finalized()
+        let metadata = fixture.metadataURL(bad)
+        let invalidBytes = Data("malformed".utf8)
+        try invalidBytes.write(to: metadata)
+        let originalWAV = try Data(contentsOf: bad.masterFileURL)
+        let report = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: fixture.locations, producingDeviceID: fixture.deviceID,
+            registeredOrigins: [], attributes: NoopStorageAttributes()
+        )
+        #expect(report.masters == [good])
+        #expect(report.rejectedMetadataFiles.map(\.lastPathComponent) == [metadata.lastPathComponent])
+        #expect(try Data(contentsOf: metadata) == invalidBytes)
+        #expect(try Data(contentsOf: bad.masterFileURL) == originalWAV)
+    }
+
+    @Test("unrecoverable directory setup errors still surface")
+    func finalizedRecoverySetupErrorsSurface() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        #expect(throws: HarcMobileCaptureStorageError.self) {
+            try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+                locations: fixture.locations, producingDeviceID: fixture.deviceID,
+                registeredOrigins: [], attributes: RejectingStorageAttributes()
+            )
+        }
     }
 
     @Test("finalization publishes an exact protected canonical WAV")
@@ -375,5 +408,11 @@ private struct Fixture {
         locations.finalized.appendingPathComponent(
             master.originRecordingID.recordingUUID.uuidString.lowercased() + ".capture.json"
         )
+    }
+}
+
+private struct RejectingStorageAttributes: HarcMobileCaptureStorageAttributeApplying {
+    func applyAndVerify(_: HarcMobileCaptureStoragePolicy, to url: URL) throws {
+        throw HarcMobileCaptureStorageError.protectionNotApplied(url.path)
     }
 }
