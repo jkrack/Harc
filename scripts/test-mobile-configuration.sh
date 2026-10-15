@@ -17,6 +17,7 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -resultBundlePath "$OUTPUT/configuration.xcresult" \
   -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
   -only-testing:HarcMobileAppTests/HarcMobileConfigurationTests \
+  -only-testing:HarcMobileAppTests/HarcMobileCaptureExperienceTests \
   -only-testing:HarcMobileAppTests/HarcMobileLocalLibraryTests \
   -only-testing:HarcMobileAppTests/HarcMobileLibraryRefreshPresentationTests \
   -only-testing:HarcMobileAppTests/HarcMobilePlaybackSessionTests \

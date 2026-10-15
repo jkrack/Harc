@@ -30,7 +30,9 @@ the new handle and progress flag. A negative control reproduces the resulting
 extra request. Each refresh now owns a unique identifier; only the current
 request may publish a result or clear its handle. Shutdown immediately publishes
 a terminal cancelled state, rendered on both clients without claiming a
-successful sync. A session returned after
+successful sync, including the capture screen’s Library status projection. The
+existing capture-experience test suite is included in mobile CI with a regression
+for the terminal presentation. A session returned after
 cancellation is closed without running Library work. Snapshot, delta, and
 speaker-pack responses check cancellation before publishing into the cache.
 
