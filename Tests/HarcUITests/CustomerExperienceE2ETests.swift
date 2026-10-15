@@ -80,7 +80,11 @@ struct CustomerExperienceE2ETests {
         #expect(await waitForCustomerExperienceState { library.recordings.map(\.wavPath).contains(recording.wavPath) })
 
         library.searchText = "pricing renewal"
-        try await Task.sleep(for: .milliseconds(350))
+        // Search debounces on RunLoop.main, then publishes asynchronously.
+        // Observe the real result using the same bounded helper as this fixture.
+        #expect(await waitForCustomerExperienceState {
+            library.hits.first?.recording.wavPath == recording.wavPath
+        })
         #expect(library.hits.first?.recording.wavPath == recording.wavPath)
         #expect(library.hits.first?.snippet.localizedCaseInsensitiveContains("pricing") == true)
 
