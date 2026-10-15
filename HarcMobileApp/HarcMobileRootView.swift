@@ -75,8 +75,20 @@ struct HarcMobileRootView: View {
         .tint(recordTabTint)
         .accessibilityIdentifier(HarcMobileAccessibilityID.root)
         .safeAreaInset(edge: .top, spacing: 0) {
-            if selectedTab != .record {
-                captureBanner
+            VStack(spacing: 0) {
+                if !model.rejectedCaptureMetadataFiles.isEmpty {
+                    Label(
+                        "Some saved audio needs recovery. Harc kept the files on this iPhone. You can keep recording.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if selectedTab != .record {
+                    captureBanner
+                }
             }
         }
         .onReceive(
