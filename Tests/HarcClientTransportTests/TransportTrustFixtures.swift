@@ -53,7 +53,8 @@ enum TransportTrustFixtures {
         epoch: UInt64,
         issuedAt: UInt64 = nowMilliseconds - 120_000,
         entryNotBefore: UInt64 = nowMilliseconds - 60_000,
-        entryNotAfter: UInt64 = nowMilliseconds + 86_400_000
+        entryNotAfter: UInt64 = nowMilliseconds + 86_400_000,
+        libraryID: LibraryID = TransportTrustFixtures.libraryID
     ) throws -> VerifiedHostTransportSetV1 {
         let entries = try tlsKeys.map { key in
             try HostTransportEntryV1(

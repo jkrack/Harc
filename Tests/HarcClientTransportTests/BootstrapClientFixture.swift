@@ -82,14 +82,18 @@ struct BootstrapClientFixture: Sendable {
         .recordingUploadOwn,
     ]
 
-    init(deviceKey: SoftwareP256SigningKey = SoftwareP256SigningKey()) throws {
+    init(
+        deviceKey: SoftwareP256SigningKey = SoftwareP256SigningKey(),
+        libraryID: LibraryID = TransportTrustFixtures.libraryID,
+        authorityByte: UInt8 = 0x31
+    ) throws {
         self.deviceKey = deviceKey
-        authorityKey = try TransportTrustFixtures.authorityKey()
+        authorityKey = try TransportTrustFixtures.authorityKey(authorityByte)
         let tlsKey = try TransportTrustFixtures.tlsKey()
         transport = try TransportTrustFixtures.transportSet(
             authorityKey: authorityKey,
             tlsKeys: [tlsKey],
-            epoch: 1
+            epoch: 1, libraryID: libraryID
         )
         hostTrust = try RecordingHostTrustBinding(
             libraryID: transport.transportSet.libraryID,

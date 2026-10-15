@@ -31,6 +31,14 @@ idempotency boundary; recovery never manufactures a Host receipt or cleanup
 permission. Synthetic fault tests live in `HarcMobileFinalizationRecoveryTests`
 and `HarcMobileDurableMasterWriterTests`.
 
+Retries reuse the durable Begin intent's complete profile, upload identity,
+chunk descriptors, and protected file paths. A new compatible session does not
+re-encode or re-freeze that attempt. Current Host authorization and session
+compatibility still apply. The retry queue excludes recordings bound to another
+Host and continues past per-recording failures, with each origin attempted once
+per pass. Pairing and the closed codec gate remain global stops. Synthetic
+composition/queue regressions live in `HarcMobileUploadPreparationTests`.
+
 Playback surfaces share explicit session ownership. Only the current owner may
 deactivate playback, and capture claims priority before requesting microphone
 permission through finalization. Row teardown and stale player callbacks must
