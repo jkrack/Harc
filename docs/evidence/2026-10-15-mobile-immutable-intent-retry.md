@@ -62,3 +62,29 @@ and integrated test logs, and watchdog receipts. All content is synthetic and
 all files are temporary. No phone action, production transfer, grant restoration,
 security setting, or release action ran. Physical re-pairing, codec, two-network,
 and direct/relay lifecycle qualification remain open.
+
+## Production error-adapter regression
+
+The queue now calls one shared production error adapter for presentation and
+stop/continue decisions. Its two-item regression injects actual
+`HarcMobileALACEncodingError.encodingFailed`, `codecNotQualified`, both normalized
+and connector `notPaired`, `pairingRepairRequired`, `CancellationError`, and an
+ordinary per-recording failure. The test uses that adapter directly, not a
+callback that chooses its own global-stop policy.
+
+`encodingFailed` can wrap per-file writes and buffer failures, so it reports a
+saved-audio retry and continues to B. It never presents a codec qualification
+change. The explicit `codecNotQualified` error still stops globally, as do pairing
+and cancellation errors; B remains queued. Pairing repair retains its real durable
+security-block transition. Every injected case checks both masters' bytes, the
+failed first master row, and absence of a receipt or cleanup permission.
+
+The shared adapter and its real AudioMobile error types are included verbatim in
+the headless harness. The same adapter drives the app coordinator's presentation
+callback; production initializer visibility and codec flags remain unchanged.
+All six focused composition XCTests passed. The production adapter regression
+also passed after the final saved-audio message assertions. Generic iOS app/test
+build-for-testing passed with signing disabled and two workers. Final validation
+kept at least 12.14 GiB free. Logs, watchdog receipts, and the exact
+adapter/source manifest are in `/tmp/harc-sync-evidence` with the
+`production-error-adapter` and `ios-production-error-adapter-build` prefixes.

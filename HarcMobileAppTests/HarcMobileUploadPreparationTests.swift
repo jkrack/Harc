@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import HarcAudioMobile
 import HarcClientStore
 @testable import HarcClientTransport
 import HarcDomain
@@ -152,6 +153,79 @@ final class HarcMobileUploadPreparationTests: XCTestCase {
         )
         XCTAssertEqual(attempts, [1, 2])
         XCTAssertEqual(skipped, [1])
+    }
+
+    func testProductionFailureAdapterControlsQueueAndRetainsFailedMaster() async throws {
+        let cases: [(String, any Error, Bool)] = [
+            ("encodingFailed", HarcMobileALACEncodingError.encodingFailed(chunkIndex: 0), false),
+            ("codecNotQualified", HarcMobileTransferError.codecNotQualified, true),
+            ("notPaired", HarcMobileTransferError.notPaired, true),
+            ("connectorNotPaired", HarcMobileHostSessionConnectorError.notPaired, true),
+            ("pairingRepairRequired", HarcMobileHostSessionConnectorError.pairingRepairRequired, true),
+            ("cancellation", CancellationError(), true),
+            ("ordinary", Fault.lostResponse, false),
+        ]
+        for (name, injectedError, expectsStop) in cases {
+            let fixture = try await Fixture.make()
+            defer { fixture.remove() }
+            let second = OriginRecordingID(deviceID: fixture.origin.deviceID, recordingUUID: UUID())
+            let secondURL = fixture.root.appendingPathComponent("second-master.pcm")
+            try fixture.bytes.write(to: secondURL)
+            _ = try fixture.store.persistFinalizedCapture(fixture.capture(second), masterFileURL: secondURL)
+            var queue = [fixture.origin, second]
+            var completed: [OriginRecordingID] = []
+            var presentations: [HarcMobileTransferFailurePresentation] = []
+            var stopped = false
+            do {
+                try await HarcMobileTransferWorkQueue.drain(
+                    identity: { $0 }, next: { queue.isEmpty ? nil : queue.removeFirst() },
+                    shouldAttempt: { _ in true },
+                    process: {
+                        if $0 == fixture.origin { throw injectedError }
+                        completed.append($0)
+                    }, skipped: { _ in XCTFail("Unexpected skipped work for \(name)") },
+                    failed: { origin, error in
+                        // No test-chosen stop callback: this is the adapter used
+                        // by the production coordinator's error handler.
+                        try HarcMobileTransferFailureAdapter.handle(
+                            error, origin: origin, store: fixture.store,
+                            report: { presentations.append($0) },
+                            persistenceFailure: { XCTFail("Adapter persistence failed: \($0)") }
+                        )
+                    }
+                )
+            } catch {
+                stopped = true
+                XCTAssertEqual(String(reflecting: error), String(reflecting: injectedError), name)
+            }
+            XCTAssertEqual(stopped, expectsStop, name)
+            XCTAssertEqual(completed, expectsStop ? [] : [second], name)
+            XCTAssertEqual(queue, expectsStop ? [second] : [], name)
+            XCTAssertEqual(presentations.count, 1, name)
+            switch (name, presentations.first) {
+            case ("encodingFailed", .some(.retryNeeded)), ("ordinary", .some(.retryNeeded)),
+                 ("codecNotQualified", .some(.codecQualificationRequired)),
+                 ("notPaired", .some(.waitingForPairing)),
+                 ("connectorNotPaired", .some(.waitingForPairing)),
+                 ("pairingRepairRequired", .some(.securityBlocked)),
+                 ("cancellation", .some(.cancelled)):
+                break
+            default:
+                XCTFail("Wrong production presentation for \(name): \(presentations)")
+            }
+            if name == "encodingFailed", case .retryNeeded(let message)? = presentations.first {
+                XCTAssertTrue(message.contains("saved on this iPhone"))
+                XCTAssertFalse(message.lowercased().contains("qualification"))
+            }
+            if name == "pairingRepairRequired" {
+                XCTAssertEqual(try fixture.store.recordingOutbox(for: fixture.origin)?.stateMachine.state, .securityBlocked)
+            }
+            XCTAssertEqual(try Data(contentsOf: fixture.masterURL), fixture.bytes, name)
+            XCTAssertEqual(try Data(contentsOf: secondURL), fixture.bytes, name)
+            XCTAssertEqual(try fixture.store.recordingOutbox(for: fixture.origin)?.finalizedCapture.masterFileState, .present, name)
+            XCTAssertNil(try fixture.store.cleanupIntent(for: fixture.origin), name)
+            XCTAssertNil(try fixture.store.verifiedRecordingReceipt(for: fixture.origin), name)
+        }
     }
 
     private static func open(_ fixture: BootstrapClientFixture) async throws -> (ValidatedClientAdoptionEvidence, HarcOpenedClientSession) {

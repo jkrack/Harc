@@ -312,90 +312,32 @@ final class HarcMobileTransferCoordinator {
     private func handleTransferFailure(
         _ error: any Error, master: HarcMobileFinalizedMaster
     ) throws {
-        if error is CancellationError {
-            queuedOrigins.remove(master.originRecordingID)
-            throw error
-        }
-        do {
-            throw error
-        } catch HarcMobileTransferError.notPaired {
-            Self.logger.error("Host transfer retry stopped because the client is not paired")
-            queuedOrigins.remove(master.originRecordingID)
-            pendingCount = max(pendingCount, queue.count + 1)
-            state = .waitingForPairing(pending: pendingCount)
-            refreshLocalRecordings()
-            throw error
-        } catch HarcMobileTransferError.codecNotQualified {
-            Self.logger.error("Host transfer retry stopped because the codec is not qualified")
-            queuedOrigins.remove(master.originRecordingID)
-            pendingCount = max(pendingCount, queue.count + 1)
-            state = .codecQualificationRequired(
-                recordingUUID: master.originRecordingID.recordingUUID
-            )
-            refreshLocalRecordings()
-            throw error
-        } catch HarcMobileHostSessionConnectorError
-            .pairingRepairRequired {
-            Self.logger.error(
-                "Host transfer stopped because saved pairing requires repair"
-            )
-            queuedOrigins.remove(master.originRecordingID)
-            pendingCount = max(pendingCount, queue.count + 1)
-            Self.persistPairingRepairBlock(
-                origin: master.originRecordingID,
-                store: store
-            )
-            state = .securityBlocked(
-                recordingUUID:
-                    master.originRecordingID.recordingUUID,
-                message: HarcMobileHostSessionConnectorError
-                    .pairingRepairRequired.localizedDescription
-            )
-            refreshLocalRecordings()
-            throw error
-        } catch let error as HarcMobileALACEncodingError {
-            Self.logger.error("Host transfer encoding failed: \(String(reflecting: error), privacy: .public)")
-            queuedOrigins.remove(master.originRecordingID)
-            if case .encodingFailed = error {
-                pendingCount = max(pendingCount, queue.count + 1)
-                state = .codecQualificationRequired(
-                    recordingUUID:
-                        master.originRecordingID.recordingUUID
-                )
+        Self.logger.error("Host transfer failed: \(String(reflecting: error), privacy: .public)")
+        queuedOrigins.remove(master.originRecordingID)
+        try HarcMobileTransferFailureAdapter.handle(
+            error, origin: master.originRecordingID, store: store,
+            report: { presentation in
+                switch presentation {
+                case .cancelled:
+                    break
+                case .waitingForPairing:
+                    pendingCount = max(pendingCount, queue.count + 1)
+                    state = .waitingForPairing(pending: pendingCount)
+                case .codecQualificationRequired:
+                    pendingCount = max(pendingCount, queue.count + 1)
+                    state = .codecQualificationRequired(recordingUUID: master.originRecordingID.recordingUUID)
+                case .securityBlocked(let message):
+                    pendingCount = max(pendingCount, queue.count + 1)
+                    state = .securityBlocked(recordingUUID: master.originRecordingID.recordingUUID, message: message)
+                case .retryNeeded(let message):
+                    state = .retryNeeded(recordingUUID: master.originRecordingID.recordingUUID, message: message)
+                }
                 refreshLocalRecordings()
-                return
+            },
+            persistenceFailure: {
+                Self.logger.error("Could not persist pairing-repair security stop: \(String(reflecting: $0), privacy: .public)")
             }
-            state = .retryNeeded(
-                recordingUUID: master.originRecordingID.recordingUUID,
-                message: String(describing: error)
-            )
-            refreshLocalRecordings()
-            return
-        } catch {
-            Self.logger.error("Host transfer retry failed: \(String(reflecting: error), privacy: .public)")
-#if DEBUG
-            print("[Harc host-transfer] failed: \(String(reflecting: error))")
-#endif
-            queuedOrigins.remove(master.originRecordingID)
-            let outbox = try? store.recordingOutbox(
-                for: master.originRecordingID
-            )
-            if outbox?.stateMachine.state == .securityBlocked {
-                state = .securityBlocked(
-                    recordingUUID:
-                        master.originRecordingID.recordingUUID,
-                    message: Self.diagnosticMessage(error)
-                )
-            } else {
-                state = .retryNeeded(
-                    recordingUUID:
-                        master.originRecordingID.recordingUUID,
-                    message: Self.diagnosticMessage(error)
-                )
-            }
-            refreshLocalRecordings()
-            return
-        }
+        )
     }
 
     private enum TransferOutcome {
@@ -570,43 +512,7 @@ final class HarcMobileTransferCoordinator {
     }
 
     private static func diagnosticMessage(_ error: any Error) -> String {
-        let reflected = String(reflecting: error)
-        return reflected.isEmpty ? error.localizedDescription : reflected
-    }
-
-    /// Pairing rejection is a durable security stop, not a reachability
-    /// failure. Automatic durable-outbox scans exclude this recording until
-    /// the user explicitly reviews and retries it after repairing pairing.
-    private static func persistPairingRepairBlock(
-        origin: OriginRecordingID,
-        store: HarcTransferStore
-    ) {
-        do {
-            _ = try store.updateRecordingOutbox(for: origin) { machine in
-                switch machine.state {
-                case .localOnly:
-                    try machine.queue()
-                    try machine.beginAuthorization()
-                    try machine.blockForSecurity(.grantRevoked)
-                case .queued:
-                    try machine.beginAuthorization()
-                    try machine.blockForSecurity(.grantRevoked)
-                case .failedRecoverable:
-                    try machine.retryRecoverable()
-                    try machine.beginAuthorization()
-                    try machine.blockForSecurity(.grantRevoked)
-                case .authorizing, .activeUpload, .backgroundScheduled,
-                     .hostCommitPending:
-                    try machine.blockForSecurity(.grantRevoked)
-                case .securityBlocked, .committed:
-                    break
-                }
-            }
-        } catch {
-            Self.logger.error(
-                "Could not persist pairing-repair security stop: \(String(reflecting: error), privacy: .public)"
-            )
-        }
+        HarcMobileTransferFailureAdapter.diagnosticMessage(error)
     }
 
     private static func master(
@@ -637,11 +543,6 @@ final class HarcMobileTransferCoordinator {
             discontinuities: capture.discontinuities
         )
     }
-}
-
-private enum HarcMobileTransferError: Error {
-    case notPaired
-    case codecNotQualified
 }
 
 /// This compile-time gate is deliberately closed until the physical-iPhone
