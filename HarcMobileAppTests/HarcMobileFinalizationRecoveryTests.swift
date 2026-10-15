@@ -78,7 +78,7 @@ final class HarcMobileFinalizationRecoveryTests: XCTestCase {
             let orphan = try self.finalize(locations, device: healthy.producingDeviceID)
             var rejected: [URL] = []
             // Each invalid artifact is preserved and excluded independently.
-            for mutation in 0 ..< 4 {
+            for mutation in 0 ..< 5 {
                 let device = mutation == 3
                     ? try DeviceID(Data(repeating: 0x52, count: 32))
                     : healthy.producingDeviceID
@@ -94,6 +94,20 @@ final class HarcMobileFinalizationRecoveryTests: XCTestCase {
                     var bytes = try Data(contentsOf: bad.masterFileURL)
                     bytes[44] ^= 1
                     try bytes.write(to: bad.masterFileURL)
+                } else if mutation == 4 {
+                    // Valid WAV/hash and independently valid discontinuities,
+                    // but transfer-domain admission rejects their ordering.
+                    let reversed = try [UInt64(1_500), 1_100].map {
+                        try CaptureDiscontinuity(
+                            recordingID: bad.originRecordingID, monotonicTimeNanoseconds: $0,
+                            wallTime: bad.captureStartedAt, reason: .routeChanged,
+                            affectedFrames: CanonicalFrameRange(startFrame: 0, endFrameExclusive: 1),
+                            canonicalizationPolicy: .annotateGapWithoutInsertedSilence
+                        )
+                    }
+                    var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: metadata)) as? [String: Any])
+                    object["discontinuities"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reversed))
+                    try JSONSerialization.data(withJSONObject: object).write(to: metadata)
                 }
                 rejected.append(metadata)
             }

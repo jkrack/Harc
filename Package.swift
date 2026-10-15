@@ -446,7 +446,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcAudioMobileTests",
-            dependencies: ["HarcAudioMobile", "HarcDomain"]
+            dependencies: ["HarcAudioMobile", "HarcDomain", "HarcTransfer"]
         ),
         .testTarget(
             name: "HarcClientTests",

@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import HarcDomain
+import HarcTransfer
 import Testing
 @testable import HarcAudioMobile
 
@@ -132,6 +133,46 @@ struct HarcMobileDurableMasterWriterTests {
                 registeredOrigins: [], attributes: RejectingStorageAttributes()
             )
         }
+    }
+
+    @Test("transfer-domain admission rejects one orphan without hiding a healthy master")
+    func domainAdmissionIsPerArtifact() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let good = try fixture.finalized()
+        let bad = try fixture.finalized()
+        let metadata = fixture.metadataURL(bad)
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: metadata)) as? [String: Any])
+        let discontinuities = try [UInt64(1_500_000_000), 1_100_000_000].map {
+            try CaptureDiscontinuity(
+                recordingID: bad.originRecordingID, monotonicTimeNanoseconds: $0,
+                wallTime: bad.captureStartedAt, reason: .routeChanged,
+                affectedFrames: CanonicalFrameRange(startFrame: 0, endFrameExclusive: 1),
+                canonicalizationPolicy: .annotateGapWithoutInsertedSilence
+            )
+        }
+        object["discontinuities"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(discontinuities))
+        let exactMetadata = try JSONSerialization.data(withJSONObject: object)
+        try exactMetadata.write(to: metadata)
+        let originalWAV = try Data(contentsOf: bad.masterFileURL)
+        let report = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: fixture.locations, producingDeviceID: fixture.deviceID, registeredOrigins: [],
+            validateMaster: { master in
+                _ = try FinalizedCapture(
+                    producingDeviceID: master.producingDeviceID, originRecordingID: master.originRecordingID,
+                    captureStartedAt: master.captureStartedAt, captureEndedAt: master.captureEndedAt,
+                    captureStartedMonotonicNanoseconds: master.captureStartedMonotonicNanoseconds,
+                    captureEndedMonotonicNanoseconds: master.captureEndedMonotonicNanoseconds,
+                    finalizationReason: .userStopped, totalCanonicalFrames: master.totalCanonicalFrames,
+                    totalCanonicalBytes: master.totalCanonicalBytes,
+                    canonicalPCMSHA256: master.canonicalPCMSHA256, discontinuities: master.discontinuities
+                )
+            }, attributes: NoopStorageAttributes()
+        )
+        #expect(report.masters == [good])
+        #expect(report.rejectedMetadataFiles.map(\.lastPathComponent) == [metadata.lastPathComponent])
+        #expect(try Data(contentsOf: metadata) == exactMetadata)
+        #expect(try Data(contentsOf: bad.masterFileURL) == originalWAV)
     }
 
     @Test("finalization publishes an exact protected canonical WAV")

@@ -491,7 +491,9 @@ final class HarcMobileAppModel {
         })
         let finalized = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
             locations: locations, producingDeviceID: store.installationDeviceID,
-            registeredOrigins: known, attributes: attributes
+            registeredOrigins: known,
+            validateMaster: { _ = try finalizedCapture($0) },
+            attributes: attributes
         )
         for master in finalized.masters {
             _ = try store.persistFinalizedCapture(
