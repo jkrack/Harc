@@ -36,9 +36,14 @@ enum HarcMobileLibraryRefreshPresentation {
         operation: HarcMobileLibraryRefreshOperation,
         hasCachedRows: Bool
     ) -> String {
-        let diagnostic = HarcTransportErrorDiagnostic.describe(error)
+        // RPC messages, localized descriptions, and nested causes are untrusted:
+        // they can contain credentials or user content. Only expose the typed
+        // status and our fixed operation labels in the Library diagnostic.
+        let status = HarcTransportErrorDiagnostic.describe(error).rpcCode
+        let detail = status.map { "Host request failed (\($0))." }
+            ?? "Host request failed."
         let prefix = hasCachedRows ? "Showing cached Host Library. " : ""
-        return "\(prefix)\(operation.rawValue): \(diagnostic.userFacingMessage)"
+        return "\(prefix)\(operation.rawValue): \(detail)"
     }
 }
 

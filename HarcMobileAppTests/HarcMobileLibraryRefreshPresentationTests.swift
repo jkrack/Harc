@@ -13,15 +13,28 @@ struct HarcMobileLibraryRefreshPresentationTests {
     @Test("preserves actual RPC status instead of NSError's generic error 1")
     func actualRPCStatus() {
         for code in [RPCError.Code.cancelled, .deadlineExceeded, .permissionDenied, .unavailable] {
-            let error = RPCError(code: code, message: "Safe fixture message", cause: FixtureError.privateCause)
+            let error = RPCError(code: code, message: "fixture-token user-transcript raw-request", cause: FixtureError.privateCause)
             #expect((error as NSError).code == 1)
             let message = HarcMobileLibraryRefreshPresentation.failureMessage(
                 error, operation: .metadata, hasCachedRows: false
             )
             #expect(message.contains(code.description))
-            #expect(message.contains("Safe fixture message"))
+            #expect(!message.contains("fixture-token"))
+            #expect(!message.contains("user-transcript"))
+            #expect(!message.contains("raw-request"))
             #expect(!message.contains("privateCause"))
         }
+    }
+
+    @Test("never renders arbitrary localized errors or raw request details")
+    func excludesUntrustedErrorDescriptions() {
+        let message = HarcMobileLibraryRefreshPresentation.failureMessage(
+            UntrustedError(), operation: .openingSession, hasCachedRows: false
+        )
+        #expect(message == "Host connection: Host request failed.")
+        #expect(!message.contains("fixture-token"))
+        #expect(!message.contains("user-transcript"))
+        #expect(!message.contains("raw-request"))
     }
 
     @Test("identifies cached rows and the failed operation without discarding data")
@@ -83,4 +96,10 @@ struct HarcMobileLibraryRefreshPresentationTests {
     }
 
     private enum FixtureError: Error { case privateCause }
+
+    private struct UntrustedError: LocalizedError {
+        var errorDescription: String? {
+            "fixture-token user-transcript raw-request"
+        }
+    }
 }

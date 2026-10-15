@@ -7,8 +7,9 @@ Synthetic errors with the distinct statuses `cancelled`, `deadlineExceeded`,
 reported number as `cancelled` would be an unsupported diagnosis.
 
 The Library coordinator now uses the existing `HarcTransportErrorDiagnostic`
-formatter used by Settings. The message retains the actual RPC status and
-message, excludes its underlying cause, names the failed refresh operation, and
+formatter used by Settings to obtain the typed RPC status. The Library displays
+only that status and fixed operation labels; it suppresses arbitrary RPC
+messages, localized descriptions, and underlying causes, and
 identifies retained cached rows. Starting another refresh immediately shows
 progress even when cached rows exist. The request still coalesces while active;
 this change adds no retries, timeout policy, authorization, transport, or codec
@@ -22,20 +23,24 @@ succeeded or identify which operation failed.
 
 ## Bounded regression evidence
 
-Three new Swift Testing tests cover the actual RPC status/cause boundary,
-cached-row and operation presentation, and an immediately visible retry that
+Four new Swift Testing tests cover the actual RPC status/cause boundary,
+exclusion of untrusted error descriptions, cached-row and operation presentation,
+and an immediately visible retry that
 retains cached rows. The last fixture uses an in-memory software identity, a
 synthetic temporary cache, and no adoption or route. It neither accesses real
 credentials nor opens a network connection.
 
 On Apple Silicon macOS 26.6.2 with Xcode 27, an isolated native SwiftPM projection
-of the exact coordinator and supporting sources passed all three tests. Restoring
-the old localized-description behavior and cached-row refresh condition in the
-projection made all three tests fail with ten assertions. Restoring the proposed
-source passed all three again. The projection uses wire Swift files previously
+of the exact coordinator and supporting sources passed all four tests. Before
+the additional privacy test, restoring the old localized-description behavior
+and cached-row refresh condition made the original three tests fail with ten
+assertions; restoring the proposed source passed all three again. The final
+four-test run also verifies that RPC messages and arbitrary localized errors
+cannot render credential-like fixtures, transcript-like fixtures, or raw request
+text. The projection uses wire Swift files previously
 generated from the identical schemas; it omits the generation plugin and app
 entrypoint. This is focused source evidence, not an Xcode app or physical-device
-qualification. The three tests are added to the existing mobile configuration
+qualification. The four tests are added to the existing mobile configuration
 CI selector for full-target compilation and execution.
 
 ## Acceptance still open
