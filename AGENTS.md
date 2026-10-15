@@ -247,9 +247,16 @@ a release build dirties it.
 So: a `Package.resolved` diff that only adds Sparkle is a release-build
 artifact — **leave it out of the commit** (`git checkout Package.resolved`).
 Do not "fix" it by committing the Sparkle pin; that inverts the noise onto
-every test run. Sparkle's version is pinned by `from:` in `project.yml`,
-and the framework is embedded and signed from there, so nothing about the
-shipped build depends on that pin being present here.
+every test run. Sparkle's `from:` requirement in `project.yml` permits stable
+versions from that minimum up to the next major version; it is not an exact
+version pin. The archive preflight accepts only one Xcode-added Sparkle pin
+from the official source within that requirement, with its revision matching
+one exact official version tag (annotated tags are peeled), and generated
+`originHash` churn. Tag lookup is noninteractive, bounded to 15 seconds and
+fails closed on missing/ambiguous tags, mismatch or resolver failure. Every
+other committed pin and lockfile field
+must remain unchanged. Record the resolved Sparkle version/revision with build
+evidence; do not expand this exception to other dependency changes.
 
 ## Release Ritual
 
