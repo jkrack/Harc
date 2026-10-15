@@ -238,7 +238,8 @@ public final class LibraryViewModel: ObservableObject {
                     }
                     try Task.checkCancellation()
                     await MainActor.run {
-                        guard self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
+                        guard !Task.isCancelled,
+                              self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
                         self.hits = results
                         self.searchError = nil
                         // `recordings` stays populated with the unfiltered list so
@@ -250,7 +251,8 @@ public final class LibraryViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    guard self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
+                    guard !Task.isCancelled,
+                          self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
                     self.hits = []
                     self.searchError = Self.searchErrorMessage(from: error)
                 }
