@@ -250,3 +250,17 @@ enum HarcMobileHostSessionConnector {
         return try HarcValidatedCapabilityOfferV1(offer, policy: policy)
     }
 }
+
+enum HarcMobileHostSessionConnectorError: LocalizedError {
+    case notPaired
+    case pairingRepairRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .notPaired:
+            "This iPhone is not paired with a Harc Host."
+        case .pairingRepairRequired:
+            "The Host no longer accepts this iPhone’s saved pairing. Recordings are safe on this iPhone. Forget this Host, create a new invitation, and pair again."
+        }
+    }
+}

@@ -104,3 +104,27 @@ Exact executed iOS totals from PR118 and main are recorded in
 [hosted mobile execution evidence](2026-10-15-hosted-mobile-execution.md), including
 the clean checkout commits, simulator model/runtime, named recovery results, and
 artifact digests. Neither prior run includes PR119's new composition class.
+
+
+## Shared connector error ownership
+
+Final-head run 38690317955 (`d0e7a759a2d5458a41db7955742bca2bf103fd5e`)
+passed the full package suite and every preceding check, then failed `Build
+Harc.app`. The compiler could not find `HarcMobileHostSessionConnectorError`
+while compiling the shared connector. The error-adapter extraction had moved
+that enum into `HarcMobileTransferFailureAdapter.swift`, which belongs only to
+the mobile app. `project.yml` intentionally includes the connector, but not the
+mobile transfer adapter, in the Mac target.
+
+The earlier successful local Mac build used the Library validation checkout on
+main plus the Library fix. Its Library source matched PR119, but its connector
+still contained the enum. That build did not validate PR119's combined Mac
+source set and cannot establish that the adapter extraction compiled on Mac.
+
+Restore the unchanged internal connector error enum to its original connector
+file. Both apps already compile that file. Its cases, messages, visibility,
+callers, error-adapter policy, dependencies, and target source lists remain
+unchanged. No mobile-only adapter is added to the Mac target. The connector now
+matches main byte for byte. Full validation is rerun from the actual PR checkout;
+local compiler/toolchain overrides are recorded separately and do not enter the
+commit. Hosted mobile execution remains pending until the upstream Mac job passes.
