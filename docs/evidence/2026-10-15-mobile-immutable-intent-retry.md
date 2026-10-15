@@ -88,3 +88,19 @@ build-for-testing passed with signing disabled and two workers. Final validation
 kept at least 12.14 GiB free. Logs, watchdog receipts, and the exact
 adapter/source manifest are in `/tmp/harc-sync-evidence` with the
 `production-error-adapter` and `ios-production-error-adapter-build` prefixes.
+
+
+## Full CI investigation
+
+CI run 38683188751 failed one customer-actions E2E rename/filter assertion out of
+1,608 package tests, after package build and the blocking-I/O regression passed.
+The mobile job was skipped. Investigation and deterministic regressions for the
+separate production Library publication race are recorded in
+[Library refresh evidence](2026-10-15-library-refresh-publication.md). The existing
+E2E wait, assertions, and PR112 search fix are unchanged. The Library fix is kept
+in a separate commit on this branch for review and combined CI validation.
+
+Exact executed iOS totals from PR118 and main are recorded in
+[hosted mobile execution evidence](2026-10-15-hosted-mobile-execution.md), including
+the clean checkout commits, simulator model/runtime, named recovery results, and
+artifact digests. Neither prior run includes PR119's new composition class.
