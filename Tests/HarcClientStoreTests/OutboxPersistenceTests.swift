@@ -1258,13 +1258,15 @@ struct OutboxPersistenceTests {
         #expect(try store.backgroundBatch(id: batch.batchID)?.state
             == .readyToSchedule)
 
+        let replacementIdentity = try SystemBackgroundTaskIdentity(taskIdentifier: 72)
+        try store.persistTaskMappingBeforeResume(replacementIdentity, batchID: batch.batchID)
         try store.persistBackgroundTaskFailure(
-            identity,
+            replacementIdentity,
             batchID: batch.batchID,
             disposition: .securityBlocked
         )
         try store.persistBackgroundTaskFailure(
-            identity,
+            replacementIdentity,
             batchID: batch.batchID,
             disposition: .failedRecoverable
         )
@@ -1273,22 +1275,27 @@ struct OutboxPersistenceTests {
                 == .securityBlocked
         )
         #expect(try store.taskMappings().map(\.state) == [
-            .securityBlocked,
+            .retired, .securityBlocked,
         ])
         #expect(
             try store.recordingOutbox(for: origin)?.stateMachine.state
                 == .securityBlocked
         )
+        #expect(throws: ClientStoreError.self) {
+            try store.persistTaskMappingBeforeResume(
+                SystemBackgroundTaskIdentity(taskIdentifier: 73), batchID: batch.batchID
+            )
+        }
         let blockedReconciliation = try store.reconcileBackgroundTasks(
             observedSystemTasks: []
         )
         #expect(blockedReconciliation.batchesToReschedule.isEmpty)
         #expect(try store.taskMappings().map(\.state) == [
-            .securityBlocked,
+            .retired, .securityBlocked,
         ])
         #expect(throws: ClientStoreError.self) {
             try store.persistBackgroundTaskFailure(
-                identity,
+                replacementIdentity,
                 batchID: AudioBatchID.random(),
                 disposition: .failedRecoverable
             )
@@ -1304,7 +1311,7 @@ struct OutboxPersistenceTests {
                 == .securityBlocked
         )
         #expect(try reopened.taskMappings().map(\.state) == [
-            .securityBlocked,
+            .retired, .securityBlocked,
         ])
         #expect(
             try reopened.recordingOutbox(for: origin)?.stateMachine.state
@@ -1322,7 +1329,7 @@ struct OutboxPersistenceTests {
                 == .failedRecoverable
         )
         #expect(try reopened.taskMappings().map(\.state) == [
-            .failedRecoverable,
+            .retired, .failedRecoverable,
         ])
         #expect(
             try !reopened.resumeSecurityBlockedBackgroundUpload(for: origin)
