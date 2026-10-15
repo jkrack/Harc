@@ -208,6 +208,36 @@ struct HarcMobileLibraryRefreshPresentationTests {
         #expect(opens == 2)
     }
 
+    @Test("shutdown leaves a terminal cancellation state before and after a late completion",
+          arguments: [false, true], [false, true])
+    func shutdownTerminates(cached: Bool, lateFailure: Bool) async throws {
+        let fixture = try await RefreshFixture(cached: cached)
+        defer { fixture.remove() }
+        let pending = RefreshGate()
+        var aborts = 0
+        let coordinator = fixture.coordinator {
+            HarcMobileLibraryRefreshSession(
+                protectedEdits: nil,
+                metadata: {
+                    await pending.wait()
+                    if lateFailure { throw RPCError(code: .unavailable, message: "private late failure") }
+                },
+                speakerProfiles: nil, finish: {}, abort: { aborts += 1 }
+            )
+        }
+        defer { coordinator.shutdown(); pending.release() }
+        coordinator.refresh()
+        try await waitUntil { pending.entered }
+        coordinator.shutdown()
+        #expect(!coordinator.isRefreshing)
+        #expect(coordinator.state == .cancelled)
+        pending.release()
+        try await waitUntil { aborts == 1 }
+        #expect(!coordinator.isRefreshing)
+        #expect(coordinator.state == .cancelled)
+        #expect(coordinator.recordings == (cached ? [fixture.original] : []))
+    }
+
     @Test("a session returned after cancellation is aborted without changing the newer result")
     func staleOpenedSession() async throws {
         let fixture = try await RefreshFixture(cached: false)
@@ -255,6 +285,31 @@ struct HarcMobileLibraryRefreshPresentationTests {
         #expect(coordinator.state == .accessNotGranted)
         #expect(finished)
         #expect(coordinator.recordings == [fixture.original])
+    }
+
+    @Test("known pairing repair keeps fixed actionable guidance and cached rows", arguments: [false, true])
+    func pairingRepairGuidance(cached: Bool) async throws {
+        let fixture = try await RefreshFixture(cached: cached)
+        defer { fixture.remove() }
+        let coordinator = fixture.coordinator {
+            throw HarcMobileHostSessionConnectorError.pairingRepairRequired
+        }
+        defer { coordinator.shutdown() }
+        coordinator.refresh()
+        try await waitUntil { !coordinator.isRefreshing }
+        let message: String
+        switch coordinator.state {
+        case .offline(let value) where cached: message = value
+        case .failed(let value) where !cached: message = value
+        default:
+            Issue.record("Pairing repair must preserve the initial/cached failure state")
+            return
+        }
+        #expect(message.contains("Recordings are safe on this iPhone."))
+        #expect(message.contains("Forget this Host, create a new invitation, and pair again."))
+        #expect(message.hasPrefix("Showing cached Host Library.") == cached)
+        #expect(message.count <= 240)
+        #expect(coordinator.recordings == (cached ? [fixture.original] : []))
     }
 
     @Test("error text stays bounded for every operation despite oversized untrusted payloads")

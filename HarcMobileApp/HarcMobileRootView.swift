@@ -323,6 +323,12 @@ struct HarcMobileRootView: View {
                 systemImage: "wifi.slash",
                 description: Text(message)
             )
+        case .cancelled:
+            ContentUnavailableView(
+                "Refresh cancelled",
+                systemImage: "arrow.clockwise",
+                description: Text("Refresh Library to try again.")
+            )
         case .ready:
             ContentUnavailableView(
                 "No recordings yet",
@@ -339,6 +345,9 @@ struct HarcMobileRootView: View {
         switch coordinator.state {
         case .refreshing:
             HStack { ProgressView(); Text("Refreshing from Host…") }
+        case .cancelled:
+            Label("Host Library refresh cancelled.", systemImage: "arrow.clockwise")
+                .foregroundStyle(.secondary)
         case .offline(let message):
             Label(message, systemImage: "clock.arrow.circlepath")
                 .foregroundStyle(.secondary)

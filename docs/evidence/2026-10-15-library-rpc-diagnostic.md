@@ -8,7 +8,8 @@ reported number as `cancelled` would be an unsupported diagnosis.
 
 The Library coordinator now uses the existing `HarcTransportErrorDiagnostic`
 formatter used by Settings to obtain the typed RPC status. The Library displays
-only that status and fixed operation labels; it suppresses arbitrary RPC
+only that status, fixed operation labels, and explicitly allowlisted app-owned
+pairing-repair guidance; it suppresses arbitrary RPC
 messages, localized descriptions, and underlying causes, and
 identifies retained cached rows. Starting another refresh immediately shows
 progress even when cached rows exist. The request still coalesces while active;
@@ -27,7 +28,9 @@ Shutdown cancels the active refresh and releases its task handle. Previously,
 that old task could finish after a new refresh started and unconditionally clear
 the new handle and progress flag. A negative control reproduces the resulting
 extra request. Each refresh now owns a unique identifier; only the current
-request may publish a result or clear its handle. A session returned after
+request may publish a result or clear its handle. Shutdown immediately publishes
+a terminal cancelled state, rendered on both clients without claiming a
+successful sync. A session returned after
 cancellation is closed without running Library work. Snapshot, delta, and
 speaker-pack responses check cancellation before publishing into the cache.
 
@@ -39,7 +42,7 @@ connection path is added.
 
 ## Bounded regression evidence
 
-Ten Swift Testing tests exercise 23 single or parameterized cases:
+Twelve Swift Testing tests exercise 29 single or parameterized cases:
 
 - Initial and cached loads failing at Host connection, protected edits, metadata,
   speaker profiles, or connection completion. Later failures retain metadata
@@ -48,16 +51,20 @@ Ten Swift Testing tests exercise 23 single or parameterized cases:
 - Active-refresh coalescing; stale success/error responses completing before or
   after the newer request; cancellation while opening a session; and an absent
   Library-read grant closing without running Library work.
+- Terminal shutdown state before and after late success/failure, with and without
+  cached rows; fixed typed pairing-repair instructions retaining cached rows.
 - Actual RPC status preservation, exclusion of arbitrary RPC/localized/cause
-  text, oversized untrusted payloads producing at most 140 displayed characters,
+  text, oversized untrusted RPC payloads producing at most 140 displayed characters
+  (fixed repair guidance remains below 240),
   and a no-adoption fixture retaining its local cache without a network route.
 
 On Apple Silicon macOS 26.6.2 with Xcode 27, the exact-source native SwiftPM
-projection passed 41 tests across the lifecycle, Library cache, receipt
+projection passed 43 tests across the lifecycle, Library cache, receipt
 persistence, outbox, and background isolation suites. Restoring the old unowned
 cleanup only in that projection makes the four-case stale-response regression
-fail with four assertions, including an unexpected third open. Restoring the
-proposed source passes. Earlier, restoring the old localized-description and
+fail with four assertions, including an unexpected third open. A second negative control removing the
+repair allowlist and terminal shutdown state makes both new regressions fail
+with twelve assertions across six cases. Restoring the proposed source passes. Earlier, restoring the old localized-description and
 cached-row refresh behavior made the original three tests fail with ten
 assertions.
 

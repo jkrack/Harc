@@ -38,10 +38,16 @@ enum HarcMobileLibraryRefreshPresentation {
     ) -> String {
         // RPC messages, localized descriptions, and nested causes are untrusted:
         // they can contain credentials or user content. Only expose the typed
-        // status and our fixed operation labels in the Library diagnostic.
-        let status = HarcTransportErrorDiagnostic.describe(error).rpcCode
-        let detail = status.map { "Host request failed (\($0))." }
-            ?? "Host request failed."
+        // status and fixed app-owned labels or allowlisted repair guidance.
+        let detail: String
+        if let connectorError = error as? HarcMobileHostSessionConnectorError,
+           case .pairingRepairRequired = connectorError {
+            detail = HarcMobileHostSessionConnectorError.pairingRepairGuidance
+        } else {
+            let status = HarcTransportErrorDiagnostic.describe(error).rpcCode
+            detail = status.map { "Host request failed (\($0))." }
+                ?? "Host request failed."
+        }
         let prefix = hasCachedRows ? "Showing cached Host Library. " : ""
         return "\(prefix)\(operation.rawValue): \(detail)"
     }
@@ -79,6 +85,7 @@ final class HarcMobileLibraryCoordinator {
         case unpaired
         case accessNotGranted
         case refreshing
+        case cancelled
         case ready(lastUpdated: Date?)
         case offline(message: String)
         case failed(String)
@@ -147,6 +154,7 @@ final class HarcMobileLibraryCoordinator {
     }
 
     func shutdown() {
+        if isRefreshing { state = .cancelled }
         activeRefreshID = nil
         refreshTask?.cancel()
         refreshTask = nil
