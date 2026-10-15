@@ -2,12 +2,15 @@
 """Allow only Xcode's Sparkle addition under the checked-in project requirement."""
 
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 
 SPARKLE_URL = "https://github.com/sparkle-project/Sparkle"
+TAG_RESOLVER_TIMEOUT = 15
 
 
 def stable_version(value):
@@ -42,6 +45,42 @@ def sparkle_requirement(project):
     return stable_version(fields["from"])
 
 
+def resolve_sparkle_tag(version):
+    stable_version(version)
+    tags = [f"refs/tags/{version}", f"refs/tags/v{version}"]
+    refs = [ref for tag in tags for ref in (tag, tag + "^{}")]
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", "--exit-code", SPARKLE_URL, *refs],
+            capture_output=True, text=True, timeout=TAG_RESOLVER_TIMEOUT,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("official Sparkle tag lookup timed out after 15 seconds") from error
+    except OSError as error:
+        raise ValueError("official Sparkle tag lookup could not run") from error
+    if result.returncode != 0:
+        raise ValueError(f"official Sparkle tag lookup failed (exit {result.returncode})")
+    found = {}
+    if not isinstance(result.stdout, str):
+        raise ValueError("malformed official Sparkle tag response")
+    for line in result.stdout.splitlines():
+        match = re.fullmatch(r"([0-9a-f]{40})\t([^\s]+)", line)
+        if (not match or match[2] not in refs or match[2] in found
+                or match[1] == "0" * 40):
+            raise ValueError("malformed or duplicate official Sparkle tag response")
+        found[match[2]] = match[1]
+    present = [tag for tag in tags if tag in found]
+    if len(present) != 1:
+        raise ValueError("official Sparkle version tag is absent or ambiguous")
+    tag = present[0]
+    if any(ref not in (tag, tag + "^{}") for ref in found):
+        raise ValueError("official Sparkle version tag is ambiguous")
+    # ls-remote's ^{} entry peels annotated tags; their tag-object ID is not
+    # the commit SwiftPM must have resolved. Lightweight tags have one entry.
+    return found.get(tag + "^{}", found[tag])
+
+
 def validate(committed, working, project):
     minimum = sparkle_requirement(project)
     if not isinstance(committed.get("pins"), list) or not isinstance(working.get("pins"), list):
@@ -74,6 +113,8 @@ def validate(committed, working, project):
     actual["pins"] = [pin for pin in working["pins"] if pin.get("identity") != "sparkle"]
     if actual != expected:
         raise ValueError("dependency drift beyond the Xcode-only Sparkle addition")
+    if state["revision"] != resolve_sparkle_tag(state["version"]):
+        raise ValueError("Sparkle revision does not match the official exact version tag")
     return state["version"]
 
 
@@ -90,7 +131,7 @@ def main():
     except (ValueError, TypeError, KeyError, AttributeError, OSError) as error:
         print(f"Package.resolved rejected: {error}", file=sys.stderr)
         return 1
-    print(f"Verified Xcode-only Sparkle {version} against project.yml; other pins unchanged")
+    print(f"Verified Xcode-only Sparkle {version} range and official tag revision; other pins unchanged")
     return 0
 
 

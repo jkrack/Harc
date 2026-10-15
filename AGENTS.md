@@ -250,8 +250,11 @@ Do not "fix" it by committing the Sparkle pin; that inverts the noise onto
 every test run. Sparkle's `from:` requirement in `project.yml` permits stable
 versions from that minimum up to the next major version; it is not an exact
 version pin. The archive preflight accepts only one Xcode-added Sparkle pin
-from the official source within that requirement, a valid version/revision,
-and generated `originHash` churn. Every other committed pin and lockfile field
+from the official source within that requirement, with its revision matching
+one exact official version tag (annotated tags are peeled), and generated
+`originHash` churn. Tag lookup is noninteractive, bounded to 15 seconds and
+fails closed on missing/ambiguous tags, mismatch or resolver failure. Every
+other committed pin and lockfile field
 must remain unchanged. Record the resolved Sparkle version/revision with build
 evidence; do not expand this exception to other dependency changes.
 

@@ -79,12 +79,18 @@ remain useful history and must not be relabeled as 0.14.13 qualification.
   the committed SwiftPM lockfile still intentionally excludes Sparkle.
   The preflight correction derives the allowed range from the checked-in
   declaration and admits exactly one official-source, versioned Sparkle pin
-  plus generated `originHash` churn. Other pins, revisions, URLs, schema and
+  whose revision matches the exact official version tag, plus generated
+  `originHash` churn. Annotated tags use their peeled commit. A noninteractive
+  lookup to the fixed official source is bounded to 15 seconds; absent or
+  ambiguous tags, malformed responses, mismatched revisions and resolver
+  failure all reject the exception. Other pins, revisions, URLs, schema and
   lockfile fields must remain unchanged. Unknown requirement forms fail closed.
   No dependency requirement or committed pin changes in this correction.
 - Focused regressions exercise accepted current/historical resolutions and
   rejection of other dependency drift, invalid/duplicate Sparkle pins,
-  out-of-range versions, unknown project requirements and malformed metadata.
+  out-of-range versions, unknown project requirements and malformed metadata,
+  plus controlled official tag mappings, well-formed SHA mismatches, annotated
+  tags, absent/ambiguous tags and resolver failure.
   They run with the current-candidate identification regressions in CI.
 - Source/public-URL preflight passed after a bounded recheck: privacy and support
   URLs both returned HTTP 200 and the published support contact matched source.
