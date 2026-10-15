@@ -33,6 +33,61 @@ struct P256SigningTests {
         #expect(!publicKey.isValidSignature(signature, for: accidentallyDoubleHashed))
     }
 
+    private let capturedPublicKeyHex = """
+        04
+        f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5f
+        b5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36
+        """
+
+    // Captured from the software-only scalar-15 diagnostic on macOS 26.6.2.
+    // OpenSSL 3.6.2 and an independent P-256 equation check accept this low-S
+    // vector. Apple CryptoKit/SecKey reject it on the affected development Mac.
+    // Keep the positive assertion: retries or an expected-failure annotation
+    // would hide the same failure class as the relay-admission CI anomaly.
+    @Test("captured valid low-S signature remains interoperable")
+    func capturedLowSSignatureInteroperability() throws {
+        let publicKey = try P256X963PublicKey(try Data(hex: capturedPublicKeyHex))
+        let digestBytes = try Data(hex:
+            "76d7b73faeb2bbecd43b6176ee41da3db2b0c7cf6528fac3435f0950ed22afae"
+        )
+        #expect(digestBytes == Data(SHA256Reference.hash(
+            Data("harc-signature-diagnostic-12".utf8)
+        )))
+        let signature = try P256RawSignature(try Data(hex: """
+            bb1f1b082fdd7aeb5c396d109374e5445a5a7dc5957b15ec59aa27f1a79208f4
+            3977eccab3ee08d969a77b3b52910487847b07b360b442ac8821bb97d77f2976
+            """))
+        let digest = try P256SHA256Digest(digestBytes)
+        #expect(publicKey.isValidSignature(signature, for: digest))
+
+        // A verifier change must still reject a changed message and double hash.
+        var changedDigestBytes = digestBytes
+        changedDigestBytes[0] ^= 1
+        #expect(!publicKey.isValidSignature(
+            signature,
+            for: try P256SHA256Digest(changedDigestBytes)
+        ))
+        #expect(!publicKey.isValidSignature(
+            signature,
+            for: P256SHA256Digest(hashing: digestBytes)
+        ))
+    }
+
+    @Test("captured valid Host transport signature remains interoperable")
+    func capturedTransportSignatureInteroperability() throws {
+        let publicKey = try P256X963PublicKey(try Data(hex: capturedPublicKeyHex))
+        // Exact signing prehash/signature from the failed transport-set frame
+        // preserved in docs/evidence/2026-10-15-p256-verification-vectors.json.
+        let digest = try P256SHA256Digest(try Data(hex:
+            "d59617b34da3428bb9e35906612d8c7ffdb12a3b8213d5c97a687828c1e3bab8"
+        ))
+        let signature = try P256RawSignature(try Data(hex: """
+            8fd3457d89a4450a0d568c007f961b0bbb496b07b5f91295e8b98970836ee8c1
+            290c1b6ad1723e75f4dc080492c75a26f737b1bbf1ad60f8070c269d56acff28
+            """))
+        #expect(publicKey.isValidSignature(signature, for: digest))
+    }
+
     @Test("identity derivation uses the exact versioned X9.63 domain separator")
     func identityDerivationVector() throws {
         let publicKey = try P256X963PublicKey(try Data(hex: publicKeyHex))

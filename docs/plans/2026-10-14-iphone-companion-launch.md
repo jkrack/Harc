@@ -95,6 +95,15 @@ the gate or loosening thresholds without a reviewed specification change.
 
 ### Current validation and physical acceptance
 
+**2026-10-15 update:** PR #106 is merged. Combined main `c802dce6` passed
+[CI 38738216824](https://github.com/jkrack/Harc/actions/runs/38738216824),
+including mobile app tests. Subsequent bounded synthetic checks reproduced `.invalidSignature` in the
+unchanged intermediate-CI test and captured a deterministic valid-signature
+verification discrepancy. The baseline remains blocked by that unresolved
+[finding and regression](../evidence/2026-10-15-p256-verification-qualification.md);
+the passing combined run is not a fix. The paragraphs below retain the original
+review snapshot.
+
 PR #106 addresses package/STT/MCP executor starvation and bounded validation. At
 review, its published head was `e29b4b72cdb514b808b4dbf6d2080d72da7fd2ab`;
 [that exact CI run](https://github.com/jkrack/Harc/actions/runs/38499275839) failed.
