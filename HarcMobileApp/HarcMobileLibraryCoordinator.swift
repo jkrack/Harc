@@ -22,6 +22,26 @@ struct HarcLibraryAudioPolicy: Equatable, Sendable {
     )
 }
 
+enum HarcMobileLibraryRefreshOperation: String {
+    case openingSession = "Host connection"
+    case protectedEdits = "Protected edit sync"
+    case metadata = "Library metadata refresh"
+    case speakerProfiles = "Speaker profile update"
+    case finishing = "Completing Host refresh"
+}
+
+enum HarcMobileLibraryRefreshPresentation {
+    static func failureMessage(
+        _ error: any Error,
+        operation: HarcMobileLibraryRefreshOperation,
+        hasCachedRows: Bool
+    ) -> String {
+        let diagnostic = HarcTransportErrorDiagnostic.describe(error)
+        let prefix = hasCachedRows ? "Showing cached Host Library. " : ""
+        return "\(prefix)\(operation.rawValue): \(diagnostic.userFacingMessage)"
+    }
+}
+
 @MainActor
 @Observable
 final class HarcMobileLibraryCoordinator {
@@ -93,7 +113,7 @@ final class HarcMobileLibraryCoordinator {
     func refresh() {
         guard refreshTask == nil else { return }
         isRefreshing = true
-        if recordings.isEmpty { state = .refreshing }
+        state = .refreshing
         refreshTask = Task { [weak self] in
             await self?.performRefresh()
         }
@@ -483,7 +503,9 @@ final class HarcMobileLibraryCoordinator {
             isRefreshing = false
             refreshTask = nil
         }
+        var operation = HarcMobileLibraryRefreshOperation.openingSession
         do {
+            try Task.checkCancellation()
             let opened = try await HarcMobileHostSessionConnector.open(
                 identity: identity,
                 store: transferStore,
@@ -503,6 +525,7 @@ final class HarcMobileLibraryCoordinator {
                 if opened.adoption.grant.scopes.contains(
                     .libraryMetadataWrite
                 ) {
+                    operation = .protectedEdits
                     try await drainOfflineMutations(
                         opened: opened,
                         authorization: authorization
@@ -511,8 +534,10 @@ final class HarcMobileLibraryCoordinator {
                 try await synchronize(
                     opened: opened,
                     authorization: authorization,
-                    mayRestartSnapshot: true
+                    mayRestartSnapshot: true,
+                    refreshProgress: { operation = $0 }
                 )
+                operation = .finishing
                 try await opened.connection.shutdownGracefully()
                 loadCachedView()
                 state = .ready(lastUpdated: try cache.state()?.updatedAt)
@@ -521,14 +546,21 @@ final class HarcMobileLibraryCoordinator {
                 throw error
             }
         } catch HarcMobileHostSessionConnectorError.notPaired {
+            guard !Task.isCancelled else { return }
             state = recordings.isEmpty ? .unpaired : .offline(
                 message: "Showing the protected local cache. Pair a Host to refresh."
             )
         } catch {
+            guard !Task.isCancelled else { return }
             loadCachedView()
+            let message = HarcMobileLibraryRefreshPresentation.failureMessage(
+                error,
+                operation: operation,
+                hasCachedRows: !recordings.isEmpty
+            )
             state = recordings.isEmpty
-                ? .failed(error.localizedDescription)
-                : .offline(message: error.localizedDescription)
+                ? .failed(message)
+                : .offline(message: message)
         }
     }
 
@@ -641,8 +673,10 @@ final class HarcMobileLibraryCoordinator {
     private func synchronize(
         opened: HarcMobileOpenedHostConnection,
         authorization: HarcLibraryAuthorization,
-        mayRestartSnapshot: Bool
+        mayRestartSnapshot: Bool,
+        refreshProgress: ((HarcMobileLibraryRefreshOperation) -> Void)? = nil
     ) async throws {
+        refreshProgress?(.metadata)
         let current = try cache.state()
         if current?.libraryID != opened.adoption.hostTrust.libraryID {
             try await replaceFromSnapshot(
@@ -658,6 +692,7 @@ final class HarcMobileLibraryCoordinator {
             mayRestartSnapshot: mayRestartSnapshot
         )
         if opened.adoption.grant.scopes.contains(.speakerIdentityRead) {
+            refreshProgress?(.speakerProfiles)
             try await refreshRecognitionPack(
                 opened: opened,
                 authorization: authorization

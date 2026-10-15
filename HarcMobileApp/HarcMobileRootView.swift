@@ -340,7 +340,7 @@ struct HarcMobileRootView: View {
         case .refreshing:
             HStack { ProgressView(); Text("Refreshing from Host…") }
         case .offline(let message):
-            Label(message, systemImage: "wifi.slash")
+            Label(message, systemImage: "clock.arrow.circlepath")
                 .foregroundStyle(.secondary)
         case .accessNotGranted:
             Label(
