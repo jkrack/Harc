@@ -185,23 +185,43 @@ final class HarcMobileCaptureCoordinator {
         isReconfiguring = false
         removeObservers()
         do {
-            try AVAudioSession.sharedInstance().setActive(
-                false,
-                options: .notifyOthersOnDeactivation
-            )
+            let deactivate = {
+                try AVAudioSession.sharedInstance().setActive(
+                    false, options: .notifyOthersOnDeactivation
+                )
+            }
             switch result {
             case .success(let master):
-                try onFinalized(master)
+                try Self.persistBeforeDeactivating(
+                    master, persist: onFinalized, deactivate: deactivate
+                )
                 state = Self.terminalState(
                     recordingUUID: master.originRecordingID.recordingUUID,
                     finalizationReason: master.finalizationReason
                 )
             case .failure(let error):
+                try deactivate()
                 state = .failed(error.localizedDescription)
             }
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+
+    static func persistBeforeDeactivating(
+        _ master: HarcMobileFinalizedMaster,
+        persist: (HarcMobileFinalizedMaster) throws -> Void,
+        deactivate: () throws -> Void
+    ) throws {
+        // Audio-session teardown must never prevent durable outbox registration.
+        // A failed store insert is recovered from finalized metadata on launch.
+        do {
+            try persist(master)
+        } catch {
+            try? deactivate()
+            throw error
+        }
+        try deactivate()
     }
 
     static func terminalState(

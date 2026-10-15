@@ -21,6 +21,16 @@ protected local master directly. **Host Library** is a separate cached/remote
 section; its failures must not hide local audio. Forgetting a Host retires trust
 and the saved route, without deleting captures or their durable outbox records.
 
+Finalization registers the protected master in the outbox before audio-session
+deactivation. If the process stops or the store callback fails between file
+publication and registration, launch recovery validates the finalized metadata
+and WAV and registers one local Library entry. Invalid orphans are reported and
+preserved in place without blocking healthy Library entries or new capture;
+directory setup and database failures still surface. The existing outbox remains the
+idempotency boundary; recovery never manufactures a Host receipt or cleanup
+permission. Synthetic fault tests live in `HarcMobileFinalizationRecoveryTests`
+and `HarcMobileDurableMasterWriterTests`.
+
 Playback surfaces share explicit session ownership. Only the current owner may
 deactivate playback, and capture claims priority before requesting microphone
 permission through finalization. Row teardown and stale player callbacks must
