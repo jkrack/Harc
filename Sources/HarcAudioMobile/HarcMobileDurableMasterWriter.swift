@@ -439,6 +439,7 @@ public enum HarcMobileCaptureRecovery {
         locations: HarcMobileCaptureLocations,
         producingDeviceID: DeviceID,
         registeredOrigins: Set<OriginRecordingID>,
+        validateMaster: (HarcMobileFinalizedMaster) throws -> Void = { _ in },
         attributes: any HarcMobileCaptureStorageAttributeApplying =
             FoundationHarcMobileCaptureStorageAttributes()
     ) throws -> HarcMobileFinalizedMasterRecovery {
@@ -459,6 +460,9 @@ public enum HarcMobileCaptureRecovery {
                     producingDeviceID: producingDeviceID,
                     registeredOrigins: registeredOrigins, attributes: attributes
                 ) {
+                    // The app's transfer-domain admission rules belong inside
+                    // this artifact boundary, before durable outbox insertion.
+                    try validateMaster(master)
                     masters.append(master)
                 }
             } catch {
