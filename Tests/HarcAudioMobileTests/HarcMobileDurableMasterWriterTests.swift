@@ -6,6 +6,101 @@ import Testing
 
 @Suite("Mobile durable canonical master")
 struct HarcMobileDurableMasterWriterTests {
+    @Test("finalized metadata survives the filesystem-to-outbox crash window")
+    func finalizedRegistrationRecovery() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let master = try fixture.finalized()
+        // This is the old bootstrap's entire recovery input: finalize removed
+        // the Active checkpoint before any application/store callback ran.
+        #expect(try HarcMobileCaptureRecovery.recoverDurablePrefixes(
+            locations: fixture.locations, attributes: NoopStorageAttributes()
+        ).isEmpty)
+        let recovered = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: fixture.locations, producingDeviceID: fixture.deviceID,
+            registeredOrigins: [], attributes: NoopStorageAttributes()
+        )
+        #expect(recovered == [master])
+        #expect(try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: fixture.locations, producingDeviceID: fixture.deviceID,
+            registeredOrigins: [master.originRecordingID], attributes: NoopStorageAttributes()
+        ).isEmpty)
+    }
+
+    @Test("orphan recovery rejects modified PCM, headers, missing masters and foreign identities")
+    func finalizedRegistrationRejectsCorruption() throws {
+        for mutation in 0 ..< 4 {
+            let fixture = try Fixture()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let master = try fixture.finalized()
+            if mutation == 2 {
+                try FileManager.default.removeItem(at: master.masterFileURL)
+            } else if mutation != 3 {
+                var data = try Data(contentsOf: master.masterFileURL)
+                data[mutation == 0 ? 44 : 0] ^= 1
+                try data.write(to: master.masterFileURL)
+            }
+            let device = mutation == 3 ? try DeviceID(Data(repeating: 0x43, count: 32)) : fixture.deviceID
+            #expect(throws: (any Error).self) {
+                try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+                    locations: fixture.locations, producingDeviceID: device,
+                    registeredOrigins: [], attributes: NoopStorageAttributes()
+                )
+            }
+            #expect(FileManager.default.fileExists(atPath: fixture.metadataURL(master).path))
+        }
+    }
+
+    @Test("orphan metadata invariants and regular-file boundaries are revalidated")
+    func finalizedRegistrationRejectsUnsafeMetadata() throws {
+        for mutation in 0 ..< 4 {
+            let fixture = try Fixture()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let master = try fixture.finalized()
+            let metadata = fixture.metadataURL(master)
+            if mutation == 0 {
+                var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: metadata)) as? [String: Any])
+                object["totalCanonicalFrames"] = 0
+                try JSONSerialization.data(withJSONObject: object).write(to: metadata)
+            } else if mutation == 1 {
+                try FileManager.default.removeItem(at: metadata)
+                try FileManager.default.createSymbolicLink(at: metadata, withDestinationURL: master.masterFileURL)
+            } else if mutation == 2 {
+                let target = fixture.root.appendingPathComponent("outside.wav")
+                try FileManager.default.moveItem(at: master.masterFileURL, to: target)
+                try FileManager.default.createSymbolicLink(at: master.masterFileURL, withDestinationURL: target)
+            } else {
+                try FileManager.default.moveItem(at: metadata, to: metadata.deletingLastPathComponent().appendingPathComponent("not-a-uuid.capture.json"))
+            }
+            #expect(throws: (any Error).self) {
+                try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+                    locations: fixture.locations, producingDeviceID: fixture.deviceID,
+                    registeredOrigins: [], attributes: NoopStorageAttributes()
+                )
+            }
+        }
+    }
+
+    @Test("registered cleanup is not resurrected and relocated orphan paths use the current container")
+    func finalizedRegistrationRespectsCleanupAndRelocation() throws {
+        let fixture = try Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let master = try fixture.finalized()
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: fixture.metadataURL(master))) as? [String: Any])
+        object["masterFileURL"] = "file:///retired-container/" + master.masterFileURL.lastPathComponent
+        try JSONSerialization.data(withJSONObject: object).write(to: fixture.metadataURL(master))
+        let recovered = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: fixture.locations, producingDeviceID: fixture.deviceID,
+            registeredOrigins: [], attributes: NoopStorageAttributes()
+        )
+        #expect(recovered.first?.masterFileURL == master.masterFileURL)
+        try FileManager.default.removeItem(at: master.masterFileURL)
+        #expect(try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: fixture.locations, producingDeviceID: fixture.deviceID,
+            registeredOrigins: [master.originRecordingID], attributes: NoopStorageAttributes()
+        ).isEmpty)
+    }
+
     @Test("finalization publishes an exact protected canonical WAV")
     func finalize() throws {
         let fixture = try Fixture()
@@ -263,6 +358,22 @@ private struct Fixture {
             attributes: NoopStorageAttributes(),
             storageExhaustionAfterCanonicalBytesForTesting:
                 storageExhaustionAfterCanonicalBytesForTesting
+        )
+    }
+
+    func finalized() throws -> HarcMobileFinalizedMaster {
+        let writer = try writer()
+        try writer.appendCanonicalPCM(
+            Data([1, 2, 3, 4, 5, 6, 7, 8]),
+            endedAt: started.addingTimeInterval(1),
+            endedMonotonicNanoseconds: 2_000_000_000
+        )
+        return try writer.finalize(reason: .userStopped)
+    }
+
+    func metadataURL(_ master: HarcMobileFinalizedMaster) -> URL {
+        locations.finalized.appendingPathComponent(
+            master.originRecordingID.recordingUUID.uuidString.lowercased() + ".capture.json"
         )
     }
 }

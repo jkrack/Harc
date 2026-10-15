@@ -219,18 +219,13 @@ final class HarcMobileAppModel {
                 root: root,
                 locations: clientLocations
             )
-            let recovered = try HarcMobileCaptureRecovery
-                .recoverDurablePrefixes(locations: captureLocations)
-            for master in recovered {
-                _ = try store.persistFinalizedCapture(
-                    try Self.finalizedCapture(master),
-                    masterFileURL: master.masterFileURL
-                )
-            }
             try Self.rebaseRelocatedArtifactPaths(
                 store: store,
                 locations: captureLocations,
                 currentRoot: root
+            )
+            let recovered = try Self.recoverCaptures(
+                store: store, locations: captureLocations
             )
             try Self.protectTransferState(
                 root: root,
@@ -450,7 +445,36 @@ final class HarcMobileAppModel {
         }
     }
 
-    private static func finalizedCapture(
+    static func recoverCaptures(
+        store: HarcTransferStore,
+        locations: HarcMobileCaptureLocations,
+        attributes: any HarcMobileCaptureStorageAttributeApplying =
+            FoundationHarcMobileCaptureStorageAttributes()
+    ) throws -> [HarcMobileFinalizedMaster] {
+        let prefixes = try HarcMobileCaptureRecovery.recoverDurablePrefixes(
+            locations: locations, attributes: attributes
+        )
+        for master in prefixes {
+            _ = try store.persistFinalizedCapture(
+                try finalizedCapture(master), masterFileURL: master.masterFileURL
+            )
+        }
+        let known = Set(try store.recordingOutboxes().map {
+            $0.finalizedCapture.capture.originRecordingID
+        })
+        let finalized = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: locations, producingDeviceID: store.installationDeviceID,
+            registeredOrigins: known, attributes: attributes
+        )
+        for master in finalized {
+            _ = try store.persistFinalizedCapture(
+                try finalizedCapture(master), masterFileURL: master.masterFileURL
+            )
+        }
+        return prefixes + finalized
+    }
+
+    static func finalizedCapture(
         _ master: HarcMobileFinalizedMaster
     ) throws -> FinalizedCapture {
         let reason: CaptureFinalizationReason = switch master.finalizationReason {
