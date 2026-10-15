@@ -21,27 +21,60 @@ connection. A speaker-profile failure can follow a successful metadata update.
 Rows displayed beside an error therefore do not prove that the whole refresh
 succeeded or identify which operation failed.
 
+## Refresh cancellation ownership
+
+Shutdown cancels the active refresh and releases its task handle. Previously,
+that old task could finish after a new refresh started and unconditionally clear
+the new handle and progress flag. A negative control reproduces the resulting
+extra request. Each refresh now owns a unique identifier; only the current
+request may publish a result or clear its handle. A session returned after
+cancellation is closed without running Library work. Snapshot, delta, and
+speaker-pack responses check cancellation before publishing into the cache.
+
+The lifecycle accepts an internal opened-session abstraction for deterministic
+fault injection. Production always opens through the existing authenticated
+Host connector and retains the same scope checks and RPC operations. No launch
+argument, remote setting, authorization fallback, or alternate production
+connection path is added.
+
 ## Bounded regression evidence
 
-Four new Swift Testing tests cover the actual RPC status/cause boundary,
-exclusion of untrusted error descriptions, cached-row and operation presentation,
-and an immediately visible retry that
-retains cached rows. The last fixture uses an in-memory software identity, a
-synthetic temporary cache, and no adoption or route. It neither accesses real
-credentials nor opens a network connection.
+Ten Swift Testing tests exercise 23 single or parameterized cases:
 
-On Apple Silicon macOS 26.6.2 with Xcode 27, an isolated native SwiftPM projection
-of the exact coordinator and supporting sources passed all four tests. Before
-the additional privacy test, restoring the old localized-description behavior
-and cached-row refresh condition made the original three tests fail with ten
-assertions; restoring the proposed source passed all three again. The final
-four-test run also verifies that RPC messages and arbitrary localized errors
-cannot render credential-like fixtures, transcript-like fixtures, or raw request
-text. The projection uses wire Swift files previously
-generated from the identical schemas; it omits the generation plugin and app
-entrypoint. This is focused source evidence, not an Xcode app or physical-device
-qualification. The four tests are added to the existing mobile configuration
-CI selector for full-target compilation and execution.
+- Initial and cached loads failing at Host connection, protected edits, metadata,
+  speaker profiles, or connection completion. Later failures retain metadata
+  already committed by the successful metadata operation.
+- A successful retry clearing the previous error and publishing updated rows.
+- Active-refresh coalescing; stale success/error responses completing before or
+  after the newer request; cancellation while opening a session; and an absent
+  Library-read grant closing without running Library work.
+- Actual RPC status preservation, exclusion of arbitrary RPC/localized/cause
+  text, oversized untrusted payloads producing at most 140 displayed characters,
+  and a no-adoption fixture retaining its local cache without a network route.
+
+On Apple Silicon macOS 26.6.2 with Xcode 27, the exact-source native SwiftPM
+projection passed 41 tests across the lifecycle, Library cache, receipt
+persistence, outbox, and background isolation suites. Restoring the old unowned
+cleanup only in that projection makes the four-case stale-response regression
+fail with four assertions, including an unexpected third open. Restoring the
+proposed source passes. Earlier, restoring the old localized-description and
+cached-row refresh behavior made the original three tests fail with ten
+assertions.
+
+All fixtures use synthetic temporary caches and in-memory software identities.
+No real credentials, network route, or recording content is accessed. Projection
+source hashes match the branch; wire Swift files were previously generated from
+identical schemas, with the generation plugin and app entrypoint omitted only in
+the focus harness. The suite is included in the full mobile configuration CI
+selector.
+
+These controlled sessions do not fault-inject real HTTP/2 or pinned-TLS calls,
+prove device credential behavior, or close the physical transfer/restart matrix.
+The production cancellation checks at concrete snapshot/delta/speaker response
+boundaries are compiled by the app targets; the controlled-session race tests
+exercise lifecycle publication and task ownership rather than those wire calls.
+Full app/CI results must be recorded separately before calling the exact source
+validated.
 
 ## Acceptance still open
 
