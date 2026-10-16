@@ -8,30 +8,28 @@ candidate passed Apple notarization, stapling and Gatekeeper. Existing phone
 pairing authenticated after launch; retained recording metadata was checked.
 These are installation and connection results, not upload acceptance.
 
-**In progress:** The Sync status/detail UI was first committed locally as
-`ade0039c0bdb631438e33b41410e4ba01658f775` on
-`codex/mobile-sync-status`. Nine focused native XCTest methods passed. The local
-iOS build-for-testing exposed an invalid SwiftUI `Section` initializer; the
-corrected app and test bundles compiled at
-`e017038b42acb4f9687f949630ee1a59f3c82fd4`. Review then clarified the metadata
-update timestamp label and UI accessibility assertions. Nine focused tests
-passed again; final-source compilation and hosted runtime validation are next.
-The branch is not yet pushed or in a PR; this UI has not been installed.
+**In progress:** [Draft PR #122](https://github.com/jkrack/Harc/pull/122) adds
+Library/Host Sync status navigation and separate transfer, Host and Library
+recovery states. Reviewed code `280caf4c97d70bbbe4a68a5dd2b4767c1a0a5783`
+passed nine focused native XCTest methods and unsigned generic-iOS
+build-for-testing (app plus both test bundles). Hosted runtime validation is
+pending in the [PR checks](https://github.com/jkrack/Harc/pull/122/checks).
+This UI has not been installed on a physical phone.
 
 **Blocked:** New audio transfer remains behind the closed codec qualification
 gate. Physical phone upload, durable Host receipt and the subsequent phone
 Library round trip remain unqualified. Host Library reads are a separate path;
 the user's report of “syncing is paused” does not establish a Library RPC cause.
 
-**Next validation:** Build the corrected iOS app and test
-bundles with at most two workers, then run exact-head hosted app/UI tests. There
+**Next validation:** Review the exact-head hosted app/UI results, resolve any
+failure and retain the result evidence before merging. There
 is no local simulator runtime. A passing projection test does not validate
 SwiftUI navigation or physical behavior. Keep the qualification gate closed.
 
 | Objective / acceptance | Owner | Status | Next action |
 | --- | --- | --- | --- |
 | Current development baseline: both apps identified, signed Mac accepted, existing adoption retained | Codex | Done for installed `0ce24fe` candidate | Preserve the dated installation evidence below. |
-| Discoverable Sync details: Library and Host entry points; accurate pending/Host/Library states; valid recovery actions; local playback/export retained | Codex | Implementation committed; compile fix awaiting validation | Complete app/UI validation, review, push scoped branch and open draft PR. |
+| Discoverable Sync details: Library and Host entry points; accurate pending/Host/Library states; valid recovery actions; local playback/export retained | Codex | Draft PR #122; nine native tests and app/test compilation pass | Complete hosted app/UI validation and review before merging. |
 | Codec: all four named-device three-hour cells pass frozen thresholds before enablement | Codex + James for hardware | Open; gate closed | Follow the physical qualification runbook; no bypass or threshold change. |
 | Phone → Host → Library: verified durable receipt, matching audio identity, one canonical recording, retry/restart behavior | Codex + James | Unqualified; depends on qualified codec | Run sealed-source physical acceptance after codec decision. |
 | Host Library diagnosis: actual operation/RPC result, distinct from transfer availability | Codex + James | User-visible failure not yet reproduced with a fresh typed result | Use the new status surface after it is validated; do not infer cause from paused copy. |
@@ -52,23 +50,27 @@ SwiftUI navigation or physical behavior. Keep the qualification gate closed.
   [main CI run](https://github.com/jkrack/Harc/actions/runs/38797324831) passed;
   that older result does not validate this new UI commit.
 - **Continuation:** James resumed this work through the connected Mac mini task.
-  The compile fix passed; timestamp/accessibility review is complete and the
-  final-source build is next. Leave
+  Reviewed code `280caf4c97d70bbbe4a68a5dd2b4767c1a0a5783` passed the
+  app/test-bundle build; the branch is pushed and draft PR #122 is open.
+  No local build/test process remains running; hosted CI is pending. Leave
   Xcode-only Sparkle lockfile churn out of commits.
 - **Local evidence:** `/tmp/harc-sync-evidence/mobile-sync-status-ios-build.log`
   and `.json`; focused tests in
   `/tmp/harc-sync-evidence/mobile-sync-status-reviewed-native.log` and `.json`.
-  The first passing full-SHA build is `mobile-sync-status-ios-fixed.log`/`.json`
-  in that evidence directory.
-  The failed build used a short source stamp and is diagnostic only. A future
-  build must use the full actual source SHA.
+  The reviewed full-SHA build is `mobile-sync-status-ios-reviewed.log`/`.json`;
+  `mobile-sync-status-reviewed-manifest.json` verifies the app stamp, binary
+  digest, both test bundles and absence of the qualification define. All are
+  in that evidence directory; the build retained at least 7.83 GiB free.
+  The earlier failed build used a short source stamp and remains diagnostic
+  only. New builds must use the full actual source SHA.
 - **Other checkout:** `/Users/jlane/Documents/GitHub/Harc` contains pre-existing
   unrelated changes; leave it untouched. Deferred Mac UI is separately at
   `/tmp/harc-library-activation-20261015`, commit `6ef08e8`.
 - **Resume instruction:** Read this tracker, `AGENTS.md`, applicable `.agents`
   instructions and the Sync evidence record, then continue this exact worktree.
-  Preserve the closed codec gate. Push the scoped branch and open a draft PR
-  after review/validation; that action is already authorized. Do not install,
+  Preserve the closed codec gate. Continue the existing draft PR #122; do not
+  duplicate the branch or PR. Inspect `git status --short` and the current PR
+  checks before resuming; the final tracker follow-up changes documentation only. Do not install,
   launch, record, refresh the physical phone, alter pairing/security/credentials,
   or publish a release under this handoff.
 
