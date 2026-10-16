@@ -1,0 +1,124 @@
+{
+  "publicKeyX963Hex": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+  "source": "c802dce6c8c638f0f7d95e8c0fc7c8cebbe58920",
+  "opensslVersion": "OpenSSL 3.6.2 7 Apr 2026 (Library: OpenSSL 3.6.2 7 Apr 2026)",
+  "vectors": [
+    {
+      "iteration": 12,
+      "digestHex": "76d7b73faeb2bbecd43b6176ee41da3db2b0c7cf6528fac3435f0950ed22afae",
+      "rawSignatureHex": "bb1f1b082fdd7aeb5c396d109374e5445a5a7dc5957b15ec59aa27f1a79208f43977eccab3ee08d969a77b3b52910487847b07b360b442ac8821bb97d77f2976",
+      "derSignatureBase64": "MEUCIQC7HxsIL91661w5bRCTdOVEWlp9xZV7FexZqifxp5II9AIgOXfsyrPuCNlpp3s7UpEEh4R7B7NgtEKsiCG7l9d/KXY=",
+      "openssl3": {
+        "exact": {
+          "returncode": 0,
+          "stdout": "Signature Verified Successfully",
+          "stderr": ""
+        },
+        "tampered": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        },
+        "doubleHash": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        }
+      }
+    },
+    {
+      "iteration": 110,
+      "digestHex": "17aaab9d758cd283a491a00782b6b72cf0f7d49d80aaa9d484b1f758d93f4f3a",
+      "rawSignatureHex": "6e7838cb5be785ca3294ebd2695e5c87d5e71ef4b2392fb6fef1316d59a1129415e1de6ed2c8b68584390dc008e8d4bddd57e23965d2e3fcdd4b58a726221027",
+      "derSignatureBase64": "MEQCIG54OMtb54XKMpTr0mleXIfV5x70sjkvtv7xMW1ZoRKUAiAV4d5u0si2hYQ5DcAI6NS93VfiOWXS4/zdS1inJiIQJw==",
+      "openssl3": {
+        "exact": {
+          "returncode": 0,
+          "stdout": "Signature Verified Successfully",
+          "stderr": ""
+        },
+        "tampered": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        },
+        "doubleHash": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        }
+      }
+    },
+    {
+      "iteration": 272,
+      "digestHex": "4802db87e7fac14a2d2861dacc57e5d961ba0c0d37aa701c785def38440f5bbe",
+      "rawSignatureHex": "d66f4e51b6dd513e2781bafb8debeaf040f08868c76a23a2da18ed00c587547b7a7ffa105dab9f8b018e274e10aeb7acf26d4f9153cec842191c834da63f2664",
+      "derSignatureBase64": "MEUCIQDWb05Rtt1RPieBuvuN6+rwQPCIaMdqI6LaGO0AxYdUewIgen/6EF2rn4sBjidOEK63rPJtT5FTzshCGRyDTaY/JmQ=",
+      "openssl3": {
+        "exact": {
+          "returncode": 0,
+          "stdout": "Signature Verified Successfully",
+          "stderr": ""
+        },
+        "tampered": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        },
+        "doubleHash": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        }
+      }
+    },
+    {
+      "iteration": 308,
+      "digestHex": "2d8334e72f12daa398f876514823f59beefe0148501141b724d22c52b8f09974",
+      "rawSignatureHex": "3f111f0d46671cd283f17d72d978b0b287d9714b5f898dc17150ebdb34ed95ba12b664430c292c3601b725cf05860004079ed0c13a4d0c3b1aad304d718f65d3",
+      "derSignatureBase64": "MEQCID8RHw1GZxzSg/F9ctl4sLKH2XFLX4mNwXFQ69s07ZW6AiAStmRDDCksNgG3Jc8FhgAEB57QwTpNDDsarTBNcY9l0w==",
+      "openssl3": {
+        "exact": {
+          "returncode": 0,
+          "stdout": "Signature Verified Successfully",
+          "stderr": ""
+        },
+        "tampered": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        },
+        "doubleHash": {
+          "returncode": 1,
+          "stdout": "Signature Verification Failure",
+          "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+        }
+      }
+    }
+  ],
+  "publicTestFixturesOnly": true,
+  "transportCapture": {
+    "iteration": 519,
+    "digestHex": "d59617b34da3428bb9e35906612d8c7ffdb12a3b8213d5c97a687828c1e3bab8",
+    "rawSignatureHex": "8fd3457d89a4450a0d568c007f961b0bbb496b07b5f91295e8b98970836ee8c1290c1b6ad1723e75f4dc080492c75a26f737b1bbf1ad60f8070c269d56acff28",
+    "exactFramedBytesBase64": "SEFSQ1NPMQAAAADvSEFSQ1NFMQAAFWhvc3QudHJhbnNwb3J0LnNldC52MQABAAAAAAAAAAAAAAAAAAAAAAFQR7YaPWKHTlMO7hw5R3KSvxetopy+wOv1JpQt2cxjQ7YAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHRqUogAAAAAAAAAAAAABpoYXJjLnYxLkhvc3RUcmFuc3BvcnRTZXRWMf//////////eeFD/bs3CInI/7pIUez42WbCdcZRNLwdpWW/IaZt5HMAAAAAAAAArUhBUkNUUzEAAAEAAAAAAAAAAAAAAAAAAAAAAVBHtho9YodOUw7uHDlHcpK/F62inL7A6/UmlC3ZzGNDtgAAAAAAAAAHAAAB0alKIAACISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEAAAHRqUocGAAAAdGpSwpgIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIAAAHRqUocGAAAAdGpSwpgAECP00V9iaRFCg1WjAB/lhsLu0lrB7X5EpXouYlwg27owSkMG2rRcj519NwIBJLHWib3N7G78a1g+AcMJp1WrP8o",
+    "frameSHA256": "56b87243fd6dc054c05a8850ac3c49d2f03224fc348ffbaca7402dbec3063f6f",
+    "openssl3": {
+      "exact": {
+        "returncode": 0,
+        "stdout": "Signature Verified Successfully",
+        "stderr": ""
+      },
+      "tampered": {
+        "returncode": 1,
+        "stdout": "Signature Verification Failure",
+        "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+      },
+      "doubleHash": {
+        "returncode": 1,
+        "stdout": "Signature Verification Failure",
+        "stderr": "8021F9F901000000:error:030000EA:digital envelope routines:EVP_PKEY_verify:provider signature failure:crypto/evp/signature.c:1174:ECDSA verify:"
+      }
+    }
+  }
+}
