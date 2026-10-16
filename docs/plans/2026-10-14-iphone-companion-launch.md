@@ -1,6 +1,6 @@
 # iPhone companion launch plan
 
-## Current tracker and Mac mini handoff — 2026-10-16
+## Current tracker and Mac mini handoff — October 15, 2026 (Pacific)
 
 **Done:** Both development apps were installed from
 `0ce24fe5e94090ddcec26fd6c5d6f4c59796f60a`, version 0.14.13 (68). The Mac
@@ -8,28 +8,31 @@ candidate passed Apple notarization, stapling and Gatekeeper. Existing phone
 pairing authenticated after launch; retained recording metadata was checked.
 These are installation and connection results, not upload acceptance.
 
-**In progress:** [Draft PR #122](https://github.com/jkrack/Harc/pull/122) adds
-Library/Host Sync status navigation and separate transfer, Host and Library
-recovery states. Reviewed code `280caf4c97d70bbbe4a68a5dd2b4767c1a0a5783`
-passed nine focused native XCTest methods and unsigned generic-iOS
-build-for-testing (app plus both test bundles). Hosted runtime validation is
-pending in the [PR checks](https://github.com/jkrack/Harc/pull/122/checks).
-This UI has not been installed on a physical phone.
+**In progress:** [Draft PR #122](https://github.com/jkrack/Harc/pull/122) is ready
+for code review after automated validation. [CI run 38844699721](https://github.com/jkrack/Harc/actions/runs/38844699721)
+passed at head `83848c152a9139e324fda9b5dc897deaeb2a5c2f`, including the Mac
+app/helper checks and hosted mobile tests. The iPhone 17/iOS 26.5 simulator result
+contains 70 logical tests / 87 case executions, all passed, including nine new
+status tests and both selected UI tests; zero skips or runtime warnings. The
+[Sync evidence record](../evidence/2026-10-16-mobile-sync-status.md) names exact
+source/tree/artifact identities and package-test skips. This record's follow-up
+changes documentation only. The UI has not been installed on a physical phone.
 
 **Blocked:** New audio transfer remains behind the closed codec qualification
 gate. Physical phone upload, durable Host receipt and the subsequent phone
 Library round trip remain unqualified. Host Library reads are a separate path;
 the user's report of “syncing is paused” does not establish a Library RPC cause.
 
-**Next validation:** Review the exact-head hosted app/UI results, resolve any
-failure and retain the result evidence before merging. There
-is no local simulator runtime. A passing projection test does not validate
-SwiftUI navigation or physical behavior. Keep the qualification gate closed.
+**Next validation:** Review the scoped draft. Manual accessibility, a fresh
+physical Host Library diagnosis and the qualified phone-to-Host acceptance gates
+remain open. The Mac mini has no local simulator runtime; focused UI execution
+was completed safely on the hosted simulator. No merge, physical installation or
+release is authorized by this validation task.
 
 | Objective / acceptance | Owner | Status | Next action |
 | --- | --- | --- | --- |
 | Current development baseline: both apps identified, signed Mac accepted, existing adoption retained | Codex | Done for installed `0ce24fe` candidate | Preserve the dated installation evidence below. |
-| Discoverable Sync details: Library and Host entry points; accurate pending/Host/Library states; valid recovery actions; local playback/export retained | Codex | Draft PR #122; nine native tests and app/test compilation pass | Complete hosted app/UI validation and review before merging. |
+| Discoverable Sync details: Library and Host entry points; accurate pending/Host/Library states; valid recovery actions; local playback/export retained | Codex | Draft PR #122; native tests, app/test compilation and hosted app/UI checks passed | Complete code review; manual accessibility and physical checks remain open. |
 | Codec: all four named-device three-hour cells pass frozen thresholds before enablement | Codex + James for hardware | Open; gate closed | Follow the physical qualification runbook; no bypass or threshold change. |
 | Phone → Host → Library: verified durable receipt, matching audio identity, one canonical recording, retry/restart behavior | Codex + James | Unqualified; depends on qualified codec | Run sealed-source physical acceptance after codec decision. |
 | Host Library diagnosis: actual operation/RPC result, distinct from transfer availability | Codex + James | User-visible failure not yet reproduced with a fresh typed result | Use the new status surface after it is validated; do not infer cause from paused copy. |
@@ -52,7 +55,10 @@ SwiftUI navigation or physical behavior. Keep the qualification gate closed.
 - **Continuation:** James resumed this work through the connected Mac mini task.
   Reviewed code `280caf4c97d70bbbe4a68a5dd2b4767c1a0a5783` passed the
   app/test-bundle build; the branch is pushed and draft PR #122 is open.
-  No local build/test process remains running; hosted CI is pending. Leave
+  CI passed at head `83848c152a9139e324fda9b5dc897deaeb2a5c2f`; that run
+  and its watcher have finished. No local app build/test is running. This
+  evidence follow-up is
+  documentation only; inspect current PR checks for subsequent runs. Leave
   Xcode-only Sparkle lockfile churn out of commits.
 - **Local evidence:** `/tmp/harc-sync-evidence/mobile-sync-status-ios-build.log`
   and `.json`; focused tests in
@@ -61,8 +67,10 @@ SwiftUI navigation or physical behavior. Keep the qualification gate closed.
   `mobile-sync-status-reviewed-manifest.json` verifies the app stamp, binary
   digest, both test bundles and absence of the qualification define. All are
   in that evidence directory; the build retained at least 7.83 GiB free.
-  The earlier failed build used a short source stamp and remains diagnostic
-  only. New builds must use the full actual source SHA.
+  Hosted evidence is retained under
+  `/tmp/harc-sync-evidence/ci-38844699721/`, including the verified result bundle,
+  test tree and manifest. The earlier failed build used a short source stamp
+  and remains diagnostic only. New builds must use the full actual source SHA.
 - **Other checkout:** `/Users/jlane/Documents/GitHub/Harc` contains pre-existing
   unrelated changes; leave it untouched. Deferred Mac UI is separately at
   `/tmp/harc-library-activation-20261015`, commit `6ef08e8`.
