@@ -2,27 +2,49 @@
 
 ## Current checkpoint — October 16, 2026
 
-James merged [#122](https://github.com/jkrack/Harc/pull/122) and
-[#120](https://github.com/jkrack/Harc/pull/120). Combined main
-`3f9f090ae4bd1266651ceb94f2a553f10d1de08a` then
-[failed CI 38901509843](https://github.com/jkrack/Harc/actions/runs/38901509843)
-with exactly the two retained positive-signature assertions from #120.
-Package compilation and 31 strict-executor tests passed; Mac app/helper and
-mobile checks were skipped after the package failure. The earlier green Sync UI
-branch result does not validate this combined main.
+**Release eligibility: NO-GO for public Sparkle or App Store distribution.**
+Reviewed main is `3f9f090ae4bd1266651ceb94f2a553f10d1de08a`; no open PRs were
+found before this documentation follow-up. James merged
+[#122](https://github.com/jkrack/Harc/pull/122) and
+[#120](https://github.com/jkrack/Harc/pull/120). Combined-main
+[CI 38901509843](https://github.com/jkrack/Harc/actions/runs/38901509843)
+failed exactly two retained positive-signature assertions. Keep them active.
+Mac app/helper and mobile checks in that run were skipped after package failure.
+The [correction assessment](../evidence/2026-10-16-p256-main-blocker.md) records
+why no supported production fix has been established in the current scope.
 
-The [correction assessment](../evidence/2026-10-16-p256-main-blocker.md)
-records the exact evidence, the model's narrowly testable upstream hypothesis,
-and why no supported or validated production correction is available in the
-current scope. Keep the assertions active. Recommended owner decision: retain
-the blocker and authorize Apple escalation/cross-OS validation; review any
-provider replacement separately. No installation is prepared from this failing
-baseline. Installed `0ce24fe` builds remain unchanged, codec/upload gates remain
-closed, and physical/release acceptance remains open. No external report was
-sent or release published.
+[PR #106](https://github.com/jkrack/Harc/pull/106)'s original package-executor
+stall objective is satisfied within its tested scope: its exact-head CI passed;
+current main's 31 strict-executor tests passed and its full test run terminated
+with the two signature issues. This does not close physical recording reliability,
+issue #105, real-model or release acceptance. The
+[readiness evidence](../evidence/2026-10-16-readiness-and-private-builds.md)
+separates these results and records exact sources, artifact hashes and unrun work.
 
-The October 15 snapshot below is historical; its open-draft/next-review wording
-does not describe the merged PRs' current state.
+Fresh private 0.14.14 (69) builds are retained on the external SSD. The Mac
+Release app and both helpers built; Apple accepted notarization, stapling and
+Gatekeeper verification passed. The iOS development app built for physical
+`iphoneos` and passed signature/archive checks. These artifacts derive from
+local commit `cbaba907c36f204a536b3d2c0956aa79a42b7afc`, whose only difference
+from reviewed main is the version/build bump. They have not been installed or
+published. The owner's private-install choice remains pending; leave it untouched.
+Installed 0.14.13 (68) builds remain the baseline. Codec/upload gates remain closed.
+
+| Objective / acceptance | Owner | Current status | Smallest next action |
+| --- | --- | --- | --- |
+| Bounded package execution / PR #106 | Codex | Passed in tested scope; current strict lane remains green | Preserve the bounded runner and strict lane; investigate a new stall only if observed. |
+| Combined-main security validation | Codex + James | Blocked by two retained P-256 positive assertions | Arrange cross-OS validation or separately authorize Apple escalation/provider review; no report sent. |
+| Discoverable Sync details / PR #122 | Codex | Merged; final branch CI passed 70 logical / 87 mobile case executions; current-main mobile job skipped | Retain branch evidence; run required combined-source checks after a supported security correction. Manual and physical checks remain open. |
+| Private 0.14.14 (69) retry artifacts | James for pending choice; Codex for execution | Mac notarized/verified; iOS signed/verified; neither installed | Await the existing install choice and idle-app confirmation before an in-place test update. |
+| Host Library diagnosis | Codex + James | No fresh typed physical result from the new Sync surface | After an authorized update, inspect Host Library operation/RPC status without recording; paused transfer copy alone does not identify a cause. |
+| Named-device codec matrix and durable phone → Host → Library acceptance | Codex + James for hardware | Unqualified; gate closed | Follow the sealed-source physical runbooks; Omega is supplementary Pro hardware. |
+| Privacy, accessibility and submission | Codex + James | Open; not release-ready | Complete owner fields, manual checks and exact-archive acceptance in the milestones below. |
+
+No physical recording, gate bypass, credentials/trust/permission change, external
+bug report, App Store action or public release occurred in this follow-up. Dirty
+checkouts, recordings and unique diagnostic evidence were preserved. The dated
+snapshot below is historical, including its draft-PR and continuation instructions;
+use this checkpoint for current status.
 
 ## Mac mini handoff snapshot — October 15, 2026 (Pacific)
 

@@ -7,9 +7,13 @@ Date: October 16, 2026. Reviewed main:
 
 No supported upstream correction or validated Harc implementation fix was
 identified within the current dependencies and environment. Keep the two
-positive assertions active and defer installation preparation from this main
-baseline. Do not substitute the passing #122 branch checks for combined-main
-validation. Installed builds and the codec/upload gates remain unchanged.
+positive assertions active and keep public release blocked. Do not substitute
+the passing #122 branch checks for combined-main validation. Installed builds
+and the codec/upload gates remain unchanged. A later explicit owner request
+produced private test artifacts; see the
+[dated artifact and readiness record](2026-10-16-readiness-and-private-builds.md).
+Their installation choice remains pending, and their build/notarization results
+do not resolve these security failures.
 
 ## Current evidence
 
@@ -106,6 +110,6 @@ qualification remain separate requirements even after a verifier correction.
 The native task `Plan Harc iOS port` was idle when checked, and no compiler/test
 process was active. This follow-up uses a separate main-based documentation
 worktree; the native task's dirty checkout and all installed builds were left
-untouched. The external APFS SSD `/Volumes/MacMiniSDD` has about 2 TB free for
+untouched. The external APFS SSD `/Volumes/MacMiniSDD` has about 1.8 TiB free for
 future build outputs, but that does not remove the need for internal OS/temp
 headroom or resolve the signature blocker.
