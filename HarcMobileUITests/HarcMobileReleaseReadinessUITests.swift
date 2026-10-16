@@ -43,6 +43,33 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         ].exists)
     }
 
+    func testSyncDetailsAreDiscoverableWithoutHostOrRecording() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        let library = app.tabBars.buttons["Library"]
+        XCTAssertTrue(library.waitForExistence(timeout: 10))
+        library.tap()
+        let status = app.buttons["harc.mobile.library.sync-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertEqual(status.label, "Sync status")
+        XCTAssertGreaterThanOrEqual(status.frame.height, 44)
+        status.tap()
+        XCTAssertTrue(app.staticTexts["Transfers not enabled in this build"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["No Host paired"].exists)
+        XCTAssertFalse(app.buttons["harc.mobile.sync.retry-transfers"].exists)
+        let local = app.buttons["harc.mobile.sync.local-recordings"]
+        XCTAssertTrue(scrollUntilExists(local, in: app))
+        local.tap()
+        XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+
+        app.tabBars.buttons["Host"].tap()
+        let hostLink = app.buttons["harc.mobile.host.sync-status"]
+        XCTAssertTrue(hostLink.waitForExistence(timeout: 10))
+        hostLink.tap()
+        XCTAssertTrue(app.staticTexts["Transfers not enabled in this build"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Retry transfers"].exists)
+    }
+
     func testOfflineReviewSampleAndPrivacyAreReachableWithoutHost() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()

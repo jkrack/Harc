@@ -154,6 +154,7 @@ struct HarcMobileRootView: View {
 
     private var libraryView: some View {
         List {
+            Section { syncStatusLink }
             Section("On This iPhone") {
                 if let transfer = model.transferCoordinator {
                     if let error = transfer.localRecordingsError {
@@ -167,7 +168,8 @@ struct HarcMobileRootView: View {
                         HarcMobileLocalRecordingRow(
                             recording: recording,
                             captureIsActive: model.captureCoordinator?.isRecording ?? false,
-                            retryTransfer: transfer.retry(recordingUUID:)
+                            retryTransfer: transfer.retry(recordingUUID:),
+                            transferRetryIsAvailable: transfer.isCodecQualifiedForTransfers
                         )
                     }
                 } else {
@@ -250,6 +252,58 @@ struct HarcMobileRootView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var syncStatus: HarcMobileSyncStatusPresentation {
+        let transfer = model.transferCoordinator
+        return .make(
+            host: .init(model.hostHealthCoordinator?.status ?? .unpaired),
+            transfer: transfer.map { .init($0.state) } ?? .preparing,
+            codecQualified: transfer?.isCodecQualifiedForTransfers ?? false,
+            pendingCount: transfer.map {
+                HarcMobileCaptureStatusPresentation.effectivePendingCount(
+                    pendingCount: $0.pendingCount,
+                    localRecordings: $0.localRecordings
+                )
+            } ?? 0
+        )
+    }
+
+    private var syncStatusLink: some View {
+        NavigationLink {
+            syncDetailView
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                Label("Sync status", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.headline)
+                Text(syncStatus.title).foregroundStyle(.secondary)
+                Text("\(syncStatus.pendingCount) recordings waiting to transfer")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+        .accessibilityLabel("Sync status")
+        .accessibilityValue("\(syncStatus.title). \(syncStatus.pendingCount) recordings waiting to transfer.")
+        .accessibilityHint("Shows transfer availability, Host connection and Library status.")
+        .accessibilityIdentifier(HarcMobileSyncAccessibilityID.libraryStatus)
+    }
+
+    private var syncDetailView: some View {
+        HarcMobileSyncDetailView(
+            presentation: syncStatus,
+            openHostSettings: { selectedTab = .host }
+        ) {
+            ScrollView {
+                if let transfer = model.transferCoordinator {
+                    localRecordingsSection(
+                        transfer,
+                        captureIsActive: model.captureCoordinator?.isRecording ?? false
+                    )
+                    .padding()
+                }
+            }
+            .navigationTitle("On This iPhone")
         }
     }
 
@@ -578,7 +632,8 @@ struct HarcMobileRootView: View {
                     HarcMobileLocalRecordingRow(
                         recording: recording,
                         captureIsActive: captureIsActive,
-                        retryTransfer: coordinator.retry(recordingUUID:)
+                        retryTransfer: coordinator.retry(recordingUUID:),
+                        transferRetryIsAvailable: coordinator.isCodecQualifiedForTransfers
                     )
                 }
             }
@@ -655,6 +710,12 @@ struct HarcMobileRootView: View {
     private func hostReadyView(deviceID: DeviceID) -> some View {
         if let coordinator = model.pairingCoordinator {
             List {
+                Section("Sync") {
+                    NavigationLink { syncDetailView } label: {
+                        Label("Sync status", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .accessibilityIdentifier(HarcMobileSyncAccessibilityID.hostStatusLink)
+                }
                 Section("This iPhone") {
                     LabeledContent("Device ID") {
                         Text(String(deviceID.description.prefix(16)) + "…")
@@ -770,6 +831,7 @@ private struct HarcMobileLocalRecordingRow: View {
     let recording: HarcMobileLocalRecording
     let captureIsActive: Bool
     let retryTransfer: (UUID) -> Void
+    let transferRetryIsAvailable: Bool
 
     @State private var audio: HarcMobileLocalRecordingAudioController
     @State private var showsExport = false
@@ -777,11 +839,13 @@ private struct HarcMobileLocalRecordingRow: View {
     init(
         recording: HarcMobileLocalRecording,
         captureIsActive: Bool,
-        retryTransfer: @escaping (UUID) -> Void
+        retryTransfer: @escaping (UUID) -> Void,
+        transferRetryIsAvailable: Bool
     ) {
         self.recording = recording
         self.captureIsActive = captureIsActive
         self.retryTransfer = retryTransfer
+        self.transferRetryIsAvailable = transferRetryIsAvailable
         _audio = State(
             initialValue: HarcMobileLocalRecordingAudioController(
                 url: recording.masterFileURL
@@ -890,6 +954,10 @@ private struct HarcMobileLocalRecordingRow: View {
         case .transferring:
             Label("Transferring", systemImage: "arrow.up.circle")
                 .foregroundStyle(.secondary)
+        case .retryNeeded where !transferRetryIsAvailable:
+            Label("Transfer not enabled", systemImage: "iphone")
+        case .securityBlocked where !transferRetryIsAvailable:
+            Label("Host access needs review", systemImage: "lock")
         case .retryNeeded:
             Button("Retry", systemImage: "arrow.clockwise") {
                 retryTransfer(recording.id)

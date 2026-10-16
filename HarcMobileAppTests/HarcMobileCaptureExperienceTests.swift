@@ -93,7 +93,7 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         XCTAssertEqual(presentation.tone, .healthy)
     }
 
-    func testCodecGateUsesCalmUserFacingLanguageAndLocalCount() {
+    func testCodecGateNamesTheBuildRestrictionAndLocalCount() {
         let recording = HarcMobileLocalRecording(
             id: UUID(),
             startedAt: Date(timeIntervalSinceReferenceDate: 10),
@@ -114,11 +114,11 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         )
         XCTAssertEqual(
             presentation.detail,
-            "Transfers paused · they move to your Host when ready"
+            "Audio transfers are not enabled in this build. Recordings stay available here."
         )
         XCTAssertEqual(presentation.tone, .neutral)
         XCTAssertFalse(presentation.detail.contains("codec"))
-        XCTAssertFalse(presentation.detail.contains("build"))
+        XCTAssertTrue(presentation.detail.contains("not enabled in this build"))
     }
 
     func testHostPillMapsHealthWithoutDashboardCopy() {
