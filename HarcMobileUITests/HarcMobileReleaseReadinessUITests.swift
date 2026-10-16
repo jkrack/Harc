@@ -43,6 +43,38 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         ].exists)
     }
 
+    func testSyncDetailsAreDiscoverableWithoutHostOrRecording() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        let library = app.tabBars.buttons["Library"]
+        XCTAssertTrue(library.waitForExistence(timeout: 10))
+        library.tap()
+        let status = app.buttons["harc.mobile.library.sync-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertEqual(status.label, "Sync status")
+        XCTAssertGreaterThanOrEqual(status.frame.height, 44)
+        status.tap()
+        let transferStatus = app.descendants(matching: .any)["harc.mobile.sync.transfer-status"]
+        XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
+        XCTAssertTrue(transferStatus.label.contains("Transfers not enabled in this build"))
+        let hostStatus = app.descendants(matching: .any)["harc.mobile.sync.host"]
+        XCTAssertTrue(hostStatus.exists)
+        XCTAssertTrue((hostStatus.label + " " + String(describing: hostStatus.value ?? "")).contains("No Host paired"))
+        XCTAssertFalse(app.buttons["harc.mobile.sync.retry-transfers"].exists)
+        let local = app.buttons["harc.mobile.sync.local-recordings"]
+        XCTAssertTrue(scrollUntilExists(local, in: app))
+        local.tap()
+        XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+
+        app.tabBars.buttons["Host"].tap()
+        let hostLink = app.buttons["harc.mobile.host.sync-status"]
+        XCTAssertTrue(hostLink.waitForExistence(timeout: 10))
+        hostLink.tap()
+        XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
+        XCTAssertTrue(transferStatus.label.contains("Transfers not enabled in this build"))
+        XCTAssertFalse(app.buttons["Retry transfers"].exists)
+    }
+
     func testOfflineReviewSampleAndPrivacyAreReachableWithoutHost() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()

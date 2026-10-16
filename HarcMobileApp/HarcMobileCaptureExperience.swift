@@ -144,7 +144,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
                 title: protectedCount > 0
                     ? protectedTitle(protectedCount)
                     : "New recordings stay safe on this iPhone",
-                detail: "Transfers paused · they move to \(destination) when ready",
+                detail: "Audio transfers are not enabled in this build. Recordings stay available here.",
                 systemImage: "iphone",
                 tone: .neutral,
                 relativeMoment: nil

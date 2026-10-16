@@ -1,5 +1,117 @@
 # iPhone companion launch plan
 
+## Current tracker and Mac mini handoff — October 15, 2026 (Pacific)
+
+**Done:** Both development apps were installed from
+`0ce24fe5e94090ddcec26fd6c5d6f4c59796f60a`, version 0.14.13 (68). The Mac
+candidate passed Apple notarization, stapling and Gatekeeper. Existing phone
+pairing authenticated after launch; retained recording metadata was checked.
+These are installation and connection results, not upload acceptance.
+
+**In progress:** [Draft PR #122](https://github.com/jkrack/Harc/pull/122) is ready
+for code review after automated validation. [CI run 38844699721](https://github.com/jkrack/Harc/actions/runs/38844699721)
+passed at head `83848c152a9139e324fda9b5dc897deaeb2a5c2f`, including the Mac
+app/helper checks and hosted mobile tests. The iPhone 17/iOS 26.5 simulator result
+contains 70 logical tests / 87 case executions, all passed, including nine new
+status tests and both selected UI tests; zero skips or runtime warnings. The
+[Sync evidence record](../evidence/2026-10-16-mobile-sync-status.md) names exact
+source/tree/artifact identities and package-test skips. This record's follow-up
+changes documentation only. The UI has not been installed on a physical phone.
+
+**Blocked:** New audio transfer remains behind the closed codec qualification
+gate. Physical phone upload, durable Host receipt and the subsequent phone
+Library round trip remain unqualified. Host Library reads are a separate path;
+the user's report of “syncing is paused” does not establish a Library RPC cause.
+
+**Next validation:** Review the scoped draft. Manual accessibility, a fresh
+physical Host Library diagnosis and the qualified phone-to-Host acceptance gates
+remain open. The Mac mini has no local simulator runtime; focused UI execution
+was completed safely on the hosted simulator. No merge, physical installation or
+release is authorized by this validation task.
+
+| Objective / acceptance | Owner | Status | Next action |
+| --- | --- | --- | --- |
+| Current development baseline: both apps identified, signed Mac accepted, existing adoption retained | Codex | Done for installed `0ce24fe` candidate | Preserve the dated installation evidence below. |
+| Discoverable Sync details: Library and Host entry points; accurate pending/Host/Library states; valid recovery actions; local playback/export retained | Codex | Draft PR #122; native tests, app/test compilation and hosted app/UI checks passed | Complete code review; manual accessibility and physical checks remain open. |
+| Codec: all four named-device three-hour cells pass frozen thresholds before enablement | Codex + James for hardware | Open; gate closed | Follow the physical qualification runbook; no bypass or threshold change. |
+| Phone → Host → Library: verified durable receipt, matching audio identity, one canonical recording, retry/restart behavior | Codex + James | Unqualified; depends on qualified codec | Run sealed-source physical acceptance after codec decision. |
+| Host Library diagnosis: actual operation/RPC result, distinct from transfer availability | Codex + James | User-visible failure not yet reproduced with a fresh typed result | Use the new status surface after it is validated; do not infer cause from paused copy. |
+| Submission: exact archive, privacy/dependencies, screenshots and owner fields accepted | Codex + James | Open; not release-ready | Complete applicable gates in the milestones below. |
+| Deferred Mac UI and issue #105 | Codex | Separate work; no demonstrated launch dependency | Keep separate unless evidence establishes a dependency. |
+
+### Continue in native Codex on the Mac mini
+
+- **Worktree:** `/tmp/harc-mobile-sync-status-20261016` (a local temporary path;
+  retain it until the branch and handoff are safely published).
+- **Branch:** `codex/mobile-sync-status`. Initial implementation:
+  `ade0039c0bdb631438e33b41410e4ba01658f775`; first passing app/test-bundle build:
+  `e017038b42acb4f9687f949630ee1a59f3c82fd4`. Read the current HEAD with
+  `git rev-parse HEAD` before resuming.
+- **Base:** main `16fe2e9bbeb79d4e432cb5bbf2eea2cdf6a5bf27`, the merge of
+  [PR #121](https://github.com/jkrack/Harc/pull/121). Its tree matches the
+  installed `0ce24fe` candidate. The
+  [main CI run](https://github.com/jkrack/Harc/actions/runs/38797324831) passed;
+  that older result does not validate this new UI commit.
+- **Continuation:** James resumed this work through the connected Mac mini task.
+  Reviewed code `280caf4c97d70bbbe4a68a5dd2b4767c1a0a5783` passed the
+  app/test-bundle build; the branch is pushed and draft PR #122 is open.
+  CI passed at head `83848c152a9139e324fda9b5dc897deaeb2a5c2f`; that run
+  and its watcher have finished. No local app build/test is running. This
+  evidence follow-up is
+  documentation only; inspect current PR checks for subsequent runs. Leave
+  Xcode-only Sparkle lockfile churn out of commits.
+- **Local evidence:** `/tmp/harc-sync-evidence/mobile-sync-status-ios-build.log`
+  and `.json`; focused tests in
+  `/tmp/harc-sync-evidence/mobile-sync-status-reviewed-native.log` and `.json`.
+  The reviewed full-SHA build is `mobile-sync-status-ios-reviewed.log`/`.json`;
+  `mobile-sync-status-reviewed-manifest.json` verifies the app stamp, binary
+  digest, both test bundles and absence of the qualification define. All are
+  in that evidence directory; the build retained at least 7.83 GiB free.
+  Hosted evidence is retained under
+  `/tmp/harc-sync-evidence/ci-38844699721/`, including the verified result bundle,
+  test tree and manifest. The earlier failed build used a short source stamp
+  and remains diagnostic only. New builds must use the full actual source SHA.
+- **Other checkout:** `/Users/jlane/Documents/GitHub/Harc` contains pre-existing
+  unrelated changes; leave it untouched. Deferred Mac UI is separately at
+  `/tmp/harc-library-activation-20261015`, commit `6ef08e8`.
+- **Resume instruction:** Read this tracker, `AGENTS.md`, applicable `.agents`
+  instructions and the Sync evidence record, then continue this exact worktree.
+  Preserve the closed codec gate. Continue the existing draft PR #122; do not
+  duplicate the branch or PR. Inspect `git status --short` and the current PR
+  checks before resuming; the final tracker follow-up changes documentation only. Do not install,
+  launch, record, refresh the physical phone, alter pairing/security/credentials,
+  or publish a release under this handoff.
+
+### Installed baseline evidence
+
+The Mac mini is an Apple M4 Mac16,10 on macOS 26.6.2 (25G83). The connected
+physical phone was an iPhone 15 Pro Max, iPhone16,2, on iOS 26.6 (23G71), wired,
+paired and with Developer Mode enabled. It is supplementary Pro-device evidence,
+not either named codec-matrix phone and not a simulator. A later read-only source
+query was blocked by the phone's locked/passcode state; no unlock was attempted.
+
+Apple accepted notarization submission `c68b27a0-361c-42b6-921f-cabf3cbe7302`.
+The installed stapled DMG has SHA-256
+`281ac4880235c973140b3299511a8889041fcdc9750459c9984967cced070fe5`;
+the iPhone development ZIP has SHA-256
+`1ce1ed2d8d4ac4c7d0f1a79cbf931293c8067030560c9e88b61c99b8d8886ed7`.
+The Mac packaging reused reviewed Debug binaries and existing Developer ID
+credentials; it is not a production Release build. Earlier unnotarized/ad-hoc
+candidates are superseded.
+
+Local installation receipt:
+`/tmp/harc-mac-ui-evidence-20261015/both-development-updates-installed-20261016.json`.
+Notarization receipt:
+`/tmp/harc-library-0ce24fe-mac-timestamped-development/notarization-20261016/notarized-candidate-receipt.json`.
+Mac ordinary database counts, 221 audio-file metadata records and 24 phone
+capture-artifact metadata records were retained across the update. No recording
+contents or playback were used for that check. Pairing authentication does not
+prove a new recording was uploaded or receipted.
+
+The assessment below is the original October 14 review. This dated tracker
+supersedes its historical CI/build-status observations; the normative spec and
+unexecuted physical/release gates remain in force.
+
 **Date:** 2026-10-14  
 **Status:** Agreed launch scope; implementation and qualification remain in progress  
 **Review baseline:** `main` at `7cb2d18772bb249d86a2de74ba4843711dca68c8`, Harc 0.14.13 (68)

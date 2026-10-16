@@ -93,6 +93,11 @@ final class HarcMobileTransferCoordinator {
         case securityBlocked(recordingUUID: UUID, message: String)
     }
 
+    /// Read-only presentation of the unchanged production qualification gate.
+    var isCodecQualifiedForTransfers: Bool {
+        HarcMobileLosslessReleaseGate.selected == .cafALAC
+    }
+
     private(set) var state: State = .idle
     private(set) var pendingCount = 0
     private(set) var localRecordings: [HarcMobileLocalRecording] = []
