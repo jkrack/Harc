@@ -1,6 +1,30 @@
 # iPhone companion launch plan
 
-## Current tracker and Mac mini handoff — October 15, 2026 (Pacific)
+## Current checkpoint — October 16, 2026
+
+James merged [#122](https://github.com/jkrack/Harc/pull/122) and
+[#120](https://github.com/jkrack/Harc/pull/120). Combined main
+`3f9f090ae4bd1266651ceb94f2a553f10d1de08a` then
+[failed CI 38901509843](https://github.com/jkrack/Harc/actions/runs/38901509843)
+with exactly the two retained positive-signature assertions from #120.
+Package compilation and 31 strict-executor tests passed; Mac app/helper and
+mobile checks were skipped after the package failure. The earlier green Sync UI
+branch result does not validate this combined main.
+
+The [correction assessment](../evidence/2026-10-16-p256-main-blocker.md)
+records the exact evidence, the model's narrowly testable upstream hypothesis,
+and why no supported or validated production correction is available in the
+current scope. Keep the assertions active. Recommended owner decision: retain
+the blocker and authorize Apple escalation/cross-OS validation; review any
+provider replacement separately. No installation is prepared from this failing
+baseline. Installed `0ce24fe` builds remain unchanged, codec/upload gates remain
+closed, and physical/release acceptance remains open. No external report was
+sent or release published.
+
+The October 15 snapshot below is historical; its open-draft/next-review wording
+does not describe the merged PRs' current state.
+
+## Mac mini handoff snapshot — October 15, 2026 (Pacific)
 
 **Done:** Both development apps were installed from
 `0ce24fe5e94090ddcec26fd6c5d6f4c59796f60a`, version 0.14.13 (68). The Mac
