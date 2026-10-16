@@ -10,13 +10,13 @@ Host Library metadata refresh and authenticated Host health checks are separate 
 - Sync details shows transfer availability, pending recording count, the adopted Host and its independently verified connection, plus Host Library status and fixed operation/RPC diagnostics when supplied by the coordinator.
 - Qualification explains why new audio remains local and offers local playback/export navigation. It never offers Retry as a fix. Existing local-row retry actions are also hidden while qualification is closed.
 - Pairing/security stops lead to Host settings; qualified, connected recoverable work may offer Retry. No Pause/Resume toggle is invented.
-- A successful Library refresh time is shown only from the coordinator's current ready state and actual completed timestamp. Host contact, cached rows, queue emptiness and a transfer receipt without a time do not manufacture a last-sync date.
+- The Library metadata update time is shown only from the coordinator's current successfully refreshed ready state. It is labeled as a metadata update, because the cache timestamp is not a refresh-completion time. Host contact, cached rows, queue emptiness and a transfer receipt without a time do not manufacture a last-sync date.
 - Local recording, playback and explicit export access remain available without a paired or reachable Host.
 
 ## Validation
 
-- Focused Foundation projection: nine XCTest methods passed natively, including gate/Host-state combinations, security and authorization, offline/retry, pending-count transitions and successful-refresh evidence.
+- Focused Foundation projection: nine XCTest methods passed natively after review (source SHA-256 `5ea4fa5cd36a6427fae27b3a07ebc1524ca8d1a2cc0e4b060843c07f5b537206`), including gate/Host-state combinations, security and authorization, offline/retry, pending-count transitions and successful-refresh evidence.
 - Added selected hosted app tests and a UI navigation/accessibility regression for the Library and Host entry points, a readable status label, a 44-point hit region and local access without a Host or microphone use.
-- Local unsigned iOS build-for-testing ended with exit 65: `HarcMobileSyncDetailView.swift:58` uses the string-title `Section` form with a footer closure; this requires an explicit header closure. App/test-bundle compilation has not passed. This diagnostic run used a short source stamp, so it is not sealed build provenance. See the launch plan's current handoff section for the full code SHA and local log paths.
+- Local unsigned generic-iOS build-for-testing passed at `e017038b42acb4f9687f949630ee1a59f3c82fd4`, including app and test bundles. This corrected the original invalid SwiftUI Section initializer; the earlier short-stamp failed run remains diagnostic only. Review then corrected the metadata timestamp label and accessibility assertions; final-source recompilation is pending.
 - Exact-head hosted results and runtime UI validation remain pending. No new draft PR has been created or branch pushed at handoff.
 - No new device installation, Library refresh, recording, playback, permission/credential change, pairing reset, publication or gate enablement is part of this work. Simulator checks do not qualify physical accessibility, codec endurance or phone-to-Host durable sync.

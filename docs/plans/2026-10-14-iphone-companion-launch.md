@@ -11,9 +11,12 @@ These are installation and connection results, not upload acceptance.
 **In progress:** The Sync status/detail UI was first committed locally as
 `ade0039c0bdb631438e33b41410e4ba01658f775` on
 `codex/mobile-sync-status`. Nine focused native XCTest methods passed. The local
-iOS build-for-testing exposed an invalid SwiftUI `Section` initializer. It now
-uses an explicit header closure; the corrected app/test-bundle build is next.
-The UI is not yet build-validated, pushed, installed or in a PR.
+iOS build-for-testing exposed an invalid SwiftUI `Section` initializer; the
+corrected app and test bundles compiled at
+`e017038b42acb4f9687f949630ee1a59f3c82fd4`. Review then clarified the metadata
+update timestamp label and UI accessibility assertions. Nine focused tests
+passed again; final-source compilation and hosted runtime validation are next.
+The branch is not yet pushed or in a PR; this UI has not been installed.
 
 **Blocked:** New audio transfer remains behind the closed codec qualification
 gate. Physical phone upload, durable Host receipt and the subsequent phone
@@ -39,19 +42,24 @@ SwiftUI navigation or physical behavior. Keep the qualification gate closed.
 
 - **Worktree:** `/tmp/harc-mobile-sync-status-20261016` (a local temporary path;
   retain it until the branch and handoff are safely published).
-- **Branch / code HEAD:** `codex/mobile-sync-status` /
-  `ade0039c0bdb631438e33b41410e4ba01658f775`.
+- **Branch:** `codex/mobile-sync-status`. Initial implementation:
+  `ade0039c0bdb631438e33b41410e4ba01658f775`; first passing app/test-bundle build:
+  `e017038b42acb4f9687f949630ee1a59f3c82fd4`. Read the current HEAD with
+  `git rev-parse HEAD` before resuming.
 - **Base:** main `16fe2e9bbeb79d4e432cb5bbf2eea2cdf6a5bf27`, the merge of
   [PR #121](https://github.com/jkrack/Harc/pull/121). Its tree matches the
   installed `0ce24fe` candidate. The
   [main CI run](https://github.com/jkrack/Harc/actions/runs/38797324831) passed;
   that older result does not validate this new UI commit.
 - **Continuation:** James resumed this work through the connected Mac mini task.
-  The compile fix and tracker are being committed before a bounded build. Leave
+  The compile fix passed; timestamp/accessibility review is complete and the
+  final-source build is next. Leave
   Xcode-only Sparkle lockfile churn out of commits.
 - **Local evidence:** `/tmp/harc-sync-evidence/mobile-sync-status-ios-build.log`
   and `.json`; focused tests in
-  `/tmp/harc-sync-evidence/mobile-sync-status-focused-native.log` and `.json`.
+  `/tmp/harc-sync-evidence/mobile-sync-status-reviewed-native.log` and `.json`.
+  The first passing full-SHA build is `mobile-sync-status-ios-fixed.log`/`.json`
+  in that evidence directory.
   The failed build used a short source stamp and is diagnostic only. A future
   build must use the full actual source SHA.
 - **Other checkout:** `/Users/jlane/Documents/GitHub/Harc` contains pre-existing

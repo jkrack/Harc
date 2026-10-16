@@ -75,15 +75,15 @@ final class HarcMobileSyncStatusPresentationTests: XCTestCase {
         XCTAssertEqual(status.action, .none)
     }
 
-    func testOnlyCompletedLibraryRefreshSuppliesSuccessfulSyncTime() {
+    func testOnlySuccessfulLibraryRefreshExposesMetadataUpdateTime() {
         let date = Date(timeIntervalSince1970: 100)
-        let success = HarcMobileSyncLibraryEvidence(.ready(completedAt: date))
-        XCTAssertEqual(success.lastSuccessfulRefresh, date)
-        XCTAssertNil(HarcMobileSyncLibraryEvidence(.ready(completedAt: nil)).lastSuccessfulRefresh)
+        let success = HarcMobileSyncLibraryEvidence(.ready(lastUpdated: date))
+        XCTAssertEqual(success.verifiedMetadataUpdatedAt, date)
+        XCTAssertNil(HarcMobileSyncLibraryEvidence(.ready(lastUpdated: nil)).verifiedMetadataUpdatedAt)
         for state: HarcMobileSyncLibraryEvidence.State in [
             .preparing, .unpaired, .accessNotGranted, .refreshing, .offline, .failed, .cancelled
         ] {
-            XCTAssertNil(HarcMobileSyncLibraryEvidence(state).lastSuccessfulRefresh)
+            XCTAssertNil(HarcMobileSyncLibraryEvidence(state).verifiedMetadataUpdatedAt)
         }
     }
 

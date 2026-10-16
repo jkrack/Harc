@@ -89,27 +89,27 @@ struct HarcMobileSyncStatusPresentation: Equatable {
 struct HarcMobileSyncLibraryEvidence: Equatable {
     enum State: Equatable {
         case preparing, unpaired, accessNotGranted, refreshing
-        case ready(completedAt: Date?), offline, failed, cancelled
+        case ready(lastUpdated: Date?), offline, failed, cancelled
     }
 
     enum Action: Equatable { case none, hostSettings, refresh }
 
-    let lastSuccessfulRefresh: Date?
+    let verifiedMetadataUpdatedAt: Date?
     let action: Action
 
     init(_ state: State) {
         switch state {
         case .preparing, .refreshing:
-            lastSuccessfulRefresh = nil
+            verifiedMetadataUpdatedAt = nil
             action = .none
         case .unpaired, .accessNotGranted:
-            lastSuccessfulRefresh = nil
+            verifiedMetadataUpdatedAt = nil
             action = .hostSettings
         case .ready(let date):
-            lastSuccessfulRefresh = date
+            verifiedMetadataUpdatedAt = date
             action = .refresh
         case .offline, .failed, .cancelled:
-            lastSuccessfulRefresh = nil
+            verifiedMetadataUpdatedAt = nil
             action = .refresh
         }
     }

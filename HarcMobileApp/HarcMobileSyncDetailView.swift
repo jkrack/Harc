@@ -73,14 +73,14 @@ struct HarcMobileSyncDetailView<LocalRecordings: View>: View {
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier(HarcMobileSyncAccessibilityID.library)
-                    // Only a successful current refresh supplies this time.
-                    // A Host probe or an old cache timestamp is not sync proof.
-                    if let date = evidence.lastSuccessfulRefresh {
-                        LabeledContent("Last successful Library refresh") {
+                    // Show the metadata update time only after a successful refresh.
+                    // This is not the time an audio transfer or refresh completed.
+                    if let date = evidence.verifiedMetadataUpdatedAt {
+                        LabeledContent("Library metadata updated") {
                             Text(date, style: .relative)
                         }
                     } else {
-                        Text("No successful Library refresh time is available.")
+                        Text("No verified Library update time is available.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     if evidence.action == .hostSettings {
@@ -146,7 +146,7 @@ extension HarcMobileSyncLibraryEvidence.State {
         case .unpaired: .unpaired
         case .accessNotGranted: .accessNotGranted
         case .refreshing: .refreshing
-        case .ready(let date): .ready(completedAt: date)
+        case .ready(let date): .ready(lastUpdated: date)
         case .offline: .offline
         case .failed: .failed
         case .cancelled: .cancelled

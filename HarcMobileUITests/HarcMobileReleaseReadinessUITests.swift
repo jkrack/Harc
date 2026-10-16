@@ -54,8 +54,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertEqual(status.label, "Sync status")
         XCTAssertGreaterThanOrEqual(status.frame.height, 44)
         status.tap()
-        XCTAssertTrue(app.staticTexts["Transfers not enabled in this build"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["No Host paired"].exists)
+        let transferStatus = app.descendants(matching: .any)["harc.mobile.sync.transfer-status"]
+        XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
+        XCTAssertTrue(transferStatus.label.contains("Transfers not enabled in this build"))
+        let hostStatus = app.descendants(matching: .any)["harc.mobile.sync.host"]
+        XCTAssertTrue(hostStatus.exists)
+        XCTAssertTrue((hostStatus.label + " " + String(describing: hostStatus.value ?? "")).contains("No Host paired"))
         XCTAssertFalse(app.buttons["harc.mobile.sync.retry-transfers"].exists)
         let local = app.buttons["harc.mobile.sync.local-recordings"]
         XCTAssertTrue(scrollUntilExists(local, in: app))
@@ -66,7 +70,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let hostLink = app.buttons["harc.mobile.host.sync-status"]
         XCTAssertTrue(hostLink.waitForExistence(timeout: 10))
         hostLink.tap()
-        XCTAssertTrue(app.staticTexts["Transfers not enabled in this build"].waitForExistence(timeout: 10))
+        XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
+        XCTAssertTrue(transferStatus.label.contains("Transfers not enabled in this build"))
         XCTAssertFalse(app.buttons["Retry transfers"].exists)
     }
 
