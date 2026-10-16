@@ -55,7 +55,7 @@ struct HarcMobileSyncDetailView<LocalRecordings: View>: View {
                 }
                 hostSettingsButton
             }
-            Section("Host Library") {
+            Section {
                 if let library = model.libraryCoordinator {
                     let evidence = HarcMobileSyncLibraryEvidence(.init(library.state))
                     let status = HarcMobileCaptureStatusPresentation.library(
@@ -94,6 +94,8 @@ struct HarcMobileSyncDetailView<LocalRecordings: View>: View {
                 } else {
                     Text("Preparing Host Library status…")
                 }
+            } header: {
+                Text("Host Library")
             } footer: {
                 Text("Reading the Host Library is separate from sending new recordings. A verified Host connection does not mean recordings have synced.")
             }

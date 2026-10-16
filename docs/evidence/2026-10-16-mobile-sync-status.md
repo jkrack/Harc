@@ -17,5 +17,6 @@ Host Library metadata refresh and authenticated Host health checks are separate 
 
 - Focused Foundation projection: nine XCTest methods passed natively, including gate/Host-state combinations, security and authorization, offline/retry, pending-count transitions and successful-refresh evidence.
 - Added selected hosted app tests and a UI navigation/accessibility regression for the Library and Host entry points, a readable status label, a 44-point hit region and local access without a Host or microphone use.
-- Local app/test-bundle compilation and exact-head hosted results: pending at this checkpoint.
+- Local unsigned iOS build-for-testing ended with exit 65: `HarcMobileSyncDetailView.swift:58` uses the string-title `Section` form with a footer closure; this requires an explicit header closure. App/test-bundle compilation has not passed. This diagnostic run used a short source stamp, so it is not sealed build provenance. See the launch plan's current handoff section for the full code SHA and local log paths.
+- Exact-head hosted results and runtime UI validation remain pending. No new draft PR has been created or branch pushed at handoff.
 - No new device installation, Library refresh, recording, playback, permission/credential change, pairing reset, publication or gate enablement is part of this work. Simulator checks do not qualify physical accessibility, codec endurance or phone-to-Host durable sync.
