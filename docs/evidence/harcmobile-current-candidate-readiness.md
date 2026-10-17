@@ -1,7 +1,7 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-10-15
-**Candidate configuration:** HarcMobile 0.14.13 (68), iOS 18+, iPhone only
+**Updated:** 2026-10-17
+**Candidate configuration:** HarcMobile 0.14.15 (70), iOS 18+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.
@@ -16,6 +16,17 @@ retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observat
 remain useful history and must not be relabeled as 0.14.13 qualification.
 
 ## Source-scoped observations
+
+### Release preparation, 2026-10-17
+
+Configuration is now 0.14.15 (70), distinct from the retained private 0.14.14
+(69) artifacts. The local release branch starts at merged main `c715538` and
+includes the reviewed mobile navigation changes from #125, which had merged
+into the stacked branch rather than main. Prior dated observations below retain
+their original source and version scope. This update identifies the new
+development candidate; it does not close physical, archive, or App Store gates.
+Fresh build, signing and release receipts are retained on the Mac mini SSD
+under `HarcBuilds/release-0-14-15-evidence-20261017`.
 
 ### Combined baseline and development update, 2026-10-15
 
