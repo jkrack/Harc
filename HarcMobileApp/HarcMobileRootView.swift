@@ -1154,6 +1154,12 @@ private struct HarcMobileRecordingDetailView: View {
                         )
                         LabeledContent("Revision", value: String(detail.summary.revision.rawValue))
                     }
+                    if detail.captureNeedsReview {
+                        Section("Capture quality") {
+                            Label("Some audio may be missing. Review this recording before relying on it.", systemImage: "exclamationmark.triangle")
+                                .accessibilityIdentifier("harc.mobile.captureIntegrityWarning")
+                        }
+                    }
                     if !detail.discontinuities.isEmpty {
                         Section("Capture interruptions") {
                             ForEach(

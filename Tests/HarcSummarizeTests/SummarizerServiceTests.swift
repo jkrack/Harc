@@ -23,6 +23,18 @@ final class SummarizerServiceTests: XCTestCase {
         return (loader, { await box.snapshot() })
     }
 
+    func test_insufficientBudgetFailsRatherThanReturningOnlyTheTail() async throws {
+        let (loader, _) = spyLoader(id: "m")
+        let service = SummarizerService(loader: loader)
+        do {
+            _ = try await service.summarize(transcript: .init(utterances: [
+                .init(speaker: "Ada", text: "I will send the contract on Friday."),
+                .init(speaker: "Ben", text: "Goodbye.")
+            ]), modelID: "m", modelDirectory: .temporaryDirectory, budgetWords: 2)
+            XCTFail("Returned an incomplete summary")
+        } catch is SummarizerError { }
+    }
+
     func test_newService_reportsNoLoadedModel() async {
         let service = SummarizerService(loader: { _ in
             throw SummarizerError.loadFailed("not called")
@@ -170,7 +182,7 @@ final class SummarizerServiceTests: XCTestCase {
         let produced = await containers()
         XCTAssertEqual(produced.count, 1, "One container produced.")
         let stub = produced[0]
-        XCTAssertEqual(stub.generateCalls, 1)
+        XCTAssertEqual(stub.generateCalls, 2)
         XCTAssertEqual(stub.lastMaxTokens, SummaryPrompt.maxOutputTokens,
             "Service must pass the canonical maxOutputTokens to the container.")
         XCTAssertTrue(stub.lastPromptBody?.contains("Jason: Let's lock rollout for Friday.") ?? false,
@@ -344,6 +356,9 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
         lastSystemPrompt = systemPrompt
         lastMaxTokens = maxTokens
         onStats?(GenerationStats(generatedTokens: 42, tokensPerSecond: 21, isFinal: true))
+        if promptBody.contains("Do not generate an action list") {
+            return "## Summary\n" + SummaryParser.parse(response).summary
+        }
         return response
     }
 }

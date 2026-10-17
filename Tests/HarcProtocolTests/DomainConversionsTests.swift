@@ -10,6 +10,17 @@ import Testing
 struct DomainConversionsTests {
     private let baseDate = Date(timeIntervalSince1970: 2_000_000_000)
 
+    @Test("capture review advisory has stable field-8 bytes and accepts legacy absence")
+    func captureReviewWireCompatibility() throws {
+        let legacy = try Harc_V1_LibraryRecordingDetailV1(serializedBytes: Data())
+        #expect(!legacy.captureNeedsReview)
+        #expect(try legacy.serializedData().isEmpty)
+        let advisoryBytes = Data([0x40, 0x01])
+        let advisory = try Harc_V1_LibraryRecordingDetailV1(serializedBytes: advisoryBytes)
+        #expect(advisory.captureNeedsReview)
+        #expect(try advisory.serializedData() == advisoryBytes)
+    }
+
     @Test("requirements are canonical and fail closed for unsupported semantics")
     func requirementsFailClosed() throws {
         #expect(throws: HarcProtobufConversionError.nonCanonicalOrder(
@@ -340,7 +351,8 @@ struct DomainConversionsTests {
             summary: summary,
             transcriptText: "Hello",
             speakerLabels: [SpeakerLabel(speakerIndex: 0, displayName: "Alex")],
-            notesMarkdown: "A note"
+            notesMarkdown: "A note",
+            captureNeedsReview: true
         )
         #expect(try Harc_V1_LibraryRecordingDetailV1(detail).domainValue() == detail)
 

@@ -1,0 +1,303 @@
+Listener qualification explicitly excluded.
+Building for debugging...
+[0/8] /private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/.build/arm64-apple-macosx/debug/HarcTLSRegressionPackageTests.derived/runner.swift
+[1/8] Write sources
+[5/8] Write swift-version--58304C5D6DBC2206.txt
+[7/16] Compiling HarcDomain CanonicalAudio.swift
+[8/16] Compiling HarcDomain CaptureDiscontinuity.swift
+[9/16] Compiling HarcDomain Conflicts.swift
+[10/16] Compiling HarcDomain DomainValidationError.swift
+[11/16] Compiling HarcDomain HostSpeakerProcessingOutcome.swift
+[12/16] Compiling HarcDomain Identifiers.swift
+[13/16] Compiling HarcDomain LibraryMetadata.swift
+[14/16] Emitting module HarcDomain
+[15/23] Compiling HarcDomain LibraryViews.swift
+[16/23] Compiling HarcDomain ProcessingState.swift
+[17/23] Compiling HarcDomain Revisions.swift
+[18/23] Compiling HarcDomain SpeakerClusterMap.swift
+[19/23] Compiling HarcDomain SpeakerEvidenceSnapshot.swift
+[20/23] Compiling HarcDomain SpeakerIdentity.swift
+[21/23] Compiling HarcDomain SpeakerTranscriptLabelProjector.swift
+[22/31] Compiling HarcIdentity Authorization.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         return try removeLegacyCertificates(from: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[23/31] Compiling HarcIdentity HostCryptographicState.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         return try removeLegacyCertificates(from: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[24/31] Compiling HarcIdentity HostCryptographicStateRepository.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         return try removeLegacyCertificates(from: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[25/31] Compiling HarcIdentity HostSecurityP256SigningKey.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         return try removeLegacyCertificates(from: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[26/31] Compiling HarcIdentity HostTLSCertificateMigration.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         return try removeLegacyCertificates(from: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[27/31] Compiling HarcIdentity HostTLSServerIdentity.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         return try removeLegacyCertificates(from: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[28/31] Compiling HarcIdentity InstallationIdentity.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         return try removeLegacyCertificates(from: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[29/31] Emitting module HarcIdentity
+[30/37] Compiling HarcIdentity KeychainHostCryptographicStateStore.swift
+[31/37] Compiling HarcIdentity KeychainSoftwareInstallationKeyStore.swift
+[32/37] Compiling HarcIdentity P256Signing.swift
+[33/37] Compiling HarcIdentity PreferredInstallationSigningKeyStore.swift
+[34/37] Compiling HarcIdentity SecureEnclaveP256SigningKey.swift
+[35/37] Compiling HarcIdentity SigningIdentity.swift
+[36/41] Emitting module HarcIdentityTests
+[37/41] Compiling HarcIdentityTests AuthorizationTests.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:97:46: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 95 |         var temporary: SecKeychain?
+ 96 |         let password = "disposable-test-keychain"
+ 97 |         let created = password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) }
+    |                                              `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 98 |         #expect(created == errSecSuccess)
+ 99 |         let keychain = try #require(temporary)
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:100:17: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 98 |         #expect(created == errSecSuccess)
+ 99 |         let keychain = try #require(temporary)
+100 |         defer { SecKeychainDelete(keychain) }
+    |                 `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+101 |         let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(
+102 |             applicationTag: Data("com.harc.tests.tls.migration.\(UUID())".utf8),
+
+macro expansion #expect:1:55: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+`- /private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:140:140: note: expanded code originates here
+138 |         var temporary: SecKeychain?
+139 |         let password = "disposable-test-keychain"
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkBinaryOperation(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) },{ $0 == $1() },errSecSuccess,expression: .__fromBinaryOperation(.__fromSyntaxNode("password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) }"),"==",.__fromSyntaxNode("errSecSuccess")),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    |  |                                                       `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+    +-------------------------------------------------------------------
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:140:40: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+138 |         var temporary: SecKeychain?
+139 |         let password = "disposable-test-keychain"
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+    |                                        `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:142:17: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+    |                 `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+143 |         let tag = Data("com.harc.tests.tls.orphan.\(UUID())".utf8)
+144 |         let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(applicationTag: tag, keychain: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[38/41] Compiling HarcIdentityTests HostCryptographicStateTests.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:97:46: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 95 |         var temporary: SecKeychain?
+ 96 |         let password = "disposable-test-keychain"
+ 97 |         let created = password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) }
+    |                                              `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 98 |         #expect(created == errSecSuccess)
+ 99 |         let keychain = try #require(temporary)
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:100:17: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 98 |         #expect(created == errSecSuccess)
+ 99 |         let keychain = try #require(temporary)
+100 |         defer { SecKeychainDelete(keychain) }
+    |                 `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+101 |         let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(
+102 |             applicationTag: Data("com.harc.tests.tls.migration.\(UUID())".utf8),
+
+macro expansion #expect:1:55: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+`- /private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:140:140: note: expanded code originates here
+138 |         var temporary: SecKeychain?
+139 |         let password = "disposable-test-keychain"
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkBinaryOperation(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) },{ $0 == $1() },errSecSuccess,expression: .__fromBinaryOperation(.__fromSyntaxNode("password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) }"),"==",.__fromSyntaxNode("errSecSuccess")),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    |  |                                                       `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+    +-------------------------------------------------------------------
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:140:40: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+138 |         var temporary: SecKeychain?
+139 |         let password = "disposable-test-keychain"
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+    |                                        `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:142:17: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+    |                 `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+143 |         let tag = Data("com.harc.tests.tls.orphan.\(UUID())".utf8)
+144 |         let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(applicationTag: tag, keychain: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[39/41] Compiling HarcIdentityTests HostTLSServerIdentityTests.swift
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:97:46: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 95 |         var temporary: SecKeychain?
+ 96 |         let password = "disposable-test-keychain"
+ 97 |         let created = password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) }
+    |                                              `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 98 |         #expect(created == errSecSuccess)
+ 99 |         let keychain = try #require(temporary)
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:100:17: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 98 |         #expect(created == errSecSuccess)
+ 99 |         let keychain = try #require(temporary)
+100 |         defer { SecKeychainDelete(keychain) }
+    |                 `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+101 |         let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(
+102 |             applicationTag: Data("com.harc.tests.tls.migration.\(UUID())".utf8),
+
+macro expansion #expect:1:55: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+`- /private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:140:140: note: expanded code originates here
+138 |         var temporary: SecKeychain?
+139 |         let password = "disposable-test-keychain"
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkBinaryOperation(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) },{ $0 == $1() },errSecSuccess,expression: .__fromBinaryOperation(.__fromSyntaxNode("password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) }"),"==",.__fromSyntaxNode("errSecSuccess")),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    |  |                                                       `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+    +-------------------------------------------------------------------
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:140:40: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+138 |         var temporary: SecKeychain?
+139 |         let password = "disposable-test-keychain"
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+    |                                        `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+
+/private/var/folders/db/qkgy0m615tv5mg_cnp88mf3r0000gn/T/harc-tls-regression-um0k_43t/Tests/HarcIdentityTests/HostTLSServerIdentityTests.swift:142:17: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+140 |         #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+141 |         let keychain = try #require(temporary)
+142 |         defer { SecKeychainDelete(keychain) }
+    |                 `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+143 |         let tag = Data("com.harc.tests.tls.orphan.\(UUID())".utf8)
+144 |         let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(applicationTag: tag, keychain: keychain)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[40/43] Compiling HarcIdentityTests InstallationIdentityTests.swift
+[41/43] Compiling HarcIdentityTests P256SigningTests.swift
+[42/45] Compiling HarcTLSRegressionPackageTests runner.swift
+[43/45] Emitting module HarcTLSRegressionPackageTests
+[43/45] Write Objects.LinkFileList
+[44/45] Linking HarcTLSRegressionPackageTests
+Build complete! (10.75s)
+warning: '--build-system native' has been deprecated and will be removed in a future release; please report an issue at https://github.com/swiftlang/swift-package-manager/issues if you are unable to adopt the default build system.
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "HarcIdentity permanent TLS key and X.509 server identity" started.
+◇ Test "50 identity resolutions never install a certificate" started.
+Harc certificate count: before=0, after=0; 50 identity resolutions
+✔ Test "50 identity resolutions never install a certificate" passed after 0.110 seconds.
+◇ Test "migration deletes only matching labels and is idempotent in an isolated keychain" started.
+✔ Test "migration deletes only matching labels and is idempotent in an isolated keychain" passed after 0.068 seconds.
+◇ Test "migration removes orphan keys but preserves authority references" started.
+◇ Test case passing 1 argument retained → false to "migration removes orphan keys but preserves authority references" started.
+◇ Test case passing 1 argument retained → true to "migration removes orphan keys but preserves authority references" started.
+✔ Test "migration removes orphan keys but preserves authority references" with 2 test cases passed after 0.099 seconds.
+◇ Test "migration accepts only the exact self-signed Harc profile" started.
+✔ Test "migration accepts only the exact self-signed Harc profile" passed after 0.047 seconds.
+◇ Test "a permanent P-256 SecKey issues the exact Harc leaf and resolves a SecIdentity" started.
+✔ Test "a permanent P-256 SecKey issues the exact Harc leaf and resolves a SecIdentity" passed after 0.053 seconds.
+◇ Test "certificate requests reject invalid validity, SPKI, and extension bounds" started.
+✔ Test "certificate requests reject invalid validity, SPKI, and extension bounds" passed after 0.001 seconds.
+◇ Test "SPKI binding and strict certificate parsing fail closed on tamper" started.
+✔ Test "SPKI binding and strict certificate parsing fail closed on tamper" passed after 0.057 seconds.
+◇ Test "production issuance uses independent positive random serials" started.
+✔ Test "production issuance uses independent positive random serials" passed after 0.058 seconds.
+◇ Test "serial canonicalization retains only a required positive sign octet" started.
+✔ Test "serial canonicalization retains only a required positive sign octet" passed after 0.055 seconds.
+◇ Test "concurrent load-or-create persists intent before creating one permanent TLS key" started.
+✔ Test "concurrent load-or-create persists intent before creating one permanent TLS key" passed after 0.102 seconds.
+◇ Test "a failed record insert creates no permanent TLS key" started.
+✔ Test "a failed record insert creates no permanent TLS key" passed after 0.001 seconds.
+◇ Test "a losing staged-key CAS creates no orphaned permanent key" started.
+✔ Test "a losing staged-key CAS creates no orphaned permanent key" passed after 0.218 seconds.
+◇ Test "a created intent key is inspected without mutation and recovered idempotently" started.
+✔ Test "a created intent key is inspected without mutation and recovered idempotently" passed after 0.077 seconds.
+◇ Test "checked deletion remains journaled after failure and retries on load" started.
+✔ Test "checked deletion remains journaled after failure and retries on load" passed after 0.217 seconds.
+✔ Suite "HarcIdentity permanent TLS key and X.509 server identity" passed after 1.167 seconds.
+✔ Test run with 14 tests in 1 suite passed after 1.167 seconds.
+Concurrent test PIDs: 67097 67098
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "HarcIdentity permanent TLS key and X.509 server identity" started.
+◇ Suite "HarcIdentity permanent TLS key and X.509 server identity" started.
+◇ Test "50 identity resolutions never install a certificate" started.
+◇ Test "50 identity resolutions never install a certificate" started.
+Harc certificate count: before=0, after=0; 50 identity resolutions
+✔ Test "50 identity resolutions never install a certificate" passed after 0.113 seconds.
+✔ Suite "HarcIdentity permanent TLS key and X.509 server identity" passed after 0.113 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.113 seconds.
+Harc certificate count: before=0, after=0; 50 identity resolutions
+✔ Test "50 identity resolutions never install a certificate" passed after 0.116 seconds.
+✔ Suite "HarcIdentity permanent TLS key and X.509 server identity" passed after 0.116 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.116 seconds.

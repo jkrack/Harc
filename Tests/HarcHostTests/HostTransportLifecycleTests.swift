@@ -4,6 +4,7 @@ import HarcDomain
 @testable import HarcIdentity
 import HarcProtocol
 import Testing
+import Synchronization
 @testable import HarcHost
 
 // Security.framework's process-global certificate/identity lookup is not a
@@ -11,6 +12,37 @@ import Testing
 // remove its temporary Keychain material while another is resolving identity.
 @Suite("Host transport-set lifecycle", .serialized)
 struct HostTransportLifecycleTests {
+    @Test("concurrent leaf creation invokes the issuer only once")
+    func concurrentLeafIssuance() async throws {
+        let fixture = try await makePermanentFixture()
+        defer {
+            fixture.keys.deleteAllBestEffort()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        let ready = try await fixture.lifecycle.prepareForServing()
+        let facts = ready.serverIdentity.certificate
+        try await fixture.store.dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM host_tls_leaves")
+        }
+        let issued = Mutex(0)
+        let issue: @Sendable () throws -> HostTLSServerCertificateFacts = {
+            issued.withLock { $0 += 1 }
+            return facts
+        }
+        async let first = fixture.store.resolveOrCreateTLSLeaf(
+            for: ready.verifiedTransportSet, tlsSPKISHA256: facts.tlsSPKISHA256,
+            at: fixture.now, issue: issue
+        )
+        async let second = fixture.store.resolveOrCreateTLSLeaf(
+            for: ready.verifiedTransportSet, tlsSPKISHA256: facts.tlsSPKISHA256,
+            at: fixture.now, issue: issue
+        )
+        let results = try await (first, second)
+        #expect(results.0 == facts.certificateDER)
+        #expect(results.1 == facts.certificateDER)
+        #expect(issued.withLock { $0 } == 1)
+    }
+
     @Test("pending N+1 is advanced in Keychain and atomically applied on reopen")
     func pendingRecoveryAdvancesThenApplies() async throws {
         let fixture = try await makeFixture()
@@ -791,10 +823,10 @@ struct HostTransportLifecycleTests {
             tlsSPKISHA256: state.activeTLSIdentity.tlsSPKISHA256,
             notBeforeUnixMilliseconds: notBefore ?? nowMilliseconds - 300_000,
             // Default fixtures are comfortably outside the production
-            // seven-day proactive-renewal window. Tests exercising expiry or
+            // 30-day proactive-renewal window. Tests exercising expiry or
             // renewal pass an explicit boundary.
             notAfterUnixMilliseconds: notAfter
-                ?? nowMilliseconds + (30 * 86_400_000)
+                ?? nowMilliseconds + (60 * 86_400_000)
         )
         return try TestHostTransportSetProtocolBoundaryV1().issueTransportSet(
             HostTransportSetIssueRequest(

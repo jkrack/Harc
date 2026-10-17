@@ -23,6 +23,51 @@ public struct HarcValidatedProcessingSubmissionV1: Sendable {
         guard case .initialCommandAcceptance = authenticatedMetadata.authenticationPurpose else {
             throw HarcProtocolCodecError.currentGrantRequired
         }
+        let (exactMetadata, bundle) = try validateProcessingArtifactBodyV1(
+            authenticatedMetadata: authenticatedMetadata, exactBundleBytes: exactBundleBytes,
+            totalCanonicalFrames: totalCanonicalFrames, supportedRequiredFeatures: supportedRequiredFeatures,
+            versionPolicy: versionPolicy)
+        self.authenticatedMetadata = authenticatedMetadata
+        self.metadata = exactMetadata
+        self.bundle = bundle
+        self.totalCanonicalFrames = totalCanonicalFrames
+    }
+}
+
+/// Revalidation of an already-selected artifact, never authority to accept a new
+/// processing command. The Host must resolve the expected hashes from durable
+/// selection and recheck that selection in the eventual mutation transaction.
+public struct HarcValidatedRetainedProcessingArtifactV1: Sendable {
+    public let authenticatedMetadata: HarcAuthenticatedSignedObjectV1
+    public let metadata: HarcExactProtobufPayload<Harc_V1_ProcessingArtifactV1>
+    public let bundle: HarcProcessingBundleV1
+    public let totalCanonicalFrames: UInt64
+
+    public init(authenticatedMetadata: HarcAuthenticatedSignedObjectV1, exactBundleBytes: Data,
+        selectedSignedMetadataSHA256: Data, selectedBundleSHA256: Data,
+        totalCanonicalFrames: UInt64, supportedRequiredFeatures: Set<String> = [],
+        versionPolicy: HarcProtocolVersionPolicy = .currentV1) throws {
+        guard authenticatedMetadata.authenticationPurpose == .historicalEvidence,
+              selectedSignedMetadataSHA256.count == 32, selectedBundleSHA256.count == 32,
+              Data(SHA256.hash(data: authenticatedMetadata.signedObject.exactFramedBytes)) == selectedSignedMetadataSHA256,
+              Data(SHA256.hash(data: exactBundleBytes)) == selectedBundleSHA256 else {
+            throw HarcProtobufConversionError.inconsistentField("retainedProcessingArtifact.selection")
+        }
+        let (exactMetadata, bundle) = try validateProcessingArtifactBodyV1(
+            authenticatedMetadata: authenticatedMetadata, exactBundleBytes: exactBundleBytes,
+            totalCanonicalFrames: totalCanonicalFrames, supportedRequiredFeatures: supportedRequiredFeatures,
+            versionPolicy: versionPolicy)
+        self.authenticatedMetadata = authenticatedMetadata
+        self.metadata = exactMetadata
+        self.bundle = bundle
+        self.totalCanonicalFrames = totalCanonicalFrames
+    }
+}
+
+private func validateProcessingArtifactBodyV1(authenticatedMetadata: HarcAuthenticatedSignedObjectV1,
+    exactBundleBytes: Data, totalCanonicalFrames: UInt64, supportedRequiredFeatures: Set<String>,
+    versionPolicy: HarcProtocolVersionPolicy) throws
+    -> (HarcExactProtobufPayload<Harc_V1_ProcessingArtifactV1>, HarcProcessingBundleV1) {
         guard totalCanonicalFrames > 0 else {
             throw HarcProtobufConversionError.invalidValue(
                 field: "processingSubmission.totalCanonicalFrames"
@@ -93,9 +138,5 @@ public struct HarcValidatedProcessingSubmissionV1: Sendable {
             )
         }
 
-        self.authenticatedMetadata = authenticatedMetadata
-        self.metadata = exactMetadata
-        self.bundle = bundle
-        self.totalCanonicalFrames = totalCanonicalFrames
-    }
+        return (exactMetadata, bundle)
 }

@@ -466,6 +466,8 @@ actor FakeDiarizingClient: DiarizingClient {
         self.result = result
     }
 
+    func setOverlapRanges(_ ranges: [SpeechOverlapRange]) { result.overlapRanges = ranges }
+
     func diarize(audioPath: String) async throws -> DiarizeResult {
         calls.append(audioPath)
         if let err = shouldThrow { throw err }
@@ -549,6 +551,8 @@ struct ChunkedTranscriberDiarizeTests {
             // Overlap off: these tests assert exact nominal chunk cadence.
             chunkOverlapSeconds: 0
         )
+        let overlaps = [try SpeechOverlapRange(startMs: 500, endMs: 750)]
+        await fakeDi.setOverlapRanges(overlaps)
         await transcriber.start(audioURL: url)
         try await Task.sleep(nanoseconds: 400_000_000)
 
@@ -561,6 +565,9 @@ struct ChunkedTranscriberDiarizeTests {
         #expect(result.transcript.speakers.count == 2)
         #expect(result.speakerEmbeddings.count == 2)
         #expect(result.diarizationError == nil)
+        #expect(result.transcript.overlapRanges == overlaps)
+        let saved = try JSONEncoder().encode(result.transcript)
+        #expect(try JSONDecoder().decode(SessionTranscript.self, from: saved).overlapRanges == overlaps)
     }
 
     @Test("finalize tolerates diarize errors — transcript still returned")

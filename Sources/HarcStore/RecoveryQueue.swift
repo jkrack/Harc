@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 
 public struct RecoveryArtifact: Identifiable, Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable {
@@ -23,6 +24,9 @@ public struct RecoveryArtifact: Identifiable, Codable, Equatable, Sendable {
     public var status: Status
     public var sourceURL: URL
     public var destinationURL: URL?
+    /// Reserved before publication; survives a crash between file/DB commit
+    /// and the queue's completion write. Absent in legacy queue records.
+    public var recoveryOutputURL: URL?
     public var recordingID: Int64?
     public var title: String
     public var detail: String
@@ -36,6 +40,7 @@ public struct RecoveryArtifact: Identifiable, Codable, Equatable, Sendable {
         status: Status = .pending,
         sourceURL: URL,
         destinationURL: URL? = nil,
+        recoveryOutputURL: URL? = nil,
         recordingID: Int64? = nil,
         title: String,
         detail: String,
@@ -48,6 +53,7 @@ public struct RecoveryArtifact: Identifiable, Codable, Equatable, Sendable {
         self.status = status
         self.sourceURL = sourceURL
         self.destinationURL = destinationURL
+        self.recoveryOutputURL = recoveryOutputURL
         self.recordingID = recordingID
         self.title = title
         self.detail = detail
@@ -61,6 +67,8 @@ public actor RecoveryQueue {
     public enum QueueError: Error, LocalizedError, Sendable {
         case artifactNotFound(String)
         case missingDestination(String)
+        case artifactBusy(String)
+        case sourceIdentityChanged(String)
 
         public var errorDescription: String? {
             switch self {
@@ -68,6 +76,10 @@ public actor RecoveryQueue {
                 return "Recovery artifact \(id) was not found."
             case .missingDestination(let id):
                 return "Recovery artifact \(id) does not have a destination directory."
+            case .artifactBusy(let id):
+                return "Recovery artifact \(id) is already being recovered."
+            case .sourceIdentityChanged(let id):
+                return "Recovery artifact \(id) cannot be rebound to a different source file."
             }
         }
     }
@@ -78,10 +90,30 @@ public actor RecoveryQueue {
     private let decoder: JSONDecoder
     private var artifacts: [RecoveryArtifact] = []
     private var loaded = false
+    private var recoveringSources: Set<String> = []
+    private let writeMetadata: @Sendable (Data, URL) throws -> Void
+    private let publish: @Sendable (RecordingCacheRecovery, URL, URL) async throws -> Recording
 
     public init(fileURL: URL, store: RecordingStore) {
+        self.init(fileURL: fileURL, store: store, writeMetadata: { data, url in
+            try DurableFileIO.writeAtomically(data, to: url)
+        })
+    }
+
+    /// I/O seams let failure tests interrupt real publication at its commit
+    /// boundary without timing sleeps or touching the user's recordings.
+    init(
+        fileURL: URL,
+        store: RecordingStore,
+        writeMetadata: @escaping @Sendable (Data, URL) throws -> Void,
+        publish: @escaping @Sendable (RecordingCacheRecovery, URL, URL) async throws -> Recording = {
+            try await $0.recover($1, to: $2, removeSourceAfterCommit: false)
+        }
+    ) {
         self.fileURL = fileURL
         self.store = store
+        self.writeMetadata = writeMetadata
+        self.publish = publish
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -115,8 +147,40 @@ public actor RecoveryQueue {
             return
         }
 
-        var changed = false
+        var publicationSources: Set<String> = []
+        for journal in files where journal.lastPathComponent.hasSuffix(".wav.publication.json") {
+            let source = journal.deletingPathExtension().deletingPathExtension()
+            guard let publication = try RecordingPublication.load(for: source) else { continue }
+            publicationSources.insert(source.standardizedFileURL.path)
+            if let index = artifactIndex(forSourceURL: source) {
+                // Preserve existing terminal decisions and the original source
+                // identity. Pending entries can resume through this same intent.
+                if artifacts[index].status == .recovered,
+                   try await store.fetchByWavPath(publication.destination.path) != nil {
+                    try publication.finishLibraryCommit()
+                }
+                continue
+            }
+            if try await store.fetchByWavPath(publication.destination.path) != nil {
+                try publication.finishLibraryCommit()
+                continue
+            }
+            var artifact = RecoveryArtifact(
+                id: "publication:\(publication.id.uuidString.lowercased())",
+                kind: .destinationMoveFailed,
+                sourceURL: source,
+                destinationURL: publication.destination.deletingLastPathComponent(),
+                title: "Finish recording publication",
+                detail: "Resume the saved destination without creating another recording."
+            )
+            artifact.recoveryOutputURL = publication.destination
+            var candidate = artifacts
+            candidate.append(artifact)
+            try persist(candidate)
+        }
+
         for url in files where url.pathExtension.lowercased() == "wav" {
+            guard !publicationSources.contains(url.standardizedFileURL.path) else { continue }
             let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
             let fileSize = values?.fileSize ?? 0
             guard fileSize > 0 else { continue }
@@ -129,37 +193,58 @@ public actor RecoveryQueue {
             )
             guard artifactIndex(forSourceURL: url) == nil else { continue }
 
-            artifacts.append(
+            var candidate = artifacts
+            candidate.append(
                 RecoveryArtifact(
                     id: id,
                     kind: .interruptedWAV,
                     sourceURL: url,
-                    destinationURL: destinationDirectory,
+                    destinationURL: try CaptureDestinationBinding.load(for: url)?.baseDirectory ?? destinationDirectory,
                     title: "Interrupted recording",
                     detail: "\(fileSize) bytes in cache"
                 )
             )
-            changed = true
-        }
-
-        if changed {
-            try persist()
+            // Commit before the next store await can admit another mutation.
+            try persist(candidate)
         }
     }
 
     public func enqueue(_ artifact: RecoveryArtifact) async throws {
         try loadIfNeeded()
-        if let index = artifacts.firstIndex(where: { $0.id == artifact.id }) {
-            artifacts[index] = merge(existing: artifacts[index], incoming: artifact)
-        } else {
-            artifacts.append(artifact)
+        try requireAvailable(artifact)
+        if let existing = artifacts.first(where: { $0.id == artifact.id }) {
+            try requireAvailable(existing)
+            guard existing.sourceURL.standardizedFileURL == artifact.sourceURL.standardizedFileURL else {
+                throw QueueError.sourceIdentityChanged(artifact.id)
+            }
         }
-        try persist()
+        var candidate = artifacts
+        if let index = candidate.firstIndex(where: {
+            $0.sourceURL.standardizedFileURL == artifact.sourceURL.standardizedFileURL
+        }) {
+            var incoming = artifact
+            incoming.id = candidate[index].id
+            candidate[index] = merge(existing: candidate[index], incoming: incoming)
+        } else {
+            candidate.append(artifact)
+        }
+        try persist(candidate)
     }
 
     public func fetchAll() async throws -> [RecoveryArtifact] {
         try loadIfNeeded()
-        return artifacts.sorted { lhs, rhs in
+        // A persisted intent is not evidence that a worker is still alive.
+        // Project interrupted intents as retryable without claiming a new
+        // durable transition when metadata storage may itself be unavailable.
+        return artifacts.map { artifact in
+            var visible = artifact
+            if visible.status == .recovering,
+               !recoveringSources.contains(visible.sourceURL.standardizedFileURL.path) {
+                visible.status = .failed
+                visible.lastError = "Recovery was interrupted before completion was recorded. Retry to resume safely."
+            }
+            return visible
+        }.sorted { lhs, rhs in
             if lhs.status == rhs.status {
                 return lhs.createdAt > rhs.createdAt
             }
@@ -173,6 +258,7 @@ public actor RecoveryQueue {
         guard let index = artifacts.firstIndex(where: { $0.id == id }) else {
             throw QueueError.artifactNotFound(id)
         }
+        try requireAvailable(artifacts[index])
         if artifacts[index].status == .recovered {
             return artifacts[index]
         }
@@ -180,31 +266,65 @@ public actor RecoveryQueue {
             throw QueueError.missingDestination(id)
         }
 
-        artifacts[index].status = .recovering
-        artifacts[index].updatedAt = Date()
-        artifacts[index].lastError = nil
-        try persist()
+        let source = artifacts[index].sourceURL
+        let sourceIdentity = source.standardizedFileURL.path
+        recoveringSources.insert(sourceIdentity)
+        defer { recoveringSources.remove(sourceIdentity) }
+        let recovery = RecordingCacheRecovery(
+            cacheDirectory: source.deletingLastPathComponent(),
+            destinationDirectory: destination,
+            store: store
+        )
+        let output = try artifacts[index].recoveryOutputURL
+            ?? RecordingPublication.load(for: source)?.destination
+            ?? recovery.plannedDestination(for: source)
+        var starting = artifacts
+        starting[index].status = .recovering
+        starting[index].recoveryOutputURL = output
+        starting[index].updatedAt = Date()
+        starting[index].lastError = nil
+        try persist(starting)
+
+        var completed = starting[index]
 
         do {
-            let recovery = RecordingCacheRecovery(
-                cacheDirectory: artifacts[index].sourceURL.deletingLastPathComponent(),
-                destinationDirectory: destination,
-                store: store
-            )
-            let recording = try await recovery.recover(artifacts[index].sourceURL)
-            artifacts[index].status = .recovered
-            artifacts[index].destinationURL = URL(fileURLWithPath: recording.wavPath)
-            artifacts[index].recordingID = recording.id
-            artifacts[index].updatedAt = Date()
-            artifacts[index].lastError = nil
+            let recording = try await publish(recovery, source, output)
+            completed.status = .recovered
+            completed.destinationURL = URL(fileURLWithPath: recording.wavPath)
+            completed.recordingID = recording.id
+            completed.updatedAt = Date()
+            completed.lastError = nil
         } catch {
-            artifacts[index].status = .failed
-            artifacts[index].updatedAt = Date()
-            artifacts[index].lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            completed.status = .failed
+            completed.updatedAt = Date()
+            completed.lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
 
-        try persist()
-        return artifacts[index]
+        var candidate = artifacts
+        candidate[index] = completed
+        try persist(candidate)
+        if completed.status == .recovered,
+           completed.destinationURL?.standardizedFileURL != source.standardizedFileURL {
+            // Publication and queue completion both succeeded. A failed cleanup
+            // leaves an already-accounted-for cache file, never a new recovery.
+            do {
+                if let publication = try RecordingPublication.load(for: source) {
+                    try publication.finishLibraryCommit()
+                } else {
+                    if let destination = completed.destinationURL {
+                        try CaptureDestinationBinding.load(for: source)?.validate(destination: destination)
+                    }
+                    try? FileManager.default.removeItem(at: source)
+                    try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: source))
+                    if !FileManager.default.fileExists(atPath: source.path) {
+                        try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: source))
+                    }
+                }
+            } catch {
+                // Keep both the source and journal if cleanup validation fails.
+            }
+        }
+        return completed
     }
 
     @discardableResult
@@ -213,34 +333,47 @@ public actor RecoveryQueue {
         guard let index = artifacts.firstIndex(where: { $0.id == id }) else {
             throw QueueError.artifactNotFound(id)
         }
-        artifacts[index].status = .discarded
-        artifacts[index].updatedAt = Date()
-        artifacts[index].lastError = nil
-        try persist()
-        return artifacts[index]
+        try requireAvailable(artifacts[index])
+        var candidate = artifacts
+        candidate[index].status = .discarded
+        candidate[index].updatedAt = Date()
+        candidate[index].lastError = nil
+        try persist(candidate)
+        return candidate[index]
     }
 
     private func loadIfNeeded() throws {
         guard !loaded else { return }
-        loaded = true
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        do {
+            let data = try Data(contentsOf: fileURL)
+            let decoded = try decoder.decode([RecoveryArtifact].self, from: data)
+            artifacts = decoded
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             artifacts = []
-            return
         }
-        let data = try Data(contentsOf: fileURL)
-        artifacts = try decoder.decode([RecoveryArtifact].self, from: data)
+        // A failed read or decode must remain retryable and must never permit
+        // the original metadata to be overwritten by an empty in-memory queue.
+        loaded = true
     }
 
-    private func persist() throws {
+    private func persist(_ candidate: [RecoveryArtifact]) throws {
         let parent = fileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-        let data = try encoder.encode(artifacts)
-        try data.write(to: fileURL, options: [.atomic])
+        try DurableFileIO.createDirectory(at: parent)
+        let data = try encoder.encode(candidate)
+        try writeMetadata(data, fileURL)
+        artifacts = candidate
+    }
+
+    private func requireAvailable(_ artifact: RecoveryArtifact) throws {
+        guard !recoveringSources.contains(artifact.sourceURL.standardizedFileURL.path) else {
+            throw QueueError.artifactBusy(artifact.id)
+        }
     }
 
     private func merge(existing: RecoveryArtifact, incoming: RecoveryArtifact) -> RecoveryArtifact {
         var merged = incoming
         merged.createdAt = existing.createdAt
+        merged.recoveryOutputURL = existing.recoveryOutputURL
         if existing.status == .recovered || existing.status == .discarded {
             merged.status = existing.status
             merged.recordingID = existing.recordingID

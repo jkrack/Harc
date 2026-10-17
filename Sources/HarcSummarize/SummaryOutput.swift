@@ -24,15 +24,33 @@ public struct ActionItem: Codable, Equatable, Sendable {
 public struct SummaryParseResult: Equatable, Sendable {
     public let summary: String
     public let actionItems: [ActionItem]
-    /// True when the model didn't emit the expected `## Summary` /
-    /// `## Action Items` shape. The view shows an `ⓘ` tooltip and
-    /// surfaces the raw text in `summary`.
+    /// True when headers or action lines could not be fully parsed.
+    /// Unrecognized output remains in `summary` for review. Callers must
+    /// explicitly propagate this flag if they display a format warning.
     public let parseWarning: Bool
 
-    public init(summary: String, actionItems: [ActionItem], parseWarning: Bool) {
+    /// Earlier utterances excluded by the input budget, independent of model formatting.
+    public let omittedUtteranceCount: Int
+
+    public init(summary: String, actionItems: [ActionItem], parseWarning: Bool, omittedUtteranceCount: Int = 0) {
         self.summary = summary
         self.actionItems = actionItems
+        self.omittedUtteranceCount = max(0, omittedUtteranceCount)
         self.parseWarning = parseWarning
+    }
+
+    /// The persisted text is also displayed by clients and included in exports.
+    /// Keep the review notice with the preserved response so those surfaces do
+    /// not depend on a separate, currently unpersisted parser flag.
+    public var markdownForStorage: String {
+        var notices: [String] = []
+        if omittedUtteranceCount > 0 {
+            notices.append("Partial summary: Earlier transcript content was excluded because it exceeded the model's input limit. This summary and its action items cover only the end of the transcript; earlier facts and commitments may be missing.")
+        }
+        if parseWarning {
+            notices.append("Review needed: Some generated text could not be organized into summary and action items. Check the preserved response below against the transcript.")
+        }
+        return (notices + [summary]).joined(separator: "\n\n")
     }
 }
 

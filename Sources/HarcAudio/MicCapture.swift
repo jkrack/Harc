@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 @preconcurrency import AVFoundation
 @preconcurrency import AVFAudio
 import HarcAudioObjC
@@ -13,6 +14,11 @@ public protocol MicCaptureSource: Sendable {
     func start() async throws -> AsyncStream<AVAudioPCMBuffer>
 
     func stop() async
+    func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async
+}
+
+public extension MicCaptureSource {
+    func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async {}
 }
 
 /// Real implementation backed by AVAudioEngine.
@@ -21,6 +27,10 @@ public actor MicCapture: MicCaptureSource {
     private let selection: MicrophoneSelection
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
     private var isRunning = false
+    private var configurationObserver: NSObjectProtocol?
+    private var integrityHandler: (@Sendable (CaptureIntegrityReport.Reason) -> Void)?
+
+    public func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async { integrityHandler = handler }
 
     public init(selection: MicrophoneSelection = .systemDefault) {
         self.selection = selection
@@ -70,23 +80,14 @@ public actor MicCapture: MicCaptureSource {
             )
         }
 
-        let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+        let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream(bufferingPolicy: .bufferingOldest(256))
         self.continuation = cont
 
-        let tapBlock: AVAudioNodeTapBlock = { [cont] buffer, _ in
+        let handler = integrityHandler
+        let tapBlock: AVAudioNodeTapBlock = { [cont, handler] buffer, _ in
             // Copy the buffer — AVAudioEngine reuses the underlying storage.
-            guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-                return
-            }
-            copy.frameLength = buffer.frameLength
-            let bytesPerFrame = Int(buffer.format.streamDescription.pointee.mBytesPerFrame)
-            let total = Int(buffer.frameLength) * bytesPerFrame
-            if let src = buffer.floatChannelData, let dst = copy.floatChannelData {
-                for ch in 0..<Int(buffer.format.channelCount) {
-                    memcpy(dst[ch], src[ch], total)
-                }
-            }
-            cont.yield(copy)
+            guard let copy = try? PCMBufferCopy.copy(buffer) else { handler?(.conversionFailed); return }
+            if case .dropped = cont.yield(copy) { handler?(.bufferOverrun) }
         }
 
         var tapError: NSError?
@@ -126,6 +127,11 @@ public actor MicCapture: MicCaptureSource {
             throw AudioError.audioEngineFailed(error.localizedDescription)
         }
         isRunning = true
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            Task { await self?.configurationChanged() }
+        }
         return stream
     }
 
@@ -162,8 +168,17 @@ public actor MicCapture: MicCaptureSource {
         return false
     }
 
+    private func configurationChanged() async {
+        guard isRunning else { return }
+        integrityHandler?(.sourceStopped)
+        await stop()
+    }
+
     public func stop() async {
         guard isRunning else { return }
+        isRunning = false
+        if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer) }
+        configurationObserver = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         continuation?.finish()

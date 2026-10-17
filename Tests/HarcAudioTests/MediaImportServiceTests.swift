@@ -155,6 +155,12 @@ struct MediaImportServiceTests {
         )
         let importedAt = Date()
         let result = try await service.importFile(source: source, importedAt: importedAt)
+        defer {
+            if let publicationSource = result.publicationSourceURL {
+                try? FileManager.default.removeItem(at: RecordingPublication.journalURL(for: publicationSource))
+                try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: publicationSource))
+            }
+        }
 
         // Destination shape: <base>/YYYY/YYYY-MM-DD/HH-mm-ss.wav
         let cal = Calendar.current
@@ -194,6 +200,12 @@ struct MediaImportServiceTests {
             destination: RecordingDestination(baseDirectory: base)
         )
         let result = try await service.importFile(source: source)
+        defer {
+            if let publicationSource = result.publicationSourceURL {
+                try? FileManager.default.removeItem(at: RecordingPublication.journalURL(for: publicationSource))
+                try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: publicationSource))
+            }
+        }
 
         let wav = try AVAudioFile(forReading: result.recording.wavURL)
         #expect(wav.fileFormat.sampleRate == 16_000)
@@ -223,7 +235,13 @@ struct MediaImportServiceTests {
             }
         }
         let ticks = Ticks()
-        _ = try await service.importFile(source: source) { ticks.add($0) }
+        let result = try await service.importFile(source: source) { ticks.add($0) }
+        defer {
+            if let publicationSource = result.publicationSourceURL {
+                try? FileManager.default.removeItem(at: RecordingPublication.journalURL(for: publicationSource))
+                try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: publicationSource))
+            }
+        }
 
         let phases = ticks.items.map(\.phase)
         #expect(phases.contains(.converting))

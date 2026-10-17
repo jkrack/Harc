@@ -718,18 +718,21 @@ private struct HarcDesktopClientRecordingCommitter: RecordingCommitter {
             max(0, captured.endedAt.timeIntervalSince(captured.startedAt))
                 * 1_000_000_000
         )
+        if captured.integrity.hasIssues { try captured.integrity.save(nextTo: captured.localMasterURL) }
+        _ = try CaptureIntegrityReport.carry(from: captured.localMasterURL, to: finalURL)
         let capture = try FinalizedCapture(
             producingDeviceID: identity.deviceID,
             originRecordingID: origin,
             captureStartedAt: captured.startedAt,
             captureEndedAt: captured.endedAt,
-            captureStartedMonotonicNanoseconds: 0,
-            captureEndedMonotonicNanoseconds: durationNanoseconds,
+            captureStartedMonotonicNanoseconds: captured.startedMonotonicNanoseconds,
+            captureEndedMonotonicNanoseconds: captured.endedMonotonicNanoseconds == 0
+                ? durationNanoseconds : captured.endedMonotonicNanoseconds,
             finalizationReason: .userStopped,
             totalCanonicalFrames: prepared.frames,
             totalCanonicalBytes: prepared.frames * 2,
             canonicalPCMSHA256: try CanonicalPCMHash(prepared.pcmSHA256),
-            discontinuities: []
+            discontinuities: try captured.boundDiscontinuities(to: origin, totalFrames: prepared.frames)
         )
         var transcript = captured.transcript
         transcript?.audioPath = finalURL.path
@@ -774,6 +777,7 @@ private struct HarcDesktopClientRecordingCommitter: RecordingCommitter {
         // outbox transaction owns recovery before the ephemeral capture cache
         // is consumed.
         try? FileManager.default.removeItem(at: captured.localMasterURL)
+        try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
         onAccepted(localMirrorError)
         return .acceptedForDeferredPublication(localMasterURL: finalURL)
     }

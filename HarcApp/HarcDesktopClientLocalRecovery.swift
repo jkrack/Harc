@@ -96,7 +96,8 @@ enum HarcDesktopClientLocalRecovery {
                     transcriptJSONURL: generatedArtifacts.json,
                     transcriptMarkdownURL: generatedArtifacts.markdown,
                     sttModelID: currentModelID,
-                    transcribedAt: Date()
+                    transcribedAt: Date(),
+                    discontinuities: capture.discontinuities
                 )
                 try await persistEmbeddings(
                     generated.speakerEmbeddings,
@@ -156,7 +157,8 @@ enum HarcDesktopClientLocalRecovery {
             transcriptJSONURL: artifacts?.json,
             transcriptMarkdownURL: artifacts?.markdown,
             sttModelID: sidecar.transcript == nil ? nil : currentModelID,
-            transcribedAt: sidecar.transcript == nil ? nil : sidecar.persistedAt
+            transcribedAt: sidecar.transcript == nil ? nil : sidecar.persistedAt,
+            discontinuities: capture.discontinuities
         )
         // v0.14.9 and earlier mirrored SessionTranscript.joinedText into the
         // DB even though TranscriptWriter had produced a speaker-labeled
@@ -304,7 +306,7 @@ enum HarcDesktopClientLocalRecovery {
                     embedding: HarcStore.EmbeddingBlob.pack($0.vector),
                     segmentCount: $0.segmentCount,
                     totalMs: $0.totalMs,
-                    embedderKind: "wespeaker_v2"
+                    embedderKind: $0.modelID
                 )
             }
         )

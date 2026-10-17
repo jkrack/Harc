@@ -7,6 +7,25 @@ import Testing
 
 @Suite("Host canonical Library service")
 struct HarcHostLibraryServiceTests {
+    @Test("recognition polling renews expired packs without changing enrolled profiles")
+    func recognitionPackExpiryRefresh() async throws {
+        let store = try await RecordingStore.inMemory()
+        _ = try await store.createPerson(displayName: "Alice")
+        let metadata = try await store.libraryMetadata()
+        let session = try authenticatedSession(libraryID: metadata.libraryID)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let service = HarcHostLibraryService(store: store, now: { start })
+        let first = try #require(await service.speakerRecognitionPack(session: session, afterRevision: nil))
+        #expect(try await service.speakerRecognitionPack(session: session, afterRevision: first.revision) == nil)
+        let later = HarcHostLibraryService(store: store, now: { first.expiresAt })
+        let renewed = try #require(await later.speakerRecognitionPack(session: session, afterRevision: first.revision))
+        #expect(renewed.revision > first.revision)
+        #expect(renewed.profiles == first.profiles)
+        #expect(renewed.generatedAt == first.expiresAt)
+        #expect(try await later.speakerRecognitionPack(session: session, afterRevision: renewed.revision) == nil)
+        #expect(try await later.speakerRecognitionPack(session: session, afterRevision: nil) == renewed)
+    }
+
     @Test("snapshot pages remain anchored while subsequent changes converge")
     func anchoredSnapshotAndDelta() async throws {
         let store = try await RecordingStore.inMemory()

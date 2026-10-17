@@ -143,11 +143,13 @@ targets:
         ARCHS: arm64
     postCompileScripts:
       - name: Embed harc-stt daemon
+        basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/build-daemon.sh"
         outputFiles:
           - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/harc-stt
       - name: Embed harc-mcp agent bridge
+        basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/build-mcp.sh"
         outputFiles:
@@ -171,6 +173,9 @@ targets:
     platform: macOS
     sources:
       - path: HarcAppTests
+      - path: Tests/HarcClientStoreTests/ClientStoreFixtures.swift
+      - path: Tests/HarcHostTransportTests/Support
+      - path: Tests/HarcHostTransportTests/RecordingTransferFactoryTestDoubles.swift
     dependencies:
       - target: Harc
     settings:
@@ -332,6 +337,18 @@ targets:
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
 
 schemes:
+  Harc:
+    build:
+      targets:
+        Harc: all
+    run:
+      config: Debug
+    test:
+      environmentVariables:
+        HARC_UI_TESTING: "1"
+      targets:
+        - HarcAppTests
+        - HarcAppUITests
   HarcMobile:
     build:
       targets:

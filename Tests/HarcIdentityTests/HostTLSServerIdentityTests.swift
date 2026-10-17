@@ -1,15 +1,193 @@
 import Foundation
+import Network
 import HarcDomain
 import Security
 import Testing
 @testable import HarcIdentity
 
 extension LegacyMacOSKeychainIntegrationTests {
-// These tests install and remove process-global Security.framework keys and
-// certificates. Serial execution keeps one fixture's cleanup from racing
-// another fixture's SecIdentity/key lookup under a heavily parallel full run.
+// Permanent-key fixtures share process-global Security.framework state.
+// Certificate migration fixtures use disposable keychains, while serving
+// identities remain in memory. Serialized execution prevents fixture races.
 @Suite("HarcIdentity permanent TLS key and X.509 server identity", .serialized)
 struct HostTLSServerIdentityTests {
+    @Test("50 identity resolutions never install a certificate")
+    func repeatedIdentityResolutionDoesNotInstallCertificates() throws {
+        let before = try harcCertificateCount()
+        #expect(before <= 1)
+        let key = try HostSecurityP256SigningKey.loadOrCreateLegacyKeychainTestFixture(
+            applicationTag: Data("com.harc.tests.tls.resolve.\(UUID())".utf8)
+        )
+        defer { key.deletePersistentKeyBestEffort() }
+        let signing = HostTLSSigningIdentity(key: .securityFramework(key))
+        let request = try request(for: signing)
+        let facts = try signing.issueServerCertificate(request: request)
+        for _ in 0..<50 {
+            let resolved = try signing.resolveServerIdentity(certificateDER: facts.certificateDER, request: request)
+            #expect(resolved.certificate == facts)
+            #expect(try harcCertificateCount() == before)
+        }
+        print("Harc certificate count: before=\(before), after=\(try harcCertificateCount()); 50 identity resolutions")
+    }
+
+    @Test("50 TLS listener restarts leave the certificate store unchanged")
+    func listenerRestartsDoNotInstallCertificates() async throws {
+        let before = try harcCertificateCount()
+        #expect(before <= 1)
+        let key = try HostSecurityP256SigningKey.loadOrCreateLegacyKeychainTestFixture(
+            applicationTag: Data("com.harc.tests.tls.restart.\(UUID())".utf8)
+        )
+        defer { key.deletePersistentKeyBestEffort() }
+        let signing = HostTLSSigningIdentity(key: .securityFramework(key))
+        let now = Date()
+        let request = try HostTLSServerCertificateRequest(
+            transportSetEntryNotBefore: now.addingTimeInterval(-60),
+            transportSetEntryNotAfter: now.addingTimeInterval(86400),
+            expectedTLSSPKISHA256: signing.tlsSPKISHA256,
+            framedSignedTransportSet: Data("HARCSIGNED-TRANSPORT-SET-V1".utf8)
+        )
+        let facts = try signing.issueServerCertificate(request: request)
+        for _ in 0..<50 {
+            let identity = try signing.resolveServerIdentity(
+                certificateDER: facts.certificateDER, request: request
+            )
+            let options = NWProtocolTLS.Options()
+            let networkIdentity = try #require(sec_identity_create(identity.securityIdentity))
+            sec_protocol_options_set_local_identity(options.securityProtocolOptions, networkIdentity)
+            let parameters = NWParameters(tls: options, tcp: NWProtocolTCP.Options())
+            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+            let listener = try NWListener(using: parameters, on: .any)
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                listener.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        listener.cancel()
+                    case .cancelled:
+                        continuation.resume()
+                    case .failed(let error):
+                        listener.stateUpdateHandler = nil
+                        listener.cancel()
+                        continuation.resume(throwing: error)
+                    default: break
+                    }
+                }
+                listener.start(queue: DispatchQueue(label: "harc.tls.restart-test"))
+            }
+            #expect(try harcCertificateCount() == before)
+        }
+        print("Harc certificate count: before=\(before), after=\(try harcCertificateCount()); 50 listener cycles")
+    }
+
+    private func harcCertificateCount() throws -> Int {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass: kSecClassCertificate,
+            kSecMatchLimit: kSecMatchLimitAll,
+            kSecReturnRef: true,
+        ] as CFDictionary, &result)
+        if status == errSecItemNotFound { return 0 }
+        #expect(status == errSecSuccess)
+        let certificates = try #require(result as? [SecCertificate])
+        return certificates.filter(HostTLSCertificateMigration.matchesHarcProfile).count
+    }
+
+    @Test("migration deletes only matching labels and is idempotent in an isolated keychain")
+    func isolatedMigration() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("harc-migration-\(UUID()).keychain").path
+        var temporary: SecKeychain?
+        let password = "disposable-test-keychain"
+        let created = password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) }
+        #expect(created == errSecSuccess)
+        let keychain = try #require(temporary)
+        defer { SecKeychainDelete(keychain) }
+        let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(
+            applicationTag: Data("com.harc.tests.tls.migration.\(UUID())".utf8),
+            keychain: keychain
+        )
+        let signing = HostTLSSigningIdentity(key: .securityFramework(key))
+        for (serial, label) in [(UInt8(1), "Harc TLS server certificate"), (UInt8(2), "Unrelated owner")] {
+            let facts = try signing.issueServerCertificate(request: request(for: signing), serialNumber: Data([serial]))
+            let certificate = try #require(SecCertificateCreateWithData(nil, facts.certificateDER as CFData))
+            #expect(SecItemAdd([
+                kSecClass: kSecClassCertificate, kSecValueRef: certificate,
+                kSecAttrLabel: label, kSecUseKeychain: keychain,
+            ] as CFDictionary, nil) == errSecSuccess)
+            #expect(SecItemUpdate([
+                kSecClass: kSecClassCertificate, kSecValueRef: certificate,
+                kSecMatchSearchList: [keychain],
+            ] as CFDictionary, [kSecAttrLabel: label] as CFDictionary) == errSecSuccess)
+        }
+        let first = try HostTLSCertificateMigration.removeLegacyCertificates(from: keychain)
+        #expect(first.certificatesRemoved == 1)
+        #expect(first.orphanKeysRemoved == 0)
+        let second = try HostTLSCertificateMigration.removeLegacyCertificates(from: keychain)
+        #expect(second.certificatesRemoved == 0)
+        var retainedKey: CFTypeRef?
+        #expect(SecItemCopyMatching([
+            kSecClass: kSecClassKey, kSecAttrApplicationTag: key.applicationTag,
+            kSecMatchSearchList: [keychain], kSecReturnRef: true,
+        ] as CFDictionary, &retainedKey) == errSecSuccess)
+        var remaining: CFTypeRef?
+        #expect(SecItemCopyMatching([
+            kSecClass: kSecClassCertificate, kSecAttrLabel: "Unrelated owner",
+            kSecMatchSearchList: [keychain], kSecReturnRef: true,
+        ] as CFDictionary, &remaining) == errSecSuccess)
+    }
+
+    @Test("migration removes orphan keys but preserves authority references", arguments: [false, true])
+    func orphanKeyMigration(retained: Bool) throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("harc-key-migration-\(UUID()).keychain").path
+        var temporary: SecKeychain?
+        let password = "disposable-test-keychain"
+        #expect(password.withCString { SecKeychainCreate(path, UInt32(password.utf8.count), $0, false, nil, &temporary) } == errSecSuccess)
+        let keychain = try #require(temporary)
+        defer { SecKeychainDelete(keychain) }
+        let tag = Data("com.harc.tests.tls.orphan.\(UUID())".utf8)
+        let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(applicationTag: tag, keychain: keychain)
+        let signing = HostTLSSigningIdentity(key: .securityFramework(key))
+        let facts = try signing.issueServerCertificate(request: request(for: signing))
+        let certificate = try #require(SecCertificateCreateWithData(nil, facts.certificateDER as CFData))
+        #expect(SecItemAdd([kSecClass: kSecClassCertificate, kSecValueRef: certificate,
+                           kSecUseKeychain: keychain] as CFDictionary, nil) == errSecSuccess)
+        if retained {
+            let record = try JSONSerialization.data(withJSONObject: [
+                "magic": "harc-host-cryptographic-state", "formatVersion": 3,
+                "activeTLSKey": ["material": tag.base64EncodedString()],
+            ])
+            #expect(SecItemAdd([
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: KeychainHostCryptographicStateStore.defaultService,
+                kSecAttrAccount: KeychainHostCryptographicStateStore.defaultAccount,
+                kSecValueData: record, kSecUseKeychain: keychain,
+            ] as CFDictionary, nil) == errSecSuccess)
+        }
+        let result = try HostTLSCertificateMigration.removeLegacyCertificates(from: keychain)
+        #expect(result.certificatesRemoved == 1)
+        #expect(result.orphanKeysRemoved == (retained ? 0 : 1))
+        var found: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass: kSecClassKey, kSecAttrApplicationTag: tag,
+            kSecMatchSearchList: [keychain], kSecReturnRef: true,
+        ] as CFDictionary, &found)
+        #expect(status == (retained ? errSecSuccess : errSecItemNotFound))
+    }
+
+    @Test("migration accepts only the exact self-signed Harc profile")
+    func migrationProfile() throws {
+        let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(
+            applicationTag: Data("com.harc.tests.tls.migration.\(UUID())".utf8)
+        )
+        defer { key.deletePersistentKeyBestEffort() }
+        let signing = HostTLSSigningIdentity(key: .securityFramework(key))
+        let facts = try signing.issueServerCertificate(request: request(for: signing))
+        let certificate = try #require(SecCertificateCreateWithData(nil, facts.certificateDER as CFData))
+        #expect(HostTLSCertificateMigration.matchesHarcProfile(certificate))
+        var corrupt = facts.certificateDER
+        corrupt[corrupt.count - 1] ^= 1
+        let invalid = try #require(SecCertificateCreateWithData(nil, corrupt as CFData))
+        #expect(!HostTLSCertificateMigration.matchesHarcProfile(invalid))
+    }
+
     @Test("a permanent P-256 SecKey issues the exact Harc leaf and resolves a SecIdentity")
     func issuesAndResolvesServerIdentity() throws {
         let key = try HostSecurityP256SigningKey.createLegacyKeychainTestFixture(

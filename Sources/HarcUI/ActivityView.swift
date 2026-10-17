@@ -49,6 +49,12 @@ public struct ActivityView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: HarcSpacing.lg) {
                     jobsSection
+                    if let warning = bridge.captureIntegrityWarning {
+                        Label(warning, systemImage: "exclamationmark.triangle")
+                            .font(.harcBody)
+                            .foregroundStyle(Color.harc(.attention))
+                            .accessibilityIdentifier("harc.capture.integrityWarning")
+                    }
                     if let clientState = bridge.clientRecoverSyncState {
                         clientRecoverSyncSection(clientState)
                         GroupBox {

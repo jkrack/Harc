@@ -587,7 +587,7 @@ public actor HarcHostLibraryService {
                 == session.context.libraryID else {
             throw HarcHostLibraryError.snapshotBindingMismatch
         }
-        let pack = try await store.speakerRecognitionPack(at: now())
+        let pack = try await store.publishedSpeakerRecognitionPack(at: now())
         if let afterRevision, afterRevision == pack.revision {
             return nil
         }
@@ -602,7 +602,7 @@ public actor HarcHostLibraryService {
                 == session.context.libraryID else {
             throw HarcHostLibraryError.snapshotBindingMismatch
         }
-        return try await store.submitSpeakerObservation(
+        return try await store.retainUnmappedSpeakerObservation(
             observation,
             from: session.context.authenticatedDeviceID,
             at: now()

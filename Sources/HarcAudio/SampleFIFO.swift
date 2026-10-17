@@ -16,16 +16,27 @@ import Foundation
 final class SampleFIFO {
     private var storage: [Float] = []
     private var readIndex = 0
+    private let capacity: Int
+
+    init(capacity: Int = 30 * 16000) { self.capacity = max(1, capacity) }
 
     /// Samples available to read.
     var count: Int { storage.count - readIndex }
 
     /// Append the mono samples of a 16 kHz buffer to the tail.
-    func append(_ buffer: AVAudioPCMBuffer) {
-        guard let data = buffer.floatChannelData?[0] else { return }
+    @discardableResult
+    func append(_ buffer: AVAudioPCMBuffer) -> Int {
+        guard let data = buffer.floatChannelData?[0] else { return 0 }
         let n = Int(buffer.frameLength)
-        guard n > 0 else { return }
-        storage.append(contentsOf: UnsafeBufferPointer(start: data, count: n))
+        guard n > 0 else { return 0 }
+        // Keep only a bounded tail even if one incoming buffer exceeds capacity.
+        let discarded = max(0, count + n - capacity)
+        let oldDiscard = min(discarded, count)
+        readIndex += oldDiscard
+        compact()
+        let newDiscard = discarded - oldDiscard
+        storage.append(contentsOf: UnsafeBufferPointer(start: data.advanced(by: newDiscard), count: n - newDiscard))
+        return discarded
     }
 
     /// Remove up to `n` samples from the front and return them as a buffer in

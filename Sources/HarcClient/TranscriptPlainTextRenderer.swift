@@ -39,20 +39,40 @@ public enum TranscriptPlainTextRenderer {
     ) -> String {
         let joinedFallback = transcript.joinedText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !transcript.speakers.isEmpty, !transcript.words.isEmpty else {
-            return joinedFallback
+        let overlaps = transcript.overlapRanges ?? []
+        let warning = "Overlapping voices detected. Speaker attribution may be incomplete."
+        if let utterances = transcript.attributedUtterances, !utterances.isEmpty {
+            if transcript.manualEditAt != nil {
+                return overlaps.isEmpty ? joinedFallback : [warning, joinedFallback].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            }
+            let lines = utterances.flatMap { $0.displayRuns(speakers: transcript.speakers, overlapRanges: overlaps) }.map { run in
+                if run.overlaps { return "Overlapping voices: \(run.text)" }
+                if let index = run.speakerIndex {
+                    return "\(nameForSpeaker?(index) ?? "Speaker \(index + 1)"): \(run.text)"
+                }
+                return run.text
+            }
+            let notices = UntranscribedAudioMarker.parse(in: joinedFallback).map(\.text)
+                .filter { notice in !lines.contains(where: { $0.contains(notice) }) }
+            return ((overlaps.isEmpty ? [] : [warning]) + lines + notices).joined(separator: "\n\n")
+        }
+        guard (!transcript.speakers.isEmpty || transcript.words.contains { $0.speakerAttribution != nil } || !overlaps.isEmpty), !transcript.words.isEmpty else {
+            return overlaps.isEmpty ? joinedFallback : [warning, joinedFallback].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
 
-        let sentencePieceStyle = transcript.words.contains { $0.text.first?.isWhitespace == true }
+        let displayWords = Word.displayWords(from: transcript.words)
 
-        var paragraphs: [String] = []
+        var paragraphs: [String] = overlaps.isEmpty ? [] : [warning]
         var currentSpeaker: Int? = nil
+        var currentOverlap = false
         var bucket = ""
 
         func flush() {
             let trimmed = bucket.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                if let s = currentSpeaker {
+                if currentOverlap {
+                    paragraphs.append("Overlapping voices: \(trimmed)")
+                } else if let s = currentSpeaker {
                     let label = nameForSpeaker?(s) ?? "Speaker \(s + 1)"
                     paragraphs.append("\(label): \(trimmed)")
                 } else {
@@ -62,40 +82,45 @@ public enum TranscriptPlainTextRenderer {
             bucket = ""
         }
 
-        for word in transcript.words {
-            let midpoint = (word.startMs + word.endMs) / 2
+        let notices = UntranscribedAudioMarker.parse(in: joinedFallback)
+        var noticeIndex = 0
+        func emitNotices(through timestamp: Int) {
+            while noticeIndex < notices.count, notices[noticeIndex].startMs <= timestamp {
+                flush()
+                currentSpeaker = nil
+                currentOverlap = false
+                paragraphs.append(notices[noticeIndex].text)
+                noticeIndex += 1
+            }
+        }
+
+        for word in displayWords {
+            emitNotices(through: word.startMs)
+            let isOverlap = overlaps.contains {
+                word.startMs < $0.endMs && max(word.startMs, word.endMs) > $0.startMs
+                    || word.startMs == word.endMs && $0.startMs <= word.startMs && word.startMs < $0.endMs
+            }
             let assigned: Int?
-            if let containing = transcript.speakers.first(where: {
-                midpoint >= $0.startMs && midpoint < $0.endMs
-            }) {
-                assigned = containing.speaker
-            } else if currentSpeaker != nil {
-                // Word fell in a between-segment gap; keep current speaker
-                // rather than inserting a bogus turn.
-                assigned = currentSpeaker
+            if isOverlap {
+                assigned = nil
             } else {
-                // Leading-edge word: word ends before the first segment
-                // starts. Snap to the nearest segment so the first turn is
-                // labeled instead of dropping a speaker-less paragraph.
-                assigned = transcript.speakers.min { a, b in
-                    Self.distance(midpoint, from: a) < Self.distance(midpoint, from: b)
-                }?.speaker
+                assigned = word.resolvedSpeakerIndex(in: transcript.speakers)
             }
 
-            if assigned != currentSpeaker {
+            if assigned != currentSpeaker || isOverlap != currentOverlap {
                 flush()
                 currentSpeaker = assigned
+                currentOverlap = isOverlap
             }
 
-            if sentencePieceStyle {
-                bucket += word.text
-            } else if bucket.isEmpty {
+            if bucket.isEmpty {
                 bucket = word.text
             } else {
                 bucket += " " + word.text
             }
         }
         flush()
+        emitNotices(through: Int.max)
 
         return paragraphs.isEmpty ? joinedFallback : paragraphs.joined(separator: "\n\n")
     }

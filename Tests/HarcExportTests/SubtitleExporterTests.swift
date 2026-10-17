@@ -4,6 +4,18 @@ import HarcCore
 @testable import HarcExport
 
 struct SubtitleExporterTests {
+    @Test("a word without speaker evidence never inherits the previous name")
+    func unattributedGap() {
+        let cues = SubtitleExporter.makeCues(words: [
+            Word(text: "known", startMs: 0, endMs: 100),
+            Word(text: "unattributed", startMs: 120, endMs: 220)
+        ], speakers: [SpeakerSegment(speaker: 0, startMs: 0, endMs: 100)], notices: [])
+        #expect(cues.count == 2)
+        #expect(cues[0].speaker == 0)
+        #expect(cues[1].speaker == nil)
+        #expect(cues[1].text == "unattributed")
+    }
+
 
     // MARK: - Display words
 

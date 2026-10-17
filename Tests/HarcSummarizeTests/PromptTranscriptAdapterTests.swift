@@ -1,9 +1,39 @@
 import Testing
+import Foundation
 import HarcCore
 @testable import HarcSummarize
 
 @Suite("PromptTranscriptAdapter")
 struct PromptTranscriptAdapterTests {
+
+    @Test func utteranceAttributionAndManualTextReachSummaryInput() throws {
+        let utterances = [try AttributedTranscriptUtterance(text: "Untimed sentence", startMs: 0, endMs: 1000,
+            speakerAttribution: WordSpeakerAttribution(speakerIndex: 1))]
+        let result = PromptTranscriptAdapter.make(joinedText: "Untimed sentence", words: [], speakers: [],
+            speakerNameOverrides: [1: "Alice"], overlapRanges: nil, attributedUtterances: utterances)
+        #expect(result.utterances.count == 1)
+        #expect(result.utterances[0].speaker == "Alice")
+        #expect(result.utterances[0].text == "Untimed sentence")
+        let edited = PromptTranscriptAdapter.make(joinedText: "My correction", words: [], speakers: [],
+            speakerNameOverrides: [1: "Alice"], overlapRanges: nil,
+            attributedUtterances: utterances, manualEditAt: Date())
+        #expect(edited.utterances[0].text == "My correction")
+        #expect(edited.utterances[0].speaker == nil)
+    }
+
+    @Test func explicitAndUnresolvedWordsOverrideTimingAttribution() throws {
+        let words = [Word(text: "named", startMs: 0, endMs: 100,
+                          speakerAttribution: try WordSpeakerAttribution(speakerIndex: 1)),
+                     Word(text: "unknown", startMs: 100, endMs: 200, speakerAttribution: WordSpeakerAttribution())]
+        for segments in [[], [SpeakerSegment(speaker: 0, startMs: 0, endMs: 200)]] {
+            let result = PromptTranscriptAdapter.make(joinedText: "named unknown", words: words,
+                speakers: segments, speakerNameOverrides: [0: "Wrong", 1: "Alice"])
+            #expect(result.utterances.count == 2)
+            #expect(result.utterances[0].speaker == "Alice")
+            #expect(result.utterances[1].speaker == nil)
+            #expect(result.utterances[1].text == "unknown")
+        }
+    }
 
     @Test("no speakers or words → single utterance carrying joinedText, speaker nil")
     func undiarized() {
@@ -76,11 +106,10 @@ struct PromptTranscriptAdapterTests {
         #expect(t.utterances[1].speaker == "Amy")
     }
 
-    @Test("word whose midpoint falls in a between-segment gap stays with the current speaker")
+    @Test("word in a between-segment gap stays unnamed")
     func gapHandling() {
         // Three segments with a gap between seg[0] (0-500) and seg[1] (1000-1500).
-        // The middle word (550-650, midpoint 600) falls in the gap and should stay
-        // on speaker 0 rather than starting a bogus un-labeled run.
+        // The middle word has no speaker evidence and must not inherit a name.
         let words = [
             Word(text: "alpha", startMs: 0,    endMs: 500),
             Word(text: "beta",  startMs: 550,  endMs: 650),
@@ -96,11 +125,13 @@ struct PromptTranscriptAdapterTests {
             speakers: speakers,
             speakerNameOverrides: [:]
         )
-        #expect(t.utterances.count == 2)
+        #expect(t.utterances.count == 3)
         #expect(t.utterances[0].speaker == "Speaker 1")
-        #expect(t.utterances[0].text == "alpha beta")
-        #expect(t.utterances[1].speaker == "Speaker 2")
-        #expect(t.utterances[1].text == "gamma")
+        #expect(t.utterances[0].text == "alpha")
+        #expect(t.utterances[1].speaker == nil)
+        #expect(t.utterances[1].text == "beta")
+        #expect(t.utterances[2].speaker == "Speaker 2")
+        #expect(t.utterances[2].text == "gamma")
     }
 
     @Test("partial speakerNameOverrides — missing keys fall back to default Speaker N")
@@ -142,5 +173,17 @@ struct PromptTranscriptAdapterTests {
         )
         #expect(t.utterances.count == 1)
         #expect(t.utterances[0].text == "Hello everyone")
+    }
+}
+
+@Suite("Summary transcript failure notices")
+struct SummaryTranscriptFailureNoticeTests {
+    @Test func noticesArePreservedWithoutSpeakerAttribution() {
+        let notice = UntranscribedAudioMarker.text(startMs: 1000, endMs: 2000)
+        let result = PromptTranscriptAdapter.make(joinedText: "Hello \(notice) Bye",
+            words: [.init(text: "Hello", startMs: 0, endMs: 500), .init(text: "Bye", startMs: 2000, endMs: 2500)],
+            speakers: [.init(speaker: 0, startMs: 0, endMs: 3000)], speakerNameOverrides: [0: "Alex"])
+        #expect(result.utterances.map(\.text) == ["Hello", notice, "Bye"])
+        #expect(result.utterances.map(\.speaker) == ["Alex", nil, "Alex"])
     }
 }

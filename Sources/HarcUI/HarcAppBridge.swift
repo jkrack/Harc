@@ -45,6 +45,7 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var preRollStatus: PreRollStatus? = nil
     @Published public var destinationReady: Bool = true
     @Published public var destinationPath: String = ""
+    @Published public var captureIntegrityWarning: String?
     @Published public var captureReadinessText: String = "Mic + system audio"
     @Published public var captureReadinessWarning: Bool = false
     @Published public var availableMicrophones: [AudioInputDevice] = []
@@ -245,6 +246,7 @@ public final class HarcAppBridge: ObservableObject {
 
     public func setActiveCaptureStatus(_ status: ActiveCaptureStatus?) {
         activeCaptureStatus = status
+        if status == nil { captureIntegrityWarning = nil }
     }
 
     public func updateActiveCaptureSource(_ sourceState: ActiveCaptureStatus.SourceState) {

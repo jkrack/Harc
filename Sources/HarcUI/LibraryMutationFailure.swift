@@ -6,6 +6,11 @@ enum LibraryMutationAction: Equatable {
     case clearSummary(String)
     case addPerson(String)
     case renameSpeaker
+    case mergePeople
+    case updateSpeakerThreshold
+    case deletePerson
+    case splitSpeakerEvidence
+    case loadSpeakerEvidence
     case confirmSpeakerSuggestion
     case dismissSpeakerSuggestion
     case linkSpeaker
@@ -25,6 +30,16 @@ enum LibraryMutationAction: Equatable {
             return "Could not clear summary"
         case .addPerson:
             return "Could not add person"
+        case .splitSpeakerEvidence:
+            return "Could not split voice samples"
+        case .loadSpeakerEvidence:
+            return "Could not load voice samples"
+        case .mergePeople:
+            return "Could not merge people"
+        case .updateSpeakerThreshold:
+            return "Could not update match threshold"
+        case .deletePerson:
+            return "Could not delete person"
         case .renameSpeaker:
             return "Could not rename speaker"
         case .confirmSpeakerSuggestion:
@@ -56,7 +71,7 @@ enum LibraryMutationAction: Equatable {
              .dissolveSession(let value),
              .renameSession(let value):
             return value
-        case .renameSpeaker,
+        case .renameSpeaker, .mergePeople, .updateSpeakerThreshold, .deletePerson, .splitSpeakerEvidence, .loadSpeakerEvidence,
              .confirmSpeakerSuggestion,
              .dismissSpeakerSuggestion,
              .linkSpeaker,

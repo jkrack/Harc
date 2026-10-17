@@ -146,14 +146,20 @@ final class HarcMobileTransferCoordinator {
         do {
             refreshLocalRecordings()
             let backgroundManagedUploadIDs = try activeBackgroundUploadIDs()
+            let hasRelayRoute = (try? HarcMobileHostRouteStore.load(
+                from: routeURL
+            ).relay) != nil
             let pending = try store.recordingOutboxes().filter {
                 $0.stateMachine.state != .committed
                     && $0.stateMachine.state != .securityBlocked
                     && $0.integrityBlock == nil
                     && $0.finalizedCapture.masterFileState == .present
-                    && ($0.uploadID.map {
-                        !backgroundManagedUploadIDs.contains($0)
-                    } ?? true)
+                    && !Self.shouldDeferToBackgroundUpload(
+                        uploadID: $0.uploadID,
+                        backgroundManagedUploadIDs:
+                            backgroundManagedUploadIDs,
+                        hasRelayRoute: hasRelayRoute
+                    )
             }
             let eligible = try pending.filter {
                 try HarcMobileUploadPreparation.canAttempt(
@@ -259,6 +265,20 @@ final class HarcMobileTransferCoordinator {
             uploadIDs.insert(batch.descriptor.uploadID)
         }
         return uploadIDs
+    }
+
+    /// A background URLSession capability is intentionally minted for the
+    /// Host's LAN-only `.local` endpoint. When the adoption also has an
+    /// encrypted relay route, keep the recording eligible for a foreground
+    /// retry: the connector may discover that only the relay is reachable.
+    /// `scheduleInBackground` remains idempotent when the direct route wins.
+    static func shouldDeferToBackgroundUpload(
+        uploadID: UploadID?,
+        backgroundManagedUploadIDs: Set<UploadID>,
+        hasRelayRoute: Bool
+    ) -> Bool {
+        guard !hasRelayRoute, let uploadID else { return false }
+        return backgroundManagedUploadIDs.contains(uploadID)
     }
 
     private func startWorkerIfNeeded() {
@@ -439,6 +459,18 @@ final class HarcMobileTransferCoordinator {
                 store: store,
                 transport: connection
             )
+            if opened.path == .encryptedRelay {
+                Self.logger.info(
+                    "Uploading through the end-to-end encrypted relay session"
+                )
+                _ = try await uploader.drive(
+                    plan,
+                    openedSession: opened.session,
+                    deviceSigner: identity
+                )
+                try await connection.shutdownGracefully()
+                return .committed
+            }
             let result = try await uploader.scheduleInBackground(
                 plan,
                 openedSession: opened.session,

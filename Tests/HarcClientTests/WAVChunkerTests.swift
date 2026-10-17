@@ -164,3 +164,43 @@ struct WAVChunkerTests {
         _ = file
     }
 }
+
+@Suite("WAVChunker RIFF alignment")
+struct WAVChunkerAlignmentTests {
+    @Test("odd metadata payloads and two-byte-aligned sizes preserve PCM", arguments: [1, 2, 3])
+    func paddedMetadata(size: Int) async throws {
+        var data = Data("RIFF".utf8)
+        func u32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
+        func u16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
+        u32(0); data.append(contentsOf: "WAVEJUNK".utf8); u32(UInt32(size))
+        data.append(Data(repeating: 0x41, count: size))
+        if size % 2 != 0 { data.append(0) }
+        data.append(contentsOf: "fmt ".utf8); u32(16)
+        u16(1); u16(1); u32(16000); u32(32000); u16(2); u16(16)
+        let pcm = Data((0..<32000).map { UInt8($0 % 251) })
+        data.append(contentsOf: "data".utf8); u32(UInt32(pcm.count)); data.append(pcm)
+        var length = UInt32(data.count - 8).littleEndian
+        withUnsafeBytes(of: &length) { data.replaceSubrange(4..<8, with: $0) }
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("harc-riff-\(UUID()).wav")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try data.write(to: source)
+        let chunk = try #require(await WAVChunker(audioURL: source).flush())
+        defer { try? FileManager.default.removeItem(at: chunk.audioURL) }
+        let output = try AVAudioFile(forReading: chunk.audioURL)
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: output.processingFormat, frameCapacity: 16000))
+        try output.read(into: buffer)
+        let samples = try #require(buffer.floatChannelData?[0])
+        #expect(buffer.frameLength == 16000)
+        var maxError: Float = 0
+        pcm.withUnsafeBytes { bytes in
+            for i in 0..<16000 {
+                let value = Int16(littleEndian: bytes.loadUnaligned(fromByteOffset: i * 2, as: Int16.self))
+                maxError = max(maxError, abs(samples[i] - Float(value) / 32767))
+            }
+        }
+        // WAVChunker converts through Float32; allow one output PCM quantum.
+        #expect(maxError <= 1.0 / 32768.0)
+        #expect(chunk.startMs == 0)
+        #expect(chunk.endMs == 1000)
+    }
+}

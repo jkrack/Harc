@@ -22,9 +22,17 @@ public protocol ContainerLike: Sendable {
         maxTokens: Int,
         onStats: (@Sendable (GenerationStats) -> Void)?
     ) async throws -> String
+    func generateSummary(promptBody: String, maxTokens: Int,
+                         onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String
+
 }
 
 public extension ContainerLike {
+    func generateSummary(promptBody: String, maxTokens: Int,
+                         onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String {
+        try await generate(promptBody: promptBody, systemPrompt: nil, maxTokens: maxTokens, onStats: onStats)
+    }
+
     /// Convenience for call sites that don't observe throughput.
     func generate(
         promptBody: String,
@@ -57,6 +65,18 @@ public struct MLXModelContainer: ContainerLike {
         maxTokens: Int,
         onStats: (@Sendable (GenerationStats) -> Void)?
     ) async throws -> String {
+        try await generateConfigured(promptBody: promptBody, systemPrompt: systemPrompt,
+            maxTokens: maxTokens, onStats: onStats, temperature: 0.6)
+    }
+
+    public func generateSummary(promptBody: String, maxTokens: Int,
+                                onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String {
+        try await generateConfigured(promptBody: promptBody, systemPrompt: nil,
+            maxTokens: maxTokens, onStats: onStats, temperature: 0)
+    }
+
+    private func generateConfigured(promptBody: String, systemPrompt: String?, maxTokens: Int,
+                                    onStats: (@Sendable (GenerationStats) -> Void)?, temperature: Float) async throws -> String {
         // mlx-swift-lm 3.x takes raw message dicts here, not a
         // Chat.Message array. Each dict has "role" + "content".
         var messages: [[String: any Sendable]] = []
@@ -80,6 +100,7 @@ public struct MLXModelContainer: ContainerLike {
 
         var params = GenerateParameters()
         params.maxTokens = maxTokens
+        params.temperature = temperature
 
         let stream = try await container.generate(input: lmInput, parameters: params)
 
@@ -91,6 +112,7 @@ public struct MLXModelContainer: ContainerLike {
         var chunkCount = 0
 
         var result = ""
+        var completionObserved = false
         for await generation in stream {
             switch generation {
             case .chunk(let fragment):
@@ -107,14 +129,25 @@ public struct MLXModelContainer: ContainerLike {
                     }
                 }
             case .info(let info):
+                completionObserved = true
+                let stopReason: GenerationStats.StopReason = switch info.stopReason {
+                case .stop: .complete
+                case .length: .outputLimit
+                case .cancelled: .cancelled
+                }
                 onStats?(GenerationStats(
                     generatedTokens: info.generationTokenCount,
                     tokensPerSecond: info.tokensPerSecond,
-                    isFinal: true
+                    isFinal: true,
+                    stopReason: stopReason
                 ))
             case .toolCall:
                 break   // not a tool-use model
             }
+        }
+        try Task.checkCancellation()
+        guard completionObserved else {
+            throw SummarizerError.generationFailed("The model stream ended without completion metadata.")
         }
         return result
     }

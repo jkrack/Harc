@@ -17,6 +17,11 @@ public struct TranscriptDocument: Sendable {
     public let wordIndex: WordIndex
     public let audioAvailable: Bool
     public let jsonAvailable: Bool
+    public var overlapRanges: [SpeechOverlapRange]? = nil
+    public var overlapWarning: String? {
+        overlapRanges?.isEmpty == false
+            ? "Overlapping voices detected. Speaker attribution may be incomplete." : nil
+    }
 
     public init(
         recordingID: Int64?,
@@ -92,23 +97,20 @@ public struct TranscriptDocument: Sendable {
             artifactText = ""
         }
 
-        // Older Client-local rows stored joinedText in the DB, so a later
-        // metadata projection could replace an initially diarized Markdown
-        // transcript with one flat paragraph. Recover the generated turn
-        // labels from the still-structured sidecar. Never do this after a
-        // manual edit: its words/timing no longer safely describe the text.
+        // Only regenerate text that exactly matches a known generated form.
+        // A missing edit stamp alone cannot prove that externally edited text
+        // is safe to replace. Legacy generated labels may predate overlap data.
         let text: String
-        if let transcript = structuredTranscript,
-           transcript.manualEditAt == nil,
-           !transcript.words.isEmpty,
-           !transcript.speakers.isEmpty,
-           !Self.containsSpeakerTurn(in: artifactText, recording: recording) {
-            text = TranscriptPlainTextRenderer.render(transcript)
+        if let transcript = structuredTranscript, transcript.manualEditAt == nil,
+           Self.matchesGeneratedText(artifactText, transcript: transcript, recording: recording) {
+            text = TranscriptPlainTextRenderer.render(transcript) {
+                recording.speakerNames[$0] ?? "Speaker \($0 + 1)"
+            }
         } else {
             text = artifactText
         }
 
-        return TranscriptDocument(
+        var document = TranscriptDocument(
             recordingID: recording.id,
             initialText: text,
             words: words,
@@ -119,27 +121,27 @@ public struct TranscriptDocument: Sendable {
             audioAvailable: audioAvailable,
             jsonAvailable: jsonAvailable
         )
+        document.overlapRanges = structuredTranscript?.overlapRanges
+        return document
     }
 
-    private static func containsSpeakerTurn(
-        in text: String,
-        recording: Recording
+    private static func matchesGeneratedText(
+        _ text: String, transcript: SessionTranscript, recording: Recording
     ) -> Bool {
-        var labels = Set(recording.speakerNames.values)
-        labels.formUnion((1...12).map { "Speaker \($0)" })
-        return text.split(separator: "\n", omittingEmptySubsequences: true)
-            .contains { line in
-                guard let colon = line.firstIndex(of: ":") else { return false }
-                let head = line[..<colon].trimmingCharacters(in: .whitespaces)
-                return labels.contains(head)
-            }
+        var legacy = transcript
+        legacy.overlapRanges = nil
+        let candidates = [transcript.joinedText,
+            TranscriptPlainTextRenderer.render(legacy),
+            TranscriptPlainTextRenderer.render(legacy) { recording.speakerNames[$0] ?? "Speaker \($0 + 1)" }]
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return candidates.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
     }
 
     /// Return the same document metadata with a different presentation text
     /// and a word index rebuilt for that text. Speaker identity changes the
     /// visible turn headers, so offsets must be refreshed at the same time.
     public func replacingInitialText(_ text: String) -> TranscriptDocument {
-        TranscriptDocument(
+        var document = TranscriptDocument(
             recordingID: recordingID,
             initialText: text,
             words: words,
@@ -150,6 +152,8 @@ public struct TranscriptDocument: Sendable {
             audioAvailable: audioAvailable,
             jsonAvailable: jsonAvailable
         )
+        document.overlapRanges = overlapRanges
+        return document
     }
 
     /// Atomic write of the edited text to `txtURL`, plus a best-effort stamp

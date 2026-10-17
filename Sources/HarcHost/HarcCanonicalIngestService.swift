@@ -672,7 +672,8 @@ private extension HarcCanonicalIngestService {
             canonicalWAVURL: paths.wavURL,
             artifactIdentity: artifact.identity,
             startedAt: capture.captureStartedAt,
-            endedAt: capture.captureEndedAt
+            endedAt: capture.captureEndedAt,
+            discontinuities: capture.discontinuities
         )
         try artifact.validateBinding()
         let result = try await recordingStore.commitCanonicalRemoteRecording(

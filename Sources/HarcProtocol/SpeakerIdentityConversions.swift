@@ -210,3 +210,47 @@ private func speakerWireDate(_ milliseconds: UInt64) throws -> Date {
     }
     return date
 }
+
+public extension Harc_V1_SpeakerEvidenceSnapshotV1 {
+    init(_ value: SpeakerEvidenceSnapshot) {
+        self.init()
+        canonicalRecordingID = Harc_V1_CanonicalRecordingIDV1(value.canonicalRecordingID)
+        canonicalPcmSha256 = value.canonicalPCMHash.rawBytes
+        producerDeviceID = Harc_V1_DeviceIDV1(value.producerDeviceID)
+        processingArtifactSha256 = value.processingArtifactSHA256
+        localClusterID = value.localClusterID
+        embedding = Harc_V1_QuantizedSpeakerEmbeddingV1(value.embedding)
+        modelID = value.modelID
+        speechDurationMs = value.speechDurationMs
+        segmentCount = value.segmentCount
+    }
+
+    func domainValue() throws -> SpeakerEvidenceSnapshot {
+        guard hasCanonicalRecordingID, hasProducerDeviceID, hasEmbedding else {
+            throw HarcProtobufConversionError.missingField("speakerEvidence.identityOrEmbedding")
+        }
+        return try SpeakerEvidenceSnapshot(
+            canonicalRecordingID: canonicalRecordingID.domainValue(),
+            canonicalPCMHash: CanonicalPCMHash(canonicalPcmSha256),
+            producerDeviceID: producerDeviceID.domainValue(),
+            processingArtifactSHA256: processingArtifactSha256, localClusterID: localClusterID,
+            embedding: embedding.domainValue(), modelID: modelID,
+            speechDurationMs: speechDurationMs, segmentCount: segmentCount)
+    }
+}
+
+public extension Harc_V1_BoundSpeakerEmbeddingObservationV1 {
+    init(_ value: BoundSpeakerEmbeddingObservation) {
+        self.init()
+        observation = Harc_V1_SpeakerEmbeddingObservationV1(value.observation)
+        evidence = Harc_V1_SpeakerEvidenceSnapshotV1(value.evidence)
+    }
+
+    func domainValue() throws -> BoundSpeakerEmbeddingObservation {
+        guard hasObservation, hasEvidence else {
+            throw HarcProtobufConversionError.missingField("boundSpeakerObservation.observationOrEvidence")
+        }
+        return try BoundSpeakerEmbeddingObservation(
+            observation: observation.domainValue(), evidence: evidence.domainValue())
+    }
+}

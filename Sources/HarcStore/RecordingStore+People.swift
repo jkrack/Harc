@@ -23,6 +23,45 @@ public extension RecordingStore {
         }
     }
 
+    /// Atomic fallback for a source that has never acquired bound voice evidence.
+    func createPersonForLegacySpeaker(displayName: String, recordingID: Int64, speakerIndex: Int) async throws -> Int64 {
+        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, speakerIndex >= 0 else { throw StoreError.invalidData("Invalid speaker or person name") }
+        let personID = try await db.write { database in
+            guard try !Self.requiresBoundSpeakerReview(in: database, recordingID: recordingID),
+                  let recording = try Recording.fetchOne(database, key: recordingID), recording.deletedAt == nil else {
+                throw StoreError.invalidData("The recording changed. Review its current voice evidence before creating a person.")
+            }
+            let now = Date()
+            let previous = try Int64.fetchOne(database, sql:
+                "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, speakerIndex])
+            try database.execute(sql: """
+                INSERT INTO people(stable_uuid, display_name, match_threshold, created_at, updated_at, profile_revision)
+                VALUES (?, ?, NULL, ?, ?, 1)
+                """, arguments: [PersonID.random().description, name, now.timeIntervalSince1970, now.timeIntervalSince1970])
+            let personID = database.lastInsertedRowID
+            try database.execute(sql: """
+                INSERT OR REPLACE INTO person_speakers(person_id, recording_id, speaker_index, confirmed_at, is_user_confirmed)
+                VALUES (?, ?, ?, ?, 1)
+                """, arguments: [personID, recordingID, speakerIndex, now.timeIntervalSince1970])
+            try database.execute(sql: "DELETE FROM pending_suggestions WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, speakerIndex])
+            var names = recording.speakerNames
+            names[speakerIndex] = name
+            let encoded = Dictionary(uniqueKeysWithValues: names.map { (String($0.key), $0.value) })
+            let json = String(data: try JSONEncoder().encode(encoded), encoding: .utf8)
+            try database.execute(sql: "UPDATE recordings SET speaker_names = ?, updated_at = ? WHERE id = ?",
+                arguments: [json, now, recordingID])
+            _ = try Self.bumpSpeakerProfiles(in: database, personIDs: Set([previous, personID].compactMap { $0 }),
+                at: now.timeIntervalSince1970)
+            _ = try Self.bumpRevisionAndAppendLibraryChange(in: database, recordingID: recordingID, changedAt: now)
+            return personID
+        }
+        await reprojectOKF(id: recordingID)
+        return personID
+    }
+
     func fetchPeople() async throws -> [Person] {
         try await db.read { database in
             try Self.fetchPeople(db: database)
@@ -97,6 +136,14 @@ public extension RecordingStore {
                     """,
                 arguments: [personID, recordingID, speakerIndex, now]
             )
+            try database.execute(
+                sql: "DELETE FROM pending_suggestions WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, speakerIndex]
+            )
+            try database.execute(
+                sql: "DELETE FROM dismissed_suggestions WHERE person_id = ? AND recording_id = ? AND speaker_index = ?",
+                arguments: [personID, recordingID, speakerIndex]
+            )
             _ = try Self.bumpSpeakerProfiles(
                 in: database,
                 personIDs: Set([oldPersonID, personID].compactMap { $0 }),
@@ -107,6 +154,9 @@ public extension RecordingStore {
 
     func unlinkSpeaker(recordingID: Int64, speakerIndex: Int) async throws {
         try await db.write { database in
+            guard try !Self.requiresBoundSpeakerReview(in: database, recordingID: recordingID) else {
+                throw StoreError.invalidData("This speaker requires review of its current voice evidence")
+            }
             let personID = try Int64.fetchOne(
                 database,
                 sql: "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
@@ -126,13 +176,17 @@ public extension RecordingStore {
                     at: Date().timeIntervalSince1970
                 )
             }
+            try database.execute(
+                sql: "DELETE FROM pending_suggestions WHERE recording_id = ? AND speaker_index = ?",
+                arguments: [recordingID, speakerIndex]
+            )
         }
     }
 
     func fetchPersonSpeakerLinks(recordingID: Int64) async throws -> [PersonSpeakerLink] {
         try await db.read { database in
             let rows = try Row.fetchAll(database, sql: """
-                SELECT person_id, recording_id, speaker_index, confirmed_at
+                SELECT person_id, recording_id, speaker_index, confirmed_at, is_user_confirmed
                 FROM person_speakers
                 WHERE recording_id = ?
                 """, arguments: [recordingID])
@@ -141,7 +195,8 @@ public extension RecordingStore {
                     personID: row["person_id"],
                     recordingID: row["recording_id"],
                     speakerIndex: row["speaker_index"],
-                    confirmedAt: Date(timeIntervalSince1970: row["confirmed_at"])
+                    confirmedAt: Date(timeIntervalSince1970: row["confirmed_at"]),
+                    isUserConfirmed: row["is_user_confirmed"]
                 )
             }
         }
@@ -188,6 +243,22 @@ public extension RecordingStore {
 
     func confirmSuggestion(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws {
         try await db.write { db in
+            guard try !Self.requiresBoundSpeakerReview(in: db, recordingID: recordingID) else {
+                throw StoreError.invalidData("This speaker requires review of its current voice evidence")
+            }
+            guard try Bool.fetchOne(db, sql: """
+                SELECT EXISTS(SELECT 1 FROM pending_suggestions
+                    WHERE person_id = ? AND recording_id = ? AND speaker_index = ?)
+                """, arguments: [personID, recordingID, speakerIndex]) == true else {
+                // Duplicate clicks may arrive after the first confirmation commits.
+                // Only the identical still-confirmed assignment is a harmless replay.
+                if try Bool.fetchOne(db, sql: """
+                    SELECT EXISTS(SELECT 1 FROM person_speakers
+                        WHERE person_id = ? AND recording_id = ? AND speaker_index = ?
+                          AND is_user_confirmed = 1)
+                    """, arguments: [personID, recordingID, speakerIndex]) == true { return }
+                throw StoreError.notFound
+            }
             let oldPersonID = try Int64.fetchOne(
                 db,
                 sql: "SELECT person_id FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
@@ -209,6 +280,10 @@ public extension RecordingStore {
                     """,
                 arguments: [recordingID, speakerIndex]
             )
+            try db.execute(
+                sql: "DELETE FROM dismissed_suggestions WHERE person_id = ? AND recording_id = ? AND speaker_index = ?",
+                arguments: [personID, recordingID, speakerIndex]
+            )
             _ = try Self.bumpSpeakerProfiles(
                 in: db,
                 personIDs: Set([oldPersonID, personID].compactMap { $0 }),
@@ -219,6 +294,17 @@ public extension RecordingStore {
 
     func dismissSuggestion(personID: Int64, recordingID: Int64, speakerIndex: Int) async throws {
         try await db.write { db in
+            if try Bool.fetchOne(db, sql: """
+                SELECT EXISTS(SELECT 1 FROM person_speakers
+                    WHERE person_id = ? AND recording_id = ? AND speaker_index = ?
+                      AND is_user_confirmed = 1)
+                """, arguments: [personID, recordingID, speakerIndex]) == true {
+                try db.execute(
+                    sql: "DELETE FROM pending_suggestions WHERE person_id = ? AND recording_id = ? AND speaker_index = ?",
+                    arguments: [personID, recordingID, speakerIndex]
+                )
+                return
+            }
             try db.execute(
                 sql: """
                     INSERT OR REPLACE INTO dismissed_suggestions
@@ -234,6 +320,23 @@ public extension RecordingStore {
                     """,
                 arguments: [personID, recordingID, speakerIndex]
             )
+            try db.execute(sql: """
+                DELETE FROM person_speakers WHERE person_id = ? AND recording_id = ?
+                    AND speaker_index = ? AND is_user_confirmed = 0
+                """, arguments: [personID, recordingID, speakerIndex])
+            if db.changesCount == 1, let recording = try Recording.fetchOne(db, key: recordingID) {
+                var names = recording.speakerNames
+                let rejectedName = try String.fetchOne(db,
+                    sql: "SELECT display_name FROM people WHERE id = ?", arguments: [personID])
+                if names[speakerIndex] == rejectedName { names.removeValue(forKey: speakerIndex) }
+                let encoded = Dictionary(uniqueKeysWithValues: names.map { (String($0.key), $0.value) })
+                let json = String(data: try JSONEncoder().encode(encoded), encoding: .utf8)
+                let now = Date()
+                try db.execute(sql: "UPDATE recordings SET speaker_names = ?, updated_at = ? WHERE id = ?",
+                               arguments: [json, now, recordingID])
+                _ = try Self.bumpRevisionAndAppendLibraryChange(in: db, recordingID: recordingID, changedAt: now)
+            }
+
         }
     }
 
@@ -322,6 +425,12 @@ public extension RecordingStore {
                     sql: "DELETE FROM dismissed_suggestions WHERE person_id = ?",
                     arguments: [sourceID]
                 )
+                // Transfer selected immutable evidence before deleting the source.
+                // Its stable prototype identity survives, but open reviews become stale.
+                try db.execute(sql: """
+                    UPDATE confirmed_speaker_evidence
+                    SET person_id = ?, confirmation_uuid = ? WHERE person_id = ?
+                    """, arguments: [targetID, UUID().uuidString.lowercased(), sourceID])
                 // Finally drop the source person row.
                 try db.execute(
                     sql: "DELETE FROM people WHERE id = ?",
@@ -343,6 +452,11 @@ public extension RecordingStore {
     /// the new Person ID.
     func splitEmbeddings(slots: [(recordingID: Int64, speakerIndex: Int)], intoNewPersonNamed name: String) async throws -> Int64 {
         try await db.write { db in
+            for slot in slots {
+                guard try !Self.requiresBoundSpeakerReview(in: db, recordingID: slot.recordingID) else {
+                    throw StoreError.invalidData("Split this speaker using its exact confirmed voice samples")
+                }
+            }
             let now = Date().timeIntervalSince1970
             try db.execute(
                 sql: """
@@ -365,10 +479,14 @@ public extension RecordingStore {
                 try db.execute(
                     sql: """
                         UPDATE person_speakers
-                        SET person_id = ?, confirmed_at = ?
+                        SET person_id = ?, confirmed_at = ?, is_user_confirmed = 1
                         WHERE recording_id = ? AND speaker_index = ?
                         """,
                     arguments: [newID, now, slot.recordingID, slot.speakerIndex]
+                )
+                try db.execute(
+                    sql: "DELETE FROM pending_suggestions WHERE recording_id = ? AND speaker_index = ?",
+                    arguments: [slot.recordingID, slot.speakerIndex]
                 )
             }
             _ = try Self.bumpSpeakerProfiles(
@@ -404,12 +522,30 @@ public extension RecordingStore {
 
     /// All embeddings for a single recording filtered by embedder kind.
     func fetchSpeakerEmbeddings(recordingID: Int64, embedderKind: String) async throws -> [SpeakerEmbeddingRow] {
+        try await fetchRecordingSpeakerEmbeddings(recordingID: recordingID, embedderKind: embedderKind)
+    }
+
+    /// Stored rows for one recording, preserving model provenance, including unbound legacy rows.
+    func fetchSpeakerEmbeddings(recordingID: Int64) async throws -> [SpeakerEmbeddingRow] {
+        try await fetchRecordingSpeakerEmbeddings(recordingID: recordingID, embedderKind: nil)
+    }
+
+    private func fetchRecordingSpeakerEmbeddings(
+        recordingID: Int64, embedderKind: String?
+    ) async throws -> [SpeakerEmbeddingRow] {
         try await db.read { db in
-            let rows = try Row.fetchAll(db, sql: """
+            var sql = """
                 SELECT prototype_uuid, recording_id, speaker_index, embedding, segment_count, total_ms, embedder_kind
                 FROM speaker_embeddings
-                WHERE recording_id = ? AND embedder_kind = ?
-                """, arguments: [recordingID, embedderKind])
+                WHERE recording_id = ?
+                """
+            var arguments: StatementArguments = [recordingID]
+            if let embedderKind {
+                sql += " AND embedder_kind = ?"
+                arguments += [embedderKind]
+            }
+            sql += " ORDER BY speaker_index"
+            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
             return rows.map {
                 SpeakerEmbeddingRow(
                     prototypeID: SpeakerPrototypeID(UUID(uuidString: $0["prototype_uuid"] as String)!),
@@ -433,7 +569,8 @@ public extension RecordingStore {
                 JOIN person_speakers ps
                   ON ps.recording_id = e.recording_id
                  AND ps.speaker_index = e.speaker_index
-                WHERE ps.person_id = ? AND e.embedder_kind = ?
+                WHERE ps.is_user_confirmed = 1 AND ps.person_id = ? AND e.embedder_kind = ?
+                  AND NOT EXISTS (SELECT 1 FROM bound_speaker_enrollment_sources b WHERE b.recording_id = ps.recording_id)
                 """, arguments: [personID, embedderKind])
             return rows.map {
                 SpeakerEmbeddingRow(
@@ -577,11 +714,17 @@ public extension RecordingStore {
     // MARK: - Phase 7.3: per-Person threshold override
 
     func updatePersonThreshold(personID: Int64, threshold: Double?) async throws {
+        if let threshold, !threshold.isFinite || !(0 ... 1).contains(threshold) {
+            throw StoreError.invalidData("Speaker match threshold must be between zero and one")
+        }
         try await db.write { db in
+            let now = Date().timeIntervalSince1970
             try db.execute(
-                sql: "UPDATE people SET match_threshold = ?, updated_at = ? WHERE id = ?",
-                arguments: [threshold, Date().timeIntervalSince1970, personID]
+                sql: "UPDATE people SET match_threshold = ?, updated_at = ?, profile_revision = profile_revision + 1 WHERE id = ?",
+                arguments: [threshold, now, personID]
             )
+            guard db.changesCount == 1 else { throw StoreError.notFound }
+            try Self.bumpSpeakerRecognitionPackRevision(in: db, at: now)
         }
     }
 

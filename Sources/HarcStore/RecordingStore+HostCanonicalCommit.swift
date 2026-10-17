@@ -13,6 +13,7 @@ public struct HostCanonicalRecordingCommitRequest: Equatable, Sendable {
     public let artifactIdentity: HostCanonicalArtifactIdentity
     public let startedAt: Date
     public let endedAt: Date?
+    public let discontinuities: [CaptureDiscontinuity]
 
     public init(
         canonicalID: CanonicalRecordingID,
@@ -22,7 +23,8 @@ public struct HostCanonicalRecordingCommitRequest: Equatable, Sendable {
         canonicalWAVURL: URL,
         artifactIdentity: HostCanonicalArtifactIdentity,
         startedAt: Date,
-        endedAt: Date?
+        endedAt: Date?,
+        discontinuities: [CaptureDiscontinuity] = []
     ) throws {
         guard canonicalID.rawValue != Self.zeroUUID,
               originID.recordingUUID != Self.zeroUUID
@@ -50,6 +52,10 @@ public struct HostCanonicalRecordingCommitRequest: Equatable, Sendable {
             throw StoreError.invalidData("Canonical recording timestamps are invalid")
         }
 
+        guard discontinuities.allSatisfy({
+            $0.recordingID == originID && $0.affectedFrames.endFrameExclusive <= canonicalPCMFrames
+        }) else { throw StoreError.invalidData("Capture discontinuity binding is invalid") }
+        self.discontinuities = discontinuities
         try artifactIdentity.validatePathBinding(at: canonicalWAVURL)
 
         self.canonicalID = canonicalID
@@ -165,6 +171,7 @@ public extension RecordingStore {
                           existing.canonicalPCMHash == request.canonicalPCMHash,
                           existing.canonicalPCMFrames == request.canonicalPCMFrames,
                           existing.wavPath == request.canonicalWAVURL.path,
+                          existing.captureDiscontinuities == request.discontinuities,
                           existingStartedAtMilliseconds == requestStartedAtMilliseconds,
                           existingEndedAtMilliseconds == requestEndedAtMilliseconds
                     else {
@@ -224,6 +231,7 @@ public extension RecordingStore {
                     processing: .pending,
                     projection: .pending
                 )
+                inserted.captureDiscontinuities = request.discontinuities
                 try inserted.insert(database)
                 inserted.id = database.lastInsertedRowID
                 guard let recordingID = inserted.id, recordingID > 0 else {

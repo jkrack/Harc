@@ -62,6 +62,11 @@ public struct ProvisionalSpeakerMatch: Equatable, Hashable, Sendable {
 /// Pure client-side matcher for immediate provisional labels. The Host always
 /// re-evaluates the observation against its authoritative evidence.
 public enum SpeakerRecognitionMatcher {
+    /// Existing speaker-suggestion baseline, shared by enrollment consumers.
+    /// This is a minimum evidence floor, not a calibrated accuracy guarantee.
+    /// Manual naming and storage of shorter observations remain allowed.
+    public static let minimumEnrollmentSpeechMs: UInt64 = 5_000
+
     public static func bestMatch(
         embedding: QuantizedSpeakerEmbedding,
         modelID: String,
@@ -72,14 +77,18 @@ public enum SpeakerRecognitionMatcher {
               pack.dimensions == embedding.dimensions,
               now < pack.expiresAt else { return nil }
         let query = embedding.dequantized
-        var best: (SpeakerIdentityProfile, Double)?
+        var scores: [PersonID: Double] = [:]
         for profile in pack.profiles {
-            for prototype in profile.prototypes {
+            for prototype in profile.prototypes where
+                prototype.speechDurationMs >= minimumEnrollmentSpeechMs && prototype.segmentCount > 0 {
                 let score = cosineSimilarity(query, prototype.embedding.dequantized)
-                if best == nil || score > best!.1 { best = (profile, score) }
+                scores[profile.id] = max(scores[profile.id] ?? -1, score)
             }
         }
-        guard let best, best.1 >= best.0.matchThreshold else { return nil }
+        guard let personID = unambiguousBestPerson(scores: scores),
+              let profile = pack.profiles.first(where: { $0.id == personID }),
+              let score = scores[personID], score >= profile.matchThreshold else { return nil }
+        let best = (profile, score)
         return ProvisionalSpeakerMatch(
             personID: best.0.id,
             displayName: best.0.displayName,
@@ -87,6 +96,21 @@ public enum SpeakerRecognitionMatcher {
             profileRevision: best.0.revision,
             packRevision: pack.revision
         )
+    }
+
+    /// A conservative abstention margin, not a calibrated probability. Compare
+    /// distinct identities after pooling their prototypes, including runners-up
+    /// that fall below their own acceptance threshold. A near competitor still
+    /// makes the winner ambiguous. Host and provisional decisions share this rule.
+    public static let minimumIdentitySeparation: Double = 0.05
+
+    public static func unambiguousBestPerson(scores: [PersonID: Double]) -> PersonID? {
+        let ranked = scores.filter { $0.value.isFinite && $0.value > 0 }
+            .sorted { $0.value > $1.value }
+        guard let first = ranked.first else { return nil }
+        if ranked.count > 1,
+           first.value - ranked[1].value <= minimumIdentitySeparation { return nil }
+        return first.key
     }
 
     private static func cosineSimilarity(_ lhs: [Float], _ rhs: [Float]) -> Double {

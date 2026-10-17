@@ -1,4 +1,6 @@
 import Foundation
+import HarcCore
+import HarcAudio
 import HarcClientStore
 import HarcDomain
 import HarcTransfer
@@ -46,6 +48,7 @@ enum HarcDesktopClientRecovery {
         }
         let sidecars = Dictionary<String, URL>(uniqueKeysWithValues: sidecarPairs)
 
+        let activeTrust = try store.activeAdoption()?.tuple
         let originalOutboxes = try store.recordingOutboxes()
         let originalByStem = Dictionary(uniqueKeysWithValues: originalOutboxes.map {
             ($0.finalizedCapture.capture.originRecordingID.recordingUUID.uuidString.lowercased(), $0)
@@ -66,6 +69,16 @@ enum HarcDesktopClientRecovery {
             let sidecarURL = sidecars[stem]
             do {
                 if let sidecarURL {
+                    if masterURL == nil, let existing = originalByStem[stem],
+                       try HarcDesktopClientTransferCoordinator.hasVerifiedHostCopy(existing,
+                            store: store, expectedTrust: activeTrust) {
+                        let sidecar = try decodeSidecar(sidecarURL)
+                        guard sidecar.capture == existing.finalizedCapture.capture,
+                              sidecar.capture.producingDeviceID == deviceID else { throw RecoveryError.identityMismatch }
+                        try DurableFileIO.synchronizeFileAndParent(at: sidecarURL)
+                        alreadyTracked += 1
+                        continue
+                    }
                     guard let masterURL else {
                         throw RecoveryError.missingMaster
                     }
@@ -150,6 +163,21 @@ enum HarcDesktopClientRecovery {
             let capture = outbox.finalizedCapture
             let stem = capture.capture.originRecordingID.recordingUUID.uuidString.lowercased()
             if blockedOrigins.contains(capture.capture.originRecordingID) {
+                continue
+            }
+            if try HarcDesktopClientTransferCoordinator.hasVerifiedHostCopy(outbox,
+                store: store, expectedTrust: activeTrust) {
+                if !FileManager.default.fileExists(atPath: capture.masterFileURL.path), sidecars[stem] == nil {
+                    // Reconstruct only immutable capture metadata from the verified
+                    // outbox. There is no local audio to reprocess or transcript to invent.
+                    let rebuilt = HarcDesktopClientCaptureSidecar(capture: capture.capture,
+                        transcript: nil, speakerEmbeddings: nil, persistedAt: capture.persistedAt)
+                    let destination = directory.appendingPathComponent("\(stem).capture.json")
+                    try HarcDesktopClientFiles.writeSidecar(rebuilt, to: destination)
+                    try DurableFileIO.synchronizeFileAndParent(at: destination)
+                    sidecarsRebuilt += 1
+                }
+                alreadyOnHost += 1
                 continue
             }
             guard FileManager.default.fileExists(atPath: capture.masterFileURL.path),
@@ -259,6 +287,9 @@ enum HarcDesktopClientRecovery {
         let endedAt = values.contentModificationDate ?? values.creationDate ?? Date()
         let startedAt = endedAt.addingTimeInterval(-duration)
         let origin = OriginRecordingID(deviceID: deviceID, recordingUUID: recordingUUID)
+        let recoveredCapture = CapturedRecording(localMasterURL: masterURL,
+            startedAt: startedAt, endedAt: endedAt,
+            integrity: try CaptureIntegrityReport.load(nextTo: masterURL))
         let capture = try FinalizedCapture(
             producingDeviceID: deviceID,
             originRecordingID: origin,
@@ -270,7 +301,7 @@ enum HarcDesktopClientRecovery {
             totalCanonicalFrames: prepared.frames,
             totalCanonicalBytes: prepared.frames * 2,
             canonicalPCMSHA256: try CanonicalPCMHash(prepared.pcmSHA256),
-            discontinuities: []
+            discontinuities: try recoveredCapture.boundDiscontinuities(to: origin, totalFrames: prepared.frames)
         )
         return HarcDesktopClientCaptureSidecar(
             capture: capture,

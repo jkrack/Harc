@@ -1,4 +1,5 @@
 import Foundation
+import HarcDomain
 import HarcStore
 import HarcVoiceprint
 
@@ -40,6 +41,7 @@ public actor SpeakerSuggestionEngine {
 
         let people = try await store.fetchPeople()
         guard !people.isEmpty else { return }
+        let references = try await referenceSnapshot(for: people)
 
         let linksForRec = try await store.fetchPersonSpeakerLinks(recordingID: recordingID)
         let linkedSpeakerIndices = Set(linksForRec.map(\.speakerIndex))
@@ -52,26 +54,8 @@ public actor SpeakerSuggestionEngine {
                 continue
             }
 
-            // Find best matching Person.
-            var bestPerson: Person?
-            var bestScore: Double = 0
-            for person in people {
-                let personEmbeddings = try await store.fetchEmbeddingsForPerson(
-                    person.id, embedderKind: embedderKind)
-                for pe in personEmbeddings {
-                    guard let v = EmbeddingBlob.decode(pe.embedding, expectedDim: embeddingDim) else {
-                        continue
-                    }
-                    let s = cosine(newVec, v)
-                    if s > bestScore {
-                        bestScore = s
-                        bestPerson = person
-                    }
-                }
-            }
-            guard let person = bestPerson else { continue }
-            let threshold = person.matchThreshold ?? globalDefaultThreshold
-            guard bestScore >= threshold else { continue }
+            guard let (person, bestScore) = bestMatch(
+                for: newVec, people: people, references: references, excludingRecording: recordingID) else { continue }
 
             // Skip if dismissed.
             if try await store.isDismissed(
@@ -94,20 +78,18 @@ public actor SpeakerSuggestionEngine {
     /// recordings' embeddings; if any match the new Person's seed embedding
     /// above threshold and aren't already linked or dismissed, suggest.
     public func suggestForNewPerson(personID: Int64, fromRecording recordingID: Int64, speakerIndex: Int) async throws {
-        let seedRow = try await store.speakerEmbedding(
-            recordingID: recordingID, speakerIndex: speakerIndex)
-        guard let seed = seedRow, seed.embedderKind == embedderKind else { return }
-        guard let seedVec = EmbeddingBlob.decode(seed.embedding, expectedDim: embeddingDim) else {
-            return
-        }
-
-        let person = try await store.fetchPeople().first(where: { $0.id == personID })
-        let threshold = person?.matchThreshold ?? globalDefaultThreshold
+        let people = try await store.fetchPeople()
+        guard let person = people.first(where: { $0.id == personID }) else { return }
+        let references = try await referenceSnapshot(for: people)
+        // A bound snapshot may outlive or replace its mutable embedding row.
+        // Trigger from eligible confirmed evidence, not the old slot payload.
+        guard references[person.stableID]?.contains(where: { $0.recordingID == recordingID }) == true else { return }
 
         let allEmbeddings = try await store.fetchAllSpeakerEmbeddings(embedderKind: embedderKind)
         for cand in allEmbeddings {
-            // Skip the seed slot itself.
-            if cand.recordingID == recordingID && cand.speakerIndex == speakerIndex { continue }
+            // A different slot in the same recording is not independent
+            // corroboration; backfill uses other recordings only.
+            if cand.recordingID == recordingID { continue }
 
             // Skip already-linked slots in the candidate's recording.
             let linkedFor = try await store.fetchPersonSpeakerLinks(recordingID: cand.recordingID)
@@ -121,19 +103,56 @@ public actor SpeakerSuggestionEngine {
             guard let candVec = EmbeddingBlob.decode(cand.embedding, expectedDim: embeddingDim) else {
                 continue
             }
-            let s = cosine(seedVec, candVec)
-            if s >= threshold {
-                try await store.insertPendingSuggestion(
-                    personID: personID,
-                    recordingID: cand.recordingID,
-                    speakerIndex: cand.speakerIndex,
-                    score: s
-                )
-            }
+            guard let (person, score) = bestMatch(
+                for: candVec, people: people, references: references, excludingRecording: cand.recordingID),
+                  person.id == personID else { continue }
+            try await store.insertPendingSuggestion(
+                personID: personID,
+                recordingID: cand.recordingID,
+                speakerIndex: cand.speakerIndex,
+                score: score
+            )
         }
     }
 
+    /// Pool prototypes per person before comparing distinct identities. A
+    /// runner-up remains a competitor even below its own acceptance threshold.
+    private func referenceSnapshot(for people: [Person]) async throws -> [PersonID: [RecordingStore.SpeakerRecognitionReference]] {
+        guard let dimensions = UInt32(exactly: embeddingDim), dimensions > 0,
+              dimensions <= QuantizedSpeakerEmbedding.maximumDimensions else { return [:] }
+        var result: [PersonID: [RecordingStore.SpeakerRecognitionReference]] = [:]
+        for person in people {
+            result[person.stableID] = try await store.speakerRecognitionReferences(
+                personID: person.id, modelID: embedderKind, dimensions: dimensions)
+        }
+        return result
+    }
+
+    private func bestMatch(
+        for query: [Float], people: [Person], references: [PersonID: [RecordingStore.SpeakerRecognitionReference]],
+        excludingRecording recordingID: Int64
+    ) -> (Person, Double)? {
+        var scores: [PersonID: Double] = [:]
+        for person in people {
+            for reference in references[person.stableID] ?? [] where reference.recordingID != recordingID {
+                guard let vector = EmbeddingBlob.decode(reference.embedding, expectedDim: embeddingDim) else { continue }
+                let score = cosine(query, vector)
+                guard score.isFinite else { continue }
+                scores[person.stableID] = max(scores[person.stableID] ?? -1, score)
+            }
+        }
+        guard let winner = SpeakerRecognitionMatcher.unambiguousBestPerson(scores: scores),
+              let person = people.first(where: { $0.stableID == winner }),
+              let score = scores[winner],
+              score >= (person.matchThreshold ?? globalDefaultThreshold) else { return nil }
+        return (person, score)
+    }
+
     // MARK: - Math
+
+    private nonisolated static func isEligibleReference(_ row: RecordingStore.SpeakerEmbeddingRow) -> Bool {
+        row.totalMs >= Int(SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs) && row.segmentCount > 0
+    }
 
     private nonisolated func cosine(_ a: [Float], _ b: [Float]) -> Double {
         guard a.count == b.count, !a.isEmpty else { return 0 }

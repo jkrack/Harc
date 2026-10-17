@@ -73,6 +73,7 @@ public struct RequestHandler: Sendable {
                         )
                         result.speakers = output.segments
                         result.speakerEmbeddings = output.speakers
+                        result.overlapRanges = output.overlapRanges
                     } catch {
                         // Diarization is best-effort during chunked transcribe;
                         // log but return text + words intact.
@@ -102,11 +103,13 @@ public struct RequestHandler: Sendable {
             do {
                 let output = try await diarizer.diarizeWithEmbeddings(audioPath: req.audioPath)
                 let processingMs = Int(Date().timeIntervalSince(started) * 1000)
-                return .diarization(DiarizeResult(
+                var result = DiarizeResult(
                     segments: output.segments,
                     speakers: output.speakers,
                     processingMs: processingMs
-                ))
+                )
+                result.overlapRanges = output.overlapRanges
+                return .diarization(result)
             } catch {
                 return .error(IPCError(
                     code: "diarize_failed",

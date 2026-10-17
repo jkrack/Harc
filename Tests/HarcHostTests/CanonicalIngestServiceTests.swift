@@ -251,6 +251,27 @@ private struct PreparedCanonicalIngest {
 
 @Suite("Canonical ingest saga and receipt recovery", .serialized)
 struct CanonicalIngestServiceTests {
+    @Test("signed capture discontinuities survive Host commit, Library projection and receipt replay")
+    func hostPreservesCaptureDiscontinuities() async throws {
+        let fixture = try await makePreparedIngest(withDiscontinuity: true)
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        let receipt = try await service.commitUpload(context: fixture.context,
+            uploadID: fixture.uploadID, generation: .initial,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let rows = try await fixture.recordingStore.fetchAll()
+        let row = try #require(rows.first)
+        let detail = try await fixture.recordingStore.recordingDetail(canonicalID: row.canonicalID)
+        #expect(detail?.discontinuities.count == 1)
+        #expect(detail?.discontinuities.first?.reason == .bufferOverrun)
+        #expect(detail?.discontinuities.first?.recordingID == row.originID)
+        let replay = try await service.commitUpload(context: fixture.context,
+            uploadID: fixture.uploadID, generation: .initial,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        #expect(replay == receipt)
+        try await fixture.recordingStore.disableHostMode(fixture.lease)
+    }
+
     @Test("publication failure codes are stable and omit associated details")
     func publicationFailureCodesAreStableAndPrivate() {
         let fixtures: [(any Error, HostCanonicalIngestFailureCode)] = [
@@ -1178,7 +1199,7 @@ struct CanonicalIngestServiceTests {
 }
 
 private extension CanonicalIngestServiceTests {
-    func makePreparedIngest(repairAuthorization: any HostLocalOSAuthenticationBoundary = RejectingHostLocalOSAuthenticationBoundary()) async throws -> PreparedCanonicalIngest {
+    func makePreparedIngest(withDiscontinuity: Bool = false, repairAuthorization: any HostLocalOSAuthenticationBoundary = RejectingHostLocalOSAuthenticationBoundary()) async throws -> PreparedCanonicalIngest {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "harc-canonical-ingest-\(UUID().uuidString)",
             isDirectory: true
@@ -1299,7 +1320,12 @@ private extension CanonicalIngestServiceTests {
             totalCanonicalFrames: UInt64(bytes.count / 2),
             totalCanonicalBytes: UInt64(bytes.count),
             canonicalPCMSHA256: CanonicalPCMHash(digest),
-            discontinuities: []
+            discontinuities: withDiscontinuity ? [try CaptureDiscontinuity(
+                recordingID: origin, monotonicTimeNanoseconds: 150,
+                wallTime: base.addingTimeInterval(-29.5), reason: .bufferOverrun,
+                affectedFrames: CanonicalFrameRange(startFrame: 0, endFrameExclusive: 0),
+                canonicalizationPolicy: .annotateGapWithoutInsertedSilence
+            )] : []
         )
         let chunked = try ChunkedFinalizedCapture(
             capture: capture,

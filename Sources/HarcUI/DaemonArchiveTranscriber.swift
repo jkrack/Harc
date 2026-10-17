@@ -47,3 +47,24 @@ public enum ArchiveTranscriptionError: Error, LocalizedError {
         }
     }
 }
+
+/// The resident app owns local identity and structured publication. Keep those
+/// dependencies out of the transport-free archive orchestration layer.
+public struct PublishingArchiveTranscriber: ArchiveTranscriber {
+    public let modelID: String
+    private let publish: @Sendable (Recording, RecordingStore) async throws -> Void
+
+    public init(modelID: String, publish: @escaping @Sendable (Recording, RecordingStore) async throws -> Void) {
+        self.modelID = modelID
+        self.publish = publish
+    }
+
+    public func retranscribe(wavPath: String) async throws -> String {
+        throw StoreError.invalidData("Structured archive processing requires a recording and publication transaction")
+    }
+
+    public func reprocess(recording: Recording, store: RecordingStore) async throws {
+        try Task.checkCancellation()
+        try await publish(recording, store)
+    }
+}

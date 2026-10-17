@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import HarcCore
 @preconcurrency import AVFoundation
 @testable import HarcAudio
 
@@ -12,6 +13,108 @@ private final class SendableBuffers: @unchecked Sendable {
 
 @Suite("RecordingSession")
 struct RecordingSessionTests {
+    actor FaultingMic: MicCaptureSource {
+        nonisolated let buffer: AVAudioPCMBuffer
+        var handler: (@Sendable (CaptureIntegrityReport.Reason) -> Void)?
+        init(buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+        func requestPermission() async throws {}
+        func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async { self.handler = handler }
+        func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
+            let (stream, continuation) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+            continuation.yield(buffer)
+            handler?(.bufferOverrun)
+            handler?(.bufferOverrun)
+            continuation.finish()
+            return stream
+        }
+        func stop() async {}
+    }
+
+    @Test("capture loss persists through Stop and standalone publication without a transcript")
+    func captureLossSurvivesPublication() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = RecordingSession(
+            mic: FaultingMic(buffer: makeConstantBuffer(0.25, frames: 1600)),
+            systemAudio: FakeSystem(.denied)
+        )
+        let committer = StandaloneRecordingCommitter(destination: RecordingDestination(baseDirectory: root))
+        try await session.start(at: Date(), prepareCapture: { source in
+            #expect(!FileManager.default.fileExists(atPath: source.path))
+            try committer.prepareCapture(at: source)
+            #expect(try CaptureDestinationBinding.load(for: source) != nil)
+        })
+        let captured = try await session.stop()
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+            try? FileManager.default.removeItem(at: RecordingPublication.journalURL(for: captured.localMasterURL))
+            try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: captured.localMasterURL))
+        }
+        #expect(captured.integrity.issues.count == 1)
+        #expect(captured.integrity.issues.first?.occurrences == 2)
+        #expect(try CaptureIntegrityReport.load(nextTo: captured.localMasterURL) == captured.integrity)
+        let outcome = try await committer.commit(captured)
+        guard case .standalonePublished(_, let result) = outcome else { Issue.record("expected standalone publication"); return }
+        #expect(try CaptureIntegrityReport.load(nextTo: result.wavURL) == captured.integrity)
+        #expect(try AVAudioFile(forReading: result.wavURL).length == 1600)
+        #expect(!FileManager.default.fileExists(atPath: captured.localMasterURL.path))
+        #expect(!FileManager.default.fileExists(atPath: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL).path))
+    }
+
+    @Test("system sample FIFO remains bounded and reports discarded samples")
+    func boundedSystemFIFO() throws {
+        let fifo = SampleFIFO(capacity: 100)
+        #expect(fifo.append(makeConstantBuffer(0.2, frames: 80)) == 0)
+        #expect(fifo.append(makeConstantBuffer(0.3, frames: 80)) == 60)
+        #expect(fifo.count == 100)
+        #expect(fifo.append(makeConstantBuffer(0.4, frames: 1000)) == 1000)
+        #expect(fifo.count == 100)
+        let tail = try #require(fifo.take(100, format: AudioMixer.targetFormat))
+        #expect(tail.floatChannelData![0][99] == 0.4)
+    }
+
+    /// Delivers its final accepted audio at Stop, after the mic has ended.
+    /// This handshake exercises the drain ordering without scheduler sleeps.
+    actor StopTailSystem: SystemAudioCaptureSource {
+        nonisolated let buffer: AVAudioPCMBuffer
+        private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+        init(buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+        func requestPermission() async throws {}
+        func start() async throws -> AsyncStream<AVAudioPCMBuffer> {
+            let (stream, continuation) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+            self.continuation = continuation
+            return stream
+        }
+        func stop() async {
+            continuation?.yield(buffer)
+            continuation?.finish()
+        }
+    }
+
+    @Test("Stop preserves the system tail after the microphone has finished")
+    func stopDrainsSystemTail() async throws {
+        let session = RecordingSession(
+            mic: FakeMic(script: []),
+            systemAudio: StopTailSystem(buffer: makeConstantBuffer(0.25, frames: 12000))
+        )
+        try await session.start(at: Date())
+        let captured = try await session.stop()
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
+        let file = try AVAudioFile(forReading: captured.localMasterURL)
+        #expect(file.length == 12000)
+        let samples = try #require(AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat, frameCapacity: 12000
+        ))
+        try file.read(into: samples)
+        let values = try #require(samples.floatChannelData?[0])
+        #expect(abs(values[11000] - 0.25) < 0.001,
+                "system-only tail must preserve its ordinary unity gain")
+    }
+
     /// In-memory fake that emits the buffers you hand it, then finishes.
     actor FakeMic: MicCaptureSource {
         nonisolated let script: [AVAudioPCMBuffer]
@@ -176,7 +279,10 @@ struct RecordingSessionTests {
         try await session.start(at: pressedStopwatch, preRoll: banked)
         try await Task.sleep(nanoseconds: 300_000_000)
         let captured = try await session.stop()
-        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
 
         let file = try AVAudioFile(forReading: captured.localMasterURL)
         // 2 s of pre-roll + 1 s of live mic.
@@ -209,7 +315,10 @@ struct RecordingSessionTests {
         try await session.start(at: Date())
         try await Task.sleep(nanoseconds: 300_000_000)
         let captured = try await session.stop()
-        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
 
         let preRolled = await session.preRolledSeconds
         #expect(preRolled == 0)
@@ -245,7 +354,10 @@ struct RecordingSessionTests {
         try await session.start(at: Date())
         try await Task.sleep(for: .milliseconds(100))
         let captured = try await session.stop()
-        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
 
         #expect(await session.systemAudioFellBack)
         #expect(captured.warnings.contains { warning in
@@ -274,7 +386,10 @@ struct RecordingSessionTests {
         // If the pump deadlocks on sysIter.next(), this test will TIME OUT.
         try await Task.sleep(for: .milliseconds(500))
         let captured = try await session.stop()
-        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
 
         // Verify the WAV has > 1 buffer's worth of frames.
         // 10 buffers × 1600 frames = 16000 frames = 1.0s at 16kHz.
@@ -306,7 +421,7 @@ struct RecordingSessionTests {
         // Deterministic completion wait: the session emits one AudioLevels
         // per processed mic buffer, so 10 emissions means every mic buffer is
         // mixed and written — no fixed sleep to race under parallel load.
-        // stop() cancels the pump, so stopping early would truncate the mix.
+        // Wait for the paced producer before Stop asks it to finish.
         let levelsStream = session.levels
         let waiter = Task {
             var seen = 0
@@ -324,7 +439,10 @@ struct RecordingSessionTests {
         await waiter.value
         deadline.cancel()
         let captured = try await session.stop()
-        defer { try? FileManager.default.removeItem(at: captured.localMasterURL) }
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
 
         let af = try AVAudioFile(forReading: captured.localMasterURL)
         let frames = AVAudioFrameCount(af.length)

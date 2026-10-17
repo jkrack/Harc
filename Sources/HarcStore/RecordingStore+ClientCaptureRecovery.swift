@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import HarcDomain
+import HarcCore
 
 public struct ClientCaptureLibraryResult: Sendable {
     public let recording: Recording
@@ -27,8 +28,13 @@ public extension RecordingStore {
         transcriptJSONURL: URL?,
         transcriptMarkdownURL: URL?,
         sttModelID: String?,
-        transcribedAt: Date?
+        transcribedAt: Date?,
+        discontinuities: [CaptureDiscontinuity] = []
     ) async throws -> ClientCaptureLibraryResult {
+        guard discontinuities.allSatisfy({ $0.recordingID == originID && $0.affectedFrames.endFrameExclusive <= canonicalPCMFrames }) else {
+            throw StoreError.invalidData("Client capture discontinuity binding is invalid")
+        }
+        let integrity = try CaptureIntegrityReport.load(nextTo: masterURL)
         do {
             return try await db.write { database in
                 let existingByOrigin = try Recording.fetchOne(
@@ -76,13 +82,20 @@ public extension RecordingStore {
                             )
                     )
                     let shouldBindIdentity = existing.originID == nil
-                    if shouldBindIdentity || shouldAdoptTranscript {
+                    guard existing.captureDiscontinuities.isEmpty || existing.captureDiscontinuities == discontinuities else {
+                        throw StoreError.originIdentityConflict
+                    }
+                    let shouldPreserveIntegrity = existing.captureDiscontinuities != discontinuities
+                        || (!existing.captureIntegrity.hasIssues && integrity.hasIssues)
+                    if shouldBindIdentity || shouldAdoptTranscript || shouldPreserveIntegrity {
                         let now = Date()
                         existing.originID = originID
                         existing.canonicalPCMHash = canonicalPCMHash
                         existing.canonicalPCMFrames = canonicalPCMFrames
                         existing.startedAt = startedAt
                         existing.endedAt = endedAt
+                        existing.captureDiscontinuities = discontinuities
+                        if integrity.hasIssues { existing.captureIntegrity = integrity }
                         if shouldAdoptTranscript {
                             existing.transcriptText = transcriptText
                             existing.jsonPath = transcriptJSONURL?.path
@@ -133,6 +146,8 @@ public extension RecordingStore {
                     processing: .ready,
                     projection: .readyV1
                 )
+                inserted.captureIntegrity = integrity
+                inserted.captureDiscontinuities = discontinuities
                 inserted.sttModelID = sttModelID
                 inserted.transcribedAt = transcribedAt
                 try inserted.insert(database)

@@ -6,6 +6,24 @@ import HarcCore
 
 @Suite("RecordingCommitter")
 struct RecordingCommitterTests {
+    @Test("a recreated committer retains the destination saved before capture")
+    func recreatedCommitterUsesSavedDestination() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.wav")
+        let original = root.appendingPathComponent("original")
+        let committer = StandaloneRecordingCommitter(destination: RecordingDestination(baseDirectory: original))
+        try committer.prepareCapture(at: source)
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+        try Data([1, 2]).write(to: source)
+        let recreated = StandaloneRecordingCommitter(destination: RecordingDestination(baseDirectory: root.appendingPathComponent("changed")))
+        let outcome = try await recreated.commit(CapturedRecording(localMasterURL: source, startedAt: Date(), endedAt: Date()))
+        guard case .standalonePublished(_, let result) = outcome else { throw TestFailure.unexpectedCommitOutcome }
+        #expect(result.wavURL.path.hasPrefix(original.path + "/"))
+        #expect(try CaptureDestinationBinding.load(for: source) != nil)
+    }
+
     private enum TestFailure: Error { case unexpectedCommitOutcome }
 
     private actor FakeOutboxCommitter: RecordingCommitter {

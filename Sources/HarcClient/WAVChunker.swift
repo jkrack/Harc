@@ -213,11 +213,16 @@ public final class WAVChunker: @unchecked Sendable {
         var offset = 12  // skip 'RIFF'(4) + size(4) + 'WAVE'(4)
         while offset + 8 <= header.count {
             guard let chunkId = String(bytes: header[offset..<offset + 4], encoding: .ascii) else { break }
-            let chunkSize = header[offset + 4..<offset + 8].withUnsafeBytes { $0.load(as: UInt32.self) }
+            let chunkSize = header.withUnsafeBytes { bytes in
+                UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self))
+            }
             if chunkId == "data" {
                 return offset + 8  // body starts after 4-byte id + 4-byte size
             }
-            let nextOffset = offset + 8 + Int(chunkSize)
+            // RIFF payloads are padded to an even byte boundary. The size
+            // field excludes that padding, so the next header may be only
+            // two-byte aligned even in a valid WAV.
+            let nextOffset = offset + 8 + Int(chunkSize) + Int(chunkSize & 1)
             if nextOffset <= offset { break }  // guard against zero/corrupt sizes
             offset = nextOffset
         }

@@ -340,7 +340,8 @@ public extension RecordingStore {
                 summaryMarkdown: recording.summaryMarkdown,
                 actionItemsMarkdown: recording.actionItemsMarkdown,
                 notesMarkdown: recording.notesMarkdown,
-                discontinuities: []
+                discontinuities: recording.captureDiscontinuities,
+                captureNeedsReview: recording.captureIntegrity.hasIssues
             )
         }
     }

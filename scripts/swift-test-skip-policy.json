@@ -1,0 +1,31 @@
+{
+  "swiftTesting": {
+    "minimumDiscovered": 1641,
+    "allowedSkips": {
+      "HarcHostTransportTests.PairingLifecycleLoopbackIntegrationTests/completeDesktopLifecycle()": "Run scripts/test-pairing-lifecycle.sh",
+      "HarcCoreTests.RecordingPublicationTests/crossVolumePublication()": "Run the disposable cross-volume qualification wrapper",
+      "HarcClientTests.EndToEndTests/transcribeFixture()": "Set HARC_INTEGRATION_TESTS=1 to run the real-model client integration test.",
+      "HarcSTTTests.TranscriberTests/transcribeShortSpeechVADOn()": "Set HARC_INTEGRATION_TESTS=1 to run real transcription model tests.",
+      "HarcSTTTests.TranscriberTests/transcribeShortSpeechVADOff()": "Set HARC_INTEGRATION_TESTS=1 to run real transcription model tests.",
+      "HarcSTTTests.DaemonIntegrationTests/transcribeOverSocket()": "Set HARC_INTEGRATION_TESTS=1 to run the real-model daemon integration test.",
+      "HarcSTTTests.ParakeetUnifiedSpikeTests/unifiedEngineEndToEnd()": "Set HARC_INTEGRATION_TESTS=1 to run real Parakeet model tests.",
+      "HarcSTTTests.ParakeetUnifiedSpikeTests/v2Baseline()": "Set HARC_INTEGRATION_TESTS=1 to run real Parakeet model tests.",
+      "HarcSTTTests.ParakeetUnifiedSpikeTests/unifiedFixtureGate()": "Set HARC_INTEGRATION_TESTS=1 to run real Parakeet model tests.",
+      "HarcSTTTests.DiarizerTests/diarizeWithEmbeddingsReturnsVectors()": "Set HARC_INTEGRATION_TESTS=1 to run real diarizer model tests.",
+      "HarcSTTTests.DiarizerTests/diarizeShortSpeech()": "Set HARC_INTEGRATION_TESTS=1 to run real diarizer model tests.",
+      "HarcStoreTests.RecordingCacheRecoveryTests/largeStreamingRecovery()": "Run separately with process memory measurement"
+    }
+  },
+  "xctest": {
+    "minimumDiscovered": 125,
+    "allowedSkips": {
+      "HarcSummarizeTests.MLXLoadVerifyTests/test_loadGemma4E2B_fromLocalDirectory_generatesNonEmptyOutput": "Requires explicitly enabled local model/corpus qualification; not closed by CI.",
+      "HarcSummarizeTests.MLXLoadVerifyTests/test_summarizerService_endToEnd_producesParsedSummary": "Requires explicitly enabled local model/corpus qualification; not closed by CI.",
+      "HarcQualityTests.RealModelGoldenSampleTests/test_inspectVADBoundaries_forLocalFixture": "Requires explicitly enabled local model/corpus qualification; not closed by CI.",
+      "HarcQualityTests.RealModelGoldenSampleTests/test_localCorpus_reportsPerCaseAccuracyTimingAndCompleteness": "Requires explicitly enabled local model/corpus qualification; not closed by CI.",
+      "HarcQualityTests.RealModelGoldenSampleTests/test_realSTTOutput_isScoredAgainstShortSpeechReference": "Requires explicitly enabled local model/corpus qualification; not closed by CI.",
+      "HarcQualityTests.RealModelGoldenSampleTests/test_realSummarizerOutput_passesCustomerRenewalGoldenSample": "Requires explicitly enabled local model/corpus qualification; not closed by CI.",
+      "HarcQualityTests.RealModelGoldenSampleTests/test_realSummarizerActionAttribution_contrastSet": "Requires explicitly enabled local model attribution evaluation; not closed by CI."
+    }
+  }
+}

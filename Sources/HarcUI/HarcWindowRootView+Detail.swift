@@ -129,6 +129,12 @@ extension HarcWindowRootView {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 detailTitleRow(recording: recording)
+                if recording.captureIntegrity.hasIssues || !recording.captureDiscontinuities.isEmpty {
+                    Label("Some audio may be missing. Review capture interruptions before relying on this recording.", systemImage: "exclamationmark.triangle")
+                        .font(.harcCaption)
+                        .foregroundStyle(Color.harc(.attention))
+                        .accessibilityIdentifier("harc.recording.captureIntegrityWarning")
+                }
 
                 WaveformPlayerView(
                     envelope: detailEnvelope,
@@ -177,6 +183,13 @@ extension HarcWindowRootView {
                 if transcriptFindVisible {
                     transcriptFindBar()
                         .frame(maxWidth: .infinity)
+                }
+
+                if let warning = detailDocument?.overlapWarning, !editorText.contains(warning) {
+                    Label(warning, systemImage: "person.2.wave.2")
+                        .font(.harcCaption)
+                        .foregroundStyle(Color.harc(.attention))
+                        .accessibilityIdentifier("harc.transcript.overlap-warning")
                 }
 
                 vocabularySuggestionBar
@@ -266,7 +279,8 @@ extension HarcWindowRootView {
                     subtitle: err
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            } else if editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !editorDirty, detailDocument?.initialText.isEmpty != false {
                 EmptyStateView(
                     icon: "doc.text.magnifyingglass",
                     title: "No transcript available",

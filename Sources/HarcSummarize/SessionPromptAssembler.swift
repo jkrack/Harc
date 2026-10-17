@@ -19,6 +19,9 @@ public enum SessionPromptAssembler {
         /// indices fall back to "Speaker N" inside the adapter.
         public let speakerNames: [Int: String]
         public let startedAt: Date
+        public var attributedUtterances: [AttributedTranscriptUtterance]? = nil
+        public var manualEditAt: Date? = nil
+        public var overlapRanges: [SpeechOverlapRange]? = nil
 
         public init(
             joinedText: String,
@@ -50,7 +53,9 @@ public enum SessionPromptAssembler {
                 joinedText: part.joinedText,
                 words: part.words,
                 speakers: part.speakers,
-                speakerNameOverrides: part.speakerNames
+                speakerNameOverrides: part.speakerNames,
+                overlapRanges: part.overlapRanges, attributedUtterances: part.attributedUtterances,
+                manualEditAt: part.manualEditAt
             )
             guard !transcript.utterances.isEmpty else { continue }
             assembled.append((part.startedAt, transcript.utterances))

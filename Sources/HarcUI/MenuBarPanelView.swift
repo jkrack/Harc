@@ -45,6 +45,7 @@ public struct MenuBarPanelView: View {
     let destinationPath: String
     let captureReadinessText: String
     let captureReadinessWarning: Bool
+    let captureIntegrityWarning: String?
     let sttReadinessText: String
     let sttReady: Bool
     let summarizerReadinessText: String
@@ -114,6 +115,7 @@ public struct MenuBarPanelView: View {
         destinationPath: String = "",
         captureReadinessText: String = "Mic + system audio",
         captureReadinessWarning: Bool = false,
+        captureIntegrityWarning: String? = nil,
         sttReadinessText: String = "Local STT ready",
         sttReady: Bool = true,
         summarizerReadinessText: String = "Summary unavailable",
@@ -176,6 +178,7 @@ public struct MenuBarPanelView: View {
         self.destinationPath = destinationPath
         self.captureReadinessText = captureReadinessText
         self.captureReadinessWarning = captureReadinessWarning
+        self.captureIntegrityWarning = captureIntegrityWarning
         self.sttReadinessText = sttReadinessText
         self.sttReady = sttReady
         self.summarizerReadinessText = summarizerReadinessText
@@ -600,7 +603,8 @@ public struct MenuBarPanelView: View {
     }
 
     private var statusSummary: String {
-        LocalStackHealthModel.summary(for: healthItems)
+        if captureIntegrityWarning != nil { return "Audio capture needs review" }
+        return LocalStackHealthModel.summary(for: healthItems)
     }
 
     private enum StatusTone { case ready, attention, broken }
@@ -616,6 +620,7 @@ public struct MenuBarPanelView: View {
     /// The single most urgent transient, one line, under the summary. The
     /// full story lives in Activity; this is the trailer.
     private var statusSubtitle: String? {
+        if let captureIntegrityWarning { return captureIntegrityWarning }
         if let stopRecovery { return stopRecovery.title }
         let pending = RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
         if pending > 0 { return "\(Pluralize.count(pending, "recording")) awaiting recovery" }

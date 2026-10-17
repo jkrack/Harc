@@ -610,6 +610,251 @@ extension DatabaseMigrator {
                 """)
         }
 
+        migrator.registerMigration("v19_capture_integrity") { db in
+            try db.alter(table: "recordings") { table in
+                table.add(column: "capture_integrity", .blob)
+                table.add(column: "capture_discontinuities", .blob)
+            }
+        }
+
+        migrator.registerMigration("v20_speaker_confirmation_provenance") { db in
+            try db.execute(sql: """
+                ALTER TABLE person_speakers ADD COLUMN is_user_confirmed INTEGER
+                    NOT NULL DEFAULT 1 CHECK(is_user_confirmed IN (0, 1))
+                """)
+            // Automatic assignment and observation were committed together using
+            // the same timestamp. Later explicit confirmations have a new stamp.
+            // Preserve labels; remove only inferred links from enrollment evidence.
+            try db.execute(sql: """
+                UPDATE person_speakers SET is_user_confirmed = 0
+                WHERE EXISTS (
+                    SELECT 1 FROM speaker_embedding_observations o
+                    JOIN recordings r ON r.canonical_uuid = o.canonical_recording_uuid
+                    WHERE r.id = person_speakers.recording_id
+                      AND o.speaker_index = person_speakers.speaker_index
+                      AND o.disposition = 'matched'
+                      AND o.received_at = person_speakers.confirmed_at
+                )
+                """)
+            if db.changesCount > 0 {
+                try db.execute(sql: "UPDATE people SET profile_revision = profile_revision + 1")
+                try db.execute(sql: "UPDATE speaker_identity_metadata SET pack_revision = pack_revision + 1")
+            }
+        }
+
+        migrator.registerMigration("v21_immutable_speaker_evidence") { db in
+            try db.execute(sql: """
+                CREATE TABLE speaker_evidence_snapshots (
+                    evidence_sha256 BLOB PRIMARY KEY NOT NULL CHECK(length(evidence_sha256) = 32),
+                    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    snapshot_json BLOB NOT NULL CHECK(length(snapshot_json) BETWEEN 1 AND 16384),
+                    retained_at REAL NOT NULL
+                )
+                """)
+            try db.execute(sql: """
+                CREATE INDEX speaker_evidence_snapshots_recording_idx
+                ON speaker_evidence_snapshots(recording_id)
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER speaker_evidence_snapshots_no_update
+                BEFORE UPDATE ON speaker_evidence_snapshots
+                BEGIN SELECT RAISE(ABORT, 'Speaker evidence snapshots are immutable'); END
+                """)
+            // No legacy backfill: a recording/index cannot establish the exact
+            // processing artifact or producer for its historical observations.
+        }
+
+        migrator.registerMigration("v22_confirmed_speaker_evidence") { db in
+            try db.execute(sql: """
+                CREATE TABLE confirmed_speaker_evidence (
+                    evidence_sha256 BLOB PRIMARY KEY NOT NULL
+                        REFERENCES speaker_evidence_snapshots(evidence_sha256) ON DELETE CASCADE,
+                    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+                    prototype_uuid TEXT NOT NULL UNIQUE CHECK(length(prototype_uuid) = 36),
+                    confirmed_at REAL NOT NULL
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX confirmed_speaker_evidence_person_idx ON confirmed_speaker_evidence(person_id)")
+        }
+
+        migrator.registerMigration("v23_speaker_confirmation_tokens") { db in
+            try db.execute(sql: "ALTER TABLE confirmed_speaker_evidence ADD COLUMN confirmation_uuid TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' CHECK(length(confirmation_uuid) = 36)")
+            try db.execute(sql: "UPDATE confirmed_speaker_evidence SET confirmation_uuid = prototype_uuid")
+        }
+
+        migrator.registerMigration("v24_current_speaker_evidence") { db in
+            try db.execute(sql: """
+                CREATE TABLE current_speaker_evidence (
+                    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    speaker_index INTEGER NOT NULL CHECK(speaker_index >= 0),
+                    evidence_sha256 BLOB NOT NULL REFERENCES speaker_evidence_snapshots(evidence_sha256),
+                    PRIMARY KEY(recording_id, speaker_index)
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER current_speaker_evidence_artifact_changed
+                AFTER UPDATE OF json_path, canonical_pcm_sha256, canonical_uuid ON recordings
+                WHEN NEW.json_path IS NOT OLD.json_path OR NEW.canonical_pcm_sha256 IS NOT OLD.canonical_pcm_sha256
+                    OR NEW.canonical_uuid IS NOT OLD.canonical_uuid
+                BEGIN DELETE FROM current_speaker_evidence WHERE recording_id = NEW.id; END
+                """)
+        }
+
+        migrator.registerMigration("v25_bound_speaker_enrollment_sources") { db in
+            try db.execute(sql: """
+                CREATE TABLE bound_speaker_enrollment_sources (
+                    recording_id INTEGER PRIMARY KEY REFERENCES recordings(id) ON DELETE CASCADE
+                )
+                """)
+            try db.execute(sql: """
+                INSERT INTO bound_speaker_enrollment_sources(recording_id)
+                SELECT DISTINCT e.recording_id FROM confirmed_speaker_evidence c
+                JOIN speaker_evidence_snapshots e ON e.evidence_sha256 = c.evidence_sha256
+                """)
+            if db.changesCount > 0 {
+                try db.execute(sql: """
+                    UPDATE people SET profile_revision = profile_revision + 1
+                    WHERE id IN (SELECT ps.person_id FROM person_speakers ps
+                        JOIN bound_speaker_enrollment_sources b ON b.recording_id = ps.recording_id)
+                    """)
+                try db.execute(sql: "UPDATE speaker_identity_metadata SET pack_revision = pack_revision + 1")
+            }
+        }
+
+        migrator.registerMigration("v26_speaker_assignment_history") { db in
+            try db.execute(sql: """
+                CREATE TABLE speaker_assignment_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    recording_revision INTEGER NOT NULL,
+                    artifact_sha256 BLOB,
+                    assignments_json BLOB NOT NULL,
+                    archived_at REAL NOT NULL
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER speaker_assignment_history_immutable BEFORE UPDATE ON speaker_assignment_history
+                BEGIN SELECT RAISE(ABORT, 'speaker assignment history is immutable'); END
+                """)
+        }
+
+        migrator.registerMigration("v27_published_speaker_recognition_pack") { db in
+            try db.execute(sql: """
+                CREATE TABLE published_speaker_recognition_pack (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    pack_payload BLOB NOT NULL
+                )
+                """)
+            // Older hosts generated different validity dates under the same revision.
+            // Invalidate those client payloads before the first durable publication.
+            try RecordingStore.bumpSpeakerRecognitionPackRevision(in: db,
+                at: Date().timeIntervalSince1970)
+        }
+
+        migrator.registerMigration("v28_unmapped_speaker_observations") { db in
+            try db.execute(sql: """
+                CREATE TABLE unmapped_speaker_observations (
+                    operation_uuid TEXT PRIMARY KEY,
+                    canonical_recording_uuid TEXT NOT NULL,
+                    source_device_id BLOB NOT NULL CHECK(length(source_device_id) = 32),
+                    request_sha256 BLOB NOT NULL CHECK(length(request_sha256) = 32),
+                    request_json BLOB NOT NULL,
+                    received_at REAL NOT NULL,
+                    result_json BLOB NOT NULL
+                )
+                """)
+        }
+
+        migrator.registerMigration("v29_selected_speaker_cluster_map") { db in
+            try db.execute(sql: """
+                CREATE TABLE selected_speaker_cluster_map (
+                    recording_id INTEGER PRIMARY KEY REFERENCES recordings(id) ON DELETE CASCADE,
+                    map_json BLOB NOT NULL,
+                    map_sha256 BLOB NOT NULL CHECK(length(map_sha256) = 32),
+                    projection_sha256 BLOB NOT NULL CHECK(length(projection_sha256) = 32)
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER selected_speaker_cluster_map_invalidated
+                AFTER UPDATE OF json_path, canonical_pcm_sha256, canonical_uuid, origin_device_id, origin_recording_uuid ON recordings
+                WHEN NEW.json_path IS NOT OLD.json_path OR NEW.canonical_pcm_sha256 IS NOT OLD.canonical_pcm_sha256
+                    OR NEW.canonical_uuid IS NOT OLD.canonical_uuid OR NEW.origin_device_id IS NOT OLD.origin_device_id
+                    OR NEW.origin_recording_uuid IS NOT OLD.origin_recording_uuid
+                BEGIN DELETE FROM selected_speaker_cluster_map WHERE recording_id = NEW.id; END
+                """)
+        }
+
+        migrator.registerMigration("v30_bound_speaker_observation_provenance") { db in
+            try db.execute(sql: """
+                CREATE TABLE bound_speaker_observation_provenance (
+                    operation_uuid TEXT PRIMARY KEY REFERENCES speaker_embedding_observations(operation_uuid) ON DELETE CASCADE,
+                    evidence_sha256 BLOB NOT NULL REFERENCES speaker_evidence_snapshots(evidence_sha256) ON DELETE CASCADE,
+                    cluster_map_sha256 BLOB NOT NULL CHECK(length(cluster_map_sha256) = 32),
+                    request_json BLOB NOT NULL
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER bound_speaker_observation_provenance_no_update
+                BEFORE UPDATE ON bound_speaker_observation_provenance
+                BEGIN SELECT RAISE(ABORT, 'Bound speaker provenance is immutable'); END
+                """)
+        }
+
+        migrator.registerMigration("v31_selected_edge_artifact_source") { db in
+            try db.execute(sql: """
+                CREATE TABLE selected_edge_artifact_source (
+                    recording_id INTEGER PRIMARY KEY REFERENCES selected_speaker_cluster_map(recording_id) ON DELETE CASCADE,
+                    signed_metadata_path TEXT NOT NULL,
+                    bundle_path TEXT NOT NULL,
+                    signed_metadata_sha256 BLOB NOT NULL CHECK(length(signed_metadata_sha256) = 32),
+                    bundle_sha256 BLOB NOT NULL CHECK(length(bundle_sha256) = 32)
+                )
+                """)
+        }
+
+        migrator.registerMigration("v32_host_speaker_processing_outcome") { db in
+            try db.execute(sql: """
+                CREATE TABLE host_speaker_decision_provenance (
+                    operation_uuid TEXT PRIMARY KEY REFERENCES speaker_embedding_observations(operation_uuid) ON DELETE CASCADE,
+                    evidence_sha256 BLOB NOT NULL REFERENCES speaker_evidence_snapshots(evidence_sha256)
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER host_speaker_decision_provenance_no_update
+                BEFORE UPDATE ON host_speaker_decision_provenance
+                BEGIN SELECT RAISE(ABORT, 'Host speaker decision provenance is immutable'); END
+                """)
+            try db.execute(sql: """
+                CREATE TABLE host_speaker_processing_outcome (
+                    recording_id INTEGER PRIMARY KEY REFERENCES recordings(id) ON DELETE CASCADE,
+                    outcome_json BLOB NOT NULL
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER host_speaker_outcome_invalidated
+                AFTER UPDATE OF json_path, canonical_pcm_sha256, canonical_uuid, processing_state ON recordings
+                WHEN NEW.json_path IS NOT OLD.json_path OR NEW.canonical_pcm_sha256 IS NOT OLD.canonical_pcm_sha256
+                    OR NEW.canonical_uuid IS NOT OLD.canonical_uuid OR NEW.processing_state != 'ready'
+                BEGIN DELETE FROM host_speaker_processing_outcome WHERE recording_id = NEW.id; END
+                """)
+        }
+
+        migrator.registerMigration("v33_host_speaker_review_queue") { db in
+            try db.execute(sql: """
+                CREATE TABLE host_speaker_review_queue (
+                    recording_id INTEGER PRIMARY KEY REFERENCES host_speaker_processing_outcome(recording_id) ON DELETE CASCADE,
+                    job_uuid TEXT NOT NULL UNIQUE,
+                    expected_outcome_json BLOB NOT NULL,
+                    eligible_at REAL NOT NULL,
+                    failure_count INTEGER NOT NULL DEFAULT 0 CHECK(failure_count BETWEEN 0 AND 8)
+                );
+                CREATE INDEX host_speaker_review_due ON host_speaker_review_queue(eligible_at, recording_id);
+                CREATE TRIGGER host_speaker_review_superseded
+                AFTER UPDATE OF outcome_json ON host_speaker_processing_outcome
+                WHEN NEW.outcome_json IS NOT OLD.outcome_json
+                BEGIN DELETE FROM host_speaker_review_queue WHERE recording_id = NEW.recording_id; END;
+                """)
+        }
         return migrator
     }
 }

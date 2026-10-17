@@ -6,6 +6,16 @@ import HarcCore
 @Suite("SessionPromptAssembler")
 struct SessionPromptAssemblerTests {
 
+    @Test func attributedUtterancesAndManualEditsSurvivePartAssembly() throws {
+        var value = SessionPromptAssembler.Part(joinedText: "untimed", words: [], speakers: [],
+            speakerNames: [2: "Alice"], startedAt: Date())
+        value.attributedUtterances = [try AttributedTranscriptUtterance(text: "untimed", startMs: 0, endMs: 1000,
+            speakerAttribution: WordSpeakerAttribution(speakerIndex: 2))]
+        #expect(SessionPromptAssembler.make(parts: [value]).utterances.first?.speaker == "Alice")
+        value.manualEditAt = Date()
+        #expect(SessionPromptAssembler.make(parts: [value]).utterances.first?.speaker == nil)
+    }
+
     private func part(
         text: String,
         speaker: Int = 0,

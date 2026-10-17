@@ -149,6 +149,7 @@ let package = Package(
         .target(
             name: "HarcHost",
             dependencies: [
+                "HarcCore",
                 "HarcDomain",
                 "HarcIdentity",
                 "HarcProtocol",
