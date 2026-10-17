@@ -931,7 +931,9 @@ replacement is modeled as revocation followed by new pairing.
 
 ### 13.1 Platform and dependency baseline
 
-The first mobile target has a deployment floor of iOS 18. The current macOS
+The mobile target has a deployment floor of iOS 26 (raised from iOS 18 on
+2026-10-17 so the app can adopt the iOS 26 Liquid Glass tab bar, search tab,
+and tab-bar bottom accessory without a parallel legacy UI). The current macOS
 deployment floor remains unchanged. Harc uses the gRPC Swift 2 package family:
 
 Mobile hardware support is deliberately two-tiered. Capture, protected durable
@@ -943,7 +945,7 @@ disguise missing oldest-device qualification. Optional on-device inference MAY
 use a separately measured runtime capability/performance tier, but an unavailable
 tier falls back to the adopted Host and MUST NOT block or degrade durable capture.
 Before release, the evidence bundle names and qualifies the oldest supported
-physical iPhone; source compatibility with iOS 18 alone is not a performance or
+physical iPhone; source compatibility with iOS 26 alone is not a performance or
 reliability claim for every eligible device.
 
 - `GRPCCore` from `grpc-swift-2`;

@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.harc
   deploymentTarget:
     macOS: "26.0"
-    iOS: "18.0"
+    iOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 settings:
@@ -183,7 +183,7 @@ targets:
   HarcMobile:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileApp
         excludes:
@@ -248,7 +248,7 @@ targets:
   HarcMobileAppTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileAppTests
       # Reuse socket-free, signed bootstrap fixtures; never weaken evidence access.
@@ -268,7 +268,7 @@ targets:
   HarcMobileUITests:
     type: bundle.ui-testing
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileUITests
     dependencies:
@@ -284,7 +284,7 @@ targets:
   HarcMobileSpikes:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileSpikes
         excludes:
@@ -318,7 +318,7 @@ targets:
   HarcMobileSpikesTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileSpikesTests
     dependencies:

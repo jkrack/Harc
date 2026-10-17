@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Harc",
-    platforms: [.macOS(.v26), .iOS(.v18)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
         .library(name: "HarcCore", targets: ["HarcCore"]),
         .library(name: "HarcDomain", targets: ["HarcDomain"]),

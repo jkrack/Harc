@@ -2,7 +2,7 @@
 
 The `mobile-configuration` job runs only after the Mac `build` job succeeds.
 It builds and executes the 15 HarcMobileConfigurationTests on one installed
-available iPhone simulator with iOS 18 or newer. The selector prefers an already booted eligible iPhone, then chooses the newest
+available iPhone simulator with iOS 26 or newer. The selector prefers an already booted eligible iPhone, then chooses the newest
 available iOS runtime within that set and sorts devices by name and UDID. Cold
 CI hosts use all available eligible iPhones. This avoids unnecessary local cold
 startup while preserving explicit destination evidence; unavailable

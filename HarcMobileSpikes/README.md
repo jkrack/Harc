@@ -1,6 +1,6 @@
 # HarcMobileSpikes
 
-This directory is reserved for the non-shipping, signed iOS 18 physical-device
+This directory is reserved for the non-shipping, signed iOS 26 physical-device
 harness used to decide the lossless codec before host ingest and to validate
 background TLS/gRPC behavior before the production mobile transport freezes.
 
