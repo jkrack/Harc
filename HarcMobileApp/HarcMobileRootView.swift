@@ -13,10 +13,7 @@ struct HarcMobileRootView: View {
 
     @Environment(HarcMobileAppModel.self) private var model
     @State private var selectedTab: RootTab = .record
-    @State private var showsPairingScanner = false
-    @State private var showsReviewSample = false
     @State private var showsLocalRecordings = false
-    @State private var showsForgetHostConfirmation = false
     @State private var showsSetupAndSync = false
     @State private var captureAccessoryStartedAt: Date?
     @State private var libraryQuery = ""
@@ -43,17 +40,7 @@ struct HarcMobileRootView: View {
                     libraryView
                         .navigationTitle("Library")
                         .toolbar {
-                            ToolbarItemGroup(placement: .topBarTrailing) {
-                                Button(
-                                    "Open Review Sample",
-                                    systemImage: "doc.text.magnifyingglass"
-                                ) {
-                                    showsReviewSample = true
-                                }
-                                .accessibilityIdentifier(
-                                    HarcMobileAccessibilityID
-                                        .openReviewSampleToolbar
-                                )
+                            ToolbarItem(placement: .topBarTrailing) {
                                 hostPill
                             }
                         }
@@ -124,77 +111,7 @@ struct HarcMobileRootView: View {
             model.hostHealthCoordinator?.stopMonitoring()
         }
         .sheet(isPresented: $showsSetupAndSync) {
-            setupAndSyncSheet
-        }
-        .sheet(isPresented: $showsReviewSample) {
-            NavigationStack {
-                HarcMobileReviewSampleView()
-            }
-        }
-    }
-
-    private var setupAndSyncSheet: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if !model.rejectedCaptureMetadataFiles.isEmpty {
-                    rejectedCaptureMetadataWarning
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                }
-                hostView
-            }
-            .navigationTitle("Setup & Sync")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink {
-                        HarcMobilePrivacyView()
-                    } label: {
-                        Label(
-                            "Privacy & Data",
-                            systemImage: "hand.raised"
-                        )
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { showsSetupAndSync = false }
-                }
-            }
-        }
-        .accessibilityIdentifier(HarcMobileAccessibilityID.setupAndSync)
-        .sheet(isPresented: $showsPairingScanner) {
-            pairingScannerSheet
-        }
-    }
-
-    private var pairingScannerSheet: some View {
-        NavigationStack {
-            HarcPairingScannerView(
-                onCode: { code in
-                    showsPairingScanner = false
-                    Task {
-                        await model.pairingCoordinator?.begin(
-                            scannedURI: code
-                        )
-                    }
-                },
-                onFailure: { message in
-                    showsPairingScanner = false
-                    model.pairingCoordinator?.scannerFailed(message)
-                }
-            )
-            .ignoresSafeArea()
-            .navigationTitle("Scan Host Code")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        showsPairingScanner = false
-                        model.pairingCoordinator?
-                            .pairingScannerCancelled()
-                    }
-                }
-            }
+            HarcMobileSetupAndSyncView()
         }
     }
 
@@ -350,26 +267,6 @@ struct HarcMobileRootView: View {
             model.libraryCoordinator?.refresh()
         }
         .onAppear { model.transferCoordinator?.refreshLocalRecordings() }
-        .toolbar {
-            if let coordinator = model.libraryCoordinator {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu("Host Library cache", systemImage: "externaldrive") {
-                        Button("Clear downloaded audio") {
-                            try? coordinator.clearDownloadedAudio()
-                        }
-                        Button("Rebuild Host Library cache") {
-                            try? coordinator.resetLibraryCache()
-                        }
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Refresh Library", systemImage: "arrow.clockwise") {
-                        model.transferCoordinator?.refreshLocalRecordings()
-                        coordinator.refresh()
-                    }
-                }
-            }
-        }
     }
 
     private var syncStatus: HarcMobileSyncStatusPresentation {
@@ -392,36 +289,23 @@ struct HarcMobileRootView: View {
             syncDetailView
         } label: {
             VStack(alignment: .leading, spacing: 5) {
-                Label("Sync status", systemImage: "arrow.triangle.2.circlepath")
+                Label("Sending to Mac", systemImage: "arrow.up.circle")
                     .font(.headline)
-                Text(syncStatus.title).foregroundStyle(.secondary)
                 Text("\(syncStatus.pendingCount) recordings waiting to transfer")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
         }
         .accessibilityLabel("Sync status")
-        .accessibilityValue("\(syncStatus.title). \(syncStatus.pendingCount) recordings waiting to transfer.")
+        .accessibilityValue(
+            "\(syncStatus.pendingCount) recordings waiting to transfer."
+        )
         .accessibilityHint("Shows transfer availability, Host connection and Library status.")
         .accessibilityIdentifier(HarcMobileSyncAccessibilityID.libraryStatus)
     }
 
     private var syncDetailView: some View {
-        HarcMobileSyncDetailView(
-            presentation: syncStatus,
-            openHostSettings: { showsSetupAndSync = true }
-        ) {
-            ScrollView {
-                if let transfer = model.transferCoordinator {
-                    localRecordingsSection(
-                        transfer,
-                        captureIsActive: model.captureCoordinator?.isRecording ?? false
-                    )
-                    .padding()
-                }
-            }
-            .navigationTitle("On This iPhone")
-        }
+        HarcMobileSendingToMacView()
     }
 
     @ViewBuilder
@@ -461,25 +345,13 @@ struct HarcMobileRootView: View {
         case .loadingCache, .refreshing:
             ProgressView("Syncing Library…")
         case .unpaired:
-            VStack(spacing: 16) {
-                ContentUnavailableView(
-                    "Pair a Host",
-                    systemImage: "macmini",
-                    description: Text(
-                        "Pair locally to sync the Library view permitted by your Host."
-                    )
+            ContentUnavailableView(
+                "Pair a Host",
+                systemImage: "macmini",
+                description: Text(
+                    "Pair locally to sync the Library view permitted by your Host."
                 )
-                Button(
-                    "Open Offline Review Sample",
-                    systemImage: "doc.text.magnifyingglass"
-                ) {
-                    showsReviewSample = true
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier(
-                    HarcMobileAccessibilityID.openReviewSample
-                )
-            }
+            )
         case .accessNotGranted:
             ContentUnavailableView(
                 "Library access not granted",
@@ -750,138 +622,6 @@ struct HarcMobileRootView: View {
         }
     }
 
-    @ViewBuilder
-    private var hostView: some View {
-        switch model.readiness {
-        case .ready(let deviceID, _):
-            hostReadyView(deviceID: deviceID)
-        default:
-            ContentUnavailableView(
-                "Finish local setup first",
-                systemImage: "hourglass"
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func hostReadyView(deviceID: DeviceID) -> some View {
-        if let coordinator = model.pairingCoordinator {
-            List {
-                Section("Sync") {
-                    NavigationLink { syncDetailView } label: {
-                        Label("Sync status", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .accessibilityIdentifier(HarcMobileSyncAccessibilityID.hostStatusLink)
-                }
-                Section("This iPhone") {
-                    LabeledContent("Device ID") {
-                        Text(String(deviceID.description.prefix(16)) + "…")
-                            .font(.caption.monospaced())
-                    }
-                }
-                pairingContent(coordinator)
-            }
-            .confirmationDialog(
-                "Forget this Host?",
-                isPresented: $showsForgetHostConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("Forget This Host", role: .destructive) {
-                    coordinator.forgetActiveHost()
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(
-                    "This removes the saved pairing from this iPhone. Local recordings stay protected. Revoke this iPhone separately on the Host if it should no longer be trusted."
-                )
-            }
-        } else {
-            ProgressView("Preparing secure pairing…")
-        }
-    }
-
-    @ViewBuilder
-    private func pairingContent(
-        _ coordinator: HarcMobilePairingCoordinator
-    ) -> some View {
-        switch coordinator.state {
-        case .unpaired:
-            Section {
-                Button("Scan Host Pairing Code", systemImage: "qrcode.viewfinder") {
-                    showsPairingScanner = true
-                }
-                .accessibilityIdentifier(
-                    HarcMobileAccessibilityID.scanPairingCode
-                )
-            } footer: {
-                Text(
-                    "Scanning uses the camera, then connects over your local network. iOS may ask for both permissions. The short-lived code pins the Host identity and TLS route; no cloud account is used."
-                )
-            }
-        case .connecting:
-            Section {
-                HStack {
-                    ProgressView()
-                    Text("Verifying Host and proving this iPhone…")
-                }
-            }
-        case .compareWords(let host, let phrase, let expiresAt):
-            Section("Compare on \(host)") {
-                Text(phrase)
-                    .font(.title2.weight(.semibold).monospaced())
-                    .textSelection(.enabled)
-                    .accessibilityLabel("Security words: \(phrase)")
-                Text("Code expires \(expiresAt, style: .relative).")
-                    .foregroundStyle(.secondary)
-                Button("These Four Words Match", systemImage: "checkmark.shield") {
-                    Task { await coordinator.confirmWordsMatch() }
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier(
-                    HarcMobileAccessibilityID.pairingWordsMatch
-                )
-                Button("Words Do Not Match", role: .destructive) {
-                    Task { await coordinator.wordsDoNotMatch() }
-                }
-                .accessibilityIdentifier(
-                    HarcMobileAccessibilityID.pairingWordsMismatch
-                )
-            }
-        case .awaitingHostApproval(let host, let phrase):
-            Section("Waiting for \(host)") {
-                HStack {
-                    ProgressView()
-                    Text("Approve this iPhone on the Host computer.")
-                }
-                LabeledContent("Security words", value: phrase)
-            }
-        case .paired(let host):
-            Section {
-                Label(host, systemImage: "checkmark.shield.fill")
-                    .foregroundStyle(.green)
-                Button("Repair or Re-pair This Host") {
-                    coordinator.beginReplacement()
-                    showsPairingScanner = true
-                }
-                Button("Forget This Host", role: .destructive) {
-                    showsForgetHostConfirmation = true
-                }
-            } header: {
-                Text("Adopted Host")
-            } footer: {
-                Text("Reconnects revalidate the signed Host transport and device grant before opening a session. Forgetting is local-only and never deletes recordings.")
-            }
-        case .failed(let message):
-            Section("Pairing Failed") {
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                Button("Try Again") {
-                    coordinator.resetFailure()
-                    showsPairingScanner = true
-                }
-            }
-        }
-    }
 }
 
 private struct HarcMobileCaptureAccessory: View {
@@ -952,7 +692,7 @@ private struct HarcMobileLiveDot: View {
     }
 }
 
-private struct HarcMobileLocalRecordingRow: View {
+struct HarcMobileLocalRecordingRow: View {
     let recording: HarcMobileLocalRecording
     let captureIsActive: Bool
     let retryTransfer: (UUID) -> Void
@@ -1080,7 +820,7 @@ private struct HarcMobileLocalRecordingRow: View {
             Label("Transferring", systemImage: "arrow.up.circle")
                 .foregroundStyle(.secondary)
         case .retryNeeded where !transferRetryIsAvailable:
-            Label("Transfer not enabled", systemImage: "iphone")
+            Label("Waiting", systemImage: "iphone")
         case .securityBlocked where !transferRetryIsAvailable:
             Label("Host access needs review", systemImage: "lock")
         case .retryNeeded:

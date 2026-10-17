@@ -28,8 +28,8 @@ struct HarcMobileSyncStatusPresentation: Equatable {
     let qualificationNotice: String?
 
     static let qualificationExplanation =
-        "This build keeps audio transfers off until transfer safety checks are complete. "
-        + "Recordings remain on this iPhone for playback and export. Retry cannot enable transfers."
+        "Sending to your Mac isn't turned on in this version of Harc yet. "
+        + "Your recordings are safe here, and you can play or export them anytime."
 
     static func make(
         host: Host,
@@ -50,7 +50,7 @@ struct HarcMobileSyncStatusPresentation: Equatable {
                           "Transfer stopped for a security or authorization check. Review Host access before trying again. Local recordings remain protected.", .hostSettings)
         }
         if !codecQualified || transfer == .qualificationRequired {
-            return status(.qualificationRequired, "Transfers not enabled in this build",
+            return status(.qualificationRequired, "Recordings waiting to send",
                           qualificationExplanation, .localRecordings)
         }
         if host == .unpaired || transfer == .waitingForPairing {
