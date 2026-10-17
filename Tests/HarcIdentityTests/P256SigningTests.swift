@@ -88,6 +88,28 @@ struct P256SigningTests {
         #expect(publicKey.isValidSignature(signature, for: digest))
     }
 
+    // Independent scalar-15 diagnostic, valid low-S form accepted by the
+    // original verifier while the equivalent high-S form is rejected there.
+    // This prevents an always-reflect replacement of the original path.
+    @Test("valid signatures that require the original verification path remain accepted")
+    func originalVerificationPathRemainsAvailable() throws {
+        let key = try P256X963PublicKey(try Data(hex: capturedPublicKeyHex))
+        let digest = try P256SHA256Digest(try Data(hex:
+            "15793fac00058cbcc93bb50dcc1f13d81e4ba2dc2c67259115b5a5c42bd16585"
+        ))
+        let signature = try P256RawSignature(try Data(hex: """
+            2366877840d73a34104fbcf6ef0820ee4fc49d9cc2bccd1e3c3bb0e59b2bc844
+            563f56978f892935f2777b3fa5b40b5ed5c547bc686f203bbde50be0d3456833
+            """))
+        #expect(key.isValidSignature(signature, for: digest))
+        #expect(throws: IdentityCryptoError.signatureNotLowS) {
+            try P256RawSignature(try Data(hex: """
+                2366877840d73a34104fbcf6ef0820ee4fc49d9cc2bccd1e3c3bb0e59b2bc844
+                a9c0a9677076d6cb0d8884c05a4bf4a0e721b2f13ea87e4935d4bee2291dbd1e
+                """))
+        }
+    }
+
     @Test("identity derivation uses the exact versioned X9.63 domain separator")
     func identityDerivationVector() throws {
         let publicKey = try P256X963PublicKey(try Data(hex: publicKeyHex))

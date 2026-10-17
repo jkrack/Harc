@@ -330,7 +330,8 @@ let package = Package(
         .testTarget(name: "HarcDomainTests", dependencies: ["HarcDomain"]),
         .testTarget(
             name: "HarcIdentityTests",
-            dependencies: ["HarcIdentity", "HarcDomain"]
+            dependencies: ["HarcIdentity", "HarcDomain"],
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "HarcTransferTests",
