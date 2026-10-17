@@ -140,7 +140,7 @@ logs, result bundles, hardware/OS identity, and artifact digests together.
 
 | Gate | Current status | Required closure |
 | --- | --- | --- |
-| Candidate version/build identification | Identified only | Match source 0.14.13 (68); choose a clean pushed source commit before artifact qualification. |
+| Candidate version/build identification | Identified only | Match source 0.14.15 (70); retain the clean source commit with the new artifact receipts. |
 | Repository input preflight | Source inputs and public URLs passed during preparation | `xcodegen generate` and source/public-URL preflight passed in the isolated readiness checkout. Repeat on the clean committed candidate and retain its exit status. This does not close the gates below. |
 | Packaged iPhone configuration/privacy assertions | Combined-source simulator CI pass | All 15 configuration tests passed with the 28 selected mobile tests above. Repeat on the sealed release artifact and retain its packaged manifest. |
 | Package, Mac app, embedded helpers | Combined main CI pass | Main `0ef6054` passed both CI jobs; local macOS/helper validation also passed at its identical reviewed tree. Repeat affected gates after source changes and retain exact release-artifact identity. Keep Mac distribution on Sparkle. |
