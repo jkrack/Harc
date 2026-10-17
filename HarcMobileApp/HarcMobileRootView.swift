@@ -294,16 +294,7 @@ struct HarcMobileRootView: View {
             presentation: syncStatus,
             openHostSettings: { selectedTab = .host }
         ) {
-            ScrollView {
-                if let transfer = model.transferCoordinator {
-                    localRecordingsSection(
-                        transfer,
-                        captureIsActive: model.captureCoordinator?.isRecording ?? false
-                    )
-                    .padding()
-                }
-            }
-            .navigationTitle("On This iPhone")
+            localRecordingsDestination
         }
     }
 
@@ -605,6 +596,42 @@ struct HarcMobileRootView: View {
             return HarcMobilePalette.coral
         }
         return HarcMobilePalette.action
+    }
+
+    private var localRecordingsDestination: some View {
+        ScrollView {
+            Group {
+                if let transfer = model.transferCoordinator {
+                    if transfer.localRecordings.isEmpty,
+                       transfer.localRecordingsError == nil {
+                        ContentUnavailableView(
+                            "No recordings yet",
+                            systemImage: "iphone",
+                            description: Text(
+                                "Recordings saved on this iPhone appear here, even without a Host."
+                            )
+                        )
+                        .accessibilityIdentifier("harc.mobile.local-recordings.empty")
+                    } else {
+                        localRecordingsSection(
+                            transfer,
+                            captureIsActive: model.captureCoordinator?.isRecording ?? false
+                        )
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "Local recordings unavailable",
+                        systemImage: "lock",
+                        description: Text("Unlock iPhone to open protected local recordings.")
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+        }
+        .frame(maxWidth: .infinity)
+        .navigationTitle("On This iPhone")
+        .accessibilityIdentifier("harc.mobile.local-recordings")
     }
 
     @ViewBuilder
