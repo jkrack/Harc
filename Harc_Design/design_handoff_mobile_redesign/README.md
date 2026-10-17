@@ -1,4 +1,9 @@
-# Handoff (DRAFT, still iterating): HarcMobile redesign (iOS 26)
+# Handoff: HarcMobile redesign (iOS 26)
+
+**Status (2026-10-17):** approved for implementation: the shell and
+navigation, the Setup & Sync sheet (P4 to P7), the single Library list (P2),
+search, and the record button motion. **Still in design:** recording detail
+(P3). Build P3 only when this line says so.
 
 ## Overview
 
@@ -42,6 +47,13 @@ at the canvas's own file names and can be ignored.
 | `P5-SendingToMac.dc.html` | Setup › Sending to Mac |
 | `P6-PairAMac.dc.html` | Pairing flow, step 2 (compare words) |
 | `P7-Advanced.dc.html` | Setup › Advanced |
+| `flow/01` to `flow/12` | The full approved flow as linked screens; when a `flow/` screen and a `P` screen disagree, `flow/` wins |
+| `RecordButtonMotion.dc.html` | Animated motion reference: current blob (left) and approved fluid blob (right); its script holds the exact motion math |
+
+The `flow/` screens, in order: Record, Recording, Library while recording,
+Library, Recording detail (still in design), Setup & Sync, Sending to Mac,
+Pair step 1 (scan), Pair step 2 (compare words), Pair step 3 (approve on
+Mac), Advanced, Search.
 
 The recording-in-progress screen on the Record tab does not change. Keep
 `HarcMobileCaptureHeroView` as shipped.
@@ -114,7 +126,12 @@ Files: `HarcMobileRootView.swift`, new files as needed.
   show "Transcribing on {Mac}…". Pinned rows show a pin glyph.
 - Local-row actions (Play, Export) move to swipe actions and the detail
   screen. They are no longer inline buttons.
-- Search results (search tab) reuse the same row with a highlighted snippet.
+- Search results (search tab) reuse the same row with a highlighted snippet
+  and the speaker and timestamp of the match ("Priya at 14:02"). Footnote:
+  "Recordings only on this iPhone are matched by title until they reach your
+  Mac."
+- A recording that just stopped appears at the top of Today immediately,
+  as a local row, before any transfer.
 
 ### P3 Recording detail
 
@@ -193,13 +210,18 @@ The existing pairing coordinator states, presented as a three-step flow in
 a sheet: **1 Scan code**, **2 Compare words**, **3 Approve on Mac**. A
 progress strip is shown at the top.
 
-- Step 1: an explainer, then the camera scanner (`HarcPairingScannerView`).
-  The permissions sentence moves here from the Host tab footer.
+- Step 1: heading "Scan the code on your Mac", the line "On your Mac, open
+  Harc Settings and choose Pair a Device. A code appears there.", the camera
+  scanner (`HarcPairingScannerView`) in a rounded viewfinder, and the footer
+  "Harc asks for the camera to scan, then Local Network to reach your Mac
+  directly. The code is short-lived and no cloud account is used."
 - Step 2 (mockup): heading "Do these words match?", the line "{Mac} is
   showing four words. They should be exactly the same as these.", the four
   words in a 2×2 grid (monospaced), "Code expires in N minutes", a primary
   **They match** button, and a destructive text button **They don't match**.
-- Step 3: spinner and "Approve this iPhone on {Mac}."
+- Step 3: spinner, heading "Approve this iPhone on {Mac}", and the line "Harc
+  on your Mac is asking whether to trust this iPhone. Choose Allow there to
+  finish." Cancel stays available.
 - Success dismisses to the Setup sheet with the Mac card updated. Failure
   shows the message and a "Try again" button.
 
@@ -215,6 +237,66 @@ progress strip is shown at the top.
   review sample".
 - **Forget {Mac}** (destructive, keeps the existing confirmation dialog). The
   footer explains that this is local-only and that recordings stay.
+
+## Record button motion (approved)
+
+Reference: `reference/RecordButtonMotion.dc.html`. The right-hand blob is
+approved; its `fluidVals` and `step` functions are the source of truth for
+the numbers below. Implement in `Sources/HarcPresenceUI/HarcPresenceBlob.swift`.
+
+**Scope.** The blob is shared with the Mac app (mini, compact, and standard
+sizes in the menu bar panel, record card, island, and Quick Capture). Add the
+fluid motion as an opt-in, for example `motion: .fluid` with `.classic` as the
+default, and pass `.fluid` only from the iOS hero call sites in
+`HarcMobileCaptureExperience.swift`. The Mac must render exactly as before.
+
+What changes, relative to today's `HarcPresenceStyle` and `HarcPresenceShape`:
+
+1. **Frame rate.** Drive the hero at the display rate:
+   `TimelineView(.animation(paused: reduceMotion))` with no 15 or 24 fps cap.
+2. **Shape.** 64 points (up from 36), joined with a smooth closed curve
+   (Catmull-Rom to cubic Bézier, not midpoint quadratics). The radius is
+   `96 * (1 + breath + organic + voice)` in a 280pt frame. Scale it to the
+   hero diameter:
+   - `organic = (0.034·sin(2θ + 0.41·t·s + 0.3) + 0.028·sin(3θ − 0.57·t·s + 1.7)
+     + 0.016·sin(5θ + 0.83·t·s + 4.1) + 0.008·sin(7θ − 1.21·t·s)) · (1 + 0.5·m)`
+   - `voice = level · (0.07 + 0.035·sin(4θ + 2.2·t))`
+   - `breath = 0.018 · sin(0.9·t·s)`
+   - `s = 1 + 0.45·m` (speed rises while recording); `m` is the morph value
+     below.
+   The non-commensurate frequencies are the point: the outline must never
+   visibly loop.
+3. **Interior.** Replace the rotating `AngularGradient` with flowing color:
+   a base fill plus four soft radial color pools, clipped to the shape, each
+   drifting on its own slow orbit (radius about 50 by 44pt in the reference
+   frame, angular rates 0.23 to 0.52 rad/s times `s`). An animated
+   `MeshGradient` clipped to the shape is the preferred implementation;
+   stacked `RadialGradient`s are acceptable. While recording, the pools grow
+   slightly with level. Colors:
+   - Idle: base #2A2580; pools #7838B8, #1A94BF, #4B3FD1, #A04BD9.
+   - Recording: base #B8283A; pools #F0554D, #FF8A5C, #7838B8, #E8334D.
+   Add a soft white sheen ellipse near the top-left at about 32% opacity.
+4. **Halo.** The halo uses the same shape evaluated 0.35s behind
+   (`t − 0.35`), scaled 1.1 plus `level · 0.06`, blurred about 22pt at 60%
+   opacity. The lag is what makes it read as liquid.
+5. **Idle-to-recording morph.** No instant style swap. A spring
+   (stiffness 38, damping 10) drives `m` from 0 to 1. Colors, speed, and
+   amplitude interpolate on `m`; the mic glyph fades and shrinks out as the
+   stop square fades and grows in.
+6. **Press.** Replace the flat 0.96 scale with a spring
+   (stiffness 520, damping 13) toward 0.93 while pressed. Squash
+   horizontally: x scale = `p · (1 + (1 − p) · 0.45)`, y scale = `p`. On
+   release it overshoots and settles. Keep the existing haptics.
+7. **Audio smoothing.** Asymmetric smoothing of `audioLevel`: attack 0.35,
+   release 0.06 per 60 Hz frame (frame-rate independent:
+   `1 − (1 − rate)^(dt·60)`). No raw level reaches the shape.
+8. **Reduce Motion.** No deformation, no orbit, no breath; the morph becomes
+   a plain cross-fade. This matches today's Reduce Motion contract.
+
+Keep the shape, color, and halo work inside one `Canvas` or a single shape
+pass, so the hero stays cheap. Profile on the oldest supported iPhone (SE
+2nd generation). If it drops frames, reduce pools to three before lowering
+the frame rate.
 
 ## Copy rules
 
@@ -276,11 +358,12 @@ and storage-full and saved states.
    placeholder sheet that contains today's Host view. Remove the Host tab.
    Update the UI tests.
 2. Setup & Sync sheet: P4, P5, P6, and P7, built from today's Host and sync
-   views.
+   views (`flow/06` to `flow/11`).
 3. Library: one merged list, attention row, swipe actions, and search tab
-   results.
-4. Recording detail: P3.
-5. Copy and tokens: the copy rules, the iOS intent colors, and the palette
+   results (`flow/03`, `flow/04`, `flow/12`).
+4. Record button motion (see "Record button motion").
+5. Recording detail: P3. Not yet approved.
+6. Copy and tokens: the copy rules, the iOS intent colors, and the palette
    deduplication.
 
 Each PR should build for the iOS 26 simulator, pass `HarcMobileAppTests` and
