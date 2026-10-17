@@ -404,10 +404,11 @@ struct HarcMobileCaptureHeroView: View {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
                     size: .hero,
+                    motion: .fluid,
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(HarcMobileBlobButtonStyle())
+            .buttonStyle(HarcMobileBlobButtonStyle(fluid: true))
             .accessibilityLabel("Start Recording")
             .accessibilityHint(
                 "Starts a protected microphone recording on this iPhone."
@@ -421,10 +422,11 @@ struct HarcMobileCaptureHeroView: View {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
                     size: .hero,
+                    motion: .fluid,
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(HarcMobileBlobButtonStyle())
+            .buttonStyle(HarcMobileBlobButtonStyle(fluid: true))
             .accessibilityLabel("Stop Recording")
             .accessibilityHint(
                 "Stops and durably saves the recording on this iPhone."
@@ -434,6 +436,7 @@ struct HarcMobileCaptureHeroView: View {
             HarcPresenceBlob(
                 state: state.harcPresenceState,
                 size: .hero,
+                motion: .fluid,
                 audioLevel: audioLevel
             )
             .accessibilityHidden(true)
@@ -484,13 +487,28 @@ struct HarcMobileCaptureHeroView: View {
 }
 
 private struct HarcMobileBlobButtonStyle: ButtonStyle {
+    let fluid: Bool
+
+    init(fluid: Bool = false) {
+        self.fluid = fluid
+    }
+
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(
-                .easeOut(duration: 0.12),
-                value: configuration.isPressed
-            )
+        if fluid {
+            configuration.label
+                .environment(
+                    \.harcPresenceIsPressed,
+                    configuration.isPressed
+                )
+        } else {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(
+                    .easeOut(duration: 0.12),
+                    value: configuration.isPressed
+                )
+        }
     }
 }
 
