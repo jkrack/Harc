@@ -508,6 +508,9 @@ struct HarcMobileHostPill: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
@@ -519,7 +522,7 @@ struct HarcMobileHostPill: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Host")
         .accessibilityValue(presentation.accessibilityValue)
-        .accessibilityHint("Opens Host status and pairing.")
+        .accessibilityHint("Opens Setup and Sync.")
         .accessibilityIdentifier(HarcMobileAccessibilityID.hostHealth)
     }
 
