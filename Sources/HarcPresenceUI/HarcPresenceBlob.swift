@@ -1,5 +1,21 @@
 import SwiftUI
 
+public enum HarcPresenceMotion: Equatable, Sendable {
+    case classic
+    case fluid
+}
+
+private struct HarcPresencePressedEnvironmentKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+public extension EnvironmentValues {
+    var harcPresenceIsPressed: Bool {
+        get { self[HarcPresencePressedEnvironmentKey.self] }
+        set { self[HarcPresencePressedEnvironmentKey.self] = newValue }
+    }
+}
+
 /// Harc's cross-platform visual presence.
 ///
 /// The blob reflects capture lifecycle state; it never owns or advances that
@@ -9,27 +25,43 @@ public struct HarcPresenceBlob: View {
     public let state: HarcPresenceState
     public let size: HarcPresenceSize
     public let showsSymbol: Bool
+    public let motion: HarcPresenceMotion
     private let audioLevel: () -> Double
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.harcPresenceIsPressed) private var isPressed
+    @State private var fluidSimulator = HarcFluidPresenceSimulator()
+    @State private var lastFluidFrameDate: Date?
 
     public init(
         state: HarcPresenceState,
         size: HarcPresenceSize = .standard,
         showsSymbol: Bool = true,
+        motion: HarcPresenceMotion = .classic,
         audioLevel: @escaping () -> Double = { 0 }
     ) {
         self.state = state
         self.size = size
         self.showsSymbol = showsSymbol
+        self.motion = motion
         self.audioLevel = audioLevel
     }
 
+    @ViewBuilder
     public var body: some View {
+        switch motion {
+        case .classic:
+            classicBody
+        case .fluid:
+            fluidBody
+        }
+    }
+
+    private var classicBody: some View {
         let style = HarcPresenceStyle(state: state)
         let metrics = HarcPresenceMetrics(size: size)
 
-        TimelineView(
+        return TimelineView(
             .animation(
                 minimumInterval: 1 / style.framesPerSecond,
                 paused: reduceMotion || !style.animates
@@ -96,6 +128,81 @@ public struct HarcPresenceBlob: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Harc")
         .accessibilityValue(state.accessibilityValue)
+    }
+
+    private var fluidBody: some View {
+        let metrics = HarcPresenceMetrics(size: size)
+        return TimelineView(.animation(paused: reduceMotion)) { context in
+            let values = fluidSimulator.values(
+                time: context.date.timeIntervalSinceReferenceDate,
+                reduceMotion: reduceMotion
+            )
+            ZStack {
+                HarcFluidPresenceCanvas(
+                    values: values,
+                    diameter: metrics.diameter
+                )
+                if showsSymbol {
+                    fluidSymbol(values: values, metrics: metrics)
+                }
+            }
+            .frame(width: metrics.diameter, height: metrics.diameter)
+            .contentShape(Circle())
+            .onChange(of: context.date, initial: true) { _, date in
+                let delta = lastFluidFrameDate.map {
+                    date.timeIntervalSince($0)
+                } ?? (1 / 60)
+                lastFluidFrameDate = date
+                fluidSimulator.step(
+                    deltaTime: delta,
+                    recording: state.isRecording,
+                    pressed: isPressed,
+                    rawAudioLevel: audioLevel(),
+                    reduceMotion: reduceMotion
+                )
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Harc")
+        .accessibilityValue(state.accessibilityValue)
+    }
+
+    @ViewBuilder
+    private func fluidSymbol(
+        values: HarcFluidPresenceValues,
+        metrics: HarcPresenceMetrics
+    ) -> some View {
+        switch state {
+        case .ready, .recording, .recordingAttention:
+            Image(systemName: "mic.fill")
+                .font(.system(size: metrics.symbolSize, weight: .semibold))
+                .foregroundStyle(.white)
+                .opacity(1 - values.clampedMorph)
+                .scaleEffect(1 - (values.clampedMorph * 0.4))
+                .shadow(
+                    color: .black.opacity(0.18),
+                    radius: metrics.symbolShadowRadius,
+                    y: 1
+                )
+            RoundedRectangle(
+                cornerRadius: metrics.symbolSize * 0.22,
+                style: .continuous
+            )
+            .fill(.white)
+            .frame(width: metrics.symbolSize, height: metrics.symbolSize)
+            .opacity(values.clampedMorph)
+            .scaleEffect(0.6 + (values.clampedMorph * 0.4))
+            .shadow(
+                color: .black.opacity(0.18),
+                radius: metrics.symbolShadowRadius,
+                y: 1
+            )
+        default:
+            symbol(
+                for: HarcPresenceStyle(state: state),
+                metrics: metrics
+            )
+        }
     }
 
     @ViewBuilder
@@ -393,12 +500,12 @@ private struct HarcPresenceShape: Shape {
 
         for index in 0 ..< pointCount {
             let angle = (Double(index) / Double(pointCount)) * (.pi * 2)
-            let organic = sin((angle * 3) + phase) * 0.045
-                + sin((angle * 5) - (phase * 1.31)) * 0.025
-            let voice = deformation * (
-                0.060 + (sin((angle * 4) + (phase * 1.7)) * 0.035)
+            let radius = HarcClassicPresenceMath.radius(
+                baseRadius: Double(baseRadius),
+                angle: angle,
+                phase: phase,
+                activity: deformation
             )
-            let radius = baseRadius * (1 + organic + voice)
             points.append(CGPoint(
                 x: center.x + CGFloat(cos(angle) * radius),
                 y: center.y + CGFloat(sin(angle) * radius)
@@ -422,4 +529,359 @@ private struct HarcPresenceShape: Shape {
     private func midpoint(_ lhs: CGPoint, _ rhs: CGPoint) -> CGPoint {
         CGPoint(x: (lhs.x + rhs.x) / 2, y: (lhs.y + rhs.y) / 2)
     }
+}
+
+enum HarcClassicPresenceMath {
+    static func radius(
+        baseRadius: Double,
+        angle: Double,
+        phase: Double,
+        activity: Double
+    ) -> Double {
+        let deformation = min(max(activity, 0), 1.1)
+        let organic = sin((angle * 3) + phase) * 0.045
+            + sin((angle * 5) - (phase * 1.31)) * 0.025
+        let voice = deformation * (
+            0.060 + (sin((angle * 4) + (phase * 1.7)) * 0.035)
+        )
+        return baseRadius * (1 + organic + voice)
+    }
+}
+
+struct HarcFluidSpring: Equatable, Sendable {
+    var value: Double
+    var velocity: Double = 0
+
+    mutating func step(
+        target: Double,
+        stiffness: Double,
+        damping: Double,
+        deltaTime: Double
+    ) {
+        let deltaTime = min(max(deltaTime, 0), 0.05)
+        guard deltaTime > 0 else { return }
+        let acceleration = -stiffness * (value - target)
+            - damping * velocity
+        velocity += acceleration * deltaTime
+        value += velocity * deltaTime
+    }
+}
+
+struct HarcFluidAudioSmoother: Equatable, Sendable {
+    private(set) var level: Double = 0
+
+    mutating func step(rawLevel: Double, deltaTime: Double) {
+        let rawLevel = min(max(rawLevel, 0), 1)
+        let deltaTime = min(max(deltaTime, 0), 0.05)
+        let rate = rawLevel > level ? 0.35 : 0.06
+        let frameIndependentRate = 1
+            - pow(1 - rate, deltaTime * 60)
+        level += (rawLevel - level) * frameIndependentRate
+    }
+
+    mutating func reset() {
+        level = 0
+    }
+}
+
+struct HarcFluidPresenceValues: Equatable, Sendable {
+    let time: Double
+    let morph: Double
+    let press: Double
+    let level: Double
+    let reduceMotion: Bool
+
+    var clampedMorph: Double { min(max(morph, 0), 1) }
+}
+
+struct HarcFluidPresenceSimulator: Equatable, Sendable {
+    private var morph = HarcFluidSpring(value: 0)
+    private var press = HarcFluidSpring(value: 1)
+    private var audio = HarcFluidAudioSmoother()
+
+    mutating func step(
+        deltaTime: Double,
+        recording: Bool,
+        pressed: Bool,
+        rawAudioLevel: Double,
+        reduceMotion: Bool
+    ) {
+        if reduceMotion {
+            morph = HarcFluidSpring(value: recording ? 1 : 0)
+            press = HarcFluidSpring(value: 1)
+            audio.reset()
+            return
+        }
+        morph.step(
+            target: recording ? 1 : 0,
+            stiffness: 38,
+            damping: 10,
+            deltaTime: deltaTime
+        )
+        press.step(
+            target: pressed ? 0.93 : 1,
+            stiffness: 520,
+            damping: 13,
+            deltaTime: deltaTime
+        )
+        audio.step(
+            rawLevel: recording ? rawAudioLevel : 0,
+            deltaTime: deltaTime
+        )
+    }
+
+    func values(time: Double, reduceMotion: Bool) -> HarcFluidPresenceValues {
+        HarcFluidPresenceValues(
+            time: time,
+            morph: morph.value,
+            press: press.value,
+            level: reduceMotion ? 0 : audio.level,
+            reduceMotion: reduceMotion
+        )
+    }
+}
+
+enum HarcFluidPresenceMath {
+    static let pointCount = 64
+    static let referenceDiameter = 280.0
+    static let referenceRadius = 96.0
+
+    static func radius(
+        angle: Double,
+        time: Double,
+        lag: Double = 0,
+        morph: Double,
+        level: Double,
+        reduceMotion: Bool,
+        fluidity: Double = 1,
+        grow: Double = 1
+    ) -> Double {
+        guard !reduceMotion else { return referenceRadius * grow }
+        let morph = min(max(morph, 0), 1)
+        let level = min(max(level, 0), 1)
+        let speed = 1 + (0.45 * morph)
+        let waveTime = time - lag
+        let breath = sin(time * 0.9 * speed) * 0.018
+        let organic = (
+            0.034 * sin((2 * angle) + (0.41 * waveTime * speed) + 0.3)
+                + 0.028 * sin((3 * angle) - (0.57 * waveTime * speed) + 1.7)
+                + 0.016 * sin((5 * angle) + (0.83 * waveTime * speed) + 4.1)
+                + 0.008 * sin((7 * angle) - (1.21 * waveTime * speed))
+        ) * fluidity * (1 + (0.5 * morph))
+        let voice = level * (
+            0.07 + (0.035 * sin((4 * angle) + (2.2 * waveTime)))
+        )
+        return referenceRadius * (1 + breath + organic + voice) * grow
+    }
+
+    static func points(
+        in rect: CGRect,
+        values: HarcFluidPresenceValues,
+        lag: Double = 0,
+        grow: Double = 1
+    ) -> [CGPoint] {
+        let scale = min(rect.width, rect.height) / referenceDiameter
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let press = values.reduceMotion ? 1 : values.press
+        let scaleX = press * (1 + ((1 - press) * 0.45))
+        let scaleY = press
+        return (0 ..< pointCount).map { index in
+            let angle = (Double(index) / Double(pointCount)) * (.pi * 2)
+            let radius = radius(
+                angle: angle,
+                time: values.time,
+                lag: lag,
+                morph: values.morph,
+                level: values.level,
+                reduceMotion: values.reduceMotion,
+                grow: grow
+            ) * scale
+            return CGPoint(
+                x: center.x + CGFloat(cos(angle) * radius * scaleX),
+                y: center.y + CGFloat(sin(angle) * radius * scaleY)
+            )
+        }
+    }
+
+    static func path(points: [CGPoint]) -> Path {
+        guard points.count > 3 else { return Path() }
+        var path = Path()
+        path.move(to: points[0])
+        for index in points.indices {
+            let previous = points[(index - 1 + points.count) % points.count]
+            let current = points[index]
+            let next = points[(index + 1) % points.count]
+            let following = points[(index + 2) % points.count]
+            let control1 = CGPoint(
+                x: current.x + ((next.x - previous.x) / 6),
+                y: current.y + ((next.y - previous.y) / 6)
+            )
+            let control2 = CGPoint(
+                x: next.x - ((following.x - current.x) / 6),
+                y: next.y - ((following.y - current.y) / 6)
+            )
+            path.addCurve(
+                to: next,
+                control1: control1,
+                control2: control2
+            )
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct HarcFluidPresenceCanvas: View {
+    let values: HarcFluidPresenceValues
+    let diameter: CGFloat
+
+    private static let idlePools = [
+        HarcFluidRGB(hex: 0x7838B8),
+        HarcFluidRGB(hex: 0x1A94BF),
+        HarcFluidRGB(hex: 0x4B3FD1),
+        HarcFluidRGB(hex: 0xA04BD9),
+    ]
+    private static let recordingPools = [
+        HarcFluidRGB(hex: 0xF0554D),
+        HarcFluidRGB(hex: 0xFF8A5C),
+        HarcFluidRGB(hex: 0x7838B8),
+        HarcFluidRGB(hex: 0xE8334D),
+    ]
+    private static let orbits = [
+        (x: 0.31, y: 0.47, xPhase: 0.0, yPhase: 1.1),
+        (x: 0.43, y: 0.29, xPhase: 2.1, yPhase: 0.4),
+        (x: 0.23, y: 0.37, xPhase: 4.2, yPhase: 2.9),
+        (x: 0.52, y: 0.41, xPhase: 1.3, yPhase: 5.0),
+    ]
+
+    var body: some View {
+        Canvas(opaque: false, rendersAsynchronously: true) { context, size in
+            let rect = CGRect(origin: .zero, size: size)
+            let bodyPath = HarcFluidPresenceMath.path(
+                points: HarcFluidPresenceMath.points(
+                    in: rect,
+                    values: values
+                )
+            )
+            let haloPath = HarcFluidPresenceMath.path(
+                points: HarcFluidPresenceMath.points(
+                    in: rect,
+                    values: values,
+                    lag: 0.35,
+                    grow: 1.1 + (values.level * 0.06)
+                )
+            )
+            let morph = values.clampedMorph
+            let scale = diameter / 280
+
+            var haloContext = context
+            haloContext.opacity = 0.60
+            haloContext.addFilter(.blur(radius: 22 * scale))
+            haloContext.fill(
+                haloPath,
+                with: .color(
+                    HarcFluidRGB(hex: 0x7838B8)
+                        .mixed(with: HarcFluidRGB(hex: 0xF0554D), amount: morph)
+                        .color
+                )
+            )
+
+            var bodyContext = context
+            bodyContext.clip(to: bodyPath)
+            bodyContext.fill(
+                Path(rect),
+                with: .color(
+                    HarcFluidRGB(hex: 0x2A2580)
+                        .mixed(with: HarcFluidRGB(hex: 0xB8283A), amount: morph)
+                        .color
+                )
+            )
+
+            let speed = 1 + (0.45 * morph)
+            let orbitX = 50 * scale
+            let orbitY = 44 * scale
+            let poolDiameter = (190 + (CGFloat(values.level) * 40)) * scale
+            for index in Self.orbits.indices {
+                let orbit = Self.orbits[index]
+                let center = CGPoint(
+                    x: rect.midX + (values.reduceMotion ? 0 : orbitX * CGFloat(
+                        sin((values.time * orbit.x * speed) + orbit.xPhase)
+                    )),
+                    y: rect.midY + (values.reduceMotion ? 0 : orbitY * CGFloat(
+                        cos((values.time * orbit.y * speed) + orbit.yPhase)
+                    ))
+                )
+                let pool = Self.idlePools[index].mixed(
+                    with: Self.recordingPools[index],
+                    amount: morph
+                ).color
+                bodyContext.fill(
+                    Path(rect),
+                    with: .radialGradient(
+                        Gradient(colors: [
+                            pool.opacity(0.95),
+                            pool.opacity(0),
+                        ]),
+                        center: center,
+                        startRadius: 0,
+                        endRadius: poolDiameter * 0.5
+                    )
+                )
+            }
+
+            let sheenRect = CGRect(
+                x: 70 * scale,
+                y: CGFloat(58 + ((1 - values.press) * 30)) * scale,
+                width: 120 * scale,
+                height: 80 * scale
+            )
+            bodyContext.fill(
+                Path(ellipseIn: sheenRect),
+                with: .radialGradient(
+                    Gradient(colors: [
+                        Color.white.opacity(0.32),
+                        Color.white.opacity(0),
+                    ]),
+                    center: CGPoint(x: sheenRect.midX, y: sheenRect.midY),
+                    startRadius: 0,
+                    endRadius: sheenRect.width * 0.5
+                )
+            )
+            context.stroke(
+                bodyPath,
+                with: .color(.white.opacity(0.20)),
+                lineWidth: max(0.5, scale)
+            )
+        }
+        .frame(width: diameter, height: diameter)
+    }
+}
+
+private struct HarcFluidRGB: Equatable, Sendable {
+    let red: Double
+    let green: Double
+    let blue: Double
+
+    init(hex: UInt32) {
+        red = Double((hex >> 16) & 0xFF) / 255
+        green = Double((hex >> 8) & 0xFF) / 255
+        blue = Double(hex & 0xFF) / 255
+    }
+
+    func mixed(with other: Self, amount: Double) -> Self {
+        let amount = min(max(amount, 0), 1)
+        return Self(
+            red: red + ((other.red - red) * amount),
+            green: green + ((other.green - green) * amount),
+            blue: blue + ((other.blue - blue) * amount)
+        )
+    }
+
+    private init(red: Double, green: Double, blue: Double) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+
+    var color: Color { Color(red: red, green: green, blue: blue) }
 }
