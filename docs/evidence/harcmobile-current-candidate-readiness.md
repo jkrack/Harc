@@ -1,7 +1,7 @@
 # HarcMobile current-candidate readiness
 
 **Updated:** 2026-10-17
-**Candidate configuration:** HarcMobile 0.14.15 (70), iOS 18+, iPhone only
+**Candidate configuration:** HarcMobile 0.14.16 (71), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.

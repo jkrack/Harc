@@ -28,18 +28,22 @@ metadata, so the script cannot satisfy the physical protection gate.
 
 ### Recommended oldest-device target
 
-With the current iOS 18 deployment floor, use a physical **iPhone XR on an iOS
-18 release** as the oldest-device qualification target unless the launch floor
-changes before the archive is frozen. [Apple includes iPhone XR, iPhone XS, and
-iPhone XS Max in the iOS 18 compatibility set](https://support.apple.com/en-us/104985);
-choosing XR exercises an actual oldest eligible model rather than inferring
-support from a newer phone.
+With the current iOS 26 deployment floor, use a physical **iPhone SE (2nd
+generation) on an iOS 26 release** as the oldest-device qualification target
+unless the launch floor changes before the archive is frozen. iOS 26 supports
+A13 Bionic iPhones and newer and drops iPhone XR, iPhone XS, and iPhone XS Max.
+Of the A13 models, SE (2nd generation) has the smallest screen and the least
+memory, so it exercises the hardest eligible layout and memory case rather than
+inferring support from a newer phone. An iPhone 11 is an acceptable substitute
+for the chip, but it does not cover the 4.7-inch layout. The earlier iPhone
+XR/iOS 18 recommendation no longer applies; XR results are not evidence for
+this floor.
 
 This recommendation is about capture, protected storage, lossless encoding,
 background transfer, and UI reliability. Shipping HarcMobile inference remains
 Host-backed, so optional future on-device inference does not justify excluding
 an otherwise capable capture client. The recommendation is not passing
-evidence: the named physical XR/OS still has to complete the codec and scenario
+evidence: the named physical SE (2nd generation)/OS still has to complete the codec and scenario
 matrix below. Do not add an unrelated required-device capability merely to hide
 the missing run.
 
