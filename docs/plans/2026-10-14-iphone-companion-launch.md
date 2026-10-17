@@ -1,6 +1,42 @@
 # iPhone companion launch plan
 
-## Current checkpoint — October 16, 2026
+## Current checkpoint — October 17, 2026
+
+**Mac Sparkle: approved 0.14.15 (70) candidate. App Store: NO-GO.**
+GitHub main at `c715538c34ba97de37cc1f955d9220ad0f5eb1ca` includes the
+reviewed P-256 correction from PR #124. Its
+[push CI 39037211911](https://github.com/jkrack/Harc/actions/runs/39037211911)
+passed. The October 16 signature failures below are retained historical evidence;
+they do not describe current main.
+
+PR #125 merged into the stacked correction branch at
+`e68ca972d546b2aba902705dfa08764567ecfdd9`. The release integrates that reviewed
+mobile change with main. Both final apps embed built source
+`5f16c7427f320b5de68daab33a3f59b9b80f7245` and identify 0.14.15 (70).
+The shared fallback version is aligned with the marketing version. On this exact
+source, local validation passed 1,616 Swift Testing tests, 124 XCTest tests with
+four skips, 31 strict-executor tests, and the direct and local encrypted-relay
+pinned-TLS pairing lifecycle. The native Swift 6.4 test-launcher issue and its
+isolated main-thread runner workaround are preserved with unchanged test bodies
+and object-file provenance in the SSD release evidence.
+
+Apple accepted notarization `c8ae24ea-d526-4c2e-a6a1-d9dd9f6a42df`; stapling,
+Gatekeeper, nested signatures and Sparkle verification passed. The final DMG is
+66,948,477 bytes with SHA-256
+`3bd23a1c256e3ed69e89c5113446752008f2c1190ea6fabc964c533030930804`.
+James explicitly approved publishing this Mac update. The separate signed iOS
+development archive remains private; neither app has been installed by this
+release task. The superseded private candidate and all original failures remain
+in `/Volumes/MacMiniSDD/HarcBuilds/release-0-14-15-evidence-20261017/`.
+
+Named-device codec, durable physical phone-to-Host-to-Library acceptance,
+real-model, accessibility, privacy and App Store gates remain open. This Mac
+release does not enable a closed codec/upload gate, submit to the App Store,
+change credentials or accept new agreements. Historical observations below are
+superseded only for their dated source/build/CI status, not for unclosed physical
+or submission requirements.
+
+## Historical checkpoint — October 16, 2026
 
 **Release eligibility: NO-GO for public Sparkle or App Store distribution.**
 Reviewed main is `3f9f090ae4bd1266651ceb94f2a553f10d1de08a`; no open PRs were
