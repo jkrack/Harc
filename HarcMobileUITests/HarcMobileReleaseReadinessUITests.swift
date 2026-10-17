@@ -432,6 +432,16 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             rootID: rootID,
             resetRoot: true
         ) + additionalArguments
+        addTeardownBlock { @MainActor () async throws -> Void in
+            // End this test's process before another test asks launch() to
+            // replace it. A failed termination remains a test failure.
+            if app.state != .notRunning {
+                app.terminate()
+            }
+            let stopped = app.wait(for: .notRunning, timeout: 10)
+            print("UI_APP_LIFECYCLE stopped=\(stopped) state=\(app.state.rawValue)")
+            XCTAssertTrue(stopped, "The owned UI-test app must exit before the next launch.")
+        }
         return app
     }
 

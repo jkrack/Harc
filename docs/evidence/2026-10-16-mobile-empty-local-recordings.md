@@ -69,8 +69,31 @@ at `faeb3d1ab9700f62ef1d05b78c5c6e4a1620b922`, and
 at `cd5fafb2e3c3c1bb7d51845319ff0a22a899a5d1`. These commits differ **only**
 in `HarcMobileRootView.swift`. Both use the same original app-test prelude and
 original two UI-test selections, repeated three times. They avoid attributing an
-effect of the added tests/order to the application change. Consult those runs
-and the PR's terminal validation record for their outcomes.
+effect of the added tests/order to the application change. The baseline passed
+all 70 logical tests / 261 executions. The root-only candidate passed 69/70
+logical tests / 260 of 261 executions: the first original Sync test failed at
+line 48 in `app.launch()` while XCTest tried to terminate the preceding app
+process. No navigation executed in that failed repetition; the other two
+repetitions passed. This is distinct from the original Host-tap observation.
+The failed result is retained, without retrying it.
+
+## Explicit UI-test process cleanup
+
+The test app factory now registers teardown for its owned application: one
+termination attempt, followed by one ten-second wait for `.notRunning` and an
+assertion. It prints the final process state, and a failed cleanup remains a
+test failure. There are no launch retries, extra taps or relaxed assertions.
+The state wait does not bound `terminate()` itself, whose duration XCTest
+controls; the existing outer runner deadline remains in force.
+
+This is lifecycle hardening, not a proved fix for the simulator failure.
+`launch()` already has a contract to terminate a running application, so the
+preceding app remaining alive is not itself proof of an invalid test harness.
+The isolated control branch changes only this cleanup relative to `cd5fafb` and
+retains the original app-test selections, two UI methods and three planned
+iterations. Its outcome and the final PR's exact-head CI must be evaluated
+before describing this cleanup as verified. The original Host-drop mechanism
+remains unproved even if these new samples pass.
 
 ## Regression and source preservation
 
