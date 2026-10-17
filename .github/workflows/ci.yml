@@ -121,6 +121,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
             -jobs 2 \
             -project Harc.xcodeproj \
             -scheme Harc \
