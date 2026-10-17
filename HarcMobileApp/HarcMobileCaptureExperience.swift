@@ -507,19 +507,22 @@ struct HarcMobileHostPill: View {
                 Text(presentation.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
+            .frame(minHeight: 44)
             .background(.thinMaterial, in: Capsule())
             .overlay {
                 Capsule().stroke(.primary.opacity(0.08), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Host")
         .accessibilityValue(presentation.accessibilityValue)
         .accessibilityHint("Opens Setup and Sync.")

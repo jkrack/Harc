@@ -81,9 +81,6 @@ struct HarcMobileRootView: View {
                     openRecording: { selectedTab = .record },
                     stop: { coordinator.stop() }
                 )
-                .accessibilityIdentifier(
-                    HarcMobileAccessibilityID.recordingBanner
-                )
             }
         }
         .onChange(
@@ -939,6 +936,9 @@ private struct HarcMobileCaptureAccessory: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open active recording")
+            .accessibilityIdentifier(
+                HarcMobileAccessibilityID.recordingBanner
+            )
 
             Button(action: stop) {
                 Image(systemName: "stop.fill")
