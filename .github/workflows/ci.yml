@@ -28,6 +28,7 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { exit ($4 < 5242880) }'
+          mkdir -p build/validation
 
       - name: Protocol schema contract
         run: ./scripts/check-harc-protocol-schemas.sh
