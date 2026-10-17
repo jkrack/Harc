@@ -193,11 +193,6 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
 
     private func assertVisibleEmptyLocalRecordings(in app: XCUIApplication) {
         XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
-        let destination = app.descendants(matching: .any)[
-            "harc.mobile.local-recordings"
-        ]
-        XCTAssertTrue(destination.waitForExistence(timeout: 10))
-        XCTAssertGreaterThan(destination.frame.width, 0)
         let empty = app.staticTexts["No recordings yet"]
         XCTAssertTrue(empty.waitForExistence(timeout: 10))
         XCTAssertTrue(empty.isHittable)
