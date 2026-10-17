@@ -25,6 +25,7 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
         + "Harc does not treat this export as synchronization."
 
     let id: UUID
+    let originID: OriginRecordingID
     let startedAt: Date
     let duration: TimeInterval
     let masterFileURL: URL
@@ -58,6 +59,7 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
                     }
                 return HarcMobileLocalRecording(
                     id: capture.originRecordingID.recordingUUID,
+                    originID: capture.originRecordingID,
                     startedAt: capture.captureStartedAt,
                     duration: capture.captureEndedAt.timeIntervalSince(
                         capture.captureStartedAt

@@ -15,6 +15,7 @@ enum HarcMobileAccessibilityID {
     static let hostHealth = "harc.mobile.host.health"
     static let setupAndSync = "harc.mobile.setup-and-sync"
     static let searchTab = "harc.mobile.search"
+    static let libraryAttention = "harc.mobile.library.attention"
     static let openReviewSample = "harc.mobile.reviewSample.open"
     static let openReviewSampleToolbar =
         "harc.mobile.reviewSample.open.toolbar"
