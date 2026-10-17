@@ -26,4 +26,8 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -only-testing:HarcMobileAppTests/HarcMobileUploadPreparationTests \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLocalLibraryIsReachableWithoutHost \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSyncDetailsAreDiscoverableWithoutHostOrRecording \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromLibraryRootControl \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromSyncControl \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromEmptyLocalRecordings \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRepeatedOfflineNavigationPreservesEachTabStack \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA" test

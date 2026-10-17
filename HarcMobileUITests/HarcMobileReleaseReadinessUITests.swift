@@ -87,6 +87,85 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         assertHostTabNavigation(openSync: true, openLocalRecordings: true)
     }
 
+    func testRepeatedOfflineNavigationPreservesEachTabStack() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        selectTab("Library", in: app)
+        openLocalRecordingsFromLibrary(in: app)
+
+        for cycle in 0..<3 {
+            XCTContext.runActivity(named: "Offline navigation cycle \(cycle + 1)") { _ in
+                selectTab("Host", in: app)
+                let hostSync = app.buttons["harc.mobile.host.sync-status"]
+                XCTAssertTrue(hostSync.waitForExistence(timeout: 10))
+                hostSync.tap()
+                openLocalRecordingsFromSync(in: app)
+
+                selectTab("Library", in: app)
+                assertVisibleEmptyLocalRecordings(in: app)
+                selectTab("Record", in: app)
+                XCTAssertTrue(app.buttons["harc.mobile.record.start"].waitForExistence(timeout: 10))
+                selectTab("Host", in: app)
+                assertVisibleEmptyLocalRecordings(in: app)
+                app.navigationBars["On This iPhone"].buttons["Sync"].tap()
+                XCTAssertTrue(app.navigationBars["Sync"].waitForExistence(timeout: 10))
+                app.navigationBars["Sync"].buttons["Host"].tap()
+                XCTAssertTrue(hostSync.waitForExistence(timeout: 10))
+
+                selectTab("Library", in: app)
+                assertVisibleEmptyLocalRecordings(in: app)
+                app.navigationBars["On This iPhone"].buttons["Sync"].tap()
+                XCTAssertTrue(app.navigationBars["Sync"].waitForExistence(timeout: 10))
+                app.navigationBars["Sync"].buttons["Library"].tap()
+                openLocalRecordingsFromLibrary(in: app)
+            }
+        }
+    }
+
+    private func selectTab(_ name: String, in app: XCUIApplication) {
+        let matches = app.tabBars.buttons.matching(identifier: name)
+        XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(matches.count, 1)
+        let tab = matches.element(boundBy: 0)
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: tab
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 10), .completed)
+        tab.tap()
+        let selected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "selected == true"), object: tab
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed)
+    }
+
+    private func openLocalRecordingsFromLibrary(in app: XCUIApplication) {
+        let sync = app.buttons["harc.mobile.library.sync-status"]
+        XCTAssertTrue(sync.waitForExistence(timeout: 10))
+        sync.tap()
+        openLocalRecordingsFromSync(in: app)
+    }
+
+    private func openLocalRecordingsFromSync(in app: XCUIApplication) {
+        let local = app.buttons["harc.mobile.sync.local-recordings"]
+        XCTAssertTrue(scrollUntilExists(local, in: app))
+        local.tap()
+        assertVisibleEmptyLocalRecordings(in: app)
+    }
+
+    private func assertVisibleEmptyLocalRecordings(in app: XCUIApplication) {
+        XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+        let destination = app.scrollViews["harc.mobile.local-recordings"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(destination.frame.width, 0)
+        let empty = app.staticTexts["No recordings yet"]
+        XCTAssertTrue(empty.waitForExistence(timeout: 10))
+        XCTAssertTrue(empty.isHittable)
+        XCTAssertGreaterThan(empty.frame.width, 0)
+        XCTAssertTrue(app.staticTexts[
+            "Recordings saved on this iPhone appear here, even without a Host."
+        ].exists)
+    }
+
     private func assertHostTabNavigation(
         openSync: Bool,
         openLocalRecordings: Bool

@@ -46,6 +46,7 @@ jobs:
             -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromLibraryRootControl \
             -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromSyncControl \
             -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromEmptyLocalRecordings \
+            -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRepeatedOfflineNavigationPreservesEachTabStack \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=${{ github.sha }}" test \
             2>&1 | tee .build/navigation-diagnostic/console.log
       - name: Preserve every diagnostic outcome
