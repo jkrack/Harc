@@ -2,7 +2,7 @@ name: Mobile navigation diagnostic
 
 on:
   push:
-    branches: [codex/mobile-host-navigation]
+    branches: [codex/mobile-navigation-context-control]
 
 permissions:
   contents: read
@@ -42,10 +42,16 @@ jobs:
             -resultBundlePath .build/navigation-diagnostic/navigation.xcresult \
             -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
             -test-iterations 3 -test-repetition-relaunch-enabled YES \
+            -only-testing:HarcMobileAppTests/HarcMobileConfigurationTests \
+            -only-testing:HarcMobileAppTests/HarcMobileCaptureExperienceTests \
+            -only-testing:HarcMobileAppTests/HarcMobileSyncStatusPresentationTests \
+            -only-testing:HarcMobileAppTests/HarcMobileLocalLibraryTests \
+            -only-testing:HarcMobileAppTests/HarcMobileLibraryRefreshPresentationTests \
+            -only-testing:HarcMobileAppTests/HarcMobilePlaybackSessionTests \
+            -only-testing:HarcMobileAppTests/HarcMobileFinalizationRecoveryTests \
+            -only-testing:HarcMobileAppTests/HarcMobileUploadPreparationTests \
+            -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLocalLibraryIsReachableWithoutHost \
             -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSyncDetailsAreDiscoverableWithoutHostOrRecording \
-            -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromLibraryRootControl \
-            -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromSyncControl \
-            -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromEmptyLocalRecordings \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=${{ github.sha }}" test \
             2>&1 | tee .build/navigation-diagnostic/console.log
       - name: Preserve every diagnostic outcome
