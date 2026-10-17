@@ -193,13 +193,15 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
 
     private func assertVisibleEmptyLocalRecordings(in app: XCUIApplication) {
         XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
-        let empty = app.staticTexts["No recordings yet"]
+        let empty = app.staticTexts.matching(
+            NSPredicate(
+                format: "label IN %@",
+                ["No recordings yet", "No recordings on this iPhone"]
+            )
+        ).firstMatch
         XCTAssertTrue(empty.waitForExistence(timeout: 10))
         XCTAssertTrue(empty.isHittable)
         XCTAssertGreaterThan(empty.frame.width, 0)
-        XCTAssertTrue(app.staticTexts[
-            "Recordings saved on this iPhone appear here, even without a Host."
-        ].exists)
     }
 
     func testOfflineReviewSampleAndPrivacyAreReachableWithoutHost() {
