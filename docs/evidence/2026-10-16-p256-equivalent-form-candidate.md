@@ -3,6 +3,10 @@
 Date: October 16, 2026. Base main:
 `3f9f090ae4bd1266651ceb94f2a553f10d1de08a`.
 
+The later [test-only review follow-up](2026-10-16-p256-corpus-review-followup.md)
+persists nine additional canonical invalid-vector checks. The source hashes and
+results below describe the initial candidate; its production verifier is unchanged.
+
 ## Candidate and security boundary
 
 The two retained captured-vector assertions now pass in focused testing with

@@ -10,6 +10,8 @@ struct P256VerificationCorpusTests {
         #expect(corpus.numberOfTests == 262)
         var valid = 0
         var invalid = 0
+        let invalidHighSCaseIDs: Set<Int> = [4, 21, 35, 205, 254, 256, 258, 259, 260]
+        var canonicalizedInvalidCaseIDs: Set<Int> = []
         for group in corpus.testGroups {
             let key = try P256X963PublicKey(try decodeHex(group.publicKey.uncompressed))
             for vector in group.tests {
@@ -31,7 +33,17 @@ struct P256VerificationCorpusTests {
                 } else {
                     #expect(vector.result == "invalid", "\(context)")
                     invalid += 1
-                    if let signature = try? P256RawSignature(raw) {
+                    if invalidHighSCaseIDs.contains(vector.tcId) {
+                        // Keep the external rejection, then exercise the verifier
+                        // with the equivalent in-range low-S invalid signature.
+                        // This normalization is test-only; wire input stays strict.
+                        #expect(throws: IdentityCryptoError.signatureNotLowS) {
+                            try P256RawSignature(raw)
+                        }
+                        let canonical = try P256RawSignature.normalizing(raw)
+                        #expect(!key.isValidSignature(canonical, for: digest), "\(context)")
+                        canonicalizedInvalidCaseIDs.insert(vector.tcId)
+                    } else if let signature = try? P256RawSignature(raw) {
                         #expect(!key.isValidSignature(signature, for: digest), "\(context)")
                     }
                 }
@@ -40,6 +52,7 @@ struct P256VerificationCorpusTests {
         #expect(valid == 173)
         #expect(invalid == 89)
         #expect(valid + invalid == corpus.numberOfTests)
+        #expect(canonicalizedInvalidCaseIDs == invalidHighSCaseIDs)
     }
 
     @Test("all five captured valid signatures verify and reject changed inputs")
