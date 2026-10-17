@@ -339,6 +339,9 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         _ = XCTWaiter.wait(for: [capturedAudio], timeout: 2)
         stop.tap()
 
+        let recordTab = app.tabBars.buttons["Record"]
+        XCTAssertTrue(recordTab.waitForExistence(timeout: 10))
+        recordTab.tap()
         XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.state, .runningForeground)
 #endif
