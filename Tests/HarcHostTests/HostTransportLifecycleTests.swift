@@ -3,6 +3,7 @@ import GRDB
 import HarcDomain
 @testable import HarcIdentity
 import HarcProtocol
+import HarcTestSupport
 import Testing
 import Synchronization
 @testable import HarcHost
@@ -10,7 +11,11 @@ import Synchronization
 // Security.framework's process-global certificate/identity lookup is not a
 // concurrency-isolated test fixture. Serialize this suite so one test cannot
 // remove its temporary Keychain material while another is resolving identity.
-@Suite("Host transport-set lifecycle", .serialized)
+@Suite(
+    "Host transport-set lifecycle",
+    .serialized,
+    .processWideSystemResource
+)
 struct HostTransportLifecycleTests {
     @Test("concurrent leaf creation invokes the issuer only once")
     func concurrentLeafIssuance() async throws {

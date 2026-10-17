@@ -1,5 +1,6 @@
 import Foundation
 import HarcDomain
+import HarcTestSupport
 import Security
 import Testing
 @testable import HarcIdentity
@@ -8,7 +9,11 @@ import Testing
 /// the TLS child suite does not isolate it from password fixtures in sibling
 /// suites. Keep all physical Keychain lifetimes in this serialized parent;
 /// concurrency inside each test (including competing TLS stores) still runs.
-@Suite("Legacy macOS Keychain integration", .serialized)
+@Suite(
+    "Legacy macOS Keychain integration",
+    .serialized,
+    .processWideSystemResource
+)
 struct LegacyMacOSKeychainIntegrationTests {
     @Test("Production macOS identity persists in the legacy login Keychain")
     func productionLegacyMacOSKeychainIdentity() async throws {

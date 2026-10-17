@@ -12,6 +12,7 @@ import HarcDomain
 import HarcProtocol
 @testable import HarcRemoteTransport
 import HarcStore
+import HarcTestSupport
 import HarcTransfer
 @preconcurrency import Network
 import Testing
@@ -29,6 +30,7 @@ private let pairingLifecycleE2EMarkerURL = URL(
 @Suite(
     "Pairing lifecycle over pinned gRPC TLS",
     .serialized,
+    .processWideSystemResource,
     .enabled(
         if: FileManager.default.fileExists(
             atPath: pairingLifecycleE2EMarkerURL.path
