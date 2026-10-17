@@ -133,10 +133,16 @@ public struct HarcPresenceBlob: View {
     private var fluidBody: some View {
         let metrics = HarcPresenceMetrics(size: size)
         return TimelineView(.animation(paused: reduceMotion)) { context in
-            let values = fluidSimulator.values(
-                time: context.date.timeIntervalSinceReferenceDate,
-                reduceMotion: reduceMotion
-            )
+            let time = context.date.timeIntervalSinceReferenceDate
+            let values = reduceMotion
+                ? HarcFluidPresenceValues(
+                    time: time,
+                    morph: state.isRecording ? 1 : 0,
+                    press: 1,
+                    level: 0,
+                    reduceMotion: true
+                )
+                : fluidSimulator.values(time: time, reduceMotion: false)
             ZStack {
                 HarcFluidPresenceCanvas(
                     values: values,
@@ -148,6 +154,10 @@ public struct HarcPresenceBlob: View {
             }
             .frame(width: metrics.diameter, height: metrics.diameter)
             .contentShape(Circle())
+            .animation(
+                reduceMotion ? .easeInOut(duration: 0.16) : nil,
+                value: state.rawValue
+            )
             .onChange(of: context.date, initial: true) { _, date in
                 let delta = lastFluidFrameDate.map {
                     date.timeIntervalSince($0)
@@ -178,7 +188,11 @@ public struct HarcPresenceBlob: View {
                 .font(.system(size: metrics.symbolSize, weight: .semibold))
                 .foregroundStyle(.white)
                 .opacity(1 - values.clampedMorph)
-                .scaleEffect(1 - (values.clampedMorph * 0.4))
+                .scaleEffect(
+                    values.reduceMotion
+                        ? 1
+                        : 1 - (values.clampedMorph * 0.4)
+                )
                 .shadow(
                     color: .black.opacity(0.18),
                     radius: metrics.symbolShadowRadius,
@@ -191,7 +205,11 @@ public struct HarcPresenceBlob: View {
             .fill(.white)
             .frame(width: metrics.symbolSize, height: metrics.symbolSize)
             .opacity(values.clampedMorph)
-            .scaleEffect(0.6 + (values.clampedMorph * 0.4))
+            .scaleEffect(
+                values.reduceMotion
+                    ? 1
+                    : 0.6 + (values.clampedMorph * 0.4)
+            )
             .shadow(
                 color: .black.opacity(0.18),
                 radius: metrics.symbolShadowRadius,
