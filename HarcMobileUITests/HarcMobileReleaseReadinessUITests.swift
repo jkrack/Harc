@@ -37,9 +37,9 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let library = app.tabBars.buttons["Library"]
         XCTAssertTrue(library.waitForExistence(timeout: 10))
         library.tap()
-        XCTAssertTrue(app.staticTexts["On This iPhone"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Library"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts[
-            "Recordings saved on this iPhone appear here, even without a Host."
+            "Recordings saved on this iPhone appear here, even without a Mac."
         ].exists)
     }
 
@@ -98,12 +98,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         )
         XCTAssertTrue(
             app.staticTexts[
-                "Recordings still on this iPhone match by title only."
+                "Recordings only on this iPhone are matched by title until they reach your Mac."
             ].exists
         )
         XCTAssertTrue(
             app.searchFields[
-                "Search Host titles, tags, and transcripts"
+                "Search meetings and transcripts"
             ].exists
         )
     }

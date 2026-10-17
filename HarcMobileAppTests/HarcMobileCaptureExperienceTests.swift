@@ -1,4 +1,5 @@
 import AVFAudio
+import HarcDomain
 import XCTest
 @testable import HarcMobile
 
@@ -94,8 +95,13 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
     }
 
     func testCodecGateKeepsExplanationInsideSetupAndSync() {
+        let id = UUID()
         let recording = HarcMobileLocalRecording(
-            id: UUID(),
+            id: id,
+            originID: OriginRecordingID(
+                deviceID: try! DeviceID(Data(repeating: 0x42, count: 32)),
+                recordingUUID: id
+            ),
             startedAt: Date(timeIntervalSinceReferenceDate: 10),
             duration: 30,
             masterFileURL: URL(fileURLWithPath: "/tmp/capture.caf"),

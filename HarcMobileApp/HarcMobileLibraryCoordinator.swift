@@ -76,6 +76,8 @@ final class HarcMobileLibraryCoordinator {
         let recording: LibraryRecordingSummary
         let score: Double?
         let snippets: [String]
+        let matchSpeakerIndex: UInt32?
+        let matchTimestamp: TimeInterval?
 
         var id: CanonicalRecordingID { recording.canonicalID }
     }
@@ -688,7 +690,9 @@ final class HarcMobileLibraryCoordinator {
                 SearchResult(
                     recording: try $0.domainValue(),
                     score: nil,
-                    snippets: []
+                    snippets: [],
+                    matchSpeakerIndex: nil,
+                    matchTimestamp: nil
                 )
             })
             guard response.hasNextPageToken else { return results }
@@ -729,17 +733,30 @@ final class HarcMobileLibraryCoordinator {
                 guard hit.hasRecording, hit.score.isFinite else {
                     throw HarcMobileLibraryError.malformedResponse
                 }
-                for snippet in hit.snippets {
+                let recording = try hit.recording.domainValue()
+                var matchTimestamp: TimeInterval?
+                for (index, snippet) in hit.snippets.enumerated() {
                     guard snippet.hasFrames else {
                         throw HarcMobileLibraryError.malformedResponse
                     }
-                    _ = try snippet.frames.domainValue()
+                    let frames = try snippet.frames.domainValue()
+                    if index == 0 {
+                        let sampleRate = recording.canonicalAudio.format?
+                            .sampleRateHz
+                            ?? CanonicalPCMFormat.harcV1.sampleRateHz
+                        matchTimestamp = TimeInterval(frames.startFrame)
+                            / TimeInterval(sampleRate)
+                    }
                 }
                 results.append(
                     SearchResult(
-                        recording: try hit.recording.domainValue(),
+                        recording: recording,
                         score: hit.score,
-                        snippets: hit.snippets.map(\.text)
+                        snippets: hit.snippets.map(\.text),
+                        matchSpeakerIndex: hit.snippets.first.flatMap {
+                            $0.hasSpeakerIndex ? $0.speakerIndex : nil
+                        },
+                        matchTimestamp: matchTimestamp
                     )
                 )
             }
@@ -761,7 +778,13 @@ final class HarcMobileLibraryCoordinator {
                     $0.localizedCaseInsensitiveContains(query)
                 })
         }.map {
-            SearchResult(recording: $0, score: nil, snippets: [])
+            SearchResult(
+                recording: $0,
+                score: nil,
+                snippets: [],
+                matchSpeakerIndex: nil,
+                matchTimestamp: nil
+            )
         }
     }
 
