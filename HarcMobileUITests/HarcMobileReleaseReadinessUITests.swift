@@ -74,7 +74,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             .buttons["Setup & Sync"]
         XCTAssertTrue(setupBack.waitForExistence(timeout: 10))
         setupBack.tap()
-        let local = app.buttons["Recordings & storage"]
+        let local = app.buttons.matching(
+            NSPredicate(
+                format: "label BEGINSWITH %@",
+                "Recordings & storage"
+            )
+        ).firstMatch
         XCTAssertTrue(local.waitForExistence(timeout: 10))
         local.tap()
         XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
@@ -184,7 +189,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
     private func openLocalRecordingsFromSetupAndSync(
         in app: XCUIApplication
     ) {
-        let storage = app.buttons["Recordings & storage"]
+        let storage = app.buttons.matching(
+            NSPredicate(
+                format: "label BEGINSWITH %@",
+                "Recordings & storage"
+            )
+        ).firstMatch
         if storage.waitForExistence(timeout: 1) {
             storage.tap()
             assertVisibleEmptyLocalRecordings(in: app)
