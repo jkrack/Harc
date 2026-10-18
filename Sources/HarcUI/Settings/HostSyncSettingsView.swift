@@ -380,12 +380,31 @@ public struct HostSyncSettingsView: View {
                     .foregroundStyle(Color.harc(.ready))
                 Button("Pair a Device…") { bridge.onOpenHostPairing() }
                 Button("Verify and Repair Recording Receipts…") { bridge.onRepairHostReceipts() }
-                    .disabled(bridge.hostReceiptRepairInProgress)
+                    .disabled(
+                        bridge.hostReceiptRepairInProgress
+                            || bridge.hostLibraryMigrationInProgress
+                    )
+                Button("Verify Moved Library…") {
+                    bridge.onMigrateHostLibraryBindings()
+                }
+                .disabled(
+                    bridge.hostReceiptRepairInProgress
+                        || bridge.hostLibraryMigrationInProgress
+                )
                 if bridge.hostReceiptRepairInProgress {
                     ProgressView("Verifying recordings…")
                         .font(.harcLabel)
                 }
                 if let status = bridge.hostReceiptRepairStatus {
+                    Text(status)
+                        .font(.harcLabel)
+                        .foregroundStyle(.secondary)
+                }
+                if bridge.hostLibraryMigrationInProgress {
+                    ProgressView("Re-hashing moved recordings…")
+                        .font(.harcLabel)
+                }
+                if let status = bridge.hostLibraryMigrationStatus {
                     Text(status)
                         .font(.harcLabel)
                         .foregroundStyle(.secondary)

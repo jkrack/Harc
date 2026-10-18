@@ -58,4 +58,10 @@ struct HarcMacLocalOSAuthenticationBoundary:
     func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool {
         await evaluate(reason: "Repair this Harc recording's delivery receipt after verifying its original audio.")
     }
+
+    func authorizeCanonicalLibraryMigration(recordingCount: Int) async throws -> Bool {
+        await evaluate(
+            reason: "Approve re-binding \(recordingCount) verified Harc recording\(recordingCount == 1 ? "" : "s") after the canonical library moved. Harc will re-hash every recording and retain immutable migration evidence."
+        )
+    }
 }
