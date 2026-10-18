@@ -99,6 +99,9 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var hostReceiptRepairInProgress = false
     @Published public var hostReceiptRepairStatus: String?
     public var onRepairHostReceipts: () -> Void = {}
+    @Published public var hostLibraryMigrationInProgress = false
+    @Published public var hostLibraryMigrationStatus: String?
+    public var onMigrateHostLibraryBindings: () -> Void = {}
     /// Mirrors completion of the desktop Client graph and the preserved
     /// On This Mac library bootstrap. Settings uses this instead of treating a
     /// configured Client preference as proof that pairing/storage are usable.
