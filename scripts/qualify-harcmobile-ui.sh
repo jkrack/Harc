@@ -11,6 +11,7 @@ set -euo pipefail
 #     --destination-id <UDID> \
 #     --platform simulator|physical \
 #     --output-dir <new-directory> \
+#     [--derived-data-path <new-directory>] \
 #     [--development-team <10-character-team-id>] \
 #     [--attempts 1-3] \
 #     [--allow-dirty-diagnostic]
@@ -19,6 +20,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DESTINATION_ID=""
 PLATFORM=""
 OUTPUT_DIR=""
+DERIVED_DATA_PATH=""
 ALLOW_DIRTY=0
 ATTEMPTS=0
 DEVELOPMENT_TEAM="${HARC_DEVELOPMENT_TEAM:-}"
@@ -40,6 +42,11 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_DIR="$2"
       shift 2
       ;;
+    --derived-data-path)
+      [[ $# -ge 2 ]] || { echo "error: --derived-data-path requires a value" >&2; exit 64; }
+      DERIVED_DATA_PATH="$2"
+      shift 2
+      ;;
     --attempts)
       [[ $# -ge 2 ]] || { echo "error: --attempts requires a value" >&2; exit 64; }
       ATTEMPTS="$2"
@@ -55,7 +62,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "usage: $0 --destination-id <UDID> --platform simulator|physical --output-dir <new-directory> [--development-team <10-character-team-id>] [--attempts 1-3] [--allow-dirty-diagnostic]" >&2
+      echo "usage: $0 --destination-id <UDID> --platform simulator|physical --output-dir <new-directory> [--derived-data-path <new-directory>] [--development-team <10-character-team-id>] [--attempts 1-3] [--allow-dirty-diagnostic]" >&2
       exit 64
       ;;
   esac
@@ -92,6 +99,14 @@ if [[ -e "$OUTPUT_DIR" ]]; then
   echo "error: output path already exists: $OUTPUT_DIR" >&2
   exit 1
 fi
+if [[ -n "$DERIVED_DATA_PATH" && -e "$DERIVED_DATA_PATH" ]]; then
+  echo "error: derived data path already exists: $DERIVED_DATA_PATH" >&2
+  exit 1
+fi
+if [[ -n "$DERIVED_DATA_PATH" && "$DERIVED_DATA_PATH" != /* ]]; then
+  echo "error: derived data path must be absolute: $DERIVED_DATA_PATH" >&2
+  exit 1
+fi
 
 for TOOL in git xcodebuild xcrun shasum ditto; do
   command -v "$TOOL" >/dev/null 2>&1 || {
@@ -105,6 +120,18 @@ if [[ "$AVAILABLE_GIB" -lt 8 ]]; then
   echo "error: free disk is ${AVAILABLE_GIB} GiB; qualification requires 8 GiB of starting headroom to preserve the 5 GiB operational floor" >&2
   exit 1
 fi
+if [[ -n "$DERIVED_DATA_PATH" ]]; then
+  DERIVED_DATA_PARENT="$(dirname "$DERIVED_DATA_PATH")"
+  [[ -d "$DERIVED_DATA_PARENT" ]] || {
+    echo "error: derived data parent does not exist: $DERIVED_DATA_PARENT" >&2
+    exit 1
+  }
+  DERIVED_AVAILABLE_GIB="$(df -Pk "$DERIVED_DATA_PARENT" | awk 'NR == 2 { print int($4 / 1024 / 1024) }')"
+  if [[ "$DERIVED_AVAILABLE_GIB" -lt 8 ]]; then
+    echo "error: derived data filesystem has ${DERIVED_AVAILABLE_GIB} GiB free; qualification requires 8 GiB of starting headroom" >&2
+    exit 1
+  fi
+fi
 
 cd "$REPO_ROOT"
 SOURCE_HEAD="$(git rev-parse HEAD)"
@@ -116,6 +143,11 @@ if [[ -n "$SOURCE_STATUS" && "$ALLOW_DIRTY" -ne 1 ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+XCODE_DERIVED_DATA_OPTIONS=()
+if [[ -n "$DERIVED_DATA_PATH" ]]; then
+  mkdir "$DERIVED_DATA_PATH"
+  XCODE_DERIVED_DATA_OPTIONS=(-derivedDataPath "$DERIVED_DATA_PATH")
+fi
 SOURCE_MANIFEST="$OUTPUT_DIR/source-files.sha256"
 while IFS= read -r SOURCE_FILE; do
   [[ -n "$SOURCE_FILE" ]] || continue
@@ -155,6 +187,7 @@ for ATTEMPT in $(seq 1 "$ATTEMPTS"); do
     -scheme HarcMobile \
     -configuration Debug \
     -destination "id=$DESTINATION_ID" \
+    "${XCODE_DERIVED_DATA_OPTIONS[@]}" \
     -jobs 2 \
     -parallel-testing-enabled NO \
     SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
@@ -278,6 +311,7 @@ fi
   echo "selected_attempt=$SELECTED_ATTEMPT"
   echo "xcode_status=$XCODE_STATUS"
   echo "result_bundle=$RESULT_BUNDLE"
+  echo "derived_data_path=$DERIVED_DATA_PATH"
   echo "source_head=$SOURCE_HEAD"
   echo "source_manifest_sha256=$SOURCE_FINGERPRINT"
 } > "$OUTPUT_DIR/qualification.txt"

@@ -175,6 +175,7 @@ Run the complete UI bundle through the provenance wrapper instead of an ad-hoc
   --destination-id <physical-device-udid> \
   --platform physical \
   --development-team <10-character-team-id> \
+  --derived-data-path <new-derived-data-directory> \
   --output-dir build/qualification/<unique-run-name>
 ```
 
@@ -183,7 +184,10 @@ The wrapper refuses to overwrite evidence, enforces two workers and requires
 clean tree for release evidence, and retains the
 source-file manifest/fingerprint, source status, destination details, build
 log, test summary, and a SHA-256-stamped zipped result bundle. The explicit
-`--allow-dirty-diagnostic` escape hatch labels current-tree engineering runs;
+`--derived-data-path` option requires a new directory, records it in the
+qualification receipt, and allows disposable compiler artifacts to live on a
+separate high-capacity volume without moving Harc recordings or user data.
+The explicit `--allow-dirty-diagnostic` escape hatch labels current-tree engineering runs;
 it is never release evidence. Simulator runs use `--platform simulator` and
 remain diagnostic only. Physical runs make up to three bounded launch attempts
 by default because CoreDevice can time out while enabling automation before a
