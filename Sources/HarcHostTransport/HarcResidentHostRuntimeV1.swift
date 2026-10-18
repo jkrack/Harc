@@ -489,6 +489,16 @@ public actor HarcResidentHostRuntimeV1 {
         return (ids.count, repaired, failed)
     }
 
+    /// Local app administration; deliberately absent from network services.
+    public func migrateCanonicalLibraryBindings() async throws
+        -> HostCanonicalLibraryMigrationReport
+    {
+        guard !transportStopped else {
+            throw HarcHostError.processingSchedulerUnavailable
+        }
+        return try await canonicalIngest.migrateCanonicalLibraryBindings()
+    }
+
     public func validatedProcessingRequest(
         canonicalRecordingID: CanonicalRecordingID
     ) async throws -> HostDurableProcessingRequest {

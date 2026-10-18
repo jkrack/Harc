@@ -218,6 +218,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 }
             }
         }
+        bridge.onMigrateHostLibraryBindings = { [weak self] in
+            guard let self, let runtime = self.hostRuntime,
+                  !self.bridge.hostLibraryMigrationInProgress else { return }
+            self.bridge.hostLibraryMigrationInProgress = true
+            self.bridge.hostLibraryMigrationStatus = nil
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.bridge.hostLibraryMigrationInProgress = false }
+                do {
+                    let result = try await runtime.migrateCanonicalLibraryBindings()
+                    self.bridge.hostLibraryMigrationStatus =
+                        "Checked \(result.checkedArtifactCount) recording(s); verified \(result.eligibleArtifactCount) moved binding(s); rebound \(result.reboundArtifactCount); recovered \(result.recoveredReceiptCount) pending receipt(s); \(result.failedUploadIDs.count) still need attention."
+                } catch HarcHostError.localOSAuthenticationRequired {
+                    self.bridge.hostLibraryMigrationStatus =
+                        "Moved-library recovery requires approval from this Mac's owner. No binding was changed."
+                } catch {
+                    self.bridge.hostLibraryMigrationStatus =
+                        "Moved-library verification could not finish. No unverified recording was rebound."
+                }
+            }
+        }
         bridge.onRetryClientHostConnection = { [weak self] in
             self?.desktopClientRuntime?.handleConnectivityRestored()
         }

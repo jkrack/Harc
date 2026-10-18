@@ -125,6 +125,15 @@ repair. Validate with `swift test --jobs 2 --filter CanonicalIngestServiceTests`
 pairing window must invalidate every suspended continuation before it can save
 route or adoption state.
 
+A distinct explicit local moved-library recovery may accept a changed device or
+inode only after a cheap safe-identity prepass, complete manifest/receipt and WAV
+hash validation before and after one batch owner approval, and an atomic immutable
+binding event. Original publication identities and exact receipts remain unchanged.
+An authorized pre-receipt event must remain resumable if receipt completion fails;
+ordinary recovery and every incoming RPC remain unable to authorize rebinding.
+Validate metadata-only, copied-file, receipt-prepared, legacy-chain, and interrupted
+recovery cases with `swift test --jobs 2 --filter CanonicalIngestServiceTests`.
+
 Host speaker outcomes bind the exact canonical audio and Host transcript artifact.
 Publication accounts for every transcript cluster with either missing voice
 evidence or a committed, evidence-bound decision; a decision may remain unmatched
@@ -812,6 +821,12 @@ permissions and length, and full signed receipt/audio validation. Preserve origi
 publication identity and append an immutable receipt-bound repair chain atomically.
 Incoming RPCs never authorize repair. Validate with
 `swift test --jobs 2 --filter CanonicalIngestServiceTests`.
+
+Moved-library recovery is a separate local owner-authorized action. It may rebind
+a changed device or inode only after exact signed evidence and full audio validation
+on both sides of approval, records the transition in the immutable canonical
+artifact binding chain, and resumes pre-receipt publication idempotently. It is
+not exposed through Host RPCs.
 
 Embedded helper scripts resolve executables with `swift build --show-bin-path`
 using the same product, architecture, configuration and scratch path as the build.
