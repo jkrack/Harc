@@ -76,6 +76,7 @@ jobs:
       - name: Recording publication across a mounted volume
         run: |
           set -o pipefail
+          mkdir -p build/validation
           HARC_SKIP_BUILD=1 \
             HARC_PUBLICATION_EVIDENCE_DIR=build/validation/publication-cross-volume \
             ./scripts/qualify-publication-cross-volume.sh \
