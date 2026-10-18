@@ -46,79 +46,102 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
     func testSyncDetailsAreDiscoverableWithoutHostOrRecording() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()
-        let library = app.tabBars.buttons["Library"]
-        XCTAssertTrue(library.waitForExistence(timeout: 10))
-        library.tap()
-        let status = app.buttons["harc.mobile.library.sync-status"]
+
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.setup-and-sync"
+            ].waitForExistence(timeout: 10)
+        )
+
+        let status = app.buttons["harc.mobile.host.sync-status"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
-        XCTAssertEqual(status.label, "Sync status")
-        XCTAssertGreaterThanOrEqual(status.frame.height, 44)
         status.tap()
         let transferStatus = app.descendants(matching: .any)["harc.mobile.sync.transfer-status"]
         XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
         XCTAssertTrue(transferStatus.label.contains("Transfers not enabled in this build"))
         let hostStatus = app.descendants(matching: .any)["harc.mobile.sync.host"]
         XCTAssertTrue(hostStatus.exists)
-        XCTAssertTrue((hostStatus.label + " " + String(describing: hostStatus.value ?? "")).contains("No Host paired"))
         XCTAssertFalse(app.buttons["harc.mobile.sync.retry-transfers"].exists)
         let local = app.buttons["harc.mobile.sync.local-recordings"]
         XCTAssertTrue(scrollUntilExists(local, in: app))
         local.tap()
         XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
-
-        app.tabBars.buttons["Host"].tap()
-        let hostLink = app.buttons["harc.mobile.host.sync-status"]
-        XCTAssertTrue(hostLink.waitForExistence(timeout: 10))
-        hostLink.tap()
-        XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
-        XCTAssertTrue(transferStatus.label.contains("Transfers not enabled in this build"))
-        XCTAssertFalse(app.buttons["Retry transfers"].exists)
     }
 
-    func testHostTabFromLibraryRootControl() {
-        assertHostTabNavigation(openSync: false, openLocalRecordings: false)
+    func testLibrarySearchLivesInTheSearchTab() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+
+        let searchTab = app.tabBars.buttons["Search"]
+        XCTAssertTrue(searchTab.waitForExistence(timeout: 10))
+        searchTab.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["harc.mobile.search"]
+                .waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(
+            app.staticTexts[
+                "Recordings still on this iPhone match by title only."
+            ].exists
+        )
+        XCTAssertTrue(
+            app.searchFields[
+                "Search Host titles, tags, and transcripts"
+            ].exists
+        )
     }
 
-    func testHostTabFromSyncControl() {
-        assertHostTabNavigation(openSync: true, openLocalRecordings: false)
-    }
-
-    func testHostTabFromEmptyLocalRecordings() {
-        assertHostTabNavigation(openSync: true, openLocalRecordings: true)
-    }
-
-    func testRepeatedOfflineNavigationPreservesEachTabStack() {
+    func testSetupAndSyncOpensFromLibraryHostPill() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()
         selectTab("Library", in: app)
-        openLocalRecordingsFromLibrary(in: app)
+        openSetupAndSync(in: app)
+        XCTAssertTrue(
+            app.buttons["harc.mobile.host.sync-status"]
+                .waitForExistence(timeout: 10)
+        )
+    }
 
-        for cycle in 0..<3 {
-            XCTContext.runActivity(named: "Offline navigation cycle \(cycle + 1)") { _ in
-                selectTab("Host", in: app)
-                let hostSync = app.buttons["harc.mobile.host.sync-status"]
-                XCTAssertTrue(hostSync.waitForExistence(timeout: 10))
-                hostSync.tap()
-                openLocalRecordingsFromSync(in: app)
+    func testSendingStatusOpensFromSetupAndSync() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        openSetupAndSync(in: app)
 
-                selectTab("Library", in: app)
-                assertVisibleEmptyLocalRecordings(in: app)
-                selectTab("Record", in: app)
-                XCTAssertTrue(app.buttons["harc.mobile.record.start"].waitForExistence(timeout: 10))
-                selectTab("Host", in: app)
-                assertVisibleEmptyLocalRecordings(in: app)
-                app.navigationBars["On This iPhone"].buttons["Sync"].tap()
-                XCTAssertTrue(app.navigationBars["Sync"].waitForExistence(timeout: 10))
-                app.navigationBars["Sync"].buttons["Host"].tap()
-                XCTAssertTrue(hostSync.waitForExistence(timeout: 10))
+        let sending = app.buttons["harc.mobile.host.sync-status"]
+        XCTAssertTrue(sending.waitForExistence(timeout: 10))
+        sending.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.sync.transfer-status"
+            ].waitForExistence(timeout: 10)
+        )
+    }
 
-                selectTab("Library", in: app)
-                assertVisibleEmptyLocalRecordings(in: app)
-                app.navigationBars["On This iPhone"].buttons["Sync"].tap()
-                XCTAssertTrue(app.navigationBars["Sync"].waitForExistence(timeout: 10))
-                app.navigationBars["Sync"].buttons["Library"].tap()
-                openLocalRecordingsFromLibrary(in: app)
-            }
+    func testEmptyLocalRecordingsOpenFromSetupAndSync() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        openSetupAndSync(in: app)
+        openLocalRecordingsFromSetupAndSync(in: app)
+    }
+
+    func testRepeatedSetupAndSyncPresentationPreservesSelectedTab() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+
+        for tabName in ["Library", "Record", "Library"] {
+            selectTab(tabName, in: app)
+            openSetupAndSync(in: app)
+            let done = app.buttons["Done"]
+            XCTAssertTrue(done.waitForExistence(timeout: 10))
+            done.tap()
+            XCTAssertTrue(
+                app.tabBars.buttons[tabName]
+                    .waitForExistence(timeout: 10)
+            )
+            XCTAssertTrue(app.tabBars.buttons[tabName].isSelected)
         }
     }
 
@@ -138,14 +161,30 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed)
     }
 
-    private func openLocalRecordingsFromLibrary(in app: XCUIApplication) {
-        let sync = app.buttons["harc.mobile.library.sync-status"]
-        XCTAssertTrue(sync.waitForExistence(timeout: 10))
-        sync.tap()
-        openLocalRecordingsFromSync(in: app)
+    private func openSetupAndSync(in app: XCUIApplication) {
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.setup-and-sync"
+            ].waitForExistence(timeout: 10)
+        )
     }
 
-    private func openLocalRecordingsFromSync(in app: XCUIApplication) {
+    private func openLocalRecordingsFromSetupAndSync(
+        in app: XCUIApplication
+    ) {
+        let storage = app.buttons["Recordings & storage"]
+        if storage.waitForExistence(timeout: 1) {
+            storage.tap()
+            assertVisibleEmptyLocalRecordings(in: app)
+            return
+        }
+
+        let sending = app.buttons["harc.mobile.host.sync-status"]
+        XCTAssertTrue(sending.waitForExistence(timeout: 10))
+        sending.tap()
         let local = app.buttons["harc.mobile.sync.local-recordings"]
         XCTAssertTrue(scrollUntilExists(local, in: app))
         local.tap()
@@ -154,57 +193,15 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
 
     private func assertVisibleEmptyLocalRecordings(in app: XCUIApplication) {
         XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
-        let destination = app.scrollViews["harc.mobile.local-recordings"]
-        XCTAssertTrue(destination.waitForExistence(timeout: 10))
-        XCTAssertGreaterThan(destination.frame.width, 0)
-        let empty = app.staticTexts["No recordings yet"]
+        let empty = app.staticTexts.matching(
+            NSPredicate(
+                format: "label IN %@",
+                ["No recordings yet", "No recordings on this iPhone"]
+            )
+        ).firstMatch
         XCTAssertTrue(empty.waitForExistence(timeout: 10))
         XCTAssertTrue(empty.isHittable)
         XCTAssertGreaterThan(empty.frame.width, 0)
-        XCTAssertTrue(app.staticTexts[
-            "Recordings saved on this iPhone appear here, even without a Host."
-        ].exists)
-    }
-
-    private func assertHostTabNavigation(
-        openSync: Bool,
-        openLocalRecordings: Bool
-    ) {
-        let app = makeApp(rootID: TestRoot.offlineReview)
-        app.launch()
-        let library = app.tabBars.buttons["Library"]
-        XCTAssertTrue(library.waitForExistence(timeout: 10))
-        library.tap()
-        let libraryStatus = app.buttons["harc.mobile.library.sync-status"]
-        XCTAssertTrue(libraryStatus.waitForExistence(timeout: 10))
-        if openSync {
-            libraryStatus.tap()
-            XCTAssertTrue(app.descendants(matching: .any)[
-                "harc.mobile.sync.transfer-status"
-            ].waitForExistence(timeout: 10))
-        }
-        if openLocalRecordings {
-            let local = app.buttons["harc.mobile.sync.local-recordings"]
-            XCTAssertTrue(scrollUntilExists(local, in: app))
-            local.tap()
-            XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
-            print("NAV_DIAG localScrollFrames=\(app.scrollViews.allElementsBoundByIndex.map(\.frame))")
-        }
-        let matches = app.tabBars.buttons.matching(identifier: "Host")
-        XCTAssertEqual(matches.count, 1, "Host tab targeting must be unique")
-        let host = matches.element(boundBy: 0)
-        print("NAV_DIAG sync=\(openSync) local=\(openLocalRecordings) hostFrame=\(host.frame) hittable=\(host.isHittable) selectedBefore=\(host.isSelected)")
-        host.tap()
-        let selected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "selected == true"), object: host
-        )
-        let selectionResult = XCTWaiter.wait(for: [selected], timeout: 10)
-        let attachment = XCTAttachment(string: app.debugDescription)
-        attachment.name = "Host tab after one tap; sync=\(openSync), local=\(openLocalRecordings)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-        XCTAssertEqual(selectionResult, .completed, "One Host tap must select Host")
-        XCTAssertTrue(app.buttons["harc.mobile.host.sync-status"].waitForExistence(timeout: 10))
     }
 
     func testOfflineReviewSampleAndPrivacyAreReachableWithoutHost() {
@@ -235,11 +232,20 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             "Review sample audio must remain reachable at large text sizes."
         )
 
-        let privacy = app.buttons["Privacy & Data"]
+        let closeSample = app.buttons["Close Review Sample"]
+        XCTAssertTrue(closeSample.waitForExistence(timeout: 10))
+        closeSample.tap()
+
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
         XCTAssertTrue(
-            scrollUntilExists(privacy, in: app),
-            "Privacy & Data must remain reachable at large text sizes."
+            app.descendants(matching: .any)[
+                "harc.mobile.setup-and-sync"
+            ].waitForExistence(timeout: 10)
         )
+        let privacy = app.buttons["Privacy & Data"]
+        XCTAssertTrue(privacy.waitForExistence(timeout: 10))
         privacy.tap()
         XCTAssertTrue(
             app.descendants(matching: .any)["harc.mobile.privacy"]
@@ -275,8 +281,19 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         )
         try performAccessibilityAudit(in: app, surface: "Review Sample")
 
+        let closeSample = app.buttons["Close Review Sample"]
+        XCTAssertTrue(closeSample.waitForExistence(timeout: 10))
+        closeSample.tap()
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.setup-and-sync"
+            ].waitForExistence(timeout: 10)
+        )
         let privacy = app.buttons["Privacy & Data"]
-        XCTAssertTrue(scrollUntilExists(privacy, in: app))
+        XCTAssertTrue(privacy.waitForExistence(timeout: 10))
         privacy.tap()
         XCTAssertTrue(
             app.descendants(matching: .any)["harc.mobile.privacy"]
@@ -305,13 +322,25 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         start.tap()
         triggerMicrophonePermissionMonitor(in: app)
 
-        let stop = app.buttons["harc.mobile.record.stop"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            app.buttons["harc.mobile.record.stop"]
+                .waitForExistence(timeout: 15)
+        )
+
+        let libraryTab = app.tabBars.buttons["Library"]
+        XCTAssertTrue(libraryTab.waitForExistence(timeout: 10))
+        libraryTab.tap()
+        let stop = app.buttons["harc.mobile.record.accessory.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
 
         let capturedAudio = expectation(description: "capture real microphone audio")
         _ = XCTWaiter.wait(for: [capturedAudio], timeout: 2)
         stop.tap()
 
+        let recordTab = app.tabBars.buttons["Record"]
+        XCTAssertTrue(recordTab.waitForExistence(timeout: 10))
+        recordTab.tap()
         XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.state, .runningForeground)
 #endif

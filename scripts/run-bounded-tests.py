@@ -20,13 +20,17 @@ def interrupted(signum, _frame):
 
 
 def group_processes(group):
-    result = subprocess.run(['ps', '-axo', 'pid=,pgid=,comm='], capture_output=True,
+    result = subprocess.run(['ps', '-axo', 'pid=,pgid=,stat=,comm='], capture_output=True,
                             text=True, timeout=5, check=True)
     processes = []
     for line in result.stdout.splitlines():
-        fields = line.strip().split(None, 2)
-        if len(fields) == 3 and int(fields[1]) == group:
-            processes.append({'pid': int(fields[0]), 'command': fields[2]})
+        fields = line.strip().split(None, 3)
+        if len(fields) == 4 and int(fields[1]) == group:
+            processes.append({
+                'pid': int(fields[0]),
+                'state': fields[2],
+                'command': fields[3],
+            })
     return processes
 
 
@@ -53,6 +57,14 @@ def signal_group(group, sig):
         os.killpg(group, sig)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # On macOS the group leader can exit between wait/poll and killpg,
+        # leaving only an unreaped zombie under a transient stale group
+        # identifier that reports EPERM rather than ESRCH. Zombies cannot be
+        # signalled and hold no resources. A live descendant must still make
+        # cleanup fail closed.
+        if any(not process['state'].startswith('Z') for process in group_processes(group)):
+            raise
 
 
 def run(command, timeout, grace, directory):
