@@ -76,6 +76,7 @@ jobs:
       - name: Recording publication across a mounted volume
         run: |
           set -o pipefail
+          mkdir -p build/validation
           HARC_SKIP_BUILD=1 \
             HARC_PUBLICATION_EVIDENCE_DIR=build/validation/publication-cross-volume \
             ./scripts/qualify-publication-cross-volume.sh \
@@ -95,11 +96,68 @@ jobs:
             --evidence-dir build/validation/publication-storage \
             2>&1 | tee build/validation/publication-storage.log
 
+      - name: Direct pinned-TLS pairing lifecycle
+        run: |
+          set -o pipefail
+          ./scripts/test-pairing-lifecycle.sh 2>&1 | tee build/validation/pairing-direct.log
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install relay emulator dependencies
+        working-directory: CloudflareRelay
+        run: npm ci
+
+      - name: Relay pinned-TLS pairing lifecycle
+        run: |
+          set -o pipefail
+          HARC_SKIP_BUILD=1 ./scripts/test-pairing-lifecycle-relay-emulator.sh 2>&1 | tee build/validation/pairing-relay.log
+
+      - name: Record package validation provenance
+        if: always()
+        run: |
+          mkdir -p build/validation
+          git rev-parse HEAD > build/validation/source.txt
+          xcodebuild -version > build/validation/toolchain.txt
+          swift --version >> build/validation/toolchain.txt
+          git status --short > build/validation/worktree.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: package-validation
+          path: build/validation
+          retention-days: 14
+
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version
+          swift --version
+
+      - name: Check build prerequisites
+        run: |
+          test "$(uname -m)" = arm64
+          df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { exit ($4 < 5242880) }'
+
       - name: Install xcodegen
         run: brew install xcodegen
 
       - name: Generate Xcode project
         run: xcodegen generate
+
+      - name: Prepare validation directory
+        run: mkdir -p build/validation
 
       - name: Build Harc.app
         run: |
@@ -120,6 +178,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
             -jobs 2 \
             -project Harc.xcodeproj \
             -scheme Harc \
@@ -150,24 +210,6 @@ jobs:
             --require-test HarcAppUITests/HarcAppUITests/testRecordStopPersistsGoldenTranscriptAcrossRelaunch \
             --output build/validation/macos-execution-gate.json
 
-      - name: Direct pinned-TLS pairing lifecycle
-        run: |
-          set -o pipefail
-          ./scripts/test-pairing-lifecycle.sh 2>&1 | tee build/validation/pairing-direct.log
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install relay emulator dependencies
-        working-directory: CloudflareRelay
-        run: npm ci
-
-      - name: Relay pinned-TLS pairing lifecycle
-        run: |
-          set -o pipefail
-          HARC_SKIP_BUILD=1 ./scripts/test-pairing-lifecycle-relay-emulator.sh 2>&1 | tee build/validation/pairing-relay.log
-
       - name: Verify embedded helpers
         run: |
           APP=$(xcodebuild -project Harc.xcodeproj -scheme Harc -configuration Debug -showBuildSettings | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2}' | head -1)/Harc.app
@@ -177,7 +219,7 @@ jobs:
             codesign --verify --strict "$APP/Contents/MacOS/$helper"
           done
 
-      - name: Record validation provenance
+      - name: Record macOS validation provenance
         if: always()
         run: |
           mkdir -p build/validation
@@ -194,8 +236,8 @@ jobs:
           retention-days: 14
 
   mobile-configuration:
-    # Sequential validation: do not overlap the Mac build job.
-    needs: build
+    # Keep the simulator workload off the package and Mac validation runners.
+    needs: [build, macos]
     runs-on: macos-26
     timeout-minutes: 45
     steps:
