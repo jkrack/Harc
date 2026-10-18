@@ -1,5 +1,5 @@
-import json
 import importlib.util
+import json
 import os
 from pathlib import Path
 import signal
@@ -84,8 +84,14 @@ class BoundedTests(unittest.TestCase):
                 mock.patch.object(RUNNER, 'group_processes', return_value=[]):
             RUNNER.signal_group(82941, signal.SIGKILL)
 
+    def test_permission_denied_for_zombie_group_is_treated_as_disappeared(self):
+        zombies = [{'pid': 82942, 'state': 'Z+', 'command': 'exited-test'}]
+        with mock.patch.object(RUNNER.os, 'killpg', side_effect=PermissionError), \
+                mock.patch.object(RUNNER, 'group_processes', return_value=zombies):
+            RUNNER.signal_group(82941, signal.SIGKILL)
+
     def test_permission_denied_with_surviving_group_fails_closed(self):
-        survivors = [{'pid': 82942, 'command': 'resistant-test'}]
+        survivors = [{'pid': 82942, 'state': 'S', 'command': 'resistant-test'}]
         with mock.patch.object(RUNNER.os, 'killpg', side_effect=PermissionError), \
                 mock.patch.object(RUNNER, 'group_processes', return_value=survivors):
             with self.assertRaises(PermissionError):
