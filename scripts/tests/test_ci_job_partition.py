@@ -39,6 +39,10 @@ class CIJobPartitionTests(unittest.TestCase):
         )
         self.assertLess(mkdir, tee)
 
+    def test_macos_build_and_test_allow_checked_in_package_plugins(self):
+        self.assertEqual(self.macos_job.count("-skipMacroValidation"), 2)
+        self.assertEqual(self.macos_job.count("-skipPackagePluginValidation"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
