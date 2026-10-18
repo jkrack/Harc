@@ -32,9 +32,18 @@ final class HarcMobileAppStoreScreenshotUITests: XCTestCase {
     let libraryTab = app.tabBars.buttons["Library"]
     XCTAssertTrue(libraryTab.waitForExistence(timeout: 5))
     libraryTab.tap()
-    let openSample = app.buttons[
-      "harc.mobile.reviewSample.open.toolbar"
-    ]
+    let hostPill = app.buttons["harc.mobile.host.health"]
+    XCTAssertTrue(hostPill.waitForExistence(timeout: 5))
+    hostPill.tap()
+    XCTAssertTrue(
+      app.descendants(matching: .any)[
+        "harc.mobile.setup-and-sync"
+      ].waitForExistence(timeout: 10)
+    )
+    let advanced = app.buttons["Advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10))
+    advanced.tap()
+    let openSample = app.buttons["harc.mobile.reviewSample.open"]
     XCTAssertTrue(openSample.waitForExistence(timeout: 10))
     openSample.tap()
     XCTAssertTrue(
@@ -47,11 +56,12 @@ final class HarcMobileAppStoreScreenshotUITests: XCTestCase {
     let closeSample = app.buttons["Close Review Sample"]
     XCTAssertTrue(closeSample.waitForExistence(timeout: 5))
     closeSample.tap()
+    let setupBack = app.navigationBars["Advanced"]
+      .buttons["Setup & Sync"]
+    XCTAssertTrue(setupBack.waitForExistence(timeout: 5))
+    setupBack.tap()
 
-    let hostTab = app.tabBars.buttons["Host"]
-    XCTAssertTrue(hostTab.waitForExistence(timeout: 5))
-    hostTab.tap()
-    let privacy = app.buttons["Privacy & Data"]
+    let privacy = app.buttons["Privacy & data"]
     XCTAssertTrue(privacy.waitForExistence(timeout: 10))
     privacy.tap()
     XCTAssertTrue(

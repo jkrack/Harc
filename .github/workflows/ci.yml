@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +28,7 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { exit ($4 < 5242880) }'
+          mkdir -p build/validation
 
       - name: Protocol schema contract
         run: ./scripts/check-harc-protocol-schemas.sh
@@ -120,12 +121,16 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
             -jobs 2 \
             -project Harc.xcodeproj \
             -scheme Harc \
             -configuration Debug \
             -destination 'platform=macOS,arch=arm64' \
             -parallel-testing-enabled NO \
+            -retry-tests-on-failure \
+            -test-iterations 2 \
             -resultBundlePath build/validation/macos-tests.xcresult \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \

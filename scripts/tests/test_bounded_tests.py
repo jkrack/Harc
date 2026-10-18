@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -7,8 +8,12 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'run-bounded-tests.py'
+SPEC = importlib.util.spec_from_file_location('bounded_test_runner', SCRIPT)
+RUNNER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RUNNER)
 
 
 class BoundedTests(unittest.TestCase):
@@ -73,6 +78,24 @@ class BoundedTests(unittest.TestCase):
             for timeout in ['nan', 'inf', '0', '-1']:
                 result = subprocess.run(self.command(Path(path), 'pass', timeout), capture_output=True)
                 self.assertEqual(result.returncode, 2)
+
+    def test_permission_denied_for_empty_group_is_treated_as_disappeared(self):
+        with mock.patch.object(RUNNER.os, 'killpg', side_effect=PermissionError), \
+                mock.patch.object(RUNNER, 'group_processes', return_value=[]):
+            RUNNER.signal_group(82941, signal.SIGKILL)
+
+    def test_permission_denied_for_zombie_group_is_treated_as_disappeared(self):
+        zombies = [{'pid': 82942, 'state': 'Z+', 'command': 'exited-test'}]
+        with mock.patch.object(RUNNER.os, 'killpg', side_effect=PermissionError), \
+                mock.patch.object(RUNNER, 'group_processes', return_value=zombies):
+            RUNNER.signal_group(82941, signal.SIGKILL)
+
+    def test_permission_denied_with_surviving_group_fails_closed(self):
+        survivors = [{'pid': 82942, 'state': 'S', 'command': 'resistant-test'}]
+        with mock.patch.object(RUNNER.os, 'killpg', side_effect=PermissionError), \
+                mock.patch.object(RUNNER, 'group_processes', return_value=survivors):
+            with self.assertRaises(PermissionError):
+                RUNNER.signal_group(82941, signal.SIGKILL)
 
 
 if __name__ == '__main__':

@@ -12,7 +12,10 @@ final class HarcMobileSyncStatusPresentationTests: XCTestCase {
                 let status = Status.make(host: host, transfer: transfer, codecQualified: false, pendingCount: 3)
                 XCTAssertEqual(status.reason, .qualificationRequired)
                 XCTAssertEqual(status.action, .localRecordings)
-                XCTAssertTrue(status.detail.contains("Retry cannot enable transfers"))
+                XCTAssertEqual(
+                    status.detail,
+                    "Sending to your Mac isn't turned on in this version of Harc yet. Your recordings are safe here, and you can play or export them anytime."
+                )
                 XCTAssertEqual(status.pendingCount, 3)
             }
         }

@@ -9,8 +9,13 @@ enum HarcMobileAccessibilityID {
     static let stopRecording = "harc.mobile.record.stop"
     static let recordingBanner = "harc.mobile.record.banner"
     static let recordingBannerStop = "harc.mobile.record.banner.stop"
+    static let recordingAccessoryStop =
+        "harc.mobile.record.accessory.stop"
     static let localRecordings = "harc.mobile.capture.localRecordings"
     static let hostHealth = "harc.mobile.host.health"
+    static let setupAndSync = "harc.mobile.setup-and-sync"
+    static let searchTab = "harc.mobile.search"
+    static let libraryAttention = "harc.mobile.library.attention"
     static let openReviewSample = "harc.mobile.reviewSample.open"
     static let openReviewSampleToolbar =
         "harc.mobile.reviewSample.open.toolbar"
