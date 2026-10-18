@@ -58,7 +58,7 @@ physical-device capture/background-transfer matrix in the normative spec must
 be green before App Store submission. TestFlight distribution is optional.
 iPad support remains behind its separate UI/device gate.
 
-The iOS 18 installation floor is not an inference-hardware floor. Core capture,
+The iOS 26 installation floor is not an inference-hardware floor. Core capture,
 protected storage, transfer, playback, and Library access have no device-model
 or on-device-inference gate. Future optional mobile inference must use a measured
 runtime tier and fall back to the adopted Host without making capture unavailable.

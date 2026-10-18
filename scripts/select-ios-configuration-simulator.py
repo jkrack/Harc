@@ -12,13 +12,13 @@ def select_simulator(runtimes, devices):
         if not runtime.get('isAvailable') or not runtime.get('identifier', '').startswith('com.apple.CoreSimulator.SimRuntime.iOS-'):
             continue
         version = tuple(int(x) for x in re.findall(r'\d+', runtime.get('version', '')))
-        if not version or version[0] < 18:
+        if not version or version[0] < 26:
             continue
         for device in devices.get('devices', {}).get(runtime['identifier'], []):
             if device.get('isAvailable') and device.get('name', '').startswith('iPhone ') and device.get('udid'):
                 candidates.append((version, device['name'], device['udid'], runtime, device.get('state') == 'Booted'))
     if not candidates:
-        raise ValueError('No installed available iPhone simulator with iOS 18+; install a compatible runtime.')
+        raise ValueError('No installed available iPhone simulator with iOS 26+; install a compatible runtime.')
     booted = [item for item in candidates if item[4]]
     candidates = booted or candidates
     newest = max(item[0] for item in candidates)

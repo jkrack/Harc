@@ -30,6 +30,7 @@ class SimulatorSelectionTests(unittest.TestCase):
         for runtime in [
             {'identifier': 'com.apple.CoreSimulator.SimRuntime.watchOS-26', 'version': '26', 'isAvailable': True},
             {'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-17', 'version': '17', 'isAvailable': True},
+            {'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-18-5', 'version': '18.5', 'isAvailable': True},
             {'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-26', 'version': '26', 'isAvailable': False}]:
             with self.subTest(runtime=runtime), self.assertRaises(ValueError):
                 selector.select_simulator({'runtimes': [runtime]}, {'devices': {runtime['identifier']: [

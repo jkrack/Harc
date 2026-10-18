@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flow: Sending to Mac</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#0066D6}a:hover{color:#004FA8}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; overflow: hidden; background: #2B2B2E; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif; color: #000000; display: flex; flex-direction: column; padding-top: 58px">
+  <div style="flex: 1 1 auto; background: #F2F2F7; border-radius: 12px 12px 0 0; overflow: hidden; display: flex; flex-direction: column">
+    <div style="display: flex; justify-content: center; padding-top: 6px"><span style="width: 36px; height: 5px; border-radius: 999px; background: rgba(60,60,67,0.3); display: block"></span></div>
+    <div style="display: grid; grid-template-columns: 110px minmax(0, 1fr) 110px; align-items: center; height: 44px; padding: 0 8px">
+      <a href="06-Setup.dc.html" style="display: flex; align-items: center; gap: 4px; text-decoration: none; font-size: 17px">
+        <svg width="12" height="20" viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2L2 10l8 8"></path></svg>
+        Setup
+      </a>
+      <div style="text-align: center; font-size: 17px; font-weight: 600">Sending to Mac</div>
+      <span></span>
+    </div>
+    <div style="margin: 8px 16px 0 16px; background: #FFFFFF; border-radius: 14px; padding: 18px 16px; display: flex; flex-direction: column; gap: 8px">
+      <div style="display: flex; align-items: center; gap: 8px">
+        <span style="width: 8px; height: 8px; border-radius: 999px; background: #8A8A8E; display: block"></span>
+        <span style="font-size: 13px; font-weight: 600; color: #3C3C43">Paused</span>
+      </div>
+      <div style="font-size: 20px; font-weight: 700">2 recordings waiting</div>
+      <div style="font-size: 15px; line-height: 21px; color: #3C3C43">Sending to your Mac isn't turned on in this version of Harc yet. Your recordings are safe here, and you can play or export them anytime.</div>
+    </div>
+    <div style="margin: 22px 32px 7px 32px; font-size: 13px; color: #6C6C70; text-transform: uppercase">Queue</div>
+    <div style="margin: 0 16px; background: #FFFFFF; border-radius: 10px; display: flex; flex-direction: column">
+      <a href="05-Detail.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid rgba(60,60,67,0.18); text-decoration: none; color: #000000">
+        <span style="display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto"><span style="font-size: 16px">Recording 9:41 AM</span><span style="font-size: 13px; color: #6C6C70">Today · 12 min</span></span>
+        <span style="font-size: 13px; color: #6C6C70">Waiting</span>
+      </a>
+      <a href="05-Detail.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 11px 16px; text-decoration: none; color: #000000">
+        <span style="display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto"><span style="font-size: 16px">Recording 3:30 PM</span><span style="font-size: 13px; color: #6C6C70">Yesterday · 48 min</span></span>
+        <span style="font-size: 13px; color: #6C6C70">Waiting</span>
+      </a>
+    </div>
+    <div style="margin: 12px 16px 0 16px">
+      <button disabled style="width: 100%; height: 48px; border: 0; border-radius: 12px; background: #E5E5EA; color: #6C6C70; font: inherit; font-size: 17px; font-weight: 600">Send now</button>
+    </div>
+    <div style="margin: 7px 32px 0 32px; font-size: 13px; line-height: 18px; color: #6C6C70">Each recording stays on this iPhone until your Mac confirms it has a verified copy.</div>
+    <div style="margin: 22px 32px 7px 32px; font-size: 13px; color: #6C6C70; text-transform: uppercase">Mac Library</div>
+    <div style="margin: 0 16px; background: #FFFFFF; border-radius: 10px; display: flex; flex-direction: column; font-size: 17px">
+      <div style="display: flex; justify-content: space-between; padding: 11px 16px; border-bottom: 1px solid rgba(60,60,67,0.18)"><span>Last updated</span><span style="color: #6C6C70">5 min ago</span></div>
+      <div style="padding: 11px 16px"><button style="border: 0; background: transparent; padding: 0; font: inherit; color: #0066D6; cursor: pointer">Refresh Library</button></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
