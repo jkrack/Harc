@@ -53,6 +53,13 @@ def signal_group(group, sig):
         os.killpg(group, sig)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # On macOS the group leader can exit between wait/poll and killpg,
+        # leaving a transient stale group identifier that reports EPERM rather
+        # than ESRCH. Ignore that race only after confirming that the group is
+        # empty; a surviving descendant must still make cleanup fail closed.
+        if group_processes(group):
+            raise
 
 
 def run(command, timeout, grace, directory):

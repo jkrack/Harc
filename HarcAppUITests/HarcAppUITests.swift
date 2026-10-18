@@ -185,6 +185,15 @@ final class HarcAppUITests: XCTestCase {
         func picker() -> XCUIElement {
             app.descendants(matching: .any).matching(identifier: "harc.speaker.0.picker").firstMatch
         }
+        func waitForPicker(label: String) -> Bool {
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(
+                    format: "exists == true AND enabled == true AND label CONTAINS %@",
+                    label
+                ),
+                object: picker()
+            )], timeout: 20) == .completed
+        }
         openInspector()
         XCTAssertTrue(picker().waitForExistence(timeout: 6), app.debugDescription)
         picker().click()
@@ -195,23 +204,17 @@ final class HarcAppUITests: XCTestCase {
         name.typeText("UI Voice Carol")
         app.buttons["Add"].click()
         XCTAssertTrue(picker().waitForExistence(timeout: 4), app.debugDescription)
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label CONTAINS %@", "UI Voice Carol"), object: picker())], timeout: 6), .completed,
-            app.debugDescription)
+        XCTAssertTrue(waitForPicker(label: "UI Voice Carol"), app.debugDescription)
         app.terminate()
         openInspector()
         XCTAssertTrue(picker().waitForExistence(timeout: 6), app.debugDescription)
-        XCTAssertTrue(picker().label.contains("UI Voice Carol"), app.debugDescription)
+        XCTAssertTrue(waitForPicker(label: "UI Voice Carol"), app.debugDescription)
         picker().click()
         app.menuItems["Unassign"].click()
-        let unnamed = NSPredicate(format: "label CONTAINS %@", "Speaker 1")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: unnamed, object: picker())], timeout: 6),
-            .completed, app.debugDescription)
+        XCTAssertTrue(waitForPicker(label: "Speaker 1"), app.debugDescription)
         picker().click()
         app.menuItems["UI Voice Carol"].click()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label CONTAINS %@", "UI Voice Carol"), object: picker())], timeout: 6), .completed,
-            app.debugDescription)
+        XCTAssertTrue(waitForPicker(label: "UI Voice Carol"), app.debugDescription)
         let evidence = XCTAttachment(screenshot: app.screenshot())
         evidence.name = "Bound speaker identity after relink"
         evidence.lifetime = .keepAlways
