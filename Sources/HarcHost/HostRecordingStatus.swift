@@ -414,7 +414,10 @@ extension HarcHostStore {
             uploadID: attempt.uploadID,
             in: db
         )
-        let artifactIdentity = try Self.canonicalArtifactIdentity(from: publicationRow)
+        let artifactIdentity = try Self.effectiveCanonicalArtifactIdentity(
+            in: db,
+            row: publicationRow
+        )
 
         let finalizedReceipt: OpaqueExactObjectSlot?
         switch effectiveCheckpoint {

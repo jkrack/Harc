@@ -37,3 +37,25 @@ The local Host settings action checks committed recordings, requests macOS owner
 The isolated candidate passed an Xcode app build, 18 canonical-ingest/receipt-recovery tests, one direct pinned-TLS pairing lifecycle test, and the same lifecycle through the local encrypted-relay emulator, with no skips in these selected runs. Its source snapshot was clean and unchanged, and its Developer ID signature verified before installation. The previous app and both databases were backed up. Read-only comparison after upgrade confirmed both original publication identities and exact signed receipts were unchanged; the new repair table contained zero records. The upgraded resident Host listened on its existing ports. This is software and installation evidence, not real-client completion.
 
 Remaining qualification includes real owner authentication (the Mac mini desktop was locked at the attempted UI step), personal MacBook Pro receipt persistence and queue clearing, playback/processing/speaker outcomes, and interruption exercises. An injected transaction failure test is not a physical power-loss test. Persistent volume identity remains future work; this repair does not claim to eliminate all reasons for metadata drift.
+
+## Moved-library recovery extension
+
+The separate **Verify Moved Library…** action handles an owner intentionally moving
+or copying the complete Harc Library. It begins with a cheap safe-identity prepass,
+then validates exact signed manifest/receipt evidence and the complete WAV hash both
+before and after one batch macOS owner-authorization prompt. The original publication
+identity and exact receipt remain immutable; schema v8 appends an immutable canonical
+artifact binding event for the newly authorized device/inode identity.
+
+Recovery includes legitimate pre-receipt states, including `receiptPrepared`. If a
+binding event commits and receipt completion then fails, the next local recovery pass
+resumes idempotently without asking the owner to approve the already-authorized event
+again. Ordinary publication recovery and all incoming Host RPCs remain unable to
+authorize rebinding.
+
+The action is exposed only through the resident Host runtime and local Host Settings.
+Focused tests cover metadata-only transitions, copied files, legacy repair-chain
+migration, receipt-prepared recovery, post-event interruption, and a file change while
+the owner prompt is open. This extension remains unreleased until the macOS app build,
+broader regression suite, notarized release path, and installed-Host qualification are
+complete.
