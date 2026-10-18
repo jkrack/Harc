@@ -3,6 +3,7 @@ import GRDB
 import HarcDomain
 @testable import HarcIdentity
 import HarcProtocol
+import HarcTestSupport
 import Testing
 import Synchronization
 @testable import HarcHost
@@ -10,7 +11,11 @@ import Synchronization
 // Security.framework's process-global certificate/identity lookup is not a
 // concurrency-isolated test fixture. Serialize this suite so one test cannot
 // remove its temporary Keychain material while another is resolving identity.
-@Suite("Host transport-set lifecycle", .serialized)
+@Suite(
+    "Host transport-set lifecycle",
+    .serialized,
+    .processWideSystemResource
+)
 struct HostTransportLifecycleTests {
     @Test("concurrent leaf creation invokes the issuer only once")
     func concurrentLeafIssuance() async throws {
@@ -19,22 +24,61 @@ struct HostTransportLifecycleTests {
             fixture.keys.deleteAllBestEffort()
             try? FileManager.default.removeItem(at: fixture.directory)
         }
-        let ready = try await fixture.lifecycle.prepareForServing()
-        let facts = ready.serverIdentity.certificate
-        try await fixture.store.dbQueue.write { db in
-            try db.execute(sql: "DELETE FROM host_tls_leaves")
-        }
+        let verified = try makeSet(
+            state: fixture.state,
+            epoch: 1,
+            now: fixture.now
+        )
+        try await fixture.store.prepareTransportSetPublication(
+            verified,
+            kind: .initial,
+            expectedActiveSPKISHA256:
+                fixture.state.activeTLSIdentity.tlsSPKISHA256,
+            secondarySPKISHA256: nil,
+            retirementFloorUnixMilliseconds: 0,
+            at: fixture.now
+        )
+        _ = try await fixture.crypto.advanceHighestIssuedTransportSetEpoch(
+            for: fixture.state.tuple,
+            from: 0,
+            to: 1
+        )
+        let pending = try #require(
+            await fixture.store.transportDatabaseSnapshot().pending
+        )
+        try await fixture.store.applyPendingTransportSetPublication(
+            expected: pending,
+            verified: verified,
+            at: fixture.now
+        )
+        let entry = try #require(verified.entries.first)
+        let request = try HostTLSServerCertificateRequest(
+            transportSetEntryNotBefore: Date(
+                timeIntervalSince1970:
+                    Double(entry.notBeforeUnixMilliseconds) / 1_000
+            ),
+            transportSetEntryNotAfter: Date(
+                timeIntervalSince1970:
+                    Double(entry.notAfterUnixMilliseconds) / 1_000
+            ),
+            expectedTLSSPKISHA256:
+                fixture.state.activeTLSIdentity.tlsSPKISHA256,
+            framedSignedTransportSet: verified.exactSignedBytes
+        )
+        let facts = try fixture.state.activeTLSIdentity.issueServerCertificate(
+            request: request
+        )
         let issued = Mutex(0)
         let issue: @Sendable () throws -> HostTLSServerCertificateFacts = {
             issued.withLock { $0 += 1 }
             return facts
         }
         async let first = fixture.store.resolveOrCreateTLSLeaf(
-            for: ready.verifiedTransportSet, tlsSPKISHA256: facts.tlsSPKISHA256,
+            for: verified, tlsSPKISHA256: facts.tlsSPKISHA256,
             at: fixture.now, issue: issue
         )
         async let second = fixture.store.resolveOrCreateTLSLeaf(
-            for: ready.verifiedTransportSet, tlsSPKISHA256: facts.tlsSPKISHA256,
+            for: verified, tlsSPKISHA256: facts.tlsSPKISHA256,
             at: fixture.now, issue: issue
         )
         let results = try await (first, second)

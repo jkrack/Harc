@@ -247,7 +247,7 @@ if [[ -n "$ARCHIVE" || -n "$DISTRIBUTION_APP" ]]; then
 fi
 
 READINESS_EVIDENCE="$REPO_ROOT/docs/evidence/harcmobile-current-candidate-readiness.md"
-EXPECTED_CANDIDATE_LINE="**Candidate configuration:** HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD), iOS 18+, iPhone only"
+EXPECTED_CANDIDATE_LINE="**Candidate configuration:** HarcMobile $EXPECTED_VERSION ($EXPECTED_BUILD), iOS 26+, iPhone only"
 ACTUAL_CANDIDATE_LINE="$(grep -E '^\*\*Candidate configuration:\*\*' "$READINESS_EVIDENCE" 2>/dev/null || true)"
 if [[ -f "$READINESS_EVIDENCE" && "$ACTUAL_CANDIDATE_LINE" == "$EXPECTED_CANDIDATE_LINE" ]]; then
   pass "current candidate record matches source version/build (identification only)"
@@ -337,7 +337,7 @@ MOBILE_TARGET="$(awk '
   found && /^  HarcMobileAppTests:$/ { exit }
   found { print }
 ' "$REPO_ROOT/project.yml")"
-if [[ "$MOBILE_TARGET" == *'deploymentTarget: "18.0"'* ]] && \
+if [[ "$MOBILE_TARGET" == *'deploymentTarget: "26.0"'* ]] && \
   [[ "$MOBILE_TARGET" == *'PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile'* ]] && \
   [[ "$MOBILE_TARGET" == *'TARGETED_DEVICE_FAMILY: 1'* ]] && \
   [[ "$MOBILE_TARGET" == *'SUPPORTS_MACCATALYST: NO'* ]] && \
@@ -345,9 +345,9 @@ if [[ "$MOBILE_TARGET" == *'deploymentTarget: "18.0"'* ]] && \
   [[ "$MOBILE_TARGET" == *'HarcBuildSHA: "$(HARC_BUILD_SHA)"'* ]] && \
   [[ "$MOBILE_TARGET" == *'HARC_BUILD_SHA: unrecorded'* ]] && \
   [[ "$MOBILE_TARGET" != *'SKIP_INSTALL: YES'* ]]; then
-  pass "iOS 18, iPhone-only, installable, source-identified Release settings"
+  pass "iOS 26, iPhone-only, installable, source-identified Release settings"
 else
-  fail "expected iOS 18, iPhone-only, installable, source-identified settings are incomplete in project.yml"
+  fail "expected iOS 26, iPhone-only, installable, source-identified settings are incomplete in project.yml"
 fi
 
 ICON_SET="$REPO_ROOT/HarcMobileApp/Assets.xcassets/AppIcon.appiconset"
@@ -537,7 +537,7 @@ if [[ -n "$ARCHIVE" ]]; then
         "archived bundle identifier"
       require_equal \
         "$(plutil -extract MinimumOSVersion raw -o - "$APP_INFO" 2>/dev/null || true)" \
-        "18.0" \
+        "26.0" \
         "archived minimum iOS version"
       require_equal \
         "$(plutil -extract CFBundleShortVersionString raw -o - "$APP_INFO" 2>/dev/null || true)" \
@@ -704,7 +704,7 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
         "distribution source commit"
       require_equal \
         "$(plutil -extract MinimumOSVersion raw -o - "$DISTRIBUTION_INFO" 2>/dev/null || true)" \
-        "18.0" \
+        "26.0" \
         "distribution minimum iOS version"
       require_equal \
         "$(plutil -extract CFBundleSupportedPlatforms json -o - "$DISTRIBUTION_INFO" 2>/dev/null || true)" \

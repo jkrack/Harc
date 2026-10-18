@@ -33,8 +33,8 @@ Prepared artifacts:
   losing a protected master, outbox entry, receipt, adoption, or library cursor.
 - Run the final signed archive on Omega (`iPhone16,2`) before upload. Do not use
   Omega alone as evidence for an older hardware support claim.
-- With the current iOS 18 deployment floor, acquire or borrow the recommended
-  physical iPhone XR/iOS 18 qualification target documented in
+- With the current iOS 26 deployment floor, acquire or borrow the recommended
+  physical iPhone SE (2nd generation)/iOS 26 qualification target documented in
   `mobile-physical-qualification.md`; do not treat mobile inference as a launch
   requirement or use it to narrow the capture-client floor.
 - Acquire or borrow a current non-Pro iPhone 17 on the current iOS release for

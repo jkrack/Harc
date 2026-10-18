@@ -33,6 +33,8 @@ struct HostMigrationTests {
             "background_capability_bindings",
             "bound_exact_objects",
             "publication_journal",
+            "canonical_receipt_repairs",
+            "canonical_artifact_binding_events",
             "audit_events",
             "host_transport_sets",
             "pending_transport_set_publications",

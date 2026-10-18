@@ -7,7 +7,7 @@ import unittest
 SCRIPT = Path(__file__).resolve().parents[1] / 'preflight-harcmobile-app-store.sh'
 ACTIVE = 'docs/evidence/harcmobile-current-candidate-readiness.md'
 HISTORICAL = 'docs/evidence/2026-08-09-harcmobile-app-store-readiness.md'
-VALID = '**Candidate configuration:** HarcMobile 0.14.13 (68), iOS 18+, iPhone only'
+VALID = '**Candidate configuration:** HarcMobile 0.14.13 (68), iOS 26+, iPhone only'
 OLD = '**Candidate configuration:** HarcMobile 0.14.10 (65), iOS 18+, iPhone only'
 
 

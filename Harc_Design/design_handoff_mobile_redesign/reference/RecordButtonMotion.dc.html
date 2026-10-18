@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Record button motion study</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#0066D6}a:hover{color:#004FA8}
+</style>
+</helmet>
+<div style="width: 880px; height: 600px; box-sizing: border-box; background: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif; color: #000000; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 40px; gap: 40px">
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 24px; border-radius: 20px; background: #F7F7F9">
+    <div style="font-size: 13px; font-weight: 600; color: #6C6C70; text-transform: uppercase; letter-spacing: 0.4px">Today</div>
+    <div style="font-size: 13px; color: #6C6C70; text-align: center">15 fps idle, two waves, rotating gradient, instant color swap</div>
+    <button aria-label="{{today.aria}}" onClick="{{today.toggle}}" onPointerDown="{{today.down}}" onPointerUp="{{today.up}}" onPointerLeave="{{today.up}}" style="width: 280px; height: 280px; border: 0; padding: 0; background: transparent; cursor: pointer; position: relative; touch-action: manipulation">
+      <div style="{{today.haloStyle}}"></div>
+      <div style="{{today.bodyStyle}}"></div>
+      <div style="{{today.micStyle}}">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="#FFFFFF"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path></svg>
+      </div>
+      <div style="{{today.stopStyle}}"></div>
+    </button>
+    <div style="font-size: 20px; font-weight: 600">{{today.label}}</div>
+  </div>
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 24px; border-radius: 20px; background: #F7F7F9">
+    <div style="font-size: 13px; font-weight: 600; color: #0066D6; text-transform: uppercase; letter-spacing: 0.4px">Proposed: fluid</div>
+    <div style="font-size: 13px; color: #6C6C70; text-align: center">Display rate, layered waves, flowing interior, spring press and morph</div>
+    <button aria-label="{{fluid.aria}}" onClick="{{fluid.toggle}}" onPointerDown="{{fluid.down}}" onPointerUp="{{fluid.up}}" onPointerLeave="{{fluid.up}}" style="width: 280px; height: 280px; border: 0; padding: 0; background: transparent; cursor: pointer; position: relative; touch-action: manipulation">
+      <div style="position: absolute; inset: 0; filter: blur(22px); opacity: 0.6">
+        <div style="{{fluid.haloStyle}}"></div>
+      </div>
+      <div style="{{fluid.bodyStyle}}">
+        <sc-for list="{{fluid.blobs}}" as="b" hint-placeholder-count="4">
+          <div style="{{b.style}}"></div>
+        </sc-for>
+        <div style="{{fluid.sheenStyle}}"></div>
+      </div>
+      <div style="{{fluid.micStyle}}">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="#FFFFFF"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path></svg>
+      </div>
+      <div style="{{fluid.stopStyle}}"></div>
+    </button>
+    <div style="font-size: 20px; font-weight: 600">{{fluid.label}}</div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"fluidity":{"editor":"range","default":1,"min":0.3,"max":2,"step":0.1,"section":"Motion"},"speed":{"editor":"range","default":1,"min":0.4,"max":2,"step":0.1,"section":"Motion"},"reduceMotion":{"editor":"boolean","default":false,"section":"Accessibility"},"$preview":{"width":880,"height":600}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { t: 0 };
+    this.sim = {
+      today: { rec: false, pressed: false, lvlSample: 0, lastSample: -1 },
+      fluid: { rec: false, pressed: false, m: 0, mv: 0, p: 1, pv: 0, lvl: 0 }
+    };
+  }
+  componentDidMount() {
+    this.start = performance.now();
+    this.last = this.start;
+    const tick = (now) => {
+      const dt = Math.min(0.05, (now - this.last) / 1000);
+      this.last = now;
+      const t = (now - this.start) / 1000;
+      this.step(t, dt);
+      this.setState({ t });
+      this.raf = requestAnimationFrame(tick);
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+  componentWillUnmount() {
+    cancelAnimationFrame(this.raf);
+  }
+  speech(t) {
+    const syll = Math.max(0, Math.sin(t * 9.1)) * (0.55 + 0.45 * Math.sin(t * 3.7 + 1.2));
+    const phrase = Math.sin(t * 1.3) > -0.3 ? 1 : 0.1;
+    return Math.min(1, syll * phrase * (0.7 + 0.3 * Math.sin(t * 0.37)));
+  }
+  step(t, dt) {
+    const f = this.sim.fluid;
+    const spring = (x, v, target, k, c) => {
+      const a = -k * (x - target) - c * v;
+      v += a * dt;
+      return [x + v * dt, v];
+    };
+    [f.m, f.mv] = spring(f.m, f.mv, f.rec ? 1 : 0, 38, 10);
+    [f.p, f.pv] = spring(f.p, f.pv, f.pressed ? 0.93 : 1, 520, 13);
+    const raw = f.rec ? this.speech(t) : 0;
+    const rate = raw > f.lvl ? 0.35 : 0.06;
+    f.lvl += (raw - f.lvl) * (1 - Math.pow(1 - rate, dt * 60));
+    const d = this.sim.today;
+    const sample = Math.floor(t * (d.rec ? 24 : 15));
+    if (sample !== d.lastSample) {
+      d.lastSample = sample;
+      d.lvlSample = d.rec ? Math.max(0, this.speech(t) + (Math.random() - 0.5) * 0.5) : 0;
+    }
+  }
+  mix(a, b, m) {
+    const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+    const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+    const c = pa.map((x, i) => Math.round(x + (pb[i] - x) * m));
+    return 'rgb(' + c.join(',') + ')';
+  }
+  rgba(a, b, m, alpha) {
+    return this.mix(a, b, m).replace('rgb(', 'rgba(').replace(')', ',' + alpha + ')');
+  }
+  smoothPath(pts) {
+    const n = pts.length;
+    let d = 'M ' + pts[0][0].toFixed(1) + ' ' + pts[0][1].toFixed(1);
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += ' C ' + c1x.toFixed(1) + ' ' + c1y.toFixed(1) + ' ' + c2x.toFixed(1) + ' ' + c2y.toFixed(1) + ' ' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1);
+    }
+    return d + ' Z';
+  }
+  quadPath(pts) {
+    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const n = pts.length;
+    let s = mid(pts[n - 1], pts[0]);
+    let d = 'M ' + s[0].toFixed(1) + ' ' + s[1].toFixed(1);
+    for (let i = 0; i < n; i++) {
+      const m = mid(pts[i], pts[(i + 1) % n]);
+      d += ' Q ' + pts[i][0].toFixed(1) + ' ' + pts[i][1].toFixed(1) + ' ' + m[0].toFixed(1) + ' ' + m[1].toFixed(1);
+    }
+    return d + ' Z';
+  }
+  todayVals(t) {
+    const d = this.sim.today;
+    const fps = d.rec ? 24 : 15;
+    const qt = Math.floor(t * fps) / fps;
+    const rm = !!this.props.reduceMotion;
+    const phase = rm ? 0 : qt * (d.rec ? 0.72 : 0.56);
+    const act = rm ? 0 : (d.rec ? 0.10 + d.lvlSample : 0.12);
+    const breath = rm ? 0 : Math.sin(qt * (d.rec ? 1.4 : 0.85)) * (d.rec ? 0.012 : 0.022);
+    const scale = (1 + breath) * (d.pressed ? 0.96 : 1);
+    const pts = [];
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2;
+      const organic = Math.sin(a * 3 + phase) * 0.045 + Math.sin(a * 5 - phase * 1.31) * 0.025;
+      const voice = Math.min(act, 1.1) * (0.06 + Math.sin(a * 4 + phase * 1.7) * 0.035);
+      const r = 96 * (1 + organic + voice) * scale;
+      pts.push([140 + Math.cos(a) * r, 140 + Math.sin(a) * r]);
+    }
+    const clip = "path('" + this.quadPath(pts) + "')";
+    const deg = rm ? 0 : qt * (d.rec ? 14 : 7);
+    const colors = d.rec ? '#E8334D, #7838B8, #F55947, #E8334D' : '#332E8C, #7838B8, #1A94BF, #332E8C';
+    const halo = d.rec ? 'rgba(232,51,77,0.28)' : 'rgba(120,56,184,0.28)';
+    return {
+      aria: d.rec ? 'Stop recording, current motion' : 'Start recording, current motion',
+      label: d.rec ? 'Tap to stop' : 'Tap to record',
+      haloStyle: 'position: absolute; inset: 0; clip-path: ' + clip + '; background: ' + halo + '; transform: scale(1.07); filter: blur(10px)',
+      bodyStyle: 'position: absolute; inset: 0; clip-path: ' + clip + '; background: conic-gradient(from ' + deg.toFixed(1) + 'deg, ' + colors + ')',
+      micStyle: 'position: absolute; inset: 0; display: ' + (d.rec ? 'none' : 'flex') + '; align-items: center; justify-content: center; pointer-events: none',
+      stopStyle: 'position: absolute; left: 122px; top: 122px; width: 36px; height: 36px; border-radius: 8px; background: #FFFFFF; display: ' + (d.rec ? 'block' : 'none') + '; pointer-events: none',
+      toggle: () => { d.rec = !d.rec; },
+      down: () => { d.pressed = true; },
+      up: () => { d.pressed = false; }
+    };
+  }
+  fluidVals(t) {
+    const f = this.sim.fluid;
+    const rm = !!this.props.reduceMotion;
+    const flu = rm ? 0 : (this.props.fluidity ?? 1);
+    const sp = (this.props.speed ?? 1) * (1 + 0.45 * f.m);
+    const m = Math.max(0, Math.min(1, f.m));
+    const lvl = rm ? 0 : f.lvl;
+    const breath = rm ? 0 : Math.sin(t * 0.9 * sp) * 0.018;
+    const sx = f.p * (1 + (1 - f.p) * 0.45);
+    const sy = f.p;
+    const shape = (lag, grow) => {
+      const tt = t - lag;
+      const pts = [];
+      for (let i = 0; i < 64; i++) {
+        const a = (i / 64) * Math.PI * 2;
+        const organic = (0.034 * Math.sin(2 * a + 0.41 * tt * sp + 0.3)
+          + 0.028 * Math.sin(3 * a - 0.57 * tt * sp + 1.7)
+          + 0.016 * Math.sin(5 * a + 0.83 * tt * sp + 4.1)
+          + 0.008 * Math.sin(7 * a - 1.21 * tt * sp)) * flu * (1 + 0.5 * m);
+        const voice = lvl * (0.07 + 0.035 * Math.sin(4 * a + 2.2 * tt));
+        const r = 96 * (1 + breath + organic + voice) * grow;
+        pts.push([140 + Math.cos(a) * r * sx, 140 + Math.sin(a) * r * sy]);
+      }
+      return "path('" + this.smoothPath(pts) + "')";
+    };
+    const clip = shape(0, 1);
+    const haloClip = shape(0.35, 1.1 + lvl * 0.06);
+    const idle = ['#7838B8', '#1A94BF', '#4B3FD1', '#A04BD9'];
+    const rec = ['#F0554D', '#FF8A5C', '#7838B8', '#E8334D'];
+    const orbit = [[0.31, 0.47, 0.0, 1.1], [0.43, 0.29, 2.1, 0.4], [0.23, 0.37, 4.2, 2.9], [0.52, 0.41, 1.3, 5.0]];
+    const blobs = orbit.map((o, i) => {
+      const cx = 140 + (rm ? 0 : 50 * Math.sin(t * o[0] * sp + o[2]));
+      const cy = 140 + (rm ? 0 : 44 * Math.cos(t * o[1] * sp + o[3]));
+      const size = 190 + lvl * 40;
+      return {
+        style: 'position: absolute; left: ' + (cx - size / 2).toFixed(1) + 'px; top: ' + (cy - size / 2).toFixed(1) + 'px; width: ' + size.toFixed(0) + 'px; height: ' + size.toFixed(0) + 'px; border-radius: 999px; background: radial-gradient(circle, ' + this.rgba(idle[i], rec[i], m, 0.95) + ' 0%, ' + this.rgba(idle[i], rec[i], m, 0) + ' 68%)'
+      };
+    });
+    const base = this.mix('#2A2580', '#B8283A', m);
+    return {
+      aria: f.rec ? 'Stop recording, fluid motion' : 'Start recording, fluid motion',
+      label: f.rec ? 'Tap to stop' : 'Tap to record',
+      haloStyle: 'position: absolute; inset: 0; clip-path: ' + haloClip + '; background: ' + this.mix('#7838B8', '#F0554D', m),
+      bodyStyle: 'position: absolute; inset: 0; overflow: hidden; clip-path: ' + clip + '; background: ' + base,
+      blobs,
+      sheenStyle: 'position: absolute; left: 70px; top: ' + (58 + (1 - f.p) * 30).toFixed(1) + 'px; width: 120px; height: 80px; border-radius: 999px; background: radial-gradient(ellipse, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0) 70%)',
+      micStyle: 'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: ' + (1 - m).toFixed(2) + '; transform: scale(' + (1 - m * 0.4).toFixed(2) + ')',
+      stopStyle: 'position: absolute; left: 122px; top: 122px; width: 36px; height: 36px; border-radius: 8px; background: #FFFFFF; pointer-events: none; opacity: ' + m.toFixed(2) + '; transform: scale(' + (0.6 + 0.4 * m).toFixed(2) + ')',
+      toggle: () => { f.rec = !f.rec; },
+      down: () => { f.pressed = true; },
+      up: () => { f.pressed = false; }
+    };
+  }
+  renderVals() {
+    const t = this.state.t || 0;
+    return { today: this.todayVals(t), fluid: this.fluidVals(t) };
+  }
+}
+</script>
+</body>
+</html>

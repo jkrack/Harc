@@ -3,12 +3,17 @@ import GRDB
 import HarcDomain
 @testable import HarcIdentity
 import HarcProtocol
+import HarcTestSupport
 import Testing
 @testable import HarcHost
 
 // These tests exercise process-global Security.framework key and certificate
 // fixtures. Serial execution prevents one cleanup from racing another bind.
-@Suite("Host transport deferred startup", .serialized)
+@Suite(
+    "Host transport deferred startup",
+    .serialized,
+    .processWideSystemResource
+)
 struct HostTransportDeferredStartupTests: Sendable {
     private let now = Date(timeIntervalSince1970: 2_000_000_000)
 

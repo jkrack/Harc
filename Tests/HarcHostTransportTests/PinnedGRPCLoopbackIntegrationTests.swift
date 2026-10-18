@@ -9,13 +9,18 @@ import HarcDomain
 import HarcProtocol
 @testable import HarcRemoteTransport
 import HarcStore
+import HarcTestSupport
 import HarcTransfer
 @preconcurrency import Network
 import Testing
 
 // This suite owns process-global Keychain material and a real TCP listener.
 // Keeping it serialized makes its cleanup and loopback resource use explicit.
-@Suite("Pinned gRPC TLS loopback", .serialized)
+@Suite(
+    "Pinned gRPC TLS loopback",
+    .serialized,
+    .processWideSystemResource
+)
 struct PinnedGRPCLoopbackIntegrationTests {
     @Test("Pinned TLS carries bootstrap, Library, and resumed upload RPCs")
     func getHostInfoOverPinnedTLS13Loopback() async throws {

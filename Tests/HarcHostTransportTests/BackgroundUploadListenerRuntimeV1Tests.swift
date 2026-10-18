@@ -5,13 +5,14 @@ import Foundation
 import HarcDomain
 import HarcHost
 @testable import HarcHostTransport
+import HarcTestSupport
 import HarcTransfer
 import Network
 import NIOCore
 import NIOHTTP1
 import Testing
 
-@Suite("Background upload listener runtime")
+@Suite("Background upload listener runtime", .processWideSystemResource)
 struct BackgroundUploadListenerRuntimeV1Tests {
     @Test("storage pressure maps to a retryable HTTP status")
     func storagePressureStatus() {
