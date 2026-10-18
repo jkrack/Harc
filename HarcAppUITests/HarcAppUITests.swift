@@ -188,7 +188,9 @@ final class HarcAppUITests: XCTestCase {
         func waitForPicker(label: String) -> Bool {
             XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(
-                    format: "exists == true AND enabled == true AND label CONTAINS %@",
+                    format: "exists == true AND enabled == true AND (label CONTAINS %@ OR title CONTAINS %@ OR value CONTAINS %@)",
+                    label,
+                    label,
                     label
                 ),
                 object: picker()
