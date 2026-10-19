@@ -243,7 +243,9 @@ public struct P256RawSignature: Hashable, Sendable, Codable, CustomStringConvert
         try container.encode(rawBytes)
     }
 
-    static func normalizing(_ rawBytes: Data) throws -> Self {
+    // TLS X.509 signatures may use either S form; normalization here does not
+    // change the strict low-S constructor used for Harc signed wire objects.
+    package static func normalizing(_ rawBytes: Data) throws -> Self {
         guard rawBytes.count == Self.byteCount else {
             throw IdentityCryptoError.invalidSignatureLength(
                 expected: Self.byteCount,

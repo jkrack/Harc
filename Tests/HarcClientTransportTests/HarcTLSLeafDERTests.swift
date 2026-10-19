@@ -102,6 +102,59 @@ struct HarcTLSLeafDERTests {
         }
     }
 
+    // Synthetic scalar-65 TLS fixture captured on macOS 26.6.2. OpenSSL accepts
+    // its self-signature; affected Apple verifiers reject the original S form.
+    // Keep a fixed positive assertion instead of retrying certificate generation.
+    @Test(
+        "a captured valid TLS self-signature remains interoperable in both S forms",
+        arguments: [
+            """
+            MIIBmDCCAT6gAwIBAgIBATAKBggqhkjOPQQDAjAaMRgwFgYDVQQDDA9IYXJjIExvY2FsIEhvc3Qw
+            HhcNMzMwNTE4MDMzMjUwWhcNMzMwNTE4MDQzMzIwWjAaMRgwFgYDVQQDDA9IYXJjIExvY2FsIEhv
+            c3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQ0Ml3LRY2OWzQ9BTVTfdXgnHBGr8vzn2YRqi7C
+            VOo0EIVo0dxQKVVHls0jjElnZxh5Tes+rXb+uG87FgHzyGnJo3UwczAMBgNVHRMBAf8EAjAAMA4G
+            A1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATA+BhRpgd7o67TArLqpza70wum36bv2
+            VAQmc3ludGhldGljIHNpZ25lZCB0cmFuc3BvcnQtc2V0IGZpeHR1cmUwCgYIKoZIzj0EAwIDSAAw
+            RQIhAMt3ZI77SnvbzwmQaPYDuDyaW2UiFXl5fAIq6kLBMe4QAiBy9Qh3u3RxmEg66vjNlUhQr1zi
+            Ui6WEDPEC4ShrXGgGA==
+            """,
+            """
+            MIIBmTCCAT6gAwIBAgIBATAKBggqhkjOPQQDAjAaMRgwFgYDVQQDDA9IYXJjIExvY2FsIEhvc3Qw
+            HhcNMzMwNTE4MDMzMjUwWhcNMzMwNTE4MDQzMzIwWjAaMRgwFgYDVQQDDA9IYXJjIExvY2FsIEhv
+            c3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQ0Ml3LRY2OWzQ9BTVTfdXgnHBGr8vzn2YRqi7C
+            VOo0EIVo0dxQKVVHls0jjElnZxh5Tes+rXb+uG87FgHzyGnJo3UwczAMBgNVHRMBAf8EAjAAMA4G
+            A1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATA+BhRpgd7o67TArLqpza70wum36bv2
+            VAQmc3ludGhldGljIHNpZ25lZCB0cmFuc3BvcnQtc2V0IGZpeHR1cmUwCgYIKoZIzj0EAwIDSQAw
+            RgIhAMt3ZI77SnvbzwmQaPYDuDyaW2UiFXl5fAIq6kLBMe4QAiEAjQr3h0SLjmi3xRUHMmq3rw2K
+            GFt4gY5RL65GIU7xhTk=
+            """
+        ]
+    )
+    func capturedSelfSignatureInteroperability(certificateBase64: String) throws {
+        let certificate = try #require(Data(
+            base64Encoded: certificateBase64,
+            options: .ignoreUnknownCharacters
+        ))
+        let transport = Data("synthetic signed transport-set fixture".utf8)
+        let facts = try HarcTLSLeafDERParser.parse(certificate)
+        #expect(facts.certificateDER == certificate)
+        #expect(facts.exactSignedTransportSet == transport)
+        let tls = try TransportTrustFixtures.tlsKey()
+        #expect(facts.publicKeyX963.rawBytes == tls.publicKey.x963Representation)
+
+        var changedTBS = certificate
+        let transportRange = try #require(changedTBS.range(of: transport))
+        changedTBS[transportRange.lowerBound] ^= 1
+        #expect(throws: HarcTLSLeafDERError.invalidSelfSignature) {
+            try HarcTLSLeafDERParser.parse(changedTBS)
+        }
+        var changedSignature = certificate
+        changedSignature[changedSignature.index(before: changedSignature.endIndex)] ^= 1
+        #expect(throws: HarcTLSLeafDERError.invalidSelfSignature) {
+            try HarcTLSLeafDERParser.parse(changedSignature)
+        }
+    }
+
     @Test("the self-signature is checked over the exact TBSCertificate bytes")
     func rejectsInvalidSelfSignature() throws {
         let authority = try TransportTrustFixtures.authorityKey()
