@@ -243,7 +243,9 @@ public struct P256RawSignature: Hashable, Sendable, Codable, CustomStringConvert
         try container.encode(rawBytes)
     }
 
-    static func normalizing(_ rawBytes: Data) throws -> Self {
+    // TLS X.509 signatures may use either S form; normalization here does not
+    // change the strict low-S constructor used for Harc signed wire objects.
+    package static func normalizing(_ rawBytes: Data) throws -> Self {
         guard rawBytes.count == Self.byteCount else {
             throw IdentityCryptoError.invalidSignatureLength(
                 expected: Self.byteCount,
@@ -251,7 +253,14 @@ public struct P256RawSignature: Hashable, Sendable, Codable, CustomStringConvert
             )
         }
         var bytes = [UInt8](rawBytes)
+        let r = Array(bytes[0..<32])
         let s = Array(bytes[32..<64])
+        // DER signatures come from untrusted TLS peers. Validate before n-S,
+        // whose subtraction assumes both scalars are in the curve's range.
+        guard P256Scalar.isNonzeroAndBelowOrder(r),
+              P256Scalar.isNonzeroAndBelowOrder(s) else {
+            throw IdentityCryptoError.invalidSignatureScalar
+        }
         if P256Scalar.isGreaterThanHalfOrder(s) {
             bytes.replaceSubrange(32..<64, with: P256Scalar.orderMinus(s))
         }

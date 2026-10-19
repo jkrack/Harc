@@ -109,7 +109,8 @@ enum TransportTrustFixtures {
         exactTransportSet: Data,
         notBefore: UInt64 = nowMilliseconds - 30_000,
         notAfter: UInt64 = nowMilliseconds + 3_600_000,
-        profile: ExtensionProfile = .valid
+        profile: ExtensionProfile = .valid,
+        signatureDEROverride: Data? = nil
     ) throws -> Data {
         let transportBytes = profile == .oversizedTransportSet
             ? Data(repeating: 0xa5, count: 4_097)
@@ -155,7 +156,7 @@ enum TransportTrustFixtures {
                 + spkiDER(for: tlsKey)
                 + explicit(tag: 0xa3, sequence(encodedExtensions))
         )
-        let signature = try tlsKey.signature(for: tbs).derRepresentation
+        let signature = try signatureDEROverride ?? tlsKey.signature(for: tbs).derRepresentation
         return sequence(
             tbs
                 + signatureAlgorithm

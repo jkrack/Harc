@@ -110,6 +110,32 @@ struct P256SigningTests {
         }
     }
 
+    @Test("normalization rejects out-of-range scalars before reflection")
+    func normalizationValidatesBeforeReflection() throws {
+        let one = Data(repeating: 0, count: 31) + Data([1])
+        let invalidScalars = [
+            Data(repeating: 0, count: 32),
+            try Data(hex: "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"),
+            try Data(hex: "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632552"),
+            Data(repeating: 0xff, count: 32),
+        ]
+        for scalar in invalidScalars {
+            #expect(throws: IdentityCryptoError.invalidSignatureScalar) {
+                try P256RawSignature.normalizing(one + scalar)
+            }
+            #expect(throws: IdentityCryptoError.invalidSignatureScalar) {
+                try P256RawSignature.normalizing(scalar + one)
+            }
+        }
+        for length in [63, 65] {
+            #expect(throws: IdentityCryptoError.invalidSignatureLength(
+                expected: 64, actual: length
+            )) {
+                try P256RawSignature.normalizing(Data(repeating: 1, count: length))
+            }
+        }
+    }
+
     @Test("identity derivation uses the exact versioned X9.63 domain separator")
     func identityDerivationVector() throws {
         let publicKey = try P256X963PublicKey(try Data(hex: publicKeyHex))
