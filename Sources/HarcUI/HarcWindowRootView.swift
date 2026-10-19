@@ -1062,6 +1062,10 @@ public struct HarcWindowRootView: View {
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                Text(libraryVM.originLabel(for: rec))
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 // One line of what was actually said, so a row is scannable
                 // without opening it. Only when the title is a real title —
                 // under a bare timestamp a snippet just adds noise to noise.

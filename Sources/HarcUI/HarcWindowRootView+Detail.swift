@@ -129,6 +129,11 @@ extension HarcWindowRootView {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 detailTitleRow(recording: recording)
+                Label(libraryVM.originLabel(for: recording), systemImage: "record.circle")
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("harc.recording.origin")
                 if recording.captureIntegrity.hasIssues || !recording.captureDiscontinuities.isEmpty {
                     Label("Some audio may be missing. Review capture interruptions before relying on this recording.", systemImage: "exclamationmark.triangle")
                         .font(.harcCaption)

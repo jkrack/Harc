@@ -3956,6 +3956,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         let libraryVM = LibraryViewModel(store: store)
+        libraryVM.loadOriginDeviceLabels = { [weak self] in
+            guard let runtime = self?.hostRuntime else { return [:] }
+            let devices = try await runtime.pairedDevices()
+            return Dictionary(uniqueKeysWithValues: devices.map { ($0.deviceID, $0.label) })
+        }
         // Hybrid retrieval when the user wants it; nil keeps search lexical.
         libraryVM.searchEmbedder = prefs.semanticSearchEnabled
             ? ensureMaintenanceStore().searchEmbedder

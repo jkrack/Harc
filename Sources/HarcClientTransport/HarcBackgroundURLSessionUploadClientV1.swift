@@ -17,6 +17,7 @@ public enum HarcBackgroundURLSessionUploadError:
     case bodyIntegrityMismatch
     case sessionNotInstalled
     case taskIdentityMismatch
+    case taskIdentityAllocationExhausted
     case missingTaskMapping
     case missingBackgroundBatch
     case invalidPersistedRequest
@@ -1054,7 +1055,7 @@ actor HarcBackgroundUploadCoordinatorV1 {
         if let error = error as? HarcBackgroundURLSessionUploadError {
             switch error {
             case .transportFailed, .capabilityExpired, .bodyUnavailable,
-                 .sessionNotInstalled:
+                 .sessionNotInstalled, .taskIdentityAllocationExhausted:
                 return .failedRecoverable
             case .serverRejected(let statusCode):
                 return [408, 425, 429, 500, 502, 503, 504, 507]
@@ -1090,10 +1091,23 @@ actor HarcBackgroundUploadCoordinatorV1 {
         let request = try HarcBackgroundUploadHTTPRequestV1.makeRequest(
             for: job
         )
-        let task = try session.makeUploadTask(
+        // URLSession task numbers may restart after the system session is
+        // recreated. Historical mappings remain immutable: skip those numbers
+        // instead of rebinding an old callback identity to a new recording.
+        let usedIdentities = Set(try persistence.taskMappings().map(\.identity))
+        var task = try session.makeUploadTask(
             request: request,
             bodyFileURL: job.bodyFileURL
         )
+        var skipped = 0
+        while usedIdentities.contains(try SystemBackgroundTaskIdentity(taskIdentifier: task.taskIdentifier)) {
+            task.cancel()
+            skipped += 1
+            guard skipped < 32 else {
+                throw HarcBackgroundURLSessionUploadError.taskIdentityAllocationExhausted
+            }
+            task = try session.makeUploadTask(request: request, bodyFileURL: job.bodyFileURL)
+        }
         task.taskDescription = HarcBackgroundUploadHTTPRequestV1
             .taskDescription(batchID: job.descriptor.batchID)
         let identity = try SystemBackgroundTaskIdentity(

@@ -459,7 +459,12 @@ final class HarcMobileTransferCoordinator {
             )
             let uploader = HarcForegroundRecordingOutboxCoordinator(
                 store: store,
-                transport: connection
+                transport: connection,
+                diagnosticSink: { event in
+#if DEBUG
+                    print("[Harc host-transfer] stage=\(event.stage.rawValue)")
+#endif
+                }
             )
             if opened.path == .encryptedRelay {
                 Self.logger.info(
