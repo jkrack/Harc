@@ -155,6 +155,34 @@ struct HarcTLSLeafDERTests {
         }
     }
 
+    @Test(
+        "malformed and out-of-range self-signature scalars fail closed",
+        arguments: [
+            "MAYCAQECAQA=",
+            "MCYCAQECIQD/////AAAAAP//////////vOb6racXnoTzucrC/GMlUQ==",
+            "MCYCAQECIQD/////AAAAAP//////////vOb6racXnoTzucrC/GMlUg==",
+            "MCYCAQECIQD//////////////////////////////////////////w==",
+            "MAYCAQACAQE=",
+            "MCYCIQD/////AAAAAP//////////vOb6racXnoTzucrC/GMlUQIBAQ==",
+            "MCYCIQD/////AAAAAP//////////vOb6racXnoTzucrC/GMlUgIBAQ==",
+            "MCYCIQD//////////////////////////////////////////wIBAQ==",
+            "MAcCAgABAgEB",
+            "MAYCAYACAQE="
+        ]
+    )
+    func malformedSelfSignatureScalars(signatureBase64: String) throws {
+        let tls = try TransportTrustFixtures.tlsKey()
+        let signature = try #require(Data(base64Encoded: signatureBase64))
+        let certificate = try TransportTrustFixtures.leafCertificate(
+            tlsKey: tls,
+            exactTransportSet: Data("synthetic signed transport-set fixture".utf8),
+            signatureDEROverride: signature
+        )
+        #expect(throws: HarcTLSLeafDERError.self) {
+            try HarcTLSLeafDERParser.parse(certificate)
+        }
+    }
+
     @Test("the self-signature is checked over the exact TBSCertificate bytes")
     func rejectsInvalidSelfSignature() throws {
         let authority = try TransportTrustFixtures.authorityKey()

@@ -253,7 +253,14 @@ public struct P256RawSignature: Hashable, Sendable, Codable, CustomStringConvert
             )
         }
         var bytes = [UInt8](rawBytes)
+        let r = Array(bytes[0..<32])
         let s = Array(bytes[32..<64])
+        // DER signatures come from untrusted TLS peers. Validate before n-S,
+        // whose subtraction assumes both scalars are in the curve's range.
+        guard P256Scalar.isNonzeroAndBelowOrder(r),
+              P256Scalar.isNonzeroAndBelowOrder(s) else {
+            throw IdentityCryptoError.invalidSignatureScalar
+        }
         if P256Scalar.isGreaterThanHalfOrder(s) {
             bytes.replaceSubrange(32..<64, with: P256Scalar.orderMinus(s))
         }
