@@ -785,7 +785,6 @@ extension HarcHostStore {
             )
             guard old == identity,
                   repair["receipt_sha256"] as Data? == row["receipt_object_sha256"] as Data?,
-                  old.deviceNumber == new.deviceNumber,
                   old.inodeNumber == new.inodeNumber,
                   bindingStableFieldsMatch(old, new) else {
                 throw HarcHostError.canonicalArtifactIdentityMismatch

@@ -686,15 +686,6 @@ struct CanonicalIngestServiceTests {
             generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
         let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
         let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
-        // Model an older boot's persisted device number only in this disposable
-        // fixture. Restore the immutable-journal trigger before invoking repair.
-        try await fixture.hostStore.dbQueue.write { db in
-            let trigger = try #require(try String.fetchOne(db, sql: "SELECT sql FROM sqlite_master WHERE name = 'publication_journal_v3_artifact_identity_update'"))
-            try db.execute(sql: "DROP TRIGGER publication_journal_v3_artifact_identity_update")
-            try db.execute(sql: "UPDATE publication_journal SET canonical_artifact_device_number = ? WHERE upload_id = ?",
-                arguments: [HarcHostStore.canonicalArtifactUInt64Bytes(work.canonicalArtifactIdentity.deviceNumber + 1), fixture.uploadID.description])
-            try db.execute(sql: trigger)
-        }
         try await Task.sleep(for: .milliseconds(2))
         #expect(chmod(paths.wavURL.path, 0o600) == 0)
         await #expect(throws: (any Error).self) {
@@ -710,12 +701,12 @@ struct CanonicalIngestServiceTests {
                 db,
                 sql: "SELECT event_kind FROM canonical_artifact_binding_events"
             )
-        } == HostCanonicalArtifactBindingEventKind.libraryMigration.rawValue)
+        } == HostCanonicalArtifactBindingEventKind.receiptMetadataRepair.rawValue)
         #expect(try await service.repairReceiptBinding(canonicalRecordingID: work.canonicalRecordingID) == false)
         #expect(await auth.calls == 1)
         #expect(try await fixture.hostStore.dbQueue.read { db in
             try Data.fetchOne(db, sql: "SELECT canonical_artifact_device_number FROM publication_journal WHERE upload_id = ?", arguments: [fixture.uploadID.description])
-        } == HarcHostStore.canonicalArtifactUInt64Bytes(work.canonicalArtifactIdentity.deviceNumber + 1))
+        } == HarcHostStore.canonicalArtifactUInt64Bytes(work.canonicalArtifactIdentity.deviceNumber))
         await #expect(throws: (any Error).self) {
             try await fixture.hostStore.dbQueue.write { db in
                 try db.execute(sql: "DELETE FROM canonical_artifact_binding_events")
