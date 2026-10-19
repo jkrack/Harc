@@ -211,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 do {
                     let result = try await runtime.repairReceiptBindings { [weak self] checked, total in
                         await MainActor.run {
-                            self?.bridge.hostReceiptRepairStatus = "Checking recording \(min(checked + 1, total)) of \(total). Owner approval appears only if a verified binding needs repair."
+                            self?.bridge.hostReceiptRepairStatus = "Checking recording \(min(checked + 1, total)) of \(total). One owner approval will cover all verified bindings that need repair."
                         }
                     }
                     self.bridge.hostReceiptRepairStatus = "Checked \(result.checked) recording(s); repaired \(result.repaired); \(result.failed) still need attention. "

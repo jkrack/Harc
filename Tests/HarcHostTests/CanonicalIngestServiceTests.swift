@@ -788,6 +788,51 @@ struct CanonicalIngestServiceTests {
         #expect(after.exactReceipt == work.exactReceipt)
     }
 
+    @Test("batch repair requests one approval and revalidates its exact snapshot", arguments: ["allowed", "denied", "changed", "unchanged"])
+    func receiptRepairBatchAuthorization(mode: String) async throws {
+        let auth = ReceiptRepairAuthorization(allowed: mode != "denied")
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        if mode != "unchanged" {
+            try await Task.sleep(for: .milliseconds(2))
+            #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        }
+        if mode == "changed" {
+            let url = paths.wavURL
+            await auth.setAction {
+                let handle = try FileHandle(forWritingTo: url)
+                try handle.seek(toOffset: 44)
+                try handle.write(contentsOf: Data([0xff]))
+                try handle.close()
+            }
+        }
+        if mode == "denied" {
+            await #expect(throws: HarcHostError.localOSAuthenticationRequired) {
+                _ = try await service.repairReceiptBindings()
+            }
+        } else {
+            let result = try await service.repairReceiptBindings()
+            #expect(result.checked == 1)
+            #expect(result.repaired == (mode == "allowed" ? 1 : 0))
+            #expect(result.failed == (mode == "changed" ? 1 : 0))
+        }
+        #expect(await auth.calls == 0)
+        #expect(await auth.batchCounts == (mode == "unchanged" ? [] : [1]))
+        let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(after.exactReceipt == work.exactReceipt)
+        if mode != "allowed" { #expect(after.canonicalArtifactIdentity == work.canonicalArtifactIdentity) }
+        if mode == "allowed" {
+            let retry = try await service.repairReceiptBindings()
+            #expect(retry.repaired == 0)
+            #expect(await auth.batchCounts == [1])
+        }
+    }
+
     @Test("file changes during owner approval cannot authorize receipt repair")
     func receiptRepairRechecksAfterApproval() async throws {
         let auth = ReceiptRepairAuthorization(allowed: true)
@@ -2222,6 +2267,7 @@ private extension CanonicalIngestServiceTests {
 private actor ReceiptRepairAuthorization: HostLocalOSAuthenticationBoundary {
     let allowed: Bool
     private(set) var calls = 0
+    private(set) var batchCounts: [Int] = []
     private(set) var migrationCalls = 0
     private(set) var migrationRecordingCounts: [Int] = []
     private var action: (@Sendable () async throws -> Void)?
@@ -2229,6 +2275,11 @@ private actor ReceiptRepairAuthorization: HostLocalOSAuthenticationBoundary {
     func setAction(_ action: @escaping @Sendable () async throws -> Void) { self.action = action }
     func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool {
         calls += 1
+        try await action?()
+        return allowed
+    }
+    func authorizeCanonicalReceiptRepairBatch(recordingCount: Int) async throws -> Bool {
+        batchCounts.append(recordingCount)
         try await action?()
         return allowed
     }
