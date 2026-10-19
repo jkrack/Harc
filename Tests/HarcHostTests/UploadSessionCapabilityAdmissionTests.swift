@@ -166,6 +166,55 @@ struct UploadSessionCapabilityAdmissionTests {
         }
     }
 
+    @Test("active upload ceiling is reported as Host capacity")
+    func activeUploadCeilingIsHostCapacity() async throws {
+        let prepared = try await prepare()
+        defer { try? FileManager.default.removeItem(at: prepared.directory) }
+        let capabilities = try prepared.fixture.sessionCapabilities(
+            for: prepared.profile
+        )
+        let acceptedAt = prepared.fixture.beganAt.addingTimeInterval(1)
+
+        for offset in 0 ..< TransferLimits.activeUploadAttemptsPerDevice {
+            let request = BeginHostUploadRequest(
+                uploadID: .random(),
+                originRecordingID: OriginRecordingID(
+                    deviceID: prepared.fixture.deviceID,
+                    recordingUUID: UUID()
+                ),
+                frozenProfile: prepared.profile,
+                beganAt: acceptedAt.addingTimeInterval(Double(offset))
+            )
+            guard case .created = try await prepared.store.beginUpload(
+                context: prepared.context,
+                sessionCapabilities: capabilities,
+                request: request,
+                at: acceptedAt.addingTimeInterval(Double(offset))
+            ) else {
+                Issue.record("Expected upload slot \(offset) to be admitted")
+                return
+            }
+        }
+
+        let overflow = BeginHostUploadRequest(
+            uploadID: .random(),
+            originRecordingID: OriginRecordingID(
+                deviceID: prepared.fixture.deviceID,
+                recordingUUID: UUID()
+            ),
+            frozenProfile: prepared.profile,
+            beganAt: acceptedAt.addingTimeInterval(10)
+        )
+        await #expect(throws: HarcHostError.operationCapacityExhausted) {
+            _ = try await prepared.store.beginUpload(
+                context: prepared.context,
+                sessionCapabilities: capabilities,
+                request: overflow,
+                at: acceptedAt.addingTimeInterval(10)
+            )
+        }
+    }
+
     private func prepare() async throws -> PreparedAdmission {
         let fixture = HostTestFixture()
         let directory = try fixture.temporaryDirectory()

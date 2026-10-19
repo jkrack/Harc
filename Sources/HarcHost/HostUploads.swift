@@ -90,14 +90,26 @@ extension HarcHostStore {
                 in: db,
                 ownerDeviceID: context.authenticatedDeviceID
             )
-            let decision = try UploadAttemptAdmission.decide(
-                proposedUploadID: request.uploadID,
-                ownerDeviceID: context.authenticatedDeviceID,
-                originRecordingID: request.originRecordingID,
-                frozenProfile: request.frozenProfile,
-                existingAttempts: existing,
-                at: acceptedAt
-            )
+            let decision: UploadAdmissionDecision
+            do {
+                decision = try UploadAttemptAdmission.decide(
+                    proposedUploadID: request.uploadID,
+                    ownerDeviceID: context.authenticatedDeviceID,
+                    originRecordingID: request.originRecordingID,
+                    frozenProfile: request.frozenProfile,
+                    existingAttempts: existing,
+                    at: acceptedAt
+                )
+            } catch TransferValidationError.exceedsLimit(
+                field: "active upload attempts per device",
+                limit: _,
+                actual: _
+            ) {
+                // This ceiling is Host work capacity, not malformed client
+                // input. Preserve the generic public response while allowing
+                // the client to retry instead of condemning the recording.
+                throw HarcHostError.operationCapacityExhausted
+            }
 
             // Capability binding belongs inside the same transaction as the
             // create-vs-replay admission decision. A rejected first admission

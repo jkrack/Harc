@@ -65,6 +65,9 @@ enum HostCanonicalIngestFailureCode: String, Sendable {
     case ingestFailed = "canonical-ingest-failed"
 
     static func classify(_ error: any Error) -> Self {
+        if case StoreError.canonicalArtifactIdentityMismatch = error {
+            return .artifactIdentityMismatch
+        }
         guard let hostError = error as? HarcHostError else {
             return .ingestFailed
         }
@@ -402,7 +405,8 @@ public actor HarcCanonicalIngestService {
         let old = work.canonicalArtifactIdentity
         let fresh = artifact.identity
         if old == fresh { return false }
-        guard old.inodeNumber == fresh.inodeNumber,
+        guard old.deviceNumber == fresh.deviceNumber,
+              old.inodeNumber == fresh.inodeNumber,
               old.ownerUserID == fresh.ownerUserID,
               old.posixMode == fresh.posixMode,
               old.linkCount == fresh.linkCount,
@@ -697,6 +701,7 @@ private extension HarcCanonicalIngestService {
               manifest.finalizedCapture == work.capture,
               manifest.exactManifestObject == work.attempt.boundManifest
         else { throw HarcHostError.manifestEvidenceRequired }
+        try validatePreparedReceiptIfPresent(work, manifest: manifest)
         if commit {
             let kind = HarcHostStore.canonicalArtifactBindingEventKind(
                 from: old,
@@ -723,6 +728,48 @@ private extension HarcCanonicalIngestService {
             changed: true,
             needsRecovery: true
         )
+    }
+
+    /// A receipt-prepared publication is still an active upload, but its exact
+    /// signed receipt is already durable. Verify that evidence before an
+    /// immutable binding event is appended; recovery must never discover a
+    /// corrupt prepared receipt only after recording repair provenance.
+    func validatePreparedReceiptIfPresent(
+        _ work: HostCanonicalPublicationWork,
+        manifest: ValidatedRecordingManifestEvidence
+    ) throws {
+        guard let exactReceipt = work.exactPersistedReceipt else { return }
+        guard let receiptID = work.receiptID,
+              let revision = work.canonicalRevision,
+              let cursor = work.changeCursor,
+              let durableCommitTime = work.durableCommitTime
+        else {
+            throw HarcHostError.publicationRecoveryRequired(
+                "prepared receipt evidence is incomplete"
+            )
+        }
+        let evidence = try receiptValidator.validateRecordingReceipt(
+            exactSignedReceiptBytes: exactReceipt.exactBytes,
+            validatedManifest: manifest,
+            hostTrust: manifest.hostTrust
+        )
+        guard evidence.exactReceiptObject == exactReceipt,
+              evidence.uploadID == work.attempt.uploadID,
+              evidence.receiptID == receiptID,
+              evidence.canonicalRecordingID == work.canonicalRecordingID,
+              evidence.canonicalRevision == revision,
+              evidence.changeCursor == cursor,
+              evidence.durableCommitTime == durableCommitTime,
+              evidence.canonicalPCMSHA256
+                == work.capture.capture.canonicalPCMSHA256,
+              evidence.totalCanonicalFrames
+                == work.capture.capture.totalCanonicalFrames,
+              evidence.processingState == .pending
+        else {
+            throw HarcHostError.publicationRecoveryRequired(
+                "prepared receipt evidence drifted"
+            )
+        }
     }
 
     func currentCanonicalArtifactIdentity(

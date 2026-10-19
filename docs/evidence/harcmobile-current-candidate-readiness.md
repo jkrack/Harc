@@ -1,7 +1,7 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-10-17
-**Candidate configuration:** HarcMobile 0.14.16 (71), iOS 26+, iPhone only
+**Updated:** 2026-10-19
+**Candidate configuration:** HarcMobile 0.14.17 (72), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.
@@ -10,6 +10,14 @@ This is the active candidate and gap register. Update its configuration when
 source version/build changes, then attach evidence scoped to the exact pushed
 candidate commit. A matching version line lets repository preflight identify
 what is being prepared; it does not transfer old passes or close external gates.
+
+The [Omega CAF/ALAC product-path diagnostic](2026-10-18-omega-alac-product-path-diagnostic.md)
+now records a passing physical bit-exact encoder regression and one real,
+matching phone-to-Host verified receipt with no premature cleanup. Because that
+development app included uncommitted diagnostic changes, the result proves the
+technical path but does not seal or qualify a release candidate. The named
+iPhone SE (2nd generation) / iPhone 17 rule is superseded; Omega is an eligible
+physical qualification phone.
 
 The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
@@ -144,7 +152,7 @@ logs, result bundles, hardware/OS identity, and artifact digests together.
 | Repository input preflight | Source inputs and public URLs passed during preparation | `xcodegen generate` and source/public-URL preflight passed in the isolated readiness checkout. Repeat on the clean committed candidate and retain its exit status. This does not close the gates below. |
 | Packaged iPhone configuration/privacy assertions | Combined-source simulator CI pass | All 15 configuration tests passed with the 28 selected mobile tests above. Repeat on the sealed release artifact and retain its packaged manifest. |
 | Package, Mac app, embedded helpers | Combined main CI pass | Main `0ef6054` passed both CI jobs; local macOS/helper validation also passed at its identical reviewed tree. Repeat affected gates after source changes and retain exact release-artifact identity. Keep Mac distribution on Sparkle. |
-| Physical codec matrix | UNRUN for this candidate | Execute all specified real-time cells on both named qualification roles; Pro/simulator results do not substitute for them. Keep production codec activation fail-closed. |
+| Physical codec and product-path qualification | IN PROGRESS on Omega | Retain the passing physical bit-exact codec regression, then complete one real phone → Host transfer with a verified durable receipt, matching canonical hash, and no cleanup before receipt. Simulator evidence does not substitute. |
 | C/T/P/H capture and transfer matrix | UNRUN for this candidate | Perform the specified repetitions, durable-prefix/receipt/recovery checks, and actual phone-to-Mac-to-Library round trip. |
 | Physical UI/accessibility/protection/upgrade | Update installation and file-metadata preservation observed only | First launch, migrations, UI/playback/export, VoiceOver/largest text, lock/reboot, interruption, storage and remaining upgrade acceptance are UNRUN. Execute the full physical cases with provenance. |
 | Physical two-network/direct-route/revocation | UNRUN for this candidate | Verify authenticated direct/relay lifecycle and visible revocation on actual devices/networks. |

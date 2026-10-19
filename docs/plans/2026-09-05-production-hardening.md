@@ -114,9 +114,10 @@ workers and an automatic 5 GiB disk-floor stop; its log is
 process 90836 at the last inspection). Verify live handles before acting;
 these process identifiers are observations, not durable ownership claims.
 
-CoreDevice lists only Omega, currently unavailable. The user was asked which
-named qualification phones and secondary Mac they can make available; no
-physical gate has been closed.
+CoreDevice lists only Omega, currently unavailable. Omega is eligible as the
+recorded physical qualification iPhone; no named marketing-model role is
+required. A real secondary Mac is still required for its separate cross-Mac
+qualification gate. No physical gate has been closed in this observation.
 
 ### Recovery publication follow-through
 
@@ -901,8 +902,9 @@ executed and passed all eight cases. Logs: `vad-gap-full.log`,
 churn was verified/restored after terminal builds; `git diff --check` passed.
 `vad-gap-source-manifest.json` records relevant current source hashes.
 The known short-gap loss is fixed and software/model-diagnostic validated.
-Real-world corpus, speaker/summary accuracy, multi-hour capture, named devices
-and networks, live UI, CI enforcement and sealed release gates remain open.
+Real-world corpus, speaker/summary accuracy, multi-hour capture, recorded
+physical-device and network evidence, live UI, CI enforcement and sealed release
+gates remain open.
 The complete production goal remains active.
 
 ### Capture startup dependency and metric audit

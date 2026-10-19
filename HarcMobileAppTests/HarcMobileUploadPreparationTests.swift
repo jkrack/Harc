@@ -12,6 +12,10 @@ import XCTest
 
 @MainActor
 final class HarcMobileUploadPreparationTests: XCTestCase {
+    func testDeliveryBuildSelectsCAFALAC() {
+        XCTAssertEqual(HarcMobileLosslessReleaseGate.selected, .cafALAC)
+    }
+
     func testLostBeginReusesWholeIntentUnderAdditiveCapabilitiesWithoutEncoding() async throws {
         let fixture = try await Fixture.make()
         defer { fixture.remove() }

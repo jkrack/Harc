@@ -584,10 +584,9 @@ final class HarcMobileTransferCoordinator {
     }
 }
 
-/// This compile-time gate is deliberately closed until the physical-iPhone
-/// matrix in the implementation spec freezes a release codec. Enabling it is
-/// a reviewed release change backed by the signed qualification report.
-private enum HarcMobileLosslessReleaseGate {
+/// CAF/ALAC selection for the physical delivery candidate. Qualification evidence
+/// must identify this exact build before it is distributed as a qualified release.
+enum HarcMobileLosslessReleaseGate {
     #if HARC_MOBILE_QUALIFIED_CAF_ALAC
     static let selected: LosslessEncodingConfiguration? = .cafALAC
     #else

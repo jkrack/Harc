@@ -7,8 +7,10 @@
 **Decision:** **NO-GO for production/App Store submission until the named
 external gates pass.** The current architecture is viable and the repository
 software gates are strong, but Simulator, one available Pro iPhone, and local
-transport emulators cannot qualify the oldest/current-non-Pro device matrix,
+transport emulators cannot by themselves qualify the physical product path,
 real secondary Mac, two-network operation, or App Store distribution service.
+The former oldest/current non-Pro named-device rule is superseded; Omega is an
+eligible physical qualification phone.
 
 ## Current launch scope — 2026-10-14
 
@@ -126,8 +128,8 @@ network behavior cannot close the physical local-network gate.
 | Software regression | Full Swift package suite, macOS Xcode app target, focused Host transport suite, direct and relay pinned-TLS lifecycles | **Passed on the reviewed working tree:** 1,577 tests in 266 suites with two declared MLX environment skips; focused macOS/iOS app and Host-maintenance suites passed; bounded arm64 macOS Xcode build passed; direct and relay pair/authorize/revoke/forget/re-pair lifecycles passed |
 | UI/software accessibility | Complete current-tree Simulator UI suite with no findings | Passed; exact xcresult is retained in ignored qualification output |
 | Physical iPhone UI | Real microphone, storage protection, force-quit recovery, storage exhaustion, VoiceOver/largest text | Open; three bounded signed Omega runner attempts timed out enabling automation before executing a Harc test |
-| Codec/endurance | Four real-time three-hour cells on iPhone XR/iOS 18 and current non-Pro iPhone 17/current iOS | Open; no substitute hardware evidence is accepted |
-| C/T/P/H matrix | All spec scenarios, with three consecutive C1/C2/T1/T2 passes per named phone | Open |
+| Codec/endurance | Physical bit-exact selected-codec regression plus one real phone → Host verified receipt; optional extended endurance evidence | Open on the recorded physical qualification iPhone; no named marketing model is required |
+| C/T/P/H matrix | All spec scenarios, with three consecutive C1/C2/T1/T2 passes on the recorded qualification phone | Open |
 | Secondary Mac | Pair, reconnect after route change/wake, process locally during Host load, upload concurrently, surface Host/speaker decisions | Open; repeatable privacy-bounded collector and three-pass physical runbook now checked in |
 | Two-network/relay | Physical direct/relay failover, replacement session, visible revocation, no plaintext/content retention | Local/emulator and staging evidence exists; final physical path is open |
 | App Store artifact | Clean sealed commit, Release archive/export, exact-build screenshots, TestFlight processing, owner metadata/privacy/export answers | Open; the app now seals its source commit and preflight rejects archive/export commit mismatch |
@@ -146,7 +148,8 @@ state and verified at SHA-256
 
 ## Execution order
 
-1. Seal a candidate commit and run the physical matrix without source changes.
+1. Seal a candidate commit and run physical codec, product-path, and reliability
+   qualification without source changes.
 2. Qualify a real secondary Mac and two-network direct/relay recovery against
    the same sealed source.
 3. Produce the exact Release archive/export and screenshots, upload to

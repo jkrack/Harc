@@ -294,9 +294,10 @@ What changes, relative to today's `HarcPresenceStyle` and `HarcPresenceShape`:
    a plain cross-fade. This matches today's Reduce Motion contract.
 
 Keep the shape, color, and halo work inside one `Canvas` or a single shape
-pass, so the hero stays cheap. Profile on the oldest supported iPhone (SE
-2nd generation). If it drops frames, reduce pools to three before lowering
-the frame rate.
+pass, so the hero stays cheap. Profile on the recorded physical qualification
+iPhone. Additional compact or older hardware is useful compatibility evidence,
+not a named release role. If the recorded phone drops frames, reduce pools to
+three before lowering the frame rate.
 
 ## Copy rules
 

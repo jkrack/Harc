@@ -83,8 +83,10 @@ authentication, capability policy, and container validation. The ordered PR
 slices through Host ingest, transport, mobile capture/transfer, secondary-Mac
 Client mode, and the optional blind relay are implemented in the current
 SwiftPM/Xcode project. Do not infer that their unit or integration tests close
-the named physical-device codec, two-network, App Store, or real secondary-Mac
-qualification gates. `HarcAudioMac` and `HarcInference` remain
+the physical-device codec, two-network, App Store, or real secondary-Mac
+qualification gates. Physical qualification records the actual iPhone hardware
+and OS used; it does not require an iPhone SE (2nd generation), iPhone 17, or
+any other named marketing-model role. `HarcAudioMac` and `HarcInference` remain
 documentation-only boundaries; do not add either as a placeholder module to
 `Package.swift` or `project.yml`.
 Keep the V1 host in the resident Mac app, keep the existing daemon, issue the

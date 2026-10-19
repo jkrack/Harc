@@ -941,12 +941,13 @@ storage, pairing, transfer, playback, and Library access MUST NOT depend on a
 specific iPhone marketing model or on-device model inference. The iOS deployment
 floor controls installation eligibility; no `UIRequiredDeviceCapabilities`
 entry beyond Xcode's platform-generated architecture requirement may be added to
-disguise missing oldest-device qualification. Optional on-device inference MAY
+mask missing physical qualification. Optional on-device inference MAY
 use a separately measured runtime capability/performance tier, but an unavailable
 tier falls back to the adopted Host and MUST NOT block or degrade durable capture.
-Before release, the evidence bundle names and qualifies the oldest supported
-physical iPhone; source compatibility with iOS 26 alone is not a performance or
-reliability claim for every eligible device.
+Before release, the evidence bundle names the physical iPhone used to qualify
+the shipping capture and transfer path. Source compatibility with iOS 26 alone
+is not a performance or reliability claim for every eligible device, but no
+specific marketing model or oldest/current device pair is a release gate.
 
 - `GRPCCore` from `grpc-swift-2`;
 - `GRPCProtobuf` and `GRPCProtobufGenerator` from `grpc-swift-protobuf`; and
@@ -1447,11 +1448,14 @@ The canonical decoded hash input is mono signed Int16 little-endian PCM bytes.
 Chunks are contiguous and non-overlapping. Every compressed chunk has a complete
 independent container/header and codec state so it can be decoded in isolation.
 
-The release codec is selected by an early CAF+ALAC versus FLAC physical-device
-spike. Both MUST decode bit-exactly. On the oldest supported iPhone, p95 encoding
-of a 60-second chunk must finish within ten seconds, encoder queue depth must
-remain at most two during a three-hour run, incremental peak memory must remain
-below 100 MiB, and encoding must not cause serious or critical thermal state.
+The release codec is selected with physical-device evidence. The selected codec
+MUST decode bit-exactly in a focused physical regression and in one real
+phone-to-Host transfer that returns a verified durable receipt. The Host's
+canonical decoded PCM SHA-256 MUST equal the phone's complete canonical PCM
+SHA-256, and the protected local master MUST remain until receipt verification.
+Section 25.2 includes optional three-hour queue, memory, energy, and thermal
+characterization. These endurance runs and additional phone models are useful
+coverage, not release blockers (owner correction, October 18, 2026).
 Simulator, Catalyst, and iOS-app-on-Mac reports are diagnostic only and MUST
 fail qualification. A qualifying report records a physical iPhone hardware
 identifier and phone interface idiom in addition to the signed build identity.
@@ -2225,16 +2229,19 @@ xcodebuild \
 Simulator compilation is necessary but never sufficient for capture or
 background-transfer acceptance.
 
-### 25.2 Physical-device matrix
+### 25.2 Physical-device qualification
 
-Test at least the oldest supported iPhone/OS, a current non-Pro iPhone/current
-iOS, and one current iPad before iPad support ships. Cover built-in and
-AirPods/Bluetooth input, Wi-Fi, and cellular hardware.
+Test at least one physical iPhone within the declared iOS release scope and one
+current iPad before iPad support ships. Record the exact device model identifier,
+OS build, app build, and source identity. Additional compact, older, current
+non-Pro, and Pro hardware broadens compatibility evidence but is not a named
+release requirement. Cover built-in and AirPods/Bluetooth input, Wi-Fi, and
+cellular hardware where the scenario applies.
 
 | ID | Scenario | Required result |
 | --- | --- | --- |
 | C1 | 60 minutes, ten lock cycles, host absent | Exact durable PCM except explicit discontinuities; remains local |
-| C2 | Three hours locked, oldest device, Low Power Mode | Bounded queue/memory; no corruption or critical thermal state |
+| C2 (optional) | Three hours locked, Low Power Mode | Bounded queue/memory; no corruption or critical thermal state |
 | C3 | Phone/Siri interruption while locked | Durable discontinuity and correct resume or visible stop |
 | C4 | AirPods disconnect and format-changing route | Converter rebuilt; no silent timeline corruption |
 | C5 | Randomized force-quit during recording | Playable repair through last durable frame; no auto-resume claim |
@@ -2254,10 +2261,10 @@ AirPods/Bluetooth input, Wi-Fi, and cellular hardware.
 | P1 | Microphone/camera/local-network denial combinations | Local recording remains available where possible |
 | H1 | Windows closed, app quit, host asleep/restarted | Accurate reachable/offline state and safe queuing |
 
-C1, C2, T1, and T2 must pass three consecutive times on the oldest and current
-iPhones. Every committed WAV must match the mobile canonical PCM SHA-256. No
-scenario may create a duplicate canonical recording, delete the final copy
-before receipt, or omit a lost interval silently.
+C1, T1, and T2 must pass three consecutive times on the recorded physical
+qualification iPhone. Every committed WAV must match the mobile canonical PCM
+SHA-256. No scenario may create a duplicate canonical recording, delete the
+final copy before receipt, or omit a lost interval silently.
 
 ## 26. Ordered implementation pull requests
 
@@ -2287,8 +2294,9 @@ later.
 Activate `HarcIdentity`, `HarcTransfer`, `HarcClientStore`, and transport-free
 `HarcHost`; add `HarcHost.db`, migrations, key abstractions, state machines,
 authorization, staging, idempotency, and loopback application-service tests.
-Add a non-shipping signed iOS 18 `HarcMobileSpikes` harness, run the CAF+ALAC
-versus FLAC matrix, and freeze the lossless codec/container before PR 5.
+Add a non-shipping signed `HarcMobileSpikes` harness, establish bit-exact
+physical behavior for the selected lossless codec/container, and freeze it
+before PR 5.
 
 ### PR 4 — Protobuf and signing wire contracts
 
@@ -2355,8 +2363,8 @@ and rollback-safe behavior. No PR is a repository-wide reorganization.
 
 PRs 0 through 7 are complete when a new iPhone pairs locally, records through
 lock, survives host/network loss, transfers compressed audio, persists a signed
-receipt, and observes host processing status. C1, C2, T1, and T2 are green on
-physical devices.
+receipt, and observes host processing status. C1, T1, and T2 are green on
+the physical qualification iPhone; C2 is optional endurance evidence.
 
 This is a physical-development milestone, not an App Review claim.
 
@@ -2399,13 +2407,14 @@ each vertical slice replaces assumptions with measured throughput.
 The following questions are intentionally resolved with code and physical
 evidence, not parallel speculative implementations:
 
-1. CAF+ALAC versus FLAC against the Section 15 thresholds.
+1. The selected lossless codec against the Section 15 physical integrity and
+   product-path requirements.
 2. Pinned host trust in background URLSession across lock, suspension, system
    relaunch, deferred upload across TLS leaf cutover, and failure.
 3. gRPC Swift 2 TransportServices client/server behavior on the chosen iOS and
    macOS floors, including stream cancellation on revocation.
 4. Active-master synchronization interval versus durability, energy, and thermal
-   behavior on the oldest supported iPhone.
+   behavior on the recorded physical qualification iPhone.
 5. Host staging/free-disk defaults using representative one- and three-hour
    recordings.
 
