@@ -468,12 +468,15 @@ public actor HarcResidentHostRuntimeV1 {
     }
 
     /// Local app administration; deliberately absent from the network services.
-    public func repairReceiptBindings() async throws -> (checked: Int, repaired: Int, failed: Int) {
+    public func repairReceiptBindings(
+        progress: (@Sendable (Int, Int) async -> Void)? = nil
+    ) async throws -> (checked: Int, repaired: Int, failed: Int) {
         guard !transportStopped else { throw HarcHostError.processingSchedulerUnavailable }
         let ids = try await storageRuntime.hostStore.committedReceiptRecordingIDs()
         var repaired = 0
         var failed = 0
-        for id in ids {
+        for (index, id) in ids.enumerated() {
+            await progress?(index, ids.count)
             try Task.checkCancellation()
             guard !transportStopped else { throw CancellationError() }
             do {
@@ -486,6 +489,7 @@ public actor HarcResidentHostRuntimeV1 {
                 failed += 1
             }
         }
+        await progress?(ids.count, ids.count)
         return (ids.count, repaired, failed)
     }
 

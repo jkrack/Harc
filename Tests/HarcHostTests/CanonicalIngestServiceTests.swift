@@ -762,6 +762,32 @@ struct CanonicalIngestServiceTests {
         }
     }
 
+    @Test("receipt repair rejects replaced audio before hashing or requesting owner approval")
+    func receiptRepairPreflightRejectsReplacementBeforeContentRead() async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        // Preserve the original inode, then replace the path with same-length
+        // invalid audio. Identity rejection must precede the WAV/hash decoder.
+        try FileManager.default.moveItem(at: paths.wavURL,
+            to: paths.wavURL.appendingPathExtension("original"))
+        try Data(repeating: 0, count: Int(work.canonicalArtifactIdentity.fileByteCount))
+            .write(to: paths.wavURL, options: .withoutOverwriting)
+        #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        await #expect(throws: HarcHostError.canonicalArtifactIdentityMismatch) {
+            _ = try await service.repairReceiptBinding(canonicalRecordingID: work.canonicalRecordingID)
+        }
+        #expect(await auth.calls == 0)
+        let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(after.canonicalArtifactIdentity == work.canonicalArtifactIdentity)
+        #expect(after.exactReceipt == work.exactReceipt)
+    }
+
     @Test("file changes during owner approval cannot authorize receipt repair")
     func receiptRepairRechecksAfterApproval() async throws {
         let auth = ReceiptRepairAuthorization(allowed: true)

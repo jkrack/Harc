@@ -396,14 +396,12 @@ public actor HarcCanonicalIngestService {
             rootAnchor: canonicalRootAnchor, canonicalRecordingID: work.canonicalRecordingID,
             persistedRelativeWAVPath: work.publicationRelativePath, temporaryName: work.temporaryName
         )
-        // Capture a fresh descriptor and validate all bytes before considering
-        // any metadata transition. Retain it through authentication and commit.
-        let artifact = try HostValidatedCanonicalArtifact(
-            at: paths.wavURL, in: paths, totalFrames: work.canonicalPCMFrames,
-            expectedPCMHash: work.canonicalPCMHash
-        )
+        // Inspect identity before hashing: unchanged bindings need no repair,
+        // and replaced/moved files require the distinct migration operation.
+        // This prepass grants no authority. Eligible bytes are still fully
+        // validated on a retained descriptor before and after owner approval.
         let old = work.canonicalArtifactIdentity
-        let fresh = artifact.identity
+        let fresh = try currentCanonicalArtifactIdentity(at: paths.wavURL, in: paths)
         if old == fresh { return false }
         guard old.deviceNumber == fresh.deviceNumber,
               old.inodeNumber == fresh.inodeNumber,
@@ -413,6 +411,10 @@ public actor HarcCanonicalIngestService {
               old.fileByteCount == fresh.fileByteCount else {
             throw HarcHostError.canonicalArtifactIdentityMismatch
         }
+        let artifact = try HostValidatedCanonicalArtifact(
+            at: paths.wavURL, in: paths, totalFrames: work.canonicalPCMFrames,
+            expectedPCMHash: work.canonicalPCMHash, expectedIdentity: fresh
+        )
         let manifest = try await hostStore.validateBoundManifest(uploadID: work.uploadID, using: manifestValidator)
         let receipt = try receiptValidator.validateRecordingReceipt(
             exactSignedReceiptBytes: work.exactReceipt.exactBytes,
