@@ -28,8 +28,12 @@ replaced, and no Sparkle update was published.
   fake capture stopping, rather than waiting for the 30-second refresh.
 - The Mac app and test bundles build successfully. All 69 app tests in 19 suites
   passed, including pinned-TLS transfer and pairing-boundary checks.
-- macOS UI automation timed out before executing UI cases in both the full run
-  and a focused retry. Those runs are not passing UI qualification.
+- After the user enabled Developer Tools authorization, the latest diagnostic
+  Mac UI suite passed all 10 cases with zero failures or skips. The result-tree
+  verifier passed and explicitly required Undo-after-autosave. This supersedes
+  the earlier automation-startup blocker; the timed-out runs remain failures.
+  Evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-ui-10-20261020.xcresult`
+  and `/private/tmp/tide-main-mac-ui-10-verified.json`.
 - Manual Mac checks verified Library and Settings rendering, actual generated
   tone playback and pause, transcript replacement/autosave, Undo and Redo, and
   persistence of undone text across relaunch. This exposed and verified a fix

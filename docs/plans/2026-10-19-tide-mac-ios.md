@@ -4,6 +4,32 @@ Requested outcome: finish both native apps tonight (October 19, America/Los_Ange
 
 ## Current handoff status
 
+Mac automation is now qualified for the latest diagnostic build. After the user's
+authorization, `DevToolsSecurity -enable` completed and reported enabled. Focused
+Undo retry 09 passed, then the entire Mac UI suite passed: **10 tests, zero
+failures, zero skips**, including Library/search, Settings, speaker relinking,
+capture-integrity presentation, fake recording persistence, special-character
+editing and Undo after autosave. Both result trees passed the fail-closed verifier.
+Evidence: `/private/tmp/tide-main-mac-undo-09-verified.json`,
+`/private/tmp/tide-main-mac-ui-10-verified.json`,
+`/private/tmp/tide-main-mac-ui-10.log`, and
+`/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-ui-10-20261020.xcresult`.
+The runner records Mac mini, macOS 26.6.2 (25G83). Test cleanup terminated the
+diagnostic app. The paired-Host and actual passcode-locked iPhone gates remain;
+this does not authorize or qualify public release.
+
+Earlier authorization history: the user approved enabling Developer Tools and reported
+approving both system prompts. The live setting still reports disabled, and
+`DevToolsSecurity -enable` remains pending at the macOS “SamplingTools wants to
+make changes” credential dialog. No credentials were requested in chat or read.
+The latest internal app/test bundles were refreshed from successful build 07.
+A bounded focused UI retry 08 still timed out enabling automation before its
+Undo case executed (exit 65):
+`/private/tmp/tide-main-mac-undo-08.log`,
+`/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-undo-08-20261020.xcresult`.
+The system dialog was brought forward for the user. Do not repeat UI runs until
+authorization is actually completed.
+
 Validated follow-up after checkpoint `e13c6e4`: manual inspection of the merged
 idle menu revealed that the UI harness's isolated database/recovery queue still
 scanned the normal recording cache (49 recovery rows appeared). No Recover or
@@ -68,7 +94,7 @@ verified restored 90-second duration, waveform rendering, playback advancement
 and pause; evidence `/private/tmp/tide-main-mac-playing-ax.txt` and the retained
 Mac Library screenshot. The current diagnostic app is open with playback paused.
 
-Still open: automated Mac UI execution, actual passcode-locked Stop, and paired
+Still open: actual passcode-locked Stop, and paired
 Host-backed screens and transfers under the pending trust approval. The existing
 diagnostic binaries are bound by their retained source manifests, not an embedded
 claim to the later integration commit. Older checkpoint successes below remain
