@@ -683,6 +683,11 @@ physical microphone, storage protection, or endurance behavior.
 For isolated local Mac testing, `HARC_MAC_DIAGNOSTIC_SUFFIX=.TideDiagnostic`
 gives the app a separate bundle identity; keep `HARC_UI_TESTING=1` and temporary
 test roots as well. A separate bundle ID alone does not isolate library data.
+In DEBUG UI tests, `RecordingDestination` resolves capture and recovery cache
+paths under the same test root (`RecordingCache`), including the process-specific
+fallback when the explicit root is absent. Never scan the normal recording cache
+from an isolated test library. Validate this boundary with
+`RecordingDestinationTests` and a fresh-root Mac launch with no recovery fixtures.
 If an SSD-launched diagnostic app is blocked by removable-volume permission,
 `build-for-testing` products and their relative-path xctestrun can be copied to
 internal temporary storage and run with `test-without-building`. Verify the

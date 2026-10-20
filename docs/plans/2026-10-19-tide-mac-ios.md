@@ -4,6 +4,47 @@ Requested outcome: finish both native apps tonight (October 19, America/Los_Ange
 
 ## Current handoff status
 
+Validated follow-up after checkpoint `e13c6e4`: manual inspection of the merged
+idle menu revealed that the UI harness's isolated database/recovery queue still
+scanned the normal recording cache (49 recovery rows appeared). No Recover or
+Discard action was taken. `RecordingDestination.cacheDirectory()` now routes
+DEBUG UI tests to `RecordingCache` within the same explicit or process-specific
+fallback root as AppDelegate, so capture and recovery share isolation. A focused
+test covers explicit, missing and blank roots, plus ordinary non-test operation.
+All six `RecordingDestinationTests` passed, including the new isolation case:
+`/private/tmp/tide-cache-isolation-tests.log`, using the existing SSD SwiftPM
+cache and two workers. Mac build-for-testing 06 succeeded with the same worker
+limit: `/private/tmp/tide-main-mac-build-06.log`, result
+`/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-build-06-20261020.xcresult`.
+Its internal copy passed signature verification. A fresh-root launch at
+`/private/tmp/harc-tide-cache-isolation-06` showed Capture ready and no recovery
+warning, with no recovery queue file generated. Fake capture started from the
+menu and Stop and save produced its synthetic recording. Evidence:
+`/private/tmp/tide-cache-isolation-{menu,recording,poststop,later}-ax.txt`,
+`/private/tmp/tide-cache-isolation-menu-recording.png`.
+
+That smoke also reproduced a stale Today count: after save it remained zero
+until the 30-second menu refresh, then correctly displayed “1 recording.”
+`finishNewRecording` now refreshes Today after persistence instead of waiting
+for that timer. Mac build-for-testing 07 succeeded:
+`/private/tmp/tide-main-mac-build-07.log`, result
+`/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-build-07-20261020.xcresult`.
+Its internal copy passed signature verification. A fresh launch at
+`/private/tmp/harc-tide-cache-isolation-07` showed Capture ready. One second after
+stopping fake capture, accessibility reported both “Saved safely” and “Today,
+1 recording”: `/private/tmp/tide-today-refresh-immediate-ax.txt`. Full panel
+screenshots are retained as `mac-menu-saved.png` and `mac-menu-recording.png`.
+This verifies fake capture presentation and immediate count refresh, not real
+microphone capture. No capture remains running.
+The old diagnostic app was quit. The idle screenshot also exposed the singular
+“1 recordings” label, corrected to “1 recording.”
+
+Quick Capture was moved away from the system authorization prompt and visually
+inspected unobstructed; its screenshot is retained as `mac-quick-capture.png`.
+The merged idle menu was inspected at `/private/tmp/tide-main-mac-menu-idle.png`;
+its recovery warning is evidence of the harness issue above, not canonical
+library qualification. Mac Developer Tools authorization remains disabled.
+
 Current-main integration is committed locally as `e7a016f` on
 `codex/tide-current-main`, merging upstream `08849bc`. Both app builds pass. Retained app-only
 screenshots and a concise qualification ledger are in

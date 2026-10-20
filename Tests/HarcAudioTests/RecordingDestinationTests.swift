@@ -4,6 +4,30 @@ import Foundation
 
 @Suite("RecordingDestination")
 struct RecordingDestinationTests {
+    #if DEBUG
+    @Test("UI test capture and recovery cannot fall back to the normal recording cache")
+    func isolatedUITestCache() {
+        let temporary = URL(fileURLWithPath: "/tmp/cache-isolation", isDirectory: true)
+        func resolve(_ environment: [String: String]) -> URL? {
+            RecordingDestination.uiTestCacheDirectory(
+                environment: environment,
+                temporaryDirectory: temporary,
+                processIdentifier: 123
+            )
+        }
+        #expect(resolve([:]) == nil)
+        #expect(resolve(["HARC_UI_TEST_ROOT": "/tmp/ignored"]) == nil)
+        #expect(resolve(["HARC_UI_TESTING": "1", "HARC_UI_TEST_ROOT": "/tmp/fixture"])?.path
+            == "/tmp/fixture/RecordingCache")
+        for root in [nil, "", " \n"] as [String?] {
+            var environment = ["HARC_UI_TESTING": "1"]
+            environment["HARC_UI_TEST_ROOT"] = root
+            #expect(resolve(environment)?.path
+                == "/tmp/cache-isolation/harc-ui-test-123/RecordingCache")
+        }
+    }
+    #endif
+
     private func makeTempBase() throws -> URL {
         let base = URL(fileURLWithPath: "/tmp/harc-dest-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)

@@ -405,7 +405,8 @@ public struct MenuBarPanelView: View {
                             HStack {
                                 Text("Today").font(.harcTitle)
                                 Spacer()
-                                Text("\(intervals.count) recordings").font(.harcCaption)
+                                Text(intervals.count == 1 ? "1 recording" : "\(intervals.count) recordings")
+                                    .font(.harcCaption)
                             }
                             HarcTideDayTimeline(intervals: intervals)
                                 .frame(height: 40) // token-exempt: compact panel day map.

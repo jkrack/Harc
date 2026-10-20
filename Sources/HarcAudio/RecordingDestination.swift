@@ -60,9 +60,40 @@ public struct RecordingDestination: Sendable {
     /// Directory that holds in-progress recordings before they are finalized
     /// into the user's public destination folder.
     public static func cacheDirectory() -> URL {
+        #if DEBUG
+        if let isolated = uiTestCacheDirectory(
+            environment: ProcessInfo.processInfo.environment,
+            temporaryDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
+            processIdentifier: ProcessInfo.processInfo.processIdentifier
+        ) {
+            return isolated
+        }
+        #endif
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return caches.appendingPathComponent("Harc/recordings", isDirectory: true)
     }
+
+    #if DEBUG
+    /// Capture and recovery must share the same isolated cache in UI tests.
+    /// Match AppDelegate's fallback root when the harness omits an explicit root.
+    static func uiTestCacheDirectory(
+        environment: [String: String],
+        temporaryDirectory: URL,
+        processIdentifier: Int32
+    ) -> URL? {
+        guard environment["HARC_UI_TESTING"] == "1" else { return nil }
+        let root: URL
+        if let path = environment["HARC_UI_TEST_ROOT"],
+           !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            root = URL(fileURLWithPath: path, isDirectory: true)
+        } else {
+            root = temporaryDirectory.appendingPathComponent(
+                "harc-ui-test-\(processIdentifier)", isDirectory: true
+            )
+        }
+        return root.appendingPathComponent("RecordingCache", isDirectory: true)
+    }
+    #endif
 
     /// The final public path for a recording started at `date`.
     /// Shape: `<base>/YYYY/YYYY-MM-DD/HH-mm-ss.wav`. Appends `-1`, `-2`, … on collision.

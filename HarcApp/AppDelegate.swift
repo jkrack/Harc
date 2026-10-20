@@ -3412,6 +3412,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 durationMs: durationMs
             )
         }
+        // Reflect the committed recording before showing the saved state.
+        // The menu's periodic refresh otherwise leaves Today stale for 30 seconds.
+        await bridge.refreshTodayRecordings()
     }
 
     private func startPreRollTicker() {
