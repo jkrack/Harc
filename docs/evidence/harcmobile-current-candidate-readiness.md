@@ -1,6 +1,6 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-10-17
+**Updated:** 2026-10-18
 **Candidate configuration:** HarcMobile 0.14.16 (71), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
@@ -13,13 +13,34 @@ what is being prepared; it does not transfer old passes or close external gates.
 
 The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
-remain useful history and must not be relabeled as 0.14.13 qualification.
+remain useful history and must not be relabeled as current-candidate qualification.
 
 ## Source-scoped observations
 
+### External-SSD and Omega diagnostic, 2026-10-18
+
+[PR #136](https://github.com/jkrack/Harc/pull/136) merged external-volume
+DerivedData support for the physical UI qualification wrapper as
+`3afdccf7d69278288fd9f574c61b133fdf4a600d`. Its tree exactly matches the
+physically tested head. Exact-head CI passed all hosted lanes. On supplementary
+Omega hardware, all 94 HarcMobile app tests passed in bounded class groups;
+the physical UI runner consistently failed before a Harc assertion while Xcode
+27 attempted to enable automation mode on iOS 26.6. The phone's 13-capture
+backlog remained protected with zero verified receipts and zero cleanup intents;
+transfer stayed fail-closed at `codecNotQualified`.
+
+The full [diagnostic record](2026-10-18-pr136-omega-physical-diagnostics.md)
+binds source, hardware, results and retained SSD evidence. It is not named-device
+codec, physical UI, durable transfer, archive or submission qualification.
+
+Current source still declares 0.14.16 (71). The installed Mac app also reports
+0.14.16 (71), but embeds older source `4ae88f71abbd62b855b8268682c0698b29af51a1`.
+Any next Mac or iOS distribution must receive a new version/build identity
+before it is archived or published; different bytes must not reuse 0.14.16 (71).
+
 ### Release preparation, 2026-10-17
 
-Configuration is now 0.14.15 (70), distinct from the retained private 0.14.14
+At that point, configuration was 0.14.15 (70), distinct from the retained private 0.14.14
 (69) artifacts. The local release branch starts at merged main `c715538` and
 includes the reviewed mobile navigation changes from #125, which had merged
 into the stacked branch rather than main. Prior dated observations below retain
@@ -140,13 +161,13 @@ logs, result bundles, hardware/OS identity, and artifact digests together.
 
 | Gate | Current status | Required closure |
 | --- | --- | --- |
-| Candidate version/build identification | Identified only | Match source 0.14.15 (70); retain the clean source commit with the new artifact receipts. |
+| Candidate version/build identification | COLLISION: current source and an older installed release both identify as 0.14.16 (71) | Bump version/build before the next distribution, then retain the clean source commit and exact artifact receipts. Do not publish different bytes under 0.14.16 (71). |
 | Repository input preflight | Source inputs and public URLs passed during preparation | `xcodegen generate` and source/public-URL preflight passed in the isolated readiness checkout. Repeat on the clean committed candidate and retain its exit status. This does not close the gates below. |
-| Packaged iPhone configuration/privacy assertions | Combined-source simulator CI pass | All 15 configuration tests passed with the 28 selected mobile tests above. Repeat on the sealed release artifact and retain its packaged manifest. |
-| Package, Mac app, embedded helpers | Combined main CI pass | Main `0ef6054` passed both CI jobs; local macOS/helper validation also passed at its identical reviewed tree. Repeat affected gates after source changes and retain exact release-artifact identity. Keep Mac distribution on Sparkle. |
+| Packaged iPhone configuration/privacy assertions | Current exact-head simulator CI pass | The current lane passed 56 XCTest app cases, 12 Swift Testing cases and two UI cases with zero failures. Repeat on the sealed release artifact and retain its packaged manifest. |
+| Package, Mac app, embedded helpers | PR #136 exact-head CI pass; post-merge main run pending when recorded | Run `39177518324` passed package/protocol/relay validation, the Mac app/UI regression, helpers and mobile configuration at the tree merged as `3afdccf`. Confirm the separate post-merge main run and repeat release-artifact checks after a version bump. Keep Mac distribution on Sparkle. |
 | Physical codec matrix | UNRUN for this candidate | Execute all specified real-time cells on both named qualification roles; Pro/simulator results do not substitute for them. Keep production codec activation fail-closed. |
 | C/T/P/H capture and transfer matrix | UNRUN for this candidate | Perform the specified repetitions, durable-prefix/receipt/recovery checks, and actual phone-to-Mac-to-Library round trip. |
-| Physical UI/accessibility/protection/upgrade | Update installation and file-metadata preservation observed only | First launch, migrations, UI/playback/export, VoiceOver/largest text, lock/reboot, interruption, storage and remaining upgrade acceptance are UNRUN. Execute the full physical cases with provenance. |
+| Physical UI/accessibility/protection/upgrade | All 94 app tests passed on supplementary Omega; UI runner blocked before assertions by Xcode/CoreDevice automation startup | Rerun physical UI with a compatible Xcode/device-OS pairing, then execute first launch, migrations, UI/playback/export, VoiceOver/largest text, lock/reboot, interruption, storage and remaining upgrade acceptance on the named roles. |
 | Physical two-network/direct-route/revocation | UNRUN for this candidate | Verify authenticated direct/relay lifecycle and visible revocation on actual devices/networks. |
 | Deployed privacy and prior-record expiry | Not refreshed | Re-read deployed no-retention state and close expiry/export concerns; August observations remain historical. |
 | Exact-build App Privacy and export answers | OPEN, Account Holder | Complete the existing privacy assessment and App Store Connect declarations for the exact candidate; a required-reason manifest pass is insufficient. |
@@ -163,11 +184,12 @@ bound to its original version, source, hardware, and artifact.
 
 ## Configuration-test CI coverage
 
-The hosted lane now executes 28 selected mobile tests, including the 15 configuration tests:
+The hosted lane now executes 70 logical mobile tests: 56 XCTest app cases,
+12 Swift Testing cases and two UI cases. It includes all 15 configuration tests:
 use an explicit available iPhone destination, two build workers, one test
 simulator, exact-source `HARC_BUILD_SHA`, a timeout, and retained `.xcresult`/logs.
-Schedule that lane after the Mac validation job (`needs: build`) so heavy jobs do
-not overlap. It can cover packaging/manifest regressions but cannot qualify
+Schedule that lane after both package and Mac validation (`needs: [build, macos]`)
+so heavy jobs do not overlap. It can cover packaging/manifest regressions but cannot qualify
 physical microphone, codec, network, privacy-owner, archive, or submission gates.
 
 The checked-in workflow selects an available iPhone runtime deterministically,
