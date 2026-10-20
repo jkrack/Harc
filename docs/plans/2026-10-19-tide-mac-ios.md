@@ -18,6 +18,14 @@ Remaining: paired Library/detail/Search and both platforms' pairing/device scree
 
 ## Source and boundaries
 
+### Playback report follow-up
+
+The user reported a saved local recording plays but sounds confined to the iPhone earpiece. A silent physical-device regression on Omega showed initial local playback already selects the `Speaker` output. It also reproduced a separate resume defect: after pausing and changing the shared session to capture's `.record`/`.measurement`, resuming left the session in recording mode, returned playback failure and exposed no output route.
+
+Local and Host-downloaded playback now reestablish `.playback`/`.spokenAudio` and activate the session before resuming; failed resumes remain visible failures. No speaker override is applied, preserving system accessory routing. The local controller is internal so its real behavior can be exercised from app tests.
+
+Before-fix evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-playback-route-before-20261020.xcresult`, log `/private/tmp/harc-tide-playback-route-before.log`. After-fix evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-playback-route-after-20261020.xcresult`, log `/private/tmp/harc-tide-playback-route-after.log`: all 13 focused tests passed on Omega, and both initial and resumed routes reported `Speaker`. This confirms the resume repair, not the audible cause of the user's first-play report. Manual listening remains necessary. Tests use a temporary silent file, with no recording deletion or microphone capture.
+
 The 14 artboards in `docs/design/tide-2026-10-19/manifest.json` are the visual reference. They were extracted from rendered Claude artboards with CSS and generated SVG geometry; scripts were removed. They are not editable original project files.
 
 Implement native SwiftUI with existing capture, library, pairing and transfer coordinators. Preserve private inference, durable start without model warmup, protected masters until verified receipt, separate trust/route/delivery states, and visible recovery. Use real data; never copy sample durations, security words, connection timestamps or disabled-transfer claims into production behavior. Preserve `HarcPresenceUI` as the capture-presence renderer and `ActivityView` as the Mac readiness/recovery renderer. The menu panel must not scroll.

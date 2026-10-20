@@ -1145,7 +1145,7 @@ private struct HarcMobileLocalRecordingRow: View {
 
 @MainActor
 @Observable
-private final class HarcMobileLocalRecordingAudioController: NSObject {
+final class HarcMobileLocalRecordingAudioController: NSObject {
     enum State: Equatable {
         case idle
         case loading
@@ -1167,10 +1167,19 @@ private final class HarcMobileLocalRecordingAudioController: NSObject {
             if player.isPlaying {
                 player.pause()
                 state = .paused
-            } else if player.play() {
-                state = .playing
             } else {
-                state = .failed("Harc could not resume local playback.")
+                do {
+                    // Another capture may have changed the shared session while paused.
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playback, mode: .spokenAudio)
+                    try session.setActive(true)
+                    guard player.play() else {
+                        throw HarcMobileLocalPlaybackError.startFailed
+                    }
+                    state = .playing
+                } catch {
+                    state = .failed(error.localizedDescription)
+                }
             }
             return
         }

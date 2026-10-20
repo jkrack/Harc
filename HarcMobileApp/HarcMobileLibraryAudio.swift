@@ -325,8 +325,19 @@ final class HarcMobileRecordingAudioController: NSObject {
                 player.pause()
                 state = .paused
             } else {
-                player.play()
-                state = .playing
+                do {
+                    #if os(iOS)
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playback, mode: .spokenAudio)
+                    try session.setActive(true)
+                    #endif
+                    guard player.play() else {
+                        throw HarcMobileLibraryAudioError.playbackFailed
+                    }
+                    state = .playing
+                } catch {
+                    state = .failed(error.localizedDescription)
+                }
             }
             return
         }
