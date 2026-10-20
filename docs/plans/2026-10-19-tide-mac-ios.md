@@ -4,7 +4,8 @@ Requested outcome: finish both native apps tonight (October 19, America/Los_Ange
 
 ## Current handoff status
 
-Current-main integration is implemented and both app builds pass. Retained app-only
+Current-main integration is committed locally as `e7a016f` on
+`codex/tide-current-main`, merging upstream `08849bc`. Both app builds pass. Retained app-only
 screenshots and a concise qualification ledger are in
 [`verification/README.md`](../design/tide-2026-10-19/verification/README.md).
 The original overnight target was missed. Nothing has been pushed or published.
@@ -26,12 +27,35 @@ verified restored 90-second duration, waveform rendering, playback advancement
 and pause; evidence `/private/tmp/tide-main-mac-playing-ax.txt` and the retained
 Mac Library screenshot. The current diagnostic app is open with playback paused.
 
-Still open: automated Mac UI execution, actual passcode-locked Stop, paired
-Host-backed screens and transfers under the pending trust approval, and final
-source integration/handoff. Older checkpoint successes below remain scoped to
-their named source and artifacts.
+Still open: automated Mac UI execution, actual passcode-locked Stop, and paired
+Host-backed screens and transfers under the pending trust approval. The existing
+diagnostic binaries are bound by their retained source manifests, not an embedded
+claim to the later integration commit. Older checkpoint successes below remain
+scoped to their named source and artifacts.
 
-## Current-main integration in progress
+A read outside the restricted sandbox reports `Developer mode is currently
+disabled` from `DevToolsSecurity -status`. This is a possible explanation for the
+Mac automation startup failures, not a proven root cause. Enabling this system
+authorization setting is awaiting user approval; no setting has been changed.
+Subsequent screen inspection found the concrete pending system dialog:
+“XCTest is trying to Enable UI Automation,” requiring the user's Mac password.
+The user has been asked to approve it directly on the Mac, without sharing a
+password in chat. No authorization change is claimed.
+
+Merged build 04 also passed a manual fake-capture smoke in fresh isolated root
+`/private/tmp/harc-tide-mac-main-surfaces`: Quick Capture started recording,
+the compact timer advanced, hover expanded the Island, and Stop hid it and
+wrote synthetic WAV/Markdown/JSON artifacts ending at 45 seconds. Retained
+compact/expanded screenshots are in the verification directory. The initial
+Quick Capture screenshot was obscured by the system authorization dialog;
+unobstructed Quick Capture and merged menu rendering still need inspection.
+No microphone capture was used for this Mac smoke.
+
+## Current-main integration history
+
+The following entries are chronological observations. References to running
+processes, uncommitted changes and pending reruns describe their state at that
+point; the current handoff above supersedes them.
 
 The user confirmed the revised iPhone animation looks great. The tested checkpoint is preserved on `codex/tide-mac-ios` at `9411d32`; it has not been published through Sparkle. A fresh GitHub read lists v0.14.16 as the latest release. Fetching main revealed that the original Tide baseline (`3ad6bc9`, v0.14.12) predates substantial reliability and mobile Library changes.
 
@@ -63,7 +87,7 @@ Mac test build 04 subsequently succeeded. The diagnostic app was quit normally, 
 
 The merge is not yet committed or qualified. Wrapper syntax and its three current-main Python tests pass. Remaining integration work includes UI qualification of the extracted Setup screen and unified Library, Mac compilation and runtime checks. Previous build and device passes below do not qualify this merged source. A live GitHub feed check on October 20 still lists v0.14.16, build 71, as Sparkle's newest release; Tide has not been published.
 
-## Latest status (October 20, 07:21 PT)
+## Earlier checkpoint status (October 20, 07:21 PT)
 
 The overnight target was missed. Both app builds pass. Implementation checkpoint `de8abb4` is committed locally on `codex/tide-mac-ios` in this isolated worktree. Mac fixture rendering/playback and physical iPhone capture/recovery/background Live Activity stop have passed their checks. No push, production installation or release has happened.
 
