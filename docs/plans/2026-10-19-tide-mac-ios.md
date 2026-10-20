@@ -2,6 +2,67 @@
 
 Requested outcome: finish both native apps tonight (October 19, America/Los_Angeles). Goal is active. Time is a target, not grounds to skip validation or claim incomplete work is finished.
 
+## Current handoff status
+
+Current-main integration is implemented and both app builds pass. Retained app-only
+screenshots and a concise qualification ledger are in
+[`verification/README.md`](../design/tide-2026-10-19/verification/README.md).
+The original overnight target was missed. Nothing has been pushed or published.
+
+Latest physical Search/Setup rerun passed and its exact test tree was verified:
+`/Volumes/MacMiniSDD/HarcBuilds/tide-main-phone-search-02-20261020`, manifest
+`08e42c1b49eac1edb16de346103a7db7af4760ccaa325d33c36d0673b1fe54bc`,
+report `/private/tmp/tide-main-phone-search-02-verified.json`.
+This resolves the only failing assertion from the 15-pass / 1-skip / 1-fail
+full physical run; it does not rewrite that earlier run as wholly passing.
+
+Mac UI retry 05 also timed out enabling automation before running its case.
+Manual validation of build 04 confirmed replacement/autosave, Undo persistence,
+Redo persistence, and the restored transcript after relaunch. Evidence:
+`/private/tmp/tide-main-mac-undo-after-fix.md` and
+`/private/tmp/tide-main-mac-relaunch-undo-ax.txt`.
+Replacing only the diagnostic placeholder WAV with a quiet generated tone
+verified restored 90-second duration, waveform rendering, playback advancement
+and pause; evidence `/private/tmp/tide-main-mac-playing-ax.txt` and the retained
+Mac Library screenshot. The current diagnostic app is open with playback paused.
+
+Still open: automated Mac UI execution, actual passcode-locked Stop, paired
+Host-backed screens and transfers under the pending trust approval, and final
+source integration/handoff. Older checkpoint successes below remain scoped to
+their named source and artifacts.
+
+## Current-main integration in progress
+
+The user confirmed the revised iPhone animation looks great. The tested checkpoint is preserved on `codex/tide-mac-ios` at `9411d32`; it has not been published through Sparkle. A fresh GitHub read lists v0.14.16 as the latest release. Fetching main revealed that the original Tide baseline (`3ad6bc9`, v0.14.12) predates substantial reliability and mobile Library changes.
+
+Integration is now on separate local branch `codex/tide-current-main`, merging `origin/main` at `08849bc`. Do not ship the older checkpoint in place of current main. Preserve the newer playback ownership/capture exclusion, unified local-and-Host Library, capture-integrity warning, detailed sync UI, receipt repair and moved-library controls while retaining Tide presentation. The installed diagnostic phone build remains the previously tested checkpoint.
+
+Integration attempt 03 finished with `TEST SUCCEEDED`: all 23 focused simulator tests passed with zero failures or skips. The result-tree verifier also passed, requiring the playback ownership/reactivation regression explicitly. Xcode's optional diagnostics collector timed out after 600 seconds; this did not prevent the completed test result. Log: `/private/tmp/tide-main-integration-03.log`; result: `/Volumes/MacMiniSDD/HarcBuilds/tide-main-integration-03-20261020.xcresult`; verification: `/private/tmp/tide-main-integration-03-verified.json`. Coverage includes playback/session ownership and reactivation, capture presentation, envelope and Live Activity tests. Attempt 01 exposed the widget deployment target mismatch with current main; attempt 02 exposed missing Library helpers after extraction. Both compile issues were repaired before attempt 03. No merged build has been installed on the phone.
+
+The full simulator UI wrapper finished against merged source: 17 cases, 10 passed, 5 expected platform/opt-in skips, 2 failures. Evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-main-ui-01-20261020`, log `/private/tmp/tide-main-ui-01.log`. This is explicitly dirty-tree diagnostic evidence, not release qualification. Its optional system-diagnostics collector was terminated after test execution completed; Xcode finalized the failing result normally. Screenshots and hierarchy were exported to `/private/tmp/tide-main-ui-01-attachments`.
+
+The navigation screenshot case remained at “Waiting for microphone permission…” instead of reaching Stop; the Record accessibility audit reported low contrast and potential large-text clipping on “Pair a Host.” The host pill now uses primary foreground and a larger medium-weight semantic font with unrestricted vertical wrapping. A fresh focused audit passed without suppressions: `/Volumes/MacMiniSDD/HarcBuilds/tide-main-audit-02-20261020`, log `/private/tmp/tide-main-audit-02.log`, manifest `9eb65de8380102b1ebe0726d47b8e3c172a8952686eec1bc844f1d8821fbff07`. The simulator capture hierarchy is retained in `/private/tmp/tide-main-ui-01-capture-log.txt`. Library, Search, local recordings, offline review/privacy, explicit recording entry and repeated Setup presentation passed in the full run.
+
+Screenshot review also found an empty native accessory capsule when idle. On iOS 26.1+, the root now uses native `tabViewBottomAccessory(isEnabled:)`; the 26.0 fallback preserves the existing stable tab hierarchy and may retain the platform's empty accessory presentation. This later root change needs new rendering verification. Diagnostic wrapper runs now disable optional system-wide diagnostics while retaining test logs, screenshots, manifests and xcresult; clean qualification retains failure diagnostics. All three wrapper tests pass.
+
+The current-main Mac build and app/UI tests are running: `/private/tmp/tide-main-mac-01.log`, `/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-01-20261020.xcresult`. The Mac target now supports an optional `HARC_MAC_DIAGNOSTIC_SUFFIX`, analogous to the phone diagnostic identity; this run uses `.TideDiagnostic` and the existing isolated UI-test roots. Default production bundle identity is unchanged. Project regeneration completed. Omega remains connected, but the merged source has not yet been installed there.
+
+Mac compilation and both embedded helper builds have completed without errors. Test launch is waiting at macOS's new “Harc would like to access files on a removable volume” prompt (screenshot `/private/tmp/tide-mac-test-launch.png`). An asynchronous user question asks whether to allow diagnostic Harc SSD access or use an internal temporary copy. Earlier SimulatorTrampoline approval is not being treated as approval for this new app-specific prompt. The live Xcode run remains pending; no test pass is claimed. The shared Mac test scheme sets `HARC_UI_TESTING=1`, and AppDelegate supplies a temporary fallback root when no explicit test root exists.
+
+The SSD-launched Mac attempt was subsequently interrupted deliberately (exit 75, `TEST INTERRUPTED`) because the permission was unanswered. No permission was granted. A `build-for-testing` pass completed successfully: `/private/tmp/tide-main-mac-build-02.log`, result `/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-build-02-20261020.xcresult`. Its 655 MB Debug products and generated xctestrun were copied to `/private/tmp/harc-tide-mac-internal-20261020-01`; the relocated app passed deep strict signature verification, and the xctestrun has no absolute external-volume paths. A new `test-without-building` run is executing app tests from this internal copy, so SSD permission is no longer blocking: `/private/tmp/tide-main-mac-internal-03.log`, result `/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-internal-03-20261020.xcresult`. Internal free space remains 7.8 GiB. These are diagnostic ad-hoc binaries, not a notarized release.
+
+The internal Mac run completed: all 69 app tests in 19 suites passed, but the UI runner timed out enabling automation before executing UI cases (overall exit 65). This is an automation blocker, not a passing full Mac suite. The obsolete SSD prompt was dismissed with “Don’t Allow”; no access grant was made. Manual verification uses PID 9281 from the internal diagnostic app, `HARC_UI_TESTING=1`, and fresh `/private/tmp/harc-tide-mac-main-fixture` storage with fake capture enabled. Library, General, and standalone Devices & Sync render without crashes; screenshots are `/private/tmp/tide-main-mac-library.png`, `/private/tmp/tide-main-mac-settings.png`, and `/private/tmp/tide-main-mac-devices.png`. The fixture WAV is placeholder bytes, so its empty waveform does not qualify playback. Paired-device states remain unverified.
+
+Current merged iPhone build has compiled and the full approved physical diagnostic UI suite is running on Omega: `/private/tmp/tide-main-phone-01.log`, evidence `/Volumes/MacMiniSDD/HarcBuilds/tide-main-phone-01-20261020`. This run includes the later host-label and native accessory visibility fixes. Internal disk remains above the 5 GiB guard (6.6 GiB after phone compilation).
+
+Physical run 01 completed with 15 passed, 1 opt-in screenshot skip and 1 failure. Real recording, force-quit recovery, storage-exhaustion recovery, background Live Activity stop, navigation recording accessory, and accessibility all passed. The last failure was the Tide test expecting a Search tab button after Setup dismissal; the retained hierarchy instead shows the correct `harc.mobile.search` screen and its usable native search field (iOS 26.6 collapses the selected Search tab). The assertion now checks Setup dismissal, Search screen identity and the hittable search field; a fresh focused physical run is required. Source manifest: `0225574f9e031882b3bdf57edf950a00eab9b02129fcdca80440db74ebfe4bf6`. Attachments: `/private/tmp/tide-main-phone-01-attachments`. Record screenshot `3CA8711C-8839-472E-A635-A171A2D875AB.png` confirms the empty accessory capsule is gone on Omega. Activity screenshot `A608EDA3-9B7F-4AB8-988A-EB273C913E11.png` shows 0:21 elapsed / 0:15 durable audio in Notification Center, including iOS's continued-activity permission UI; it is not actual passcode-lock qualification.
+
+Manual Mac editing found an autosave defect: after a typed change saved, Undo restored `doc.initialText` onscreen but did not persist it because the dirty guard compared against the initial load snapshot. Evidence: visible original text in `/private/tmp/tide-main-mac-after-undo.txt` versus saved replacement in `/private/tmp/tide-main-mac-undo-before-fix.md`. The guard now compares with `lastSavedEditorText`, falling back to `doc.initialText` only before any save; a regression UI case checks undo-after-save plus relaunch. Mac test build 04 is compiling this fix: `/private/tmp/tide-main-mac-build-04.log`, result `/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-build-04-20261020.xcresult`. It still needs execution/manual validation; the prior 69 app tests do not qualify this UI regression.
+
+Mac test build 04 subsequently succeeded. The diagnostic app was quit normally, the internal test copy refreshed, and its deep strict signature verified again. One focused UI retry is now running with the obsolete permission dialog already dismissed: `/private/tmp/tide-main-mac-undo-05.log`, result `/Volumes/MacMiniSDD/HarcBuilds/tide-main-mac-undo-05-20261020.xcresult`, selector `HarcAppUITests/HarcAppUITests/testUndoAfterAutosaveRestoresPersistedTranscript`. This is a bounded check of whether automation can initialize in the changed environment, not a claimed pass. The physical Search test rerun remains next.
+
+The merge is not yet committed or qualified. Wrapper syntax and its three current-main Python tests pass. Remaining integration work includes UI qualification of the extracted Setup screen and unified Library, Mac compilation and runtime checks. Previous build and device passes below do not qualify this merged source. A live GitHub feed check on October 20 still lists v0.14.16, build 71, as Sparkle's newest release; Tide has not been published.
+
 ## Latest status (October 20, 07:21 PT)
 
 The overnight target was missed. Both app builds pass. Implementation checkpoint `de8abb4` is committed locally on `codex/tide-mac-ios` in this isolated worktree. Mac fixture rendering/playback and physical iPhone capture/recovery/background Live Activity stop have passed their checks. No push, production installation or release has happened.

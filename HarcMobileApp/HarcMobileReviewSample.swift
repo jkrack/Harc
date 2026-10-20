@@ -9,8 +9,13 @@ enum HarcMobileAccessibilityID {
     static let stopRecording = "harc.mobile.record.stop"
     static let recordingBanner = "harc.mobile.record.banner"
     static let recordingBannerStop = "harc.mobile.record.banner.stop"
+    static let recordingAccessoryStop =
+        "harc.mobile.record.accessory.stop"
     static let localRecordings = "harc.mobile.capture.localRecordings"
     static let hostHealth = "harc.mobile.host.health"
+    static let setupAndSync = "harc.mobile.setup-and-sync"
+    static let searchTab = "harc.mobile.search"
+    static let libraryAttention = "harc.mobile.library.attention"
     static let openReviewSample = "harc.mobile.reviewSample.open"
     static let openReviewSampleToolbar =
         "harc.mobile.reviewSample.open.toolbar"
@@ -212,6 +217,7 @@ final class HarcMobileReviewSampleAudioController: NSObject {
 
     private(set) var state: State = .idle
     private var player: AVAudioPlayer?
+    private var sessionOwner: UUID?
 
     func playOrStop() async {
         if player?.isPlaying == true {
@@ -219,13 +225,14 @@ final class HarcMobileReviewSampleAudioController: NSObject {
             return
         }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spokenAudio)
-            try session.setActive(true)
+            sessionOwner = try HarcMobilePlaybackSession.shared.acquire {
+                [weak self] in self?.stop()
+            }
             let player = try AVAudioPlayer(
                 data: HarcMobileReviewSampleAudio.makeWAV()
             )
             player.delegate = self
+            self.player = player
             player.prepareToPlay()
             guard player.play() else {
                 throw HarcMobileReviewSampleAudioError.startFailed
@@ -233,7 +240,7 @@ final class HarcMobileReviewSampleAudioController: NSObject {
             self.player = player
             state = .playing
         } catch {
-            player = nil
+            stop()
             state = .failed(error.localizedDescription)
         }
     }
@@ -242,11 +249,15 @@ final class HarcMobileReviewSampleAudioController: NSObject {
         player?.stop()
         player = nil
         state = .idle
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: .notifyOthersOnDeactivation
-        )
+        releaseSession()
     }
+
+    private func releaseSession() {
+        guard let owner = sessionOwner else { return }
+        sessionOwner = nil
+        HarcMobilePlaybackSession.shared.release(owner)
+    }
+
 }
 
 extension HarcMobileReviewSampleAudioController:
@@ -256,14 +267,12 @@ extension HarcMobileReviewSampleAudioController:
         _ player: AVAudioPlayer,
         successfully flag: Bool
     ) {
+        guard self.player === player else { return }
         self.player = nil
         state = flag
             ? .idle
             : .failed("The synthetic review sample ended unexpectedly.")
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: .notifyOthersOnDeactivation
-        )
+        releaseSession()
     }
 }
 

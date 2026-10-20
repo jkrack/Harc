@@ -67,6 +67,7 @@ final class HarcMobileCaptureCoordinator {
     func start() async {
         guard state == .idle || isTerminalState else { return }
         audioLevelMeter.reset()
+        HarcMobilePlaybackSession.shared.beginCapture()
         state = .requestingPermission
         let granted = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { allowed in
@@ -74,6 +75,7 @@ final class HarcMobileCaptureCoordinator {
             }
         }
         guard granted else {
+            HarcMobilePlaybackSession.shared.endCapture()
             state = .failed("Microphone access is required to record.")
             return
         }
@@ -147,6 +149,7 @@ final class HarcMobileCaptureCoordinator {
                 false,
                 options: .notifyOthersOnDeactivation
             )
+            HarcMobilePlaybackSession.shared.endCapture()
             state = .failed(error.localizedDescription)
         }
     }
@@ -185,29 +188,50 @@ final class HarcMobileCaptureCoordinator {
         _ result: Result<HarcMobileFinalizedMaster, any Error>
     ) async {
         liveActivity.finish()
+        defer { HarcMobilePlaybackSession.shared.endCapture() }
         audioLevelMeter.reset()
         pipeline = nil
         captureInput = nil
         isReconfiguring = false
         removeObservers()
         do {
-            try AVAudioSession.sharedInstance().setActive(
-                false,
-                options: .notifyOthersOnDeactivation
-            )
+            let deactivate = {
+                try AVAudioSession.sharedInstance().setActive(
+                    false, options: .notifyOthersOnDeactivation
+                )
+            }
             switch result {
             case .success(let master):
-                try onFinalized(master)
+                try Self.persistBeforeDeactivating(
+                    master, persist: onFinalized, deactivate: deactivate
+                )
                 state = Self.terminalState(
                     recordingUUID: master.originRecordingID.recordingUUID,
                     finalizationReason: master.finalizationReason
                 )
             case .failure(let error):
+                try deactivate()
                 state = .failed(error.localizedDescription)
             }
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+
+    static func persistBeforeDeactivating(
+        _ master: HarcMobileFinalizedMaster,
+        persist: (HarcMobileFinalizedMaster) throws -> Void,
+        deactivate: () throws -> Void
+    ) throws {
+        // Audio-session teardown must never prevent durable outbox registration.
+        // A failed store insert is recovered from finalized metadata on launch.
+        do {
+            try persist(master)
+        } catch {
+            try? deactivate()
+            throw error
+        }
+        try deactivate()
     }
 
     static func terminalState(

@@ -2,6 +2,26 @@ import XCTest
 @testable import HarcSummarize
 
 final class SummaryOutputTests: XCTestCase {
+    func test_inputCoverageAndFormatNoticesBothSurviveStorage() {
+        let result = SummaryParseResult(summary: "raw response", actionItems: [], parseWarning: true, omittedUtteranceCount: 2)
+        XCTAssertTrue(result.markdownForStorage.contains("Partial summary:"))
+        XCTAssertTrue(result.markdownForStorage.contains("Review needed:"))
+        XCTAssertTrue(result.markdownForStorage.hasSuffix("raw response"))
+    }
+
+    func test_storageText_keepsCleanSummaryUnchanged() {
+        let result = SummaryParser.parse("## Summary\nA clean summary.\n## Action Items\n_None identified._")
+        XCTAssertEqual(result.markdownForStorage, "A clean summary.")
+    }
+
+    func test_storageText_preservesMalformedResponseWithReviewNotice() {
+        let raw = "## Summary\nPlanning.\n## Action Items\nJason will send the plan."
+        let result = SummaryParser.parse(raw)
+        XCTAssertTrue(result.markdownForStorage.hasPrefix("Review needed:"))
+        XCTAssertTrue(result.markdownForStorage.hasSuffix(raw))
+        XCTAssertEqual(result.summary, raw)
+        XCTAssertTrue(result.actionItems.isEmpty)
+    }
 
     func test_actionItem_codableRoundTrip() throws {
         let original = ActionItem(

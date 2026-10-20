@@ -11,8 +11,8 @@ set -euo pipefail
 #     --destination-id <UDID> \
 #     --platform simulator|physical \
 #     --output-dir <new-directory> \
+#     [--derived-data-path <new-directory>] \
 #     [--development-team <10-character-team-id>] \
-#     [--derived-data-path <cache-directory>] \
 #     [--diagnostic-bundle-suffix <suffix>] \
 #     [--diagnostic-test-case <Class/method>] \
 #     [--attempts 1-3] \
@@ -126,6 +126,14 @@ if [[ -e "$OUTPUT_DIR" ]]; then
   echo "error: output path already exists: $OUTPUT_DIR" >&2
   exit 1
 fi
+if [[ -n "$DERIVED_DATA_PATH" && -e "$DERIVED_DATA_PATH" && "$ALLOW_DIRTY" -ne 1 ]]; then
+  echo "error: derived data path already exists: $DERIVED_DATA_PATH" >&2
+  exit 1
+fi
+if [[ -n "$DERIVED_DATA_PATH" && "$DERIVED_DATA_PATH" != /* ]]; then
+  echo "error: derived data path must be absolute: $DERIVED_DATA_PATH" >&2
+  exit 1
+fi
 
 for TOOL in git xcodebuild xcrun shasum ditto; do
   command -v "$TOOL" >/dev/null 2>&1 || {
@@ -144,6 +152,18 @@ if [[ "$AVAILABLE_GIB" -lt 5 || "$BUILD_AVAILABLE_GIB" -lt 8 ]]; then
   echo "error: qualification requires 5 GiB on the source volume and 8 GiB of starting headroom on the build volume" >&2
   exit 1
 fi
+if [[ -n "$DERIVED_DATA_PATH" ]]; then
+  DERIVED_DATA_PARENT="$(dirname "$DERIVED_DATA_PATH")"
+  [[ -d "$DERIVED_DATA_PARENT" ]] || {
+    echo "error: derived data parent does not exist: $DERIVED_DATA_PARENT" >&2
+    exit 1
+  }
+  DERIVED_AVAILABLE_GIB="$(df -Pk "$DERIVED_DATA_PARENT" | awk 'NR == 2 { print int($4 / 1024 / 1024) }')"
+  if [[ "$DERIVED_AVAILABLE_GIB" -lt 8 ]]; then
+    echo "error: derived data filesystem has ${DERIVED_AVAILABLE_GIB} GiB free; qualification requires 8 GiB of starting headroom" >&2
+    exit 1
+  fi
+fi
 
 cd "$REPO_ROOT"
 SOURCE_HEAD="$(git rev-parse HEAD)"
@@ -155,6 +175,13 @@ if [[ -n "$SOURCE_STATUS" && "$ALLOW_DIRTY" -ne 1 ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+XCODE_DERIVED_DATA_OPTIONS=()
+if [[ -n "$DERIVED_DATA_PATH" ]]; then
+  # Only explicit diagnostic runs may reuse a cache; release qualification
+  # continues to require a fresh directory, as checked above.
+  mkdir -p "$DERIVED_DATA_PATH"
+  XCODE_DERIVED_DATA_OPTIONS=(-derivedDataPath "$DERIVED_DATA_PATH")
+fi
 SOURCE_MANIFEST="$OUTPUT_DIR/source-files.sha256"
 while IFS= read -r SOURCE_FILE; do
   [[ -n "$SOURCE_FILE" ]] || continue
@@ -188,15 +215,18 @@ for ATTEMPT in $(seq 1 "$ATTEMPTS"); do
   ATTEMPT_LOG="$OUTPUT_DIR/xcodebuild-attempt-${ATTEMPT}.log"
   ATTEMPT_SUMMARY="$OUTPUT_DIR/test-summary-attempt-${ATTEMPT}.json"
   SIGNING_OPTIONS=()
-  BUILD_LOCATION_OPTIONS=()
-  if [[ -n "$DERIVED_DATA_PATH" ]]; then
-    BUILD_LOCATION_OPTIONS+=(-derivedDataPath "$DERIVED_DATA_PATH")
-  fi
   if [[ "$PLATFORM" == "physical" ]]; then
     SIGNING_OPTIONS+=(DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM")
   fi
   if [[ -n "$DIAGNOSTIC_BUNDLE_SUFFIX" ]]; then
     SIGNING_OPTIONS+=(HARC_DIAGNOSTIC_SUFFIX=".$DIAGNOSTIC_BUNDLE_SUFFIX" "HARC_MOBILE_DISPLAY_NAME=Harc Tide Test")
+  fi
+  # Keep test logs, screenshots and xcresult evidence, but avoid the optional
+  # system-wide sysdiagnose in diagnostic iterations. CoreSimulator's collector
+  # can stall for ten minutes after the tests have already finished.
+  DIAGNOSTIC_COLLECTION="on-failure"
+  if [[ "$ALLOW_DIRTY" -eq 1 ]]; then
+    DIAGNOSTIC_COLLECTION="never"
   fi
   set +e
   xcodebuild \
@@ -204,15 +234,16 @@ for ATTEMPT in $(seq 1 "$ATTEMPTS"); do
     -scheme HarcMobile \
     -configuration Debug \
     -destination "id=$DESTINATION_ID" \
+    "${XCODE_DERIVED_DATA_OPTIONS[@]}" \
     -jobs 2 \
     -parallel-testing-enabled NO \
+    -collect-test-diagnostics "$DIAGNOSTIC_COLLECTION" \
     -test-timeouts-enabled YES \
     -default-test-execution-time-allowance 180 \
     -maximum-test-execution-time-allowance 300 \
     SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
     HARC_BUILD_SHA="$SOURCE_HEAD" \
     ${SIGNING_OPTIONS[@]+"${SIGNING_OPTIONS[@]}"} \
-    ${BUILD_LOCATION_OPTIONS[@]+"${BUILD_LOCATION_OPTIONS[@]}"} \
     -resultBundlePath "$ATTEMPT_BUNDLE" \
     "-only-testing:$TEST_SELECTION" \
     test 2>&1 | tee "$ATTEMPT_LOG"
@@ -331,9 +362,11 @@ fi
   echo "selected_attempt=$SELECTED_ATTEMPT"
   echo "xcode_status=$XCODE_STATUS"
   echo "result_bundle=$RESULT_BUNDLE"
+  echo "derived_data_path=$DERIVED_DATA_PATH"
   echo "source_head=$SOURCE_HEAD"
   echo "source_manifest_sha256=$SOURCE_FINGERPRINT"
   echo "test_selection=$TEST_SELECTION"
+  echo "system_diagnostics=$DIAGNOSTIC_COLLECTION"
   echo "diagnostic_dirty_tree=$([[ "$ALLOW_DIRTY" -eq 1 ]] && echo true || echo false)"
 } > "$OUTPUT_DIR/qualification.txt"
 

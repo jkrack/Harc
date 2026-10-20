@@ -373,14 +373,20 @@ public enum HarcTLSLeafDERParser {
         tbsCertificate: Data,
         signatureDER: Data
     ) -> Bool {
-        guard let key = try? P256.Signing.PublicKey(
-            x963Representation: publicKey.rawBytes
-        ), let signature = try? P256.Signing.ECDSASignature(
+        guard let signature = try? P256.Signing.ECDSASignature(
             derRepresentation: signatureDER
+        ), let canonicalSignature = try? P256RawSignature.normalizing(
+            signature.rawRepresentation
         ) else {
             return false
         }
-        return key.isValidSignature(signature, for: tbsCertificate)
+        // X.509 permits either S form. Reuse the identity verifier's equivalent-S
+        // interoperability handling over one hash of the exact encoded TBS bytes.
+        // DER/profile validation above and strict Harc wire signatures are unchanged.
+        return publicKey.isValidSignature(
+            canonicalSignature,
+            for: P256SHA256Digest(hashing: tbsCertificate)
+        )
     }
 
     private static func derSequence(_ content: Data) -> Data {

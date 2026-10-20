@@ -26,28 +26,53 @@ final class HarcAppUITests: XCTestCase {
         rootURL = nil
     }
 
+    func testCaptureIntegrityWarningSurvivesRelaunch() throws {
+        app.launchEnvironment["HARC_UI_TEST_CAPTURE_ISSUE"] = "1"
+        launchFixtureLibrary()
+        XCTAssertTrue(staticText(containing: "UI Test Customer Renewal").exists)
+        let warning = app.descendants(matching: .any)
+            .matching(identifier: "harc.recording.captureIntegrityWarning").firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 8), app.debugDescription)
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "HARC_UI_TEST_CAPTURE_ISSUE")
+        launchFixtureLibrary()
+        XCTAssertTrue(staticText(containing: "UI Test Customer Renewal").exists)
+        XCTAssertTrue(warning.waitForExistence(timeout: 8), app.debugDescription)
+        let evidence = XCTAttachment(screenshot: app.screenshot())
+        evidence.name = "Capture warning after relaunch"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+    }
+
     func testLaunchOpensFixtureLibraryAndShowsRecordingDetail() throws {
         launchFixtureLibrary()
 
-        let recording = app.staticTexts["UI Test Customer Renewal"]
+        let recording = seededRecordingRow()
         XCTAssertTrue(recording.waitForExistence(timeout: 8), app.debugDescription)
         recording.click()
 
-        XCTAssertTrue(app.staticTexts["UI Test Customer Renewal"].waitForExistence(timeout: 2))
+        XCTAssertTrue(staticText(containing: "UI Test Customer Renewal").waitForExistence(timeout: 2))
         XCTAssertTrue(staticText(containing: "pricing risk").waitForExistence(timeout: 4), app.debugDescription)
         XCTAssertTrue(staticText(containing: "send the renewal plan").waitForExistence(timeout: 4), app.debugDescription)
     }
 
-    func testLibrarySearchFindsSeededNoteAndRecording() throws {
+    func testLibrarySearchFindsRecordingByTitleAndTranscript() throws {
         launchFixtureLibrary()
-
         let searchField = app.searchFields.firstMatch
-        XCTAssertTrue(searchField.waitForExistence(timeout: 8), app.debugDescription)
         searchField.click()
-        searchField.typeText("Michelle")
-
-        XCTAssertTrue(app.staticTexts["Context Pack"].waitForExistence(timeout: 4), app.debugDescription)
-        XCTAssertTrue(app.staticTexts["UI Test Renewal Note"].waitForExistence(timeout: 4), app.debugDescription)
+        app.typeText("Customer Renewal")
+        XCTAssertTrue(searchResultText(containing: "UI Test Customer Renewal").waitForExistence(timeout: 6), app.debugDescription)
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("pricing risk")
+        XCTAssertEqual(searchField.value as? String, "pricing risk", app.debugDescription)
+        XCTAssertTrue(searchResultText(containing: "pricing risk").waitForExistence(timeout: 6), app.debugDescription)
+        searchField.buttons["cancel"].click()
+        searchField.click()
+        app.typeText("no-such-recording-82941")
+        XCTAssertTrue(searchResultText(containing: "No Results").waitForExistence(timeout: 6), app.debugDescription)
+        searchField.buttons["cancel"].click()
+        searchField.click()
+        XCTAssertTrue(seededRecordingRow().waitForExistence(timeout: 6), app.debugDescription)
     }
 
     func testSettingsCanOpenFromLibrary() throws {
@@ -70,11 +95,17 @@ final class HarcAppUITests: XCTestCase {
         app.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4), app.debugDescription)
 
-        // Activating a running app with no visible windows exercises
-        // applicationShouldHandleReopen, which reuses the retained Library
-        // window controller rather than constructing a fresh one.
-        app.activate()
-        XCTAssertTrue(app.windows["Harc"].waitForExistence(timeout: 8), app.debugDescription)
+        // Reopen through the resident status item's actual Library command.
+        // XCUIApplication.activate() only foregrounds the process; it does
+        // not guarantee delivery of an application-reopen event.
+        let statusItem = app.menuBars.element(boundBy: 1).children(matching: .any).firstMatch
+        XCTAssertTrue(statusItem.waitForExistence(timeout: 4), app.debugDescription)
+        statusItem.click()
+        let libraryButton = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Library")).firstMatch
+        XCTAssertTrue(libraryButton.waitForExistence(timeout: 4), app.debugDescription)
+        libraryButton.click()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
 
         app.typeKey(",", modifierFlags: .command)
         XCTAssertTrue(
@@ -86,64 +117,13 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 4))
     }
 
-    func testWikiAndReviewModesShowSeededKnowledgeAndApproveProposal() throws {
+    func testTranscriptEditingPreservesSpecialCharactersAcrossRelaunch() throws {
         launchFixtureLibrary()
-
-        switchMode("Wiki")
-        XCTAssertTrue(app.staticTexts["UI Test Renewal Wiki"].waitForExistence(timeout: 8), app.debugDescription)
-        XCTAssertTrue(staticText(containing: "Friday follow-up").waitForExistence(timeout: 4), app.debugDescription)
-
-        switchMode("Review")
-        XCTAssertTrue(app.staticTexts["UI Test Renewal Proposal"].waitForExistence(timeout: 8), app.debugDescription)
-        XCTAssertTrue(staticText(containing: "durable renewal page").waitForExistence(timeout: 4), app.debugDescription)
-
-        let approve = app.buttons["Approve"]
-        XCTAssertTrue(approve.waitForExistence(timeout: 4), app.debugDescription)
-        approve.click()
-        XCTAssertTrue(staticText(containing: "Approved and written to Wiki").waitForExistence(timeout: 8), app.debugDescription)
-        XCTAssertTrue(app.buttons["Open Page"].waitForExistence(timeout: 4), app.debugDescription)
-    }
-
-    func testNoteEditorModesRenderSeededNote() throws {
-        launchFixtureLibrary()
-
-        if !app.windows["UI Test Renewal Note"].waitForExistence(timeout: 1) {
-            let note = seededNoteRow()
-            XCTAssertTrue(note.waitForExistence(timeout: 8), app.debugDescription)
-            note.click()
-        }
-
-        XCTAssertTrue(app.windows["UI Test Renewal Note"].waitForExistence(timeout: 4) || app.textFields["Title"].waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["Editor Mode"].waitForExistence(timeout: 4), app.debugDescription)
-        XCTAssertTrue(app.radioButtons["Live"].waitForExistence(timeout: 4), app.debugDescription)
-        XCTAssertTrue(staticText(containing: "Follow up with Michelle").waitForExistence(timeout: 4), app.debugDescription)
-
-        app.radioButtons["Source"].click()
-        XCTAssertTrue(app.radioButtons["Source"].waitForExistence(timeout: 2), app.debugDescription)
-        XCTAssertTrue(staticText(containing: "Follow up with Michelle").waitForExistence(timeout: 4), app.debugDescription)
-
-        app.radioButtons["Read"].click()
-        XCTAssertTrue(app.radioButtons["Read"].waitForExistence(timeout: 2), app.debugDescription)
-        XCTAssertTrue(staticText(containing: "Follow up with Michelle").waitForExistence(timeout: 4), app.debugDescription)
-    }
-
-    func testMarkdownTypingCoversListEntryAndSpecialCharacters() throws {
-        launchFixtureLibrary()
-
-        if !app.windows["UI Test Renewal Note"].waitForExistence(timeout: 1) {
-            let note = seededNoteRow()
-            XCTAssertTrue(note.waitForExistence(timeout: 8), app.debugDescription)
-            note.click()
-        }
-
-        XCTAssertTrue(app.radioButtons["Source"].waitForExistence(timeout: 6), app.debugDescription)
-        app.radioButtons["Source"].click()
-
-        let editor = app.textViews.firstMatch
+        let editor = app.textViews["harc.transcript.editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 8), app.debugDescription)
         editor.click()
-        editor.typeKey("a", modifierFlags: .command)
-        editor.typeKey(.delete, modifierFlags: [])
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(.delete, modifierFlags: [])
 
         let markdown = """
         # Typed Markdown Gauntlet
@@ -175,34 +155,99 @@ final class HarcAppUITests: XCTestCase {
         [Typed Link](https://github.com/jkrack/Harc)
         """
 
-        editor.typeText(markdown)
+        app.typeText(markdown)
+        XCTAssertEqual(editor.value as? String, markdown, app.debugDescription)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertNotEqual(editor.value as? String, markdown)
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertEqual(editor.value as? String, markdown, app.debugDescription)
 
         XCTAssertTrue(textView(containing: "- First typed bullet").waitForExistence(timeout: 4), app.debugDescription)
         XCTAssertTrue(textView(containing: "Symbols: ~ ! @ # $ % ^ & *").waitForExistence(timeout: 4), app.debugDescription)
 
-        let save = app.buttons["Save Note"]
-        if save.waitForExistence(timeout: 2), save.isEnabled {
-            save.click()
-        }
-
-        XCTAssertNotNil(waitForFile(pathExtension: "md", containing: "- First typed bullet"))
-        XCTAssertNotNil(waitForFile(pathExtension: "md", containing: "Symbols: ~ ! @ # $ % ^ & * ( ) _ + - = { } [ ] | \\ : ; \" ' < > , . ? /"))
-        XCTAssertNotNil(waitForFile(pathExtension: "md", containing: "| Bullet | Created from dash space |"))
-
-        app.radioButtons["Live"].click()
-        XCTAssertTrue(waitForVisibleNoteText("First typed bullet", timeout: 6), app.debugDescription)
-        XCTAssertTrue(waitForVisibleNoteText("Typed unchecked task", timeout: 6), app.debugDescription)
-        XCTAssertTrue(waitForVisibleNoteText("Created from dash space", timeout: 6), app.debugDescription)
-
-        app.radioButtons["Read"].click()
-        XCTAssertTrue(waitForVisibleNoteText("First typed bullet", timeout: 6), app.debugDescription)
-        XCTAssertTrue(waitForVisibleNoteText("Typed Link", timeout: 6), app.debugDescription)
+        // The current Library edits the transcript in place and autosaves.
+        XCTAssertNotNil(waitForFile(pathExtension: "md", containing: markdown))
+        app.terminate()
+        launchFixtureLibrary()
+        XCTAssertTrue(editor.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertEqual(editor.value as? String, markdown, app.debugDescription)
     }
 
-    func testRecordingInspectorShowsSpeakersLinkedNotesAndFiles() throws {
+    func testUndoAfterAutosaveRestoresPersistedTranscript() throws {
+        launchFixtureLibrary()
+        let editor = app.textViews["harc.transcript.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 8), app.debugDescription)
+        let original = try XCTUnwrap(editor.value as? String)
+        let replacement = "A saved edit that will be undone."
+        editor.click()
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText(replacement)
+        XCTAssertNotNil(waitForFile(pathExtension: "md", containing: replacement))
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertEqual(editor.value as? String, original, app.debugDescription)
+        XCTAssertNotNil(waitForFile(pathExtension: "md", containing: original))
+        app.terminate()
+        launchFixtureLibrary()
+        XCTAssertTrue(editor.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertEqual(editor.value as? String, original, app.debugDescription)
+    }
+
+    func testBoundSpeakerCreateUnassignAndRelinkSurviveRelaunch() throws {
+        app.launchEnvironment["HARC_UI_TEST_BOUND_SPEAKERS"] = "1"
+        func openInspector() {
+            launchFixtureLibrary()
+            seededRecordingRow().click()
+            let inspector = app.buttons.containing(NSPredicate(format: "label BEGINSWITH[c] %@", "Inspector")).firstMatch
+            XCTAssertTrue(inspector.waitForExistence(timeout: 4), app.debugDescription)
+            inspector.click()
+        }
+        func picker() -> XCUIElement {
+            app.descendants(matching: .any).matching(identifier: "harc.speaker.0.picker").firstMatch
+        }
+        func waitForPickerText(_ text: String, timeout: TimeInterval = 6) -> XCTWaiter.Result {
+            let predicate = NSPredicate(
+                format: "label CONTAINS %@ OR title CONTAINS %@ OR value CONTAINS %@",
+                text,
+                text,
+                text
+            )
+            return XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(predicate: predicate, object: picker())],
+                timeout: timeout
+            )
+        }
+        openInspector()
+        XCTAssertTrue(picker().waitForExistence(timeout: 6), app.debugDescription)
+        picker().click()
+        app.menuItems["Add new person…"].click()
+        let name = app.textFields["Name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 4), app.debugDescription)
+        name.click()
+        name.typeText("UI Voice Carol")
+        app.buttons["Add"].click()
+        XCTAssertTrue(picker().waitForExistence(timeout: 4), app.debugDescription)
+        XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)
+        app.terminate()
+        openInspector()
+        XCTAssertTrue(picker().waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)
+        picker().click()
+        app.menuItems["Unassign"].click()
+        XCTAssertEqual(waitForPickerText("Speaker 1"), .completed, app.debugDescription)
+        picker().click()
+        app.menuItems["UI Voice Carol"].click()
+        XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)
+        let evidence = XCTAttachment(screenshot: app.screenshot())
+        evidence.name = "Bound speaker identity after relink"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+    }
+
+    func testRecordingInspectorShowsSpeakersAndFiles() throws {
         launchFixtureLibrary()
 
-        let recording = app.staticTexts["UI Test Customer Renewal"]
+        let recording = seededRecordingRow()
         XCTAssertTrue(recording.waitForExistence(timeout: 8), app.debugDescription)
         recording.click()
 
@@ -215,10 +260,9 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Speakers"].waitForExistence(timeout: 6), app.debugDescription)
         XCTAssertTrue(app.staticTexts["File"].waitForExistence(timeout: 6), app.debugDescription)
         XCTAssertTrue(staticText(containing: "09-00-00.wav").waitForExistence(timeout: 4), app.debugDescription)
-        XCTAssertTrue(staticText(containing: "UI Test Renewal Note").waitForExistence(timeout: 4), app.debugDescription)
     }
 
-    func testRecordStopTranscribeCreateNoteLoopUsesGoldenOutput() throws {
+    func testRecordStopPersistsGoldenTranscriptAcrossRelaunch() throws {
         let title = "UI Test Live Pipeline Review"
         let transcript = "Alyssa: Budget owner confirmed the launch checklist is complete. Marco: Send the customer recap by Friday and keep the renewal risk visible."
         app.launchEnvironment["HARC_UI_TEST_SEED_LIBRARY"] = "0"
@@ -235,15 +279,15 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["harc.library.capture.recordButton"].waitForExistence(timeout: 4), app.debugDescription)
 
         app.buttons["harc.library.capture.recordButton"].click()
-        XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(waitForFile(pathExtension: "txt", containing: "Budget owner confirmed") != nil)
+        XCTAssertTrue(staticText(containing: title).waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(waitForFile(pathExtension: "md", containing: "Budget owner confirmed") != nil)
         XCTAssertTrue(waitForFile(pathExtension: "json", containing: "customer recap by Friday") != nil)
 
         let recording = seededRecordingRow()
         XCTAssertTrue(recording.waitForExistence(timeout: 6), app.debugDescription)
         recording.click()
-        XCTAssertTrue(staticText(containing: "Budget owner confirmed").waitForExistence(timeout: 6), app.debugDescription)
-        XCTAssertTrue(staticText(containing: "renewal risk visible").waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertTrue(textView(containing: "Budget owner confirmed").waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertTrue(textView(containing: "renewal risk visible").waitForExistence(timeout: 6), app.debugDescription)
 
         let inspector = app.buttons
             .containing(NSPredicate(format: "label BEGINSWITH[c] %@", "Inspector"))
@@ -251,37 +295,29 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(inspector.waitForExistence(timeout: 4), app.debugDescription)
         inspector.click()
 
-        let newNote = app.buttons["New note from this recording"]
-        XCTAssertTrue(newNote.waitForExistence(timeout: 6), app.debugDescription)
-        newNote.click()
-
-        XCTAssertTrue(app.windows[title].waitForExistence(timeout: 6) || app.staticTexts["1 recording"].waitForExistence(timeout: 6), app.debugDescription)
-        XCTAssertTrue(app.staticTexts["1 recording"].waitForExistence(timeout: 6), app.debugDescription)
-        XCTAssertTrue(waitForFile(pathExtension: "md", containing: "recording:") != nil)
+        app.terminate()
+        launchFixtureLibrary()
+        XCTAssertTrue(staticText(containing: title).waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(textView(containing: "Budget owner confirmed").waitForExistence(timeout: 8), app.debugDescription)
     }
 
     private func launchFixtureLibrary() {
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 12), app.debugDescription)
-        switchMode("Library")
+        // Launch opens the Library directly. Its window title follows the
+        // selected recording; the former mode radio group no longer exists.
         XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
-    }
-
-    private func switchMode(_ title: String) {
-        let mode = app.radioButtons[title]
-        XCTAssertTrue(mode.waitForExistence(timeout: 8), app.debugDescription)
-        mode.click()
-    }
-
-    private func seededNoteRow() -> XCUIElement {
-        app.staticTexts
-            .matching(NSPredicate(format: "identifier BEGINSWITH[c] %@", "harc.library.note."))
-            .firstMatch
     }
 
     private func seededRecordingRow() -> XCUIElement {
         app.staticTexts
             .matching(NSPredicate(format: "identifier BEGINSWITH[c] %@", "harc.library.recording."))
+            .firstMatch
+    }
+
+    private func searchResultText(containing text: String) -> XCUIElement {
+        app.outlines.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", text, text))
             .firstMatch
     }
 
@@ -295,17 +331,6 @@ final class HarcAppUITests: XCTestCase {
         app.textViews
             .matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", text, text))
             .firstMatch
-    }
-
-    private func waitForVisibleNoteText(_ text: String, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if staticText(containing: text).exists || textView(containing: text).exists {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        }
-        return false
     }
 
     private func waitForFile(pathExtension: String, containing text: String, timeout: TimeInterval = 10) -> URL? {

@@ -40,28 +40,233 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         search.tap()
         XCTAssertTrue(app.staticTexts["Find a moment"].waitForExistence(timeout: 10))
         keepTideScreenshot("Tide-Search")
-        let setup = app.buttons["harc.setup-and-sync"]
+        let setup = app.buttons["harc.mobile.host.health"]
         XCTAssertTrue(setup.waitForExistence(timeout: 10))
         setup.tap()
         XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["Check now"].exists)
+        XCTAssertTrue(app.buttons["Pair a Mac"].exists)
         keepTideScreenshot("Tide-Setup")
         app.buttons["Done"].tap()
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["harc.mobile.search"].waitForExistence(timeout: 5))
+        // iOS can replace the selected Search tab button with its native
+        // search field. Verify the returned screen and usable control.
+        let searchField = app.searchFields["Search meetings and transcripts"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        XCTAssertTrue(searchField.isHittable)
+        keepTideScreenshot("Tide-Search-After-Setup")
         XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+    }
+
+    func testLocalLibraryIsReachableWithoutHost() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        let library = app.tabBars.buttons["Library"]
+        XCTAssertTrue(library.waitForExistence(timeout: 10))
+        library.tap()
+        XCTAssertTrue(app.navigationBars["Library"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[
+            "Recordings saved on this iPhone appear here, even without a Mac."
+        ].exists)
+    }
+
+    func testSyncDetailsAreDiscoverableWithoutHostOrRecording() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.setup-and-sync"
+            ].waitForExistence(timeout: 10)
+        )
+
+        let status = app.buttons["harc.mobile.host.sync-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        status.tap()
+        let transferStatus = app.descendants(matching: .any)["harc.mobile.sync.transfer-status"]
+        XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
+        let unpairedStatus = NSPredicate(
+            format: "label CONTAINS %@",
+            "Local recording, playback and export work without a Mac."
+        )
+        expectation(for: unpairedStatus, evaluatedWith: transferStatus)
+        waitForExpectations(timeout: 10)
+        let sendNow = app.buttons["harc.mobile.sync.retry-transfers"]
+        XCTAssertTrue(sendNow.exists)
+        XCTAssertFalse(sendNow.isEnabled)
+
+        let setupBack = app.navigationBars["Sending to Mac"]
+            .buttons["Setup & Sync"]
+        XCTAssertTrue(setupBack.waitForExistence(timeout: 10))
+        setupBack.tap()
+        let local = app.buttons.matching(
+            NSPredicate(
+                format: "label BEGINSWITH %@",
+                "Recordings & storage"
+            )
+        ).firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 10))
+        local.tap()
+        XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+    }
+
+    func testLibrarySearchLivesInTheSearchTab() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+
+        let searchTab = app.tabBars.buttons["Search"]
+        XCTAssertTrue(searchTab.waitForExistence(timeout: 10))
+        searchTab.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["harc.mobile.search"]
+                .waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(
+            app.staticTexts[
+                "Recordings only on this iPhone are matched by title until they reach your Mac."
+            ].exists
+        )
+        XCTAssertTrue(
+            app.searchFields[
+                "Search meetings and transcripts"
+            ].exists
+        )
+    }
+
+    func testSetupAndSyncOpensFromLibraryHostPill() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        selectTab("Library", in: app)
+        openSetupAndSync(in: app)
+        XCTAssertTrue(
+            app.buttons["harc.mobile.host.sync-status"]
+                .waitForExistence(timeout: 10)
+        )
+    }
+
+    func testSendingStatusOpensFromSetupAndSync() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        openSetupAndSync(in: app)
+
+        let sending = app.buttons["harc.mobile.host.sync-status"]
+        XCTAssertTrue(sending.waitForExistence(timeout: 10))
+        sending.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.sync.transfer-status"
+            ].waitForExistence(timeout: 10)
+        )
+    }
+
+    func testEmptyLocalRecordingsOpenFromSetupAndSync() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        openSetupAndSync(in: app)
+        openLocalRecordingsFromSetupAndSync(in: app)
+    }
+
+    func testRepeatedSetupAndSyncPresentationPreservesSelectedTab() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+
+        for tabName in ["Library", "Record", "Library"] {
+            selectTab(tabName, in: app)
+            openSetupAndSync(in: app)
+            let done = app.buttons["Done"]
+            XCTAssertTrue(done.waitForExistence(timeout: 10))
+            done.tap()
+            XCTAssertTrue(
+                app.tabBars.buttons[tabName]
+                    .waitForExistence(timeout: 10)
+            )
+            XCTAssertTrue(app.tabBars.buttons[tabName].isSelected)
+        }
+    }
+
+    private func selectTab(_ name: String, in app: XCUIApplication) {
+        let matches = app.tabBars.buttons.matching(identifier: name)
+        XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(matches.count, 1)
+        let tab = matches.element(boundBy: 0)
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: tab
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 10), .completed)
+        tab.tap()
+        let selected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "selected == true"), object: tab
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed)
+    }
+
+    private func openSetupAndSync(in app: XCUIApplication) {
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.setup-and-sync"
+            ].waitForExistence(timeout: 10)
+        )
+    }
+
+    private func openLocalRecordingsFromSetupAndSync(
+        in app: XCUIApplication
+    ) {
+        let storage = app.buttons.matching(
+            NSPredicate(
+                format: "label BEGINSWITH %@",
+                "Recordings & storage"
+            )
+        ).firstMatch
+        if storage.waitForExistence(timeout: 1) {
+            storage.tap()
+            assertVisibleEmptyLocalRecordings(in: app)
+            return
+        }
+
+        let sending = app.buttons["harc.mobile.host.sync-status"]
+        XCTAssertTrue(sending.waitForExistence(timeout: 10))
+        sending.tap()
+        let local = app.buttons["harc.mobile.sync.local-recordings"]
+        XCTAssertTrue(scrollUntilExists(local, in: app))
+        local.tap()
+        assertVisibleEmptyLocalRecordings(in: app)
+    }
+
+    private func assertVisibleEmptyLocalRecordings(in app: XCUIApplication) {
+        XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+        let empty = app.staticTexts.matching(
+            NSPredicate(
+                format: "label IN %@",
+                ["No recordings yet", "No recordings on this iPhone"]
+            )
+        ).firstMatch
+        XCTAssertTrue(empty.waitForExistence(timeout: 10))
+        XCTAssertTrue(empty.isHittable)
+        XCTAssertGreaterThan(empty.frame.width, 0)
     }
 
     func testOfflineReviewSampleAndPrivacyAreReachableWithoutHost() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()
 
-        let libraryTab = app.tabBars.buttons["Library"]
-        XCTAssertTrue(libraryTab.waitForExistence(timeout: 10))
-        libraryTab.tap()
-
-        let openSample = app.buttons[
-            "harc.mobile.reviewSample.open.toolbar"
-        ]
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "harc.mobile.setup-and-sync"
+            ].waitForExistence(timeout: 10)
+        )
+        let advanced = app.buttons["Advanced"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 10))
+        advanced.tap()
+        let openSample = app.buttons["harc.mobile.reviewSample.open"]
         XCTAssertTrue(openSample.waitForExistence(timeout: 10))
         openSample.tap()
 
@@ -79,11 +284,16 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             "Review sample audio must remain reachable at large text sizes."
         )
 
-        let privacy = app.buttons["Privacy & Data"]
-        XCTAssertTrue(
-            scrollUntilExists(privacy, in: app),
-            "Privacy & Data must remain reachable at large text sizes."
-        )
+        let closeSample = app.buttons["Close Review Sample"]
+        XCTAssertTrue(closeSample.waitForExistence(timeout: 10))
+        closeSample.tap()
+
+        let setupBack = app.navigationBars["Advanced"]
+            .buttons["Setup & Sync"]
+        XCTAssertTrue(setupBack.waitForExistence(timeout: 10))
+        setupBack.tap()
+        let privacy = app.buttons["Privacy & data"]
+        XCTAssertTrue(privacy.waitForExistence(timeout: 10))
         privacy.tap()
         XCTAssertTrue(
             app.descendants(matching: .any)["harc.mobile.privacy"]
@@ -105,12 +315,13 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         )
         try performAccessibilityAudit(in: app, surface: "Record")
 
-        let libraryTab = app.tabBars.buttons["Library"]
-        XCTAssertTrue(libraryTab.waitForExistence(timeout: 10))
-        libraryTab.tap()
-        let openSample = app.buttons[
-            "harc.mobile.reviewSample.open.toolbar"
-        ]
+        let hostPill = app.buttons["harc.mobile.host.health"]
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 10))
+        hostPill.tap()
+        let advanced = app.buttons["Advanced"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 10))
+        advanced.tap()
+        let openSample = app.buttons["harc.mobile.reviewSample.open"]
         XCTAssertTrue(openSample.waitForExistence(timeout: 10))
         openSample.tap()
         XCTAssertTrue(
@@ -119,8 +330,15 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         )
         try performAccessibilityAudit(in: app, surface: "Review Sample")
 
-        let privacy = app.buttons["Privacy & Data"]
-        XCTAssertTrue(scrollUntilExists(privacy, in: app))
+        let closeSample = app.buttons["Close Review Sample"]
+        XCTAssertTrue(closeSample.waitForExistence(timeout: 10))
+        closeSample.tap()
+        let setupBack = app.navigationBars["Advanced"]
+            .buttons["Setup & Sync"]
+        XCTAssertTrue(setupBack.waitForExistence(timeout: 10))
+        setupBack.tap()
+        let privacy = app.buttons["Privacy & data"]
+        XCTAssertTrue(privacy.waitForExistence(timeout: 10))
         privacy.tap()
         XCTAssertTrue(
             app.descendants(matching: .any)["harc.mobile.privacy"]
@@ -149,13 +367,25 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         start.tap()
         triggerMicrophonePermissionMonitor(in: app)
 
-        let stop = app.buttons["harc.mobile.record.stop"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            app.buttons["harc.mobile.record.stop"]
+                .waitForExistence(timeout: 15)
+        )
+
+        let libraryTab = app.tabBars.buttons["Library"]
+        XCTAssertTrue(libraryTab.waitForExistence(timeout: 10))
+        libraryTab.tap()
+        let stop = app.buttons["harc.mobile.record.accessory.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
 
         let capturedAudio = expectation(description: "capture real microphone audio")
         _ = XCTWaiter.wait(for: [capturedAudio], timeout: 2)
         stop.tap()
 
+        let recordTab = app.tabBars.buttons["Record"]
+        XCTAssertTrue(recordTab.waitForExistence(timeout: 10))
+        recordTab.tap()
         XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.state, .runningForeground)
 #endif
@@ -349,6 +579,16 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             rootID: rootID,
             resetRoot: true
         ) + additionalArguments
+        addTeardownBlock { @MainActor () async throws -> Void in
+            // End this test's process before another test asks launch() to
+            // replace it. A failed termination remains a test failure.
+            if app.state != .notRunning {
+                app.terminate()
+            }
+            let stopped = app.wait(for: .notRunning, timeout: 10)
+            print("UI_APP_LIFECYCLE stopped=\(stopped) state=\(app.state.rawValue)")
+            XCTAssertTrue(stopped, "The owned UI-test app must exit before the next launch.")
+        }
         return app
     }
 

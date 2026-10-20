@@ -80,7 +80,10 @@ public actor HarcHostStore {
             configuration.busyMode = .timeout(5)
             configuration.prepareDatabase { db in
                 try db.execute(sql: "PRAGMA foreign_keys = ON")
-                try db.execute(sql: "PRAGMA synchronous = FULL")
+                // Acknowledged receipts and trust changes need the journal's
+                // directory barrier as well as the Apple drive-cache barrier.
+                try db.execute(sql: "PRAGMA synchronous = EXTRA")
+                try db.execute(sql: "PRAGMA fullfsync = ON")
             }
             queue = try DatabaseQueue(path: databaseURL.path, configuration: configuration)
         } catch {
@@ -137,7 +140,10 @@ public actor HarcHostStore {
             configuration.busyMode = .timeout(5)
             configuration.prepareDatabase { db in
                 try db.execute(sql: "PRAGMA foreign_keys = ON")
-                try db.execute(sql: "PRAGMA synchronous = FULL")
+                // Acknowledged receipts and trust changes need the journal's
+                // directory barrier as well as the Apple drive-cache barrier.
+                try db.execute(sql: "PRAGMA synchronous = EXTRA")
+                try db.execute(sql: "PRAGMA fullfsync = ON")
             }
             queue = try DatabaseQueue(path: databaseURL.path, configuration: configuration)
         } catch {

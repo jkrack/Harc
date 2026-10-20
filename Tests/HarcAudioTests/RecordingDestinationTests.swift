@@ -61,6 +61,26 @@ struct RecordingDestinationTests {
         #expect(cache.path.contains("/Library/Caches/Harc/recordings/"))
     }
 
+    @Test("publication collision preserves the existing master and recoverable source")
+    func publicationCollisionPreservesBoth() throws {
+        let base = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let src = base.appendingPathComponent("src.wav")
+        let destination = RecordingDestination(baseDirectory: base)
+        let dst = try destination.publicPath(for: Date())
+        try FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let sourceBytes = Data([1, 2, 3])
+        let existingBytes = Data([4, 5, 6])
+        try sourceBytes.write(to: src)
+        // Another publisher wins after filename selection.
+        try existingBytes.write(to: dst)
+        #expect(throws: (any Error).self) {
+            try RecordingDestination.atomicMove(from: src, to: dst)
+        }
+        #expect(try Data(contentsOf: src) == sourceBytes)
+        #expect(try Data(contentsOf: dst) == existingBytes)
+    }
+
     @Test("atomicMove relocates a file and removes the source")
     func atomicMoveRelocates() throws {
         let base = try makeTempBase()

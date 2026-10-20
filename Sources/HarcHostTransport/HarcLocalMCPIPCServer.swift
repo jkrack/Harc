@@ -11,13 +11,12 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
             .appendingPathComponent("Harc/IPC/host.sock")
     }
 
-    private let socketURL: URL
     private let service: any HarcMCPToolCalling
     private let authorizer: any MCPPeerAuthorizing
     private let listenerDescriptor: Int32
-    private let socketIdentity: HarcIPCSocketIdentity
     private let stateLock = NSLock()
-    private var acceptTask: Task<Void, Never>?
+    private let acceptCompletion = HarcLocalMCPAcceptCompletion()
+    private var activeClientDescriptor: Int32?
     private var stopped = false
 
     public static func start(
@@ -42,72 +41,97 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
                 code: errno
             )
         }
+        let listenerFlags = fcntl(descriptor, F_GETFL)
+        guard listenerFlags >= 0,
+              fcntl(descriptor, F_SETFL, listenerFlags | O_NONBLOCK) == 0 else {
+            let code = errno
+            Darwin.close(descriptor)
+            _ = socketURL.path.withCString {
+                harc_ipc_unlink_socket_if_matches($0, geteuid(), identity)
+            }
+            throw HarcLocalMCPIPCError.systemCall(operation: "fcntl", code: code)
+        }
         let server = HarcLocalMCPIPCServer(
-            socketURL: socketURL,
             service: service,
             authorizer: authorizer,
-            listenerDescriptor: descriptor,
-            socketIdentity: identity
+            listenerDescriptor: descriptor
         )
-        server.acceptTask = Task.detached { [weak server] in
-            server?.acceptLoop()
-        }
+        let completion = server.acceptCompletion
+        Thread { [weak server, descriptor, socketURL, socketIdentity = identity] in
+            defer {
+                Darwin.close(descriptor)
+                _ = socketURL.path.withCString {
+                    harc_ipc_unlink_socket_if_matches($0, geteuid(), socketIdentity)
+                }
+                completion.finish()
+            }
+            // Each bounded iteration releases its strong server reference so
+            // dropping an idle server still runs deinit and stops its worker.
+            while server?.acceptNextConnection() == true { }
+        }.start()
         return server
     }
 
     private init(
-        socketURL: URL,
         service: any HarcMCPToolCalling,
         authorizer: any MCPPeerAuthorizing,
-        listenerDescriptor: Int32,
-        socketIdentity: HarcIPCSocketIdentity
+        listenerDescriptor: Int32
     ) {
-        self.socketURL = socketURL
         self.service = service
         self.authorizer = authorizer
         self.listenerDescriptor = listenerDescriptor
-        self.socketIdentity = socketIdentity
     }
 
     public func shutdown() async {
-        let task = stateLock.withLock { () -> Task<Void, Never>? in
-            if !stopped {
-                stopped = true
-                _ = Darwin.shutdown(listenerDescriptor, SHUT_RDWR)
-                Darwin.close(listenerDescriptor)
-            }
-            return acceptTask
-        }
-        await task?.value
-        _ = socketURL.path.withCString {
-            harc_ipc_unlink_socket_if_matches(
-                $0,
-                geteuid(),
-                socketIdentity
-            )
-        }
+        requestStop()
+        // Caller cancellation cannot release resources still owned by the
+        // accept worker, or terminate the join for other shutdown callers.
+        await acceptCompletion.wait()
     }
 
-    deinit {
+    deinit { requestStop() }
+
+    private func requestStop() {
         stateLock.withLock {
-            if !stopped {
-                stopped = true
-                _ = Darwin.shutdown(listenerDescriptor, SHUT_RDWR)
-                Darwin.close(listenerDescriptor)
+            stopped = true
+            if let descriptor = activeClientDescriptor {
+                _ = Darwin.shutdown(descriptor, SHUT_RDWR)
             }
         }
+        // macOS cannot shutdown a listening socket. The worker's bounded poll
+        // notices stop and closes its own fd before releasing shutdown waiters.
     }
 
-    private func acceptLoop() {
-        while true {
-            var descriptor = Int32(-1)
-            guard harc_ipc_accept(listenerDescriptor, &descriptor) == 0 else {
-                if errno == EINTR { continue }
-                return
-            }
-            handleConnection(descriptor)
+    private var isStopped: Bool { stateLock.withLock { stopped } }
+
+    private func acceptNextConnection() -> Bool {
+        guard !isStopped else { return false }
+        var readiness = pollfd(fd: listenerDescriptor, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&readiness, 1, 250)
+        if ready == 0 { return true }
+        if ready < 0 { return errno == EINTR }
+        guard !isStopped else { return false }
+
+        var descriptor = Int32(-1)
+        guard harc_ipc_accept(listenerDescriptor, &descriptor) == 0 else {
+            return errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK
+        }
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags & ~O_NONBLOCK) == 0 else {
+            Darwin.close(descriptor)
+            return !isStopped
+        }
+        let shouldHandle = stateLock.withLock {
+            guard !stopped else { return false }
+            activeClientDescriptor = descriptor
+            return true
+        }
+        if shouldHandle { handleConnection(descriptor) }
+        stateLock.withLock {
+            activeClientDescriptor = nil
             Darwin.close(descriptor)
         }
+        return !isStopped
     }
 
     private func handleConnection(_ descriptor: Int32) {
@@ -171,6 +195,35 @@ public final class HarcLocalMCPIPCServer: @unchecked Sendable {
             text: "The local Host did not produce an MCP response.",
             isError: true
         )
+    }
+}
+
+/// A broadcast join, independent of any waiting task's cancellation. Only
+/// the accept thread finishes it, after closing and unlinking its listener.
+private final class HarcLocalMCPAcceptCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let ready = lock.withLock {
+                if completed { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if ready { continuation.resume() }
+        }
+    }
+
+    func finish() {
+        let pending = lock.withLock {
+            completed = true
+            let pending = waiters
+            waiters.removeAll()
+            return pending
+        }
+        for waiter in pending { waiter.resume() }
     }
 }
 

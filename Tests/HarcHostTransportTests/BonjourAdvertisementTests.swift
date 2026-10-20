@@ -2,10 +2,11 @@
 import Foundation
 import HarcProtocol
 @testable import HarcHostTransport
+import HarcTestSupport
 import Network
 import Testing
 
-@Suite("Bonjour listener advertisement")
+@Suite("Bonjour listener advertisement", .processWideSystemResource)
 struct BonjourAdvertisementTests {
     @Test("advertisement attaches exact V1 service to the gRPC listener")
     func attachesToSuppliedListener() async throws {

@@ -467,6 +467,24 @@ public actor HarcResidentHostRuntimeV1 {
         await remoteRelayHostAgent?.state()
     }
 
+    /// Local app administration; deliberately absent from the network services.
+    public func repairReceiptBindings(
+        progress: (@Sendable (Int, Int) async -> Void)? = nil
+    ) async throws -> (checked: Int, repaired: Int, failed: Int) {
+        guard !transportStopped else { throw HarcHostError.processingSchedulerUnavailable }
+        return try await canonicalIngest.repairReceiptBindings(progress: progress)
+    }
+
+    /// Local app administration; deliberately absent from network services.
+    public func migrateCanonicalLibraryBindings() async throws
+        -> HostCanonicalLibraryMigrationReport
+    {
+        guard !transportStopped else {
+            throw HarcHostError.processingSchedulerUnavailable
+        }
+        return try await canonicalIngest.migrateCanonicalLibraryBindings()
+    }
+
     public func validatedProcessingRequest(
         canonicalRecordingID: CanonicalRecordingID
     ) async throws -> HostDurableProcessingRequest {

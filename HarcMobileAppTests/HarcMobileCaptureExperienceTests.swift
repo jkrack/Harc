@@ -1,4 +1,5 @@
 import AVFAudio
+import HarcDomain
 import XCTest
 @testable import HarcMobile
 
@@ -93,9 +94,14 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         XCTAssertEqual(presentation.tone, .healthy)
     }
 
-    func testCodecGateUsesCalmUserFacingLanguageAndLocalCount() {
+    func testCodecGateKeepsExplanationInsideSetupAndSync() {
+        let id = UUID()
         let recording = HarcMobileLocalRecording(
-            id: UUID(),
+            id: id,
+            originID: OriginRecordingID(
+                deviceID: try! DeviceID(Data(repeating: 0x42, count: 32)),
+                recordingUUID: id
+            ),
             startedAt: Date(timeIntervalSinceReferenceDate: 10),
             duration: 30,
             masterFileURL: URL(fileURLWithPath: "/tmp/capture.caf"),
@@ -114,11 +120,10 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         )
         XCTAssertEqual(
             presentation.detail,
-            "Transfers paused · they move to your Host when ready"
+            "Open Setup & Sync to review sending status."
         )
         XCTAssertEqual(presentation.tone, .neutral)
         XCTAssertFalse(presentation.detail.contains("codec"))
-        XCTAssertFalse(presentation.detail.contains("build"))
     }
 
     func testHostPillMapsHealthWithoutDashboardCopy() {
@@ -162,6 +167,19 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
             presentation.detail,
             "1 recording safe on this iPhone"
         )
+    }
+
+    func testCancelledLibraryIsTerminalAndDoesNotClaimSyncSuccess() {
+        let updatedAt = Date(timeIntervalSinceReferenceDate: 300)
+        for count in [0, 2] {
+            let presentation = HarcMobileCaptureStatusPresentation.library(
+                state: .cancelled, recordingCount: count, lastUpdatedAt: updatedAt
+            )
+            XCTAssertEqual(presentation.title, "Library refresh cancelled")
+            XCTAssertEqual(presentation.tone, .neutral)
+            XCTAssertTrue(presentation.detail.contains("Refresh Library to try again"))
+            XCTAssertEqual(presentation.relativeMoment, .updated(updatedAt))
+        }
     }
 
     func testLibraryPresentationNamesCachedCanonicalRecordingCount() {

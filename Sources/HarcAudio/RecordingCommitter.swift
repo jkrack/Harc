@@ -1,5 +1,6 @@
 import Foundation
 import HarcClient
+import HarcCore
 
 /// Publication policy for a completed, recoverable capture.
 ///
@@ -7,7 +8,12 @@ import HarcClient
 /// Client mode can instead durably enqueue the capture without changing the
 /// capture coordinator itself.
 public protocol RecordingCommitter: Sendable {
+    func prepareCapture(at source: URL) throws
     func commit(_ captured: CapturedRecording) async throws -> RecordingCommitOutcome
+}
+
+extension RecordingCommitter {
+    public func prepareCapture(at source: URL) throws {}
 }
 
 /// A mode-neutral acceptance result. Only standalone publication produces the
@@ -27,12 +33,21 @@ public struct StandaloneRecordingCommitter: RecordingCommitter, Sendable {
         self.destination = destination
     }
 
+    public func prepareCapture(at source: URL) throws {
+        try destination.persistBinding(for: source)
+    }
+
     public func commit(_ captured: CapturedRecording) async throws -> RecordingCommitOutcome {
-        let wavURL = try destination.publicPath(for: captured.startedAt)
-        try publishMasterPreservingSourceOnFailure(
-            from: captured.localMasterURL,
-            to: wavURL
-        )
+        let destination = try destination.restoringBinding(for: captured.localMasterURL)
+        let wavURL = try RecordingPublication.load(for: captured.localMasterURL)?.destination
+            ?? destination.publicPath(for: captured.startedAt)
+        if captured.integrity.hasIssues { try captured.integrity.save(nextTo: captured.localMasterURL) }
+        let publication = try destination.preparePublication(from: captured.localMasterURL, to: wavURL)
+        try publication.verifyDestinationVolume()
+        _ = try CaptureIntegrityReport.carry(from: captured.localMasterURL, to: wavURL)
+        try publication.publish()
+
+        try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
 
         // Siblings describe the committed public master, never the temporary
         // capture path. Match the legacy best-effort behavior: a sibling write
@@ -43,6 +58,7 @@ public struct StandaloneRecordingCommitter: RecordingCommitter, Sendable {
         if var transcript = captured.transcript {
             transcript.audioPath = wavURL.path
             do {
+                try publication.verifyDestinationVolume()
                 try TranscriptWriter.writeSiblings(transcript: transcript, nextTo: wavURL)
                 let stem = wavURL.deletingPathExtension().lastPathComponent
                 let parent = wavURL.deletingLastPathComponent()
@@ -65,17 +81,4 @@ public struct StandaloneRecordingCommitter: RecordingCommitter, Sendable {
         return .standalonePublished(capture: captured, result: result)
     }
 
-    /// Preserve the legacy publication primitive. On the normal same-volume
-    /// cache-to-Documents path this is one O(1) rename: success removes the
-    /// cache identity atomically, while a thrown rename leaves it recoverable.
-    /// `FileManager.moveItem` also owns the platform's cross-volume behavior;
-    /// adding an unjournaled two-file staging protocol here would create crash
-    /// windows that the current recovery scanner cannot safely reconcile.
-    private func publishMasterPreservingSourceOnFailure(from source: URL, to destination: URL) throws {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: source.path) else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-        try RecordingDestination.atomicMove(from: source, to: destination)
-    }
 }

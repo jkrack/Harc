@@ -111,10 +111,18 @@ public extension RecordingStore {
                 }
                 if let identity = prepared.identityAssignment {
                     try database.execute(
+                        sql: "DELETE FROM pending_suggestions WHERE recording_id = ? AND speaker_index = ?",
+                        arguments: [recordingID, identity.speakerIndex]
+                    )
+                    try database.execute(
                         sql: "DELETE FROM person_speakers WHERE recording_id = ? AND speaker_index = ?",
                         arguments: [recordingID, identity.speakerIndex]
                     )
                     if let newPersonID = identity.newPersonLocalID {
+                        try database.execute(
+                            sql: "DELETE FROM dismissed_suggestions WHERE person_id = ? AND recording_id = ? AND speaker_index = ?",
+                            arguments: [newPersonID, recordingID, identity.speakerIndex]
+                        )
                         try database.execute(sql: """
                             INSERT INTO person_speakers
                                 (person_id, recording_id, speaker_index, confirmed_at)

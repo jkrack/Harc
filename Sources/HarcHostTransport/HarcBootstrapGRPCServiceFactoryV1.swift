@@ -20,7 +20,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
     ) -> HarcRecordingTransferGRPCServiceAdapterV1
     private let libraryAdapterForBinding: (@Sendable (
         HarcGRPCServedIdentityBinding
-    ) -> HarcLibraryGRPCServiceAdapterV1)?
+    ) -> any Harc_V1_LibraryService.ServiceProtocol)?
     private let processingAdapterForBinding: (@Sendable (
         HarcGRPCServedIdentityBinding
     ) -> HarcProcessingGRPCServiceAdapterV1)?
@@ -61,6 +61,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
             HarcLibraryGRPCServiceAdapterV1(
                 service: libraryService,
                 sessionService: sessionService,
+                processingService: processingService,
                 servedIdentityBinding: servedIdentityBinding,
                 compatibility: capabilityPolicy.compatibility
             )
@@ -95,7 +96,10 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
             any HarcSessionCredentialAuthenticating,
         libraryAdapterForBinding: (@Sendable (
             HarcGRPCServedIdentityBinding
-        ) -> HarcLibraryGRPCServiceAdapterV1)? = nil,
+        ) -> any Harc_V1_LibraryService.ServiceProtocol)? = nil,
+        processingAdapterForBinding: (@Sendable (
+            HarcGRPCServedIdentityBinding
+        ) -> HarcProcessingGRPCServiceAdapterV1)? = nil,
         hostAuthorityPublicKey: P256X963PublicKey,
         capabilityPolicy: HarcCapabilityPolicyV1,
         sourceBindingProvider: HarcHostRPCSourceBindingProvider,
@@ -118,7 +122,7 @@ package struct HarcBootstrapGRPCServiceFactoryV1: Sendable {
             )
         }
         self.libraryAdapterForBinding = libraryAdapterForBinding
-        self.processingAdapterForBinding = nil
+        self.processingAdapterForBinding = processingAdapterForBinding
         self.sourceBindingProvider = sourceBindingProvider
         self.preauthenticationGate = preauthenticationGate
         self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
@@ -163,7 +167,7 @@ struct HarcBootstrapGRPCServiceAdaptersV1: Sendable {
     let pairing: HarcPairingGRPCServiceAdapterV1
     let session: HarcSessionGRPCServiceAdapterV1
     let recording: HarcRecordingTransferGRPCServiceAdapterV1
-    let library: HarcLibraryGRPCServiceAdapterV1?
+    let library: (any Harc_V1_LibraryService.ServiceProtocol)?
     let processing: HarcProcessingGRPCServiceAdapterV1?
 
     var registrableServices: [any RegistrableRPCService] {

@@ -39,6 +39,19 @@ struct LibraryViewAndConflictTests {
         )
     }
 
+    @Test("originless review warnings are portable and legacy JSON remains readable")
+    func originlessCaptureReviewCompatibility() throws {
+        let detail = try LibraryRecordingDetail(summary: summary(id: firstID), captureNeedsReview: true)
+        #expect(detail.summary.originID == nil)
+        #expect(detail.discontinuities.isEmpty)
+        let data = try JSONEncoder().encode(detail)
+        #expect(try JSONDecoder().decode(LibraryRecordingDetail.self, from: data).captureNeedsReview)
+        var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "captureNeedsReview")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+        #expect(try !JSONDecoder().decode(LibraryRecordingDetail.self, from: legacyData).captureNeedsReview)
+    }
+
     @Test("Summary rejects an end before its start")
     func summaryTimes() throws {
         #expect(throws: DomainValidationError.self) {

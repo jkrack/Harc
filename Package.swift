@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Harc",
-    platforms: [.macOS(.v26), .iOS(.v18)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
         .library(name: "HarcCore", targets: ["HarcCore"]),
         .library(name: "HarcDomain", targets: ["HarcDomain"]),
@@ -149,6 +149,7 @@ let package = Package(
         .target(
             name: "HarcHost",
             dependencies: [
+                "HarcCore",
                 "HarcDomain",
                 "HarcIdentity",
                 "HarcProtocol",
@@ -326,11 +327,16 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ]
         ),
+        .target(
+            name: "HarcTestSupport",
+            path: "Tests/HarcTestSupport"
+        ),
         .testTarget(name: "HarcCoreTests", dependencies: ["HarcCore"]),
         .testTarget(name: "HarcDomainTests", dependencies: ["HarcDomain"]),
         .testTarget(
             name: "HarcIdentityTests",
-            dependencies: ["HarcIdentity", "HarcDomain"]
+            dependencies: ["HarcIdentity", "HarcDomain", "HarcTestSupport"],
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "HarcTransferTests",
@@ -366,6 +372,7 @@ let package = Package(
                 "HarcIdentity",
                 "HarcProtocol",
                 "HarcStore",
+                "HarcTestSupport",
                 "HarcTransfer",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
@@ -384,6 +391,7 @@ let package = Package(
                 "HarcProtocol",
                 "HarcProtocolWire",
                 "HarcStore",
+                "HarcTestSupport",
                 "HarcTransfer",
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
                 .product(
@@ -446,7 +454,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcAudioMobileTests",
-            dependencies: ["HarcAudioMobile", "HarcDomain"]
+            dependencies: ["HarcAudioMobile", "HarcDomain", "HarcTransfer"]
         ),
         .testTarget(
             name: "HarcClientTests",

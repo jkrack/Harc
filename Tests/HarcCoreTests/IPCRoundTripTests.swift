@@ -50,6 +50,25 @@ struct IPCRoundTripTests {
         #expect(decoded == original)
     }
 
+    @Test("Result envelope preserves absent, assigned and unresolved word attribution")
+    func wordAttributionResponseRoundTrip() throws {
+        let original = IPCResponse.result(TranscribeResult(text: "legacy named unknown", words: [
+            Word(text: "legacy", startMs: 0, endMs: 100),
+            Word(text: "named", startMs: 100, endMs: 200,
+                speakerAttribution: try WordSpeakerAttribution(speakerIndex: 3)),
+            Word(text: "unknown", startMs: 200, endMs: 300,
+                speakerAttribution: WordSpeakerAttribution())
+        ], speakers: [.init(speaker: 0, startMs: 0, endMs: 300)], processingMs: 1))
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(IPCResponse.self, from: data)
+        #expect(decoded == original)
+        guard case .result(let result) = decoded else { Issue.record("Result envelope changed type"); return }
+        #expect(result.words[0].resolvedSpeakerIndex(in: result.speakers) == 0)
+        #expect(result.words[1].resolvedSpeakerIndex(in: result.speakers) == 3)
+        #expect(result.words[2].speakerAttribution != nil)
+        #expect(result.words[2].resolvedSpeakerIndex(in: result.speakers) == nil)
+    }
+
     @Test("Status response round-trip")
     func statusResponseRoundTrip() throws {
         let original = IPCResponse.status(

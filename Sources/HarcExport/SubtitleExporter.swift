@@ -34,39 +34,30 @@ public enum SubtitleExporter {
     }
 
     static func displayWords(from words: [Word]) -> [TimedWord] {
-        guard !words.isEmpty else { return [] }
-        // Leading-space tokens mark word boundaries; bare tokens continue
-        // the previous word. A transcript with no leading-space token at
-        // all is plain word-per-entry (older sidecars, tests).
-        let sentencePieceStyle = words.contains { $0.text.first?.isWhitespace == true }
-        guard sentencePieceStyle else {
-            return words.compactMap {
-                let t = $0.text.trimmingCharacters(in: .whitespaces)
-                return t.isEmpty ? nil : TimedWord(text: t, startMs: $0.startMs, endMs: $0.endMs)
-            }
+        Word.displayWords(from: words).map {
+            TimedWord(text: $0.text, startMs: $0.startMs, endMs: $0.endMs)
         }
-
-        var out: [TimedWord] = []
-        for token in words {
-            let isBoundary = token.text.first?.isWhitespace == true
-            let piece = token.text.trimmingCharacters(in: .whitespaces)
-            if piece.isEmpty { continue }
-            if isBoundary || out.isEmpty {
-                out.append(TimedWord(text: piece, startMs: token.startMs, endMs: token.endMs))
-            } else {
-                out[out.count - 1].text += piece
-                out[out.count - 1].endMs = token.endMs
-            }
-        }
-        return out
     }
 
     public static func makeCues(
         words: [Word],
-        speakers: [SpeakerSegment]
+        speakers: [SpeakerSegment],
+        notices: [UntranscribedAudioMarker] = []
+    ) -> [Cue] {
+        makeCues(words: words, speakers: speakers, notices: notices, overlapRanges: nil)
+    }
+
+    public static func makeCues(
+        words: [Word], speakers: [SpeakerSegment], notices: [UntranscribedAudioMarker],
+        overlapRanges: [SpeechOverlapRange]?
     ) -> [Cue] {
         let timed = displayWords(from: words)
-        guard !timed.isEmpty else { return [] }
+        let overlaps = overlapRanges ?? []
+        guard !timed.isEmpty || !notices.isEmpty || !overlaps.isEmpty else { return [] }
+        func intersects(_ word: TimedWord, _ range: SpeechOverlapRange) -> Bool {
+            word.startMs < range.endMs && max(word.startMs, word.endMs) > range.startMs
+                || word.startMs == word.endMs && range.startMs <= word.startMs && word.startMs < range.endMs
+        }
 
         func speaker(at ms: Int) -> Int? {
             speakers.first { ms >= $0.startMs && ms < $0.endMs }?.speaker
@@ -75,6 +66,7 @@ public enum SubtitleExporter {
         var cues: [Cue] = []
         var bucket: [TimedWord] = []
         var bucketSpeaker: Int? = nil
+        var bucketOverlap = false
 
         func flush() {
             guard let first = bucket.first, let last = bucket.last else { return }
@@ -84,19 +76,51 @@ public enum SubtitleExporter {
                 // hold at least 1s unless the next cue starts sooner (the
                 // renderer clamps overlaps).
                 endMs: max(last.endMs, first.startMs + 1_000),
-                speaker: bucketSpeaker,
-                text: bucket.map(\.text).joined(separator: " ")
+                speaker: bucketOverlap ? nil : bucketSpeaker,
+                text: (bucketOverlap ? "Overlapping voices: " : "") + bucket.map(\.text).joined(separator: " ")
             ))
             bucket = []
         }
 
+        // Even an interval without recognized words must retain its overlap evidence.
+        let overlapNotices = overlaps.filter { range in !timed.contains { intersects($0, range) } }
+            .map { (startMs: $0.startMs, endMs: $0.endMs, text: "Overlapping voices detected.") }
+        let sortedNotices = (notices.map { (startMs: $0.startMs, endMs: $0.endMs, text: $0.text) }
+            + overlapNotices).sorted {
+                $0.startMs == $1.startMs ? $0.text < $1.text : $0.startMs < $1.startMs
+            }
+        var orderedNotices: [(startMs: Int, endMs: Int, text: String)] = []
+        for notice in sortedNotices {
+            if let last = orderedNotices.last, last.startMs == notice.startMs {
+                // A second cue at the same instant would clamp the first to zero
+                // duration. Keep both quality notices readable in one cue.
+                orderedNotices[orderedNotices.count - 1] = (
+                    last.startMs, max(last.endMs, notice.endMs), last.text + "\n" + notice.text
+                )
+            } else { orderedNotices.append(notice) }
+        }
+        var noticeIndex = 0
+        func emitNotices(through timestamp: Int) {
+            while noticeIndex < orderedNotices.count, orderedNotices[noticeIndex].startMs <= timestamp {
+                flush()
+                bucketSpeaker = nil
+                bucketOverlap = false
+                let notice = orderedNotices[noticeIndex]
+                cues.append(Cue(startMs: notice.startMs, endMs: max(notice.endMs, notice.startMs + 1),
+                                speaker: nil, text: notice.text))
+                noticeIndex += 1
+            }
+        }
+
         for word in timed {
+            emitNotices(through: word.startMs)
             let mid = (word.startMs + word.endMs) / 2
-            let wordSpeaker = speaker(at: mid) ?? bucketSpeaker
+            let isOverlap = overlaps.contains { intersects(word, $0) }
+            let wordSpeaker: Int? = isOverlap ? nil : speaker(at: mid)
             let bucketChars = bucket.reduce(0) { $0 + $1.text.count + 1 }
             let shouldBreak: Bool
             if let last = bucket.last {
-                shouldBreak = wordSpeaker != bucketSpeaker
+                shouldBreak = wordSpeaker != bucketSpeaker || isOverlap != bucketOverlap
                     || word.startMs - last.endMs > gapBreakMs
                     || bucketChars + word.text.count > maxCueChars
                     || word.endMs - bucket[0].startMs > maxCueMs
@@ -104,10 +128,11 @@ public enum SubtitleExporter {
                 shouldBreak = false
             }
             if shouldBreak { flush() }
-            if bucket.isEmpty { bucketSpeaker = wordSpeaker }
+            if bucket.isEmpty { bucketSpeaker = wordSpeaker; bucketOverlap = isOverlap }
             bucket.append(word)
         }
         flush()
+        emitNotices(through: Int.max)
 
         // Clamp the 1s minimum hold so cues never overlap their successor.
         for i in 0..<max(0, cues.count - 1) where cues[i].endMs > cues[i + 1].startMs {

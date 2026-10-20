@@ -5,6 +5,27 @@ import GRDB
 
 @Suite("RecordingStore")
 struct RecordingStoreTests {
+    @Test("file-backed Library durability policy survives reopen and committed rows remain readable")
+    func onDiskDurabilityPolicy() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("Library.db")
+        let audioPath = root.appendingPathComponent("capture.wav").path
+        for pass in 0..<2 {
+            let store = try await RecordingStore.onDisk(url: url)
+            let settings = try await store.dbReader.read { database in
+                [try Int.fetchOne(database, sql: "PRAGMA synchronous"),
+                 try Int.fetchOne(database, sql: "PRAGMA fullfsync")]
+            }
+            #expect(settings == [3, 1])
+            if pass == 0 {
+                _ = try await store.upsert(sampleRecording(wavPath: audioPath, title: "Committed"))
+            } else {
+                #expect(try await store.fetchByWavPath(audioPath)?.title == "Committed")
+            }
+        }
+    }
+
     private func makeInMemoryStore() async throws -> RecordingStore {
         try await RecordingStore.inMemory()
     }

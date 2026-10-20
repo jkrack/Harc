@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import HarcDomain
+import HarcCore
 
 func decodeStoredFailure(_ value: String?, fallbackCode: String) throws -> ProcessingFailure? {
     guard let value else { return nil }
@@ -29,6 +30,8 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var revision: EntityRevision
     public var processing: ProcessingDescriptor
     public var projection: ProjectionDescriptor
+    public var captureIntegrity = CaptureIntegrityReport()
+    public var captureDiscontinuities: [CaptureDiscontinuity] = []
     public var wavPath: String
     public var txtPath: String?
     public var jsonPath: String?
@@ -313,6 +316,12 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
                 fallbackCode: "projection.failure"
             )
         )
+        if let raw = try c.decodeIfPresent(Data.self, forKey: .captureIntegrity) {
+            captureIntegrity = try JSONDecoder().decode(CaptureIntegrityReport.self, from: raw)
+        }
+        if let raw = try c.decodeIfPresent(Data.self, forKey: .captureDiscontinuities) {
+            captureDiscontinuities = try JSONDecoder().decode([CaptureDiscontinuity].self, from: raw)
+        }
         self.wavPath = try c.decode(String.self, forKey: .wavPath)
         self.txtPath = try c.decodeIfPresent(String.self, forKey: .txtPath)
         self.jsonPath = try c.decodeIfPresent(String.self, forKey: .jsonPath)
@@ -416,6 +425,8 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
             encodeStoredFailure(projection.failure),
             forKey: .projectionFailureDetail
         )
+        try c.encode(JSONEncoder().encode(captureIntegrity), forKey: .captureIntegrity)
+        try c.encode(JSONEncoder().encode(captureDiscontinuities), forKey: .captureDiscontinuities)
         try c.encode(wavPath, forKey: .wavPath)
         try c.encodeIfPresent(txtPath, forKey: .txtPath)
         try c.encodeIfPresent(jsonPath, forKey: .jsonPath)
@@ -500,6 +511,8 @@ extension Recording: FetchableRecord, PersistableRecord {
         case projectionState = "projection_state"
         case projectionFailureDetail = "projection_failure_detail"
         case projectionVersion = "projection_version"
+        case captureIntegrity = "capture_integrity"
+        case captureDiscontinuities = "capture_discontinuities"
         case wavPath = "wav_path"
         case txtPath = "txt_path"
         case jsonPath = "json_path"
@@ -579,6 +592,8 @@ extension Recording {
             && originID == other.originID
             && canonicalPCMHash == other.canonicalPCMHash
             && canonicalPCMFrames == other.canonicalPCMFrames
+            && captureIntegrity == other.captureIntegrity
+            && captureDiscontinuities == other.captureDiscontinuities
             && processing == other.processing
             && projection == other.projection
             && startedAt == other.startedAt

@@ -146,6 +146,7 @@ final class HarcMobileAppModel {
 
     private(set) var readiness: Readiness = .starting
     private(set) var bootstrapCompleted = false
+    private(set) var rejectedCaptureMetadataFiles: [URL] = []
     private(set) var captureCoordinator: HarcMobileCaptureCoordinator?
     private(set) var pairingCoordinator: HarcMobilePairingCoordinator?
     private(set) var transferCoordinator: HarcMobileTransferCoordinator?
@@ -219,18 +220,15 @@ final class HarcMobileAppModel {
                 root: root,
                 locations: clientLocations
             )
-            let recovered = try HarcMobileCaptureRecovery
-                .recoverDurablePrefixes(locations: captureLocations)
-            for master in recovered {
-                _ = try store.persistFinalizedCapture(
-                    try Self.finalizedCapture(master),
-                    masterFileURL: master.masterFileURL
-                )
-            }
             try Self.rebaseRelocatedArtifactPaths(
                 store: store,
                 locations: captureLocations,
                 currentRoot: root
+            )
+            let recovered = try prepareLocalCapture(
+                store: store, locations: captureLocations,
+                storageExhaustionAfterCanonicalBytesForTesting:
+                    qualificationStorageExhaustionBytes
             )
             try Self.protectTransferState(
                 root: root,
@@ -283,21 +281,6 @@ final class HarcMobileAppModel {
                 routeURL: routeURL
             )
             hostHealthCoordinator = hostHealth
-            captureCoordinator = HarcMobileCaptureCoordinator(
-                producingDeviceID: identity.deviceID,
-                locations: captureLocations,
-                storageExhaustionAfterCanonicalBytesForTesting:
-                    qualificationStorageExhaustionBytes
-            ) { [weak self] master in
-                guard let self, let store = self.transferStore else {
-                    throw CocoaError(.fileNoSuchFile)
-                }
-                _ = try store.persistFinalizedCapture(
-                    try Self.finalizedCapture(master),
-                    masterFileURL: master.masterFileURL
-                )
-                self.transferCoordinator?.enqueue(master)
-            }
             pairingCoordinator = HarcMobilePairingCoordinator(
                 identity: identity,
                 store: store,
@@ -450,7 +433,80 @@ final class HarcMobileAppModel {
         }
     }
 
-    private static func finalizedCapture(
+    @discardableResult
+    func prepareLocalCapture(
+        store: HarcTransferStore,
+        locations: HarcMobileCaptureLocations,
+        storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil,
+        attributes: any HarcMobileCaptureStorageAttributeApplying =
+            FoundationHarcMobileCaptureStorageAttributes()
+    ) throws -> [HarcMobileFinalizedMaster] {
+        let report = try Self.recoverCapturesReport(
+            store: store, locations: locations, attributes: attributes
+        )
+        rejectedCaptureMetadataFiles = report.rejectedMetadataFiles
+        transferStore = store
+        captureCoordinator = HarcMobileCaptureCoordinator(
+            producingDeviceID: store.installationDeviceID,
+            locations: locations,
+            storageExhaustionAfterCanonicalBytesForTesting:
+                storageExhaustionAfterCanonicalBytesForTesting
+        ) { [weak self] master in
+            guard let self, let store = self.transferStore else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            _ = try store.persistFinalizedCapture(
+                try Self.finalizedCapture(master),
+                masterFileURL: master.masterFileURL
+            )
+            self.transferCoordinator?.enqueue(master)
+        }
+        return report.masters
+    }
+
+    static func recoverCaptures(
+        store: HarcTransferStore,
+        locations: HarcMobileCaptureLocations,
+        attributes: any HarcMobileCaptureStorageAttributeApplying =
+            FoundationHarcMobileCaptureStorageAttributes()
+    ) throws -> [HarcMobileFinalizedMaster] {
+        try recoverCapturesReport(store: store, locations: locations, attributes: attributes).masters
+    }
+
+    private static func recoverCapturesReport(
+        store: HarcTransferStore,
+        locations: HarcMobileCaptureLocations,
+        attributes: any HarcMobileCaptureStorageAttributeApplying
+    ) throws -> HarcMobileFinalizedMasterRecovery {
+        let prefixes = try HarcMobileCaptureRecovery.recoverDurablePrefixes(
+            locations: locations, attributes: attributes
+        )
+        for master in prefixes {
+            _ = try store.persistFinalizedCapture(
+                try finalizedCapture(master), masterFileURL: master.masterFileURL
+            )
+        }
+        let known = Set(try store.recordingOutboxes().map {
+            $0.finalizedCapture.capture.originRecordingID
+        })
+        let finalized = try HarcMobileCaptureRecovery.recoverUnregisteredFinalizedMasters(
+            locations: locations, producingDeviceID: store.installationDeviceID,
+            registeredOrigins: known,
+            validateMaster: { _ = try finalizedCapture($0) },
+            attributes: attributes
+        )
+        for master in finalized.masters {
+            _ = try store.persistFinalizedCapture(
+                try finalizedCapture(master), masterFileURL: master.masterFileURL
+            )
+        }
+        return HarcMobileFinalizedMasterRecovery(
+            masters: prefixes + finalized.masters,
+            rejectedMetadataFiles: finalized.rejectedMetadataFiles
+        )
+    }
+
+    static func finalizedCapture(
         _ master: HarcMobileFinalizedMaster
     ) throws -> FinalizedCapture {
         let reason: CaptureFinalizationReason = switch master.finalizationReason {

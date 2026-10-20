@@ -9,26 +9,32 @@ public enum SummaryPrompt {
     /// The user-turn body sent to Gemma. `{TRANSCRIPT}` is replaced
     /// at build time with the rendered utterance lines.
     public static let template: String = """
-    You analyze meeting transcripts and produce a short, factual summary plus
-    action items.
+    Summarize only facts from the transcript below. Requests must remain requests, refusals must remain refusals, and possibilities must remain uncertain. Do not add facts or assume work was accepted.
 
-    Output EXACTLY this format:
-
+    Write exactly two Markdown sections, each heading once:
     ## Summary
-    <3–6 sentences, plain prose, no bullets, no headings inside>
+    A concise factual paragraph covering each substantive topic, risk, restriction, request, and agreed follow-up in the transcript. Describe requests as requests and preserve restrictions and conditions; do not omit them just because they are not commitments.
+    ## Confirmed Commitments
+    One line per agreed future task, including conditional promises with their condition using exactly: - [ ] <actual owner from transcript>: <task> (<deadline or condition, if stated>)
+    If nobody accepted a task, write exactly _None identified._ beneath Confirmed Commitments.
 
-    ## Action Items
-    - [ ] <actor>: <task> (<due if mentioned>)
-    - [ ] <actor>: <task>
+    Include an action only when the owner agrees to do it. An explicit "If X happens, I will do Y" is an agreed conditional task: include Y with its condition X. The condition does not need to be true yet. "I will send the report" is a commitment by that speaker. "Send the report" and "Do not approve the discount" are instructions, not commitments. "Please send it" followed by "I need to check first" is not accepted. "I will not", "I could", cancelled tasks and quoted old promises are not current commitments. When someone else takes over, include only the new owner's accepted task. Exclude work already completed. Never list unassigned tasks or requests that nobody accepted, even under "Unassigned". Include all explicit commitments to remaining work; never omit one because other speakers only made requests. Preserve any condition on an accepted commitment; do not turn conditional work into an unconditional promise.
 
-    If no action items are in the transcript, write:
-    ## Action Items
-    _None identified._
+    Examples of action eligibility (these are examples, NOT transcript facts):
+    - "I finished the migration last night." => _None identified._ The work is already done.
+    - "Please review the design." with no acceptance => _None identified._ A request alone is not a commitment.
+    - "I'll review the design tomorrow." => - [ ] Speaker: review the design (tomorrow)
+    - "Could you review the design?" then "Yes, I will." => only the second speaker owns the review.
 
-    Rules:
-    - Never invent facts. If something isn't said, don't add it.
-    - Use speaker names where present in the transcript; fall back to "the team" or "someone".
-    - Action items are the MINIMUM — only include items someone actually committed to.
+    Transcript:
+    <<<
+    {TRANSCRIPT}
+    >>>
+    """
+
+    static let factsTemplate: String = """
+    Summarize only the facts in the transcript. Write one concise paragraph under exactly one heading: ## Summary.
+    Cover every substantive current status, risk, restriction, request, and agreed follow-up. Preserve both sides of a contrast: a positive status and an unresolved risk can both be true. Keep requests as requests, refusals as refusals, and possibilities uncertain. Preserve conditions, deadlines, cancellations, and changes of ownership. Do not invent facts or treat a request as accepted. Keep every stated date, quantity and condition attached to its original event, including completed work. Copy relative time phrases exactly rather than changing their reference point. Do not generate an action list.
 
     Transcript:
     <<<
@@ -47,10 +53,14 @@ public enum SummaryPrompt {
     // MARK: - Internals (visible for tests via @testable)
 
     static func renderBody(transcript: PromptTranscript, budgetWords: Int) -> String {
+        renderWithCoverage(transcript: transcript, budgetWords: budgetWords).body
+    }
+
+    static func renderWithCoverage(transcript: PromptTranscript, budgetWords: Int) -> (body: String, omittedUtterances: Int) {
         let lines = transcript.utterances.map(line(for:))
         let totalWords = lines.map(wordCount(of:)).reduce(0, +)
         if totalWords <= budgetWords {
-            return lines.joined(separator: "\n")
+            return (lines.joined(separator: "\n"), 0)
         }
         // Walk from the tail forward, keeping whole utterances until we
         // hit the budget. Preserves speaker boundaries.
@@ -69,7 +79,7 @@ public enum SummaryPrompt {
             keptReversed.append(last)
         }
         let tail = keptReversed.reversed().joined(separator: "\n")
-        return "[Earlier in the meeting…]\n" + tail
+        return ("[Earlier in the meeting…]\n" + tail, lines.count - keptReversed.count)
     }
 
     static func line(for utt: PromptTranscript.Utterance) -> String {

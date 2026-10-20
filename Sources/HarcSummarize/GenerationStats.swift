@@ -4,11 +4,17 @@ import Foundation
 /// derived from streamed chunk counts and wall-clock time; the final value
 /// carries the authoritative numbers from MLX's completion info.
 public struct GenerationStats: Sendable, Equatable {
+    public enum StopReason: Sendable, Equatable {
+        case complete, outputLimit, cancelled
+    }
+    /// Authoritative termination metadata, when supplied by the generator.
+    public let stopReason: StopReason?
     public let generatedTokens: Int
     public let tokensPerSecond: Double
     public let isFinal: Bool
 
-    public init(generatedTokens: Int, tokensPerSecond: Double, isFinal: Bool) {
+    public init(generatedTokens: Int, tokensPerSecond: Double, isFinal: Bool, stopReason: StopReason? = nil) {
+        self.stopReason = stopReason
         self.generatedTokens = generatedTokens
         self.tokensPerSecond = tokensPerSecond
         self.isFinal = isFinal

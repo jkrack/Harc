@@ -374,6 +374,31 @@ struct HarcDesktopSpeakerDecisionEvidenceTests {
         #expect(marker.needsReview(at: reviewAt))
     }
 
+    @Test("bound completion refreshes even without recognition concerns and survives reopening")
+    func boundSpeakerReviewDeadline() throws {
+        let accepted = Date(timeIntervalSince1970: 4000)
+        let marker = HarcDesktopSpeakerObservationMarker(canonicalRecordingID: .random(),
+            sourcePackRevision: nil, decisions: [], acceptedAt: accepted,
+            processingArtifactSHA256: Data(repeating: 4, count: 32))
+        let deadline = accepted.addingTimeInterval(6 * 60 * 60)
+        #expect(marker.concernCount == 0)
+        #expect(marker.reviewDeadline == deadline)
+        #expect(!marker.needsReview(at: deadline.addingTimeInterval(-1)))
+        #expect(marker.needsReview(at: deadline))
+        let reopened = try JSONDecoder().decode(HarcDesktopSpeakerObservationMarker.self,
+            from: JSONEncoder().encode(marker))
+        #expect(reopened.needsReview(at: deadline.addingTimeInterval(3600)))
+        let refreshed = HarcDesktopSpeakerObservationMarker(canonicalRecordingID: marker.canonicalRecordingID,
+            sourcePackRevision: nil, decisions: [], acceptedAt: deadline,
+            nextReviewAt: deadline.addingTimeInterval(6 * 60 * 60),
+            processingArtifactSHA256: marker.processingArtifactSHA256)
+        #expect(!refreshed.needsReview(at: deadline))
+        let legacy = HarcDesktopSpeakerObservationMarker(canonicalRecordingID: marker.canonicalRecordingID,
+            sourcePackRevision: nil, decisions: [], acceptedAt: accepted)
+        #expect(legacy.reviewDeadline == nil)
+        #expect(!legacy.needsReview(at: deadline))
+    }
+
     @Test("legacy acceptance markers remain readable")
     func legacyMarkerDecodes() throws {
         let canonicalID = CanonicalRecordingID.random()

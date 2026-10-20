@@ -54,4 +54,18 @@ struct HarcMacLocalOSAuthenticationBoundary:
             return false
         }
     }
+
+    func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool {
+        await evaluate(reason: "Repair this Harc recording's delivery receipt after verifying its original audio.")
+    }
+
+    func authorizeCanonicalReceiptRepairBatch(recordingCount: Int) async throws -> Bool {
+        await evaluate(reason: "Repair delivery receipts for \(recordingCount) verified Harc recordings. This approval applies only to this batch; Harc will recheck each recording before saving its repair.")
+    }
+
+    func authorizeCanonicalLibraryMigration(recordingCount: Int) async throws -> Bool {
+        await evaluate(
+            reason: "Approve re-binding \(recordingCount) verified Harc recording\(recordingCount == 1 ? "" : "s") after the canonical library moved. Harc will re-hash every recording and retain immutable migration evidence."
+        )
+    }
 }

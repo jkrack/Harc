@@ -139,10 +139,26 @@ public struct P256X963PublicKey: Hashable, Sendable, Codable, CustomStringConver
         else {
             return false
         }
-        return key.isValidSignature(
-            cryptoSignature,
-            for: PrecomputedSHA256Digest(digest.rawBytes)
+        let prehash = PrecomputedSHA256Digest(digest.rawBytes)
+        if key.isValidSignature(cryptoSignature, for: prehash) {
+            return true
+        }
+
+        // P256RawSignature has already enforced canonical low-S input. ECDSA
+        // (r, s) and (r, n - s) have the same validity: the verification point
+        // is negated, preserving its x-coordinate. Affected Apple verifiers
+        // reject some valid signatures in one form but accept the other.
+        // Keep the original check: the opposite discrepancy occurs as well.
+        // This alternate is internal only; high-S wire input remains rejected.
+        let reflectedBytes = Data(signature.rawBytes.prefix(32)) + Data(
+            P256Scalar.orderMinus(Array(signature.rawBytes.suffix(32)))
         )
+        guard let reflectedSignature = try? P256.Signing.ECDSASignature(
+            rawRepresentation: reflectedBytes
+        ) else {
+            return false
+        }
+        return key.isValidSignature(reflectedSignature, for: prehash)
     }
 
     public init(from decoder: any Decoder) throws {
@@ -227,7 +243,9 @@ public struct P256RawSignature: Hashable, Sendable, Codable, CustomStringConvert
         try container.encode(rawBytes)
     }
 
-    static func normalizing(_ rawBytes: Data) throws -> Self {
+    // TLS X.509 signatures may use either S form; normalization here does not
+    // change the strict low-S constructor used for Harc signed wire objects.
+    package static func normalizing(_ rawBytes: Data) throws -> Self {
         guard rawBytes.count == Self.byteCount else {
             throw IdentityCryptoError.invalidSignatureLength(
                 expected: Self.byteCount,
@@ -235,7 +253,14 @@ public struct P256RawSignature: Hashable, Sendable, Codable, CustomStringConvert
             )
         }
         var bytes = [UInt8](rawBytes)
+        let r = Array(bytes[0..<32])
         let s = Array(bytes[32..<64])
+        // DER signatures come from untrusted TLS peers. Validate before n-S,
+        // whose subtraction assumes both scalars are in the curve's range.
+        guard P256Scalar.isNonzeroAndBelowOrder(r),
+              P256Scalar.isNonzeroAndBelowOrder(s) else {
+            throw IdentityCryptoError.invalidSignatureScalar
+        }
         if P256Scalar.isGreaterThanHalfOrder(s) {
             bytes.replaceSubrange(32..<64, with: P256Scalar.orderMinus(s))
         }

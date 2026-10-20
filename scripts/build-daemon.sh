@@ -21,8 +21,10 @@ swift build \
   --scratch-path "$SCRATCH" \
   --arch arm64
 
-BIN_PATH="$(swift build --show-bin-path --scratch-path "$SCRATCH" -c release --arch arm64)"
-DAEMON_SRC="$BIN_PATH/harc-stt"
+# SwiftPM's default build engine changed in Xcode 27; query its output path.
+BIN_DIR="$(swift build --jobs "$BUILD_JOBS" -c release --product harc-stt \
+  --scratch-path "$SCRATCH" --arch arm64 --show-bin-path)"
+DAEMON_SRC="$BIN_DIR/harc-stt"
 DAEMON_DST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/harc-stt"
 
 mkdir -p "$(dirname "$DAEMON_DST")"

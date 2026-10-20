@@ -14,6 +14,7 @@ public struct HarcLibraryGRPCServiceAdapterV1:
     static let defaultSnapshotPageItems = 100
 
     private let service: HarcHostLibraryService
+    private let processingService: HarcHostProcessingArtifactService?
     private let sessionService: HarcSessionService?
     private let sessionAuthenticator: any HarcSessionCredentialAuthenticating
     private let servedIdentityBinding: HarcGRPCServedIdentityBinding
@@ -22,10 +23,12 @@ public struct HarcLibraryGRPCServiceAdapterV1:
     init(
         service: HarcHostLibraryService,
         sessionService: HarcSessionService,
+        processingService: HarcHostProcessingArtifactService? = nil,
         servedIdentityBinding: HarcGRPCServedIdentityBinding,
         compatibility: HarcProtobufCompatibilityPolicy = .currentV1
     ) {
         self.service = service
+        self.processingService = processingService
         self.sessionService = sessionService
         self.sessionAuthenticator = sessionService
         self.servedIdentityBinding = servedIdentityBinding
@@ -42,6 +45,7 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         compatibility: HarcProtobufCompatibilityPolicy = .currentV1
     ) {
         self.service = service
+        self.processingService = nil
         self.sessionService = nil
         self.sessionAuthenticator = sessionAuthenticator
         self.servedIdentityBinding = servedIdentityBinding
@@ -622,18 +626,26 @@ public struct HarcLibraryGRPCServiceAdapterV1:
             let version = try validateProtocol(
                 request.message.hasProtocol,
                 request.message.protocol,
-                knownFields: [1, 2],
+                knownFields: [1, 2, 3],
                 session: session
             )
-            guard request.message.hasObservation else {
-                throw HarcProtobufConversionError.missingField(
-                    "submitSpeakerObservation.observation"
-                )
+            let features: Set<String>
+            if request.message.hasBoundObservation {
+                let capabilities = try Harc_V1_NegotiatedCapabilitiesV1(serializedBytes: session.exactCapabilitiesBytes)
+                features = Set(capabilities.selectedFeatureIds)
+            } else { features = [] }
+            let payload = try HarcSpeakerObservationRequestV1(request.message,
+                negotiatedFeatureIDs: features, compatibility: compatibility)
+            let decision: SpeakerObservationDecision
+            switch payload {
+            case .legacy(let observation):
+                decision = try await service.submitSpeakerObservation(session: session, observation: observation)
+            case .bound(let observation):
+                guard let processingService else {
+                    throw HarcProtobufConversionError.inconsistentField("speakerRequest.boundServiceUnavailable")
+                }
+                decision = try await processingService.submitBoundSpeakerObservation(session: session, observation: observation)
             }
-            let decision = try await service.submitSpeakerObservation(
-                session: session,
-                observation: request.message.observation.domainValue()
-            )
             var response = Harc_V1_SubmitSpeakerObservationResponseV1()
             response.protocol = version.protobufV1()
             response.decision = Harc_V1_SpeakerObservationDecisionV1(decision)
@@ -1049,7 +1061,7 @@ public struct HarcLibraryGRPCServiceAdapterV1:
         }
     }
 
-    private static func project(
+    static func project(
         _ detail: LibraryRecordingDetail,
         requestedFields: Set<Harc_V1_RecordingDetailFieldV1>
     ) throws -> LibraryRecordingDetail {
@@ -1072,7 +1084,8 @@ public struct HarcLibraryGRPCServiceAdapterV1:
             ) ? detail.notesMarkdown : nil,
             discontinuities: requestedFields.contains(
                 .recordingDetailFieldDiscontinuities
-            ) ? detail.discontinuities : []
+            ) ? detail.discontinuities : [],
+            captureNeedsReview: detail.captureNeedsReview
         )
     }
 

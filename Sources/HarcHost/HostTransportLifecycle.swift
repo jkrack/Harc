@@ -484,28 +484,27 @@ extension HarcHostStore {
         at date: Date
     ) async throws -> Data {
         guard facts.framedSignedTransportSet == verified.exactSignedBytes,
-              let entry = verified.entries.first(where: {
-                  $0.tlsSPKISHA256 == facts.tlsSPKISHA256
-              }) else {
-            throw HarcHostError.tlsLeafMismatch("transport-set extension or SPKI")
+              let entry = verified.entries.first(where: { $0.tlsSPKISHA256 == facts.tlsSPKISHA256 }),
+              try Self.unixMilliseconds(facts.notValidBefore) >= entry.notBeforeUnixMilliseconds,
+              try Self.unixMilliseconds(facts.notValidAfter) <= entry.notAfterUnixMilliseconds,
+              facts.notValidBefore < facts.notValidAfter else {
+            throw HarcHostError.tlsLeafMismatch("transport-set extension, SPKI or validity")
         }
-        let notBefore = try Self.unixMilliseconds(facts.notValidBefore)
-        let notAfter = try Self.unixMilliseconds(facts.notValidAfter)
-        guard notBefore >= entry.notBeforeUnixMilliseconds,
-              notAfter <= entry.notAfterUnixMilliseconds,
-              notBefore < notAfter else {
-            throw HarcHostError.tlsLeafMismatch("validity interval")
-        }
-        let record = HostPersistedTLSLeaf(
-            certificateDER: facts.certificateDER,
-            certificateSHA256: Data(SHA256.hash(data: facts.certificateDER)),
-            serialNumber: facts.serialNumber,
-            notBeforeUnixMilliseconds: notBefore,
-            notAfterUnixMilliseconds: notAfter
-        )
+        return try await resolveOrCreateTLSLeaf(
+            for: verified, tlsSPKISHA256: facts.tlsSPKISHA256, at: date
+        ) { facts }
+    }
+
+    /// Serialize lookup and signing in the SQLite writer transaction. Two
+    /// processes cannot both issue a leaf for the same published transport set.
+    func resolveOrCreateTLSLeaf(
+        for verified: HostValidatedTransportSet,
+        tlsSPKISHA256: Data,
+        at date: Date,
+        issue: @escaping @Sendable () throws -> HostTLSServerCertificateFacts
+    ) async throws -> Data {
         let transportEpoch = try Self.sqliteInteger(
-            verified.setEpoch,
-            field: "transportEpoch"
+            verified.setEpoch, field: "transportEpoch"
         )
         return try await dbQueue.write { db in
             guard let metadata = try Row.fetchOne(
@@ -525,7 +524,7 @@ extension HarcHostStore {
                     """,
                 arguments: [
                     try Self.sqliteInteger(verified.setEpoch, field: "transportEpoch"),
-                    facts.tlsSPKISHA256,
+                    tlsSPKISHA256,
                 ]
             ) {
                 let existingDER: Data = existing["certificate_der"]
@@ -533,11 +532,31 @@ extension HarcHostStore {
                         == Data(SHA256.hash(data: existingDER)) else {
                     throw HarcHostError.tlsLeafMismatch("persisted certificate hash")
                 }
-                // A concurrent issuer may have won with a different random
-                // serial. The caller revalidates this exact winner against the
-                // request before resolving it.
+                // Reuse exact persisted bytes without invoking the issuer.
                 return existingDER
             }
+            let facts = try issue()
+            guard facts.tlsSPKISHA256 == tlsSPKISHA256,
+                  facts.framedSignedTransportSet == verified.exactSignedBytes,
+                  let entry = verified.entries.first(where: {
+                      $0.tlsSPKISHA256 == facts.tlsSPKISHA256
+                  }) else {
+                throw HarcHostError.tlsLeafMismatch("transport-set extension or SPKI")
+            }
+            let notBefore = try Self.unixMilliseconds(facts.notValidBefore)
+            let notAfter = try Self.unixMilliseconds(facts.notValidAfter)
+            guard notBefore >= entry.notBeforeUnixMilliseconds,
+                  notAfter <= entry.notAfterUnixMilliseconds,
+                  notBefore < notAfter else {
+                throw HarcHostError.tlsLeafMismatch("validity interval")
+            }
+            let record = HostPersistedTLSLeaf(
+                certificateDER: facts.certificateDER,
+                certificateSHA256: Data(SHA256.hash(data: facts.certificateDER)),
+                serialNumber: facts.serialNumber,
+                notBeforeUnixMilliseconds: notBefore,
+                notAfterUnixMilliseconds: notAfter
+            )
             try db.execute(
                 sql: """
                     INSERT INTO host_tls_leaves (
@@ -599,7 +618,7 @@ package actor HostTransportLifecycle {
     private static let clockSkewMilliseconds: UInt64 = 5 * 60 * 1_000
     private static let freshLifetimeMilliseconds: UInt64 = 89 * 24 * 60 * 60 * 1_000
     private static let capabilitySafetyMarginMilliseconds: UInt64 = 5 * 60 * 1_000
-    package static let renewalLeadTime: TimeInterval = 7 * 24 * 60 * 60
+    package static let renewalLeadTime: TimeInterval = 30 * 24 * 60 * 60
     package static let renewalRetryInterval: TimeInterval = 5 * 60
 
     private let store: HarcHostStore
@@ -2194,19 +2213,12 @@ package actor HostTransportLifecycle {
             expectedTLSSPKISHA256: identity.tlsSPKISHA256,
             framedSignedTransportSet: transportSet.exactSignedBytes
         )
-        let exactDER: Data
-        if let persisted = try await store.persistedTLSLeaf(
-            transportEpoch: transportSet.setEpoch,
-            tlsSPKISHA256: identity.tlsSPKISHA256
+        let exactDER = try await store.resolveOrCreateTLSLeaf(
+            for: transportSet,
+            tlsSPKISHA256: identity.tlsSPKISHA256,
+            at: now()
         ) {
-            exactDER = persisted
-        } else {
-            let candidate = try identity.issueServerCertificate(request: request)
-            exactDER = try await store.persistTLSLeaf(
-                candidate,
-                for: transportSet,
-                at: now()
-            )
+            try identity.issueServerCertificate(request: request)
         }
         // Revalidation happens inside resolveServerIdentity even for a row
         // loaded from an existing database or won by another concurrent issuer.

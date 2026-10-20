@@ -248,6 +248,12 @@ public struct HarcProcessingGRPCServiceAdapterV1:
         status.projection = Harc_V1_ProjectionDescriptorV1(value.projection)
         status.canonicalAudioSha256.value = value.canonicalAudioSHA256
         status.updatedAtUnixMs = try unixMilliseconds(value.updatedAt)
+        if let digest = value.selectedEdgeBundleSHA256 {
+            status.selectedEdgeBundleSha256.value = digest
+        }
+        if let outcome = value.hostSpeakerOutcome {
+            status.hostSpeakerOutcome = Harc_V1_HostSpeakerProcessingOutcomeV1(outcome)
+        }
         return status
     }
 

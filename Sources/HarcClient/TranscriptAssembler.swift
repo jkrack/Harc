@@ -62,10 +62,24 @@ public final class TranscriptAssembler {
             }
             let nextWords = next.text.split(separator: " ", omittingEmptySubsequences: true)
             let trimmedText = nextWords.dropFirst(droppedWordCount).joined(separator: " ")
-            // The successor's word timings over the shared audio duplicate
-            // the predecessor's; drop them along with the text so seek and
-            // the (future) gutter don't see the boundary twice.
-            let trimmedWords = next.words.filter { $0.startMs >= overlapMs }
+            // Match timed words to the exact duplicate text prefix. A fixed
+            // overlap-time cutoff can remove new speech or leave a token fragment.
+            let display = Word.displayWords(from: next.words)
+            func normalizedWord(_ text: String) -> String {
+                text.lowercased().filter { $0.isLetter || $0.isNumber }
+            }
+            guard next.words.isEmpty || (display.count >= droppedWordCount &&
+                zip(display.prefix(droppedWordCount), nextWords.prefix(droppedWordCount))
+                    .allSatisfy { normalizedWord($0.0.text) == normalizedWord(String($0.1)) }) else {
+                // Uncertain alignment: retain the successor intact rather than
+                // deleting unrelated timed speech to force a cleaner seam.
+                out.append(next)
+                continue
+            }
+            let pieces = next.words.contains { $0.text.first?.isWhitespace == true }
+            let trimmedWords = display.dropFirst(droppedWordCount).map {
+                Word(text: (pieces ? " " : "") + $0.text, startMs: $0.startMs, endMs: $0.endMs, speakerAttribution: $0.speakerAttribution)
+            }
             out.append(ChunkResult(
                 startMs: next.startMs,
                 endMs: next.endMs,
@@ -129,7 +143,7 @@ public final class TranscriptAssembler {
         for chunk in chunks {
             let offset = chunk.startMs
             for w in chunk.words {
-                allWords.append(Word(text: w.text, startMs: w.startMs + offset, endMs: w.endMs + offset))
+                allWords.append(Word(text: w.text, startMs: w.startMs + offset, endMs: w.endMs + offset, speakerAttribution: w.speakerAttribution))
             }
             for s in chunk.speakers {
                 allSpeakers.append(SpeakerSegment(

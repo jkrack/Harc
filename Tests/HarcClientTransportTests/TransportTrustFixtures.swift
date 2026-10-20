@@ -53,7 +53,8 @@ enum TransportTrustFixtures {
         epoch: UInt64,
         issuedAt: UInt64 = nowMilliseconds - 120_000,
         entryNotBefore: UInt64 = nowMilliseconds - 60_000,
-        entryNotAfter: UInt64 = nowMilliseconds + 86_400_000
+        entryNotAfter: UInt64 = nowMilliseconds + 86_400_000,
+        libraryID: LibraryID = TransportTrustFixtures.libraryID
     ) throws -> VerifiedHostTransportSetV1 {
         let entries = try tlsKeys.map { key in
             try HostTransportEntryV1(
@@ -86,7 +87,7 @@ enum TransportTrustFixtures {
             expectedRevision: nil,
             payloadSHA256: HarcSignedEnvelopeV1.payloadDigest(payloadBytes)
         )
-        let signed = try HarcSignedObjectV1.signRegistered(
+        let signed = try signBootstrapFixtureObject(
             header: header,
             exactPayloadBytes: payloadBytes,
             payloadBindings: HarcSignedPayloadBindingsV1(
@@ -108,7 +109,8 @@ enum TransportTrustFixtures {
         exactTransportSet: Data,
         notBefore: UInt64 = nowMilliseconds - 30_000,
         notAfter: UInt64 = nowMilliseconds + 3_600_000,
-        profile: ExtensionProfile = .valid
+        profile: ExtensionProfile = .valid,
+        signatureDEROverride: Data? = nil
     ) throws -> Data {
         let transportBytes = profile == .oversizedTransportSet
             ? Data(repeating: 0xa5, count: 4_097)
@@ -154,7 +156,7 @@ enum TransportTrustFixtures {
                 + spkiDER(for: tlsKey)
                 + explicit(tag: 0xa3, sequence(encodedExtensions))
         )
-        let signature = try tlsKey.signature(for: tbs).derRepresentation
+        let signature = try signatureDEROverride ?? tlsKey.signature(for: tbs).derRepresentation
         return sequence(
             tbs
                 + signatureAlgorithm

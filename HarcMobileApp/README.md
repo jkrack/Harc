@@ -15,6 +15,38 @@ status, and the scoped Host Library cache. Library sync supports snapshots,
 deltas, search, detail, verified audio playback, signed metadata mutations, and
 explicit conflict handling.
 
+Library always presents device-owned masters in **On This iPhone**, independently
+of Host adoption, reachability, search, and transfer progress. Playback uses the
+protected local master directly. **Host Library** is a separate cached/remote
+section; its failures must not hide local audio. Forgetting a Host retires trust
+and the saved route, without deleting captures or their durable outbox records.
+
+Finalization registers the protected master in the outbox before audio-session
+deactivation. If the process stops or the store callback fails between file
+publication and registration, launch recovery validates the finalized metadata
+and WAV and registers one local Library entry. Invalid orphans are reported and
+preserved in place without blocking healthy Library entries or new capture;
+directory setup and database failures still surface. The existing outbox remains the
+idempotency boundary; recovery never manufactures a Host receipt or cleanup
+permission. Synthetic fault tests live in `HarcMobileFinalizationRecoveryTests`
+and `HarcMobileDurableMasterWriterTests`.
+
+Retries reuse the durable Begin intent's complete profile, upload identity,
+chunk descriptors, and protected file paths. A new compatible session does not
+re-encode or re-freeze that attempt. Current Host authorization and session
+compatibility still apply. The retry queue excludes recordings bound to another
+Host and continues past per-recording failures, with each origin attempted once
+per pass. The production error adapter reports file/buffer encoding failures as
+per-recording retries with saved-audio messaging; they do not change codec
+qualification. Pairing, cancellation, and `codecNotQualified` remain global stops.
+Synthetic composition/queue regressions live in `HarcMobileUploadPreparationTests`.
+
+Playback surfaces share explicit session ownership. Only the current owner may
+deactivate playback, and capture claims priority before requesting microphone
+permission through finalization. Row teardown and stale player callbacks must
+never deactivate a newer player or the recorder. Test with
+`HarcMobilePlaybackSessionTests`; the injected players/session hooks use no audio.
+
 For external review without access to a developer LAN, the Library exposes a
 bundled, read-only offline sample. Its synthetic audio is generated on device;
 it contains no user data, requests no permission, performs no network operation,
@@ -26,11 +58,12 @@ physical-device capture/background-transfer matrix in the normative spec must
 be green before App Store submission. TestFlight distribution is optional.
 iPad support remains behind its separate UI/device gate.
 
-The iOS 18 installation floor is not an inference-hardware floor. Core capture,
+The iOS 26 installation floor is not an inference-hardware floor. Core capture,
 protected storage, transfer, playback, and Library access have no device-model
 or on-device-inference gate. Future optional mobile inference must use a measured
 runtime tier and fall back to the adopted Host without making capture unavailable.
-The oldest declared launch iPhone still requires physical qualification.
+The exact physical iPhone used for release qualification must be recorded with
+its hardware identifier and OS build. No named marketing model is required.
 
 See:
 

@@ -99,6 +99,11 @@ struct CanonicalMetadataMutationTests {
         let person = try #require(
             try await store.fetchPeople().first { $0.id == localPersonID }
         )
+        try await store.insertPendingSuggestion(personID: localPersonID, recordingID: recordingID,
+                                               speakerIndex: 0, score: 0.9)
+        try await store.dismissSuggestion(personID: localPersonID, recordingID: recordingID, speakerIndex: 0)
+        try await store.insertPendingSuggestion(personID: localPersonID, recordingID: recordingID,
+                                               speakerIndex: 0, score: 0.9)
         let digest = Data(repeating: 0x43, count: 32)
         let operationID = OperationID(UUID())
         let result = try await store.applyCanonicalMetadataMutation(
@@ -119,6 +124,9 @@ struct CanonicalMetadataMutationTests {
         let links = try await store.fetchPersonSpeakerLinks(recordingID: recordingID)
         #expect(links.count == 1)
         #expect(links.first?.personID == localPersonID)
+        #expect(try await store.fetchPendingSuggestionsForRecording(recordingID).isEmpty)
+        #expect(links.first?.isUserConfirmed == true)
+        #expect(try await !store.isDismissed(personID: localPersonID, recordingID: recordingID, speakerIndex: 0))
         #expect(try await store.resolvedSpeakerName(
             recordingID: recordingID,
             speakerIndex: 0

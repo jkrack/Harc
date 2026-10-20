@@ -1,8 +1,10 @@
 # Security
 
-The current Harc release is a local-first Mac app: audio is captured,
-transcribed, and summarized on the Mac. It has no adopted-device transport yet,
-so nothing about you or your content leaves this Mac through Harc.
+Harc uses private inference. Standalone mode captures, transcribes, and
+summarizes audio on the current Mac. In Client mode, recordings and derived
+artifacts can synchronize automatically to the explicitly adopted Harc Host.
+HarcMobile captures locally and transfers to that adopted Host for processing.
+A Host owner can enable Harc Remote for encrypted connections across networks.
 
 ## What talks to the network
 
@@ -15,26 +17,43 @@ so nothing about you or your content leaves this Mac through Harc.
   EdDSA-signed; Sparkle refuses unsigned or mis-signed updates. System
   profiling is permanently disabled — the update check sends nothing about
   you or your machine.
-- **Current release:** nothing else. No telemetry, no crash reporting, no
-  analytics.
+- **Adopted Host connections** — authenticated encrypted transport carries
+  recordings, transcripts, Library information, and speaker synchronization
+  between adopted devices. Bonjour discovers candidate routes; discovery never
+  establishes trust.
+- **Harc Remote (opt-in)** — a content-blind relay connects clients and Hosts
+  across networks. Application content remains inside pinned TLS. The relay
+  infrastructure can observe connection metadata; encryption is not a claim
+  that the infrastructure observes no metadata. Deployment logging, exports,
+  and retention must be checked against the exact release's privacy assessment.
+- **User-directed export** — a user can explicitly export a selected recording
+  through a system destination outside the adopted-Host boundary after Harc
+  identifies that boundary. This is not an automatic synchronization path.
 
-The bundled `harc-mcp` executable (the MCP agent bridge) opens **no network
-connections**: it speaks JSON-RPC over stdio to a locally spawned agent host
-(Claude Desktop, Claude Code, etc.) and touches only the Harc database in
-Application Support and the user's chosen notes folder. Any network traffic
-in that flow belongs to the agent host the user runs, on their own account.
+Harc does not use cloud inference or an external application telemetry, crash
+reporting, or analytics service. Production relay configuration and account-level
+retention are separate operator checks documented in
+[`docs/operations/app-store-release-readiness.md`](docs/operations/app-store-release-readiness.md).
+
+The bundled `harc-mcp` executable (the MCP agent bridge) speaks JSON-RPC over
+stdio to the user's MCP client (Claude Desktop, Claude Code, etc.). In
+Standalone mode it accesses the local store and notes. In Host mode it uses
+authenticated local IPC to the resident Harc app; it must not fall back to direct
+canonical database writes when the Host is unavailable. Content returned to an
+MCP client is available to that client and its configured model provider; the
+MCP client's own network and data-handling policy applies.
 Note that because harc-mcp is spawned by the agent host/MCP client process,
 writes to the notes folder under `~/Documents` are TCC-attributed to that
 process — if the user denied it Documents access, OKF file regeneration
 silently no-ops (database writes in Application Support are unaffected).
 
-## Adopted-device mode (approved, not yet implemented)
+## Adopted-device trust boundary
 
-Harc's approved host/client architecture permits an iPhone or secondary Mac to
+Harc's host/client architecture permits an iPhone or secondary Mac to
 send recordings and derived artifacts to an explicitly adopted, user-controlled
 Harc host. This remains private/local-first behavior, not cloud processing.
 
-The implementation is required to preserve these boundaries:
+The implementation contract requires these boundaries:
 
 - No Harc-operated cloud speech, diarization, summarization, telemetry, crash
   reporting, or analytics service.
@@ -60,9 +79,6 @@ The implementation is required to preserve these boundaries:
 - In Host mode, the bundled `harc-mcp` reaches the canonical store only through
   authenticated same-user local IPC owned by the resident Harc process. It does
   not fall back to direct writes while that host is unavailable.
-
-Until that architecture ships and this document's network inventory is updated,
-the current-release description above remains the behavior users receive.
 
 The approved cryptographic, pairing, authorization, revocation, and retention
 contract is specified in

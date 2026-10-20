@@ -1,4 +1,5 @@
 import Foundation
+import HarcDomain
 import HarcStore
 import HarcVoiceprint
 
@@ -50,13 +51,13 @@ public actor SpeakerReIDService {
         nameResolver: SpeakerNameResolver,
         embeddingDim: Int = 256,
         threshold: Float = 0.65,
-        minTotalMs: Int = 5_000
+        minTotalMs: Int = Int(SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs)
     ) {
         self.store = store
         self.nameResolver = nameResolver
         self.embeddingDim = embeddingDim
         self.threshold = threshold
-        self.minTotalMs = minTotalMs
+        self.minTotalMs = max(minTotalMs, Int(SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs))
     }
 
     /// Top-K speaker suggestions for a new recording's speaker. The query
@@ -78,7 +79,7 @@ public actor SpeakerReIDService {
         var matches: [SpeakerMatch] = []
         matches.reserveCapacity(rows.count)
 
-        for row in rows where row.totalMs >= minTotalMs {
+        for row in rows where row.totalMs >= minTotalMs && row.segmentCount > 0 {
             guard let vec = EmbeddingBlob.decode(row.embedding, expectedDim: embeddingDim) else {
                 continue
             }

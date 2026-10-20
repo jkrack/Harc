@@ -2,6 +2,31 @@ import XCTest
 @testable import HarcSummarize
 
 final class SummaryParserTests: XCTestCase {
+    func test_commitmentHeadingAndBracketOwnerPreserveTaskAndCondition() {
+        let result = SummaryParser.parse("## Summary\nConditional work.\n## Confirmed Commitments\n- [Nell]: run the export (if security approves)")
+        XCTAssertFalse(result.parseWarning)
+        XCTAssertEqual(result.actionItems.first?.actor, "Nell")
+        XCTAssertEqual(result.actionItems.first?.text, "run the export")
+        XCTAssertEqual(result.actionItems.first?.due, "if security approves")
+        let colon = SummaryParser.parse("## Summary\nFacts.\n## Confirmed Commitments\n- [Nell]: review: chapter two (Friday)")
+        XCTAssertEqual(colon.actionItems.first?.text, "review: chapter two")
+    }
+
+    func test_mixedHeadersAndEmptyBracketTasksRemainReviewable() {
+        for body in ["- [ ]: task", "- [Nell]: (Friday)", "_None identified._\n## Action Items\n- [ ] Nell: task"] {
+            let raw = "## Summary\nFacts.\n## Confirmed Commitments\n" + body
+            let parsed = SummaryParser.parse(raw)
+            XCTAssertTrue(parsed.parseWarning)
+            XCTAssertEqual(parsed.summary, raw)
+        }
+    }
+
+    func test_emptySummaryIsNotACompleteResult() {
+        let raw = "## Summary\n\n## Action Items\n_None identified._"
+        let result = SummaryParser.parse(raw)
+        XCTAssertTrue(result.parseWarning)
+        XCTAssertEqual(result.summary, raw)
+    }
 
     func test_parse_happyPath_extractsSummaryAndThreeActionItems() {
         let raw = """
@@ -136,11 +161,10 @@ final class SummaryParserTests: XCTestCase {
         XCTAssertEqual(item.text, "Tuesday, Friday: check in on rollout")
     }
 
-    func test_parse_strayProseBetweenItems_isIgnored() {
+    func test_parse_strayProseBetweenItems_preservesRawAndWarns() {
         // Gemma sometimes editorialises between the action items.
-        // Lines that don't start with "- [ ]" / "- [x]" must be
-        // skipped — the items list still contains exactly the two
-        // checkbox lines.
+        // Non-checkbox prose must remain available for review, without
+        // being invented into a third structured action item.
         let raw = """
         ## Summary
         Reviewed the rollout plan.
@@ -152,11 +176,37 @@ final class SummaryParserTests: XCTestCase {
         """
         let result = SummaryParser.parse(raw)
 
-        XCTAssertFalse(result.parseWarning)
+        XCTAssertTrue(result.parseWarning)
+        XCTAssertEqual(result.summary, raw)
         XCTAssertEqual(result.actionItems.count, 2,
             "Non-checkbox lines must not produce action items.")
         XCTAssertEqual(result.actionItems[0].actor, "Jason")
         XCTAssertEqual(result.actionItems[1].actor, "Amy")
         XCTAssertTrue(result.actionItems[1].done)
+    }
+
+    func test_parse_unrecognizedActionFormats_preservesRawAndWarns() {
+        for body in ["- Jason: send the plan", "1. Jason: send the plan", "Jason will send the plan.", "", "- [ ]", "- [ ] Jason: (Friday)"] {
+            let raw = "## Summary\nPlanning.\n\n## Action Items\n" + body
+            let result = SummaryParser.parse(raw)
+            XCTAssertTrue(result.parseWarning, body)
+            XCTAssertEqual(result.summary, raw.trimmingCharacters(in: .whitespacesAndNewlines), body)
+            XCTAssertTrue(result.actionItems.isEmpty, body)
+        }
+    }
+
+    func test_parse_mixedSentinelAndTask_warnsWithoutLosingTask() {
+        let raw = "## Summary\nPlanning.\n\n## Action Items\n_None identified._\n- [ ] Jason: send the plan"
+        let result = SummaryParser.parse(raw)
+        XCTAssertTrue(result.parseWarning)
+        XCTAssertEqual(result.summary, raw)
+        XCTAssertEqual(result.actionItems, [ActionItem(text: "send the plan", actor: "Jason")])
+    }
+
+    func test_parse_noItemsSentinel_toleratesCaseAndWhitespace() {
+        let result = SummaryParser.parse("## Summary\nCheck-in.\n## Action Items\n  _NONE IDENTIFIED._  \n")
+        XCTAssertFalse(result.parseWarning)
+        XCTAssertEqual(result.summary, "Check-in.")
+        XCTAssertTrue(result.actionItems.isEmpty)
     }
 }

@@ -219,7 +219,8 @@ public actor Transcriber {
         let stitch = VoicedStitcher.stitch(
             samples: samples,
             segments: segments,
-            sampleRate: Self.sampleRate
+            sampleRate: Self.sampleRate,
+            preservingGapsUpTo: 0.1
         )
         return try await runEngine(on: stitch.compactSamples, regions: stitch.regions)
     }

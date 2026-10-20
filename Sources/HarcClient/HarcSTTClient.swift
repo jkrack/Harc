@@ -110,6 +110,14 @@ public struct HarcSTTClient: Sendable {
     /// `timeoutSeconds` elapse, which surfaces as `ClientError.timeout` instead
     /// of pinning a thread on a wedged daemon.
     private func roundTrip(_ request: IPCRequest, timeoutSeconds: Int) async throws -> IPCResponse {
+        try await HarcBlockingIO.run {
+            try roundTripBlocking(request, timeoutSeconds: timeoutSeconds)
+        }
+    }
+
+    // Internal so tests can measure the kernel deadline on the I/O thread,
+    // independently of when a loaded cooperative executor resumes the caller.
+    func roundTripBlocking(_ request: IPCRequest, timeoutSeconds: Int) throws -> IPCResponse {
         let fd: Int32
         let shouldClose: Bool
         if let pre = preconnectedFd {

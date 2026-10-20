@@ -122,6 +122,9 @@ public struct HarcWindowRootView: View {
 
     // Task 8.1: pending suggestions for the inspector chip system
     @State var inspectorPendingSuggestions: [PendingSuggestion] = []
+    @State var inspectorSuggestionReviews = SpeakerSuggestionReviewBatch.empty
+    @State var inspectorSlotReviews = SpeakerSlotReviewBatch.empty
+    @State var inspectorSuggestionLoadID = UUID()
     /// Stats for Nerds for the current selection, assembled async from the
     /// JSON sidecar + store. Nil hides the section.
     @State var nerdStats: RecordingNerdStats? = nil
@@ -1092,6 +1095,10 @@ public struct HarcWindowRootView: View {
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                Text(libraryVM.originLabel(for: rec))
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 // One line of what was actually said, so a row is scannable
                 // without opening it. Only when the title is a real title —
                 // under a bare timestamp a snippet just adds noise to noise.
@@ -1197,17 +1204,14 @@ public struct HarcWindowRootView: View {
                 pendingSuggestions: inspectorPendingSuggestions,
                 personNamesByID: allPeopleByID,
                 onConfirmSuggestion: { s in
+                    let reviews = inspectorSuggestionReviews
                     Task {
                         do {
-                            try await store.confirmSuggestion(
-                                personID: s.personID,
-                                recordingID: s.recordingID,
-                                speakerIndex: s.speakerIndex
-                            )
-                            try await mirrorResolvedSpeakerName(
-                                recordingID: s.recordingID,
-                                speakerIndex: s.speakerIndex
-                            )
+                            let needsLegacyLabel = try await reviews.confirm(s, store: store)
+                            if needsLegacyLabel {
+                                try await mirrorResolvedSpeakerName(
+                                    recordingID: s.recordingID, speakerIndex: s.speakerIndex)
+                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1225,6 +1229,7 @@ public struct HarcWindowRootView: View {
                                 speakerIndex: s.speakerIndex
                             )
                             await loadInspectorSummaryData(for: recording)
+                            await loadResolvedLabels()
                             mutationFailure = nil
                         } catch {
                             reportMutationFailure(.dismissSpeakerSuggestion, error: error)
@@ -1235,13 +1240,14 @@ public struct HarcWindowRootView: View {
                 allPeople: allPeople,
                 onLinkPerson: { personID, speakerIndex in
                     guard let rid = recording.id else { return }
+                    let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            try await store.linkSpeaker(personID: personID, recordingID: rid, speakerIndex: speakerIndex)
-                            try await mirrorResolvedSpeakerName(
-                                recordingID: rid,
-                                speakerIndex: speakerIndex
-                            )
+                            let needsLegacyLabel = try await reviews.link(personID: personID,
+                                recordingID: rid, speakerIndex: speakerIndex, store: store)
+                            if needsLegacyLabel {
+                                try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
+                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1252,14 +1258,15 @@ public struct HarcWindowRootView: View {
                 },
                 onCreatePerson: { name, speakerIndex in
                     guard let rid = recording.id else { return }
+                    let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            let pid = try await store.createPerson(displayName: name, matchThreshold: nil)
-                            try await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
-                            try await mirrorResolvedSpeakerName(
-                                recordingID: rid,
-                                speakerIndex: speakerIndex
-                            )
+                            let created = try await reviews.createPerson(displayName: name,
+                                recordingID: rid, speakerIndex: speakerIndex, store: store)
+                            let pid = created.personID
+                            if created.needsLegacyLabel {
+                                try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
+                            }
                             // Best-effort, non-blocking: backfill suggestions for the new person.
                             Task.detached { [store] in
                                 let engine = SpeakerSuggestionEngine(store: store, embedderKind: "wespeaker_v2")
@@ -1275,13 +1282,14 @@ public struct HarcWindowRootView: View {
                 },
                 onUnlinkPerson: { speakerIndex in
                     guard let rid = recording.id else { return }
+                    let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            try await store.unlinkSpeaker(recordingID: rid, speakerIndex: speakerIndex)
-                            try await clearMirroredSpeakerName(
-                                recordingID: rid,
-                                speakerIndex: speakerIndex
-                            )
+                            let needsLegacyLabel = try await reviews.unlink(recordingID: rid,
+                                speakerIndex: speakerIndex, store: store)
+                            if needsLegacyLabel {
+                                try await clearMirroredSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
+                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1344,14 +1352,26 @@ public struct HarcWindowRootView: View {
     }
 
     func loadInspectorSummaryData(for recording: Recording) async {
+        let loadID = UUID()
+        inspectorSuggestionLoadID = loadID
         let people = (try? await store.fetchPeople()) ?? []
+        let suggestions: [PendingSuggestion]
+        if let id = recording.id {
+            suggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+        } else {
+            suggestions = []
+        }
+        let reviews = await SpeakerSuggestionReviewBatch.load(suggestions, store: store)
+        let slots: SpeakerSlotReviewBatch
+        if let id = recording.id {
+            slots = await SpeakerSlotReviewBatch.load(recordingID: id, indices: speakerIndices(for: recording), store: store)
+        } else { slots = .empty }
+        guard inspectorSuggestionLoadID == loadID else { return }
         allPeople = people
         allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
-        if let id = recording.id {
-            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
-        } else {
-            inspectorPendingSuggestions = []
-        }
+        inspectorSlotReviews = slots
+        inspectorSuggestionReviews = reviews
+        inspectorPendingSuggestions = suggestions
     }
 
     /// Keep the recording's portable speaker-name metadata in step with its
@@ -1489,7 +1509,7 @@ public struct HarcWindowRootView: View {
     /// Loads `transcriptText` from cache or disk. Called on selection change.
     /// Also loads the structured .json sidecar when available so the detail
     /// pane can render per-turn timestamps instead of the flat .txt blob.
-    func loadTranscript() {
+    func loadTranscript(recording observedRecording: Recording? = nil) {
         transcriptLoadError = nil
         transcriptText = ""
         transcriptSegments = []
@@ -1501,7 +1521,7 @@ public struct HarcWindowRootView: View {
         lastAutosaveAt = nil
         speakerBoundaries = []
         renderedSpeakerLabels = [:]
-        guard let recording = selectedRecording else { return }
+        guard let recording = observedRecording ?? selectedRecording else { return }
         titleDraft = recording.title ?? ""
 
         // The pane edits in place now, so it loads through the same tolerant
@@ -1706,7 +1726,18 @@ public struct HarcWindowRootView: View {
     func observeRecording(recording: Recording) async {
         guard let id = recording.id else { return }
         for await latest in store.observe(id: id) {
+            guard !Task.isCancelled,
+                  selection == .recording(wavPath: recording.wavPath) else { return }
             guard let latest else { continue }
+            // Stop can select the destination before the Library observation
+            // delivers its row. Initialize from this observation's value,
+            // rather than waiting for another selection change. Never replace
+            // an editor containing user edits with a later processing result.
+            if !editorDirty, editorText.isEmpty,
+               detailDocument == nil || detailDocument?.initialText.isEmpty == true,
+               hasTranscriptSource(latest) {
+                loadTranscript(recording: latest)
+            }
             if transcriptText.isEmpty, let cached = latest.transcriptText, !cached.isEmpty {
                 transcriptText = cached
             }

@@ -135,6 +135,17 @@ extension HarcWindowRootView {
                     Label("Library on this Mac", systemImage: "desktopcomputer")
                 }
                 detailTitleRow(recording: recording)
+                Label(libraryVM.originLabel(for: recording), systemImage: "record.circle")
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("harc.recording.origin")
+                if recording.captureIntegrity.hasIssues || !recording.captureDiscontinuities.isEmpty {
+                    Label("Some audio may be missing. Review capture interruptions before relying on this recording.", systemImage: "exclamationmark.triangle")
+                        .font(.harcCaption)
+                        .foregroundStyle(Color.harc(.attention))
+                        .accessibilityIdentifier("harc.recording.captureIntegrityWarning")
+                }
 
                 WaveformPlayerView(
                     envelope: detailEnvelope,
@@ -147,6 +158,13 @@ extension HarcWindowRootView {
                 if transcriptFindVisible {
                     transcriptFindBar()
                         .frame(maxWidth: .infinity)
+                }
+
+                if let warning = detailDocument?.overlapWarning, !editorText.contains(warning) {
+                    Label(warning, systemImage: "person.2.wave.2")
+                        .font(.harcCaption)
+                        .foregroundStyle(Color.harc(.attention))
+                        .accessibilityIdentifier("harc.transcript.overlap-warning")
                 }
 
                 vocabularySuggestionBar
@@ -294,7 +312,8 @@ extension HarcWindowRootView {
                     subtitle: err
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            } else if editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !editorDirty, detailDocument?.initialText.isEmpty != false {
                 EmptyStateView(
                     icon: "doc.text.magnifyingglass",
                     title: "No transcript available",
@@ -326,7 +345,10 @@ extension HarcWindowRootView {
 
     func editorTextDidChange() {
         guard let doc = detailDocument else { return }
-        guard editorText != doc.initialText || editorDirty else { return }
+        // Undo can return to the initially loaded text after another edit has
+        // already autosaved. Compare with the persisted text, not the load
+        // snapshot, so that undo is itself saved.
+        guard editorText != (lastSavedEditorText ?? doc.initialText) || editorDirty else { return }
         editorDirty = true
         // Word ranges no longer line up once the text shifts — stop
         // highlighting rather than highlight the wrong words. This is the

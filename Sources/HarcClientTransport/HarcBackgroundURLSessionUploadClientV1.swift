@@ -17,6 +17,7 @@ public enum HarcBackgroundURLSessionUploadError:
     case bodyIntegrityMismatch
     case sessionNotInstalled
     case taskIdentityMismatch
+    case taskIdentityAllocationExhausted
     case missingTaskMapping
     case missingBackgroundBatch
     case invalidPersistedRequest
@@ -501,7 +502,7 @@ final class HarcTransferStoreBackgroundUploadPersistenceV1:
     }
 
     func taskMappings() throws -> [StoredBackgroundTaskMapping] {
-        try store.taskMappings()
+        try store.backgroundTaskMappingsForTransport()
     }
 
     func reconcileTasks(
@@ -918,8 +919,7 @@ actor HarcBackgroundUploadCoordinatorV1 {
             }
             guard task.state == .running || task.state == .suspended,
                   let mapping = mappingsByIdentity[identity],
-                  mapping.state != .completed,
-                  mapping.state != .securityBlocked,
+                  mapping.state.isActive,
                   let job = try persistence.job(
                       batchID: mapping.batchID
                   ),
@@ -976,7 +976,7 @@ actor HarcBackgroundUploadCoordinatorV1 {
     @discardableResult
     func handleCompletion(
         _ event: HarcBackgroundUploadCompletionEventV1
-    ) throws -> AudioBatchID {
+    ) throws -> AudioBatchID? {
         let identity = try SystemBackgroundTaskIdentity(
             taskIdentifier: event.taskIdentifier
         )
@@ -985,6 +985,10 @@ actor HarcBackgroundUploadCoordinatorV1 {
         ) else {
             throw HarcBackgroundURLSessionUploadError.missingTaskMapping
         }
+        // Terminal/historical callbacks have no authority over the current job.
+        // In particular, never validate an old request against a new credential
+        // and then security-block the replacement because the bytes differ.
+        guard mapping.state.isActive else { return nil }
         do {
             guard let job = try persistence.job(
                 batchID: mapping.batchID
@@ -1051,7 +1055,7 @@ actor HarcBackgroundUploadCoordinatorV1 {
         if let error = error as? HarcBackgroundURLSessionUploadError {
             switch error {
             case .transportFailed, .capabilityExpired, .bodyUnavailable,
-                 .sessionNotInstalled:
+                 .sessionNotInstalled, .taskIdentityAllocationExhausted:
                 return .failedRecoverable
             case .serverRejected(let statusCode):
                 return [408, 425, 429, 500, 502, 503, 504, 507]
@@ -1087,10 +1091,23 @@ actor HarcBackgroundUploadCoordinatorV1 {
         let request = try HarcBackgroundUploadHTTPRequestV1.makeRequest(
             for: job
         )
-        let task = try session.makeUploadTask(
+        // URLSession task numbers may restart after the system session is
+        // recreated. Historical mappings remain immutable: skip those numbers
+        // instead of rebinding an old callback identity to a new recording.
+        let usedIdentities = Set(try persistence.taskMappings().map(\.identity))
+        var task = try session.makeUploadTask(
             request: request,
             bodyFileURL: job.bodyFileURL
         )
+        var skipped = 0
+        while usedIdentities.contains(try SystemBackgroundTaskIdentity(taskIdentifier: task.taskIdentifier)) {
+            task.cancel()
+            skipped += 1
+            guard skipped < 32 else {
+                throw HarcBackgroundURLSessionUploadError.taskIdentityAllocationExhausted
+            }
+            task = try session.makeUploadTask(request: request, bodyFileURL: job.bodyFileURL)
+        }
         task.taskDescription = HarcBackgroundUploadHTTPRequestV1
             .taskDescription(batchID: job.descriptor.batchID)
         let identity = try SystemBackgroundTaskIdentity(
@@ -1512,8 +1529,9 @@ public final class HarcBackgroundURLSessionUploadClientV1:
             completionGate: completionGate
         ) { [coordinator, completionReporter, failureReporter] event in
             do {
-                let batchID = try await coordinator.handleCompletion(event)
-                await completionReporter(batchID)
+                if let batchID = try await coordinator.handleCompletion(event) {
+                    await completionReporter(batchID)
+                }
             } catch {
                 await failureReporter(
                     HarcBackgroundUploadDelegateFailureV1(

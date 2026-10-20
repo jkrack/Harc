@@ -23,8 +23,10 @@ swift build \
   --scratch-path "$SCRATCH" \
   --arch arm64
 
-BIN_PATH="$(swift build --show-bin-path --scratch-path "$SCRATCH" -c release --arch arm64)"
-MCP_SRC="$BIN_PATH/harc-mcp"
+# SwiftPM's default build engine changed in Xcode 27; query its output path.
+BIN_DIR="$(swift build --jobs "$BUILD_JOBS" -c release --product harc-mcp \
+  --scratch-path "$SCRATCH" --arch arm64 --show-bin-path)"
+MCP_SRC="$BIN_DIR/harc-mcp"
 MCP_DST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/harc-mcp"
 
 mkdir -p "$(dirname "$MCP_DST")"

@@ -1,4 +1,7 @@
 import AppKit
+import CryptoKit
+import HarcDomain
+import HarcIdentity
 import ApplicationServices
 import AVFoundation
 import Combine
@@ -196,6 +199,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         bridge.onOpenHostPairing = { [weak self] in
             self?.openRolePairing(nil)
+        }
+        bridge.onRepairHostReceipts = { [weak self] in
+            guard let self, let runtime = self.hostRuntime,
+                  !self.bridge.hostReceiptRepairInProgress else { return }
+            self.bridge.hostReceiptRepairInProgress = true
+            self.bridge.hostReceiptRepairStatus = nil
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.bridge.hostReceiptRepairInProgress = false }
+                do {
+                    let result = try await runtime.repairReceiptBindings { [weak self] checked, total in
+                        await MainActor.run {
+                            self?.bridge.hostReceiptRepairStatus = "Checking recording \(min(checked + 1, total)) of \(total). One owner approval will cover all verified bindings that need repair."
+                        }
+                    }
+                    self.bridge.hostReceiptRepairStatus = "Checked \(result.checked) recording(s); repaired \(result.repaired); \(result.failed) still need attention. "
+                        + (result.repaired == 0 ? "No receipt bindings were changed. " : "Clients will retry automatically. ")
+                        + (result.failed > 0 ? "If the library was moved or copied, use Verify Moved Library. Files that fail verification remain protected." : "")
+                } catch HarcHostError.localOSAuthenticationRequired {
+                    self.bridge.hostReceiptRepairStatus = "Repair requires approval from this Mac's owner. Recording copies remain protected."
+                } catch {
+                    self.bridge.hostReceiptRepairStatus = "Receipt verification could not finish. Recording copies remain protected."
+                }
+            }
+        }
+        bridge.onMigrateHostLibraryBindings = { [weak self] in
+            guard let self, let runtime = self.hostRuntime,
+                  !self.bridge.hostLibraryMigrationInProgress else { return }
+            self.bridge.hostLibraryMigrationInProgress = true
+            self.bridge.hostLibraryMigrationStatus = nil
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.bridge.hostLibraryMigrationInProgress = false }
+                do {
+                    let result = try await runtime.migrateCanonicalLibraryBindings()
+                    self.bridge.hostLibraryMigrationStatus =
+                        "Checked \(result.checkedArtifactCount) recording(s); verified \(result.eligibleArtifactCount) moved binding(s); rebound \(result.reboundArtifactCount); recovered \(result.recoveredReceiptCount) pending receipt(s); \(result.failedUploadIDs.count) still need attention."
+                } catch HarcHostError.localOSAuthenticationRequired {
+                    self.bridge.hostLibraryMigrationStatus =
+                        "Moved-library recovery requires approval from this Mac's owner. No binding was changed."
+                } catch {
+                    self.bridge.hostLibraryMigrationStatus =
+                        "Moved-library verification could not finish. No unverified recording was rebound."
+                }
+            }
         }
         bridge.onRetryClientHostConnection = { [weak self] in
             self?.desktopClientRuntime?.handleConnectivityRestored()
@@ -499,7 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var sttClient: HarcSTTClient?
     /// Capture never waits for inference. This best-effort warmup normally
     /// finishes before the first long-form chunk becomes eligible.
-    private var recordingDaemonWarmupTask: Task<Void, Never>?
+    private let recordingWarmup = RecordingWarmupController()
     private var speakerReIDService: SpeakerReIDService?
     private var store: RecordingStore?
     /// Present only in Host role. It owns the canonical store above; no second
@@ -572,6 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Launch-time recovery is best effort. If capture wins the startup race,
     /// defer the scan until the protected capture/publication pipeline drains.
     private var bootstrapRecoveryScanDeferred = false
+    private var captureIntegritySessionID: UUID?
     private var uiTestRecordingStartedAt: Date?
     private var frontmostPoller: Timer?
     private var hasShownMicOnlyNotice = false
@@ -589,7 +638,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// retained controllers such as the Library window.
     private var activeManagedWindows: Set<ObjectIdentifier> = []
     private var managedWindowCloseObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
-    private var mainMenuInstalled = false
 
     /// Minimum transcript word count to actually call the summarizer.
     /// Below this, the prompt is too thin to constrain the model and
@@ -598,6 +646,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private static let minWordsToSummarize = 10
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !isUITesting {
+            Task.detached(priority: .utility) {
+                let defaults = UserDefaults.standard
+                let marker = "HarcTLSCertificateMigration.memoryIdentity.v1"
+                guard !defaults.bool(forKey: marker) else { return }
+                do {
+                    let result = try HostTLSCertificateMigration.removeLegacyCertificates()
+                    FileHandle.standardError.write(Data(
+                        "harc: removed \(result.certificatesRemoved) legacy TLS certificates and \(result.orphanKeysRemoved) orphan keys\n".utf8
+                    ))
+                    defaults.set(true, forKey: marker)
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "harc: TLS certificate cleanup failed; will retry: \(error)\n".utf8
+                    ))
+                }
+            }
+        }
         // A UI-test run that was killed rather than terminated never got to
         // put the user's preferences back. Replay the stash on the next
         // ordinary launch so a crashed test doesn't leave auto-summarize and
@@ -1033,12 +1099,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     /// The app runs as an accessory (LSUIElement) with only a MenuBarExtra-style
-    /// UI, so SwiftUI never builds a main menu. When a real window promotes us
-    /// to `.regular`, the menu bar would be empty without one — including the
-    /// Edit menu, whose absence breaks ⌘C/⌘V in the transcript editor.
+    /// UI. Its Settings-only SwiftUI scene can replace the managed-window
+    /// menu with a minimal menu lacking Edit. Restore the resident app's menu
+    /// before handling events so text editing retains standard shortcuts.
+    func applicationWillUpdate(_ notification: Notification) {
+        guard !activeManagedWindows.isEmpty else { return }
+        installMainMenuIfNeeded()
+    }
+
     private func installMainMenuIfNeeded() {
-        guard !mainMenuInstalled else { return }
-        mainMenuInstalled = true
+        // A Settings-only SwiftUI scene can replace this menu after launch.
+        // Check the installed menu, not whether we installed one in the past.
+        if let edit = NSApp.mainMenu?.item(withTitle: "Edit")?.submenu,
+           edit.items.contains(where: { $0.action == #selector(NSText.selectAll(_:)) }) {
+            return
+        }
 
         let main = NSMenu()
 
@@ -1882,7 +1957,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func startRecording(title: String? = nil, includePreRoll: Bool = true) async {
         // `isPreparing` closes the re-entrancy window: this method suspends
-        // for seconds (daemon launch, engine spin-up) before `session` is
+        // during capture preparation and engine spin-up before `session` is
         // assigned, and a second trigger (hotkey double-press, meeting
         // detection, deep link) entering during that window used to start a
         // second session that overwrote the first — leaving an orphaned live
@@ -1936,28 +2011,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         do {
             let warmupBeganAt = Date()
-            recordingDaemonWarmupTask?.cancel()
-            recordingDaemonWarmupTask = Task { [weak self, launcher] in
-                do {
-                    _ = try await launcher.ensureRunning()
-                    let elapsed = Int(
-                        Date().timeIntervalSince(warmupBeganAt) * 1_000
-                    )
-                    FileHandle.standardError.write(Data(
-                        "harc-recording: inference_ready_ms=\(elapsed)\n".utf8
-                    ))
-                } catch is CancellationError {
-                    return
-                } catch {
-                    FileHandle.standardError.write(Data(
-                        "harc-recording: inference_warmup_failed type=\(String(reflecting: Swift.type(of: error)))\n".utf8
-                    ))
-                    self?.bridge.captureReadinessText =
-                        "Recording safely; transcription will retry after the speech engine recovers"
-                    self?.bridge.captureReadinessWarning = true
-                }
-                self?.recordingDaemonWarmupTask = nil
-            }
+            recordingWarmup.start(operation: { [launcher] in
+                _ = try await launcher.ensureRunning()
+            }, onReady: {
+                // Status responsiveness does not guarantee modelLoaded.
+                let elapsed = Int(Date().timeIntervalSince(warmupBeganAt) * 1_000)
+                FileHandle.standardError.write(Data(
+                    "harc-recording: daemon_responsive_ms=\(elapsed)\n".utf8
+                ))
+            }, onFailure: { [weak self] error in
+                FileHandle.standardError.write(Data(
+                    "harc-recording: inference_warmup_failed type=\(String(reflecting: Swift.type(of: error)))\n".utf8
+                ))
+                self?.bridge.captureReadinessText =
+                    "Speech engine unavailable; transcription will retry after it recovers"
+                self?.bridge.captureReadinessWarning = true
+            })
             let client = HarcSTTClient()
             self.sttClient = client
             let transcriber = ChunkedTranscriber(
@@ -1998,16 +2067,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     )
                 )
             }
-            // Daemon launch may have taken seconds. Re-resolve System Default
+            // Capture preparation may span a route change. Re-resolve System Default
             // at the last responsible moment so the displayed and opened route
             // describe the same device after a dock event during preparation.
             refreshMicrophoneDevices()
+            let integritySessionID = UUID()
+            captureIntegritySessionID = integritySessionID
+            bridge.captureIntegrityWarning = nil
             let session = RecordingSession(
                 mic: MicCapture(selection: prefs.microphoneSelection),
                 systemAudio: systemSource,
                 transcriber: transcriber,
                 onWriteFailure: { [weak self] message in
-                    Task { @MainActor in await self?.handleRecordingWriteFailure(message) }
+                    Task { @MainActor in
+                        guard let self, self.captureIntegritySessionID == integritySessionID else { return }
+                        await self.handleRecordingWriteFailure(message)
+                    }
+                },
+                onCaptureIssue: { [weak self] report in
+                    Task { @MainActor in
+                        guard let self, self.captureIntegritySessionID == integritySessionID else { return }
+                        self.bridge.captureIntegrityWarning = report.warningText
+                        if report.issues.contains(where: { $0.source == .microphone && $0.reason == .sourceStopped }),
+                           self.state.isRecording || self.state.isPreparing {
+                            await self.stopRecording(autoStopReason: nil)
+                        }
+                    }
                 }
             )
             self.session = session
@@ -2037,7 +2122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 preRoll = []
             }
             preRollCapture = nil
-            try await session.start(at: startedAt, preRoll: preRoll)
+            try await session.start(at: startedAt, preRoll: preRoll, prepareCapture: { source in
+                try committer.prepareCapture(at: source)
+            })
             let captureStartMS = Int(
                 Date().timeIntervalSince(startedAt) * 1_000
             )
@@ -2083,8 +2170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // near-empty junk WAV into the user's destination folder, where
             // launch-time ingest would resurrect it as a phantom row.
             stopRequestedDuringStart = false
-            recordingDaemonWarmupTask?.cancel()
-            recordingDaemonWarmupTask = nil
+            recordingWarmup.cancel()
             await self.session?.abort()
             self.session = nil
             self.sessionCommitter = nil
@@ -2296,6 +2382,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 autoStopReason: autoStopReason,
                 late: late
             )
+            do {
+                if let store, try await store.fetchByWavPath(result.wavURL.path) != nil {
+                    finishPublicationCleanupInBackground(source: capture.localMasterURL)
+                }
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harc: publication cleanup remains recoverable: \(error.localizedDescription)\n".utf8
+                ))
+            }
         case .acceptedForDeferredPublication:
             // The Client committer mirrors this exact capture before returning.
             // Refresh now so a tray stop appears immediately even while an
@@ -2307,6 +2402,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             if !late {
                 state.markDeferredStop()
                 autoStop.end(autoStopReason: autoStopReason)
+            }
+        }
+    }
+
+    /// The Library row is already durable. Cleanup can safely outlive this
+    /// callback: interruption leaves the immutable intent for the next scan.
+    private func finishPublicationCleanupInBackground(source: URL) {
+        Task.detached(priority: .utility) {
+            do { try RecordingPublication.load(for: source)?.finishLibraryCommit() }
+            catch {
+                FileHandle.standardError.write(Data(
+                    "harc: publication cleanup remains recoverable: \(error.localizedDescription)\n".utf8
+                ))
             }
         }
     }
@@ -2368,20 +2476,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 postProcessingState.begin(recordingID: id)
                 let embeddings = result.speakerEmbeddings
                 let diarizeErr = result.diarizationError
-                Task.detached { [store, postProcessingState = self.postProcessingState] in
+                Task { @MainActor [weak self, store, postProcessingState = self.postProcessingState] in
+                    guard let self else { return }
                     if !embeddings.isEmpty {
-                        let dbRows: [RecordingStore.SpeakerEmbeddingRow] = embeddings.map {
-                            RecordingStore.SpeakerEmbeddingRow(
-                                recordingID: id,
-                                speakerIndex: $0.speakerIndex,
-                                embedding: EmbeddingBlob.encode($0.vector),
-                                segmentCount: $0.segmentCount,
-                                totalMs: $0.totalMs,
-                                embedderKind: EmbedderKind.wespeakerV2
-                            )
-                        }
                         do {
-                            try await store.upsertSpeakerEmbeddings(recordingID: id, rows: dbRows)
+                            try await self.publishStandaloneSpeakerGeneration(recordingID: id, embeddings: embeddings, store: store)
                             await postProcessingState.succeed(recordingID: id, speakerCount: embeddings.count)
                             // Best-effort, non-blocking: surface speaker match suggestions.
                             Task.detached { [store] in
@@ -2460,6 +2559,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func resetUI() {
+        recordingWarmup.cancel()
         session = nil
         sessionCommitter = nil
         pendingCaptureTitle = nil
@@ -2865,8 +2965,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func refreshRecoveryArtifacts() async {
         guard let recoveryQueue else { return }
-        let artifacts = (try? await recoveryQueue.fetchAll()) ?? []
-        bridge.setRecoveryArtifacts(artifacts)
+        do {
+            bridge.setRecoveryArtifacts(try await recoveryQueue.fetchAll())
+        } catch {
+            // Keep the last known inbox rather than making a metadata failure
+            // look like all recordings were recovered or discarded.
+            showStopRecovery(StopRecoveryInfo(
+                title: "Recovery information unavailable",
+                message: "Harc could not read recovery information. Your cached audio has not been deleted. Retry recovery after resolving the storage problem. \(error.localizedDescription)",
+                cacheDirectoryPath: RecordingDestination.cacheDirectory().path
+            ))
+        }
     }
 
     // MARK: - Meeting detection
@@ -2994,6 +3103,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
 
+    /// Audio is already durable. A preparation/identity/publication failure remains
+    /// a visible processing failure and must never undo the recording commit.
+    private func publishStandaloneSpeakerGeneration(recordingID: Int64,
+        embeddings: [HarcCore.SpeakerEmbeddingRow], store: RecordingStore,
+        diarization: DiarizeResult? = nil, expectedRevision: EntityRevision? = nil,
+        expectedArtifactSHA256: Data? = nil, transcriptOverride: SessionTranscript? = nil,
+        transcriptionModelID: String? = nil, expectedAudio: HarcStandaloneAudioIdentity? = nil) async throws {
+        guard let recording = try await store.fetch(id: recordingID),
+              recording.jsonPath != nil || transcriptOverride != nil else {
+            throw StoreError.invalidData("The recording has no structured speaker transcript")
+        }
+        if let expectedRevision, recording.revision != expectedRevision {
+            throw StoreError.invalidData("The recording changed while identifying speakers")
+        }
+        let hasEvidence = try await store.hasLocalSpeakerEvidence()
+        let manager = InstallationIdentityManager(keyStore: KeychainSoftwareInstallationKeyStore(
+            service: "com.harc.Harc.local-speaker.installation-identity", account: "device-p256-signing-v1", domain: .legacyMacOS))
+        let resolution = try await manager.resolve(evidence: InstallationIdentityEvidence(
+            hasPriorIdentityState: hasEvidence, hasIdentityBoundCaptures: hasEvidence))
+        guard case .available(let identity, _) = resolution else {
+            throw StoreError.invalidData("The local speaker identity is unavailable; existing voice evidence was preserved")
+        }
+        let prepared = try await Task.detached(priority: .utility) {
+            let original = try recording.jsonPath.map { try Data(contentsOf: URL(fileURLWithPath: $0)) }
+            let originalDigest = original.map { Data(SHA256.hash(data: $0)) }
+            if let expectedArtifactSHA256, originalDigest != expectedArtifactSHA256 {
+                throw StoreError.invalidData("The transcript changed while identifying speakers")
+            }
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .secondsSince1970
+            let storedTranscript = try original.map { try decoder.decode(SessionTranscript.self, from: $0) }
+            guard var transcript = transcriptOverride ?? storedTranscript else {
+                throw StoreError.invalidData("The recording has no structured speaker transcript")
+            }
+            if let diarization { transcript = HarcStandaloneSpeakerGeneration.applying(diarization, to: transcript) }
+            transcript.audioPath = recording.wavPath
+            let generation = try HarcStandaloneSpeakerGeneration.prepare(transcript: transcript,
+                embeddings: embeddings, canonicalID: recording.canonicalID, producerDeviceID: identity.deviceID,
+                expectedAudio: expectedAudio)
+            return (generation, originalDigest)
+        }.value
+        try Task.checkCancellation()
+        try await store.publishLocalSpeakerGeneration(recordingID: recordingID, expectedRevision: recording.revision,
+            expectedArtifactSHA256: prepared.1, canonicalPCMHash: prepared.0.canonicalPCMHash,
+            canonicalFrames: prepared.0.canonicalFrames, structuredTranscriptData: prepared.0.structuredTranscriptData,
+            snapshots: prepared.0.snapshots, transcriptText: transcriptionModelID == nil ? nil : transcriptOverride?.joinedText,
+            transcriptionModelID: transcriptionModelID)
+    }
+
     /// Called by the "Identify speakers" / "Retry" buttons in the inspector panel
     /// and the panel post-stop tray. Runs a fresh full-WAV diarize pass against
     /// the recording's on-disk WAV, persists embeddings, and updates postProcessingState.
@@ -3008,24 +3165,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 postProcessingState.fail(recordingID: recordingID, message: "Recording not found")
                 return
             }
-            // Ensure the daemon is running before making an IPC call.
-            _ = try? await launcher.ensureRunning()
-            let client = self.sttClient ?? HarcSTTClient()
-            self.sttClient = client
             postProcessingState.begin(recordingID: recordingID)
             do {
+                guard let path = recording.jsonPath else { throw StoreError.invalidData("The recording has no structured transcript") }
+                let originalDigest = try await Task.detached(priority: .utility) {
+                    Data(SHA256.hash(data: try Data(contentsOf: URL(fileURLWithPath: path))))
+                }.value
+                let audioIdentity = try await Task.detached(priority: .utility) {
+                    try HarcStandaloneAudioIdentity.capture(URL(fileURLWithPath: recording.wavPath))
+                }.value
+                let socketPath = try await launcher.ensureRunning()
+                let client = HarcSTTClient(socketPath: socketPath)
+                self.sttClient = client
                 let result = try await client.diarize(audioPath: recording.wavPath)
-                let dbRows: [RecordingStore.SpeakerEmbeddingRow] = result.speakers.map {
-                    RecordingStore.SpeakerEmbeddingRow(
-                        recordingID: recordingID,
-                        speakerIndex: $0.speakerIndex,
-                        embedding: EmbeddingBlob.encode($0.vector),
-                        segmentCount: $0.segmentCount,
-                        totalMs: $0.totalMs,
-                        embedderKind: EmbedderKind.wespeakerV2
-                    )
-                }
-                try await store.upsertSpeakerEmbeddings(recordingID: recordingID, rows: dbRows)
+                try Task.checkCancellation()
+                try await publishStandaloneSpeakerGeneration(recordingID: recordingID,
+                    embeddings: result.speakers, store: store, diarization: result,
+                    expectedRevision: recording.revision, expectedArtifactSHA256: originalDigest, expectedAudio: audioIdentity)
                 postProcessingState.succeed(recordingID: recordingID, speakerCount: result.speakers.count)
                 // Best-effort, non-blocking: surface speaker match suggestions.
                 Task.detached { [store] in
@@ -3200,22 +3356,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             row.title = result.originalTitle
             let savedID = await persistStoppedRecording(row)
+            if savedID != nil, let source = result.publicationSourceURL {
+                finishPublicationCleanupInBackground(source: source)
+            }
 
             // Same post-ingest extras a live recording gets.
             if let id = savedID, let store = self.store, !rec.speakerEmbeddings.isEmpty {
                 let embeddings = rec.speakerEmbeddings
-                Task.detached { [store] in
-                    let dbRows: [RecordingStore.SpeakerEmbeddingRow] = embeddings.map {
-                        RecordingStore.SpeakerEmbeddingRow(
-                            recordingID: id,
-                            speakerIndex: $0.speakerIndex,
-                            embedding: EmbeddingBlob.encode($0.vector),
-                            segmentCount: $0.segmentCount,
-                            totalMs: $0.totalMs,
-                            embedderKind: EmbedderKind.wespeakerV2
-                        )
+                postProcessingState.begin(recordingID: id)
+                Task { @MainActor [weak self, store] in
+                    guard let self else { return }
+                    do {
+                        try await self.publishStandaloneSpeakerGeneration(recordingID: id, embeddings: embeddings, store: store)
+                        self.postProcessingState.succeed(recordingID: id, speakerCount: embeddings.count)
+                        let engine = SpeakerSuggestionEngine(store: store, embedderKind: EmbedderKind.wespeakerV2)
+                        try? await engine.suggestForRecording(recordingID: id)
+                    } catch {
+                        self.postProcessingState.fail(recordingID: id, message: error.localizedDescription)
                     }
-                    try? await store.upsertSpeakerEmbeddings(recordingID: id, rows: dbRows)
                 }
             }
             await enqueueAutoSummaryAfterStop(recordingID: savedID)
@@ -3542,11 +3700,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             store: store,
             transcriberProvider: { [weak self] in
                 guard let self else { return nil }
-                return DaemonArchiveTranscriber(
-                    engineVersion: HarcVersion.sttEngineVersion,
-                    diarize: self.prefs.diarize,
-                    vad: self.prefs.vadEnabled
-                )
+                let diarize = self.prefs.diarize
+                let vad = self.prefs.vadEnabled
+                let modelID = HarcDesktopLocalLibraryReprocessPlanner.currentModelID(diarize: diarize, vad: vad)
+                return PublishingArchiveTranscriber(modelID: modelID) { [weak self] recording, store in
+                    guard let self else { throw CancellationError() }
+                    _ = try await self.localReprocessPayload(for: recording, store: store,
+                        configuration: (diarize, vad), force: true)
+                }
             }
         )
         maintenanceStore = created
@@ -3801,6 +3962,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         let libraryVM = LibraryViewModel(store: store)
+        libraryVM.loadOriginDeviceLabels = { [weak self] in
+            guard let runtime = self?.hostRuntime else { return [:] }
+            let devices = try await runtime.pairedDevices()
+            return Dictionary(uniqueKeysWithValues: devices.map { ($0.deviceID, $0.label) })
+        }
         // Hybrid retrieval when the user wants it; nil keeps search lexical.
         libraryVM.searchEmbedder = prefs.semanticSearchEnabled
             ? ensureMaintenanceStore().searchEmbedder
@@ -3923,61 +4089,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func localReprocessPayload(
         for recording: Recording,
-        store: RecordingStore
+        store: RecordingStore, configuration: (diarize: Bool, vad: Bool)? = nil, force: Bool = false
     ) async throws -> (
         transcript: SessionTranscript,
         speakerEmbeddings: [SpeakerEmbeddingRow]
     ) {
+        let diarize = configuration?.diarize ?? prefs.diarize
+        let vad = configuration?.vad ?? prefs.vadEnabled
         let currentModelID = HarcDesktopLocalLibraryReprocessPlanner.currentModelID(
-            diarize: prefs.diarize,
-            vad: prefs.vadEnabled
+            diarize: diarize,
+            vad: vad
         )
-        let existing = HarcDesktopLocalLibraryReprocessPlanner
-            .loadStructuredTranscript(for: recording)
+        let input = try await Task.detached(priority: .utility) {
+            guard let path = recording.jsonPath, FileManager.default.fileExists(atPath: path) else {
+                return (nil as SessionTranscript?, nil as Data?)
+            }
+            let bytes = try Data(contentsOf: URL(fileURLWithPath: path))
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .secondsSince1970
+            return (try decoder.decode(SessionTranscript.self, from: bytes), Data(SHA256.hash(data: bytes)))
+        }.value
+        let existing = input.0
 
-        if HarcDesktopLocalLibraryReprocessPlanner.shouldTranscribe(
+        if force || HarcDesktopLocalLibraryReprocessPlanner.shouldTranscribe(
             recording: recording,
             structuredTranscript: existing,
             currentModelID: currentModelID
         ) {
-            _ = try await launcher.ensureRunning()
-            let result = try await HarcSTTClient().transcribe(
-                audioPath: recording.wavPath,
-                diarize: prefs.diarize,
-                vad: prefs.vadEnabled
-            )
+            let audioIdentity = try await Task.detached(priority: .utility) {
+                try HarcStandaloneAudioIdentity.capture(URL(fileURLWithPath: recording.wavPath))
+            }.value
+            let socketPath = try await launcher.ensureRunning()
+            let client = HarcSTTClient(socketPath: socketPath)
+            let result: TranscribeResult
+            if diarize {
+                result = try await client.transcribeRequiringDiarization(audioPath: recording.wavPath, vad: vad, diarizer: client)
+            } else {
+                result = try await client.transcribe(audioPath: recording.wavPath, diarize: false, vad: vad)
+            }
+            try Task.checkCancellation()
+            guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ArchiveTranscriptionError.emptyResult(recording.wavPath)
+            }
             let endedAt = recording.endedAt ?? recording.startedAt
-            let transcript = SessionTranscript(
+            var transcript = SessionTranscript(
                 startedAt: recording.startedAt,
                 endedAt: max(endedAt, recording.startedAt),
                 audioPath: recording.wavPath,
-                joinedText: result.text,
-                words: result.words,
-                speakers: result.speakers,
-                chunks: [],
+                result: result,
                 processingCoverage: .complete
             )
+            if let existing, existing.manualEditAt != nil {
+                transcript.joinedText = existing.joinedText
+                transcript.manualEditAt = existing.manualEditAt
+            }
             if let id = recording.id {
-                try await store.applyReprocessedTranscript(
-                    recordingID: id,
-                    text: result.text,
-                    modelID: currentModelID
-                )
-                if !result.speakerEmbeddings.isEmpty {
-                    try await store.upsertSpeakerEmbeddings(
-                        recordingID: id,
-                        rows: result.speakerEmbeddings.map {
-                            RecordingStore.SpeakerEmbeddingRow(
-                                recordingID: id,
-                                speakerIndex: $0.speakerIndex,
-                                embedding: HarcStore.EmbeddingBlob.pack($0.vector),
-                                segmentCount: $0.segmentCount,
-                                totalMs: $0.totalMs,
-                                embedderKind: "wespeaker_v2"
-                            )
-                        }
-                    )
-                }
+                try await publishStandaloneSpeakerGeneration(recordingID: id, embeddings: result.speakerEmbeddings,
+                    store: store, expectedRevision: recording.revision, expectedArtifactSHA256: input.1,
+                    transcriptOverride: transcript, transcriptionModelID: currentModelID, expectedAudio: audioIdentity)
             }
             return (transcript, result.speakerEmbeddings)
         }
@@ -3987,14 +4155,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         let embeddings: [SpeakerEmbeddingRow]
         if let id = recording.id {
-            embeddings = try await store.allSpeakerEmbeddings(
-                embedderKind: "wespeaker_v2"
-            ).filter { $0.recordingID == id }.map {
-                SpeakerEmbeddingRow(
-                    speakerIndex: $0.speakerIndex,
-                    vector: HarcStore.EmbeddingBlob.unpack($0.embedding),
-                    totalMs: $0.totalMs,
-                    segmentCount: $0.segmentCount
+            embeddings = try await store.fetchSpeakerEmbeddings(recordingID: id).compactMap { row in
+                // Unbound legacy vectors cannot safely be assigned a model by inference.
+                // Preserve them in storage, but do not submit them for voice recognition.
+                guard let modelID = row.embedderKind,
+                      !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return nil
+                }
+                return SpeakerEmbeddingRow(
+                    speakerIndex: row.speakerIndex,
+                    vector: HarcStore.EmbeddingBlob.unpack(row.embedding),
+                    totalMs: row.totalMs,
+                    segmentCount: row.segmentCount,
+                    modelID: modelID
                 )
             }
         } else {
@@ -4144,10 +4317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                                 capture.captureStartedAt
                             ),
                             audioPath: candidate.masterURL.path,
-                            joinedText: result.text,
-                            words: result.words,
-                            speakers: result.speakers,
-                            chunks: [],
+                            result: result,
                             processingCoverage: .complete
                         ),
                         speakerEmbeddings: result.speakerEmbeddings
@@ -4493,6 +4663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                             let worker = HarcHostProcessingWorker(
                                 store: storage.recordingStore,
                                 launcher: launcher,
+                                producerDeviceID: storage.authorityPublicKey.deviceID,
                                 diarize: diarize,
                                 vad: vad,
                                 admissionSnapshot: { [weak self] in
@@ -4803,7 +4974,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             joinedText: session.joinedText,
             words: session.words,
             speakers: session.speakers,
-            speakerNameOverrides: rec.speakerNames
+            speakerNameOverrides: rec.speakerNames,
+            overlapRanges: session.overlapRanges, attributedUtterances: session.attributedUtterances,
+            manualEditAt: session.manualEditAt
         )
 
         let modelID = prefs.activeSummarizerID
@@ -4847,7 +5020,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         try await store.updateSummary(
             id: id,
-            markdown: result.summary,
+            markdown: result.markdownForStorage,
             actionItemsMarkdown: ActionItemsMarkdown.render(result.actionItems),
             modelID: modelID,
             generatedAt: Date(),
@@ -4860,7 +5033,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         // time, because "The team reviewed the onboarding drop-off" beats
         // "Michelle, Acme" as a row identity. Best-effort: a failed title
         // write must not fail the summarization it rides on.
-        if let derived = TitleSuggester.fromSummary(result.summary) {
+        if !result.parseWarning, let derived = TitleSuggester.fromSummary(result.summary) {
             try? await store.updateSuggestedTitle(id: id, title: derived)
         }
     }
@@ -4933,20 +5106,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // default. This is what unifies "Speaker 1 at 10am" and
             // "Speaker 2 at 2pm" into one label when both link to a Person.
             var names: [Int: String] = [:]
-            for index in Set(transcript.speakers.map(\.speaker)) {
+            let attributedIndices = (transcript.attributedUtterances ?? []).flatMap { utterance in
+                [utterance.speakerAttribution?.speakerIndex].compactMap { $0 } +
+                    utterance.words.compactMap { $0.speakerAttribution?.speakerIndex }
+            }
+            for index in Set(transcript.speakers.map(\.speaker) + attributedIndices) {
                 names[index] = try? await store.resolvedSpeakerName(
                     recordingID: memberID,
                     speakerIndex: index
                 )
             }
 
-            parts.append(.init(
+            var part = SessionPromptAssembler.Part(
                 joinedText: transcript.joinedText,
                 words: transcript.words,
                 speakers: transcript.speakers,
                 speakerNames: names.compactMapValues { $0 },
                 startedAt: member.startedAt
-            ))
+            )
+            part.attributedUtterances = transcript.attributedUtterances
+            part.manualEditAt = transcript.manualEditAt
+            part.overlapRanges = transcript.overlapRanges
+            parts.append(part)
         }
 
         guard !parts.isEmpty else {
@@ -4994,7 +5175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
         try await store.updateSessionSummary(
             id: id,
-            markdown: result.summary,
+            markdown: result.markdownForStorage,
             actionItemsMarkdown: ActionItemsMarkdown.render(result.actionItems),
             modelID: modelID,
             generatedAt: Date(),
@@ -5291,6 +5472,12 @@ private extension AppDelegate {
         )
         .write(to: jsonURL, atomically: true, encoding: .utf8)
 
+        if ProcessInfo.processInfo.environment["HARC_UI_TEST_CAPTURE_ISSUE"] == "1" {
+            var integrity = CaptureIntegrityReport()
+            integrity.record(source: .systemAudio, reason: .bufferOverrun, frameOffset: 100)
+            try integrity.save(nextTo: wavURL)
+        }
+
         let recording = try await store.upsert(Recording(
             wavPath: wavURL.path,
             txtPath: txtURL.path,
@@ -5307,7 +5494,26 @@ private extension AppDelegate {
             summaryGeneratedAt: startedAt.addingTimeInterval(120),
             summarySourceWordCount: 18
         ))
-        _ = recording
+        if ProcessInfo.processInfo.environment["HARC_UI_TEST_BOUND_SPEAKERS"] == "1", let id = recording.id {
+            // Synthetic UI state only: this fixture does not qualify capture or voice accuracy.
+            let pcmHash = try CanonicalPCMHash(Data(repeating: 7, count: 32))
+            try await store.setCanonicalPCM(id: id, hash: pcmHash, totalFrames: 1_440_000)
+            let data = try Data(contentsOf: jsonURL)
+            try await store.updateProcessing(id: id, descriptor: .pending)
+            _ = try await store.stageHostProcessedTranscriptIfNotReady(recordingID: id,
+                text: transcript, modelID: "ui-test", structuredTranscriptData: data)
+            var evidenceByIndex: [Int: Data] = [:]
+            for index in 0..<2 {
+                let evidence = try SpeakerEvidenceSnapshot(canonicalRecordingID: recording.canonicalID,
+                    canonicalPCMHash: pcmHash, producerDeviceID: DeviceID(Data(repeating: 8, count: 32)),
+                    processingArtifactSHA256: Data(SHA256.hash(data: data)), localClusterID: "host-speaker-\(index)",
+                    embedding: QuantizedSpeakerEmbedding(dimensions: 3,
+                        values: Data(index == 0 ? [127, 0, 0] : [0, 127, 0]), scale: 0.5),
+                    modelID: "wespeaker_v2", speechDurationMs: 45000, segmentCount: 1)
+                evidenceByIndex[index] = try await store.retainSpeakerEvidence(evidence)
+            }
+            _ = try await store.publishHostProcessedProjectionIfNotReady(recordingID: id, speakerEvidence: evidenceByIndex)
+        }
     }
 
     func uiTestTranscriptJSON(audioPath: String, startedAt: Date, endedAt: Date, text: String) -> String {
@@ -5444,6 +5650,7 @@ private struct StatusPopoverRoot: View {
             destinationPath: bridge.destinationPath,
             captureReadinessText: bridge.captureReadinessText,
             captureReadinessWarning: bridge.captureReadinessWarning,
+            captureIntegrityWarning: bridge.captureIntegrityWarning,
             sttReadinessText: bridge.sttReadinessText,
             sttReady: bridge.sttReady,
             summarizerReadinessText: bridge.summarizerReadinessText,

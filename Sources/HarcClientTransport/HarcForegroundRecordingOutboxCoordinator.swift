@@ -741,7 +741,17 @@ public actor HarcForegroundRecordingOutboxCoordinator {
             )
         }
 
+        await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+            stage: .beginUpload,
+            message: "Opening or resuming the Host upload",
+            chunkCount: plan.chunks.count
+        ))
         let beginResponse = try await rpc.beginUpload(durableBeginRequest)
+        await diagnosticSink(HarcForegroundUploadDiagnosticEvent(
+            stage: .beginAccepted,
+            message: "Host accepted the upload identity",
+            chunkCount: plan.chunks.count
+        ))
         switch beginResponse.disposition {
         case .created:
             try validatedBeginRequest.validateInitialSessionCapabilities(

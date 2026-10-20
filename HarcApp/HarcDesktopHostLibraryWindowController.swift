@@ -151,6 +151,9 @@ private struct HarcDesktopHostLibraryView: View {
                     .foregroundStyle(.orange)
             case .refreshing:
                 Label("Refreshing from Host…", systemImage: "arrow.triangle.2.circlepath")
+            case .cancelled:
+                Label("Host Library refresh cancelled.", systemImage: "arrow.clockwise")
+                    .foregroundStyle(.secondary)
             case .ready(let updated):
                 if let updated {
                     Label(

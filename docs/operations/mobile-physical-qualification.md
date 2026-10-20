@@ -2,7 +2,9 @@
 
 This runbook collects the physical evidence required before Harc can enable a
 shipping mobile lossless codec or claim the local-network iPhone alpha complete.
-Simulator, Catalyst, and iOS-app-on-Mac results are diagnostic only.
+Simulator, Catalyst, and iOS-app-on-Mac results are diagnostic only. Harc does
+not require an iPhone SE (2nd generation), an iPhone 17, or any other named
+marketing model to enable the codec or complete the iPhone release gate.
 
 ## Short product-path checkpoint
 
@@ -24,44 +26,35 @@ This is a content/state audit only. Copying files to macOS does not preserve
 evidence of their original iOS Data Protection class or backup-exclusion
 metadata, so the script cannot satisfy the physical protection gate.
 
-## Codec matrix prerequisites
+## Codec qualification prerequisites
 
-### Recommended oldest-device target
+Use one available physical iPhone within the declared iOS release scope. Record
+its exact `iPhoneN,M` hardware identifier and OS build rather than inferring
+behavior from a Simulator. Compact, older, current non-Pro, and additional Pro
+phones provide useful compatibility coverage, but they are not named release
+roles and do not block codec enablement.
 
-With the current iOS 18 deployment floor, use a physical **iPhone XR on an iOS
-18 release** as the oldest-device qualification target unless the launch floor
-changes before the archive is frozen. [Apple includes iPhone XR, iPhone XS, and
-iPhone XS Max in the iOS 18 compatibility set](https://support.apple.com/en-us/104985);
-choosing XR exercises an actual oldest eligible model rather than inferring
-support from a newer phone.
+The selected shipping codec qualifies when one exact candidate build proves all
+of the following on the recorded physical phone:
 
-This recommendation is about capture, protected storage, lossless encoding,
-background transfer, and UI reliability. Shipping HarcMobile inference remains
-Host-backed, so optional future on-device inference does not justify excluding
-an otherwise capable capture client. The recommendation is not passing
-evidence: the named physical XR/OS still has to complete the codec and scenario
-matrix below. Do not add an unrelated required-device capability merely to hide
-the missing run.
+- bit-exact encode/decode for canonical PCM, including exact-end-of-file
+  behavior;
+- a real app capture reaches the adopted Host through the production transfer
+  path and returns a verified durable receipt;
+- the Host's canonical decoded PCM SHA-256 matches the phone's complete
+  canonical PCM SHA-256; and
+- the phone retains its protected local master until that receipt is verified.
 
-### Required current non-Pro target
+The three-hour spike harness remains available for performance, memory, queue,
+and thermal characterization. It is recommended before a broad public release,
+but a four-cell comparison across two named phone models is not a codec release
+gate.
 
-The specification separately requires a current non-Pro iPhone on the current
-iOS release so high-end Pro hardware cannot hide queue, memory, thermal, or
-layout failures. For this qualification cycle, use a physical **iPhone 17** on
-the current iOS release. Apple identifies iPhone 17 as the current standard
-model introduced in 2025; record its exact `iPhoneN,M` identifier and OS build
-at test time. Omega, an iPhone 15 Pro Max, remains valuable additional physical
-evidence but does not satisfy this named matrix role.
-
-[Apple iPhone 17 technical specifications](https://support.apple.com/en-us/125089)
-
-- One named oldest-supported iPhone/OS and one named current non-Pro
-  iPhone/current OS.
-- Both exact `iPhoneN,M` hardware identifiers recorded before the run.
-- One clean source commit used for every matrix cell.
-- A signed `HarcMobileSpikes` build with the exact 40-character source commit and
+- One physical iPhone and its exact hardware/OS identity.
+- One clean source commit used for the app, Host, and focused regression.
+- A signed HarcMobile build with the exact 40-character source commit and
   10-character Apple team ID embedded in its sealed Info.plist.
-- Enough uninterrupted time for four real-time three-hour runs.
+- A reachable adopted Host built from the recorded source.
 
 Generate the project, record the clean commit, and build with two workers. Supply
 the physical device destination and signing team appropriate to the development
@@ -82,74 +75,21 @@ xcodebuild \
   build
 ```
 
-The exported schema-5 report must show the expected bundle ID, version/build,
-team ID, source commit, physical hardware identifier, phone idiom, and a unique
-report/process-launch pair. A blank or `unrecorded` value cannot qualify.
+The physical evidence record must show the expected bundle ID, version/build,
+team ID, source commit, physical hardware identifier, phone idiom, focused test
+result, capture/upload/receipt identities, and matching canonical hashes. A
+blank or `unrecorded` value cannot qualify. Never enable
+`HARC_MOBILE_QUALIFIED_CAF_ALAC` from Simulator evidence.
 
-## Four fresh-process runs
-
-Run both candidates on both devices:
-
-| Matrix cell | Launch argument |
-| --- | --- |
-| Oldest iPhone, CAF+ALAC | `--run-three-hour-alac-spike` |
-| Oldest iPhone, FLAC | `--run-three-hour-flac-spike` |
-| Current iPhone, CAF+ALAC | `--run-three-hour-alac-spike` |
-| Current iPhone, FLAC | `--run-three-hour-flac-spike` |
-
-For every cell:
-
-1. Fully terminate `HarcMobileSpikes` before launching the candidate.
-2. Keep the phone on its named OS and ordinary thermal environment; do not use
-   Simulator acceleration.
-3. Leave the harness in the foreground and do not manually lock the phone. The
-   harness disables the idle timer only while a run is active; keep the phone
-   connected to power for the full gate.
-4. Let all 180 ordinary 60-second chunks complete in real time.
-5. Export the JSON report immediately and name it for the device and codec.
-6. Confirm the app is terminated before starting the other candidate.
-
-The process-launch UUID is generated once per app process. Reusing one process
-for two cells causes the matrix validator to fail even if every codec metric is
-otherwise green.
-
-## Validate the matrix
-
-Run the validator from the same clean source checkout:
-
-```bash
-swift run harcctl qualify-codec-matrix \
-  --oldest-device <iPhoneN,M> \
-  --current-device <iPhoneN,M> \
-  --build-sha <40-hex-commit> \
-  --team-id <10-character-team-id> \
-  --version <marketing-version> \
-  --build <build-number> \
-  --oldest-alac <oldest-alac.json> \
-  --oldest-flac <oldest-flac.json> \
-  --current-alac <current-alac.json> \
-  --current-flac <current-flac.json>
-```
-
-The validator independently recomputes ordered trial coverage, bit-exact hash
-agreement, p95/max encoding time, and encoded-byte totals. It validates queue
-depth, memory, and per-trial thermal evidence against the frozen thresholds. It
-also proves that the four cells use distinct report and process-launch IDs and
-one exact sealed build identity.
-
-A passing matrix means both candidates meet the frozen safety thresholds on
-both devices. It does not automatically select or enable a codec. Retain the
-four reports, record the reviewed size/performance decision in `docs/evidence/`,
-and only then add the chosen production compilation condition to `project.yml`.
-Never enable `HARC_MOBILE_QUALIFIED_CAF_ALAC` from Simulator evidence.
-
-## Remaining iPhone matrix
+## Remaining iPhone qualification
 
 After the codec decision, execute Section 25.2 of the implementation
-specification: C1-C7, T1-T7, T2b-T2e, P1, and H1. C1, C2, T1, and T2 require
-three consecutive passes on both named iPhones. Every host-committed WAV must
-match the phone's complete canonical PCM SHA-256; no run may create a duplicate,
-delete the final client copy before a verified receipt, or hide a lost interval.
+specification: C1, C3-C7, T1-T7, T2b-T2e, P1, and H1. C2 is optional
+endurance evidence. C1, T1, and T2 require
+three consecutive passes on the recorded physical qualification iPhone. Every
+host-committed WAV must match the phone's complete canonical PCM SHA-256; no run
+may create a duplicate, delete the final client copy before a verified receipt,
+or hide a lost interval.
 
 The Debug HarcMobile app supports the C7 deterministic quota argument documented
 in the release-gate audit. No other manual result should be promoted to passing
@@ -171,6 +111,7 @@ Run the complete UI bundle through the provenance wrapper instead of an ad-hoc
   --destination-id <physical-device-udid> \
   --platform physical \
   --development-team <10-character-team-id> \
+  --derived-data-path <new-derived-data-directory> \
   --output-dir build/qualification/<unique-run-name>
 ```
 
@@ -179,7 +120,10 @@ The wrapper refuses to overwrite evidence, enforces two workers and requires
 clean tree for release evidence, and retains the
 source-file manifest/fingerprint, source status, destination details, build
 log, test summary, and a SHA-256-stamped zipped result bundle. The explicit
-`--allow-dirty-diagnostic` escape hatch labels current-tree engineering runs;
+`--derived-data-path` option requires a new directory, records it in the
+qualification receipt, and allows disposable compiler artifacts to live on a
+separate high-capacity volume without moving Harc recordings or user data.
+The explicit `--allow-dirty-diagnostic` escape hatch labels current-tree engineering runs;
 it is never release evidence. Simulator runs use `--platform simulator` and
 remain diagnostic only. Physical runs make up to three bounded launch attempts
 by default because CoreDevice can time out while enabling automation before a
@@ -198,24 +142,23 @@ On 2026-08-09, Omega (`iPhone16,2`, iOS 26.6) passed an additional physical C7
 diagnostic. The isolated copied state proved a playable durable prefix, matching
 canonical PCM hash, `storageExhausted` metadata, explicit discontinuities, and
 no premature receipt or cleanup. See
-`docs/evidence/2026-08-09-omega-c7-storage-exhaustion.md`. The oldest-device and
-exact sealed-build repetitions remain open.
+`docs/evidence/2026-08-09-omega-c7-storage-exhaustion.md`. Exact sealed-build
+repetitions remain open.
 
 The same device also passed one deterministic C5 force-quit/relaunch diagnostic.
 The UI visibly recovered one durable recording, and isolated state inspection
 proved one playable, hash-matching `recoveredDurablePrefix` without a receipt or
 cleanup intent. See
 `docs/evidence/2026-08-09-omega-c5-force-quit-recovery.md`. Randomized timing,
-oldest-device, and exact sealed-build repetitions remain open.
+exact sealed-build repetitions remain open.
 
 The complete signed Omega regression also passed a native XCTest
 accessibility audit with no ignored findings on the Record, offline Review
 Sample, and Privacy surfaces. That automated result does not replace the
 manual VoiceOver and physical largest-text traversal required by this runbook,
-and Omega does not replace either the oldest-device or current non-Pro matrix
-device.
+and does not replace manual VoiceOver or largest-text verification.
 
-## Manual accessibility closeout on each named phone
+## Manual accessibility closeout on the qualification phone
 
 Run this from the exact candidate build with the device/build identity recorded.
 Do not promote the automated audit or simulator Dynamic Type run as a substitute.
@@ -242,5 +185,5 @@ Do not promote the automated audit or simulator Dynamic Type run as a substitute
    `iPhoneN,M`, OS version/build, app version/build, and source/archive identity.
 
 Repeat after any material layout, accessibility-label, release-configuration,
-or archive change. A pass on Omega is useful extra evidence but does not close
-the two named-device requirement.
+or archive change. Record any additional-device runs as compatibility evidence,
+not as prerequisites invented after the candidate is ready.

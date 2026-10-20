@@ -295,10 +295,13 @@ final class HarcMobileRecordingAudioController: NSObject {
     private(set) var state: State = .idle
     private(set) var envelope: [Float] = []
     private var envelopeTask: Task<Void, Never>?
-    private var playbackRequestID = UUID()
     private let coordinator: HarcMobileLibraryCoordinator
     private let summary: LibraryRecordingSummary
     private var player: AVAudioPlayer?
+    #if os(iOS)
+    private var sessionOwner: UUID?
+    #endif
+    private var playbackGeneration: UInt64 = 0
 
     var currentTime: TimeInterval { player?.currentTime ?? 0 }
     var duration: TimeInterval {
@@ -327,38 +330,40 @@ final class HarcMobileRecordingAudioController: NSObject {
             } else {
                 do {
                     #if os(iOS)
-                    let session = AVAudioSession.sharedInstance()
-                    try session.setCategory(.playback, mode: .spokenAudio)
-                    try session.setActive(true)
+                    try HarcMobilePlaybackSession.shared.reactivate(sessionOwner)
                     #endif
-                    guard player.play() else {
-                        throw HarcMobileLibraryAudioError.playbackFailed
-                    }
+                    guard player.play() else { throw HarcMobileLibraryAudioError.playbackFailed }
                     state = .playing
                 } catch {
+                    stopAndRelease()
                     state = .failed(error.localizedDescription)
                 }
             }
             return
         }
+        playbackGeneration &+= 1
+        let generation = playbackGeneration
+        #if os(iOS)
+        let captureGeneration = HarcMobilePlaybackSession.shared.captureGeneration
+        #endif
         state = .downloading
-        let requestID = UUID()
-        playbackRequestID = requestID
         do {
             let url = try await coordinator.downloadCanonicalAudio(
                 summary: summary
             )
-            guard playbackRequestID == requestID else {
-                try? await coordinator.releaseDownloadedAudio(summary: summary)
+            guard generation == playbackGeneration else { return }
+            #if os(iOS)
+            guard captureGeneration == HarcMobilePlaybackSession.shared.captureGeneration else {
+                if generation == playbackGeneration { stopAndRelease() }
                 return
             }
-            #if os(iOS)
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spokenAudio)
-            try session.setActive(true)
+            sessionOwner = try HarcMobilePlaybackSession.shared.acquire {
+                [weak self] in self?.stopAndRelease()
+            }
             #endif
             let player = try AVAudioPlayer(contentsOf: url)
             player.delegate = self
+            self.player = player
             player.prepareToPlay()
             guard player.play() else {
                 throw HarcMobileLibraryAudioError.playbackFailed
@@ -379,19 +384,23 @@ final class HarcMobileRecordingAudioController: NSObject {
                 self?.envelope = samples
             }
         } catch {
+            guard generation == playbackGeneration else { return }
+            player?.stop()
+            player = nil
+            releaseSession()
             try? await coordinator.releaseDownloadedAudio(summary: summary)
-            guard playbackRequestID == requestID else { return }
             state = .failed(error.localizedDescription)
         }
     }
 
     func stopAndRelease() {
-        playbackRequestID = UUID()
         envelopeTask?.cancel()
         envelopeTask = nil
         envelope = []
+        playbackGeneration &+= 1
         player?.stop()
         player = nil
+        releaseSession()
         state = .idle
         Task {
             try? await coordinator.releaseDownloadedAudio(summary: summary)
@@ -420,6 +429,14 @@ final class HarcMobileRecordingAudioController: NSObject {
         }
         return peaks
     }
+    private func releaseSession() {
+        #if os(iOS)
+        guard let owner = sessionOwner else { return }
+        sessionOwner = nil
+        HarcMobilePlaybackSession.shared.release(owner)
+        #endif
+    }
+
 }
 
 extension HarcMobileRecordingAudioController: @preconcurrency AVAudioPlayerDelegate {
@@ -427,7 +444,9 @@ extension HarcMobileRecordingAudioController: @preconcurrency AVAudioPlayerDeleg
         _ player: AVAudioPlayer,
         successfully flag: Bool
     ) {
+        guard self.player === player else { return }
         self.player = nil
+        releaseSession()
         state = flag ? .idle : .failed("Playback ended unexpectedly.")
         Task {
             try? await coordinator.releaseDownloadedAudio(summary: summary)

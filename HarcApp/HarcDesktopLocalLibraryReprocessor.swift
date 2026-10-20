@@ -1,5 +1,7 @@
 import CryptoKit
+import Darwin
 import Foundation
+import HarcAudio
 import HarcClient
 import HarcClientStore
 import HarcCore
@@ -162,6 +164,11 @@ enum HarcDesktopLocalLibraryStager {
         let endedAt = recording.endedAt.flatMap {
             $0 >= recording.startedAt ? $0 : nil
         } ?? recording.startedAt.addingTimeInterval(audioDuration)
+        let integrity = recording.captureIntegrity.hasIssues ? recording.captureIntegrity
+            : try CaptureIntegrityReport.load(nextTo: URL(fileURLWithPath: recording.wavPath))
+        if integrity.hasIssues { try integrity.save(nextTo: finalURL) }
+        let recoveredCapture = CapturedRecording(localMasterURL: finalURL,
+            startedAt: recording.startedAt, endedAt: endedAt, integrity: integrity)
         let capture = try FinalizedCapture(
             producingDeviceID: deviceID,
             originRecordingID: origin,
@@ -173,7 +180,7 @@ enum HarcDesktopLocalLibraryStager {
             totalCanonicalFrames: prepared.frames,
             totalCanonicalBytes: prepared.frames * 2,
             canonicalPCMSHA256: try CanonicalPCMHash(prepared.pcmSHA256),
-            discontinuities: []
+            discontinuities: try recoveredCapture.boundDiscontinuities(to: origin, totalFrames: prepared.frames)
         )
         var transcript = sourceTranscript
         transcript.audioPath = finalURL.path
@@ -225,6 +232,135 @@ enum HarcDesktopLocalLibraryReprocessError: LocalizedError {
             "This recording is too long to represent safely."
         case .missingAudio:
             "The local audio file could not be found."
+        }
+    }
+}
+
+/// One local diarization generation, prepared from a protected canonical master.
+/// Publication must commit these exact bytes and snapshots together; preparing
+/// this value does not enroll voices or authorize a mutable numeric speaker slot.
+struct HarcStandaloneSpeakerGeneration: Sendable {
+    let structuredTranscriptData: Data
+    let canonicalPCMHash: CanonicalPCMHash
+    let canonicalFrames: UInt64
+    let snapshots: [SpeakerEvidenceSnapshot]
+
+    /// Replace only diarization; preserve words, text and manual edit provenance.
+    /// Chunk-local speaker guesses are superseded by the new full-master timeline.
+    static func applying(_ result: DiarizeResult, to original: SessionTranscript) -> SessionTranscript {
+        var transcript = original
+        transcript.speakers = result.segments
+        transcript.overlapRanges = result.overlapRanges
+        if var utterances = transcript.attributedUtterances {
+            for index in utterances.indices {
+                utterances[index].speakerAttribution = nil
+                for word in utterances[index].words.indices {
+                    utterances[index].words[word].speakerAttribution = nil
+                }
+            }
+            transcript.attributedUtterances = utterances
+        }
+        // Explicit word assignments are scoped to the replaced generation.
+        for index in transcript.words.indices { transcript.words[index].speakerAttribution = nil }
+        for index in transcript.chunks.indices {
+            transcript.chunks[index].speakers = []
+            for word in transcript.chunks[index].words.indices {
+                transcript.chunks[index].words[word].speakerAttribution = nil
+            }
+        }
+        return transcript
+    }
+
+    static func prepare(transcript: SessionTranscript, embeddings: [HarcCore.SpeakerEmbeddingRow],
+                        canonicalID: CanonicalRecordingID, producerDeviceID: DeviceID,
+                        expectedAudio: HarcStandaloneAudioIdentity? = nil) throws -> Self {
+        let audio = try HarcStandaloneAudioIdentity.capture(URL(fileURLWithPath: transcript.audioPath))
+        if let expectedAudio, expectedAudio != audio {
+            throw invalid("The recording audio changed while inference was running")
+        }
+        return try build(transcript: transcript, embeddings: embeddings, canonicalID: canonicalID,
+            producerDeviceID: producerDeviceID, canonicalPCMHash: audio.hash, canonicalFrames: audio.frames)
+    }
+
+    static func build(transcript: SessionTranscript, embeddings: [HarcCore.SpeakerEmbeddingRow],
+                      canonicalID: CanonicalRecordingID, producerDeviceID: DeviceID,
+                      canonicalPCMHash: CanonicalPCMHash, canonicalFrames: UInt64) throws -> Self {
+        guard canonicalFrames > 0 else { throw invalid("Empty canonical audio") }
+        var durations: [Int: UInt64] = [:]
+        var ends: [Int: Int] = [:]
+        for segment in transcript.speakers.sorted(by: { $0.startMs < $1.startMs }) {
+            guard segment.speaker >= 0, segment.startMs >= 0, segment.endMs > segment.startMs,
+                  let end = UInt64(exactly: segment.endMs), end <= canonicalFrames / 16,
+                  (ends[segment.speaker] ?? 0) <= segment.startMs else {
+                throw invalid("Invalid or overlapping local speaker timeline")
+            }
+            let duration = UInt64(segment.endMs - segment.startMs)
+            let total = (durations[segment.speaker] ?? 0).addingReportingOverflow(duration)
+            guard !total.overflow else { throw invalid("Speaker duration overflow") }
+            durations[segment.speaker] = total.partialValue
+            ends[segment.speaker] = segment.endMs
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(transcript)
+        let digest = Data(SHA256.hash(data: data))
+        var seen = Set<Int>()
+        let snapshots = try embeddings.map { embedding in
+            guard seen.insert(embedding.speakerIndex).inserted,
+                  let available = durations[embedding.speakerIndex],
+                  let duration = UInt64(exactly: embedding.totalMs), duration <= available,
+                  let count = UInt32(exactly: embedding.segmentCount) else {
+                throw invalid("Voice evidence does not belong to the local speaker timeline")
+            }
+            return try SpeakerEvidenceSnapshot(canonicalRecordingID: canonicalID,
+                canonicalPCMHash: canonicalPCMHash, producerDeviceID: producerDeviceID,
+                processingArtifactSHA256: digest, localClusterID: "local-speaker-\(embedding.speakerIndex)",
+                embedding: .quantizing(embedding.vector), modelID: embedding.modelID,
+                speechDurationMs: duration, segmentCount: count)
+        }
+        return Self(structuredTranscriptData: data, canonicalPCMHash: canonicalPCMHash,
+            canonicalFrames: canonicalFrames, snapshots: snapshots)
+    }
+
+    private static func invalid(_ reason: String) -> DomainValidationError {
+        .invalidState(reason: reason)
+    }
+}
+
+/// A bounded PCM hash plus filesystem change evidence. Retain before inference
+/// and compare during preparation, including replacement with identical bytes.
+struct HarcStandaloneAudioIdentity: Sendable, Equatable {
+    let hash: CanonicalPCMHash
+    let frames: UInt64
+    private let file: Fingerprint
+
+    static func capture(_ url: URL) throws -> Self {
+        let before = try Fingerprint.read(url)
+        let audio = try HarcDesktopClientFiles.inspectCanonicalWAV(url)
+        guard try Fingerprint.read(url) == before else {
+            throw DomainValidationError.invalidState(reason: "Recording audio changed during inspection")
+        }
+        return Self(hash: try CanonicalPCMHash(audio.pcmSHA256), frames: audio.frames, file: before)
+    }
+
+    private struct Fingerprint: Sendable, Equatable {
+        let device: Int64
+        let inode: UInt64
+        let size: Int64
+        let modifiedSeconds: Int64
+        let modifiedNanoseconds: Int64
+        let changedSeconds: Int64
+        let changedNanoseconds: Int64
+
+        static func read(_ url: URL) throws -> Self {
+            var value = stat()
+            guard url.isFileURL, lstat(url.path, &value) == 0, value.st_mode & S_IFMT == S_IFREG else {
+                throw DomainValidationError.invalidState(reason: "Recording master is unavailable or not a regular file")
+            }
+            return Self(device: Int64(value.st_dev), inode: UInt64(value.st_ino), size: Int64(value.st_size),
+                modifiedSeconds: Int64(value.st_mtimespec.tv_sec), modifiedNanoseconds: Int64(value.st_mtimespec.tv_nsec),
+                changedSeconds: Int64(value.st_ctimespec.tv_sec), changedNanoseconds: Int64(value.st_ctimespec.tv_nsec))
         }
     }
 }

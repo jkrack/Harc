@@ -108,7 +108,7 @@ public struct HarcValidatedProtocolRequirements: Equatable, Hashable, Sendable {
 public struct HarcProtobufCompatibilityPolicy: Equatable, Sendable {
     public static let currentV1 = Self(
         versionPolicy: .currentV1,
-        supportedRequiredFeatures: []
+        supportedRequiredFeatures: [HarcSpeakerObservationRequestV1.boundFeatureID]
     )
 
     public let versionPolicy: HarcProtocolVersionPolicy
@@ -1326,6 +1326,7 @@ public extension Harc_V1_LibraryRecordingDetailV1 {
         }
         if let notesMarkdown = value.notesMarkdown { self.notesMarkdown = notesMarkdown }
         discontinuities = try value.discontinuities.map(Harc_V1_CaptureDiscontinuityV1.init)
+        captureNeedsReview = value.captureNeedsReview
     }
 
     func domainValue() throws -> LibraryRecordingDetail {
@@ -1339,7 +1340,8 @@ public extension Harc_V1_LibraryRecordingDetailV1 {
             summaryMarkdown: hasSummaryMarkdown ? summaryMarkdown : nil,
             actionItemsMarkdown: hasActionItemsMarkdown ? actionItemsMarkdown : nil,
             notesMarkdown: hasNotesMarkdown ? notesMarkdown : nil,
-            discontinuities: discontinuities.map { try $0.domainValue() }
+            discontinuities: discontinuities.map { try $0.domainValue() },
+            captureNeedsReview: captureNeedsReview
         )
     }
 }

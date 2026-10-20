@@ -1413,6 +1413,61 @@ public extension DatabaseMigrator {
                 """)
         }
 
+        migrator.registerMigration("v7_canonical_receipt_repairs") { db in
+            try db.execute(sql: """
+                CREATE TABLE canonical_receipt_repairs (
+                    repair_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repair_id TEXT NOT NULL UNIQUE,
+                    upload_id TEXT NOT NULL REFERENCES uploads(upload_id),
+                    receipt_sha256 BLOB NOT NULL CHECK(length(receipt_sha256) = 32),
+                    old_identity_json BLOB NOT NULL,
+                    new_identity_json BLOB NOT NULL,
+                    repaired_at REAL NOT NULL
+                );
+                CREATE TRIGGER canonical_receipt_repairs_no_update
+                BEFORE UPDATE ON canonical_receipt_repairs BEGIN
+                    SELECT RAISE(ABORT, 'receipt repair provenance is immutable');
+                END;
+                CREATE TRIGGER canonical_receipt_repairs_no_delete
+                BEFORE DELETE ON canonical_receipt_repairs BEGIN
+                    SELECT RAISE(ABORT, 'receipt repair provenance is immutable');
+                END;
+                """)
+        }
+
+        migrator.registerMigration("v8_canonical_artifact_binding_events") { db in
+            try db.execute(sql: """
+                CREATE TABLE canonical_artifact_binding_events (
+                    event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL UNIQUE,
+                    upload_id TEXT NOT NULL REFERENCES uploads(upload_id),
+                    event_kind TEXT NOT NULL CHECK(event_kind IN (
+                        'receiptMetadataRepair',
+                        'publicationMetadataRepair',
+                        'libraryMigration'
+                    )),
+                    evidence_kind TEXT NOT NULL CHECK(evidence_kind IN (
+                        'receipt',
+                        'manifest'
+                    )),
+                    evidence_sha256 BLOB NOT NULL CHECK(length(evidence_sha256) = 32),
+                    old_identity_json BLOB NOT NULL,
+                    new_identity_json BLOB NOT NULL,
+                    authorized_at REAL NOT NULL
+                );
+                CREATE INDEX canonical_artifact_binding_events_upload_sequence
+                    ON canonical_artifact_binding_events(upload_id, event_sequence);
+                CREATE TRIGGER canonical_artifact_binding_events_no_update
+                BEFORE UPDATE ON canonical_artifact_binding_events BEGIN
+                    SELECT RAISE(ABORT, 'canonical artifact binding provenance is immutable');
+                END;
+                CREATE TRIGGER canonical_artifact_binding_events_no_delete
+                BEFORE DELETE ON canonical_artifact_binding_events BEGIN
+                    SELECT RAISE(ABORT, 'canonical artifact binding provenance is immutable');
+                END;
+                """)
+        }
+
         return migrator
     }
 }

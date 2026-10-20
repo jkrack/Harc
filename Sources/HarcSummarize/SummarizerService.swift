@@ -24,7 +24,7 @@ public enum SummarizerError: Error, LocalizedError {
 /// summarization requests. Single-tenant by design — one in-flight
 /// summarize at a time — because the underlying Gemma model has a
 /// multi-GB resident footprint and concurrent generation blows RAM.
-/// The caller (Stage 3's queue) enforces serial scheduling.
+/// The service serializes summary, answer, dictation and preload operations.
 ///
 /// Thread model: actor. All state mutation is serialized. Callers
 /// interact via `await`. Cancellation is structured-concurrency
@@ -42,6 +42,13 @@ public actor SummarizerService {
     public private(set) var idleUnloadDelay: TimeInterval?
     private var container: (any ContainerLike)?
     private var idleUnloadTask: Task<Void, Never>?
+    private var loadedDirectory: URL?
+    private var loadGeneration = UUID()
+    private var operationActive = false
+    private var operationWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
+
+    /// Internal diagnostic for bounded concurrency tests.
+    var pendingOperationCount: Int { operationWaiters.count }
 
     public init(loader: @escaping Loader) {
         self.loader = loader
@@ -61,6 +68,11 @@ public actor SummarizerService {
     public func unload(reason: String = "manual") {
         idleUnloadTask?.cancel()
         idleUnloadTask = nil
+        loadGeneration = UUID()
+        let waiters = operationWaiters
+        operationWaiters.removeAll()
+        for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
+        loadedDirectory = nil
         guard let currentModelID = loadedModelID else { return }
         ModelRuntimeLog.event("unload.begin", modelID: currentModelID, reason: reason)
         container = nil
@@ -124,33 +136,83 @@ public actor SummarizerService {
         budgetWords: Int,
         onStats: (@Sendable (GenerationStats) -> Void)? = nil
     ) async throws -> SummaryParseResult {
+        try await acquireOperation()
+        defer { releaseOperation() }
+        try Task.checkCancellation()
         cancelIdleUnload()
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
         defer { scheduleIdleUnload(reason: "idle") }
-        let promptBody = SummaryPrompt.build(
+        let inputWords = transcript.utterances.map(SummaryPrompt.line(for:)).reduce(0) {
+            $0 + SummaryPrompt.wordCount(of: $1)
+        }
+        if inputWords > budgetWords {
+            let generation = loadGeneration
+            let result = try await LongSummary.run(transcript: transcript, budget: budgetWords) { prompt in
+                try await self.generateSummaryPass(prompt, container: cont, generation: generation, onStats: onStats)
+            }
+            try Task.checkCancellation()
+            guard generation == loadGeneration else { throw CancellationError() }
+            try SummaryTaskValidation.validate(result)
+            return result
+        }
+        let rendered = SummaryPrompt.renderWithCoverage(
             transcript: transcript,
             budgetWords: budgetWords
         )
 
+        let promptBody = SummaryPrompt.template.replacingOccurrences(of: "{TRANSCRIPT}", with: rendered.body)
+        let generation = loadGeneration
+        let raw = try await generateSummaryPass(promptBody, container: cont, generation: generation, onStats: onStats)
+        let parsed = SummaryParser.parse(raw)
+        try SummaryTaskValidation.validate(parsed)
+        guard !parsed.parseWarning else { return parsed }
+        let factsPrompt = SummaryPrompt.factsTemplate.replacingOccurrences(of: "{TRANSCRIPT}", with: rendered.body)
+        let facts = try await generateSummaryPass(factsPrompt, container: cont, generation: generation, onStats: onStats)
+        let trimmed = facts.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "## Summary\n"
+        guard trimmed.hasPrefix(prefix), !trimmed.dropFirst(prefix.count).contains("##"),
+              !trimmed.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SummarizerError.generationFailed("The factual summary pass was incomplete. No partial summary was saved.")
+        }
+        return SummaryParseResult(summary: String(trimmed.dropFirst(prefix.count)), actionItems: parsed.actionItems, parseWarning: false)
+
+    }
+
+    /// All summary passes share termination and authority checks. Markdown
+    /// validity alone cannot establish that generation finished.
+    private func generateSummaryPass(
+        _ prompt: String, container: any ContainerLike, generation: UUID,
+        onStats: (@Sendable (GenerationStats) -> Void)?
+    ) async throws -> String {
+        try Task.checkCancellation()
+        guard generation == loadGeneration else { throw CancellationError() }
+        let completion = SummaryCompletion()
         let raw: String
         do {
-            // The template already carries the instructions — no
-            // separate system prompt in v1. See the §5.1 template.
-            raw = try await cont.generate(
-                promptBody: promptBody,
-                systemPrompt: nil,
-                maxTokens: SummaryPrompt.maxOutputTokens,
-                onStats: onStats
-            )
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as SummarizerError {
-            throw error
+            raw = try await container.generateSummary(promptBody: prompt,
+                maxTokens: SummaryPrompt.maxOutputTokens, onStats: { stats in
+                    completion.observe(stats)
+                    onStats?(stats)
+                })
         } catch {
+            try Task.checkCancellation()
+            guard generation == loadGeneration else { throw CancellationError() }
+            if error is CancellationError { throw CancellationError() }
+            if let typed = error as? SummarizerError { throw typed }
             throw SummarizerError.generationFailed(error.localizedDescription)
         }
-
-        return SummaryParser.parse(raw)
+        try Task.checkCancellation()
+        guard generation == loadGeneration else { throw CancellationError() }
+        switch completion.reason {
+        case .outputLimit:
+            throw SummarizerError.generationFailed("The model reached its output limit before completing the summary. No incomplete summary was saved.")
+        case .cancelled:
+            // Caller cancellation/unload was checked above. A runtime stop
+            // without either is a visible failure, not a user cancellation.
+            throw SummarizerError.generationFailed("The model stopped before completing the summary. No incomplete summary was saved.")
+        case .complete, nil:
+            return raw
+        }
     }
 
     public func answer(
@@ -159,6 +221,9 @@ public actor SummarizerService {
         modelID: String,
         modelDirectory: URL
     ) async throws -> String {
+        try await acquireOperation()
+        defer { releaseOperation() }
+        try Task.checkCancellation()
         cancelIdleUnload()
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
         defer { scheduleIdleUnload(reason: "idle") }
@@ -196,6 +261,9 @@ public actor SummarizerService {
         modelDirectory: URL,
         maxTokens: Int = ModeTransformPrompt.maxOutputTokens
     ) async throws -> String {
+        try await acquireOperation()
+        defer { releaseOperation() }
+        try Task.checkCancellation()
         cancelIdleUnload()
         let cont = try await getOrLoad(modelID: modelID, directory: modelDirectory)
         defer { scheduleIdleUnload(reason: "idle") }
@@ -228,22 +296,19 @@ public actor SummarizerService {
     /// UI state instead of hiding it under generation time. No-op when the
     /// model is already resident.
     public func preload(modelID: String, modelDirectory: URL) async throws {
+        try await acquireOperation()
+        defer { releaseOperation() }
+        try Task.checkCancellation()
         cancelIdleUnload()
         _ = try await getOrLoad(modelID: modelID, directory: modelDirectory)
         scheduleIdleUnload(reason: "idle")
     }
 
-    /// Load or reuse the container for `modelID`. Reloads when the id
-    /// changes. Validates that the directory exists before calling the
-    /// loader — the loader itself is free to assume the directory is
-    /// present.
-    ///
-    /// Not a coalescing cache: concurrent `summarize` calls for the
-    /// same id during a cold-load window would each re-enter here and
-    /// load independently. The Stage 3 queue enforces serial
-    /// scheduling upstream so this is never exercised in practice.
+    /// Called only by the operation owner. Reuse requires both model identity
+    /// and directory identity; a model switched to another location reloads.
     private func getOrLoad(modelID: String, directory: URL) async throws -> any ContainerLike {
-        if let container, loadedModelID == modelID {
+        let normalizedDirectory = directory.standardizedFileURL
+        if let container, loadedModelID == modelID, loadedDirectory == normalizedDirectory {
             return container
         }
         // Different id (or first call) — drop any stale container
@@ -256,19 +321,56 @@ public actor SummarizerService {
             throw SummarizerError.modelDirectoryMissing(directory)
         }
 
+        let generation = loadGeneration
         let newContainer: any ContainerLike
         do {
             ModelRuntimeLog.event("load.begin", modelID: modelID, reason: "summarizer")
             newContainer = try await loader(directory)
-        } catch let error as SummarizerError {
-            throw error
+            try Task.checkCancellation()
+            guard generation == loadGeneration else { throw CancellationError() }
         } catch {
+            // A noncooperative loader can throw an ordinary error after its
+            // request was cancelled or unloaded. Preserve the invalidation.
+            if error is CancellationError || Task.isCancelled || generation != loadGeneration {
+                throw CancellationError()
+            }
+            if let typed = error as? SummarizerError { throw typed }
             throw SummarizerError.loadFailed(error.localizedDescription)
         }
         container = newContainer
         loadedModelID = modelID
+        loadedDirectory = normalizedDirectory
         ModelRuntimeLog.event("load.end", modelID: modelID, reason: "summarizer")
         return newContainer
+    }
+
+    private func acquireOperation() async throws {
+        try Task.checkCancellation()
+        if !operationActive {
+            operationActive = true
+            return
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                operationWaiters.append((id, continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelWaitingOperation(id) }
+        }
+    }
+
+    private func cancelWaitingOperation(_ id: UUID) {
+        guard let index = operationWaiters.firstIndex(where: { $0.id == id }) else { return }
+        operationWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+
+    private func releaseOperation() {
+        if operationWaiters.isEmpty {
+            operationActive = false
+        } else {
+            operationWaiters.removeFirst().continuation.resume()
+        }
     }
 
     private func cancelIdleUnload() {
@@ -291,7 +393,22 @@ public actor SummarizerService {
     }
 
     private func unloadIfStillLoaded(modelID: String, reason: String) {
-        guard loadedModelID == modelID else { return }
+        guard !operationActive, loadedModelID == modelID else { return }
         unload(reason: reason)
     }
+}
+
+/// Stats callbacks may run off the service actor. Only final metadata is
+/// authoritative; interim chunk counts must not decide completion.
+private final class SummaryCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: GenerationStats.StopReason?
+    func observe(_ stats: GenerationStats) {
+        guard stats.isFinal else { return }
+        lock.withLock {
+            guard value != .outputLimit, value != .cancelled else { return }
+            if let reason = stats.stopReason { value = reason }
+        }
+    }
+    var reason: GenerationStats.StopReason? { lock.withLock { value } }
 }

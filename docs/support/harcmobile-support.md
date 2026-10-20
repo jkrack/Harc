@@ -7,7 +7,7 @@ offline review sample works without an account or Host.
 
 ## Requirements
 
-- An iPhone running iOS 18 or later
+- An iPhone running iOS 26 or later
 - Microphone permission for recording
 - Harc for Mac for pairing, transcription, summaries, and the canonical Library
 - Local Network permission for direct Host discovery

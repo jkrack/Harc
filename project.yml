@@ -3,14 +3,14 @@ options:
   bundleIdPrefix: com.harc
   deploymentTarget:
     macOS: "26.0"
-    iOS: "18.0"
+    iOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.14.12"
-    CURRENT_PROJECT_VERSION: "67"
+    MARKETING_VERSION: "0.14.17"
+    CURRENT_PROJECT_VERSION: "72"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
   configs:
@@ -136,18 +136,20 @@ targets:
 
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.harc.Harc
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.Harc$(HARC_MAC_DIAGNOSTIC_SUFFIX)
         CODE_SIGN_ENTITLEMENTS: HarcApp/Harc.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         HARC_BUILD_SHA: unrecorded
         ARCHS: arm64
     postCompileScripts:
       - name: Embed harc-stt daemon
+        basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/build-daemon.sh"
         outputFiles:
           - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/harc-stt
       - name: Embed harc-mcp agent bridge
+        basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/build-mcp.sh"
         outputFiles:
@@ -171,6 +173,9 @@ targets:
     platform: macOS
     sources:
       - path: HarcAppTests
+      - path: Tests/HarcClientStoreTests/ClientStoreFixtures.swift
+      - path: Tests/HarcHostTransportTests/Support
+      - path: Tests/HarcHostTransportTests/RecordingTransferFactoryTestDoubles.swift
     dependencies:
       - target: Harc
     settings:
@@ -183,7 +188,7 @@ targets:
   HarcMobile:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileApp
         excludes:
@@ -243,6 +248,7 @@ targets:
         HARC_MOBILE_DISPLAY_NAME: Harc
         PRODUCT_NAME: Harc
         PRODUCT_MODULE_NAME: HarcMobile
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) HARC_MOBILE_QUALIFIED_CAF_ALAC"
         CODE_SIGN_ENTITLEMENTS: HarcMobileApp/HarcMobile.entitlements
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
@@ -253,7 +259,7 @@ targets:
   HarcMobileWidgets:
     type: app-extension
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileWidgets
       - path: HarcMobileActivityShared
@@ -279,9 +285,12 @@ targets:
   HarcMobileAppTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileAppTests
+      # Reuse socket-free, signed bootstrap fixtures; never weaken evidence access.
+      - path: Tests/HarcClientTransportTests/BootstrapClientFixture.swift
+      - path: Tests/HarcClientTransportTests/TransportTrustFixtures.swift
     dependencies:
       - target: HarcMobile
     settings:
@@ -296,7 +305,7 @@ targets:
   HarcMobileUITests:
     type: bundle.ui-testing
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileUITests
     dependencies:
@@ -312,7 +321,7 @@ targets:
   HarcMobileSpikes:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileSpikes
         excludes:
@@ -346,7 +355,7 @@ targets:
   HarcMobileSpikesTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.0"
     sources:
       - path: HarcMobileSpikesTests
     dependencies:
@@ -360,6 +369,18 @@ targets:
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
 
 schemes:
+  Harc:
+    build:
+      targets:
+        Harc: all
+    run:
+      config: Debug
+    test:
+      environmentVariables:
+        HARC_UI_TESTING: "1"
+      targets:
+        - HarcAppTests
+        - HarcAppUITests
   HarcMobile:
     build:
       targets:

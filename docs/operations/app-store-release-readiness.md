@@ -10,7 +10,8 @@ Prepared artifacts:
 - [submission metadata and App Review copy](../app-store/harcmobile-metadata.md)
 - [screenshot plan](../app-store/harcmobile-screenshot-plan.md)
 - [exact-build App Privacy assessment](../app-store/harcmobile-app-privacy-assessment.md)
-- [current pass/open evidence matrix](../evidence/2026-08-09-harcmobile-app-store-readiness.md)
+- [current candidate and open qualification gates](../evidence/harcmobile-current-candidate-readiness.md)
+- [historical source-scoped evidence](../evidence/2026-08-09-harcmobile-app-store-readiness.md)
 - [compact-screen simulator diagnostic](../evidence/2026-08-09-harcmobile-se3-compact-simulator.md)
 - [Omega physical storage-protection diagnostic](../evidence/2026-08-09-omega-physical-storage-protection.md)
 - [Omega physical C7 storage-exhaustion diagnostic](../evidence/2026-08-09-omega-c7-storage-exhaustion.md)
@@ -30,15 +31,13 @@ Prepared artifacts:
   largest supported Dynamic Type sizes.
 - Run client-store upgrade fixtures and an installed-build upgrade without
   losing a protected master, outbox entry, receipt, adoption, or library cursor.
-- Run the final signed archive on Omega (`iPhone16,2`) before upload. Do not use
-  Omega alone as evidence for an older hardware support claim.
-- With the current iOS 18 deployment floor, acquire or borrow the recommended
-  physical iPhone XR/iOS 18 qualification target documented in
-  `mobile-physical-qualification.md`; do not treat mobile inference as a launch
-  requirement or use it to narrow the capture-client floor.
-- Acquire or borrow a current non-Pro iPhone 17 on the current iOS release for
-  the specification's second named matrix role. Omega is useful additional Pro
-  hardware evidence, not a substitute for that role.
+- Run the final signed archive on at least one recorded physical iPhone within
+  the declared release scope before upload. Omega (`iPhone16,2`) is an acceptable
+  qualification phone. Do not generalize a single-device run into an unmeasured
+  performance claim for every eligible model.
+- Do not treat mobile inference as a launch requirement or use it to narrow the
+  capture-client floor. Compact, older, current non-Pro, and additional Pro
+  hardware runs are compatibility evidence, not named release roles.
 - Repeat the physical storage-policy test from the exact archive source, then
   exercise locked, reboot/first-unlock, and installed-upgrade behavior; the
   current Omega round-trip proves the classes are applied but not those state
@@ -159,6 +158,12 @@ Run the repository-side preflight before creating an archive:
 ```bash
 ./scripts/preflight-harcmobile-app-store.sh
 ```
+
+It checks the active current-candidate record against source version/build; the
+historical evidence file is not a current-version requirement. A matching record
+identifies preparation inputs and does not requalify historical results. Keep
+unrun physical, deployed-privacy, Account Holder, archive/export, and submission
+gates visible in that record. Source preflight success alone is not a go decision.
 
 It validates the 5 GiB operational floor, source plists and privacy manifest,
 privacy and relay URLs, release-facing project settings, final 1024px AppIcon

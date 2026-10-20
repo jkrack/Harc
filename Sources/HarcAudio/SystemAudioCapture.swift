@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 @preconcurrency import AVFoundation
 @preconcurrency import AVFAudio
 @preconcurrency import ScreenCaptureKit
@@ -12,10 +13,15 @@ public protocol SystemAudioCaptureSource: Sendable {
     func start() async throws -> AsyncStream<AVAudioPCMBuffer>
 
     func stop() async
+    func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async
+}
+
+public extension SystemAudioCaptureSource {
+    func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async {}
 }
 
 /// Real implementation backed by SCStream.
-public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOutput {
+public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOutput, SCStreamDelegate {
     /// Hands sample buffers from the (nonisolated) SCStream callback to the
     /// consumer stream *synchronously*, so arrival order is delivery order.
     /// The old path spawned one unstructured Task per buffer — tasks reach
@@ -24,14 +30,28 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
     private final class ContinuationBox: @unchecked Sendable {
         private let lock = NSLock()
         private var cont: AsyncStream<AVAudioPCMBuffer>.Continuation?
+        private var handler: (@Sendable (CaptureIntegrityReport.Reason) -> Void)?
+        private var stopping = false
+        func setHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) {
+            lock.withLock { self.handler = handler }
+        }
         func set(_ c: AsyncStream<AVAudioPCMBuffer>.Continuation?) {
-            lock.lock(); cont = c; lock.unlock()
+            lock.withLock { cont = c; stopping = false }
         }
         func yield(_ b: AVAudioPCMBuffer) {
-            lock.lock(); cont?.yield(b); lock.unlock()
+            let dropped = lock.withLock { () -> Bool in
+                if let result = cont?.yield(b), case .dropped = result { return true }
+                return false
+            }
+            if dropped { observe(.bufferOverrun) }
         }
+        func observe(_ reason: CaptureIntegrityReport.Reason) {
+            let callback = lock.withLock { cont != nil && !stopping ? handler : nil }
+            callback?(reason)
+        }
+        func prepareStop() { lock.withLock { stopping = true } }
         func finish() {
-            lock.lock(); cont?.finish(); cont = nil; lock.unlock()
+            lock.withLock { cont?.finish(); cont = nil }
         }
     }
 
@@ -44,6 +64,10 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
     // Cached across requestPermission→start within a single session so the TCC
     // path fires once, not twice. Consumed on start; cleared on stop.
     private var cachedContent: SCShareableContent?
+
+    public func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async {
+        continuationBox.setHandler(handler)
+    }
 
     public override init() {
         super.init()
@@ -87,14 +111,14 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
         config.height = 2
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
 
-        let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+        let stream = SCStream(filter: filter, configuration: config, delegate: self)
         do {
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
         } catch {
             throw AudioError.systemAudioStreamFailed("addStreamOutput: \(error.localizedDescription)")
         }
 
-        let (s, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+        let (s, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream(bufferingPolicy: .bufferingOldest(256))
         continuationBox.set(cont)
         self.stream = stream
 
@@ -111,6 +135,7 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
     public func stop() async {
         cachedContent = nil
         guard isRunning, let stream else { return }
+        continuationBox.prepareStop()
         try? await stream.stopCapture()
         self.stream = nil
         continuationBox.finish()
@@ -123,55 +148,40 @@ public actor SystemAudioCapture: NSObject, SystemAudioCaptureSource, SCStreamOut
         of type: SCStreamOutputType
     ) {
         guard type == .audio else { return }
-        guard let buffer = Self.convertToPCM(sampleBuffer) else { return }
+        guard let buffer = Self.convertToPCM(sampleBuffer) else {
+            if CMSampleBufferGetNumSamples(sampleBuffer) > 0 { continuationBox.observe(.conversionFailed) }
+            return
+        }
         // Synchronous yield on the serial sample queue: ordered by construction.
         continuationBox.yield(buffer)
     }
 
-    /// Convert a CMSampleBuffer from SCStream into a Float32 AVAudioPCMBuffer.
+    nonisolated public func stream(_ stream: SCStream, didStopWithError error: Error) {
+        continuationBox.observe(.sourceStopped)
+        continuationBox.finish()
+    }
+
+    /// Copy a CMSampleBuffer from SCStream into an owned native-format PCM buffer.
     /// SCStream delivers Int16 or Float32 depending on the system; we route
     /// whatever format the buffer describes and let AudioMixer normalise.
-    nonisolated private static func convertToPCM(_ sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+    nonisolated static func convertToPCM(_ sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
         guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let streamDesc = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
+              let streamDesc = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee,
+              streamDesc.mFormatID == kAudioFormatLinearPCM,
+              let frames = Int32(exactly: CMSampleBufferGetNumSamples(sampleBuffer)), frames > 0
         else { return nil }
 
         var asbd = streamDesc
-        guard let format = AVAudioFormat(streamDescription: &asbd) else { return nil }
-        let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
-        guard let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
-        pcm.frameLength = frames
-
-        guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
-        var totalLen = 0
-        var ptr: UnsafeMutablePointer<Int8>? = nil
-        let status = CMBlockBufferGetDataPointer(
-            dataBuffer,
-            atOffset: 0,
-            lengthAtOffsetOut: nil,
-            totalLengthOut: &totalLen,
-            dataPointerOut: &ptr
-        )
-        guard status == kCMBlockBufferNoErr, let src = ptr else { return nil }
-
-        if format.commonFormat == .pcmFormatFloat32, !format.isInterleaved,
-           let dst = pcm.floatChannelData {
-            // Non-interleaved Float32 — copy per channel. Derive the per-channel
-            // stride from the declared frame geometry rather than splitting the
-            // observed buffer length, which would be wrong for formats where
-            // channel planes aren't equal-sized.
-            let perChannelBytes = Int(format.streamDescription.pointee.mBytesPerFrame) * Int(frames)
-            for ch in 0..<Int(format.channelCount) {
-                memcpy(dst[ch], src.advanced(by: ch * perChannelBytes), perChannelBytes)
-            }
-        } else {
-            // Interleaved or Int16 — memcpy as a single blob into the raw storage.
-            let mutableABL = UnsafeMutableAudioBufferListPointer(pcm.mutableAudioBufferList)
-            if let raw = mutableABL[0].mData {
-                memcpy(raw, src, totalLen)
-                mutableABL[0].mDataByteSize = UInt32(totalLen)
-            }
-        }
+        guard let format = AVAudioFormat(streamDescription: &asbd),
+              let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames))
+        else { return nil }
+        pcm.frameLength = AVAudioFrameCount(frames)
+        // CoreMedia validates frame geometry and copies into the populated ABL.
+        // Raw CMBlockBuffer memcpy assumed contiguity, planar packing and enough
+        // destination storage, none of which is guaranteed by that API.
+        guard CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer, at: 0, frameCount: frames, into: pcm.mutableAudioBufferList
+        ) == noErr else { return nil }
         return pcm
     }
 }

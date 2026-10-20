@@ -223,6 +223,58 @@ extension HarcHostStore {
         }
     }
 
+    /// Read-only administrative view used to verify an already-published WAV
+    /// before an owner-authorized binding transition. Unlike recovery, this
+    /// never advances a failed checkpoint.
+    func canonicalPublicationWorkForBindingRepair(
+        uploadID: UploadID
+    ) async throws -> HostCanonicalPublicationWork {
+        let plan: StoredPublicationPlan = try await dbQueue.read { db in
+            guard let attempt = try self.fetchUploadAttempt(
+                in: db,
+                uploadID: uploadID
+            ), let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM publication_journal WHERE upload_id = ?",
+                arguments: [uploadID.description]
+            ) else { throw HarcHostError.uploadNotFound }
+            try Self.requireRecoverablePublicationRow(row)
+            return try self.decodePublicationPlan(row, attempt: attempt, in: db)
+        }
+        return try materializePublicationWork(plan)
+    }
+
+    func canonicalArtifactBindingCandidateUploadIDs() async throws -> [UploadID] {
+        try await dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT journal.upload_id FROM publication_journal AS journal
+                    WHERE journal.legacy_quarantined = 0
+                      AND journal.canonical_artifact_inode_number IS NOT NULL
+                      AND (
+                        journal.state IN ('receipted', 'processing', 'complete')
+                        OR (
+                            journal.state = 'failedRecoverable'
+                            AND journal.resume_state IN (
+                                'audioPublished', 'recordingCommitted',
+                                'receiptPrepared'
+                            )
+                        )
+                      )
+                    ORDER BY journal.created_at, journal.upload_id
+                    """
+            ).map { raw in
+                guard let uuid = UUID(uuidString: raw) else {
+                    throw HarcHostError.databaseFailure(
+                        "Publication journal has an invalid upload ID."
+                    )
+                }
+                return UploadID(uuid)
+            }
+        }
+    }
+
     func markPublicationCheckpoint(
         uploadID: UploadID,
         expected: Set<HostUploadJournalState>,
@@ -544,7 +596,10 @@ private extension HarcHostStore {
         )
 
         let effectiveCheckpoint = try Self.effectivePublicationCheckpoint(from: row, state: state)
-        let artifactIdentity = try Self.canonicalArtifactIdentity(from: row)
+        let artifactIdentity = try Self.effectiveCanonicalArtifactIdentity(
+            in: db,
+            row: row
+        )
 
         let receiptBytes: Data? = row["exact_receipt_bytes"]
         let receiptHash: Data? = row["receipt_object_sha256"]

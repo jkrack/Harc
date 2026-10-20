@@ -23,6 +23,18 @@ final class SummarizerServiceTests: XCTestCase {
         return (loader, { await box.snapshot() })
     }
 
+    func test_insufficientBudgetFailsRatherThanReturningOnlyTheTail() async throws {
+        let (loader, _) = spyLoader(id: "m")
+        let service = SummarizerService(loader: loader)
+        do {
+            _ = try await service.summarize(transcript: .init(utterances: [
+                .init(speaker: "Ada", text: "I will send the contract on Friday."),
+                .init(speaker: "Ben", text: "Goodbye.")
+            ]), modelID: "m", modelDirectory: .temporaryDirectory, budgetWords: 2)
+            XCTFail("Returned an incomplete summary")
+        } catch is SummarizerError { }
+    }
+
     func test_newService_reportsNoLoadedModel() async {
         let service = SummarizerService(loader: { _ in
             throw SummarizerError.loadFailed("not called")
@@ -170,7 +182,7 @@ final class SummarizerServiceTests: XCTestCase {
         let produced = await containers()
         XCTAssertEqual(produced.count, 1, "One container produced.")
         let stub = produced[0]
-        XCTAssertEqual(stub.generateCalls, 1)
+        XCTAssertEqual(stub.generateCalls, 2)
         XCTAssertEqual(stub.lastMaxTokens, SummaryPrompt.maxOutputTokens,
             "Service must pass the canonical maxOutputTokens to the container.")
         XCTAssertTrue(stub.lastPromptBody?.contains("Jason: Let's lock rollout for Friday.") ?? false,
@@ -244,8 +256,33 @@ final class SummarizerServiceTests: XCTestCase {
     }
 
     func test_idleUnloadPolicy_clearsLoadedModelAfterDelay() async throws {
-        let service = SummarizerService(loader: StubContainer.loader(id: "m"))
+        let released = expectation(description: "post-generation idle policy releases the container")
+        let service = SummarizerService(loader: { _ in
+            StubContainer(id: "m", onRelease: { released.fulfill() })
+        })
+        // With no container yet, this setter cannot schedule an unload. Only
+        // the summarize completion path can start the real idle timer.
         await service.setIdleUnloadDelay(0.01)
+        _ = try await service.summarize(
+            transcript: PromptTranscript(utterances: [
+                .init(speaker: nil, text: "hello")
+            ]),
+            modelID: "m",
+            modelDirectory: URL(fileURLWithPath: "/tmp"),
+            budgetWords: 100
+        )
+        // The timer may already have fired by the caller's continuation. Check
+        // actual release and cleared state, not an intermediate warm window.
+        await fulfillment(of: [released], timeout: 5)
+        let loaded = await service.loadedModelID
+        XCTAssertNil(loaded, "Post-generation idle policy must unload the summarizer.")
+    }
+
+    func test_idleUnloadPolicy_releasesWarmModelAfterPolicyChange() async throws {
+        let released = expectation(description: "idle policy releases the warm container")
+        let service = SummarizerService(loader: { _ in
+            StubContainer(id: "m", onRelease: { released.fulfill() })
+        })
 
         _ = try await service.summarize(
             transcript: PromptTranscript(utterances: [
@@ -258,7 +295,10 @@ final class SummarizerServiceTests: XCTestCase {
         var loaded = await service.loadedModelID
         XCTAssertEqual(loaded, "m")
 
-        try await Task.sleep(nanoseconds: 80_000_000)
+        // Enable the real timer after verifying the warm state. A fixed sleep
+        // cannot order the unloader task against this test under scheduler load.
+        await service.setIdleUnloadDelay(0.01)
+        await fulfillment(of: [released], timeout: 5)
         loaded = await service.loadedModelID
         XCTAssertNil(loaded, "Idle retention policy must unload the warm summarizer.")
     }
@@ -271,6 +311,8 @@ final class SummarizerServiceTests: XCTestCase {
 /// two-section Gemma-formatted response.
 final class StubContainer: ContainerLike, @unchecked Sendable {
     let id: String
+    private let onRelease: (@Sendable () -> Void)?
+    deinit { onRelease?() }
     private(set) var generateCalls = 0
     private(set) var lastPromptBody: String?
     private(set) var lastSystemPrompt: String?
@@ -279,6 +321,7 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
     var response: String
 
     init(id: String,
+         onRelease: (@Sendable () -> Void)? = nil,
          response: String = """
         ## Summary
         Stubbed summary.
@@ -288,6 +331,7 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
         """
     ) {
         self.id = id
+        self.onRelease = onRelease
         self.response = response
     }
 
@@ -312,6 +356,9 @@ final class StubContainer: ContainerLike, @unchecked Sendable {
         lastSystemPrompt = systemPrompt
         lastMaxTokens = maxTokens
         onStats?(GenerationStats(generatedTokens: 42, tokensPerSecond: 21, isFinal: true))
+        if promptBody.contains("Do not generate an action list") {
+            return "## Summary\n" + SummaryParser.parse(response).summary
+        }
         return response
     }
 }

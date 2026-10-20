@@ -1,9 +1,27 @@
 import Foundation
+import GRPCCore
 @testable import HarcClientTransport
 import Testing
 
 @Suite("Transport error diagnostics")
 struct HarcTransportErrorDiagnosticTests {
+    @Test("Settings distinguishes RPC failures without showing their underlying cause")
+    func rpcUserFacingMessage() {
+        let diagnostic = HarcTransportErrorDiagnostic.describe(RPCError(
+            code: .resourceExhausted,
+            message: "The host cannot accept more transfer work.",
+            cause: FixtureError.disconnected
+        ))
+        #expect(diagnostic.userFacingMessage
+            == "The host cannot accept more transfer work. (resourceExhausted)")
+        #expect(!diagnostic.userFacingMessage.contains("disconnected"))
+        #expect(HarcTransportErrorDiagnostic.describe(RPCError(
+            code: .internalError, message: ""
+        )).userFacingMessage == "internalError")
+        #expect(HarcTransportErrorDiagnostic.describe(
+            LocalizedFixtureError.hostOffline
+        ).userFacingMessage == "The adopted Host is offline.")
+    }
     private enum FixtureError: Error {
         case disconnected
     }

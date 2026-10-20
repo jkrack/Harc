@@ -69,6 +69,10 @@ public struct HostTLSServerCertificateFacts: Equatable, Sendable {
     public let tlsSPKISHA256: Data
     public let framedSignedTransportSet: Data
 
+    static func isLegacyHarcCertificate(_ der: Data, name: Data) -> Bool {
+        HostTLSCertificateDER.isLegacyHarcCertificate(der, name: name)
+    }
+
     public static func validate(
         certificateDER: Data,
         request: HostTLSServerCertificateRequest
@@ -81,7 +85,7 @@ public struct HostTLSServerCertificateFacts: Equatable, Sendable {
 }
 
 /// The only public bridge from Harc identity state to Network.framework TLS.
-/// It contains the installed certificate and matching opaque `SecIdentity`,
+/// It contains an in-memory certificate and matching opaque `SecIdentity`,
 /// never exportable private-key bytes or a standalone private `SecKey`.
 public struct HostTLSServerIdentity: @unchecked Sendable {
     public let securityIdentity: SecIdentity
@@ -165,8 +169,8 @@ extension HostTLSSigningIdentity {
         return facts
     }
 
-    /// Revalidates previously persisted DER, installs that exact public
-    /// certificate if necessary, and resolves it against this permanent key.
+    /// Revalidates persisted DER and constructs an in-memory identity. Public
+    /// certificates must never be installed in an enumerable Keychain store.
     package func resolveServerIdentity(
         certificateDER: Data,
         request: HostTLSServerCertificateRequest
@@ -186,10 +190,10 @@ extension HostTLSSigningIdentity {
         guard facts.publicKeyX963 == publicKey else {
             throw HostCryptographicStateError.serverCertificateKeyMismatch
         }
-        let identity = try HostTLSCertificateDER.installAndResolveIdentity(
+        let identity = try HostTLSCertificateDER.makeIdentity(
             certificateDER: certificateDER,
             expectedPublicKey: publicKey,
-            useDataProtectionKeychain: securityKey.usesDataProtectionKeychain
+            privateKey: securityKey.copyPrivateKeyForCertificateIssuance()
         )
         return HostTLSServerIdentity(securityIdentity: identity, certificate: facts)
     }
@@ -338,6 +342,31 @@ private enum HostTLSCertificateDER {
         )
     }
 
+    static func isLegacyHarcCertificate(_ der: Data, name: Data) -> Bool {
+        do {
+            var root = DERCursor(der)
+            var certificate = DERCursor(try root.read(tag: 0x30).content)
+            try root.requireEnd()
+            var tbs = DERCursor(try certificate.read(tag: 0x30).content)
+            _ = try tbs.read(tag: 0xa0)
+            _ = try tbs.read(tag: 0x02)
+            _ = try tbs.read(tag: 0x30)
+            guard try tbs.read(tag: 0x30).encoded == name else { return false }
+            let validity = try parseValidity(tbs.read(tag: 0x30).content)
+            guard try tbs.read(tag: 0x30).encoded == name else { return false }
+            let spki = try tbs.read(tag: 0x30).encoded
+            let transport = try parseExtensions(tbs.read(tag: 0xa3).content)
+            let request = try HostTLSServerCertificateRequest(
+                transportSetEntryNotBefore: validity.0,
+                transportSetEntryNotAfter: validity.1,
+                expectedTLSSPKISHA256: Data(SHA256.hash(data: spki)),
+                framedSignedTransportSet: transport
+            )
+            _ = try parseAndValidate(der, request: request)
+            return true
+        } catch { return false }
+    }
+
     static func parseAndValidate(
         _ certificateDER: Data,
         request: HostTLSServerCertificateRequest
@@ -426,77 +455,18 @@ private enum HostTLSCertificateDER {
         }
     }
 
-    static func installAndResolveIdentity(
+    static func makeIdentity(
         certificateDER: Data,
         expectedPublicKey: P256X963PublicKey,
-        useDataProtectionKeychain: Bool
+        privateKey: SecKey
     ) throws -> SecIdentity {
-        try HostSecurityP256SigningKey.withKeychainLifecycle {
-            try installAndResolveIdentityLocked(
-                certificateDER: certificateDER,
-                expectedPublicKey: expectedPublicKey,
-                useDataProtectionKeychain: useDataProtectionKeychain
-            )
-        }
-    }
-
-    private static func installAndResolveIdentityLocked(
-        certificateDER: Data,
-        expectedPublicKey: P256X963PublicKey,
-        useDataProtectionKeychain: Bool
-    ) throws -> SecIdentity {
-        guard let certificate = SecCertificateCreateWithData(
-            nil,
-            certificateDER as CFData
-        ), let certificateKey = SecCertificateCopyKey(certificate) else {
-            throw HostCryptographicStateError.invalidServerCertificate
-        }
-        guard try externalPublicKey(certificateKey) == expectedPublicKey else {
-            throw HostCryptographicStateError.serverCertificateKeyMismatch
-        }
-
-        var addAttributes: [String: Any] = [
-            kSecClass as String: kSecClassCertificate,
-            kSecValueRef as String: certificate,
-            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            kSecAttrLabel as String: "Harc TLS server certificate",
-        ]
-        if useDataProtectionKeychain {
-            addAttributes[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
-        }
-        let addStatus = SecItemAdd(addAttributes as CFDictionary, nil)
-        guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
-            throw HostCryptographicStateError.unexpectedKeychainStatus(addStatus)
-        }
-
-        let identity = try resolveInstalledServerIdentity(certificate: certificate)
-        var matchedPrivateKey: SecKey?
-        guard SecIdentityCopyPrivateKey(identity, &matchedPrivateKey) == errSecSuccess,
-              let matchedPrivateKey,
-              let matchedPublicKey = SecKeyCopyPublicKey(matchedPrivateKey),
-              try externalPublicKey(matchedPublicKey) == expectedPublicKey
-        else {
+        guard let certificate = SecCertificateCreateWithData(nil, certificateDER as CFData),
+              let certificateKey = SecCertificateCopyKey(certificate),
+              try externalPublicKey(certificateKey) == expectedPublicKey,
+              let identity = SecIdentityCreate(nil, certificate, privateKey) else {
             throw HostCryptographicStateError.serverIdentityUnavailable
         }
         return identity
-    }
-
-    private static func resolveInstalledServerIdentity(
-        certificate: SecCertificate
-    ) throws -> SecIdentity {
-#if os(macOS)
-        var identity: SecIdentity?
-        let status = SecIdentityCreateWithCertificate(nil, certificate, &identity)
-        guard status == errSecSuccess, let identity else {
-            throw HostCryptographicStateError.serverIdentityUnavailable
-        }
-        return identity
-#else
-        // A Harc client never serves the Host TLS identity. Keep the shared
-        // identity module buildable on iOS without weakening that boundary or
-        // attempting to select an arbitrary client identity from its keychain.
-        throw HostCryptographicStateError.serverIdentityUnavailable
-#endif
     }
 
     static func deleteInstalledCertificateBestEffort(certificateDER: Data) {

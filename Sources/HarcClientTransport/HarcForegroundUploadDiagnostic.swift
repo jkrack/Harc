@@ -43,6 +43,15 @@ public struct HarcTransportErrorDiagnostic: Equatable, Sendable {
     public let rpcMessage: String?
     public let cause: String?
 
+    /// Settings keeps the actual RPC status without displaying transport causes
+    /// (which can contain implementation details). NSError bridging loses this
+    /// information and renders unrelated failures as the same "error 1".
+    public var userFacingMessage: String {
+        guard let rpcCode else { return summary }
+        guard let rpcMessage, !rpcMessage.isEmpty else { return rpcCode }
+        return "\(rpcMessage) (\(rpcCode))"
+    }
+
     public static func describe(_ error: any Error) -> Self {
         if let rpc = error as? RPCError {
             return Self(

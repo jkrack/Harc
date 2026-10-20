@@ -1,0 +1,100 @@
+Building for debugging...
+[Planning deferred tasks]
+[1 / 12]
+[2 / 13] HarcDomain
+[11 / 61]
+[14 / 61]
+[20 / 61]
+[22 / 61]
+[26 / 61]
+[29 / 61]
+[35 / 61]
+[37 / 61]
+[38 / 61]
+[42 / 61] HarcDomain
+[44 / 61] HarcDomain
+[48 / 62] HarcDomain
+[49 / 62] HarcDomain
+[52 / 65] HarcDomain
+[53 / 76] HarcDomain
+[55 / 76] HarcIdentity
+[60 / 77] HarcIdentity
+[63 / 79] HarcIdentity
+[65 / 79] HarcIdentity
+[66 / 79] HarcIdentity
+[67 / 79] HarcDomain
+/Users/jlane/Documents/GitHub/Harc/Sources/HarcIdentity/HostTLSCertificateMigration.swift:19:19: warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 17 |         var keychain: SecKeychain?
+ 18 |         let path = NSHomeDirectory() + "/Library/Keychains/login.keychain-db"
+ 19 |         try check(SecKeychainOpen(path, &keychain))
+    |                   `- warning: 'SecKeychainOpen' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 20 |         guard let keychain else { throw Failure.invalidResult }
+ 21 |         var result: CFTypeRef?
+
+/Users/jlane/Documents/GitHub/Harc/Sources/HarcIdentity/HostTLSCertificateMigration.swift:28:38: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 26 |             kSecReturnRef: true,
+ 27 |             kSecReturnAttributes: true,
+ 28 |             kSecUseAuthenticationUI: kSecUseAuthenticationUIFail,
+    |                                      `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 29 |         ] as CFDictionary, &result)
+ 30 |         if status == errSecItemNotFound { return Result(certificatesRemoved: 0, orphanKeysRemoved: 0) }
+
+/Users/jlane/Documents/GitHub/Harc/Sources/HarcIdentity/HostTLSCertificateMigration.swift:47:42: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 45 |                 kSecMatchSearchList: [keychain],
+ 46 |                 kSecValueRef: certificate,
+ 47 |                 kSecUseAuthenticationUI: kSecUseAuthenticationUIFail,
+    |                                          `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 48 |             ] as CFDictionary)
+ 49 |             if deletion == errSecSuccess { removed += 1 }
+
+/Users/jlane/Documents/GitHub/Harc/Sources/HarcIdentity/HostTLSCertificateMigration.swift:70:38: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 68 |             kSecReturnAttributes: true,
+ 69 |             kSecReturnRef: true,
+ 70 |             kSecUseAuthenticationUI: kSecUseAuthenticationUIFail,
+    |                                      `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 71 |         ] as CFDictionary, &result)
+ 72 |         if status == errSecItemNotFound { return 0 }
+
+/Users/jlane/Documents/GitHub/Harc/Sources/HarcIdentity/HostTLSCertificateMigration.swift:94:42: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 92 |                 kSecValueRef: key,
+ 93 |                 kSecMatchSearchList: [keychain],
+ 94 |                 kSecUseAuthenticationUI: kSecUseAuthenticationUIFail,
+    |                                          `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 95 |             ] as CFDictionary)
+ 96 |             if deletion == errSecSuccess { count += 1 }
+
+/Users/jlane/Documents/GitHub/Harc/Sources/HarcIdentity/HostTLSCertificateMigration.swift:110:38: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+108 |             kSecMatchLimit: kSecMatchLimitAll,
+109 |             kSecReturnData: true,
+110 |             kSecUseAuthenticationUI: kSecUseAuthenticationUIFail,
+    |                                      `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+111 |         ] as CFDictionary, &result)
+112 |         if status == errSecItemNotFound { return [] }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[69 / 79] HarcDomain
+[74 / 80] HarcIdentityTests-product
+[77 / 91]
+[81 / 91] HarcIdentityTests-product
+[82 / 91] HarcIdentityTests-product
+[84 / 91] HarcIdentityTests-product
+[86 / 93] HarcIdentityTests-product
+[89 / 93] HarcIdentityTests-product
+[91 / 93] HarcIdentityTests-product
+Build complete! (9.27 sec)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "HarcIdentity permanent TLS key and X.509 server identity" started.
+◇ Test "50 TLS listener restarts leave the certificate store unchanged" started.
+TLS regression: constructing listener
+TLS regression listener: failed(POSIXErrorCode(rawValue: 22): Invalid argument)
+✘ Test "50 TLS listener restarts leave the certificate store unchanged" recorded an issue at HostTLSServerIdentityTests.swift:13:6: Caught error: POSIXErrorCode(rawValue: 22): Invalid argument
+✘ Test "50 TLS listener restarts leave the certificate store unchanged" failed after 0.056 seconds with 1 issue.
+✘ Suite "HarcIdentity permanent TLS key and X.509 server identity" failed after 0.056 seconds with 1 issue.
+↳ // These tests install and remove process-global Security.framework keys and
+↳ // certificates. Serial execution keeps one fixture's cleanup from racing
+↳ // another fixture's SecIdentity/key lookup under a heavily parallel full run.
+✘ Test run with 1 test in 1 suite failed after 0.056 seconds with 1 issue.
+Note: Some test targets reported failures:
+  - HarcIdentityTests (Swift Testing)

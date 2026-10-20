@@ -110,31 +110,19 @@ public final class AudioMixer {
             frameCarry = 0
         }
 
-        // Extend the input buffer by primeExtension frames of the same last-sample
-        // value so the converter can produce the expected number of output frames
-        // even though .pre consumes some input for filter priming.
         let inputFrames = Int(buffer.frameLength)
+        guard inputFrames > 0 else {
+            guard let empty = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: 1) else {
+                throw AudioError.conversionFailed("\(label): empty buffer allocation failed")
+            }
+            return empty
+        }
+        // Repeat a complete native-format frame for converter priming. Int16,
+        // Float32 and interleaved channels retain their original geometry.
         let extraInput = AudioMixer.primeExtension
-        let totalInput = inputFrames + extraInput
-        let channelCount = Int(buffer.format.channelCount)
-
-        guard let extended = AVAudioPCMBuffer(
-            pcmFormat: buffer.format,
-            frameCapacity: AVAudioFrameCount(totalInput)
-        ) else {
-            throw AudioError.conversionFailed("\(label): extended buffer allocation failed")
-        }
-        extended.frameLength = AVAudioFrameCount(totalInput)
-
-        for ch in 0..<channelCount {
-            let src = buffer.floatChannelData![ch]
-            let dst = extended.floatChannelData![ch]
-            // Copy original frames
-            dst.update(from: src, count: inputFrames)
-            // Pad with the last sample value
-            let lastValue = inputFrames > 0 ? src[inputFrames - 1] : 0.0
-            for i in inputFrames..<totalInput { dst[i] = lastValue }
-        }
+        let extended = try PCMBufferCopy.copy(
+            buffer, repeatingLastFrame: AVAudioFrameCount(extraInput)
+        )
 
         // Expected output frame count from the original (unextended) input.
         // The fractional remainder is carried to the next buffer instead of
@@ -173,12 +161,15 @@ public final class AudioMixer {
             return extended
         }
 
-        if status == .error, let error {
-            throw AudioError.conversionFailed("\(label): \(error.localizedDescription)")
+        if status == .error {
+            throw AudioError.conversionFailed("\(label): \(error?.localizedDescription ?? "converter failed")")
+        }
+        guard out.frameLength >= expectedOutput else {
+            throw AudioError.conversionFailed("\(label): converter returned fewer frames than required")
         }
 
-        // Truncate to exactly the expected output length
-        out.frameLength = min(out.frameLength, expectedOutput)
+        // Trim only the extra priming frames; never silently accept a short conversion.
+        out.frameLength = expectedOutput
         return out
     }
 }

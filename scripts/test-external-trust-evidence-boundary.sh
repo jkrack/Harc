@@ -15,16 +15,22 @@ cd "$HARC_BOUNDARY_REPO_ROOT"
 env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/build-module-cache" \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/build-clang-cache" \
-    swift build --disable-sandbox --target HarcHost
+    swift build --jobs 2 --disable-sandbox --target HarcHost
 env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/build-module-cache" \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/build-clang-cache" \
-    swift build --disable-sandbox --target HarcProtocol
+    swift build --jobs 2 --disable-sandbox --target HarcProtocol
 
 HARC_BOUNDARY_BIN_PATH=$(env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/path-module-cache" \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/path-clang-cache" \
-    swift build --disable-sandbox --show-bin-path)
+    swift build --jobs 2 --disable-sandbox --show-bin-path)
+# Native SwiftPM uses Modules/; Xcode 27's Swift Build engine puts the
+# architecture-specific .swiftmodule bundles directly in the products directory.
+HARC_BOUNDARY_MODULE_PATH="$HARC_BOUNDARY_BIN_PATH/Modules"
+if [[ ! -d "$HARC_BOUNDARY_MODULE_PATH" ]]; then
+    HARC_BOUNDARY_MODULE_PATH="$HARC_BOUNDARY_BIN_PATH"
+fi
 HARC_BOUNDARY_DIAGNOSTICS="$HARC_BOUNDARY_TMP/diagnostics.txt"
 
 set +e
@@ -33,7 +39,7 @@ env \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/typecheck-clang-cache" \
     swiftc \
         -typecheck \
-        -I "$HARC_BOUNDARY_BIN_PATH/Modules" \
+        -I "$HARC_BOUNDARY_MODULE_PATH" \
         "$HARC_BOUNDARY_FIXTURE" \
         >"$HARC_BOUNDARY_DIAGNOSTICS" 2>&1
 HARC_BOUNDARY_STATUS=$?
@@ -88,7 +94,7 @@ env \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/host-typecheck-clang-cache" \
     swiftc \
         -typecheck \
-        -I "$HARC_BOUNDARY_BIN_PATH/Modules" \
+        -I "$HARC_BOUNDARY_MODULE_PATH" \
         -Xcc "-fmodule-map-file=$HARC_BOUNDARY_REPO_ROOT/$HARC_CSQLITE_MODULE_MAP" \
         "$HARC_HOST_BOUNDARY_FIXTURE" \
         >"$HARC_HOST_BOUNDARY_DIAGNOSTICS" 2>&1

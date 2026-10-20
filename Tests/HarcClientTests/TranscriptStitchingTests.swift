@@ -8,6 +8,24 @@ import HarcCore
 /// copy — the predecessor's, which had a full chunk of left context.
 struct TranscriptStitchingTests {
 
+    @Test func stitchingAndRebasingPreserveExplicitWordAttribution() throws {
+        let attribution = try WordSpeakerAttribution(speakerIndex: 4)
+        let first = chunk("hello again today", startMs: 0, endMs: 2000)
+        let second = chunk("again today new", startMs: 1000, endMs: 3000, words: [
+            Word(text: "again", startMs: 0, endMs: 100),
+            Word(text: "today", startMs: 100, endMs: 200),
+            Word(text: "new", startMs: 200, endMs: 400, speakerAttribution: attribution)])
+        let stitched = TranscriptAssembler.stitchAdjacent([first, second])
+        #expect(stitched[1].words.count == 1)
+        #expect(stitched[1].text == "new")
+        #expect(stitched[1].words.last?.speakerAttribution == attribution)
+        let assembler = TranscriptAssembler()
+        assembler.add(first); assembler.add(second)
+        let result = assembler.finalize(startedAt: Date(), endedAt: Date(), audioPath: "/tmp/test.wav")
+        #expect(result.words.last?.speakerAttribution == attribution)
+        #expect(result.words.last?.startMs == 1200)
+    }
+
     private func chunk(
         _ text: String,
         startMs: Int,
@@ -16,6 +34,29 @@ struct TranscriptStitchingTests {
     ) -> ChunkResult {
         ChunkResult(startMs: startMs, endMs: endMs, text: text,
                     words: words, speakers: [], processingMs: 1)
+    }
+
+    @Test("stitching removes matched words rather than all speech in the time overlap")
+    func preservesNewSpeechInsideOverlap() {
+        let a = chunk("we can start now", startMs: 0, endMs: 62000)
+        let b = chunk("start now already", startMs: 60000, endMs: 122000, words: [
+            Word(text: " start", startMs: 0, endMs: 200),
+            Word(text: " now", startMs: 200, endMs: 400),
+            Word(text: " alre", startMs: 400, endMs: 600),
+            Word(text: "ady", startMs: 600, endMs: 900)])
+        let result = TranscriptAssembler.stitchAdjacent([a,b])[1]
+        #expect(result.text == "already")
+        #expect(result.words == [Word(text: " already", startMs: 400, endMs: 900)])
+    }
+
+    @Test("unaligned timed prefix keeps the successor intact")
+    func unalignedPrefix() {
+        let a = chunk("we can start now", startMs: 0, endMs: 62000)
+        let b = chunk("start now please", startMs: 60000, endMs: 122000,
+            words: [Word(text: "different", startMs: 0, endMs: 500)])
+        let result = TranscriptAssembler.stitchAdjacent([a,b])[1]
+        #expect(result.text == b.text)
+        #expect(result.words == b.words)
     }
 
     // MARK: - overlapPrefixLength (pure)
@@ -76,7 +117,7 @@ struct TranscriptStitchingTests {
         let stitched = TranscriptAssembler.stitchAdjacent([a, b])
         #expect(stitched.count == 2)
         #expect(stitched[1].text == "and the timeline holds")
-        // Words inside the shared 2s are dropped with the text.
+        // The three matched words are removed from both representations.
         #expect(stitched[1].words.map(\.text) == ["and", "the"])
     }
 

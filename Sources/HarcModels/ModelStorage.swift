@@ -13,8 +13,9 @@ import Foundation
 ///       .harc-download.partial  ← present iff a download is in flight / paused
 /// ```
 ///
-/// The two dotfiles are source of truth:
-/// - `.harc-install.json` exists → model is installed.
+/// The dotfiles record download completion and resumability:
+/// - `.harc-install.json` records a completed install; runtime readiness also
+///   checks the current catalog identity and expected file sizes.
 /// - `.harc-download.partial` exists → resume data available.
 /// - Neither → model is absent.
 ///
@@ -190,9 +191,28 @@ public struct ModelStorage: Sendable {
 
     // MARK: - State derivation
 
-    /// Derives the install state from disk dotfiles. The `ModelManager` owns
-    /// the in-flight `.downloading` / `.verifying` / `.failed` transitions;
-    /// this only distinguishes persistent states (`.absent` / `.installed`).
+    /// Cheap readiness check against the current catalog. Download completion
+    /// verifies hashes; startup checks identity and file sizes without reading
+    /// multi-gigabyte weights. This does not detect same-size content corruption.
+    public func persistedState(for descriptor: ModelDescriptor) -> ModelInstallState {
+        guard let record = readInstallRecord(for: descriptor.id),
+              record.modelID == descriptor.id,
+              record.revision == descriptor.revision,
+              record.bytes == descriptor.totalBytes,
+              !descriptor.files.isEmpty else { return .absent }
+        for file in descriptor.files {
+            guard let attributes = try? FileManager.default.attributesOfItem(
+                atPath: fileURL(forDescriptor: descriptor, file: file).path
+            ), attributes[.type] as? FileAttributeType == .typeRegular,
+               (attributes[.size] as? NSNumber)?.int64Value == file.bytes else {
+                return .absent
+            }
+        }
+        return .installed
+    }
+
+    /// Marker-only inspection for storage tooling. Runtime callers must use
+    /// the descriptor overload to validate catalog identity and file presence.
     public func persistedState(for id: String) -> ModelInstallState {
         if readInstallRecord(for: id) != nil {
             return .installed

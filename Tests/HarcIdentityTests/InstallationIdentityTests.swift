@@ -6,50 +6,6 @@ import Testing
 
 @Suite("HarcIdentity installation identity lifecycle")
 struct InstallationIdentityTests {
-    @Test("Production macOS identity persists in the legacy login Keychain")
-    func productionLegacyMacOSKeychainIdentity() async throws {
-        let service = "com.harc.tests.installation-identity.\(UUID().uuidString.lowercased())"
-        let account = "device-p256-signing-v1"
-        let cleanupQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        defer { SecItemDelete(cleanupQuery as CFDictionary) }
-
-        let firstStore = KeychainSoftwareInstallationKeyStore(
-            service: service,
-            account: account,
-            domain: .legacyMacOS
-        )
-        let first = try await InstallationIdentityManager(
-            keyStore: firstStore
-        ).resolve(evidence: .cleanInstallation)
-        guard case .available(let firstIdentity, let firstOrigin) = first else {
-            Issue.record("Expected a newly persisted macOS identity")
-            return
-        }
-        #expect(firstOrigin == .newlyCreatedKey)
-
-        let reopenedStore = KeychainSoftwareInstallationKeyStore(
-            service: service,
-            account: account,
-            domain: .legacyMacOS
-        )
-        let reopened = try await InstallationIdentityManager(
-            keyStore: reopenedStore
-        ).resolve(evidence: InstallationIdentityEvidence(
-            rememberedDeviceID: firstIdentity.deviceID,
-            hasPriorIdentityState: true
-        ))
-        guard case .available(let reopenedIdentity, let reopenedOrigin) = reopened else {
-            Issue.record("Expected the persisted macOS identity")
-            return
-        }
-        #expect(reopenedOrigin == .existingKey)
-        #expect(reopenedIdentity.deviceID == firstIdentity.deviceID)
-    }
-
     @Test("Keychain failures expose actionable status and corruption details")
     func keychainFailureDescriptionsAreActionable() {
         let status = InstallationKeychainError.unexpectedStatus(

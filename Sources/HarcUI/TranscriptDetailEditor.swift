@@ -40,6 +40,8 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
         scroll.drawsBackground = false
 
         let textView = CmdClickTextView()
+        textView.setAccessibilityIdentifier("harc.transcript.editor")
+        textView.setAccessibilityLabel("Transcript")
         textView.isEditable = true
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false

@@ -53,11 +53,7 @@ public struct FailedChunkRange: Sendable, Equatable {
     /// a hole the user can see beats a silence the user discovers in a
     /// meeting's minutes three weeks later.
     var markerText: String {
-        func stamp(_ ms: Int) -> String {
-            let s = ms / 1000
-            return String(format: "%d:%02d", s / 60, s % 60)
-        }
-        return "[\(stamp(startMs))–\(stamp(endMs)) could not be transcribed — Re-transcribe in Settings → Transcription repairs this from the saved audio]"
+        UntranscribedAudioMarker.text(startMs: startMs, endMs: endMs)
     }
 }
 
@@ -234,7 +230,6 @@ public actor ChunkedTranscriber {
             endedAt: endedAt,
             audioPath: audioURL?.path ?? ""
         )
-        assembled.joinedText = VocabularyReplacer.apply(assembled.joinedText, using: vocabulary)
         assembled.processingCoverage = TranscriptProcessingCoverage(
             failedRanges: failedRanges.map {
                 TranscriptCoverageIssue(
@@ -253,6 +248,7 @@ public actor ChunkedTranscriber {
             do {
                 let result = try await diarizer.diarize(audioPath: url.path)
                 assembled.speakers = result.segments
+                assembled.overlapRanges = result.overlapRanges
                 speakerEmbeddings = result.speakers
             } catch {
                 diarizationError = error.localizedDescription
@@ -261,6 +257,13 @@ public actor ChunkedTranscriber {
                 ))
             }
         }
+
+        if diarizationError == nil, !assembled.speakers.isEmpty {
+            let recovery = await SpeechCoverageRecovery.recover(assembled, client: client)
+            assembled = recovery.transcript
+            failedRanges.append(contentsOf: recovery.failedRanges)
+        }
+        assembled.joinedText = VocabularyReplacer.apply(assembled.joinedText, using: vocabulary)
 
         return ChunkedTranscriberFinalize(
             transcript: assembled,

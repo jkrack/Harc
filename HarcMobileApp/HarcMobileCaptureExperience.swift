@@ -144,7 +144,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
                 title: protectedCount > 0
                     ? protectedTitle(protectedCount)
                     : "New recordings stay safe on this iPhone",
-                detail: "Transfers paused · they move to \(destination) when ready",
+                detail: "Open Setup & Sync to review sending status.",
                 systemImage: "iphone",
                 tone: .neutral,
                 relativeMoment: nil
@@ -218,6 +218,16 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
                 systemImage: "lock",
                 tone: .caution,
                 relativeMoment: nil
+            )
+        case .cancelled:
+            return Self(
+                title: "Library refresh cancelled",
+                detail: recordingCount > 0
+                    ? "Showing cached recordings · Refresh Library to try again"
+                    : "Refresh Library to try again",
+                systemImage: "arrow.clockwise",
+                tone: .neutral,
+                relativeMoment: lastUpdatedAt.map(RelativeMoment.updated)
             )
         case .ready:
             return Self(
@@ -396,10 +406,11 @@ struct HarcMobileCaptureHeroView: View {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
                     size: .hero,
+                    motion: .classic,
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(HarcMobileBlobButtonStyle())
+            .buttonStyle(HarcMobileBlobButtonStyle(fluid: true))
             .accessibilityLabel("Start Recording")
             .accessibilityHint(
                 "Starts a protected microphone recording on this iPhone."
@@ -413,10 +424,11 @@ struct HarcMobileCaptureHeroView: View {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
                     size: .hero,
+                    motion: .classic,
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(HarcMobileBlobButtonStyle())
+            .buttonStyle(HarcMobileBlobButtonStyle(fluid: true))
             .accessibilityLabel("Stop Recording")
             .accessibilityHint(
                 "Stops and durably saves the recording on this iPhone."
@@ -426,6 +438,7 @@ struct HarcMobileCaptureHeroView: View {
             HarcPresenceBlob(
                 state: state.harcPresenceState,
                 size: .hero,
+                motion: .classic,
                 audioLevel: audioLevel
             )
             .accessibilityHidden(true)
@@ -476,13 +489,28 @@ struct HarcMobileCaptureHeroView: View {
 }
 
 private struct HarcMobileBlobButtonStyle: ButtonStyle {
+    let fluid: Bool
+
+    init(fluid: Bool = false) {
+        self.fluid = fluid
+    }
+
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(
-                .easeOut(duration: 0.12),
-                value: configuration.isPressed
-            )
+        if fluid {
+            configuration.label
+                .environment(
+                    \.harcPresenceIsPressed,
+                    configuration.isPressed
+                )
+        } else {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(
+                    .easeOut(duration: 0.12),
+                    value: configuration.isPressed
+                )
+        }
     }
 }
 
@@ -496,13 +524,20 @@ struct HarcMobileHostPill: View {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
                 Text(presentation.title)
-                    .font(.caption)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityHidden(true)
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
+            .frame(minHeight: 44)
             .background(.thinMaterial, in: Capsule())
             .overlay {
                 Capsule().stroke(.primary.opacity(0.08), lineWidth: 1)
@@ -511,7 +546,7 @@ struct HarcMobileHostPill: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Host")
         .accessibilityValue(presentation.accessibilityValue)
-        .accessibilityHint("Opens Host status and pairing.")
+        .accessibilityHint("Opens Setup and Sync.")
         .accessibilityIdentifier(HarcMobileAccessibilityID.hostHealth)
     }
 

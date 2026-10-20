@@ -33,32 +33,10 @@ struct ClientConnectionTests {
             }
         }
 
-        // Write a status request from the "client" side
         let reqData = try JSONEncoder().encode(IPCRequest.status) + Data([0x0A])
-        _ = reqData.withUnsafeBytes { rawBuf in
-            write(clientFd, rawBuf.baseAddress, reqData.count)
-        }
-
-        // Read response
-        var respBuffer = Data()
-        let readBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
-        defer { readBuf.deallocate() }
-        while !respBuffer.contains(0x0A) {
-            let n = read(clientFd, readBuf, 4096)
-            if n > 0 {
-                respBuffer.append(readBuf, count: n)
-            } else {
-                break
-            }
-        }
-
-        // Drop the trailing newline and any extra bytes
-        let nl = respBuffer.firstIndex(of: 0x0A) ?? respBuffer.endIndex
-        let jsonBytes = respBuffer.prefix(upTo: nl)
-        let decoded = try JSONDecoder().decode(IPCResponse.self, from: jsonBytes)
+        let decoded = try await socketTestRoundTrip(fd: clientFd, request: reqData)
         #expect(decoded == expectedResponse)
 
-        shutdown(clientFd, SHUT_WR)
         try await connTask.value
     }
 
@@ -75,25 +53,14 @@ struct ClientConnectionTests {
             }
         }
 
-        let junk = "not-a-json-object\n".data(using: .utf8)!
-        _ = junk.withUnsafeBytes { write(clientFd, $0.baseAddress, junk.count) }
-
-        var respBuffer = Data()
-        let readBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
-        defer { readBuf.deallocate() }
-        while !respBuffer.contains(0x0A) {
-            let n = read(clientFd, readBuf, 4096)
-            if n > 0 { respBuffer.append(readBuf, count: n) } else { break }
-        }
-        let nl = respBuffer.firstIndex(of: 0x0A) ?? respBuffer.endIndex
-        let decoded = try JSONDecoder().decode(IPCResponse.self, from: respBuffer.prefix(upTo: nl))
+        let junk = Data("not-a-json-object\n".utf8)
+        let decoded = try await socketTestRoundTrip(fd: clientFd, request: junk)
         if case .error(let err) = decoded {
             #expect(err.code == "decode_failed")
         } else {
             Issue.record("expected .error response, got: \(decoded)")
         }
 
-        shutdown(clientFd, SHUT_WR)
         try await connTask.value
     }
 
@@ -111,17 +78,7 @@ struct ClientConnectionTests {
         }
 
         let payload = Data(repeating: UInt8(ascii: "x"), count: ClientConnection.maxRequestBytes + 1)
-        _ = payload.withUnsafeBytes { write(clientFd, $0.baseAddress, payload.count) }
-
-        var respBuffer = Data()
-        let readBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
-        defer { readBuf.deallocate() }
-        while !respBuffer.contains(0x0A) {
-            let n = read(clientFd, readBuf, 4096)
-            if n > 0 { respBuffer.append(readBuf, count: n) } else { break }
-        }
-        let nl = respBuffer.firstIndex(of: 0x0A) ?? respBuffer.endIndex
-        let decoded = try JSONDecoder().decode(IPCResponse.self, from: respBuffer.prefix(upTo: nl))
+        let decoded = try await socketTestRoundTrip(fd: clientFd, request: payload)
         if case .error(let err) = decoded {
             #expect(err.code == "request_too_large")
         } else {

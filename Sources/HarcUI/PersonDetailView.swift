@@ -11,6 +11,8 @@ public struct PersonDetailView: View {
     @State private var selectedSlots: Set<String> = []
     @State private var showingMergeSheet = false
     @State private var showingSplitSheet = false
+    @State private var selectedEvidence: Set<Data> = []
+    @State private var showingEvidenceSplitSheet = false
     @State private var showingDeleteConfirm = false
 
     public init(
@@ -32,6 +34,7 @@ public struct PersonDetailView: View {
                 if let stats = viewModel.stats { statsLine(stats) }
                 suggestionsSection
                 utterancesSection
+                confirmedVoiceSamplesSection
                 voicePrintsSection
                 thresholdSection
             }
@@ -40,6 +43,14 @@ public struct PersonDetailView: View {
         }
         .task(id: personID) {
             await viewModel.load(personID: personID)
+        }
+        .alert(viewModel.mutationFailure?.title ?? "Could not update speaker", isPresented: Binding(
+            get: { viewModel.mutationFailure != nil },
+            set: { if !$0 { viewModel.mutationFailure = nil } }
+        ), presenting: viewModel.mutationFailure) { _ in
+            Button("OK", role: .cancel) { viewModel.mutationFailure = nil }
+        } message: { failure in
+            Text(failure.message)
         }
     }
 
@@ -61,8 +72,7 @@ public struct PersonDetailView: View {
         .alert("Delete \(viewModel.person?.displayName ?? "")?", isPresented: $showingDeleteConfirm) {
             Button("Delete", role: .destructive) {
                 Task {
-                    try? await viewModel.delete()
-                    onPersonDeleted?()
+                    if await viewModel.deleteWithFeedback() { onPersonDeleted?() }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -168,6 +178,39 @@ public struct PersonDetailView: View {
     // MARK: - Voice prints
 
     @ViewBuilder
+    private var confirmedVoiceSamplesSection: some View {
+        if !viewModel.enrolledEvidence.isEmpty {
+            VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                HStack {
+                    Text("Confirmed voice samples").font(.harcTitle)
+                    Spacer()
+                    Button("Split…") { showingEvidenceSplitSheet = true }
+                        .disabled(selectedEvidence.isEmpty)
+                }
+                ForEach(viewModel.enrolledEvidence) { evidence in
+                    Toggle(isOn: Binding(
+                        get: { selectedEvidence.contains(evidence.id) },
+                        set: { if $0 { selectedEvidence.insert(evidence.id) } else { selectedEvidence.remove(evidence.id) } }
+                    )) {
+                        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                            Text(evidence.recordingTitle).font(.harcBody)
+                            Text("\(evidence.snapshot.speechDurationMs / 1000)s of voice").font(.harcCaption)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showingEvidenceSplitSheet) {
+                SplitNameSheet { name in
+                    let ids = selectedEvidence
+                    Task { await viewModel.splitEvidence(ids: ids, newName: name) }
+                    selectedEvidence.removeAll()
+                    showingEvidenceSplitSheet = false
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private var voicePrintsSection: some View {
         if !viewModel.embeddings.isEmpty {
             VStack(alignment: .leading, spacing: HarcSpacing.sm) {
@@ -202,7 +245,7 @@ public struct PersonDetailView: View {
             }
             .sheet(isPresented: $showingMergeSheet) {
                 MergePersonPicker(allPeople: viewModel.allPeopleForMerge) { targetID in
-                    Task { await viewModel.merge(into: targetID) }
+                    Task { if await viewModel.merge(into: targetID) { onPersonDeleted?() } }
                     showingMergeSheet = false
                 }
             }
@@ -213,8 +256,11 @@ public struct PersonDetailView: View {
                         guard parts.count == 2, let r = Int64(parts[0]), let s = Int(parts[1]) else { return nil }
                         return (r, s)
                     }
-                    Task { await viewModel.split(slots: slots, newName: newName) }
-                    selectedSlots.removeAll()
+                    Task {
+                        if await viewModel.split(slots: slots, newName: newName) {
+                            selectedSlots.removeAll()
+                        }
+                    }
                     showingSplitSheet = false
                 }
             }

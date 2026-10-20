@@ -11,6 +11,26 @@ import Testing
 
 @Suite("HARCAB1 background URLSession upload client")
 struct HarcBackgroundURLSessionUploadClientV1Tests {
+    @Test("recreated sessions skip historical task numbers without replacing mappings")
+    func skipsReusedTaskNumbers() async throws {
+        let fixture = try BackgroundUploadFixture(seed: 1)
+        let old = try BackgroundUploadFixture(seed: 2)
+        let events = BackgroundUploadEventLog()
+        let persistence = BackgroundUploadPersistenceFake(hostTrust: fixture.hostTrust, events: events)
+        persistence.seed(job: old.job, mappingIdentity: old.identity(1), state: .completed)
+        persistence.seed(job: old.job, mappingIdentity: old.identity(2), state: .retired)
+        let session = BackgroundUploadSessionFake(nextTaskIdentifier: 1, events: events)
+        let coordinator = HarcBackgroundUploadCoordinatorV1(
+            persistence: persistence, session: session, verifyBody: { _ in }, now: { fixture.now })
+        let identity = try await coordinator.schedule(fixture.plan)
+        #expect(identity == fixture.identity(3))
+        #expect(session.createdTasks[0].state == .canceling)
+        #expect(session.createdTasks[1].state == .canceling)
+        #expect(persistence.mappings[0].batchID == old.descriptor.batchID)
+        #expect(persistence.mappings[0].state == .completed)
+        #expect(persistence.mappings[1].state == .retired)
+        #expect(events.snapshot().filter { $0.hasPrefix("resume:") } == ["resume:3"])
+    }
     @Test("persists every reconstruction fact and task mapping before resume")
     func persistsBeforeResumeAndBuildsExactRequest() async throws {
         let fixture = try BackgroundUploadFixture(seed: 1)
@@ -471,6 +491,43 @@ struct HarcBackgroundURLSessionUploadClientV1Tests {
         #expect(context.persistence.mappings.map(\.state) == [.completed])
     }
 
+    @Test("an old completion cannot poison a refreshed job or its replacement task")
+    func staleCompletionAfterCapabilityRefresh() async throws {
+        let fixture = try BackgroundUploadFixture(seed: 23)
+        let context = try fixture.completionContext(taskIdentifier: 231)
+        try context.persistence.persistTaskFailure(
+            fixture.identity(231), batchID: fixture.descriptor.batchID, disposition: .failedRecoverable
+        )
+        let credential = Data(repeating: 0x71, count: 32)
+        let binding = try HarcBackgroundUploadEndpointBindingV1(
+            absoluteUploadURL: fixture.endpointBinding.absoluteUploadURL,
+            httpMethod: "PUT", httpPath: fixture.endpointBinding.httpPath,
+            uploadID: fixture.descriptor.uploadID, generation: fixture.descriptor.generation,
+            batchID: fixture.descriptor.batchID, exactBodyByteLength: fixture.descriptor.exactBodyByteLength,
+            exactBodySHA256: fixture.descriptor.exactBodySHA256,
+            byteCeiling: fixture.descriptor.exactBodyByteLength, minimumTransportSetEpoch: 7,
+            trustTuple: fixture.endpointBinding.trustTuple,
+            credentialSHA256: Data(SHA256.hash(data: credential)),
+            expiresAt: fixture.now.addingTimeInterval(7200)
+        )
+        try context.persistence.persistJob(HarcBackgroundUploadJobV1(
+            descriptor: fixture.descriptor, bodyFileURL: fixture.bodyFileURL,
+            capability: OpaqueBackgroundCapability(
+                credential: credential, capabilityBindings: binding.exactBytes(), expiresAt: binding.expiresAt
+            ), endpointBinding: binding
+        ))
+        try context.persistence.persistTaskMappingBeforeResume(fixture.identity(232), batchID: fixture.descriptor.batchID)
+        let event = try fixture.completionEvent(
+            context: context, acknowledgementBytes: fixture.acknowledgement.exactAcknowledgementObject.exactBytes
+        )
+        let completion = try await context.coordinator.handleCompletion(event)
+        #expect(completion == nil)
+        #expect(context.persistence.persistedFailureDispositions == [.failedRecoverable])
+        #expect(context.persistence.persistedAcknowledgements.isEmpty)
+        #expect(context.persistence.requestedTrustTuples.isEmpty)
+        #expect(context.persistence.mappings.first { $0.identity == fixture.identity(232) }?.state == .persistedBeforeResume)
+    }
+
     @Test("background completion waits for durable work and delivers once on main")
     func completionHandlerOrdering() async throws {
         let gate = HarcBackgroundEventCompletionGateV1()
@@ -854,14 +911,15 @@ private final class BackgroundUploadPersistenceFake:
 
     func seed(
         job: HarcBackgroundUploadJobV1,
-        mappingIdentity: SystemBackgroundTaskIdentity
+        mappingIdentity: SystemBackgroundTaskIdentity,
+        state: BackgroundTaskMappingState = .persistedBeforeResume
     ) {
         jobs[job.descriptor.batchID] = job
         mappings.append(
             StoredBackgroundTaskMapping(
                 identity: mappingIdentity,
                 batchID: job.descriptor.batchID,
-                state: .persistedBeforeResume,
+                state: state,
                 updatedAt: Date(timeIntervalSince1970: 2_100_000_000)
             )
         )
@@ -876,6 +934,9 @@ private final class BackgroundUploadPersistenceFake:
 
     func persistJob(_ job: HarcBackgroundUploadJobV1) throws {
         events.append("persistJob")
+        if let old = jobs[job.descriptor.batchID], old.capability != job.capability {
+            retireInactiveMappings(batchID: job.descriptor.batchID)
+        }
         jobs[job.descriptor.batchID] = job
     }
 
@@ -891,6 +952,7 @@ private final class BackgroundUploadPersistenceFake:
     ) throws {
         events.append("persistMapping")
         if let mappingFailure { throw mappingFailure }
+        retireInactiveMappings(batchID: batchID)
         mappings.append(
             StoredBackgroundTaskMapping(
                 identity: identity,
@@ -899,6 +961,17 @@ private final class BackgroundUploadPersistenceFake:
                 updatedAt: Date(timeIntervalSince1970: 2_100_000_000)
             )
         )
+    }
+
+    private func retireInactiveMappings(batchID: AudioBatchID) {
+        mappings = mappings.map { mapping in
+            guard mapping.batchID == batchID,
+                  mapping.state == .missingFromSystem || mapping.state == .failedRecoverable else { return mapping }
+            return StoredBackgroundTaskMapping(
+                identity: mapping.identity, batchID: mapping.batchID,
+                state: .retired, updatedAt: mapping.updatedAt
+            )
+        }
     }
 
     func taskMappings() throws -> [StoredBackgroundTaskMapping] {
@@ -919,6 +992,7 @@ private final class BackgroundUploadPersistenceFake:
             .filter {
                 $0.state != .completed
                     && $0.state != .securityBlocked
+                    && $0.state != .retired
                     && !observed.contains($0.identity)
             }
             .map(\.batchID)

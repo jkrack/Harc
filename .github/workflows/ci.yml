@@ -5,27 +5,185 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# New PR commits supersede older validation; main runs always finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  build:
+  smoke:
+    if: github.event_name == 'push'
     runs-on: macos-26
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
         run: |
-          xcode_path=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Post-merge repository smoke checks
+        run: bash scripts/test-post-merge-smoke.sh
+
+      - name: Preserve smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-merge-smoke
+          path: build/smoke
+          retention-days: 7
+
+  build:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
           sudo xcode-select -s "$xcode_path"
           xcodebuild -version
           swift --version
 
+      - name: Check build prerequisites
+        run: |
+          test "$(uname -m)" = arm64
+          df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { exit ($4 < 5242880) }'
+
       - name: Protocol schema contract
         run: ./scripts/check-harc-protocol-schemas.sh
 
+      - name: Bounded runner lifecycle regression
+        timeout-minutes: 1
+        run: python3 -B -m unittest discover -s scripts/tests -p test_run_package_tests.py
+
+      - name: Release input preflight regressions
+        timeout-minutes: 1
+        run: |
+          python3 -B -m unittest discover -s scripts/tests -p test_current_candidate_readiness.py
+          python3 -B -m unittest discover -s scripts/tests -p test_xcode_package_resolution.py
+
+      - name: Test result gate regressions
+        run: python3 -B -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      - name: Build package tests
+        timeout-minutes: 30
+        run: swift build --build-tests --jobs 2
+
+      # A single cooperative worker makes blocking socket fixtures deterministic.
+      # Detached Swift tasks share this pool; they are not blocking-I/O threads.
+      - name: Blocking I/O executor regression
+        timeout-minutes: 3
+        env:
+          LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
+        run: python3 scripts/run-package-tests.py --timeout-seconds 120 --diagnostics-dir .build/test-diagnostics/ipc -- swift test --skip-build --jobs 2 --filter 'HarcSTTClientTests|ClientConnectionTests|SocketServerTests|DaemonIdleClockTests|LocalMCPIPCIntegrationTests|MediaImportServiceTests'
+
       - name: swift test
-        run: swift test
+        timeout-minutes: 10
+        run: python3 scripts/run-package-tests.py --diagnostics-dir .build/test-diagnostics/full
+
+      - name: Preserve package test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-test-diagnostics
+          path: .build/test-diagnostics
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Protocol external construction boundaries
         run: ./scripts/test-external-trust-evidence-boundary.sh
+
+      - name: Recording publication across a mounted volume
+        run: |
+          set -o pipefail
+          mkdir -p build/validation
+          HARC_SKIP_BUILD=1 \
+            HARC_PUBLICATION_EVIDENCE_DIR=build/validation/publication-cross-volume \
+            ./scripts/qualify-publication-cross-volume.sh \
+            2>&1 | tee build/validation/publication-cross-volume.log
+
+      - name: Recording publication process interruption
+        run: |
+          set -o pipefail
+          ./scripts/qualify-publication-faults.py \
+            --evidence-dir build/validation/publication-process-interruption \
+            2>&1 | tee build/validation/publication-process-interruption.log
+
+      - name: Recording publication storage failures
+        run: |
+          set -o pipefail
+          ./scripts/qualify-publication-storage.py \
+            --evidence-dir build/validation/publication-storage \
+            2>&1 | tee build/validation/publication-storage.log
+
+      - name: Direct pinned-TLS pairing lifecycle
+        run: |
+          set -o pipefail
+          ./scripts/test-pairing-lifecycle.sh 2>&1 | tee build/validation/pairing-direct.log
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install relay emulator dependencies
+        working-directory: CloudflareRelay
+        run: npm ci
+
+      - name: Relay pinned-TLS pairing lifecycle
+        run: |
+          set -o pipefail
+          HARC_SKIP_BUILD=1 ./scripts/test-pairing-lifecycle-relay-emulator.sh 2>&1 | tee build/validation/pairing-relay.log
+
+      - name: Record package validation provenance
+        if: always()
+        run: |
+          mkdir -p build/validation
+          git rev-parse HEAD > build/validation/source.txt
+          xcodebuild -version > build/validation/toolchain.txt
+          swift --version >> build/validation/toolchain.txt
+          git status --short > build/validation/worktree.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: package-validation
+          path: build/validation
+          retention-days: 14
+
+  macos:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version
+          swift --version
+
+      - name: Check build prerequisites
+        run: |
+          test "$(uname -m)" = arm64
+          df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { exit ($4 < 5242880) }'
 
       - name: Install xcodegen
         run: brew install xcodegen
@@ -33,18 +191,120 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Prepare validation directory
+        run: mkdir -p build/validation
+
       - name: Build Harc.app
         run: |
+          set -o pipefail
           xcodebuild \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            -jobs 2 \
             -project Harc.xcodeproj \
             -scheme Harc \
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            build
+            build 2>&1 | tee build/validation/macos-build.log
 
-      - name: Verify embedded harc-stt
+      - name: macOS app and UI regression
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            -jobs 2 \
+            -project Harc.xcodeproj \
+            -scheme Harc \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -parallel-testing-enabled NO \
+            -resultBundlePath build/validation/macos-tests.xcresult \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            test 2>&1 | tee build/validation/macos-tests.log
+
+      - name: Enforce macOS test execution
+        run: |
+          xcrun xcresulttool get test-results summary --path build/validation/macos-tests.xcresult --format json > build/validation/macos-summary.json
+          xcrun xcresulttool get test-results tests --path build/validation/macos-tests.xcresult --format json > build/validation/macos-test-tree.json
+          python3 scripts/check-xcode-test-results.py \
+            --summary build/validation/macos-summary.json \
+            --tests build/validation/macos-test-tree.json \
+            --require-bundle HarcAppTests \
+            --require-bundle HarcAppUITests \
+            --require-test HarcAppUITests/HarcAppUITests/testCaptureIntegrityWarningSurvivesRelaunch \
+            --require-test HarcAppUITests/HarcAppUITests/testSettingsCanOpenFromLibrary \
+            --require-test HarcAppUITests/HarcAppUITests/testSettingsCanOpenAfterLibraryIsClosedAndReopened \
+            --require-test HarcAppUITests/HarcAppUITests/testLaunchOpensFixtureLibraryAndShowsRecordingDetail \
+            --require-test HarcAppUITests/HarcAppUITests/testLibrarySearchFindsRecordingByTitleAndTranscript \
+            --require-test HarcAppUITests/HarcAppUITests/testRecordingInspectorShowsSpeakersAndFiles \
+            --require-test HarcAppUITests/HarcAppUITests/testTranscriptEditingPreservesSpecialCharactersAcrossRelaunch \
+            --require-test HarcAppUITests/HarcAppUITests/testRecordStopPersistsGoldenTranscriptAcrossRelaunch \
+            --output build/validation/macos-execution-gate.json
+
+      - name: Verify embedded helpers
         run: |
           APP=$(xcodebuild -project Harc.xcodeproj -scheme Harc -configuration Debug -showBuildSettings | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2}' | head -1)/Harc.app
           "$APP/Contents/MacOS/harc-stt" --version
+          for helper in harc-stt harc-mcp; do
+            lipo "$APP/Contents/MacOS/$helper" -verify_arch arm64
+            codesign --verify --strict "$APP/Contents/MacOS/$helper"
+          done
+
+      - name: Record macOS validation provenance
+        if: always()
+        run: |
+          mkdir -p build/validation
+          git rev-parse HEAD > build/validation/source.txt
+          xcodebuild -version > build/validation/toolchain.txt
+          swift --version >> build/validation/toolchain.txt
+          git status --short > build/validation/worktree.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-validation
+          path: build/validation
+          retention-days: 14
+
+  mobile-configuration:
+    if: github.event_name == 'pull_request'
+    # Independent runner and source build: no artifacts from the other jobs are needed.
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version
+      - name: Simulator selection regression
+        run: python3 -B -m unittest discover -s scripts/tests -p test_ios_configuration_simulator.py
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Bounded mobile configuration tests
+        shell: bash
+        timeout-minutes: 32
+        run: |
+          mkdir -p .build/mobile-configuration
+          bash scripts/test-mobile-configuration.sh 2>&1 | tee .build/mobile-configuration/console.log
+      - name: Preserve mobile configuration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-configuration-evidence
+          path: |
+            .build/mobile-configuration/destination.json
+            .build/mobile-configuration/console.log
+            .build/mobile-configuration/configuration.xcresult
+            .build/mobile-configuration/diagnostics
+          if-no-files-found: warn
+          retention-days: 3

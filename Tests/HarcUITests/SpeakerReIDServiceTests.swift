@@ -23,6 +23,16 @@ private actor MockSpeakerNameResolver: SpeakerNameResolver {
 
 @Suite("SpeakerReIDService")
 struct SpeakerReIDServiceTests {
+    @Test("suggestion configuration cannot weaken the shared enrollment floor")
+    func enrollmentFloor() async throws {
+        let store = try await RecordingStore.inMemory()
+        let resolver = MockSpeakerNameResolver()
+        let service = SpeakerReIDService(store: store, nameResolver: resolver, minTotalMs: 1)
+        #expect(await service.minTotalMs == 5_000)
+        let stricter = SpeakerReIDService(store: store, nameResolver: resolver, minTotalMs: 10_000)
+        #expect(await stricter.minTotalMs == 10_000)
+    }
+
     // MARK: - Threshold Tests
 
     @Test("default threshold is 0.65 (WeSpeaker-tuned)")

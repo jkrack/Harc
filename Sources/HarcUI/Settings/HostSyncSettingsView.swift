@@ -426,6 +426,36 @@ public struct HostSyncSettingsView: View {
                         .buttonStyle(.borderedProminent)
                     Button("Manage Devices…") { bridge.onOpenHostPairing() }
                 }
+                Button("Verify and Repair Recording Receipts…") { bridge.onRepairHostReceipts() }
+                    .disabled(
+                        bridge.hostReceiptRepairInProgress
+                            || bridge.hostLibraryMigrationInProgress
+                    )
+                Button("Verify Moved Library…") {
+                    bridge.onMigrateHostLibraryBindings()
+                }
+                .disabled(
+                    bridge.hostReceiptRepairInProgress
+                        || bridge.hostLibraryMigrationInProgress
+                )
+                if bridge.hostReceiptRepairInProgress {
+                    ProgressView("Verifying recordings…")
+                        .font(.harcLabel)
+                }
+                if let status = bridge.hostReceiptRepairStatus {
+                    Text(status)
+                        .font(.harcLabel)
+                        .foregroundStyle(.secondary)
+                }
+                if bridge.hostLibraryMigrationInProgress {
+                    ProgressView("Re-hashing moved recordings…")
+                        .font(.harcLabel)
+                }
+                if let status = bridge.hostLibraryMigrationStatus {
+                    Text(status)
+                        .font(.harcLabel)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 runtimeStartingOrFailed(role: "Host")
             }

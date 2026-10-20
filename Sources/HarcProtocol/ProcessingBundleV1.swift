@@ -433,7 +433,7 @@ public struct HarcProcessingBundleV1: Sendable {
             try validateEntryProtocol(
                 present: value.hasProtocol,
                 value: value.protocol,
-                knownCriticalFields: Set(1 ... 3),
+                knownCriticalFields: Set(1 ... 4),
                 supportedRequiredFeatures: supportedRequiredFeatures,
                 versionPolicy: versionPolicy
             )
@@ -507,6 +507,22 @@ public struct HarcProcessingBundleV1: Sendable {
         totalCanonicalFrames: UInt64?
     ) throws {
         try harcRequireCanonicalASCII(value.locale, field: "transcript.locale", maximumBytes: 128)
+        if value.protocol.requirements.criticalFieldNumbers.contains(4), !value.hasOverlapAssessment {
+            throw HarcProtocolCodecError.missingPayloadBinding(field: "transcript.overlapAssessment")
+        }
+        if value.hasOverlapAssessment {
+            guard value.protocol.requirements.criticalFieldNumbers.contains(4) else {
+                throw HarcProtocolCodecError.missingPayloadBinding(field: "transcript.overlapAssessment.critical")
+            }
+            var priorEnd: UInt64 = 0
+            for (index, range) in value.overlapAssessment.ranges.enumerated() {
+                try harcRequireFrameRange(start: range.startFrame, end: range.endFrameExclusive,
+                    priorEnd: priorEnd, maximum: totalCanonicalFrames,
+                    field: "transcript.overlapAssessment.ranges[\(index)]")
+                priorEnd = range.endFrameExclusive
+            }
+        }
+
         var priorUtteranceEnd: UInt64 = 0
         for (utteranceIndex, utterance) in value.utterances.enumerated() {
             try harcRequireFrameRange(

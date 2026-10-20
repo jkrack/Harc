@@ -46,7 +46,7 @@ final class HarcMobileConfigurationTests: XCTestCase {
         XCTAssertEqual(controller.previewLayer.frame, controller.view.bounds)
     }
 
-    func testPackagedPrivacyManifestMatchesMobileDataAndFileUsage() throws {
+    func testPackagedPrivacyManifestMatchesMobileDataAndRequiredAPIUsage() throws {
         let url = try XCTUnwrap(
             Bundle.main.url(
                 forResource: "PrivacyInfo",
@@ -69,16 +69,26 @@ final class HarcMobileConfigurationTests: XCTestCase {
         let accessedAPIs = try XCTUnwrap(
             manifest["NSPrivacyAccessedAPITypes"] as? [[String: Any]]
         )
-        XCTAssertEqual(accessedAPIs.count, 1)
-        let fileMetadata = try XCTUnwrap(accessedAPIs.first)
-        XCTAssertEqual(
-            fileMetadata["NSPrivacyAccessedAPIType"] as? String,
-            "NSPrivacyAccessedAPICategoryFileTimestamp"
-        )
-        XCTAssertEqual(
-            fileMetadata["NSPrivacyAccessedAPITypeReasons"] as? [String],
-            ["C617.1"]
-        )
+        let expectedReasons = [
+            "NSPrivacyAccessedAPICategoryFileTimestamp": ["C617.1"],
+            "NSPrivacyAccessedAPICategoryUserDefaults": ["CA92.1"],
+        ]
+        XCTAssertEqual(accessedAPIs.count, expectedReasons.count)
+        for (category, reasons) in expectedReasons {
+            let declarations = accessedAPIs.filter {
+                $0["NSPrivacyAccessedAPIType"] as? String == category
+            }
+            XCTAssertEqual(
+                declarations.count,
+                1,
+                "Each required-reason category must appear exactly once."
+            )
+            let declaration = try XCTUnwrap(declarations.first)
+            XCTAssertEqual(
+                declaration["NSPrivacyAccessedAPITypeReasons"] as? [String],
+                reasons
+            )
+        }
     }
 
     func testReleaseMetadataIsIPhoneOnlyAndMatchesExportDeclaration() {

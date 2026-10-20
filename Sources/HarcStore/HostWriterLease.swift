@@ -97,6 +97,9 @@ public final class HostCanonicalCommitCapability: @unchecked Sendable {
     /// usable by the canonical commit API.
     public var identity: HostWriterIdentity { lease.identity }
 
+    /// Currentness check for local repair transactions holding this capability.
+    public var isActive: Bool { lease.isActive }
+
     fileprivate init(lease: HostWriterLease) {
         self.lease = lease
     }

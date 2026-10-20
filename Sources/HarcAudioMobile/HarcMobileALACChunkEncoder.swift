@@ -234,6 +234,16 @@ public struct HarcMobileALACChunkEncoder: Sendable {
                 chunkIndex: chunkIndex
             )
         }
+        let expectedFrames = AVAudioFramePosition(
+            expectedBytes / MemoryLayout<Int16>.size
+        )
+#if os(iOS) && !targetEnvironment(simulator)
+        guard file.length == expectedFrames else {
+            throw HarcMobileALACEncodingError.decodeMismatch(
+                chunkIndex: chunkIndex
+            )
+        }
+#endif
         var hasher = SHA256()
         var byteCount = 0
         while byteCount < expectedBytes {
@@ -273,42 +283,17 @@ public struct HarcMobileALACChunkEncoder: Sendable {
             byteCount += data.count
         }
         guard byteCount == expectedBytes,
+              file.framePosition == expectedFrames,
               Data(hasher.finalize()) == expectedSHA256 else {
             throw HarcMobileALACEncodingError.decodeMismatch(
                 chunkIndex: chunkIndex
             )
         }
 
-        // macOS and the simulator may report ALAC packet padding in `length`
-        // but reject a read started exactly after the proved canonical frames.
-        // The shipping codec gate runs this extra probe on physical iPhone;
-        // desktop validation has already proved the exact byte count and hash.
-        #if os(macOS) || targetEnvironment(simulator)
-        return
-        #else
-        // ALAC containers can report codec packet remainder in `file.length`
-        // after every valid canonical frame has been decoded. Probe once for
-        // real trailing audio instead of looping on a length that may never
-        // advance at end-of-stream.
-        guard let trailingProbe = AVAudioPCMBuffer(
-            pcmFormat: file.processingFormat,
-            frameCapacity: 1
-        ) else {
-            throw HarcMobileALACEncodingError.decodeMismatch(
-                chunkIndex: chunkIndex
-            )
-        }
-        try file.read(into: trailingProbe, frameCount: 1)
-        let trailingList = UnsafeMutableAudioBufferListPointer(
-            trailingProbe.mutableAudioBufferList
-        )
-        guard trailingProbe.frameLength == 0,
-              trailingList.allSatisfy({ $0.mDataByteSize == 0 }) else {
-            throw HarcMobileALACEncodingError.decodeMismatch(
-                chunkIndex: chunkIndex
-            )
-        }
-        #endif
+        // AVAudioFile throws a generic Objective-C EOF error on physical iOS
+        // when asked to read one frame at the exact end of a CAF/ALAC stream.
+        // The physical path has already proved the declared container length,
+        // every canonical byte, the terminal frame position, and the SHA-256.
     }
 
     private func validateMaster(

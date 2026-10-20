@@ -488,6 +488,7 @@ final class ClientStoreDatabase: @unchecked Sendable {
         // lifetime of every opened connection.
         try queue.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA synchronous = FULL")
+            try db.execute(sql: "PRAGMA fullfsync = ON")
         }
         try migrator.migrate(queue)
         try refreshStorageAttributes()
