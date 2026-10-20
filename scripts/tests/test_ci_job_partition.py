@@ -10,6 +10,7 @@ class CIJobPartitionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         workflow = WORKFLOW.read_text()
+        cls.smoke_job = workflow.split("  smoke:\n", 1)[1].split("  build:\n", 1)[0]
         cls.package_job = workflow.split("  build:\n", 1)[1].split("  macos:\n", 1)[0]
         cls.macos_job = workflow.split("  macos:\n", 1)[1].split(
             "  mobile-configuration:\n", 1
@@ -32,6 +33,16 @@ class CIJobPartitionTests(unittest.TestCase):
     def test_independent_validation_jobs_do_not_wait_for_each_other(self):
         for job in [self.package_job, self.macos_job, self.mobile_job]:
             self.assertNotIn("needs:", job)
+
+    def test_full_validation_is_reserved_for_pull_requests(self):
+        for job in [self.package_job, self.macos_job, self.mobile_job]:
+            self.assertIn("if: github.event_name == 'pull_request'", job)
+
+    def test_main_runs_bounded_repository_smoke_checks(self):
+        self.assertIn("if: github.event_name == 'push'", self.smoke_job)
+        self.assertIn("timeout-minutes: 10", self.smoke_job)
+        self.assertIn("bash scripts/test-post-merge-smoke.sh", self.smoke_job)
+        self.assertNotIn("needs:", self.smoke_job)
 
     def test_superseded_pr_runs_cancel_without_cancelling_main(self):
         workflow = WORKFLOW.read_text()
