@@ -29,8 +29,14 @@ class CIJobPartitionTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 60", self.package_job)
         self.assertIn("timeout-minutes: 60", self.macos_job)
 
-    def test_mobile_configuration_waits_for_both_validation_jobs(self):
-        self.assertIn("needs: [build, macos]", self.mobile_job)
+    def test_independent_validation_jobs_do_not_wait_for_each_other(self):
+        for job in [self.package_job, self.macos_job, self.mobile_job]:
+            self.assertNotIn("needs:", job)
+
+    def test_superseded_pr_runs_cancel_without_cancelling_main(self):
+        workflow = WORKFLOW.read_text()
+        self.assertIn("group: ci-${{ github.event.pull_request.number || github.ref }}", workflow)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
 
     def test_publication_log_parent_exists_before_tee_opens_it(self):
         mkdir = self.package_job.index("mkdir -p build/validation")

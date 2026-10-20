@@ -5,17 +5,20 @@ test "$(uname -m)" = arm64
 df -Pk "$PWD" | awk 'NR == 2 { exit ($4 < 5242880) }'
 OUTPUT="${HARC_MOBILE_CONFIGURATION_OUTPUT:-.build/mobile-configuration}"
 DERIVED="${HARC_MOBILE_CONFIGURATION_DERIVED:-$OUTPUT/derived}"
-PACKAGE_CACHE="${HARC_MOBILE_CONFIGURATION_PACKAGE_CACHE:-$DERIVED/PackageCache}"
+XCODE_OPTIONS=(-skipMacroValidation -skipPackagePluginValidation -jobs 2)
+if [[ -n "${HARC_MOBILE_CONFIGURATION_PACKAGE_CACHE:-}" ]]; then
+  mkdir -p "$HARC_MOBILE_CONFIGURATION_PACKAGE_CACHE"
+  XCODE_OPTIONS+=(-packageCachePath "$HARC_MOBILE_CONFIGURATION_PACKAGE_CACHE")
+fi
 mkdir -p "$OUTPUT"
 python3 scripts/select-ios-configuration-simulator.py "$OUTPUT/destination.json"
 DESTINATION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination"])' "$OUTPUT/destination.json")
 SOURCE_SHA=$(git rev-parse HEAD)
 # Preserve owned-process diagnostics and xcresult on failure or timeout.
 python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$OUTPUT/diagnostics" -- \
-  xcodebuild -skipMacroValidation -skipPackagePluginValidation -jobs 2 \
+  xcodebuild "${XCODE_OPTIONS[@]}" \
   -project Harc.xcodeproj -scheme HarcMobile -configuration Debug \
   -destination "$DESTINATION" -derivedDataPath "$DERIVED" \
-  -packageCachePath "$PACKAGE_CACHE" \
   -resultBundlePath "$OUTPUT/configuration.xcresult" \
   -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
   -only-testing:HarcMobileAppTests/HarcMobileConfigurationTests \
