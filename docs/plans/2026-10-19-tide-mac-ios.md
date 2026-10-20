@@ -4,7 +4,9 @@ Requested outcome: finish both native apps tonight (October 19, America/Los_Ange
 
 ## Latest status (October 20, 07:21 PT)
 
-The overnight target was missed. Both app builds pass and the implemented surfaces are in this isolated, uncommitted worktree. Mac fixture rendering/playback and physical iPhone capture/recovery/background Live Activity stop have passed their checks. Production installation and release have not happened.
+The overnight target was missed. Both app builds pass. Implementation checkpoint `de8abb4` is committed locally on `codex/tide-mac-ios` in this isolated worktree. Mac fixture rendering/playback and physical iPhone capture/recovery/background Live Activity stop have passed their checks. No push, production installation or release has happened.
+
+The checkpoint was compared with every entry in the final physical run's source checksum manifest. All application, test and build-script files match. Only this progress document and `Package.resolved` differ: the latter has the expected Xcode-added Sparkle/origin-hash churn reverted per AGENTS.md. Existing diagnostic binaries still embed the baseline build SHA; their source is identified by the retained dirty-run manifest, not by claiming they were built from the checkpoint commit.
 
 The physical accessibility issue is now resolved: slightly larger/heavier caption text, bold microphone text and semibold day-axis labels pass the full Record/Review Sample/Privacy audit, with no suppression. Evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-type-audit-01-20261020/HarcMobileUITests-attempt-1.xcresult`; source manifest `c1a9213d2294d67f64e5724b86642d0933b20bf54d1344d9137c042641758894`; log `/private/tmp/harc-tide-type-audit-01.log`. Temporary contrast-probe, frozen-animation and appearance experiments were removed.
 
