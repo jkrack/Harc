@@ -1323,6 +1323,8 @@ private struct HarcMobileRecordingDetailView: View {
     @State private var audioController: HarcMobileRecordingAudioController
     @State private var showsCopyConfirmation = false
     @State private var didCopyPrompt = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     init(
         coordinator: HarcMobileLibraryCoordinator,
@@ -1648,7 +1650,10 @@ private struct HarcMobileRecordingDetailView: View {
     }
 
     private var audioPlaybackControls: some View {
-        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+        TimelineView(.animation(
+            minimumInterval: reduceMotion ? 0.25 : 1.0 / 30,
+            paused: scenePhase != .active
+        )) { _ in
             VStack(spacing: 16) {
                 Text(Duration.seconds(audioController.currentTime), format: .time(pattern: .minuteSecond))
                     .font(.system(.largeTitle, design: .rounded, weight: .bold))

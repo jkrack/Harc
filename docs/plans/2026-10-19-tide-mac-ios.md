@@ -26,6 +26,15 @@ Local and Host-downloaded playback now reestablish `.playback`/`.spokenAudio` an
 
 Before-fix evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-playback-route-before-20261020.xcresult`, log `/private/tmp/harc-tide-playback-route-before.log`. After-fix evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-playback-route-after-20261020.xcresult`, log `/private/tmp/harc-tide-playback-route-after.log`: all 13 focused tests passed on Omega, and both initial and resumed routes reported `Speaker`. This confirms the resume repair, not the audible cause of the user's first-play report. Manual listening remains necessary. Tests use a temporary silent file, with no recording deletion or microphone capture.
 
+### iPhone animation cadence follow-up
+
+The user reported choppy frame delivery. Source inspection found intentional 15–24 FPS presence caps and four-per-second live trace/playback updates. The iOS presence and recording indicator now request 60 FPS; live energy samples and playback visuals update approximately 30 times per second. Updates stop when the iOS scene is inactive. Reduce Motion keeps static presence and slower data updates; widgets remain static. Mac presence retains its existing rates and does not assume an inactive menu-bar app means its panel is invisible. Audio capture, metering on the writer queue, and durable writes are unchanged.
+
+Full physical UI diagnostic run passed (8 passed, 1 skipped): `/Volumes/MacMiniSDD/HarcBuilds/tide-smooth-ui-20261020/HarcMobileUITests-attempt-1.xcresult`, manifest `431ece6b52f8691e4824f09eadf2df32714f88feb101c2a9db6310057d9798e6`, log `/private/tmp/harc-tide-smooth-ui.log`.
+The full Mac Xcode app build also passed after the shared renderer change (`/private/tmp/harc-tide-mac-smooth-build.log`).
+
+A 15-second Animation Hitches trace attached to the foreground diagnostic app on Omega retained 937 Harc frame updates at 59.99 updates/second. Median update work was 5.96 ms, p95 7.90 ms, maximum 9.78 ms; the hitch table had no rows. Display frame starts were approximately 16.67 ms apart. Evidence: `/Volumes/MacMiniSDD/HarcBuilds/tide-smooth-idle-20261020.trace`; exported tables `/private/tmp/harc-tide-smooth-{updates,frames,hitches}.xml`. This qualifies the sampled idle animation, not sustained recording, scrolling, thermal behavior or every screen.
+
 The 14 artboards in `docs/design/tide-2026-10-19/manifest.json` are the visual reference. They were extracted from rendered Claude artboards with CSS and generated SVG geometry; scripts were removed. They are not editable original project files.
 
 Implement native SwiftUI with existing capture, library, pairing and transfer coordinators. Preserve private inference, durable start without model warmup, protected masters until verified receipt, separate trust/route/delivery states, and visible recovery. Use real data; never copy sample durations, security words, connection timestamps or disabled-transfer claims into production behavior. Preserve `HarcPresenceUI` as the capture-presence renderer and `ActivityView` as the Mac readiness/recovery renderer. The menu panel must not scroll.

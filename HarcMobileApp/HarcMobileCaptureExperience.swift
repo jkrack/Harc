@@ -621,10 +621,11 @@ struct HarcMobileTransferSummaryView: View {
 
 struct HarcMobileRecordingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TimelineView(
-            .animation(minimumInterval: 1 / 24, paused: reduceMotion)
+            .animation(minimumInterval: 1.0 / 60, paused: reduceMotion || scenePhase != .active)
         ) { context in
             let phase = context.date.timeIntervalSinceReferenceDate * 3.5
             let pulse = reduceMotion ? 0 : ((sin(phase) + 1) / 2)
@@ -792,6 +793,8 @@ private extension HarcMobileCaptureCoordinator.State {
 private struct HarcMobileLiveEnergyView: View {
     let audioLevel: () -> Double
     @State private var samples: [Float] = []
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 4) {
@@ -804,12 +807,13 @@ private struct HarcMobileLiveEnergyView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
         }
-        .task {
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
             while !Task.isCancelled {
                 let value = audioLevel()
                 samples.append(Float(value.isFinite ? min(1, max(0, value)) : 0))
-                if samples.count > 120 { samples.removeFirst(samples.count - 120) }
-                do { try await Task.sleep(for: .milliseconds(250)) }
+                if samples.count > 600 { samples.removeFirst(samples.count - 600) }
+                do { try await Task.sleep(for: .milliseconds(reduceMotion ? 250 : 33)) }
                 catch { return }
             }
         }

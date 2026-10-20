@@ -13,6 +13,7 @@ public struct HarcPresenceBlob: View {
     private let audioLevel: () -> Double
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     public init(
         state: HarcPresenceState,
@@ -35,8 +36,8 @@ public struct HarcPresenceBlob: View {
 
         TimelineView(
             .animation(
-                minimumInterval: 1 / style.framesPerSecond,
-                paused: motionDisabled || !style.animates
+                minimumInterval: animationInterval(for: style),
+                paused: motionDisabled || !style.animates || sceneAnimationPaused
             )
         ) { context in
             let elapsed = context.date.timeIntervalSinceReferenceDate
@@ -100,6 +101,25 @@ public struct HarcPresenceBlob: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Harc")
         .accessibilityValue(state.accessibilityValue)
+    }
+
+    private func animationInterval(for style: HarcPresenceStyle) -> TimeInterval {
+        #if os(iOS)
+        // Foreground phone motion should follow a smooth display cadence.
+        // The system may lower this rate for power or thermal conditions.
+        return 1.0 / 60
+        #else
+        return 1 / style.framesPerSecond
+        #endif
+    }
+
+    private var sceneAnimationPaused: Bool {
+        #if os(iOS)
+        return scenePhase != .active
+        #else
+        // Menu-bar panels can remain visible without an active app scene.
+        return false
+        #endif
     }
 
     @ViewBuilder
