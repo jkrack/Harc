@@ -11,6 +11,26 @@ import Testing
 
 @Suite("HARCAB1 background URLSession upload client")
 struct HarcBackgroundURLSessionUploadClientV1Tests {
+    @Test("recreated sessions skip historical task numbers without replacing mappings")
+    func skipsReusedTaskNumbers() async throws {
+        let fixture = try BackgroundUploadFixture(seed: 1)
+        let old = try BackgroundUploadFixture(seed: 2)
+        let events = BackgroundUploadEventLog()
+        let persistence = BackgroundUploadPersistenceFake(hostTrust: fixture.hostTrust, events: events)
+        persistence.seed(job: old.job, mappingIdentity: old.identity(1), state: .completed)
+        persistence.seed(job: old.job, mappingIdentity: old.identity(2), state: .retired)
+        let session = BackgroundUploadSessionFake(nextTaskIdentifier: 1, events: events)
+        let coordinator = HarcBackgroundUploadCoordinatorV1(
+            persistence: persistence, session: session, verifyBody: { _ in }, now: { fixture.now })
+        let identity = try await coordinator.schedule(fixture.plan)
+        #expect(identity == fixture.identity(3))
+        #expect(session.createdTasks[0].state == .canceling)
+        #expect(session.createdTasks[1].state == .canceling)
+        #expect(persistence.mappings[0].batchID == old.descriptor.batchID)
+        #expect(persistence.mappings[0].state == .completed)
+        #expect(persistence.mappings[1].state == .retired)
+        #expect(events.snapshot().filter { $0.hasPrefix("resume:") } == ["resume:3"])
+    }
     @Test("persists every reconstruction fact and task mapping before resume")
     func persistsBeforeResumeAndBuildsExactRequest() async throws {
         let fixture = try BackgroundUploadFixture(seed: 1)
@@ -891,14 +911,15 @@ private final class BackgroundUploadPersistenceFake:
 
     func seed(
         job: HarcBackgroundUploadJobV1,
-        mappingIdentity: SystemBackgroundTaskIdentity
+        mappingIdentity: SystemBackgroundTaskIdentity,
+        state: BackgroundTaskMappingState = .persistedBeforeResume
     ) {
         jobs[job.descriptor.batchID] = job
         mappings.append(
             StoredBackgroundTaskMapping(
                 identity: mappingIdentity,
                 batchID: job.descriptor.batchID,
-                state: .persistedBeforeResume,
+                state: state,
                 updatedAt: Date(timeIntervalSince1970: 2_100_000_000)
             )
         )

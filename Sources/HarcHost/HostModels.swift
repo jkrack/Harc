@@ -232,6 +232,7 @@ public struct NoSecurityRegistryFailureInjector: SecurityRegistryFailureInjector
 /// LocalAuthentication; transport adapters never receive this capability.
 public protocol HostLocalOSAuthenticationBoundary: Sendable {
     func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool
+    func authorizeCanonicalReceiptRepairBatch(recordingCount: Int) async throws -> Bool
     func authorizeCanonicalLibraryMigration(recordingCount: Int) async throws -> Bool
     func authorizeInitialGrantExpansion(
         for deviceID: DeviceID,
@@ -249,6 +250,10 @@ public protocol HostLocalOSAuthenticationBoundary: Sendable {
 }
 
 extension HostLocalOSAuthenticationBoundary {
+    public func authorizeCanonicalReceiptRepairBatch(recordingCount: Int) async throws -> Bool {
+        false
+    }
+
     public func authorizeCanonicalReceiptRepair(for recordingID: CanonicalRecordingID) async throws -> Bool {
         false
     }

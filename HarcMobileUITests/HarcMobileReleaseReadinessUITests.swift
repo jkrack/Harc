@@ -61,11 +61,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         status.tap()
         let transferStatus = app.descendants(matching: .any)["harc.mobile.sync.transfer-status"]
         XCTAssertTrue(transferStatus.waitForExistence(timeout: 10))
-        XCTAssertTrue(
-            transferStatus.label.contains(
-                "Sending to your Mac isn't turned on in this version of Harc yet."
-            )
+        let unpairedStatus = NSPredicate(
+            format: "label CONTAINS %@",
+            "Local recording, playback and export work without a Mac."
         )
+        expectation(for: unpairedStatus, evaluatedWith: transferStatus)
+        waitForExpectations(timeout: 10)
         let sendNow = app.buttons["harc.mobile.sync.retry-transfers"]
         XCTAssertTrue(sendNow.exists)
         XCTAssertFalse(sendNow.isEnabled)

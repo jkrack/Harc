@@ -260,15 +260,6 @@ extension HarcHostStore {
                                 'audioPublished', 'recordingCommitted',
                                 'receiptPrepared'
                             )
-                            AND (
-                                journal.last_error_code =
-                                    'canonical-artifact-identity-mismatch'
-                                OR EXISTS (
-                                    SELECT 1
-                                    FROM canonical_artifact_binding_events AS event
-                                    WHERE event.upload_id = journal.upload_id
-                                )
-                            )
                         )
                       )
                     ORDER BY journal.created_at, journal.upload_id

@@ -209,8 +209,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 guard let self else { return }
                 defer { self.bridge.hostReceiptRepairInProgress = false }
                 do {
-                    let result = try await runtime.repairReceiptBindings()
-                    self.bridge.hostReceiptRepairStatus = "Checked \(result.checked) recording(s); repaired \(result.repaired); \(result.failed) still need attention. Clients will retry automatically."
+                    let result = try await runtime.repairReceiptBindings { [weak self] checked, total in
+                        await MainActor.run {
+                            self?.bridge.hostReceiptRepairStatus = "Checking recording \(min(checked + 1, total)) of \(total). One owner approval will cover all verified bindings that need repair."
+                        }
+                    }
+                    self.bridge.hostReceiptRepairStatus = "Checked \(result.checked) recording(s); repaired \(result.repaired); \(result.failed) still need attention. "
+                        + (result.repaired == 0 ? "No receipt bindings were changed. " : "Clients will retry automatically. ")
+                        + (result.failed > 0 ? "If the library was moved or copied, use Verify Moved Library. Files that fail verification remain protected." : "")
                 } catch HarcHostError.localOSAuthenticationRequired {
                     self.bridge.hostReceiptRepairStatus = "Repair requires approval from this Mac's owner. Recording copies remain protected."
                 } catch {
@@ -3956,6 +3962,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         let libraryVM = LibraryViewModel(store: store)
+        libraryVM.loadOriginDeviceLabels = { [weak self] in
+            guard let runtime = self?.hostRuntime else { return [:] }
+            let devices = try await runtime.pairedDevices()
+            return Dictionary(uniqueKeysWithValues: devices.map { ($0.deviceID, $0.label) })
+        }
         // Hybrid retrieval when the user wants it; nil keeps search lexical.
         libraryVM.searchEmbedder = prefs.semanticSearchEnabled
             ? ensureMaintenanceStore().searchEmbedder

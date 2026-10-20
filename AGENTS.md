@@ -83,8 +83,10 @@ authentication, capability policy, and container validation. The ordered PR
 slices through Host ingest, transport, mobile capture/transfer, secondary-Mac
 Client mode, and the optional blind relay are implemented in the current
 SwiftPM/Xcode project. Do not infer that their unit or integration tests close
-the named physical-device codec, two-network, App Store, or real secondary-Mac
-qualification gates. `HarcAudioMac` and `HarcInference` remain
+the physical-device codec, two-network, App Store, or real secondary-Mac
+qualification gates. Physical qualification records the actual iPhone hardware
+and OS used; it does not require an iPhone SE (2nd generation), iPhone 17, or
+any other named marketing-model role. `HarcAudioMac` and `HarcInference` remain
 documentation-only boundaries; do not add either as a placeholder module to
 `Package.swift` or `project.yml`.
 Keep the V1 host in the resident Mac app, keep the existing daemon, issue the
@@ -549,6 +551,17 @@ pre-release diagnostic journals are preserved, never automatically rebound.
 
 Run focused tests for the surface you changed, then broaden only as risk
 requires.
+
+For local iOS Simulator configuration and navigation regressions, run
+`bash scripts/test-mobile-local.sh`. It selects an available iOS 26+ iPhone,
+keeps per-worktree DerivedData and package caches under
+`/Volumes/MacMiniSDD/HarcBuilds/local-ios`, and retains a fresh result bundle
+for each run. Set `HARC_LOCAL_IOS_ROOT` to use another build volume. The SSD
+must be mounted; the runner never silently falls back to internal build caches.
+Install a compatible runtime with Xcode before the first run. These simulator
+checks do not qualify physical audio capture or a release. CI's package, macOS,
+and mobile jobs build independently and must not wait on one another unless an
+actual artifact dependency is introduced.
 
 On the current constrained development Mac, cap Swift and Xcode concurrency at
 two workers and stop before free disk falls below 5 GiB.

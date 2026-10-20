@@ -135,9 +135,11 @@ replaced. The deterministic staging regression suite passes 28/28.
 - Fresh/upgrade/idempotent migrations and reopen recovery pass.
 - `xcodegen generate`, full `swift test`, and the unsigned Mac Xcode build pass,
   with only documented timing flakes accepted after an isolated green rerun.
-- The signed physical codec harness records bit-exact and performance evidence
-  on the named oldest-supported and current iPhones before the codec/container
-  identifier is frozen. Simulator evidence is explicitly insufficient.
+- The selected codec passes a focused bit-exact regression on the recorded
+  physical qualification iPhone, then one real phone-to-Host product-path
+  transfer returns a verified durable receipt with matching canonical PCM
+  hashes and no local-master cleanup before receipt. Simulator evidence is
+  explicitly insufficient; no named marketing-model pair is required.
 - PR 4 may proceed while that physical gate is open. PR 3 cannot exit, and PR 5
   cannot freeze or depend on a production codec/container, until it closes.
 

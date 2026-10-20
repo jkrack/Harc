@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.14.16"
-    CURRENT_PROJECT_VERSION: "71"
+    MARKETING_VERSION: "0.14.17"
+    CURRENT_PROJECT_VERSION: "72"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
   configs:
@@ -243,6 +243,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile
         PRODUCT_NAME: Harc
         PRODUCT_MODULE_NAME: HarcMobile
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) HARC_MOBILE_QUALIFIED_CAF_ALAC"
         CODE_SIGN_ENTITLEMENTS: HarcMobileApp/HarcMobile.entitlements
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO

@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# New PR commits supersede older validation; main runs always finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: macos-26
@@ -236,8 +241,7 @@ jobs:
           retention-days: 14
 
   mobile-configuration:
-    # Keep the simulator workload off the package and Mac validation runners.
-    needs: [build, macos]
+    # Independent runner and source build: no artifacts from the other jobs are needed.
     runs-on: macos-26
     timeout-minutes: 45
     steps:

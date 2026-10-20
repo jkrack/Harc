@@ -892,6 +892,7 @@ extension HarcHostStore {
         at date: Date, validateArtifact: @escaping @Sendable () throws -> Void
     ) async throws {
         guard date.timeIntervalSince1970.isFinite,
+              work.canonicalArtifactIdentity.deviceNumber == identity.deviceNumber,
               work.canonicalArtifactIdentity.inodeNumber == identity.inodeNumber,
               Self.bindingStableFieldsMatch(work.canonicalArtifactIdentity, identity)
         else { throw HarcHostError.canonicalArtifactIdentityMismatch }
@@ -1010,9 +1011,6 @@ extension HarcHostStore {
             case .manifest:
                 guard let resumeState = row["resume_state"] as String?,
                       state == "failedRecoverable",
-                      row["last_error_code"] as String?
-                        == HostCanonicalIngestFailureCode
-                            .artifactIdentityMismatch.rawValue,
                       [
                         "audioPublished", "recordingCommitted",
                         "receiptPrepared",

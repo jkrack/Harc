@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import HarcStore
+import HarcDomain
 
 public enum LibraryFilter: Equatable, Sendable {
     case all
@@ -34,6 +35,19 @@ public enum LibraryFilter: Equatable, Sendable {
 /// Library-window view model. Debounces search queries and fetches results.
 @MainActor
 public final class LibraryViewModel: ObservableObject {
+    @Published public private(set) var originDeviceLabels: [DeviceID: String] = [:]
+    public var loadOriginDeviceLabels: (@MainActor () async throws -> [DeviceID: String])?
+
+    public func originLabel(for recording: Recording) -> String {
+        guard let deviceID = recording.originID?.deviceID else {
+            return "Recording origin unavailable"
+        }
+        if let label = originDeviceLabels[deviceID]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !label.isEmpty {
+            return "Recorded on \(label)"
+        }
+        return "Recorded on device \(deviceID.description.prefix(12))"
+    }
     @Published public var searchText: String = ""
     @Published public private(set) var recordings: [Recording] = []
     /// Virtual day sessions, newest first, with member counts/durations.
@@ -82,6 +96,10 @@ public final class LibraryViewModel: ObservableObject {
     }
 
     public func start() {
+        Task { [weak self] in
+            guard let self, let load = self.loadOriginDeviceLabels else { return }
+            if let labels = try? await load() { self.originDeviceLabels = labels }
+        }
         $searchText
             .removeDuplicates()
             .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
