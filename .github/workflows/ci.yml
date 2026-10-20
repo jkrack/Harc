@@ -14,7 +14,36 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  smoke:
+    if: github.event_name == 'push'
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Post-merge repository smoke checks
+        run: bash scripts/test-post-merge-smoke.sh
+
+      - name: Preserve smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-merge-smoke
+          path: build/smoke
+          retention-days: 7
+
   build:
+    if: github.event_name == 'pull_request'
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -136,6 +165,7 @@ jobs:
           retention-days: 14
 
   macos:
+    if: github.event_name == 'pull_request'
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -241,6 +271,7 @@ jobs:
           retention-days: 14
 
   mobile-configuration:
+    if: github.event_name == 'pull_request'
     # Independent runner and source build: no artifacts from the other jobs are needed.
     runs-on: macos-26
     timeout-minutes: 45

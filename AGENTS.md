@@ -552,6 +552,17 @@ pre-release diagnostic journals are preserved, never automatically rebound.
 Run focused tests for the surface you changed, then broaden only as risk
 requires.
 
+Use local focused tests as the default development feedback loop, with the
+existing SSD build caches. Do not push each intermediate edit just to obtain
+GitHub test feedback. Run the affected package suites or app/simulator tests
+locally, then push a review-ready candidate for full CI before merging. Keep
+required app, physical-device, security and release gates; a focused local pass
+does not replace them. Pull requests run the full package, macOS and iOS CI
+jobs. Pushes to main run only `bash scripts/test-post-merge-smoke.sh`: package
+manifest validation, protocol contracts, tooling regressions and Xcode project
+generation. This smoke check does not compile or launch the app and cannot
+replace pre-merge CI or release qualification.
+
 For local iOS Simulator configuration and navigation regressions, run
 `bash scripts/test-mobile-local.sh`. It selects an available iOS 26+ iPhone,
 keeps per-worktree DerivedData and package caches under
