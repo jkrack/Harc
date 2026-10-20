@@ -188,7 +188,10 @@ targets:
       - path: HarcMobileApp
         excludes:
           - README.md
+      - path: HarcMobileActivityShared
     dependencies:
+      - target: HarcMobileWidgets
+        embed: true
       - package: HarcCore
         product: HarcAudioMobile
       - package: HarcCore
@@ -211,7 +214,7 @@ targets:
       path: HarcMobileApp/Info.plist
       properties:
         CFBundleName: Harc
-        CFBundleDisplayName: Harc
+        CFBundleDisplayName: "$(HARC_MOBILE_DISPLAY_NAME)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         HarcBuildSHA: "$(HARC_BUILD_SHA)"
@@ -223,6 +226,7 @@ targets:
         HarcRemoteRelayOrigin: "https://relay.adaptcontext.com"
         NSBonjourServices:
           - _harc._tcp
+        NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
         UILaunchScreen: {}
@@ -235,7 +239,8 @@ targets:
         com.apple.developer.default-data-protection: NSFileProtectionComplete
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile$(HARC_DIAGNOSTIC_SUFFIX)
+        HARC_MOBILE_DISPLAY_NAME: Harc
         PRODUCT_NAME: Harc
         PRODUCT_MODULE_NAME: HarcMobile
         CODE_SIGN_ENTITLEMENTS: HarcMobileApp/HarcMobile.entitlements
@@ -244,6 +249,32 @@ targets:
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         ENABLE_HARDENED_RUNTIME: NO
         HARC_BUILD_SHA: unrecorded
+
+  HarcMobileWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: HarcMobileWidgets
+      - path: HarcMobileActivityShared
+    dependencies:
+      - package: HarcCore
+        product: HarcPresenceUI
+    info:
+      path: HarcMobileWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Harc Recording
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile$(HARC_DIAGNOSTIC_SUFFIX).RecordingActivity
+        PRODUCT_NAME: HarcMobileWidgets
+        TARGETED_DEVICE_FAMILY: 1
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        GENERATE_INFOPLIST_FILE: YES
+        SUPPORTS_MACCATALYST: NO
 
   HarcMobileAppTests:
     type: bundle.unit-test

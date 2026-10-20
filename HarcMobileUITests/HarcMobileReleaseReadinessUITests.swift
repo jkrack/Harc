@@ -22,13 +22,33 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             app.staticTexts.matching(
                 NSPredicate(
                     format: "label CONTAINS %@",
-                    "Records to protected storage on this iPhone"
+                    "Saved on this iPhone first, then sent to your Mac"
                 )
             ).firstMatch.exists
         )
         XCTAssertTrue(
             app.buttons["harc.mobile.record.start"].exists
         )
+        keepTideScreenshot("Tide-Record")
+    }
+
+    func testTideSearchAndSetupAreReachableWithoutStartingCapture() {
+        let app = makeApp(rootID: TestRoot.offlineReview)
+        app.launch()
+        let search = app.tabBars.buttons["Search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        XCTAssertTrue(app.staticTexts["Find a moment"].waitForExistence(timeout: 10))
+        keepTideScreenshot("Tide-Search")
+        let setup = app.buttons["harc.setup-and-sync"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 10))
+        setup.tap()
+        XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Check now"].exists)
+        keepTideScreenshot("Tide-Setup")
+        app.buttons["Done"].tap()
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
     }
 
     func testOfflineReviewSampleAndPrivacyAreReachableWithoutHost() {
@@ -141,6 +161,70 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
 #endif
     }
 
+    func testPhysicalLiveActivityStopsBackgroundRecording() throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("Background microphone and Live Activity require a physical iPhone.")
+#else
+        addUIInterruptionMonitor(withDescription: "Microphone permission") { alert in
+            guard alert.buttons["Allow"].exists else { return false }
+            alert.buttons["Allow"].tap()
+            return true
+        }
+        let app = makeApp(rootID: TestRoot.liveActivity)
+        app.launch()
+        let start = app.buttons["harc.mobile.record.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        start.tap()
+        triggerMicrophonePermissionMonitor(in: app)
+        let stop = app.buttons["harc.mobile.record.stop"]
+        defer {
+            app.activate()
+            if stop.waitForExistence(timeout: 2) { stop.tap() }
+        }
+        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        _ = XCTWaiter.wait(
+            for: [expectation(description: "persist microphone checkpoint")],
+            timeout: 7
+        )
+        keepTideScreenshot("Tide-Physical-Recording")
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        springboard.activate()
+        XCTAssertTrue(
+            app.wait(for: .runningBackground, timeout: 10),
+            "Home must background Harc before the activity stop is exercised."
+        )
+        _ = XCTWaiter.wait(
+            for: [expectation(description: "allow the compact activity to render")],
+            timeout: 2
+        )
+        keepTideScreenshot("Tide-Physical-DynamicIsland")
+        // Notification Center presents the Lock Screen activity without a
+        // private lock-button API. Locked-device behavior remains a manual gate.
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01))
+            .press(forDuration: 0.1, thenDragTo:
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)))
+        let activityStop = springboard.buttons["Stop and save recording"]
+        XCTAssertTrue(activityStop.waitForExistence(timeout: 15))
+        let activityPermission = springboard.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Allow Live Activities from Harc Tide Test")
+        ).firstMatch
+        if activityPermission.exists, springboard.buttons["Allow"].exists {
+            springboard.buttons["Allow"].tap()
+        }
+        XCTAssertTrue(
+            springboard.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", "audio saved")
+            ).firstMatch.waitForExistence(timeout: 25),
+            "The activity must show a durable checkpoint before stopping."
+        )
+        keepTideScreenshot("Tide-Physical-LiveActivity")
+        activityStop.tap()
+        app.activate()
+        XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
+#endif
+    }
+
     func testPhysicalStorageExhaustionPreservesVisibleDurablePrefix() throws {
 #if targetEnvironment(simulator)
         throw XCTSkip("C7 storage exhaustion requires a physical iPhone.")
@@ -239,12 +323,21 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             "A2000000-0000-4000-8000-202608090001"
         static let microphone =
             "A3000000-0000-4000-8000-202608090001"
+        static let liveActivity =
+            "A6000000-0000-4000-8000-202610200001"
         static let accessibilityAudit =
             "A4000000-0000-4000-8000-202608090001"
         static let forceQuitRecovery =
             "C5000000-0000-4000-8000-202608090001"
         static let storageExhaustion =
             "C7000000-0000-4000-8000-202608090001"
+    }
+
+    private func keepTideScreenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func makeApp(

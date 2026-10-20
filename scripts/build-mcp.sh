@@ -10,6 +10,9 @@ cd "$SRCROOT"
 # Shares the daemon's scratch dir — same package, same dependency graph, so
 # a combined build reuses every module the harc-stt phase already compiled.
 SCRATCH="$SRCROOT/.build-daemon"
+mkdir -p "$SCRATCH"
+# Match the daemon and direct Swift test invocations through SSD symlinks.
+SCRATCH="$(cd "$SCRATCH" && pwd -P)"
 BUILD_JOBS="${HARC_EMBED_BUILD_JOBS:-2}"
 echo "note: building harc-mcp into $SCRATCH"
 
@@ -20,7 +23,8 @@ swift build \
   --scratch-path "$SCRATCH" \
   --arch arm64
 
-MCP_SRC="$SCRATCH/arm64-apple-macosx/release/harc-mcp"
+BIN_PATH="$(swift build --show-bin-path --scratch-path "$SCRATCH" -c release --arch arm64)"
+MCP_SRC="$BIN_PATH/harc-mcp"
 MCP_DST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/harc-mcp"
 
 mkdir -p "$(dirname "$MCP_DST")"

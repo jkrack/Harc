@@ -8,6 +8,7 @@ import HarcCore
 import HarcModels
 import HarcSummarize
 import HarcAudio
+import HarcPresenceUI
 import AppKit
 import UniformTypeIdentifiers
 
@@ -603,6 +604,35 @@ public struct HarcWindowRootView: View {
 
     // MARK: - Sidebar
 
+    private var tideTodayOverview: some View {
+        let today = libraryVM.recordings.filter { Calendar.current.isDateInToday($0.startedAt) }
+        let intervals = today.compactMap { recording -> DateInterval? in
+            guard let end = recording.endedAt, end >= recording.startedAt else { return nil }
+            return DateInterval(start: recording.startedAt, end: end)
+        }
+        return VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+            HStack {
+                Text("Today").font(.harcLabel)
+                Spacer()
+                Text("\(today.count) recordings")
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+            }
+            HarcTideDayTimeline(intervals: intervals)
+                .frame(height: 40)
+            HStack {
+                Text("12 AM")
+                Spacer()
+                Text("12 PM")
+                Spacer()
+                Text("12 AM")
+            }
+            .font(.harcCaption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(HarcSpacing.md)
+    }
+
     @ViewBuilder
     var sidebar: some View {
         VStack(spacing: 0) {
@@ -614,6 +644,7 @@ public struct HarcWindowRootView: View {
                 recordingState: recordingState,
                 postProcessing: postProcessing
             )
+            tideTodayOverview
             dateScopeBar
             Group {
                 if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -623,7 +654,9 @@ public struct HarcWindowRootView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
+        .background { HarcTideBackground() }
         .navigationTitle("Library")
         .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
         // Attached to the sidebar container, NOT to groupedList: the grouped

@@ -8,6 +8,16 @@ import Synchronization
 /// entered Harc's preallocated handoff. Sampling is capped so the visual never
 /// competes with canonical conversion or durable writes.
 final class HarcMobileAudioLevelMeter: @unchecked Sendable {
+    private let durableFrameCount = Atomic<UInt64>(0)
+
+    var durableAudioSeconds: Double {
+        Double(durableFrameCount.load(ordering: .relaxed)) / 16_000
+    }
+
+    func observeDurableFrames(_ frames: UInt64) {
+        durableFrameCount.store(frames, ordering: .relaxed)
+    }
+
     private let levelBits = Atomic<UInt32>(Float(0).bitPattern)
 
     var level: Float {
@@ -26,6 +36,7 @@ final class HarcMobileAudioLevelMeter: @unchecked Sendable {
     }
 
     func reset() {
+        durableFrameCount.store(0, ordering: .relaxed)
         levelBits.store(Float(0).bitPattern, ordering: .relaxed)
     }
 

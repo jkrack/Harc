@@ -27,7 +27,7 @@ public struct GeneralSettingsView: View {
         } header: {
             Text("General")
         } footer: {
-            Text("Host, Client, pairing, recovery, and connection diagnostics are in Host & Sync.")
+            Text("Host, Client, pairing, recovery, and connection diagnostics are in Devices & Sync.")
                 .font(.harcLabel)
                 .foregroundStyle(.secondary)
         }

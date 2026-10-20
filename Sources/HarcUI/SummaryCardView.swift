@@ -266,43 +266,47 @@ public struct SummaryCardView: View {
     }
 
     private var summaryHeader: some View {
-        HStack(spacing: HarcSpacing.sm) {
-            Image(systemName: "sparkles")
-                .foregroundStyle(Color.accentColor)
-            Text("Summary")
-                .font(.harcTitle)
-                .foregroundStyle(Color.primary)
-            Text("· generated with \(persistedTierDisplay)")
-                .font(.harcLabel)
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            if let when = recording.summaryGeneratedAt {
-                Text("· \(RelativeTimeFormatter.relativeOrDated(when))")
-                    .font(.harcLabel)
-                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-            }
-            Spacer()
-            Button(action: enqueueSelf) {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.plain)
-            .help("Regenerate with the active summarizer")
+        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+            HStack(spacing: HarcSpacing.sm) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(Color.accentColor)
+                Text("Summary")
+                    .font(.harcTitle)
+                    .foregroundStyle(Color.primary)
+                    .fixedSize()
+                Spacer()
+                Button(action: enqueueSelf) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .help("Regenerate with the active summarizer")
 
-            Menu {
-                Button("Copy summary") {
-                    if let s = recording.summaryMarkdown { copyToPasteboard(s) }
+                Menu {
+                    Button("Copy summary") {
+                        if let s = recording.summaryMarkdown { copyToPasteboard(s) }
+                    }
+                    Button("Copy action items") {
+                        if let a = recording.actionItemsMarkdown { copyToPasteboard(a) }
+                    }
+                    Divider()
+                    Button("Clear summary", role: .destructive) {
+                        if let id = recording.id { onClearSummary(id) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
                 }
-                Button("Copy action items") {
-                    if let a = recording.actionItemsMarkdown { copyToPasteboard(a) }
-                }
-                Divider()
-                Button("Clear summary", role: .destructive) {
-                    if let id = recording.id { onClearSummary(id) }
-                }
-            } label: {
-                Image(systemName: "ellipsis")
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            Text("Generated with \(persistedTierDisplay)")
+                .font(.harcLabel)
+                .foregroundStyle(Color.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let when = recording.summaryGeneratedAt {
+                Text(RelativeTimeFormatter.relativeOrDated(when))
+                    .font(.harcLabel)
+                    .foregroundStyle(Color.secondary)
+            }
         }
     }
 

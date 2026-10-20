@@ -9,6 +9,7 @@ public struct HarcPresenceBlob: View {
     public let state: HarcPresenceState
     public let size: HarcPresenceSize
     public let showsSymbol: Bool
+    public let animates: Bool
     private let audioLevel: () -> Double
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -17,31 +18,34 @@ public struct HarcPresenceBlob: View {
         state: HarcPresenceState,
         size: HarcPresenceSize = .standard,
         showsSymbol: Bool = true,
+        animates: Bool = true,
         audioLevel: @escaping () -> Double = { 0 }
     ) {
         self.state = state
         self.size = size
         self.showsSymbol = showsSymbol
+        self.animates = animates
         self.audioLevel = audioLevel
     }
 
     public var body: some View {
         let style = HarcPresenceStyle(state: state)
         let metrics = HarcPresenceMetrics(size: size)
+        let motionDisabled = reduceMotion || !animates
 
         TimelineView(
             .animation(
                 minimumInterval: 1 / style.framesPerSecond,
-                paused: reduceMotion || !style.animates
+                paused: motionDisabled || !style.animates
             )
         ) { context in
             let elapsed = context.date.timeIntervalSinceReferenceDate
-            let phase = reduceMotion ? 0 : elapsed * style.phaseSpeed
+            let phase = motionDisabled ? 0 : elapsed * style.phaseSpeed
             let sensedLevel = style.respondsToAudio
                 ? min(max(audioLevel(), 0), 1)
                 : 0
-            let activity = reduceMotion ? 0 : sensedLevel
-            let breath = reduceMotion || !style.animates
+            let activity = motionDisabled ? 0 : sensedLevel
+            let breath = motionDisabled || !style.animates
                 ? 0
                 : sin(elapsed * style.breathSpeed)
             let breathScale = 1 + (breath * style.breathAmplitude)
@@ -66,7 +70,7 @@ public struct HarcPresenceBlob: View {
                         colors: style.colors,
                         center: .center,
                         angle: .degrees(
-                            reduceMotion
+                            motionDisabled
                                 ? 0
                                 : elapsed * style.gradientDegreesPerSecond
                         )

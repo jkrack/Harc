@@ -8,6 +8,9 @@ set -euo pipefail
 cd "$SRCROOT"
 
 SCRATCH="$SRCROOT/.build-daemon"
+mkdir -p "$SCRATCH"
+# Use one cache identity when regenerable output is symlinked to an SSD.
+SCRATCH="$(cd "$SCRATCH" && pwd -P)"
 BUILD_JOBS="${HARC_EMBED_BUILD_JOBS:-2}"
 echo "note: building harc-stt into $SCRATCH"
 
@@ -18,7 +21,8 @@ swift build \
   --scratch-path "$SCRATCH" \
   --arch arm64
 
-DAEMON_SRC="$SCRATCH/arm64-apple-macosx/release/harc-stt"
+BIN_PATH="$(swift build --show-bin-path --scratch-path "$SCRATCH" -c release --arch arm64)"
+DAEMON_SRC="$BIN_PATH/harc-stt"
 DAEMON_DST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/harc-stt"
 
 mkdir -p "$(dirname "$DAEMON_DST")"

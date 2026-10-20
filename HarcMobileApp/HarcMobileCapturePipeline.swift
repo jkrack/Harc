@@ -280,6 +280,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
                 endedAt: now,
                 endedMonotonicNanoseconds: monotonic
             )
+            levelMeter.observeDurableFrames(writer.durableCanonicalFrameCount)
             canonicalFrames += UInt64(bytes.count / 2)
             if observedInputGap {
                 try recordDiscontinuity(
@@ -301,6 +302,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
                 endedAt: now,
                 endedMonotonicNanoseconds: monotonic
             )
+            levelMeter.observeDurableFrames(writer.durableCanonicalFrameCount)
             canonicalFrames += UInt64(tail.count / 2)
         }
         if input.handoff.takePendingDroppedInputFrames() > 0 {

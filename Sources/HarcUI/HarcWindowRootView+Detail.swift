@@ -4,6 +4,7 @@ import HarcStore
 import HarcExport
 import HarcClient
 import HarcCore
+import HarcPresenceUI
 import HarcModels
 import HarcSummarize
 import AppKit
@@ -32,6 +33,7 @@ extension HarcWindowRootView {
     @ViewBuilder
     var detailBody: some View {
         libraryDetail
+            .background { HarcTideBackground() }
     }
 
     func mutationFailureBanner(_ failure: LibraryMutationFailure) -> some View {
@@ -128,6 +130,10 @@ extension HarcWindowRootView {
     func detailContent(recording: Recording) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: HarcSpacing.md) {
+                HarcTideConditions {
+                    Text(Self.rowSecondaryLine(for: recording))
+                    Label("Library on this Mac", systemImage: "desktopcomputer")
+                }
                 detailTitleRow(recording: recording)
 
                 WaveformPlayerView(
@@ -137,42 +143,6 @@ extension HarcWindowRootView {
                 )
 
                 inspectorSummaryChips(for: recording)
-
-                // Summary card — requires SummarizationQueueStore and
-                // ModelManagerStore injected as environment objects by the
-                // window controller. Scrolls internally past a bound so a
-                // long summary can't push the transcript off screen.
-                ScrollView {
-                    SummaryCardView(
-                        recording: recording,
-                        store: store,
-                        activeSummarizerID: prefs.activeSummarizerID,
-                        hasTranscript: hasTranscriptSource(recording),
-                        onClearSummary: { id in
-                            Task {
-                                do {
-                                    try await store.clearSummaryStatus(id: id)
-                                    mutationFailure = nil
-                                } catch {
-                                    reportMutationFailure(.clearSummary(recording.displayTitle), error: error)
-                                }
-                            }
-                        }
-                    )
-                }
-                .frame(maxWidth: .infinity, maxHeight: 280, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-
-                if let recID = recording.id {
-                    NotesCardView(
-                        itemID: recID,
-                        notes: recording.notesMarkdown,
-                        onSave: { [store] text in
-                            try await store.updateNotes(id: recID, markdown: text)
-                        }
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
 
                 if transcriptFindVisible {
                     transcriptFindBar()
@@ -191,7 +161,22 @@ extension HarcWindowRootView {
             // The transcript, editable in place. This pane is the single
             // surface — the separate editor window, its second toolbar,
             // second find bar and hash-derived waveform are gone.
-            transcriptEditorBody
+            GeometryReader { geometry in
+                if geometry.size.width >= 820 { // token-exempt: two-column detail breakpoint.
+                    HStack(alignment: .top, spacing: HarcSpacing.lg) {
+                        transcriptEditorBody
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        detailInsights(recording: recording)
+                            .frame(width: 290) // token-exempt: Tide insight column.
+                    }
+                } else {
+                    VStack(spacing: HarcSpacing.sm) {
+                        detailInsights(recording: recording)
+                            .frame(maxHeight: 180) // token-exempt: preserve transcript space in narrow windows.
+                        transcriptEditorBody
+                    }
+                }
+            }
         }
         .navigationTitle(recording.displayTitle)
         .background(transcriptKeyboardShortcuts())
@@ -202,6 +187,14 @@ extension HarcWindowRootView {
         // which starved the "N speakers to review" chip whenever the
         // inspector was closed.
         .task(id: recording.wavPath) {
+            // A restored selection can arrive before the observed library
+            // rows. Its selection-change handler then has no document to
+            // load; initialize when the actual detail first becomes available.
+            if detailDocument == nil {
+                loadTranscript()
+                await loadEnvelope()
+                await loadResolvedLabels()
+            }
             async let observation: Void = observeRecording(recording: recording)
             async let inspectorData: Void = loadInspectorSummaryData(for: recording)
             _ = await (observation, inspectorData)
@@ -221,6 +214,41 @@ extension HarcWindowRootView {
         }
     }
 
+    private func detailInsights(recording: Recording) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: HarcSpacing.md) {
+                SummaryCardView(
+                    recording: recording,
+                    store: store,
+                    activeSummarizerID: prefs.activeSummarizerID,
+                    hasTranscript: hasTranscriptSource(recording),
+                    onClearSummary: { id in
+                        Task {
+                            do {
+                                try await store.clearSummaryStatus(id: id)
+                                mutationFailure = nil
+                            } catch {
+                                reportMutationFailure(.clearSummary(recording.displayTitle), error: error)
+                            }
+                        }
+                    }
+                )
+                if let recID = recording.id {
+                    NotesCardView(
+                        itemID: recID,
+                        notes: recording.notesMarkdown,
+                        onSave: { [store] text in
+                            try await store.updateNotes(id: recID, markdown: text)
+                        }
+                    )
+                }
+            }
+            .padding(HarcSpacing.md)
+        }
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.trailing, HarcSpacing.md)
+    }
+
     /// Title as an editable field — the rename affordance the Library never
     /// had (the view-model API existed with no caller; the retired editor
     /// window was the only place a title could be changed).
@@ -233,7 +261,7 @@ extension HarcWindowRootView {
             // recording's name.
             TextField(recording.suggestedTitle ?? "Untitled", text: $titleDraft)
                 .textFieldStyle(.plain)
-                .font(.title2.weight(.semibold))
+                .font(.system(.title2, design: .rounded, weight: .bold)) // token-exempt: primary recording title in Tide detail.
                 .onSubmit { commitTitle(for: recording) }
             Spacer(minLength: 8)
             if let error = editorSaveError {

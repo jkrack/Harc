@@ -2476,7 +2476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// tail) does. Visibility follows three published signals; size follows
     /// the pill's hover state.
     private func setupRecordingIsland() {
-        guard !isUITesting else { return }
+        guard !isUITesting || shouldShowCaptureSurfacesForUITest else { return }
         let island = RecordingIslandPanel(
             rootView: RecordingIslandView(
                 bridge: bridge,
@@ -4239,6 +4239,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         remoteRelayStartupIssue = nil
         bridge.remoteRelayStatusDetail = nil
         bridge.hostRuntimeReady = false
+        bridge.hostDevices = []
+        bridge.hostDevicesLoaded = false
+        bridge.hostDevicesError = nil
+        bridge.refreshHostDevices = {}
+        bridge.todayRecordingIntervals = nil
+        bridge.refreshTodayRecordings = {}
         bridge.clientRuntimeReady = false
         bridge.clientRecoverSyncState = nil
         clientRecoverSyncRetryTask?.cancel()
@@ -4252,7 +4258,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         do {
             let store = try await makeApplicationStore()
             try await finishStoreBootstrap(store)
+            bridge.refreshTodayRecordings = { [weak self] in
+                guard let self, let store = self.store else { return }
+                do {
+                    let recordings = try await store.recordings(onDay: .now)
+                    self.bridge.todayRecordingIntervals = recordings.map {
+                        DateInterval(start: $0.startedAt, end: max($0.startedAt, $0.endedAt ?? $0.startedAt))
+                    }
+                } catch {
+                    self.bridge.todayRecordingIntervals = nil
+                }
+            }
             bridge.hostRuntimeReady = prefs.runtimeRole == .host
+            bridge.refreshHostDevices = { [weak self] in
+                guard let self, let runtime = self.hostRuntime else { return }
+                do {
+                    let devices = try await runtime.pairedDevices()
+                    self.bridge.hostDevices = devices.map {
+                        HarcHostDevicePresentation(
+                            id: $0.deviceID.description, name: $0.label,
+                            isPhone: $0.clientKind == .mobile,
+                            isRevoked: $0.status != .active,
+                            lastConnectedAt: $0.lastConnectedAt
+                        )
+                    }
+                    self.bridge.hostDevicesLoaded = true
+                    self.bridge.hostDevicesError = nil
+                } catch {
+                    self.bridge.hostDevicesError = "Device status could not be refreshed."
+                }
+            }
             bridge.clientRuntimeReady = prefs.runtimeRole == .client
             startRemoteRelayStatusUpdates()
             if let pairingURI = pendingDesktopPairingInvitationURI {
@@ -4622,6 +4657,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             observeDestinationChanges()
             if shouldOpenLibraryForUITest {
                 openLibrary()
+            }
+            if shouldOpenMenuForUITest {
+                toggleStatusPopover(nil)
+            }
+            if shouldShowCaptureSurfacesForUITest {
+                toggleQuickCapture()
             }
             if desktopClientRuntime != nil, !isUITesting {
                 // Startup recovery is silent but complete: verified masters
@@ -5049,6 +5090,14 @@ private extension AppDelegate {
         ProcessInfo.processInfo.environment["HARC_UI_TEST_OPEN_LIBRARY"] == "1"
     }
 
+    var shouldOpenMenuForUITest: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["HARC_UI_TEST_OPEN_MENU"] == "1"
+    }
+
+    var shouldShowCaptureSurfacesForUITest: Bool {
+        isUITesting && ProcessInfo.processInfo.environment["HARC_UI_TEST_CAPTURE_SURFACES"] == "1"
+    }
+
     var shouldUseUITestRecordingLoop: Bool {
         ProcessInfo.processInfo.environment["HARC_UI_TEST_FAKE_RECORDING"] == "1"
     }
@@ -5317,6 +5366,8 @@ private extension AppDelegate {
 private extension AppDelegate {
     var isUITesting: Bool { false }
     var shouldOpenLibraryForUITest: Bool { false }
+    var shouldOpenMenuForUITest: Bool { false }
+    var shouldShowCaptureSurfacesForUITest: Bool { false }
     var shouldUseUITestRecordingLoop: Bool { false }
     var uiTestDatabaseURL: URL? { nil }
     var uiTestRecoveryQueueURL: URL? { nil }
@@ -5363,6 +5414,7 @@ private struct StatusPopoverRoot: View {
             recordingState: bridge.recordingState,
             trayState: bridge.trayState,
             amplitudeHistory: bridge.amplitudeHistory,
+            todayRecordingIntervals: bridge.todayRecordingIntervals,
             onStartStop: bridge.onStartStop,
             onOpenWindow: bridge.onOpenWindow,
             onCopy: bridge.onCopyLastTranscript,
@@ -5422,6 +5474,13 @@ private struct StatusPopoverRoot: View {
             availableUpdate: bridge.availableUpdate,
             onInstallUpdate: bridge.onInstallUpdate
         )
+        .task {
+            while !Task.isCancelled {
+                await bridge.refreshTodayRecordings()
+                do { try await Task.sleep(for: .seconds(30)) }
+                catch { return }
+            }
+        }
         .preferredColorScheme(prefs.appearance.colorScheme)
     }
 }

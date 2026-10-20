@@ -348,8 +348,8 @@ struct HarcMobileCaptureHeroView: View {
                     VStack(spacing: 6) {
                         Text("Tap to record")
                             .font(.title3.weight(.semibold))
-                        Text("Records to protected storage on this iPhone")
-                            .font(.footnote)
+                        Text("Saved on this iPhone first, then sent to your Mac")
+                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -361,9 +361,11 @@ struct HarcMobileCaptureHeroView: View {
                         startedAt: startedAt,
                         presentation: .hero
                     )
+                    HarcMobileLiveEnergyView(audioLevel: audioLevel)
+                        .frame(height: 110)
                     control
                     VStack(spacing: 6) {
-                        Text("Tap to stop")
+                        Text("Stop and save")
                             .font(.subheadline.weight(.semibold))
                         Text("Protected on this iPhone")
                             .font(.footnote)
@@ -693,8 +695,8 @@ struct HarcMobileElapsedTime: View {
         case .hero:
             .system(
                 size: heroSize,
-                weight: .ultraLight,
-                design: .monospaced
+                weight: .light,
+                design: .rounded
             )
         case .compact:
             .body.monospacedDigit()
@@ -781,6 +783,35 @@ private extension HarcMobileCaptureCoordinator.State {
         case .saved: 5
         case .storageExhausted: 6
         case .failed: 7
+        }
+    }
+}
+
+/// Samples the existing atomic meter only while visible. This trace is recent
+/// foreground activity, not a claim about the full recording or durable audio.
+private struct HarcMobileLiveEnergyView: View {
+    let audioLevel: () -> Double
+    @State private var samples: [Float] = []
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HarcTideEnergyTrace(samples: samples, isLive: true)
+            HStack {
+                Text("Recent microphone activity")
+                Spacer()
+                Text("now")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .task {
+            while !Task.isCancelled {
+                let value = audioLevel()
+                samples.append(Float(value.isFinite ? min(1, max(0, value)) : 0))
+                if samples.count > 120 { samples.removeFirst(samples.count - 120) }
+                do { try await Task.sleep(for: .milliseconds(250)) }
+                catch { return }
+            }
         }
     }
 }

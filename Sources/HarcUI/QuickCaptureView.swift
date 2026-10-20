@@ -44,7 +44,7 @@ public struct QuickCaptureView: View {
             footer
         }
         .frame(width: 560)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background { HarcTideBackground().clipShape(RoundedRectangle(cornerRadius: 16)) }
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)

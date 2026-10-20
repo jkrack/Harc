@@ -1,0 +1,105 @@
+{
+  "source": "https://claude.ai/artifact/6EPLQKJ2L16AjAy4DgGiZD#page-a4feb9a2bb70",
+  "page": "Tide",
+  "method": "Rendered artboard DOM extraction through signed-in Chrome, including generated SVG geometry. Scripts removed for static reference; not the original editable project.",
+  "artboards": [
+    {
+      "path": "mac/X1-TideLibrary.dc.html",
+      "bytes": 27137,
+      "sha256": "6f187ac202df4859bdf911f5261c74aff85cf609de54ea519a8e6c6653663d0b",
+      "styles": 1,
+      "svgs": 3
+    },
+    {
+      "path": "mac/X2-TideMenuBar.dc.html",
+      "bytes": 15097,
+      "sha256": "58b035f6b648cb409c835ef3057f8d3bc0c5abb2d3a466afd47986ca4b92f836",
+      "styles": 1,
+      "svgs": 3
+    },
+    {
+      "path": "tide/LiveActivity.dc.html",
+      "bytes": 16174,
+      "sha256": "fe1bbe54721c26f2615f564fb313fe04e6678bf219575144728a00cc91ae3837",
+      "styles": 1,
+      "svgs": 2
+    },
+    {
+      "path": "tide/i1-Record.dc.html",
+      "bytes": 17195,
+      "sha256": "7f9731af688286227f2f09f49fabe59c8892cd9ebcf5cfa5a33c0c5f26518335",
+      "styles": 1,
+      "svgs": 5
+    },
+    {
+      "path": "tide/i2-Recording.dc.html",
+      "bytes": 17621,
+      "sha256": "c71e2856147989e4efc25a766cd636773e6fce408bc4b461919b3f97822d49be",
+      "styles": 1,
+      "svgs": 5
+    },
+    {
+      "path": "tide/i3-Library.dc.html",
+      "bytes": 20696,
+      "sha256": "c304deedabc8949592c206a8cbf152afe110730a554625a83f0b06339186e7fa",
+      "styles": 1,
+      "svgs": 4
+    },
+    {
+      "path": "tide/i4-Detail.dc.html",
+      "bytes": 18959,
+      "sha256": "b2547a9ed7fdcbe62ba1023d7fc71b8f4ed1f0d69e87715515bba26d02abafc0",
+      "styles": 1,
+      "svgs": 3
+    },
+    {
+      "path": "tide/i5-Setup.dc.html",
+      "bytes": 15722,
+      "sha256": "6879915777bf03360c858188c01cd6f016ed0d90a9e3521603eb14ef7d75e250",
+      "styles": 1,
+      "svgs": 1
+    },
+    {
+      "path": "tide/i6-Pair.dc.html",
+      "bytes": 14369,
+      "sha256": "22b684176e275d48f39e2862b78264a85598266568338e7673fdee047615d301",
+      "styles": 1,
+      "svgs": 0
+    },
+    {
+      "path": "tide/i7-Search.dc.html",
+      "bytes": 15391,
+      "sha256": "fad8e816468f0e324fa5ac619d7aecfe293635c7837c2eebd40bc522c16d33e5",
+      "styles": 1,
+      "svgs": 4
+    },
+    {
+      "path": "tide/m2-MenuIdle.dc.html",
+      "bytes": 15084,
+      "sha256": "a2ade7b7135774dee924f9ce884de12900d41e7e878562878776dd49bd374da3",
+      "styles": 1,
+      "svgs": 3
+    },
+    {
+      "path": "tide/m4-Devices.dc.html",
+      "bytes": 18477,
+      "sha256": "7976d3c1db35fddaa9bb38ff16e6e304d88822260429af988a653d5e8b503230",
+      "styles": 1,
+      "svgs": 2
+    },
+    {
+      "path": "tide/m5-Pair.dc.html",
+      "bytes": 15347,
+      "sha256": "e17d3e1f8b357e290d79d0ba0e4ea65ca388cac6e371b66a92aa86b67f26bc1a",
+      "styles": 1,
+      "svgs": 0
+    },
+    {
+      "path": "tide/m6-Floating.dc.html",
+      "bytes": 15722,
+      "sha256": "22138673ebb450d6bb04a845cb22b619b3eaba4a0c9c468d64d773c2e0acdf68",
+      "styles": 1,
+      "svgs": 3
+    }
+  ]
+}

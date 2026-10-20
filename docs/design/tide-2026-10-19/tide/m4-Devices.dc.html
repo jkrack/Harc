@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en" style="--dc-editor-backdrop: #171717; --dc-editor-hatch-ink: rgba(250,249,245,.07); touch-action: none; overscroll-behavior: none; --dc-chrome-unit: 4.076086956521739px;"><head><style>
+    .sc-placeholder{background:color-mix(in srgb,currentColor 8%,transparent);
+      border:1px solid color-mix(in srgb,currentColor 50%,transparent);
+      border-radius:2px;box-sizing:border-box;overflow:hidden}
+    @keyframes sc-shine{0%{background-position:100% 50%}100%{background-position:0% 50%}}
+    html.sc-dc-streaming .sc-placeholder,
+    html.sc-dc-streaming .sc-interp.sc-missing{position:relative;
+      background:color-mix(in srgb,currentColor 5%,transparent);
+      border-color:transparent}
+    html.sc-dc-streaming .sc-placeholder::before,
+    html.sc-dc-streaming .sc-interp.sc-missing::before{content:'';
+      position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(90deg,rgba(217,119,87,0) 25%,rgba(247,225,211,.95) 37%,rgba(217,119,87,0) 63%);
+      background-size:400% 100%;animation:sc-shine 1.4s ease infinite}
+    html.sc-dc-streaming .sc-placeholder:nth-child(n+9 of .sc-placeholder)::before,
+    html.sc-dc-streaming .sc-interp.sc-missing:nth-child(n+9 of .sc-interp.sc-missing)::before{animation:none;
+      background:color-mix(in srgb,currentColor 8%,transparent)}
+    .sc-placeholder-error{padding:4px 8px;font:11px/1.4 ui-monospace,monospace;
+      color:color-mix(in srgb,currentColor 70%,transparent);word-break:break-word}
+    .sc-interp.sc-missing{display:inline-block;width:2em;height:1em;overflow:hidden;
+      vertical-align:text-bottom;background:rgba(255,255,255,.3);border:1px solid rgba(0,0,0,.5);
+      border-radius:2px;box-sizing:border-box;color:transparent;
+      user-select:none}
+    .sc-interp.sc-unresolved{font-family:ui-monospace,monospace;font-size:.85em;
+      color:color-mix(in srgb,currentColor 50%,transparent);
+      background:color-mix(in srgb,currentColor 10%,transparent);border-radius:3px;
+      padding:0 3px}
+    .sc-host.sc-has-error{position:relative}
+    .sc-logic-error{position:absolute;top:8px;left:8px;z-index:2147483647;max-width:60ch;
+      padding:6px 10px;background:#b00020;color:#fff;font:12px/1.4 ui-monospace,monospace;
+      border-radius:4px;white-space:pre-wrap;pointer-events:none}
+    /* Mirrors PRINT_BASELINE_CSS in apps/web deck-stage-export.ts — keep both
+       in sync until dc-runtime regains a build step. */
+    @media print {
+      @page { margin: 0.5cm; }
+      figure, table { break-inside: avoid; }
+      #dc-root, #dc-root > .sc-host { height: auto; }
+      *, *::before, *::after {
+        print-color-adjust: exact; -webkit-print-color-adjust: exact;
+        backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+        animation-delay: -99s !important; animation-duration: .001s !important;
+        animation-iteration-count: 1 !important; animation-fill-mode: both !important;
+        animation-play-state: running !important; transition-duration: 0s !important;
+      }
+    }
+  </style>
+
+
+<meta charset="utf-8">
+<title>Tide Mac: Settings, Devices and Sync</title>
+
+
+
+
+<style>x-dc{display:none!important}</style>
+
+<style data-dc-tpl="1">
+body{margin:0}
+a{color:#5CD2FF}a:hover{color:#9CE2FF}
+</style><style data-dc-editor-style="">body:not([data-dc-editor-overlay-hidden]) [data-dc-editor-hover][data-dc-editor-hover-stroke]:not([data-dc-editor-selected]){filter:drop-shadow(0 0 calc(1*var(--dc-chrome-unit,1px)) color-mix(in srgb,#2a78d6 90%,transparent)) drop-shadow(0 0 calc(2*var(--dc-chrome-unit,1px)) color-mix(in srgb,#2a78d6 55%,transparent))!important;}body:not([data-dc-editor-overlay-hidden]):not([data-dc-editor-proxy="copy"]) [data-dc-editor-dragging],body:not([data-dc-editor-overlay-hidden]):not([data-dc-editor-proxy]) [data-dc-dragging],body[data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-drag-follower]{outline:calc(2*var(--dc-chrome-unit,1px)) solid #2a78d6!important;outline-offset:calc(-1*var(--dc-chrome-unit,1px))!important;opacity:0.55!important;}body[data-dc-editor-proxy="move"]:not([data-dc-editor-overlay-hidden]) [data-dc-editor-dragging],body[data-dc-editor-proxy="move"]:not([data-dc-editor-overlay-hidden]) [data-dc-dragging],body[data-dc-editor-proxy="move"]:not([data-dc-editor-overlay-hidden]) [data-dc-editor-dragging]>*,body[data-dc-editor-proxy="move"]:not([data-dc-editor-overlay-hidden]) [data-dc-dragging]>*{opacity:0!important;outline:none!important;}[data-dc-editor-drag-proxy],[data-dc-editor-drag-proxy] *{pointer-events:none!important;}body[data-dc-editor-on]:not([data-dc-editor-tool="interact"]) *{cursor:default!important;user-select:none!important;}body[data-dc-editor-on]:not([data-dc-editor-tool="interact"]) :not([data-dc-editor-overlay-root]):not([data-dc-editor-overlay-root] *){pointer-events:auto!important;transition:none!important;animation:none!important;}body[data-dc-editor-on][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-editor-dragging]:not([data-dc-editor-overlay-root]) :not([data-dc-editor-overlay-root]),body[data-dc-editor-on][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-dragging]:not([data-dc-editor-overlay-root]) :not([data-dc-editor-overlay-root]),body[data-dc-editor-on][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-drag-follower]:not([data-dc-editor-overlay-root]),body[data-dc-editor-on][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-drag-follower]:not([data-dc-editor-overlay-root]) :not([data-dc-editor-overlay-root]),body[data-dc-editor-move][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-editor-dragging]:not([data-dc-editor-overlay-root]) :not([data-dc-editor-overlay-root]),body[data-dc-editor-move][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-dragging]:not([data-dc-editor-overlay-root]) :not([data-dc-editor-overlay-root]),body[data-dc-editor-move][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-drag-follower]:not([data-dc-editor-overlay-root]),body[data-dc-editor-move][data-dc-editor-brk]:not([data-dc-editor-overlay-hidden]) [data-dc-drag-follower]:not([data-dc-editor-overlay-root]) :not([data-dc-editor-overlay-root]){pointer-events:none!important;}body[data-dc-editor-move] :not([data-dc-editor-overlay-root]):not([data-dc-editor-overlay-root] *){pointer-events:auto!important;transition:none!important;animation-duration:0s!important;animation-delay:0s!important;}body[data-dc-editor-on][data-dc-editor-tool="rect"] *,body[data-dc-editor-on][data-dc-editor-tool="frame"] *,body[data-dc-editor-on][data-dc-editor-tool="grid"] *,body[data-dc-editor-on][data-dc-editor-tool="oval"] *,body[data-dc-editor-on][data-dc-editor-tool="arrow"] *,body[data-dc-editor-on][data-dc-editor-tool="line"] *{cursor:crosshair!important;}body[data-dc-editor-on][data-dc-editor-tool="text"] *{cursor:text!important;}body[data-dc-editor-on][data-dc-editor-tool="draw"] *{cursor:url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2216%22%20height=%2216%22%20viewBox=%220%200%2016%2016%22%3E%3Cpath%20d=%22M2%2014l1-4%208-8a2.1%202.1%200%200%201%203%203l-8%208-4%201z%22%20fill=%22%23333%22%20stroke=%22%23fff%22%20stroke-width=%221%22/%3E%3C/svg%3E') 1 15, crosshair!important;}body[data-dc-editor-on]:not([data-dc-editor-tool]) [data-drags-parent],body[data-dc-editor-on]:not([data-dc-editor-tool]) [data-drags-parent] *{cursor:grab!important;}body[data-dc-editor-on]:not([data-dc-editor-tool]) [data-drags-parent]:active,body[data-dc-editor-on]:not([data-dc-editor-tool]) [data-drags-parent]:active *{cursor:grabbing!important;}body[data-dc-editor-on] [data-dc-editor-editing][contenteditable][contenteditable],body[data-dc-editor-on] [data-dc-editor-editing][contenteditable][contenteditable] *,body[data-dc-editor-on] [data-dc-editor-svg-editing]{cursor:text!important;}body[data-dc-editor-on] [data-dc-editor-editing="import"]{outline:none!important;}html:not([data-dc-canvas]):has(body[data-dc-editor-on]:not([data-dc-capturing]) .sc-host){background:var(--dc-editor-backdrop,#ededeb);}html:not([data-dc-canvas]) body[data-dc-editor-on]:not([data-dc-capturing]):has(.sc-host){background:var(--dc-editor-backdrop,#ededeb);}html:not([data-dc-canvas]) body[data-dc-editor-on] .sc-host:not(.sc-host .sc-host){min-height:calc(100vh - var(--dc-editor-host-vpad,0px));}html:not([data-dc-canvas]) body[data-dc-editor-on]:not([data-dc-capturing]) .sc-host:not(.sc-host .sc-host){background:var(--dc-editor-host-bg,#fff);}html[data-dc-frameless],html[data-dc-frameless] body[data-dc-editor-on],html[data-dc-frameless] body[data-dc-editor-on] .sc-host:not(.sc-host .sc-host){background:transparent!important;min-height:0!important;}html:has(body[data-dc-capturing]),body[data-dc-capturing]{transition:none!important;}html[data-dc-canvas]{overflow:hidden;}html[data-dc-canvas] body[data-dc-editor-on] .sc-host:not(.sc-host .sc-host)::before{content:"";position:absolute;left:-100000px;top:-100000px;width:200000px;height:200000px;pointer-events:none;background:repeating-linear-gradient(45deg,var(--dc-editor-hatch-ink,rgba(0,0,0,.05)) 0 8px,transparent 8px 16px);clip-path:polygon(0 0,100% 0,100% 50%,50% 50%,50% 100%,0 100%);}</style></head>
+<body>
+<div id="dc-root"><div class="sc-host" data-sc-name="m4-Devices"><div data-dc-tpl="2" style="width: 900px; height: 720px; box-sizing: border-box; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.14); background: linear-gradient(rgb(26, 33, 64) 0%, rgb(23, 54, 90) 100%); font-family: -apple-system, BlinkMacSystemFont, &quot;SF Pro Text&quot;, &quot;Helvetica Neue&quot;, sans-serif; font-size: 13px; color: rgb(234, 242, 255); display: flex;">
+  <aside data-dc-tpl="3" style="width: 210px; flex: 0 0 auto; background: rgba(10, 16, 34, 0.45); border-right: 1px solid rgba(255, 255, 255, 0.08); display: flex; flex-direction: column; gap: 2px; padding: 0px 8px;">
+    <div data-dc-tpl="4" style="height: 52px; display: flex; align-items: center; gap: 8px; padding: 0px 8px;">
+      <span data-dc-tpl="5" style="width: 12px; height: 12px; border-radius: 999px; background: rgb(255, 95, 87); display: block;"></span>
+      <span data-dc-tpl="6" style="width: 12px; height: 12px; border-radius: 999px; background: rgb(254, 188, 46); display: block;"></span>
+      <span data-dc-tpl="7" style="width: 12px; height: 12px; border-radius: 999px; background: rgb(40, 200, 64); display: block;"></span>
+    </div>
+    <div data-dc-tpl="8" style="height: 28px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); margin-bottom: 8px; display: flex; align-items: center; padding: 0px 10px; color: rgb(143, 163, 191);">Search</div>
+    <div data-dc-tpl="9" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">General</div>
+    <div data-dc-tpl="10" style="padding: 7px 10px; border-radius: 8px; background: rgba(92, 210, 255, 0.2); color: rgb(255, 255, 255); font-weight: 600;">Devices &amp; Sync</div>
+    <div data-dc-tpl="11" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">Recording</div>
+    <div data-dc-tpl="12" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">Transcription</div>
+    <div data-dc-tpl="13" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">Dictation</div>
+    <div data-dc-tpl="14" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">Modes</div>
+    <div data-dc-tpl="15" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">AI Models</div>
+    <div data-dc-tpl="16" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">Agents</div>
+    <div data-dc-tpl="17" style="padding: 7px 10px; border-radius: 8px; color: rgb(201, 214, 234);">About</div>
+  </aside>
+  <main data-dc-tpl="18" style="flex: 1 1 auto; min-width: 0px; overflow: hidden; padding: 20px 28px; display: flex; flex-direction: column; gap: 14px;">
+    <span data-dc-tpl="19" style="font-family: ui-rounded, &quot;SF Pro Rounded&quot;, -apple-system, sans-serif; font-size: 26px; font-weight: 700;">Devices &amp; Sync</span>
+    <div data-dc-tpl="20" aria-label="Conditions" style="align-self: flex-start; display: flex; gap: 20px; padding: 8px 16px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.1); font-family: ui-rounded, &quot;SF Pro Rounded&quot;, -apple-system, sans-serif; font-weight: 600;">
+      <span data-dc-tpl="21">2 devices</span><span data-dc-tpl="22">2 arriving</span><span data-dc-tpl="23">Same network only</span><span data-dc-tpl="24" style="color: rgb(92, 224, 160);">Library on this Mac</span>
+    </div>
+    <div data-dc-tpl="25" style="display: grid; grid-template-columns: repeat(2, minmax(0px, 1fr)); gap: 12px;">
+      <div data-dc-tpl="26" style="border-radius: 18px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;">
+        <span data-dc-tpl="27" style="display: flex; align-items: center; gap: 10px;"><svg data-dc-tpl="28" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#5CD2FF" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect data-dc-tpl="29" x="6" y="2" width="12" height="20" rx="3"></rect><path data-dc-tpl="30" d="M10.5 18.5h3"></path></svg><span data-dc-tpl="31" style="flex: 1 1 auto; font-family: ui-rounded, &quot;SF Pro Rounded&quot;, -apple-system, sans-serif; font-size: 16px; font-weight: 700;">James's iPhone</span><span data-dc-tpl="32" style="width: 8px; height: 8px; border-radius: 999px; background: rgb(92, 224, 160); display: block;"></span></span>
+        <span data-dc-tpl="33" style="color: rgb(201, 214, 234);">Connected · seen 2 min ago</span>
+        <span data-dc-tpl="34" style="display: flex; align-items: baseline; gap: 6px;"><span data-dc-tpl="35" style="font-family: ui-rounded, &quot;SF Pro Rounded&quot;, -apple-system, sans-serif; font-size: 28px; font-weight: 700;">2</span><span data-dc-tpl="36" style="color: rgb(169, 184, 207);">recordings arriving</span></span>
+      </div>
+      <div data-dc-tpl="37" style="border-radius: 18px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;">
+        <span data-dc-tpl="38" style="display: flex; align-items: center; gap: 10px;"><svg data-dc-tpl="39" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#C9D6EA" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect data-dc-tpl="40" x="4" y="5" width="16" height="11" rx="1.5"></rect><path data-dc-tpl="41" d="M2 19h20"></path></svg><span data-dc-tpl="42" style="flex: 1 1 auto; font-family: ui-rounded, &quot;SF Pro Rounded&quot;, -apple-system, sans-serif; font-size: 16px; font-weight: 700;">MacBook Air</span><span data-dc-tpl="43" style="width: 8px; height: 8px; border-radius: 999px; background: rgb(110, 130, 158); display: block;"></span></span>
+        <span data-dc-tpl="44" style="color: rgb(201, 214, 234);">Not connected · seen yesterday</span>
+        <span data-dc-tpl="45" style="display: flex; align-items: baseline; gap: 6px;"><span data-dc-tpl="46" style="font-family: ui-rounded, &quot;SF Pro Rounded&quot;, -apple-system, sans-serif; font-size: 28px; font-weight: 700;">0</span><span data-dc-tpl="47" style="color: rgb(169, 184, 207);">waiting · up to date</span></span>
+      </div>
+    </div>
+    <div data-dc-tpl="48" style="border-radius: 18px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+      <span data-dc-tpl="49" style="font-family: ui-rounded, &quot;SF Pro Rounded&quot;, -apple-system, sans-serif; font-size: 16px; font-weight: 700;">Arriving</span>
+      <div data-dc-tpl="50" style="display: flex; align-items: center; gap: 12px;">
+        <span data-dc-tpl="51" style="flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px;"><span data-dc-tpl="52">Recording 9:41 AM</span><span data-dc-tpl="53" style="font-size: 11px; color: rgb(169, 184, 207);">From James's iPhone · 12 min</span></span>
+        <span data-dc-tpl="54" style="width: 160px; height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); position: relative; display: block;"><span data-dc-tpl="55" style="position: absolute; left: 0px; top: 0px; bottom: 0px; width: 64%; border-radius: 999px; background: rgb(92, 210, 255); display: block;"></span></span>
+        <span data-dc-tpl="56" style="width: 70px; text-align: right; color: rgb(201, 214, 234);">Receiving</span>
+      </div>
+      <div data-dc-tpl="57" style="display: flex; align-items: center; gap: 12px;">
+        <span data-dc-tpl="58" style="flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px;"><span data-dc-tpl="59">Recording 3:30 PM</span><span data-dc-tpl="60" style="font-size: 11px; color: rgb(169, 184, 207);">From James's iPhone · 48 min</span></span>
+        <span data-dc-tpl="61" style="width: 70px; text-align: right; color: rgb(169, 184, 207);">Waiting</span>
+      </div>
+      <span data-dc-tpl="62" style="font-size: 11px; color: rgb(143, 163, 191);">Your iPhone keeps its copy until this Mac confirms a verified one.</span>
+    </div>
+    <div data-dc-tpl="63" style="display: flex; gap: 10px; align-items: center;">
+      <button data-dc-tpl="64" style="height: 34px; padding: 0px 18px; border-radius: 999px; border: 0px; background: rgb(92, 210, 255); color: rgb(11, 20, 36); font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; font-language-override: inherit; font-weight: 700; cursor: pointer;">Pair a Device…</button>
+      <button data-dc-tpl="65" style="height: 34px; padding: 0px 16px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.16); background: transparent; color: rgb(234, 242, 255); font: inherit; cursor: pointer;">Set Up Away From Home…</button>
+      <span data-dc-tpl="66" style="flex: 1 1 auto;"></span>
+      <span data-dc-tpl="67" style="color: rgb(169, 184, 207);">Advanced ›</span>
+    </div>
+  </main></div></div></div>
+
+
+
+</body></html>

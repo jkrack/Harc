@@ -48,9 +48,9 @@ final class HarcMobileAppStoreScreenshotUITests: XCTestCase {
     XCTAssertTrue(closeSample.waitForExistence(timeout: 5))
     closeSample.tap()
 
-    let hostTab = app.tabBars.buttons["Host"]
-    XCTAssertTrue(hostTab.waitForExistence(timeout: 5))
-    hostTab.tap()
+    let setup = app.buttons["harc.setup-and-sync"]
+    XCTAssertTrue(setup.waitForExistence(timeout: 5))
+    setup.tap()
     let privacy = app.buttons["Privacy & Data"]
     XCTAssertTrue(privacy.waitForExistence(timeout: 10))
     privacy.tap()

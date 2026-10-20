@@ -293,9 +293,23 @@ final class HarcMobileRecordingAudioController: NSObject {
     }
 
     private(set) var state: State = .idle
+    private(set) var envelope: [Float] = []
+    private var envelopeTask: Task<Void, Never>?
+    private var playbackRequestID = UUID()
     private let coordinator: HarcMobileLibraryCoordinator
     private let summary: LibraryRecordingSummary
     private var player: AVAudioPlayer?
+
+    var currentTime: TimeInterval { player?.currentTime ?? 0 }
+    var duration: TimeInterval {
+        player?.duration ?? Double(summary.canonicalAudio.totalFrames ?? 0) / 16_000
+    }
+    var canSeek: Bool { player != nil }
+
+    func seek(to time: TimeInterval) {
+        guard time.isFinite, let player else { return }
+        player.currentTime = min(player.duration, max(0, time))
+    }
 
     init(
         coordinator: HarcMobileLibraryCoordinator,
@@ -317,10 +331,16 @@ final class HarcMobileRecordingAudioController: NSObject {
             return
         }
         state = .downloading
+        let requestID = UUID()
+        playbackRequestID = requestID
         do {
             let url = try await coordinator.downloadCanonicalAudio(
                 summary: summary
             )
+            guard playbackRequestID == requestID else {
+                try? await coordinator.releaseDownloadedAudio(summary: summary)
+                return
+            }
             #if os(iOS)
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio)
@@ -334,19 +354,60 @@ final class HarcMobileRecordingAudioController: NSObject {
             }
             self.player = player
             state = .playing
+            envelopeTask?.cancel()
+            envelopeTask = Task { [weak self] in
+                let worker = Task.detached(priority: .utility) {
+                    (try? Self.readEnvelope(url: url)) ?? []
+                }
+                let samples = await withTaskCancellationHandler {
+                    await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled else { return }
+                self?.envelope = samples
+            }
         } catch {
             try? await coordinator.releaseDownloadedAudio(summary: summary)
+            guard playbackRequestID == requestID else { return }
             state = .failed(error.localizedDescription)
         }
     }
 
     func stopAndRelease() {
+        playbackRequestID = UUID()
+        envelopeTask?.cancel()
+        envelopeTask = nil
+        envelope = []
         player?.stop()
         player = nil
         state = .idle
         Task {
             try? await coordinator.releaseDownloadedAudio(summary: summary)
         }
+    }
+
+    /// Bounded-memory display data derived only from verified downloaded audio.
+    nonisolated static func readEnvelope(url: URL) throws -> [Float] {
+        let file = try AVAudioFile(forReading: url)
+        guard file.length > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)
+        else { return [] }
+        let binCount = min(320, Int(file.length))
+        var peaks = [Float](repeating: 0, count: binCount)
+        var position: AVAudioFramePosition = 0
+        while position < file.length {
+            try Task.checkCancellation()
+            try file.read(into: buffer)
+            guard buffer.frameLength > 0, let channel = buffer.floatChannelData?[0] else { break }
+            for frame in 0..<Int(buffer.frameLength) {
+                let bin = min(binCount - 1, Int(Double(position + Int64(frame)) / Double(file.length) * Double(binCount)))
+                let value = abs(channel[frame])
+                if value.isFinite { peaks[bin] = max(peaks[bin], min(1, value)) }
+            }
+            position += Int64(buffer.frameLength)
+        }
+        return peaks
     }
 }
 

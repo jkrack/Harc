@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// Inline audio player for the library detail pane. Renders the recording's
 /// amplitude envelope with a playhead, supports click-to-seek, and a
@@ -21,7 +22,7 @@ public struct WaveformPlayerView: View {
     public init(
         envelope: [Float],
         audioURL: URL?,
-        tint: Color = WavePalette.center,
+        tint: Color = HarcTideStyle.ocean,
         model: WaveformPlayerModel? = nil
     ) {
         self.envelope = envelope
@@ -37,12 +38,18 @@ public struct WaveformPlayerView: View {
     }
 
     public var body: some View {
-        HStack(spacing: HarcSpacing.md) {
-            playButton
+        VStack(spacing: HarcSpacing.sm) {
+            HStack {
+                playButton
+                Text("Recording energy").font(.harcCaption).foregroundStyle(.secondary)
+                Spacer()
+                timeLabel
+            }
             waveform
-            timeLabel
+                .frame(height: 88) // token-exempt: Tide waveform plot height.
         }
-        .frame(height: 44)
+        .padding(HarcSpacing.md)
+        .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
         .task(id: audioURL) {
             guard let audioURL else {
                 await model.unload()
@@ -68,7 +75,8 @@ public struct WaveformPlayerView: View {
                 .background(Circle().fill(tint))
         }
         .buttonStyle(.plain)
-        .disabled(audioURL == nil)
+        .accessibilityLabel(model.isPlaying ? "Pause recording" : "Play recording")
+        .disabled(audioURL == nil || model.duration <= 0)
     }
 
     private var waveform: some View {
@@ -85,6 +93,14 @@ public struct WaveformPlayerView: View {
                 Task { await model.seek(to: target, andPlay: true) }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback position")
+        .accessibilityValue(formatRange(current: model.currentTime, total: model.duration))
+        .accessibilityAdjustableAction { direction in
+            let delta: Double = direction == .increment ? 10 : -10
+            let target = min(model.duration, max(0, model.currentTime + delta))
+            Task { await model.seek(to: target, andPlay: model.isPlaying) }
+        }
     }
 
     private var timeLabel: some View {
@@ -99,40 +115,44 @@ public struct WaveformPlayerView: View {
 
     private func drawEnvelope(ctx: GraphicsContext, size: CGSize) {
         guard envelope.count > 1 else { return }
-        let midY = size.height / 2
+        let baseline = size.height - 8
         let stepX = size.width / CGFloat(envelope.count - 1)
-        var p = Path()
-        p.move(to: CGPoint(x: 0, y: midY - CGFloat(envelope[0]) * midY))
-        for i in 1..<envelope.count {
+        var trace = Path()
+        for i in envelope.indices {
             let x = CGFloat(i) * stepX
-            let y = midY - CGFloat(envelope[i]) * midY
-            p.addLine(to: CGPoint(x: x, y: y))
+            let sample = envelope[i].isFinite ? min(1, max(0, envelope[i])) : 0
+            let point = CGPoint(x: x, y: baseline - CGFloat(sample) * (baseline - 6))
+            if i == 0 { trace.move(to: point) }
+            else { trace.addLine(to: point) }
         }
-        for i in (0..<envelope.count).reversed() {
-            let x = CGFloat(i) * stepX
-            let y = midY + CGFloat(envelope[i]) * midY
-            p.addLine(to: CGPoint(x: x, y: y))
-        }
+        var p = trace
+        p.addLine(to: CGPoint(x: size.width, y: baseline))
+        p.addLine(to: CGPoint(x: 0, y: baseline))
         p.closeSubpath()
         ctx.fill(p, with: .linearGradient(
-            Gradient(colors: [
-                tint.opacity(0.7),
-                WavePalette.edge.opacity(0.3),
-                WavePalette.edge.opacity(0.0),
-            ]),
-            startPoint: CGPoint(x: 0, y: midY),
-            endPoint: CGPoint(x: 0, y: 0)
+            Gradient(colors: [tint.opacity(0.45), tint.opacity(0.08)]),
+            startPoint: .zero,
+            endPoint: CGPoint(x: 0, y: baseline)
         ))
+        ctx.stroke(trace, with: .color(tint), lineWidth: 2)
+        if model.duration > 0 {
+            var played = ctx
+            let width = size.width * min(1, max(0, model.currentTime / model.duration))
+            played.clip(to: Path(CGRect(x: 0, y: 0, width: width, height: size.height)))
+            played.stroke(trace, with: .color(.primary), lineWidth: 2)
+        }
     }
 
     private func drawPlayhead(ctx: GraphicsContext, size: CGSize) {
         guard model.duration > 0 else { return }
-        let fraction = model.currentTime / model.duration
+        let fraction = min(1, max(0, model.currentTime / model.duration))
         let x = CGFloat(fraction) * size.width
         var p = Path()
         p.move(to: CGPoint(x: x, y: 0))
         p.addLine(to: CGPoint(x: x, y: size.height))
         ctx.stroke(p, with: .color(tint), lineWidth: 1.5)
+        ctx.fill(Path(ellipseIn: CGRect(x: x - 4, y: size.height - 12, width: 8, height: 8)),
+                 with: .color(HarcTideStyle.cyan))
     }
 
     private func formatRange(current: Double, total: Double) -> String {

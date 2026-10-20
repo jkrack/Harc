@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// Settings as a sidebar + detail split, the shape macOS System Settings
 /// itself uses. It replaced a single 21-section scroll: the section count
@@ -96,6 +97,10 @@ public struct HarcSettingsForm: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(pane == .hostSync ? .hidden : .automatic)
+        .background {
+            if pane == .hostSync { HarcTideBackground() }
+        }
         .navigationTitle(pane.title)
     }
 }

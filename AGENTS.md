@@ -46,6 +46,12 @@ Flag the user before violating these product decisions.
   its semantic capture states, cross-platform palette, and Reduce Motion
   behavior. Use it for Harc's persistent capture presence instead of creating
   platform-specific blob renderers.
+- `HarcMobileWidgets/` renders the local recording Live Activity and Dynamic
+  Island. `HarcMobileActivityShared/` contains its attributes and recording-bound
+  stop intent; `HarcMobileLiveActivity` is presentation-only and must never block
+  capture. A stale activity action must not stop a newer capture. Validate with
+  `HarcMobileLiveActivityTests` and build the HarcMobile scheme (which embeds the
+  widget extension).
 - `Sources/HarcStore/` owns the GRDB-backed library, people, recovery queue,
   cache recovery, and migrations.
 - `Sources/HarcUI/` contains SwiftUI/AppKit-facing state and views, including
@@ -162,7 +168,8 @@ two workers and stop before free disk falls below 5 GiB.
 
 Run HarcMobile UI qualification through
 `scripts/qualify-harcmobile-ui.sh` so the destination, exact source manifest,
-logs, result bundle, and artifact digest stay together. A dirty-tree run must be
+logs, result bundle, and artifact digest stay together. Use
+`--derived-data-path <SSD-cache-directory>` to reuse an external build cache. A dirty-tree run must be
 explicitly labeled diagnostic and cannot qualify a release.
 
 Pairing transport changes must also pass the real pinned-TLS lifecycle through
@@ -191,6 +198,11 @@ Re-run the named suite alone before treating one as a regression:
 controllers and the NSPanel HUD compile only in the Xcode app target, so a
 green package suite says nothing about them. Always finish with an
 `xcodebuild` before calling the tree green.
+
+The embedded helper scripts resolve their executable directory with
+`swift build --show-bin-path`; do not hard-code SwiftPM's output layout.
+Current Xcode toolchains may use `out/Products/Release` instead of the
+older architecture-specific directory.
 
 **Neither tests nor the compiler catch a missing `@EnvironmentObject`.** It is
 a runtime `assertionFailure` — a SIGTRAP in Release. A crash of exactly this

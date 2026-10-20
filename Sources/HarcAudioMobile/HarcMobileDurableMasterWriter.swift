@@ -109,6 +109,9 @@ public final class HarcMobileDurableMasterWriter {
     private var hasher = SHA256()
     private var totalFrames: UInt64 = 0
     private var durableFrames: UInt64 = 0
+    /// Read only on the writer's serial queue. Advances only after the audio,
+    /// checkpoint file, attributes and containing directory have synchronized.
+    public var durableCanonicalFrameCount: UInt64 { durableFrames }
     private var lastEndedAt: Date
     private var lastEndedMonotonicNanoseconds: UInt64
     private var discontinuities: [CaptureDiscontinuity] = []
