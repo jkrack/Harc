@@ -473,7 +473,8 @@ struct HarcMobileSendingToMacView: View {
     }
 
     private var isTransferGated: Bool {
-        !(model.transferCoordinator?.isCodecQualifiedForTransfers ?? false)
+        presentation.action != .retryTransfers
+            || (model.captureCoordinator?.isRecording ?? false)
     }
 }
 
