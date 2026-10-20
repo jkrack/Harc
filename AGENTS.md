@@ -552,6 +552,17 @@ pre-release diagnostic journals are preserved, never automatically rebound.
 Run focused tests for the surface you changed, then broaden only as risk
 requires.
 
+For local iOS Simulator configuration and navigation regressions, run
+`bash scripts/test-mobile-local.sh`. It selects an available iOS 26+ iPhone,
+keeps per-worktree DerivedData and package caches under
+`/Volumes/MacMiniSDD/HarcBuilds/local-ios`, and retains a fresh result bundle
+for each run. Set `HARC_LOCAL_IOS_ROOT` to use another build volume. The SSD
+must be mounted; the runner never silently falls back to internal build caches.
+Install a compatible runtime with Xcode before the first run. These simulator
+checks do not qualify physical audio capture or a release. CI's package, macOS,
+and mobile jobs build independently and must not wait on one another unless an
+actual artifact dependency is introduced.
+
 On the current constrained development Mac, cap Swift and Xcode concurrency at
 two workers and stop before free disk falls below 5 GiB.
 
