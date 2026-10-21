@@ -50,8 +50,9 @@ struct MicCaptureFormatTests {
 
         let candidates = MicCapture.tapFormatCandidates(outputFormat: good, inputFormat: good)
 
-        // nil (device-native) first, then the valid format once.
+        // Prefer the output bus format, with nil only as a last fallback.
         #expect(candidates.count == 2)
-        #expect(candidates[0] == nil)
+        #expect(candidates[0] == good)
+        #expect(candidates[1] == nil)
     }
 }

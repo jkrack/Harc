@@ -62,6 +62,24 @@ struct RecordingSessionTests {
         #expect(!FileManager.default.fileExists(atPath: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL).path))
     }
 
+    @Test("a running session with no written microphone frames reports capture failure")
+    func deadMicDoesNotLookLikeAHealthyRecording() async throws {
+        let session = RecordingSession(
+            mic: FakeMic(script: []),
+            systemAudio: FakeSystem(.denied)
+        )
+        try await session.start(at: Date())
+        try await Task.sleep(for: .seconds(6))
+        let captured = try await session.stop()
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
+        #expect(captured.integrity.issues.contains {
+            $0.source == .microphone && $0.reason == .sourceStopped
+        })
+    }
+
     @Test("system sample FIFO remains bounded and reports discarded samples")
     func boundedSystemFIFO() throws {
         let fifo = SampleFIFO(capacity: 100)

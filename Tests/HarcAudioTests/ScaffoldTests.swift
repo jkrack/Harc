@@ -37,8 +37,8 @@ struct ScaffoldTests {
         let candidates = MicCapture.tapFormatCandidates(outputFormat: output, inputFormat: input)
 
         #expect(candidates.count == 3)
-        #expect(candidates[0] == nil)
-        #expect(candidates[1] == output)
-        #expect(candidates[2] == input)
+        #expect(candidates[0] == output)
+        #expect(candidates[1] == input)
+        #expect(candidates[2] == nil)
     }
 }

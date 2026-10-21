@@ -18,10 +18,10 @@ struct RecordCardView: View {
 
     var body: some View {
         Group {
-            if recordingState.isRecording || recordingState.isPreparing {
-                recordingCard
-            } else if bridge.recordingStopInFlight || isIdentifying {
+            if bridge.recordingStopInFlight || isIdentifying {
                 finishingCard
+            } else if recordingState.isRecording || recordingState.isPreparing {
+                recordingCard
             } else {
                 idleCard
             }
@@ -173,7 +173,7 @@ struct RecordCardView: View {
             .frame(maxWidth: .infinity)
             HStack(spacing: HarcSpacing.sm) {
                 Button {
-                    bridge.onStartStop()
+                    bridge.onStopRecording()
                 } label: {
                     Text("Stop")
                         .font(.harcBody.weight(.semibold))
