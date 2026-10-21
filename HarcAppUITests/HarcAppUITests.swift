@@ -56,6 +56,24 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(staticText(containing: "send the renewal plan").waitForExistence(timeout: 4), app.debugDescription)
     }
 
+    func testTideLibraryCompositionInBothAppearances() throws {
+        for appearance in ["dark", "light"] {
+            app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
+            launchFixtureLibrary()
+            let recording = seededRecordingRow()
+            XCTAssertTrue(recording.waitForExistence(timeout: 8), app.debugDescription)
+            recording.click()
+            XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 4))
+            XCTAssertTrue(staticText(containing: "Talk time").waitForExistence(timeout: 4), app.debugDescription)
+            XCTAssertTrue(staticText(containing: "Action items").waitForExistence(timeout: 4), app.debugDescription)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Tide Library – \(appearance)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            app.terminate()
+        }
+    }
+
     func testLibrarySearchFindsRecordingByTitleAndTranscript() throws {
         launchFixtureLibrary()
         let searchField = app.searchFields.firstMatch

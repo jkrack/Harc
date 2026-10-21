@@ -30,6 +30,7 @@ public extension NSNotification.Name {
 /// Toolbar actions (Edit, Export, Delete, recording pill) are wired in.
 /// This view is hosted by `HarcWindowController`.
 public struct HarcWindowRootView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var libraryVM: LibraryViewModel
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var bridge: HarcAppBridge
@@ -102,6 +103,9 @@ public struct HarcWindowRootView: View {
     /// computed at load for the boundary-jump commands.
     @State var speakerBoundaries: [Int] = []
     @State var titleDraft: String = ""
+    @State var librarySearchFocusToken = 0
+    @State var showTideNotes = false
+    @State var showTideActions = false
     /// The one playback transport for the pane — the transcript's
     /// ⌘-click-to-seek and word highlight drive the same clock the waveform
     /// shows, instead of the second player the editor window used to own.
@@ -377,11 +381,9 @@ public struct HarcWindowRootView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
-        .searchable(
-            text: $libraryVM.searchText,
-            placement: .sidebar,
-            prompt: "Search titles and transcripts"
-        )
+        .onReceive(NotificationCenter.default.publisher(for: .harcLibraryFocusSearch)) { _ in
+            librarySearchFocusToken += 1
+        }
         .toolbar {
             // Record left the toolbar for the sidebar's top (design 3e): a
             // permanent card can hold state — the live timer, envelope, and
@@ -615,9 +617,9 @@ public struct HarcWindowRootView: View {
         }
         return VStack(alignment: .leading, spacing: HarcSpacing.xs) {
             HStack {
-                Text("Today").font(.harcLabel)
+                Text("Today").font(.system(size: 19, weight: .bold, design: .rounded))
                 Spacer()
-                Text("\(today.count) recordings")
+                Text(Pluralize.count(today.count, "recording"))
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
@@ -633,7 +635,9 @@ public struct HarcWindowRootView: View {
             .font(.harcCaption)
             .foregroundStyle(.secondary)
         }
-        .padding(HarcSpacing.md)
+        .padding(.horizontal, HarcSpacing.md)
+        .padding(.top, HarcSpacing.md)
+        .padding(.bottom, HarcSpacing.xs)
     }
 
     @ViewBuilder
@@ -659,9 +663,12 @@ public struct HarcWindowRootView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
         }
-        .background { HarcTideBackground() }
+        .background {
+            HarcTideBackground()
+                .overlay(.black.opacity(colorScheme == .dark ? 0.25 : 0.06))
+        }
         .navigationTitle("Library")
-        .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
+        .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
         // Attached to the sidebar container, NOT to groupedList: the grouped
         // list leaves the hierarchy while a search is active, and a modifier
         // on a removed view never fires. Stopping a recording mid-search
@@ -792,6 +799,7 @@ public struct HarcWindowRootView: View {
                 Label("People", systemImage: "person.2")
             }
         }
+        .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
     }
 
     /// The saturated row is reserved for this — the one place urgency is
@@ -828,6 +836,7 @@ public struct HarcWindowRootView: View {
         .tag(LibrarySelection.live)
         .accessibilityIdentifier("harc.library.liveRow")
         .accessibilityLabel("Recording in progress")
+        .onTapGesture { selection = .live }
     }
 
 
@@ -988,6 +997,7 @@ public struct HarcWindowRootView: View {
                 }
             }
             .tag(LibrarySelection.person(id: item.person.id))
+            .onTapGesture { selection = .person(id: item.person.id) }
         }
         Button {
             showingAddPerson = true
@@ -1067,10 +1077,14 @@ public struct HarcWindowRootView: View {
                             selection = .recording(wavPath: hit.recording.wavPath)
                         })
                         .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
+                        .onTapGesture {
+                            selection = .recording(wavPath: hit.recording.wavPath)
+                        }
                         .contextMenu { contextMenu(for: hit.recording) }
                     }
                 }
             }
+            .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
         }
     }
 
@@ -1095,10 +1109,13 @@ public struct HarcWindowRootView: View {
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Text(libraryVM.originLabel(for: rec))
-                    .font(.harcCaption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if let deviceID = rec.originID?.deviceID {
+                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(libraryVM.originLabel(for: rec))
+                }
                 // One line of what was actually said, so a row is scannable
                 // without opening it. Only when the title is a real title —
                 // under a bare timestamp a snippet just adds noise to noise.
@@ -1305,6 +1322,13 @@ public struct HarcWindowRootView: View {
             }
 
             FileInspectorSection(recording: recording)
+            if let deviceID = recording.originID?.deviceID {
+                Section("Recording origin") {
+                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                    LabeledContent("Device ID", value: deviceID.description)
+                        .textSelection(.enabled)
+                }
+            }
         }
         .formStyle(.grouped)
         .background(.thinMaterial)

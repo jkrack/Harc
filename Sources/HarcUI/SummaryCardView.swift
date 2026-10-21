@@ -13,6 +13,7 @@ public struct SummaryCardView: View {
     let store: RecordingStore?
     let activeSummarizerID: String
     let hasTranscript: Bool
+    let showActionItems: Bool
     let onClearSummary: (Int64) -> Void
 
     @EnvironmentObject private var queueStore: SummarizationQueueStore
@@ -23,12 +24,14 @@ public struct SummaryCardView: View {
         store: RecordingStore? = nil,
         activeSummarizerID: String,
         hasTranscript: Bool = true,
+        showActionItems: Bool = true,
         onClearSummary: @escaping (Int64) -> Void
     ) {
         self.recording = recording
         self.store = store
         self.activeSummarizerID = activeSummarizerID
         self.hasTranscript = hasTranscript
+        self.showActionItems = showActionItems
         self.onClearSummary = onClearSummary
     }
 
@@ -238,10 +241,10 @@ public struct SummaryCardView: View {
                     .font(.harcBody)
                     .foregroundStyle(Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let items = parsedActionItems, !items.isEmpty {
+                if showActionItems, let items = parsedActionItems, !items.isEmpty {
                     actionItemsLabel
                     actionItemsList(items)
-                } else if let raw = recording.actionItemsMarkdown?
+                } else if showActionItems, let raw = recording.actionItemsMarkdown?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                           !raw.isEmpty {
                     actionItemsLabel

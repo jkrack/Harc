@@ -1,5 +1,6 @@
 import SwiftUI
 import HarcPresenceUI
+import HarcCore
 
 /// Inline audio player for the library detail pane. Renders the recording's
 /// amplitude envelope with a playhead, supports click-to-seek, and a
@@ -12,22 +13,26 @@ public struct WaveformPlayerView: View {
     let envelope: [Float]
     let audioURL: URL?
     let tint: Color
+    let speakerSegments: [SpeakerSegment]
 
     // Owned externally when the caller needs to drive it (the detail pane's
     // ⌘-click-to-seek and playback word highlight); self-owned otherwise.
     @ObservedObject var model: WaveformPlayerModel
 
     @StateObject private var fallbackModel = WaveformPlayerModel()
+    @State private var showsSpeakerTimeline = false
 
     public init(
         envelope: [Float],
         audioURL: URL?,
         tint: Color = HarcTideStyle.ocean,
+        speakerSegments: [SpeakerSegment] = [],
         model: WaveformPlayerModel? = nil
     ) {
         self.envelope = envelope
         self.audioURL = audioURL
         self.tint = tint
+        self.speakerSegments = speakerSegments
         if let model {
             self._model = ObservedObject(wrappedValue: model)
         } else {
@@ -38,18 +43,72 @@ public struct WaveformPlayerView: View {
     }
 
     public var body: some View {
-        VStack(spacing: HarcSpacing.sm) {
-            HStack {
-                playButton
-                Text("Recording energy").font(.harcCaption).foregroundStyle(.secondary)
-                Spacer()
-                timeLabel
+        VStack(spacing: 10) {
+            ZStack(alignment: .top) {
+                Group {
+                    if showsSpeakerTimeline {
+                        speakerTimeline
+                    } else {
+                        waveform
+                    }
+                }
+                HStack(spacing: 8) {
+                    HStack(spacing: 7) {
+                        playButton
+                        Text(showsSpeakerTimeline ? "Speakers" : "Recording energy")
+                            .font(.harcCaption)
+                            .foregroundStyle(.white.opacity(0.88))
+                    }
+                    .padding(5)
+                    .padding(.trailing, 5)
+                    .background(.black.opacity(0.55), in: Capsule())
+                    Spacer()
+                    timeLabel
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(.black.opacity(0.55), in: Capsule())
+                }
+                .padding(.horizontal, 4)
+                .padding(.top, 4)
             }
-            waveform
-                .frame(height: 88) // token-exempt: Tide waveform plot height.
+            .frame(height: 150) // token-exempt: Tide's primary data plot.
+            if !speakerSegments.isEmpty {
+                speakerLane
+                    .frame(height: 7)
+            }
+            HStack(spacing: 4) {
+                Text("0:00")
+                Spacer()
+                if model.duration > 0 {
+                    Text(formatTime(model.duration / 4))
+                    Spacer()
+                }
+                modeButton("Energy", selected: !showsSpeakerTimeline) {
+                    showsSpeakerTimeline = false
+                }
+                if !speakerSegments.isEmpty {
+                    modeButton("Speakers", selected: showsSpeakerTimeline) {
+                        showsSpeakerTimeline = true
+                    }
+                }
+                Spacer()
+                if model.duration > 0 {
+                    Text(formatTime(model.duration * 3 / 4))
+                    Spacer()
+                    Text(formatTime(model.duration))
+                }
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
         }
-        .padding(HarcSpacing.md)
-        .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(.primary.opacity(0.08), lineWidth: 1)
+        }
         .task(id: audioURL) {
             guard let audioURL else {
                 await model.unload()
@@ -103,10 +162,62 @@ public struct WaveformPlayerView: View {
         }
     }
 
+    private func modeButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(.harcCaption.weight(selected ? .semibold : .regular))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(.primary.opacity(selected ? 0.13 : 0.035), in: Capsule())
+            .buttonStyle(.plain)
+    }
+
+    private var speakerTimeline: some View {
+        Canvas { context, size in
+            guard model.duration > 0 else { return }
+            let speakers = Array(Set(speakerSegments.map(\.speaker))).sorted()
+            let rowHeight: CGFloat = 20
+            let rowSpacing: CGFloat = 8
+            let totalHeight = CGFloat(speakers.count) * rowHeight
+                + CGFloat(max(0, speakers.count - 1)) * rowSpacing
+            let top = max(0, (size.height - totalHeight) / 2)
+            for segment in speakerSegments {
+                let left = CGFloat(max(0, Double(segment.startMs) / 1000 / model.duration)) * size.width
+                let right = CGFloat(min(1, Double(segment.endMs) / 1000 / model.duration)) * size.width
+                guard right > left else { continue }
+                guard let row = speakers.firstIndex(of: segment.speaker) else { continue }
+                let rect = CGRect(x: left, y: top + CGFloat(row) * (rowHeight + rowSpacing),
+                                  width: max(2, right - left), height: rowHeight)
+                context.fill(Path(roundedRect: rect, cornerRadius: 5),
+                             with: .color(speakerColor(segment.speaker).opacity(0.8)))
+            }
+        }
+        .accessibilityLabel("Speaker turns across recording")
+    }
+
+    private var speakerLane: some View {
+        Canvas { context, size in
+            guard model.duration > 0 else { return }
+            for segment in speakerSegments {
+                let left = CGFloat(max(0, Double(segment.startMs) / 1000 / model.duration)) * size.width
+                let right = CGFloat(min(1, Double(segment.endMs) / 1000 / model.duration)) * size.width
+                guard right > left else { continue }
+                context.fill(Path(CGRect(x: left, y: 0, width: max(2, right - left), height: size.height)),
+                             with: .color(speakerColor(segment.speaker)))
+            }
+        }
+        .clipShape(Capsule())
+        .accessibilityLabel("Speaker timeline")
+    }
+
+    private func speakerColor(_ index: Int) -> Color {
+        let colors: [Color] = [HarcTideStyle.cyan, .purple, .orange, .teal, .green, .pink]
+        return colors[abs(index) % colors.count]
+    }
+
     private var timeLabel: some View {
         Text(formatRange(current: model.currentTime, total: model.duration))
             .font(.harcMono)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.white.opacity(0.88))
             .monospacedDigit()
             .frame(minWidth: 80, alignment: .trailing)
     }

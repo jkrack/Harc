@@ -283,6 +283,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func applyAppearance(_ pref: HarcPreferences.Appearance) {
+        // Keep visual qualification isolated from the user's saved preference.
+        if isUITesting {
+            switch ProcessInfo.processInfo.environment["HARC_UI_TEST_APPEARANCE"] {
+            case "dark": NSApp.appearance = NSAppearance(named: .darkAqua); return
+            case "light": NSApp.appearance = NSAppearance(named: .aqua); return
+            default: break
+            }
+        }
         switch pref {
         case .system: NSApp.appearance = nil
         case .light:  NSApp.appearance = NSAppearance(named: .aqua)
@@ -5460,7 +5468,7 @@ private extension AppDelegate {
         let txtURL = dayURL.appendingPathComponent("09-00-00.md")
         let jsonURL = dayURL.appendingPathComponent("09-00-00.json")
         let transcript = "Amy: The customer renewal is healthy, but pricing risk is still open. Jason: Send the renewal plan by Friday."
-        try Data(repeating: 12, count: 512).write(to: wavURL, options: .atomic)
+        try writeUITestWaveform(to: wavURL)
         try OKFMarkdown.render(OKFMarkdown.Fields(
             title: "UI Test Customer Renewal",
             startedAt: startedAt,
@@ -5495,7 +5503,7 @@ private extension AppDelegate {
             actionItemsMarkdown: "- [ ] Jason: send the renewal plan by Friday",
             summaryModelID: "ui-test-model",
             summaryGeneratedAt: startedAt.addingTimeInterval(120),
-            summarySourceWordCount: 18
+            summarySourceWordCount: 19
         ))
         if ProcessInfo.processInfo.environment["HARC_UI_TEST_BOUND_SPEAKERS"] == "1", let id = recording.id {
             // Synthetic UI state only: this fixture does not qualify capture or voice accuracy.
@@ -5517,6 +5525,47 @@ private extension AppDelegate {
             }
             _ = try await store.publishHostProcessedProjectionIfNotReady(recordingID: id, speakerEvidence: evidenceByIndex)
         }
+    }
+
+    /// A valid synthetic 16 kHz mono master lets visual tests exercise the
+    /// actual waveform and player without touching a real recording.
+    private func writeUITestWaveform(to url: URL) throws {
+        let frameCount = 16_000 * 90
+        let dataBytes = UInt32(frameCount * 2)
+        var wav = Data()
+        wav.reserveCapacity(Int(dataBytes) + 44)
+        func bytes(_ value: UInt16) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { wav.append(contentsOf: $0) }
+        }
+        func bytes(_ value: UInt32) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { wav.append(contentsOf: $0) }
+        }
+        wav.append(contentsOf: "RIFF".utf8)
+        bytes(36 + dataBytes)
+        wav.append(contentsOf: "WAVEfmt ".utf8)
+        bytes(UInt32(16))
+        bytes(UInt16(1))
+        bytes(UInt16(1))
+        bytes(UInt32(16_000))
+        bytes(UInt32(32_000))
+        bytes(UInt16(2))
+        bytes(UInt16(16))
+        wav.append(contentsOf: "data".utf8)
+        bytes(dataBytes)
+        for frame in 0..<frameCount {
+            let halfSecond = frame / 8_000
+            let isPause = halfSecond < 8 || (halfSecond % 31) < 3
+            let variation = (halfSecond * 37 + 11) % 29
+            let amplitude = isPause ? 80 : 2_500 + variation * 290
+            let cycle = frame % 160
+            let triangle = (cycle < 80 ? cycle : 160 - cycle) - 40
+            let sample = Int16(triangle * amplitude / 40)
+            wav.append(UInt8(truncatingIfNeeded: sample))
+            wav.append(UInt8(truncatingIfNeeded: sample >> 8))
+        }
+        try wav.write(to: url, options: .atomic)
     }
 
     func uiTestTranscriptJSON(audioPath: String, startedAt: Date, endedAt: Date, text: String) -> String {
