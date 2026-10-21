@@ -39,7 +39,7 @@ struct RecordCardView: View {
     // MARK: - Idle (+ retroactive armed)
 
     private var idleCard: some View {
-        VStack(spacing: HarcSpacing.xs) {
+        HStack(spacing: 0) {
             Button {
                 bridge.onStartStop()
             } label: {
@@ -55,6 +55,10 @@ struct RecordCardView: View {
                         Text("Record")
                             .font(.harcBody.weight(.semibold))
                             .foregroundStyle(HarcBrand.live)
+                        Text(bridge.selectedMicrophoneName)
+                            .font(.harcCaption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                         if let banked = bankedText {
                             HStack(spacing: 4) {
                                 Text("\(banked) banked")
@@ -72,46 +76,34 @@ struct RecordCardView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
-                        Text(String(describing: shortcut))
-                            .font(.harcMono)
-                            .foregroundStyle(.tertiary)
-                    }
                 }
-                .padding(HarcSpacing.md)
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.vertical, 10)
+                .padding(.leading, 12)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!bridge.selectedMicrophoneAvailable)
             .accessibilityIdentifier("harc.library.capture.recordButton")
             .help(recordHelp)
 
-            HStack(spacing: HarcSpacing.sm) {
-                Image(systemName: bridge.selectedMicrophoneAvailable
-                      ? "mic.fill" : "mic.slash.fill")
-                    .font(.harcCaption)
-                    .foregroundStyle(bridge.selectedMicrophoneAvailable
-                                     ? Color.secondary : Color.harc(.attention))
-                MicrophonePickerControl(bridge: bridge)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if !bridge.selectedMicrophoneAvailable {
-                    Text("Disconnected")
-                        .font(.harcCaption)
-                        .foregroundStyle(Color.harc(.attention))
-                }
+            MicrophonePickerControl(bridge: bridge)
+                .padding(.trailing, 8)
+            if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
+                Text(String(describing: shortcut))
+                    .font(.harcMono)
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 10)
             }
-            .padding(.horizontal, HarcSpacing.sm)
-            .padding(.vertical, HarcSpacing.xs)
         }
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(
-                    bridge.selectedMicrophoneAvailable
-                        ? Color.primary.opacity(0.14)
-                        : Color.harc(.attention).opacity(0.65),
-                    lineWidth: 1
-                )
+                .fill(Color.primary.opacity(0.055))
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(bridge.selectedMicrophoneAvailable
+                    ? Color.primary.opacity(0.10) : Color.harc(.attention).opacity(0.65), lineWidth: 1)
+        }
     }
 
     private var bankedText: String? {

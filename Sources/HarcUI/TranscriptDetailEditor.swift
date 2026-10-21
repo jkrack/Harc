@@ -38,6 +38,7 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.drawsBackground = false
+        scroll.backgroundColor = .clear
 
         let textView = CmdClickTextView()
         textView.setAccessibilityIdentifier("harc.transcript.editor")
@@ -48,9 +49,10 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.allowsUndo = true
-        textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.font = NSFont.systemFont(ofSize: 14)
+        textView.textContainerInset = NSSize(width: 14, height: 12)
         textView.drawsBackground = false
+        textView.backgroundColor = .clear
         textView.delegate = context.coordinator
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
@@ -106,7 +108,9 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
 
         let baseFont = textView.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let turnStyle = NSMutableParagraphStyle()
-        turnStyle.paragraphSpacingBefore = 10
+        // Generated transcripts already separate turns with a blank line.
+        // Adding a second paragraph gap made the text appear fragmented.
+        turnStyle.paragraphSpacingBefore = 0
         turnStyle.lineSpacing = 2
         let bodyStyle = NSMutableParagraphStyle()
         bodyStyle.lineSpacing = 2
@@ -250,6 +254,14 @@ final class TranscriptTimestampRuler: NSRulerView {
 
     required init(coder: NSCoder) {
         fatalError("not used")
+    }
+
+    override var isOpaque: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // NSRulerView's default draw fills with the system window background,
+        // leaving a dark vertical slab against Tide's gradient.
+        drawHashMarksAndLabels(in: dirtyRect)
     }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {

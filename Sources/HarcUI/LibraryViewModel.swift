@@ -46,7 +46,7 @@ public final class LibraryViewModel: ObservableObject {
            !label.isEmpty {
             return "Recorded on \(label)"
         }
-        return "Recorded on device \(deviceID.description.prefix(12))"
+        return "Recorded on another device"
     }
     @Published public var searchText: String = ""
     @Published public private(set) var recordings: [Recording] = []
