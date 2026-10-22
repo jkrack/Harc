@@ -64,17 +64,39 @@ struct RecordingSessionTests {
 
     @Test("a running session with no written microphone frames reports capture failure")
     func deadMicDoesNotLookLikeAHealthyRecording() async throws {
+        let (reports, reportContinuation) = AsyncStream<CaptureIntegrityReport>.makeStream()
         let session = RecordingSession(
             mic: FakeMic(script: []),
-            systemAudio: FakeSystem(.denied)
+            systemAudio: FakeSystem(.denied),
+            onCaptureIssue: { report in reportContinuation.yield(report) }
         )
         try await session.start(at: Date())
-        try await Task.sleep(for: .seconds(6))
+        let reportedDeadMic = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await report in reports {
+                    if report.issues.contains(where: {
+                        $0.source == .microphone && $0.reason == .sourceStopped
+                    }) {
+                        return true
+                    }
+                }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(30))
+                return false
+            }
+            let observed = await group.next() ?? false
+            reportContinuation.finish()
+            group.cancelAll()
+            return observed
+        }
         let captured = try await session.stop()
         defer {
             try? FileManager.default.removeItem(at: captured.localMasterURL)
             try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
         }
+        #expect(reportedDeadMic)
         #expect(captured.integrity.issues.contains {
             $0.source == .microphone && $0.reason == .sourceStopped
         })
