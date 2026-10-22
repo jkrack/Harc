@@ -86,7 +86,8 @@ public extension CapturedRecording {
             switch issue.reason {
             case .bufferOverrun: reason = .bufferOverrun
             case .writerFailure: reason = .writerFailure
-            case .conversionFailed, .sourceStopped, .drainTimedOut: reason = .interruptionBegan
+            case .conversionFailed, .sourceInterrupted, .sourceStopped, .drainTimedOut:
+                reason = .interruptionBegan
             }
             let offset = min(issue.frameOffset, totalFrames)
             return try CaptureDiscontinuity(

@@ -20,6 +20,7 @@ final class CaptureIntegrityRecorder: @unchecked Sendable {
     }
     func configure(audioURL: URL) { lock.withLock { self.audioURL = audioURL } }
     func wrote(frames: UInt32) { lock.withLock { writtenFrames += UInt64(frames) } }
+    var writtenFrameCount: UInt64 { lock.withLock { writtenFrames } }
     func observe(_ source: CaptureIntegrityReport.Source, _ reason: CaptureIntegrityReport.Reason) {
         let observation = lock.withLock { () -> (Bool, CaptureIntegrityReport) in
             let first = report.record(source: source, reason: reason, frameOffset: writtenFrames)
