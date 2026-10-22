@@ -141,11 +141,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         )
         super.init()
         bridge.onStartStop = { [weak self] in
-            Task { await self?.toggleRecording() }
+            guard let self else { return }
+            if self.state.isActiveOrPreparing {
+                // A visible Stop is an explicit request, unlike repeated
+                // global-hotkey events. Acknowledge it in this event turn.
+                self.bridge.onStopRecording()
+            } else {
+                Task { await self.toggleRecording() }
+            }
         }
         bridge.onStopRecording = { [weak self] in
             guard let self,
-                  self.state.isRecording,
+                  self.state.isActiveOrPreparing,
                   !self.bridge.recordingStopInFlight else {
                 return
             }
@@ -154,6 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // leave the live controls on screen after the click appears to do
             // nothing.
             self.bridge.beginRecordingStop()
+            if self.state.isPreparing && !self.state.isRecording {
+                self.stopRequestedDuringStart = true
+                return
+            }
             Task { [weak self] in
                 await self?.stopRecording(
                     autoStopReason: nil,
@@ -1225,7 +1236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     @objc private func stopRecordingFromMenu() {
-        Task { await stopRecording(autoStopReason: nil) }
+        bridge.onStopRecording()
     }
 
     /// When the last hotkey-triggered start began. Toggle events inside the
@@ -2169,7 +2180,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // it now that the session is fully up and can stop cleanly.
             if stopRequestedDuringStart {
                 stopRequestedDuringStart = false
-                await stopRecording(autoStopReason: nil)
+                await stopRecording(
+                    autoStopReason: nil,
+                    feedbackAlreadyStarted: bridge.recordingStopInFlight
+                )
             }
         } catch {
             // session.start may have brought up mic / system-audio captures
@@ -2178,6 +2192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // near-empty junk WAV into the user's destination folder, where
             // launch-time ingest would resurrect it as a phantom row.
             stopRequestedDuringStart = false
+            bridge.endRecordingStop()
             recordingWarmup.cancel()
             await self.session?.abort()
             self.session = nil

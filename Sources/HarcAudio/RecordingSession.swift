@@ -80,6 +80,8 @@ public actor RecordingSession {
     private var startedAt: Date?
     private var startedMonotonicNanoseconds: UInt64 = 0
     private var pumpTask: Task<Void, Never>?
+    private var captureProgressTask: Task<Void, Never>?
+    private var captureActive = false
     private var systemAudioAvailable = false
     private var captureWarnings: [CaptureWarning] = []
 
@@ -213,12 +215,31 @@ public actor RecordingSession {
         self.pumpTask = Task.detached { [self, micStream, sysStream] in
             await pumpStreams(session: self, mic: micStream, system: sysStream)
         }
+        captureActive = true
+        captureProgressTask = Task { [weak self, integrity] in
+            var lastFrameCount = integrity.writtenFrameCount
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+                guard let self else { return }
+                let nextFrameCount = integrity.writtenFrameCount
+                guard await self.captureActive else { return }
+                if nextFrameCount == lastFrameCount {
+                    integrity.observe(.microphone, .sourceStopped)
+                    return
+                }
+                lastFrameCount = nextFrameCount
+            }
+        }
     }
 
     /// Stop accepting audio, drain every accepted buffer, close the durable
     /// local master, and finalize optional processing artifacts. Publication
     /// is deliberately left to a `RecordingCommitter`.
     public func stop() async throws -> CapturedRecording {
+        captureActive = false
+        captureProgressTask?.cancel()
+        captureProgressTask = nil
         await mic.stop()
         await systemAudio.stop()
         // This is the one capture end timestamp used by both the returned
@@ -304,6 +325,9 @@ public actor RecordingSession {
     /// phantom "Recovered" library row. An aborted start leaves nothing
     /// behind: captures stopped, writer closed, cache file deleted.
     public func abort() async {
+        captureActive = false
+        captureProgressTask?.cancel()
+        captureProgressTask = nil
         await mic.stop()
         await systemAudio.stop()
         pumpTask?.cancel()

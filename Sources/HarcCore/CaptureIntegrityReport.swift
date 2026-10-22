@@ -6,7 +6,7 @@ import Foundation
 public struct CaptureIntegrityReport: Codable, Equatable, Hashable, Sendable {
     public enum Source: String, Codable, CaseIterable, Sendable { case microphone, systemAudio, mixed }
     public enum Reason: String, Codable, CaseIterable, Sendable {
-        case bufferOverrun, conversionFailed, sourceStopped, writerFailure, drainTimedOut
+        case bufferOverrun, conversionFailed, sourceInterrupted, sourceStopped, writerFailure, drainTimedOut
     }
     public struct Issue: Codable, Equatable, Hashable, Sendable {
         public let source: Source
