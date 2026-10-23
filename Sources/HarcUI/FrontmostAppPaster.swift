@@ -3,9 +3,7 @@ import Carbon.HIToolbox
 @preconcurrency import ApplicationServices
 
 /// Writes text to the clipboard and synthesises Cmd-V into the frontmost
-/// application. Requires Accessibility permission (Input Monitoring works too
-/// for some event types, but CGEvent post for synthetic keystrokes needs
-/// Accessibility on modern macOS).
+/// application. Synthetic keystrokes require Accessibility permission.
 public enum FrontmostAppPaster {
     public enum PasteError: Error, LocalizedError {
         case accessibilityDenied
@@ -36,8 +34,8 @@ public enum FrontmostAppPaster {
     /// the user copied something else in the meantime (change-count guard).
     ///
     /// Throws `PasteError.accessibilityDenied` synchronously if Harc has not
-    /// been granted Accessibility permission — the caller is responsible for
-    /// presenting UI to request it. No system prompt is triggered here.
+    /// been granted Accessibility permission. No system prompt is triggered
+    /// here; the caller can leave the text on the clipboard for manual paste.
     @MainActor
     public static func copyAndPaste(
         _ text: String,
@@ -85,10 +83,11 @@ public enum FrontmostAppPaster {
     /// Synthesize Cmd-V into the frontmost (post-hide) application.
     @MainActor
     public static func synthesizeCmdV() throws {
-        // AXIsProcessTrustedWithOptions with the prompt flag asks the user
-        // to grant Accessibility if it hasn't been granted yet.
+        // Trust can change during the dwell before this call. Never trigger a
+        // system permission prompt while finalizing a recording; the caller
+        // leaves the transcript on the clipboard and reports the skipped paste.
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue()
-        let opts = [promptKey: true] as CFDictionary
+        let opts = [promptKey: false] as CFDictionary
         guard AXIsProcessTrustedWithOptions(opts) else {
             throw PasteError.accessibilityDenied
         }
