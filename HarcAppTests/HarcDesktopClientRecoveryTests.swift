@@ -328,7 +328,7 @@ struct HarcDesktopClientRecoveryTests {
             mastersFound: 6, sidecarsFound: 8, sidecarsRebuilt: 0,
             outboxesRepaired: 0, alreadyTracked: 8, alreadyInLocalLibrary: 6,
             retryRequested: 2, alreadyOnHost: 6, securityBlocked: 0, issues: []))
-        bridge.clientTransferStatusText = "Delivering audio or updates to Host. Unresolved delivery failure: Recording 11111111: Host delivery could not be confirmed; Harc will retry."
+        bridge.clientTransferStatusText = "Delivering audio or updates to Host. Unresolved sync problem: Recording 11111111: Host delivery could not be confirmed; Harc will retry."
         let view = NSHostingView(rootView: ActivityView(bridge: bridge,
             importState: MediaImportState(), onDismiss: {})
             .environmentObject(RecordingPostProcessingState())

@@ -88,6 +88,18 @@ struct HarcDesktopHostEvidenceBinding: Codable, Equatable, Sendable {
 /// from this display state; the verified-receipt store remains authoritative.
 struct HarcDesktopDeliveryFailures {
     private var messages: [UUID: String] = [:]
+    private var inventoryFailure: String?
+
+    var recordingIDs: Set<UUID> { Set(messages.keys) }
+
+    mutating func recordInventoryFailure(_ message: String) {
+        inventoryFailure = message
+    }
+
+    mutating func inventorySucceeded(completedRecordings: Set<UUID>) {
+        inventoryFailure = nil
+        messages = messages.filter { !completedRecordings.contains($0.key) }
+    }
 
     mutating func record(_ recording: UUID, message: String) {
         messages[recording] = message
@@ -98,6 +110,7 @@ struct HarcDesktopDeliveryFailures {
     }
 
     var summary: String? {
+        if let inventoryFailure { return "Archive inventory: " + inventoryFailure }
         guard let recording = messages.keys.sorted(by: { $0.uuidString < $1.uuidString }).first,
               let message = messages[recording] else { return nil }
         let others = messages.count > 1 ? " (and \(messages.count - 1) other recording(s))" : ""
@@ -123,15 +136,20 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         case uploading(UUID)
         case uploaded(UUID)
         case edgeArtifactDeferred(UUID, String)
-        case retryNeeded(UUID, String)
+        case retryNeeded(UUID?, String)
         case securityBlocked(UUID, String)
     }
 
     @Published private(set) var state: State = .idle {
         didSet {
             switch state {
-            case .retryNeeded(let recording, let message),
-                 .securityBlocked(let recording, let message),
+            case .retryNeeded(let recording, let message):
+                if let recording {
+                    deliveryFailures.record(recording, message: message)
+                } else {
+                    deliveryFailures.recordInventoryFailure(message)
+                }
+            case .securityBlocked(let recording, let message),
                  .edgeArtifactDeferred(let recording, let message):
                 deliveryFailures.record(recording, message: message)
             case .uploaded(let recording):
@@ -161,6 +179,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private let retryURL: URL
     private let contactURL: URL
     private let diagnosticLog: HarcDiagnosticLogStore
+    private let readOutboxes: () throws -> [StoredRecordingOutbox]
+    private let transferOverride: ((HarcMobileFinalizedMaster) async throws -> String?)?
     private var queue: [HarcMobileFinalizedMaster] = []
     private var queuedOrigins = Set<OriginRecordingID>()
     /// Set by Client archive reconciliation. These origins remain fail-closed
@@ -178,7 +198,9 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         libraryCache: HarcLibraryCache,
         clientRoot: URL,
         routeURL: URL,
-        diagnosticLog: HarcDiagnosticLogStore
+        diagnosticLog: HarcDiagnosticLogStore,
+        readOutboxes: (() throws -> [StoredRecordingOutbox])? = nil,
+        transferOverride: ((HarcMobileFinalizedMaster) async throws -> String?)? = nil
     ) throws {
         self.identity = identity
         self.store = store
@@ -191,6 +213,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         retryURL = clientRoot.appendingPathComponent("host-retry.json")
         contactURL = clientRoot.appendingPathComponent("host-contact.json")
         self.diagnosticLog = diagnosticLog
+        self.readOutboxes = readOutboxes ?? { try store.recordingOutboxes() }
+        self.transferOverride = transferOverride
         if let data = try? Data(contentsOf: retryURL, options: .mappedIfSafe),
            let persisted = try? JSONDecoder().decode(
                HarcDesktopRetrySchedule.self,
@@ -214,11 +238,11 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         switch state {
         case .connecting, .encoding, .uploading:
             if let failure = deliveryFailures.summary {
-                return currentStatusMessage + ". Unresolved delivery failure: " + failure
+                return currentStatusMessage + ". Unresolved sync problem: " + failure
             }
         case .idle, .uploaded:
             if let failure = deliveryFailures.summary {
-                return "Host delivery still needs attention. Unresolved delivery failure: " + failure
+                return "Client sync still needs attention. Unresolved sync problem: " + failure
             }
         default:
             break
@@ -266,8 +290,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             }
         case .edgeArtifactDeferred(_, let message):
             "Audio is safe on Host; local metadata handoff will retry: \(message)"
-        case .retryNeeded(_, let message):
-            "Host transfer needs retry: \(message)"
+        case .retryNeeded(let recording, let message):
+            recording == nil
+                ? "Client archive check needs retry: \(message)"
+                : "Host transfer needs retry: \(message)"
         case .securityBlocked(_, let message):
             "Host transfer blocked for security: \(message)"
         }
@@ -398,7 +424,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private func inventoryPending() {
         do {
             let activeTrust = try store.activeAdoption()?.tuple
-            let outboxes = try store.recordingOutboxes()
+            let outboxes = try readOutboxes()
             let eligibleOutboxes = outboxes.filter { outbox in
                 !recoveryBlockedOrigins.contains(
                     outbox.finalizedCapture.capture.originRecordingID
@@ -466,6 +492,14 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 else { continue }
                 queue.append(master)
             }
+            // A successful scan clears only the scan-level error and recording
+            // errors independently proved complete by receipt/metadata evidence.
+            // An empty eligible queue is not itself completion evidence.
+            let failedIDs = deliveryFailures.recordingIDs
+            let completed = try durablyCompletedRecordings(outboxes.filter {
+                failedIDs.contains($0.finalizedCapture.capture.originRecordingID.recordingUUID)
+            }, expectedTrust: activeTrust)
+            deliveryFailures.inventorySucceeded(completedRecordings: completed)
             if pending.isEmpty {
                 state = .idle
                 clearAutomaticRetry()
@@ -474,9 +508,60 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             startWorkerIfNeeded()
         } catch {
             logFailure(error, stage: "queue-inventory", recording: nil)
-            state = .retryNeeded(UUID(), error.localizedDescription)
+            state = .retryNeeded(nil, error.localizedDescription)
             scheduleAutomaticRetry(reason: "queue-inventory")
         }
+    }
+
+    /// Reconcile post-commit transport/cleanup failures without inventing a new
+    /// upload for already-complete work. Missing, foreign, corrupt, blocked or
+    /// pending evidence leaves the recording's original failure visible.
+    func durablyCompletedRecordings(
+        _ outboxes: [StoredRecordingOutbox], expectedTrust: AdoptedTrustTuple?
+    ) throws -> Set<UUID> {
+        var completed = Set<UUID>()
+        for outbox in outboxes {
+            let capture = outbox.finalizedCapture.capture
+            let origin = capture.originRecordingID
+            guard origin.deviceID == identity.deviceID,
+                  !recoveryBlockedOrigins.contains(origin),
+                  try Self.hasVerifiedHostCopy(outbox, store: store, expectedTrust: expectedTrust) else { continue }
+            let sidecarURL = Self.captureSidecarURL(origin: origin, clientRoot: clientRoot)
+            do {
+                let sidecarData = try Data(contentsOf: sidecarURL, options: .mappedIfSafe)
+                let sidecar = try JSONDecoder().decode(HarcDesktopClientCaptureSidecar.self, from: sidecarData)
+                try HarcDesktopClientRecovery.validateHostOnlyCapture(sidecar.capture,
+                    stored: capture, recordingUUID: origin.recordingUUID, deviceID: identity.deviceID)
+                guard !sidecar.speakerProcessingNeedsRetry,
+                      !Self.needsProcessingArtifact(origin: origin, clientRoot: clientRoot, expectedTrust: expectedTrust),
+                      !Self.needsSpeakerObservations(origin: origin, clientRoot: clientRoot, expectedTrust: expectedTrust) else { continue }
+                let processingURL = Self.processingMarkerURL(origin: origin, clientRoot: clientRoot)
+                let speakerURL = Self.speakerObservationMarkerURL(origin: origin, clientRoot: clientRoot)
+                let processingData = sidecar.transcript == nil ? nil : try Data(contentsOf: processingURL)
+                let speakerData = try Data(contentsOf: speakerURL)
+                // Existing bytes can survive a failed write barrier. Complete
+                // the barriers before allowing display history to claim success.
+                try DurableFileIO.synchronizeFileAndParent(at: sidecarURL)
+                if sidecar.transcript != nil {
+                    try DurableFileIO.synchronizeFileAndParent(at: processingURL)
+                }
+                try DurableFileIO.synchronizeFileAndParent(at: speakerURL)
+                guard try Data(contentsOf: sidecarURL) == sidecarData,
+                      try Data(contentsOf: speakerURL) == speakerData else { continue }
+                if let processingData {
+                    guard try Data(contentsOf: processingURL) == processingData else { continue }
+                }
+                completed.insert(origin.recordingUUID)
+            } catch {
+                diagnosticLog.append(severity: .info, area: "transfer",
+                    stage: "completion-proof-deferred",
+                    message: "Retained delivery failure because completion evidence could not be verified",
+                    context: recordingContext(origin.recordingUUID,
+                        extra: ["error_type": String(reflecting: Swift.type(of: error))]))
+                continue
+            }
+        }
+        return completed
     }
 
     func setRecoveryBlockedOrigins(_ origins: Set<OriginRecordingID>) {
@@ -543,7 +628,12 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             guard !Task.isCancelled else { return }
             let master = queue.removeFirst()
             do {
-                let artifactFailure = try await transfer(master)
+                let artifactFailure: String?
+                if let transferOverride {
+                    artifactFailure = try await transferOverride(master)
+                } else {
+                    artifactFailure = try await transfer(master)
+                }
                 activeStages.removeValue(
                     forKey: master.originRecordingID.recordingUUID
                 )

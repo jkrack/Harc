@@ -892,3 +892,10 @@ reports archive completion independently of delivery and retains per-recording
 failure feedback through retries until that recording succeeds. Validate with
 `HarcDesktopClientRecoveryTests`, `HarcDesktopSpeakerReviewCoordinatorTests`,
 `ClientHostConnectionStateTests`, and `HarcTransportErrorDiagnosticTests`.
+
+Inventory failures have no recording identity and clear after a successful scan.
+Retained recording failures clear only after successful transfer or independently
+verified receipt/Host-bound metadata evidence with completed durability barriers.
+An empty eligible queue is never proof of delivery; preserve errors for blocked,
+missing, corrupt or foreign evidence. The desktop speaker-review coordinator
+suite includes deterministic inventory and post-commit cleanup fault regressions.
