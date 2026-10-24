@@ -119,7 +119,11 @@ jobs:
       # Detached Swift tasks share this pool; they are not blocking-I/O threads.
       - name: Listener cancellation ownership regression
         timeout-minutes: 3
-        run: python3 scripts/run-package-tests.py --timeout-seconds 120 --diagnostics-dir .build/test-diagnostics/listener -- swift test --skip-build --jobs 2 --filter GRPCListenerCancellationIntegrationTests
+        run: |
+          status=0
+          python3 scripts/run-package-tests.py --timeout-seconds 60 --diagnostics-dir .build/test-diagnostics/upload-listener -- swift test --skip-build --jobs 2 --filter BackgroundUploadListenerRuntimeV1Tests/acceptsNetworkFrameworkChildConnection || status=$?
+          python3 scripts/run-package-tests.py --timeout-seconds 60 --diagnostics-dir .build/test-diagnostics/grpc-listener -- swift test --skip-build --jobs 2 --filter GRPCListenerCancellationIntegrationTests || status=$?
+          exit "$status"
 
       - name: Blocking I/O executor regression
         timeout-minutes: 3
