@@ -1,9 +1,10 @@
 # Harc 0.14.20 (75) Mac maintenance preparation
 
 Date: 2026-10-24. **NO-GO for publication. No artifact selected.**
-Base: `2e8711e7af54d58d6716b4301e0d3eec9aa40fd3` (merged #154).
-This separate preparation changes only version/fallback/readiness inputs and
-this record. It does not qualify hardware or authorize distribution.
+Initial base: `2e8711e7af54d58d6716b4301e0d3eec9aa40fd3` (merged #154).
+Updated base: `206ba922487b84b02ecae24240815068a83f8335` (merged #153).
+This separate preparation changes version/fallback/readiness inputs, this
+record and a focused readiness-row regression. It does not qualify hardware or authorize distribution.
 
 ## Identity and scope
 
@@ -18,11 +19,21 @@ No 0.14.20 release/tag was listed; all 58 fetched remote project configurations
 were at build 74 or lower. Thus 0.14.20 (75) is the next unused preparation
 identity in the inspected repository evidence. Recheck before any later release.
 
-Open #146 (`codex/recording-permission-flow`) and draft #153
-(`codex/mobile-route-failure-regression`) are authored by `jkrack`. They are
-excluded and their files/branches are not edited. #153's active continuation
-investigation remains with its owner. Accessibility alerts addressed by #146
+At initial inspection, open #146 (`codex/recording-permission-flow`) and draft #153
+(`codex/mobile-route-failure-regression`) were authored by `jkrack`. They were
+excluded; their files/branches were not edited. #153's active continuation
+investigation remained with its owner at that point. Accessibility alerts addressed by #146
 remain unresolved in this candidate; do not claim their fix.
+
+Before final validation, #153 merged normally into main as
+`206ba922487b84b02ecae24240815068a83f8335`. This preparation then merged that
+main commit without conflicts. The combined source now includes its phone route
+continuation fix and validation diagnostics; the earlier exclusion describes the
+initial base only. The phone fix completes a dequeued route request when writer
+checkpointing fails and establishes ordering in its regression. It is source
+software evidence, not physical capture/route qualification. #146 and unmerged
+#156 iPhone Library refresh presentation remain separate and excluded. Fresh
+combined-head CI is required; earlier-head results do not qualify this source.
 
 Since published 0.14.19, #154 adds actual Mac runtime value: exact transfer-store
 Date-codec normalization avoids false Host-only recovery conflicts; foreign
@@ -119,8 +130,10 @@ is a handoff only, not permission to operate another machine or sign/publish.
 `project.yml` supplies the same marketing/build values to Mac, iPhone and widget.
 The phone readiness header is therefore aligned to 0.14.20 (75) for identification
 only. Sealed release source remains unselected and App Store decision remains
-NO-GO. No continuation fix, codec enablement, physical capture/transfer receipt,
+NO-GO. The merged #153 source fix is included through current main; it does not
+imply physical continuation/route qualification. No codec enablement, physical
+capture/transfer receipt,
 protection/reliability/upgrade/accessibility pass, archive/export, privacy owner
 approval or submission follows from this bump or hosted CI. Follow the current
 companion launch plan and mobile physical/App Store runbooks; preserve all dated
-evidence identities and the independent #153 owner investigation.
+evidence identities and the separate unmerged #156 owner work.

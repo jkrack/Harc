@@ -16,8 +16,11 @@ Source preparation inputs were refreshed on 2026-10-24 for the separate
 The shared project settings now identify 0.14.20 (75) for Mac, iPhone and its
 widget extension. This is source preparation only: no phone artifact is selected,
 no historical pass transfers, and companion physical, codec, product-path,
-archive, privacy and submission gates remain open. Unmerged #153 continuation
-work remains with its owner and is excluded from this preparation.
+archive, privacy and submission gates remain open. At initial preparation #153 continuation work was unmerged and excluded. Before
+final validation, main merged #153 as `206ba922487b84b02ecae24240815068a83f8335`;
+the Mac preparation then merged that main source. Its phone route-continuation
+fix is now included as source work, without physical qualification. Unmerged
+#156 Library refresh presentation remains separate and excluded.
 
 Source preparation inputs were refreshed on 2026-10-23 to match the shared
 `project.yml` configuration, 0.14.19 (74). This identifies preparation inputs only:
