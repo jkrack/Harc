@@ -14,11 +14,8 @@ API_ORIGIN="https://api.cloudflare.com/client/v4"
 RELAY_HEALTH_URL="${HARC_RELAY_HEALTH_URL:-https://relay.adaptcontext.com/health}"
 EXPECTED_TAIL_CONSUMER="${HARC_RELAY_EXPECTED_TAIL_CONSUMER:-}"
 
-DEPLOYMENT_JSON="$(
-  WRANGLER_SEND_ERROR_REPORTS=false npx wrangler deployments status \
-    --name "$WORKER_NAME" \
-    --json
-)"
+SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOYMENT_JSON="$(node "$SCRIPT_DIRECTORY/read-deployment-status.mjs" "$WORKER_NAME")"
 
 if [[ -n "${HARC_CLOUDFLARE_API_TOKEN:-}" ]]; then
   HARC_RELAY_AUDIT_TOKEN="$HARC_CLOUDFLARE_API_TOKEN"
@@ -47,14 +44,19 @@ if [[ -z "$HARC_RELAY_AUDIT_TOKEN" ]]; then
   exit 1
 fi
 
-SETTINGS_JSON="$(curl --disable \
+if ! SETTINGS_JSON="$(curl --disable \
+  --connect-timeout 5 \
+  --max-time 20 \
   --silent \
   --show-error \
   --fail \
   --header @- \
   "$API_ORIGIN/accounts/$ACCOUNT_ID/workers/scripts/$WORKER_NAME/script-settings" \
   <<< "Authorization: Bearer $HARC_RELAY_AUDIT_TOKEN"
-)"
+)"; then
+  echo "error: relay settings request failed (5-second connect, 20-second total deadline)" >&2
+  exit 1
+fi
 
 VERSION_ID="$(node -e '
 const payload = JSON.parse(process.argv[1]);
@@ -116,7 +118,10 @@ if (observability !== null && observability !== undefined) {
 }
 ' "$SETTINGS_JSON" "$EXPECTED_TAIL_CONSUMER"
 
-HEALTH_BODY="$(curl --disable --silent --show-error --fail "$RELAY_HEALTH_URL")"
+if ! HEALTH_BODY="$(curl --disable --connect-timeout 5 --max-time 20 --silent --show-error --fail "$RELAY_HEALTH_URL")"; then
+  echo "error: relay health request failed (5-second connect, 20-second total deadline)" >&2
+  exit 1
+fi
 if [[ "$HEALTH_BODY" != '{"status":"ok"}' ]]; then
   echo "error: unexpected relay health response: $HEALTH_BODY" >&2
   exit 1
