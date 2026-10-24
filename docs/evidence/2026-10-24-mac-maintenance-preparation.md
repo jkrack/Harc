@@ -2,7 +2,8 @@
 
 Date: 2026-10-24. **NO-GO for publication. No artifact selected.**
 Initial base: `2e8711e7af54d58d6716b4301e0d3eec9aa40fd3` (merged #154).
-Updated base: `206ba922487b84b02ecae24240815068a83f8335` (merged #153).
+Previous base: `206ba922487b84b02ecae24240815068a83f8335` (merged #153).
+Current base: `2c9d3fd47bf65b17a2c373b2e62cfd154b4bdc85` (merged #157 and #156).
 This separate preparation changes version/fallback/readiness inputs, this
 record and a focused readiness-row regression. It does not qualify hardware or authorize distribution.
 
@@ -31,9 +32,23 @@ main commit without conflicts. The combined source now includes its phone route
 continuation fix and validation diagnostics; the earlier exclusion describes the
 initial base only. The phone fix completes a dequeued route request when writer
 checkpointing fails and establishes ordering in its regression. It is source
-software evidence, not physical capture/route qualification. #146 and unmerged
-#156 iPhone Library refresh presentation remain separate and excluded. Fresh
-combined-head CI is required; earlier-head results do not qualify this source.
+software evidence, not physical capture/route qualification. At that checkpoint,
+#146 and then-unmerged #156 remained excluded. Earlier-head CI applies only to
+its recorded source.
+
+The later refresh integrates actual main
+`2c9d3fd47bf65b17a2c373b2e62cfd154b4bdc85` without conflicts. It includes #157's
+NIOTS listener-close ordering fix and #156's truthful phone Library refresh/error
+presentation and contextual recovery navigation, as well as #153. These merged
+changes are source inclusion, not physical listener lifecycle, Library recovery,
+phone capture or release qualification. #146 remains excluded. Search work is
+local and excluded; no search change or publication approval is inferred.
+
+Version availability was rechecked on this refresh: published releases and the
+main feed still top out at 0.14.19 (74), no 0.14.20 tag/release exists, and among
+61 fetched remote project configurations only this preparation branch uses
+0.14.20 (75). The reserved preparation identity remains unchanged. New final-head
+CI is required; prior preparation CI is historical evidence only.
 
 Since published 0.14.19, #154 adds actual Mac runtime value: exact transfer-store
 Date-codec normalization avoids false Host-only recovery conflicts; foreign
@@ -44,14 +59,19 @@ does not imply delivery. This justifies a small maintenance candidate, subject
 to all remaining gates. #145 reconciles readiness inputs; #147–151 (via #152)
 harden validation, signer identity, TLS restart qualification, relay privacy checks
 and metadata checking. These are supporting preparation improvements, not new
-capture or phone qualification. #142 documents existing Omega blockers.
+capture or phone qualification. #142 documents existing Omega blockers. #157
+adds Mac runtime value by closing Network-framework listeners through their NIO
+channel before cancellation, including the late-registration path, while retaining
+bounded runtime joins. This addresses a process-crash ordering hazard, not a
+claim of hardware or endurance qualification.
 
 ## Proposed release notes
 
 Harc 0.14.20 improves Mac Client recovery and sync feedback. It avoids false
 metadata conflicts when recovering recordings already verified on the Host,
 reports local archiving separately from delivery, and keeps unresolved sync
-problems visible until the affected recording has verified completion.
+problems visible until the affected recording has verified completion. It also
+fixes a network listener shutdown ordering issue that could crash the process.
 
 ## Preparation validation and limits
 
@@ -79,7 +99,9 @@ is a handoff only, not permission to operate another machine or sign/publish.
    reviewed pushed source, regenerate with `xcodegen generate`, and run focused
    `HarcDesktopClientRecoveryTests`, `HarcDesktopSpeakerReviewCoordinatorTests`,
    `ClientHostConnectionStateTests`, `HarcTransportErrorDiagnosticTests` and
-   `VersionTests`, plus required package, Mac app/UI and repository smoke checks.
+   `VersionTests`, plus focused `GRPCListenerCancellationIntegrationTests` and
+   `BackgroundUploadListenerRuntimeV1Tests`, full package, both direct and relay
+   pinned-TLS lifecycle gates, Mac app/UI and repository smoke checks.
    Required PR CI also includes mobile configuration and credential-free relay.
 2. Against the exact candidate on authorized affected hardware, record audible
    microphone capture with the selected input, route removal/reconnect, no-frame
@@ -136,4 +158,7 @@ capture/transfer receipt,
 protection/reliability/upgrade/accessibility pass, archive/export, privacy owner
 approval or submission follows from this bump or hosted CI. Follow the current
 companion launch plan and mobile physical/App Store runbooks; preserve all dated
-evidence identities and the separate unmerged #156 owner work.
+evidence identities. Merged #156 Library recovery UX is included as source work
+only; repeat affected physical Library failure/retry/navigation checks. #157
+listener teardown also needs affected real Host restart/route recovery checks.
+Local search work remains excluded.

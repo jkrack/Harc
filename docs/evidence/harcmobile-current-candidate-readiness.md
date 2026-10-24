@@ -19,8 +19,11 @@ no historical pass transfers, and companion physical, codec, product-path,
 archive, privacy and submission gates remain open. At initial preparation #153 continuation work was unmerged and excluded. Before
 final validation, main merged #153 as `206ba922487b84b02ecae24240815068a83f8335`;
 the Mac preparation then merged that main source. Its phone route-continuation
-fix is now included as source work, without physical qualification. Unmerged
-#156 Library refresh presentation remains separate and excluded.
+fix was included as source work, without physical qualification. The subsequent
+refresh integrates main `2c9d3fd47bf65b17a2c373b2e62cfd154b4bdc85`, including
+merged #157 listener lifecycle and #156 Library refresh/recovery presentation.
+These are source inclusions, not physical Library, capture/transfer or release
+qualification. Local search work remains excluded; artifact selection is unchanged.
 
 Source preparation inputs were refreshed on 2026-10-23 to match the shared
 `project.yml` configuration, 0.14.19 (74). This identifies preparation inputs only:
