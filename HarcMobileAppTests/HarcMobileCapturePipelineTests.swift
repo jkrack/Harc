@@ -6,6 +6,97 @@ import XCTest
 @testable import HarcMobile
 
 final class HarcMobileCapturePipelineTests: XCTestCase {
+    @MainActor
+    func testDequeuedReconfigurationCheckpointFailureReleasesEveryCaller()
+        async throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let locations = try HarcMobileCaptureLocations(applicationSupportRoot: root)
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: 48_000,
+            channels: 2
+        ))
+        let attributes = FailSecondCheckpointAttributes()
+        let completed = expectation(description: "pipeline completed once")
+        completed.assertForOverFulfill = true
+        let rebuilt = expectation(description: "all route rebuild awaits returned")
+        rebuilt.expectedFulfillmentCount = 3
+        rebuilt.assertForOverFulfill = true
+        let pipeline = try HarcMobileCapturePipeline(
+            locations: locations,
+            producingDeviceID: DeviceID(Data(repeating: 0x59, count: 32)),
+            inputFormat: format,
+            tapFrameCapacity: 4_096,
+            captureStartedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            captureStartedMonotonicNanoseconds: 1_000_000_000,
+            storageAttributes: attributes
+        ) { result in
+            switch result {
+            case .success:
+                XCTFail("An empty failed capture unexpectedly produced a master")
+            case .failure(let error):
+                XCTAssertEqual(error as? CheckpointFault, .injected)
+            }
+            completed.fulfill()
+        }
+
+        // No microphone or audio buffers: initialization writes checkpoint #1;
+        // the first dequeued route request forces checkpoint #2 and throws.
+        // Concurrent callers exercise queued or terminal admission as well as
+        // the in-flight request, regardless of task scheduling order.
+        let callers = (0 ..< 3).map { _ in
+            Task { @MainActor in
+                do {
+                    _ = try await pipeline.prepareReplacementInput(
+                        replacing: pipeline.initialInput,
+                        inputFormat: format,
+                        tapFrameCapacity: 4_096,
+                        discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                            reason: .routeChanged
+                        )
+                    )
+                    XCTFail("A failed checkpoint accepted a replacement input")
+                } catch {
+                    XCTAssertEqual(error as? CheckpointFault, .injected)
+                }
+                rebuilt.fulfill()
+            }
+        }
+        // Do not await task values or use a task group: the pre-fix continuation
+        // leak must fail a bounded expectation instead of hanging test teardown.
+        defer { callers.forEach { $0.cancel() } }
+        pipeline.start()
+        let result = await XCTWaiter.fulfillment(
+            of: [completed, rebuilt], timeout: 5
+        )
+        XCTAssertEqual(result, .completed, "Every rebuild await must terminate")
+        XCTAssertEqual(attributes.checkpointApplications, 2)
+
+        let late = expectation(description: "post-failure route request returned")
+        late.assertForOverFulfill = true
+        let lateCaller = Task { @MainActor in
+            do {
+                _ = try await pipeline.prepareReplacementInput(
+                    replacing: pipeline.initialInput,
+                    inputFormat: format,
+                    tapFrameCapacity: 4_096,
+                    discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                        reason: .routeChanged
+                    )
+                )
+                XCTFail("A terminated pipeline accepted a replacement input")
+            } catch {
+                XCTAssertEqual(error as? CheckpointFault, .injected)
+            }
+            late.fulfill()
+        }
+        defer { lateCaller.cancel() }
+        let lateResult = await XCTWaiter.fulfillment(of: [late], timeout: 5)
+        XCTAssertEqual(lateResult, .completed)
+    }
+
     func testReconfigurationAfterWriterFailureFailsInsteadOfWaiting()
         async throws
     {
@@ -207,4 +298,33 @@ private struct NoopStorageAttributes:
         _ policy: HarcMobileCaptureStoragePolicy,
         to url: URL
     ) throws {}
+}
+
+private enum CheckpointFault: Error, Equatable {
+    case injected
+}
+
+private final class FailSecondCheckpointAttributes:
+    HarcMobileCaptureStorageAttributeApplying, @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var applications = 0
+
+    var checkpointApplications: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return applications
+    }
+
+    func applyAndVerify(
+        _ policy: HarcMobileCaptureStoragePolicy,
+        to url: URL
+    ) throws {
+        guard url.lastPathComponent.hasSuffix(".capture.json") else { return }
+        lock.lock()
+        applications += 1
+        let shouldFail = applications == 2
+        lock.unlock()
+        if shouldFail { throw CheckpointFault.injected }
+    }
 }
