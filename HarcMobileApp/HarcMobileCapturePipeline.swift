@@ -86,6 +86,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
     private let writer: HarcMobileDurableMasterWriter
     private let levelMeter: HarcMobileAudioLevelMeter
     private let completion: Completion
+    private let reconfigurationEnqueuedForTesting: (@Sendable () -> Void)?
     private let stateLock = NSLock()
     private var finishRequest: (
         HarcMobileCaptureFinalizationReason,
@@ -116,6 +117,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         storageAttributes: any HarcMobileCaptureStorageAttributeApplying =
             FoundationHarcMobileCaptureStorageAttributes(),
         storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil,
+        reconfigurationEnqueuedForTesting: (@Sendable () -> Void)? = nil,
         completion: @escaping Completion
     ) throws {
         let available = DispatchSemaphore(value: 0)
@@ -137,6 +139,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         )
         self.levelMeter = levelMeter
         self.completion = completion
+        self.reconfigurationEnqueuedForTesting = reconfigurationEnqueuedForTesting
     }
 
     func start() {
@@ -182,6 +185,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
                 continuation: continuation
             ))
             stateLock.unlock()
+            reconfigurationEnqueuedForTesting?()
             available.signal()
         }
     }

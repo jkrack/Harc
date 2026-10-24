@@ -33,6 +33,9 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
             channels: 2
         ))
         let attributes = FailSecondCheckpointAttributes()
+        let enqueued = expectation(description: "all route requests queued before writer starts")
+        enqueued.expectedFulfillmentCount = 3
+        enqueued.assertForOverFulfill = true
         let completed = expectation(description: "pipeline completed once")
         completed.assertForOverFulfill = true
         let rebuilt = expectation(description: "all route rebuild awaits returned")
@@ -45,7 +48,8 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
             tapFrameCapacity: 4_096,
             captureStartedAt: Date(timeIntervalSince1970: 1_700_000_000),
             captureStartedMonotonicNanoseconds: 1_000_000_000,
-            storageAttributes: attributes
+            storageAttributes: attributes,
+            reconfigurationEnqueuedForTesting: { enqueued.fulfill() }
         ) { result in
             switch result {
             case .success:
@@ -58,8 +62,8 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
 
         // No microphone or audio buffers: initialization writes checkpoint #1;
         // the first dequeued route request forces checkpoint #2 and throws.
-        // Concurrent callers exercise queued or terminal admission as well as
-        // the in-flight request, regardless of task scheduling order.
+        // Observe admission before starting the writer: its first request is
+        // in-flight at the fault while exactly two more remain queued.
         let callers = (0 ..< 3).map { _ in
             Task { @MainActor in
                 do {
@@ -86,6 +90,8 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
             // thread just before it throws, without racing a timer or sleeping.
             attributes.beforeFailure { callers.forEach { $0.cancel() } }
         }
+        let admissionResult = await XCTWaiter.fulfillment(of: [enqueued], timeout: 5)
+        XCTAssertEqual(admissionResult, .completed)
         pipeline.start()
         let result = await XCTWaiter.fulfillment(
             of: [completed, rebuilt], timeout: 5
