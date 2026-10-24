@@ -45,6 +45,7 @@ struct HostTLSServerIdentityTests {
             framedSignedTransportSet: Data("HARCSIGNED-TRANSPORT-SET-V1".utf8)
         )
         let facts = try signing.issueServerCertificate(request: request)
+        var completedCycles = 0
         for _ in 0..<50 {
             let identity = try signing.resolveServerIdentity(
                 certificateDER: facts.certificateDER, request: request
@@ -60,56 +61,17 @@ struct HostTLSServerIdentityTests {
                 sec_protocol_options_add_tls_application_protocol(securityOptions, $0)
             }
             let parameters = NWParameters(tls: options, tcp: NWProtocolTCP.Options())
-            do {
-                try await runListenerCycle(
-                    try NWListener(using: parameters, on: .any),
-                    queueLabel: "harc.tls.restart-test"
-                )
-            } catch let tlsError as NWError where tlsError == .posix(.EINVAL) {
-                do {
-                    try await runListenerCycle(
-                        try NWListener(using: .tcp, on: .any),
-                        queueLabel: "harc.tcp.listener-control"
-                    )
-                } catch let controlError as NWError
-                    where controlError == .posix(.EINVAL)
-                {
-                    withKnownIssue(
-                        "Network.framework cannot start a plaintext control listener in this environment."
-                    ) {
-                        throw controlError
-                    }
-                    return
-                }
-                throw tlsError
-            }
+            // A listener must have an inbound connection handler before start.
+            // A plaintext listener missing the same handler is not an
+            // independent environment control; it fails with the same EINVAL.
+            try await ListenerTestCycle.run(
+                try NWListener(using: parameters, on: .any)
+            )
+            completedCycles += 1
             #expect(try harcCertificateCount() == before)
         }
-        print("Harc certificate count: before=\(before), after=\(try harcCertificateCount()); 50 listener cycles")
-    }
-
-    private func runListenerCycle(
-        _ listener: NWListener,
-        queueLabel: String
-    ) async throws {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Void, Error>) in
-            listener.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    listener.cancel()
-                case .cancelled:
-                    continuation.resume()
-                case .failed(let error):
-                    listener.stateUpdateHandler = nil
-                    listener.cancel()
-                    continuation.resume(throwing: error)
-                default:
-                    break
-                }
-            }
-            listener.start(queue: DispatchQueue(label: queueLabel))
-        }
+        #expect(completedCycles == 50)
+        print("Harc certificate count: before=\(before), after=\(try harcCertificateCount()); \(completedCycles) listener cycles")
     }
 
     private func harcCertificateCount() throws -> Int {

@@ -564,9 +564,11 @@ GitHub test feedback. Run the affected package suites or app/simulator tests
 locally, then push a review-ready candidate for full CI before merging. Keep
 required app, physical-device, security and release gates; a focused local pass
 does not replace them. Pull requests run the full package, macOS and iOS CI
-jobs. Pushes to main run only `bash scripts/test-post-merge-smoke.sh`: package
-manifest validation, protocol contracts, tooling regressions and Xcode project
-generation. This smoke check does not compile or launch the app and cannot
+jobs. PRs and pushes to main also run the bounded, credential-free relay lane:
+`node --test scripts/check-production-privacy.regression.mjs` and `npm run check`
+from `CloudflareRelay/` (source policy, types, local tests and dry bundles only).
+Pushes to main run `bash scripts/test-post-merge-smoke.sh` for package manifest
+validation, protocol contracts, tooling regressions and Xcode project generation. This smoke check does not compile or launch the app and cannot
 replace pre-merge CI or release qualification.
 
 For local iOS Simulator configuration and navigation regressions, run
