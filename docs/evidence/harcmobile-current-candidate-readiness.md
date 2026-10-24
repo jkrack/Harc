@@ -1,6 +1,6 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-10-19
+**Updated:** 2026-10-20
 **Candidate configuration:** HarcMobile 0.14.19 (74), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
@@ -34,6 +34,19 @@ retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observat
 remain useful history and must not be relabeled as current-candidate qualification.
 
 ## Source-scoped observations
+
+### Omega processing and Library reconciliation, 2026-10-20
+
+The [read-only reconciliation](2026-10-20-omega-processing-and-library-diagnosis.md)
+confirms separate current blockers for the previously receipted 91,200-frame
+capture: the Host rejects its changed file identity, while the production phone
+Library cache remains at a cursor predating the recording. A selected-source
+integration regression confirms that failed processing does not hide a recording
+from Library metadata. No repair, cache reset or app replacement was performed.
+The original processing exception and current phone refresh failure stage remain
+unidentified; these observations do not qualify a current-main app pair or close
+physical/protection/reliability gates. The outstanding endurance and quantitative
+owner clarification remains unresolved.
 
 ### External-SSD and Omega diagnostic, 2026-10-18
 
