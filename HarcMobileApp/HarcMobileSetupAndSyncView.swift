@@ -176,7 +176,7 @@ struct HarcMobileSetupAndSyncView: View {
 
     private var sendingSummary: String {
         let count = syncStatus.pendingCount
-        return count == 0 ? "Up to date" : "\(count) waiting"
+        return count == 0 ? "None waiting" : "\(count) waiting"
     }
 
     private var libraryUpdatedSummary: String {
@@ -323,6 +323,7 @@ struct HarcMobileSendingToMacView: View {
 
     @Environment(HarcMobileAppModel.self) private var model
     let initialSection: SectionTarget
+    @State private var showsLibrarySetup = false
 
     init(initialSection: SectionTarget = .status) {
         self.initialSection = initialSection
@@ -377,6 +378,13 @@ struct HarcMobileSendingToMacView: View {
                 }
 
                 Section("Mac Library") {
+                    HarcMobileLibraryRefreshStatusView(
+                        state: model.libraryCoordinator?.state ?? .loadingCache,
+                        hasRows: !(model.libraryCoordinator?.recordings.isEmpty ?? true),
+                        refreshIsActive: model.libraryCoordinator?.isRefreshing ?? false,
+                        refresh: { model.libraryCoordinator?.refresh() },
+                        setup: { showsLibrarySetup = true }
+                    )
                     if let date = model.libraryCoordinator?.lastUpdatedAt {
                         LabeledContent("Last updated") {
                             Text(date, style: .relative)
@@ -384,10 +392,6 @@ struct HarcMobileSendingToMacView: View {
                     } else {
                         LabeledContent("Last updated", value: "Not yet")
                     }
-                    Button("Refresh Library") {
-                        model.libraryCoordinator?.refresh()
-                    }
-                    .disabled(model.libraryCoordinator?.isRefreshing ?? true)
                 }
                 .id(SectionTarget.macLibrary)
             }
@@ -397,6 +401,9 @@ struct HarcMobileSendingToMacView: View {
                     withAnimation { proxy.scrollTo(SectionTarget.macLibrary) }
                 }
             }
+        }
+        .sheet(isPresented: $showsLibrarySetup) {
+            HarcMobileSetupAndSyncView()
         }
         .navigationTitle("Sending to Mac")
         .navigationBarTitleDisplayMode(.inline)
@@ -421,7 +428,7 @@ struct HarcMobileSendingToMacView: View {
 
     private var presentationTitle: String {
         let count = presentation.pendingCount
-        if count == 0 { return "Everything is up to date" }
+        if count == 0 { return "No recordings waiting to send" }
         return "\(count) recording\(count == 1 ? "" : "s") waiting"
     }
 
@@ -435,7 +442,7 @@ struct HarcMobileSendingToMacView: View {
         case .working:
             "Sending"
         case .nothingPending, .receiptVerified:
-            "Up to date"
+            "Nothing waiting"
         case .securityBlocked, .retryNeeded:
             "Needs attention"
         default:

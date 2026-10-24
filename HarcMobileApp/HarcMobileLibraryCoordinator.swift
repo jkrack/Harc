@@ -31,6 +31,50 @@ enum HarcMobileLibraryRefreshOperation: String, Sendable {
 }
 
 enum HarcMobileLibraryRefreshPresentation {
+    enum Action: Equatable { case refresh, setup }
+
+    struct Status: Equatable {
+        let title: String
+        let detail: String
+        let symbol: String
+        let isLoading: Bool
+        let action: Action?
+    }
+
+    /// Both Library surfaces consume the coordinator's app-owned, sanitized state.
+    static func status(_ state: HarcMobileLibraryCoordinator.State, hasRows: Bool) -> Status {
+        switch state {
+        case .loadingCache:
+            Status(title: "Opening Mac Library…", detail: "Opening the protected Library cache.",
+                   symbol: "rectangle.stack", isLoading: true, action: nil)
+        case .refreshing:
+            Status(title: "Refreshing Mac Library…",
+                   detail: hasRows ? "Your saved recordings are still available." : "Checking your Mac for recordings.",
+                   symbol: "arrow.clockwise", isLoading: true, action: nil)
+        case .unpaired:
+            Status(title: "Pair a Mac for its Library",
+                   detail: "Recordings saved on this iPhone appear here, even without a Mac.",
+                   symbol: "desktopcomputer", isLoading: false, action: .setup)
+        case .accessNotGranted:
+            Status(title: "Mac Library access not granted",
+                   detail: "Your Mac has not granted Library access. Check Setup & Sync and the invitation permissions on your Mac.",
+                   symbol: "lock", isLoading: false, action: .setup)
+        case .cancelled:
+            Status(title: "Library refresh cancelled",
+                   detail: hasRows ? "Your saved recordings are still available. Refresh when you’re ready."
+                       : "The Mac Library has not been checked. Refresh when you’re ready.",
+                   symbol: "arrow.clockwise", isLoading: false, action: .refresh)
+        case .offline(let message), .failed(let message):
+            Status(title: "Couldn’t refresh Mac Library", detail: message,
+                   symbol: "exclamationmark.triangle", isLoading: false, action: .refresh)
+        case .ready:
+            Status(title: hasRows ? "Mac Library updated" : "No recordings yet",
+                   detail: hasRows ? "Showing the saved Mac Library."
+                       : "Your Mac Library has no recordings. Recordings saved on this iPhone appear here, even without a Mac.",
+                   symbol: "rectangle.stack", isLoading: false, action: .refresh)
+        }
+    }
+
     static func failureMessage(
         _ error: any Error,
         operation: HarcMobileLibraryRefreshOperation,

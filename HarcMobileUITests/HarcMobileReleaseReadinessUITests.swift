@@ -65,9 +65,20 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(library.waitForExistence(timeout: 10))
         library.tap()
         XCTAssertTrue(app.navigationBars["Library"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts[
-            "Recordings saved on this iPhone appear here, even without a Mac."
-        ].exists)
+        let status = app.descendants(matching: .any)["harc.mobile.library.refresh-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        let unpaired = NSPredicate(format: "label CONTAINS %@", "Pair a Mac for its Library")
+        expectation(for: unpaired, evaluatedWith: status)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.staticTexts["No recordings yet"].exists)
+        let setup = app.buttons["harc.mobile.library.refresh-action"]
+        XCTAssertTrue(setup.isEnabled)
+        setup.tap()
+        XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(unpaired.evaluate(with: status))
     }
 
     func testSyncDetailsAreDiscoverableWithoutHostOrRecording() {
@@ -97,6 +108,14 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let sendNow = app.buttons["harc.mobile.sync.retry-transfers"]
         XCTAssertTrue(sendNow.exists)
         XCTAssertFalse(sendNow.isEnabled)
+
+        XCTAssertFalse(app.staticTexts["Everything is up to date"].exists)
+        let libraryStatus = app.descendants(matching: .any)["harc.mobile.library.refresh-status"]
+        XCTAssertTrue(scrollUntilExists(libraryStatus, in: app))
+        let unpairedLibrary = NSPredicate(format: "label CONTAINS %@", "Pair a Mac for its Library")
+        expectation(for: unpairedLibrary, evaluatedWith: libraryStatus)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.buttons["harc.mobile.library.refresh-action"].isEnabled)
 
         let setupBack = app.navigationBars["Sending to Mac"]
             .buttons["Setup & Sync"]
