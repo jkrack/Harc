@@ -21,6 +21,7 @@ jobs:
       run:
         working-directory: CloudflareRelay
     env:
+      WRANGLER_SEND_METRICS: "false"
       WRANGLER_SEND_ERROR_REPORTS: "false"
       CI: "true"
     steps:
@@ -30,6 +31,11 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: CloudflareRelay/package-lock.json
+      - name: Verify Wrangler telemetry opt-outs
+        timeout-minutes: 1
+        run: |
+          test "$WRANGLER_SEND_METRICS" = false
+          test "$WRANGLER_SEND_ERROR_REPORTS" = false
       - name: Install relay check dependencies
         timeout-minutes: 3
         run: npm ci
