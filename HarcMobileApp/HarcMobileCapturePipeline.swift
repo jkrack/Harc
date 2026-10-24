@@ -86,6 +86,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
     private let writer: HarcMobileDurableMasterWriter
     private let levelMeter: HarcMobileAudioLevelMeter
     private let completion: Completion
+    private let reconfigurationEnqueuedForTesting: (@Sendable () -> Void)?
     private let stateLock = NSLock()
     private var finishRequest: (
         HarcMobileCaptureFinalizationReason,
@@ -116,6 +117,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         storageAttributes: any HarcMobileCaptureStorageAttributeApplying =
             FoundationHarcMobileCaptureStorageAttributes(),
         storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil,
+        reconfigurationEnqueuedForTesting: (@Sendable () -> Void)? = nil,
         completion: @escaping Completion
     ) throws {
         let available = DispatchSemaphore(value: 0)
@@ -137,6 +139,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         )
         self.levelMeter = levelMeter
         self.completion = completion
+        self.reconfigurationEnqueuedForTesting = reconfigurationEnqueuedForTesting
     }
 
     func start() {
@@ -148,6 +151,8 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         _ = try? writer.abandonIfEmpty()
     }
 
+    // An admitted request remains writer-owned even if its awaiting task is
+    // cancelled: never abandon a converter transition after durable work starts.
     func prepareReplacementInput(
         replacing: HarcMobileCaptureInput,
         inputFormat: AVAudioFormat,
@@ -180,6 +185,7 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
                 continuation: continuation
             ))
             stateLock.unlock()
+            reconfigurationEnqueuedForTesting?()
             available.signal()
         }
     }
@@ -217,14 +223,22 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
                         )
                         continue
                     }
-                    try finishInput(activeInput)
-                    try recordDiscontinuity(
-                        request.discontinuity.reason,
-                        at: Date(),
-                        monotonic: DispatchTime.now().uptimeNanoseconds,
-                        oldRoute: request.discontinuity.oldRoute,
-                        newRoute: request.discontinuity.newRoute
-                    )
+                    do {
+                        try finishInput(activeInput)
+                        try recordDiscontinuity(
+                            request.discontinuity.reason,
+                            at: Date(),
+                            monotonic: DispatchTime.now().uptimeNanoseconds,
+                            oldRoute: request.discontinuity.oldRoute,
+                            newRoute: request.discontinuity.newRoute
+                        )
+                    } catch {
+                        // Dequeue transfers continuation ownership to this scope.
+                        // Release it before the outer handler fails queued requests
+                        // and recovers the durable prefix with the same error.
+                        request.continuation.resume(throwing: error)
+                        throw error
+                    }
                     activeInput = request.replacement
                     request.continuation.resume(returning: activeInput)
                 }
