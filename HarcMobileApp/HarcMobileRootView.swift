@@ -213,7 +213,7 @@ struct HarcMobileRootView: View {
             if let attention = libraryAttention {
                 Section {
                     NavigationLink {
-                        HarcMobileSendingToMacView()
+                        HarcMobileSendingToMacView(setupDestination: .sheet)
                     } label: {
                         Label(
                             attention.title(macName: adoptedHostName ?? "your Mac"),
@@ -239,6 +239,10 @@ struct HarcMobileRootView: View {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
+            }
+
+            if !unifiedLibraryGroups.isEmpty, showsLibraryRefreshStatus {
+                Section("Mac Library") { libraryRefreshStatus }
             }
 
             if unifiedLibraryGroups.isEmpty {
@@ -358,18 +362,27 @@ struct HarcMobileRootView: View {
         )
     }
 
+    private var showsLibraryRefreshStatus: Bool {
+        if let state = model.libraryCoordinator?.state, case .ready = state { return false }
+        return true
+    }
+
+    private var libraryRefreshStatus: some View {
+        HarcMobileLibraryRefreshStatusView(
+            state: model.libraryCoordinator?.state ?? .loadingCache,
+            hasRows: !(model.libraryCoordinator?.recordings.isEmpty ?? true),
+            refreshIsActive: model.libraryCoordinator?.isRefreshing ?? false,
+            refresh: { model.libraryCoordinator?.refresh() },
+            setup: { showsSetupAndSync = true }
+        )
+    }
+
     @ViewBuilder
     private var unifiedLibraryEmptyState: some View {
         if model.transferCoordinator == nil {
             ProgressView("Opening protected recordings…")
         } else {
-            ContentUnavailableView(
-                "No recordings yet",
-                systemImage: "rectangle.stack",
-                description: Text(
-                    "Recordings saved on this iPhone appear here, even without a Mac."
-                )
-            )
+            libraryRefreshStatus
         }
     }
 
