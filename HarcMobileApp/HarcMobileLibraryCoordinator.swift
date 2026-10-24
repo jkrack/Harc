@@ -53,7 +53,7 @@ enum HarcMobileLibraryRefreshPresentation {
                    symbol: "arrow.clockwise", isLoading: true, action: nil)
         case .unpaired:
             Status(title: "Pair a Mac for its Library",
-                   detail: "Recordings saved on this iPhone appear here, even without a Mac.",
+                   detail: "Local recording, playback and export work without a Mac.",
                    symbol: "desktopcomputer", isLoading: false, action: .setup)
         case .accessNotGranted:
             Status(title: "Mac Library access not granted",
@@ -70,7 +70,7 @@ enum HarcMobileLibraryRefreshPresentation {
         case .ready:
             Status(title: hasRows ? "Mac Library updated" : "No recordings yet",
                    detail: hasRows ? "Showing the saved Mac Library."
-                       : "Your Mac Library has no recordings. Recordings saved on this iPhone appear here, even without a Mac.",
+                       : "Your Mac Library has no recordings. You can still record on this iPhone without a Mac.",
                    symbol: "rectangle.stack", isLoading: false, action: .refresh)
         }
     }
