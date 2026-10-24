@@ -58,7 +58,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
     }
 
-    func testLocalLibraryIsReachableWithoutHost() {
+    func testLocalLibraryIsReachableWithoutHost() throws {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()
         let library = app.tabBars.buttons["Library"]
@@ -100,15 +100,20 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         expectation(for: offline, evaluatedWith: retainedStatus)
         waitForExpectations(timeout: 10)
         for _ in 0..<2 {
-            let recovery = cachedApp.buttons["harc.mobile.library.refresh-setup"]
-            XCTAssertTrue(scrollUntilHittable(recovery, in: cachedApp))
+            let recovery = try XCTUnwrap(
+                scrollToHittableButton("harc.mobile.library.refresh-setup", in: cachedApp),
+                recoveryDiagnostics(in: cachedApp)
+            )
             recovery.tap()
             XCTAssertTrue(cachedApp.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
             // Sending inside this sheet must return to this same setup root.
             cachedApp.buttons["harc.mobile.host.sync-status"].tap()
             XCTAssertTrue(cachedApp.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
-            XCTAssertTrue(scrollUntilHittable(recovery, in: cachedApp))
-            recovery.tap()
+            let sheetRecovery = try XCTUnwrap(
+                scrollToHittableButton("harc.mobile.library.refresh-setup", in: cachedApp),
+                recoveryDiagnostics(in: cachedApp)
+            )
+            sheetRecovery.tap()
             XCTAssertTrue(cachedApp.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
             cachedApp.buttons["Done"].tap()
             XCTAssertTrue(cachedApp.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 5))
@@ -122,7 +127,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(cachedApp.tabBars.buttons["Library"].isSelected)
     }
 
-    func testSyncDetailsAreDiscoverableWithoutHostOrRecording() {
+    func testSyncDetailsAreDiscoverableWithoutHostOrRecording() throws {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()
 
@@ -158,8 +163,10 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         waitForExpectations(timeout: 10)
         XCTAssertTrue(app.buttons["harc.mobile.library.refresh-action"].isEnabled)
         for _ in 0..<2 {
-            let recovery = app.buttons["harc.mobile.library.refresh-action"]
-            XCTAssertTrue(scrollUntilHittable(recovery, in: app))
+            let recovery = try XCTUnwrap(
+                scrollToHittableButton("harc.mobile.library.refresh-action", in: app),
+                recoveryDiagnostics(in: app)
+            )
             recovery.tap()
             XCTAssertTrue(app.navigationBars["Sending to Mac"].waitForNonExistence(timeout: 5))
             XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
@@ -688,15 +695,31 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         ).tap()
     }
 
-    private func scrollUntilHittable(
-        _ element: XCUIElement,
+    private func scrollToHittableButton(
+        _ identifier: String,
         in app: XCUIApplication
-    ) -> Bool {
+    ) -> XCUIElement? {
+        // A sheet and its presenting Library can both expose this shared
+        // component's identifier. Resolve the active control on each screen.
+        let matches = app.buttons.matching(identifier: identifier)
         for _ in 0..<8 {
-            if element.exists, element.isHittable { return true }
+            if let button = matches.allElementsBoundByIndex.first(where: {
+                $0.isEnabled && $0.isHittable
+            }) { return button }
             app.swipeUp()
         }
-        return element.exists && element.isHittable
+        return matches.allElementsBoundByIndex.first { $0.isEnabled && $0.isHittable }
+    }
+
+    private func recoveryDiagnostics(in app: XCUIApplication) -> String {
+        let buttons = app.buttons.matching(identifier: "harc.mobile.library.refresh-setup")
+            .allElementsBoundByIndex.map {
+                "enabled=\($0.isEnabled), hittable=\($0.isHittable), frame=\($0.frame)"
+            }
+        let statuses = app.descendants(matching: .any)
+            .matching(identifier: "harc.mobile.library.refresh-status")
+            .allElementsBoundByIndex.map(\.label)
+        return String("Setup recovery unavailable; buttons=\(buttons); statuses=\(statuses)".prefix(1000))
     }
 
     private func scrollUntilExists(
