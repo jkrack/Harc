@@ -613,6 +613,14 @@ both the direct socket and local encrypted-relay emulator paths:
     ./scripts/test-pairing-lifecycle.sh
     ./scripts/test-pairing-lifecycle-relay-emulator.sh
 
+After handing an NWListener to NIOTS, cancel it only through its NIO channel.
+Direct NWListener cancellation can deliver `.cancelled` before NIOTS marks the
+channel closed and crash the package process. Record cancellation before channel
+registration so a late initializer closes through NIO too. Keep test teardown
+under the same owner. Validate with `swift test --jobs 2 --filter
+'GRPCListenerCancellationIntegrationTests|BackgroundUploadListenerRuntimeV1Tests'`
+in addition to the full package and both pinned-TLS lifecycle gates.
+
 MCP shutdown joins a cancellation-independent broadcast completion. The accept
 worker owns descriptor close and inode-checked socket unlink before releasing
 any shutdown caller. Runner cleanup tracks the owned process group even when

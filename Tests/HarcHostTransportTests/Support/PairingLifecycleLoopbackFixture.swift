@@ -169,7 +169,7 @@ struct PairingLifecycleLoopbackFixture {
             port: .any
         )
         let listener = try NWListener(using: parameters)
-        defer { listener.cancel() }
+        // The listener factory owns cancellation after handing this to NIOTS.
 
         let capabilityPolicy = try Self.capabilityPolicy()
         let hostInfo = try HarcHostInfoService(

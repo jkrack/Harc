@@ -3,10 +3,31 @@ import Foundation
 @testable import HarcHostTransport
 import HarcTestSupport
 import Network
+import NIOCore
+import NIOTransportServices
 import Testing
 
 @Suite("gRPC listener cancellation ownership", .serialized, .processWideSystemResource)
 struct GRPCListenerCancellationIntegrationTests {
+    @Test("cancellation before channel registration closes a late channel")
+    func cancellationBeforeRegistration() async throws {
+        let cancellation = HarcNIOTSListenerCancellation()
+        await cancellation.cancel()
+        await #expect(throws: CancellationError.self) {
+            let _: NIOAsyncChannel<Void, Never> = try await NIOTSListenerBootstrap(
+                group: NIOTSEventLoopGroup.singletonNIOTSEventLoopGroup
+            )
+            .serverChannelInitializer { channel in
+                channel.eventLoop.makeFutureWithTask {
+                    try await cancellation.register(channel)
+                }
+            }
+            .withNWListener(try NWListener(using: .tcp)) { channel in
+                channel.eventLoop.makeSucceededVoidFuture()
+            }
+        }
+    }
+
     @Test("immediate stop closes the NIO channel before cancelling its listener")
     func immediateStopAfterBind() async throws {
         // Exercise the concrete gRPC process, unlike the runtime state-machine
