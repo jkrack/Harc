@@ -213,7 +213,7 @@ struct HarcMobileRootView: View {
             if let attention = libraryAttention {
                 Section {
                     NavigationLink {
-                        HarcMobileSendingToMacView()
+                        HarcMobileSendingToMacView(setupDestination: .sheet)
                     } label: {
                         Label(
                             attention.title(macName: adoptedHostName ?? "your Mac"),

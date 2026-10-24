@@ -79,6 +79,47 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertTrue(unpaired.evaluate(with: status))
+
+        // Exercise the real Library-attention destination with cached metadata
+        // and no Host adoption, microphone, audio or network fixture.
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        let cachedApp = makeApp(
+            rootID: TestRoot.offlineReview,
+            additionalArguments: ["--harc-ui-test-cached-library"]
+        )
+        cachedApp.launch()
+        selectTab("Library", in: cachedApp)
+        let attention = cachedApp.buttons["harc.mobile.library.attention"]
+        XCTAssertTrue(attention.waitForExistence(timeout: 10))
+        attention.tap()
+        XCTAssertTrue(cachedApp.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
+        let retainedStatus = cachedApp.descendants(matching: .any)["harc.mobile.library.refresh-status"]
+        XCTAssertTrue(scrollUntilExists(retainedStatus, in: cachedApp))
+        let offline = NSPredicate(format: "label CONTAINS %@", "Couldn’t refresh Mac Library")
+        expectation(for: offline, evaluatedWith: retainedStatus)
+        waitForExpectations(timeout: 10)
+        for _ in 0..<2 {
+            let recovery = cachedApp.buttons["harc.mobile.library.refresh-setup"]
+            XCTAssertTrue(scrollUntilHittable(recovery, in: cachedApp))
+            recovery.tap()
+            XCTAssertTrue(cachedApp.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+            // Sending inside this sheet must return to this same setup root.
+            cachedApp.buttons["harc.mobile.host.sync-status"].tap()
+            XCTAssertTrue(cachedApp.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
+            XCTAssertTrue(scrollUntilHittable(recovery, in: cachedApp))
+            recovery.tap()
+            XCTAssertTrue(cachedApp.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+            cachedApp.buttons["Done"].tap()
+            XCTAssertTrue(cachedApp.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 5))
+            XCTAssertTrue(cachedApp.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
+            XCTAssertTrue(cachedApp.navigationBars["Sending to Mac"].buttons["Library"].exists)
+            XCTAssertTrue(scrollUntilExists(retainedStatus, in: cachedApp))
+            XCTAssertTrue(offline.evaluate(with: retainedStatus))
+        }
+        cachedApp.navigationBars["Sending to Mac"].buttons["Library"].tap()
+        XCTAssertTrue(cachedApp.navigationBars["Library"].waitForExistence(timeout: 10))
+        XCTAssertTrue(cachedApp.tabBars.buttons["Library"].isSelected)
     }
 
     func testSyncDetailsAreDiscoverableWithoutHostOrRecording() {
@@ -116,6 +157,17 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         expectation(for: unpairedLibrary, evaluatedWith: libraryStatus)
         waitForExpectations(timeout: 10)
         XCTAssertTrue(app.buttons["harc.mobile.library.refresh-action"].isEnabled)
+        for _ in 0..<2 {
+            let recovery = app.buttons["harc.mobile.library.refresh-action"]
+            XCTAssertTrue(scrollUntilHittable(recovery, in: app))
+            recovery.tap()
+            XCTAssertTrue(app.navigationBars["Sending to Mac"].waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+            status.tap()
+            XCTAssertTrue(app.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
+            XCTAssertTrue(scrollUntilExists(libraryStatus, in: app))
+            XCTAssertTrue(unpairedLibrary.evaluate(with: libraryStatus))
+        }
 
         let setupBack = app.navigationBars["Sending to Mac"]
             .buttons["Setup & Sync"]
@@ -130,6 +182,11 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(local.waitForExistence(timeout: 10))
         local.tap()
         XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+        app.navigationBars["On This iPhone"].buttons["Setup & Sync"].tap()
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.buttons["Record"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tabBars.buttons["Record"].isSelected)
     }
 
     func testLibrarySearchLivesInTheSearchTab() {
@@ -629,6 +686,17 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         app.coordinate(
             withNormalizedOffset: CGVector(dx: 0.05, dy: 0.12)
         ).tap()
+    }
+
+    private func scrollUntilHittable(
+        _ element: XCUIElement,
+        in app: XCUIApplication
+    ) -> Bool {
+        for _ in 0..<8 {
+            if element.exists, element.isHittable { return true }
+            app.swipeUp()
+        }
+        return element.exists && element.isHittable
     }
 
     private func scrollUntilExists(

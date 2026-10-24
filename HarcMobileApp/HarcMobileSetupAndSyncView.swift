@@ -23,7 +23,7 @@ struct HarcMobileSetupAndSyncView: View {
 
                 Section("Sync") {
                     NavigationLink {
-                        HarcMobileSendingToMacView()
+                        HarcMobileSendingToMacView(setupDestination: .existingSetup)
                     } label: {
                         Label {
                             LabeledContent(
@@ -40,7 +40,8 @@ struct HarcMobileSetupAndSyncView: View {
 
                     NavigationLink {
                         HarcMobileSendingToMacView(
-                            initialSection: .macLibrary
+                            initialSection: .macLibrary,
+                            setupDestination: .existingSetup
                         )
                     } label: {
                         Label {
@@ -321,12 +322,23 @@ struct HarcMobileSendingToMacView: View {
         case macLibrary
     }
 
+    enum SetupDestination {
+        case existingSetup
+        case sheet
+    }
+
     @Environment(HarcMobileAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
     let initialSection: SectionTarget
+    let setupDestination: SetupDestination
     @State private var showsLibrarySetup = false
 
-    init(initialSection: SectionTarget = .status) {
+    init(
+        initialSection: SectionTarget = .status,
+        setupDestination: SetupDestination
+    ) {
         self.initialSection = initialSection
+        self.setupDestination = setupDestination
     }
 
     var body: some View {
@@ -383,7 +395,7 @@ struct HarcMobileSendingToMacView: View {
                         hasRows: !(model.libraryCoordinator?.recordings.isEmpty ?? true),
                         refreshIsActive: model.libraryCoordinator?.isRefreshing ?? false,
                         refresh: { model.libraryCoordinator?.refresh() },
-                        setup: { showsLibrarySetup = true }
+                        setup: openLibrarySetup
                     )
                     if let date = model.libraryCoordinator?.lastUpdatedAt {
                         LabeledContent("Last updated") {
@@ -408,6 +420,15 @@ struct HarcMobileSendingToMacView: View {
         .navigationTitle("Sending to Mac")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier(HarcMobileSyncAccessibilityID.detail)
+    }
+
+    private func openLibrarySetup() {
+        switch setupDestination {
+        case .existingSetup:
+            dismiss()
+        case .sheet:
+            showsLibrarySetup = true
+        }
     }
 
     private var presentation: HarcMobileSyncStatusPresentation {
