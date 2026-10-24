@@ -49,6 +49,7 @@ python3 scripts/check-xcode-test-results.py \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testDequeuedReconfigurationCheckpointFailureReleasesEveryCaller \
+  --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testCancelledReconfigurationCheckpointFailureReleasesEveryCaller \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testReconfigurationAfterWriterFailureFailsInsteadOfWaiting \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testFormatChangingRouteRebuildsConverterWithoutSplittingMaster \
   --output "$OUTPUT/configuration-execution-gate.json"

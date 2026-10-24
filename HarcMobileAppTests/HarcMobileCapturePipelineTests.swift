@@ -10,6 +10,20 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
     func testDequeuedReconfigurationCheckpointFailureReleasesEveryCaller()
         async throws
     {
+        try await assertCheckpointFailureReleasesEveryCaller(cancelAtCheckpoint: false)
+    }
+
+    @MainActor
+    func testCancelledReconfigurationCheckpointFailureReleasesEveryCaller()
+        async throws
+    {
+        try await assertCheckpointFailureReleasesEveryCaller(cancelAtCheckpoint: true)
+    }
+
+    @MainActor
+    private func assertCheckpointFailureReleasesEveryCaller(
+        cancelAtCheckpoint: Bool
+    ) async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -67,6 +81,11 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
         // Do not await task values or use a task group: the pre-fix continuation
         // leak must fail a bounded expectation instead of hanging test teardown.
         defer { callers.forEach { $0.cancel() } }
+        if cancelAtCheckpoint {
+            // The fault is reached only after dequeue. Cancel on the writer
+            // thread just before it throws, without racing a timer or sleeping.
+            attributes.beforeFailure { callers.forEach { $0.cancel() } }
+        }
         pipeline.start()
         let result = await XCTWaiter.fulfillment(
             of: [completed, rebuilt], timeout: 5
@@ -236,6 +255,36 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
                 newRoute: newRoute
             )
         )
+        let repeated = expectation(description: "stale repeated request returned")
+        repeated.assertForOverFulfill = true
+        let repeatedCaller = Task {
+            do {
+                let format = try XCTUnwrap(AVAudioFormat(
+                    standardFormatWithSampleRate: 44_100,
+                    channels: 1
+                ))
+                _ = try await pipeline.prepareReplacementInput(
+                    replacing: pipeline.initialInput,
+                    inputFormat: format,
+                    tapFrameCapacity: 4_096,
+                    discontinuity: HarcMobileTerminalCaptureDiscontinuity(
+                        reason: .routeChanged
+                    )
+                )
+                XCTFail("A repeated request replaced a stale input generation")
+            } catch {
+                if let pipelineError = error as? HarcMobileCapturePipelineError,
+                   case .staleInputSegment = pipelineError {
+                    // The original replacement remains the writer's active input.
+                } else {
+                    XCTFail("Unexpected repeated-request error: \(error)")
+                }
+            }
+            repeated.fulfill()
+        }
+        defer { repeatedCaller.cancel() }
+        let repeatedResult = await XCTWaiter.fulfillment(of: [repeated], timeout: 5)
+        XCTAssertEqual(repeatedResult, .completed)
         replacement.offer(
             try makeBuffer(
                 format: replacementFormat,
@@ -309,6 +358,13 @@ private final class FailSecondCheckpointAttributes:
 {
     private let lock = NSLock()
     private var applications = 0
+    private var failureAction: (@Sendable () -> Void)?
+
+    func beforeFailure(_ action: @escaping @Sendable () -> Void) {
+        lock.lock()
+        failureAction = action
+        lock.unlock()
+    }
 
     var checkpointApplications: Int {
         lock.lock()
@@ -324,7 +380,12 @@ private final class FailSecondCheckpointAttributes:
         lock.lock()
         applications += 1
         let shouldFail = applications == 2
+        let action = shouldFail ? failureAction : nil
+        if shouldFail { failureAction = nil }
         lock.unlock()
-        if shouldFail { throw CheckpointFault.injected }
+        if shouldFail {
+            action?()
+            throw CheckpointFault.injected
+        }
     }
 }

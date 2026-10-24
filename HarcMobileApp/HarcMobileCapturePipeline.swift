@@ -148,6 +148,8 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
         _ = try? writer.abandonIfEmpty()
     }
 
+    // An admitted request remains writer-owned even if its awaiting task is
+    // cancelled: never abandon a converter transition after durable work starts.
     func prepareReplacementInput(
         replacing: HarcMobileCaptureInput,
         inputFormat: AVAudioFormat,
@@ -217,14 +219,22 @@ final class HarcMobileCapturePipeline: @unchecked Sendable {
                         )
                         continue
                     }
-                    try finishInput(activeInput)
-                    try recordDiscontinuity(
-                        request.discontinuity.reason,
-                        at: Date(),
-                        monotonic: DispatchTime.now().uptimeNanoseconds,
-                        oldRoute: request.discontinuity.oldRoute,
-                        newRoute: request.discontinuity.newRoute
-                    )
+                    do {
+                        try finishInput(activeInput)
+                        try recordDiscontinuity(
+                            request.discontinuity.reason,
+                            at: Date(),
+                            monotonic: DispatchTime.now().uptimeNanoseconds,
+                            oldRoute: request.discontinuity.oldRoute,
+                            newRoute: request.discontinuity.newRoute
+                        )
+                    } catch {
+                        // Dequeue transfers continuation ownership to this scope.
+                        // Release it before the outer handler fails queued requests
+                        // and recovers the durable prefix with the same error.
+                        request.continuation.resume(throwing: error)
+                        throw error
+                    }
                     activeInput = request.replacement
                     request.continuation.resume(returning: activeInput)
                 }
