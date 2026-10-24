@@ -179,24 +179,67 @@ require_future_profile_date() {
   fi
 }
 
-metadata_single_line() {
+# A value ends at the next Markdown field or heading, never at a later
+# hardcoded field (optional fields may be absent).
+metadata_block() {
   local marker="$1"
   awk -v marker="$marker" '
     { line = $0; sub(/[[:space:]]+$/, "", line) }
     line == marker { found = 1; next }
-    found && NF { print; exit }
+    found && (line ~ /^\*/ || line ~ /^#/) { exit }
+    found { print }
   ' "$REPO_ROOT/docs/app-store/harcmobile-metadata.md"
 }
 
-metadata_block() {
-  local start="$1"
-  local finish="$2"
-  awk -v start="$start" -v finish="$finish" '
-    { line = $0; sub(/[[:space:]]+$/, "", line) }
-    line == start { found = 1; next }
-    found && line == finish { exit }
-    found { print }
-  ' "$REPO_ROOT/docs/app-store/harcmobile-metadata.md"
+metadata_single_line() {
+  metadata_block "$1" | awk 'NF { print; exit }'
+}
+
+validate_metadata_sections() {
+  /usr/bin/python3 - "$METADATA" <<'PY_METADATA'
+import sys
+from pathlib import Path
+
+required = {"Name", "Description", "Keywords", "Review notes"}
+optional = {"Subtitle", "Promotional text"}
+fields = required | optional
+single_line = {"Name", "Subtitle", "Keywords"}
+sections = {field: [] for field in fields}
+errors = []
+active = None
+for line in Path(sys.argv[1]).read_text().splitlines():
+    stripped = line.strip()
+    # Recognize misspelled Markdown delimiters as boundaries too, so their
+    # text cannot silently become the previous field's value.
+    label = stripped.rstrip(":").strip("*# \t")
+    if label in fields:
+        active = None
+        if line.rstrip() != "**" + label + "**":
+            errors.append(f"malformed metadata section: {label}")
+        else:
+            sections[label].append([])
+            active = sections[label][-1]
+    elif stripped.startswith(("*", "#")):
+        active = None
+    elif active is not None:
+        active.append(line)
+
+for field in sorted(fields):
+    values = sections[field]
+    if len(values) > 1:
+        errors.append(f"duplicate metadata section: {field}")
+    if field in required and not values:
+        errors.append(f"missing metadata section: {field}")
+    for value in values:
+        nonblank = [line for line in value if line.strip()]
+        if field in required and not nonblank:
+            errors.append(f"blank metadata section: {field}")
+        if field in single_line and len(nonblank) > 1:
+            errors.append(f"metadata section must be a single line: {field}")
+for error in errors:
+    print(error)
+sys.exit(bool(errors))
+PY_METADATA
 }
 
 character_count() {
@@ -385,12 +428,17 @@ fi
 
 METADATA="$REPO_ROOT/docs/app-store/harcmobile-metadata.md"
 if [[ -f "$METADATA" ]]; then
+  if SECTION_ERRORS="$(validate_metadata_sections)"; then
+    pass "metadata section structure and required values"
+  else
+    fail "metadata section structure: $SECTION_ERRORS"
+  fi
   NAME="$(metadata_single_line '**Name**')"
   SUBTITLE="$(metadata_single_line '**Subtitle**')"
-  PROMOTIONAL_TEXT="$(metadata_block '**Promotional text**' '**Description**' | awk 'NF { if (text) text = text " "; text = text $0 } END { print text }')"
-  DESCRIPTION="$(metadata_block '**Description**' '**Keywords**')"
+  PROMOTIONAL_TEXT="$(metadata_block '**Promotional text**' | awk 'NF { if (text) text = text " "; text = text $0 } END { print text }')"
+  DESCRIPTION="$(metadata_block '**Description**')"
   KEYWORDS="$(metadata_single_line '**Keywords**')"
-  REVIEW_NOTES="$(metadata_block '**Review notes**' '## Account-holder decisions still required')"
+  REVIEW_NOTES="$(metadata_block '**Review notes**')"
 
   NAME_COUNT="$(printf '%s' "$NAME" | character_count)"
   SUBTITLE_COUNT="$(printf '%s' "$SUBTITLE" | character_count)"
