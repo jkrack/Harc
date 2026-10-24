@@ -32,6 +32,26 @@ class CurrentCandidateReadinessTests(unittest.TestCase):
             return subprocess.run(['bash', str(harness)], env=environment,
                                   capture_output=True, text=True).returncode
 
+    def test_live_candidate_record_matches_project_configuration(self):
+        # Use production version/build extraction and the actual repository
+        # register: fixture-only checks cannot catch drift in committed inputs.
+        source = SCRIPT.read_text()
+        expected = source[source.index('EXPECTED_VERSION="$(awk'):
+                          source.index('\nrequire_nonempty "$EXPECTED_VERSION"')]
+        gate = source[source.index('READINESS_EVIDENCE='):
+                      source.index('\nAVAILABLE_GIB=')]
+        harness = ('set -eu\nFAILURES=0\npass() { :; }\n'
+                   'fail() { echo "$*" >&2; FAILURES=$((FAILURES + 1)); }\n'
+                   + expected
+                   + '\ntest -n "$EXPECTED_VERSION" && test -n "$EXPECTED_BUILD"\n'
+                   + gate + '\nexit "$FAILURES"\n')
+        result = subprocess.run(
+            ['bash', '-c', harness],
+            env=dict(os.environ, REPO_ROOT=str(SCRIPT.parents[1])),
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_current_record_matches_without_relabeling_history(self):
         self.assertEqual(self.run_gate(VALID, OLD), 0)
 

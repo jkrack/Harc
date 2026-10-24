@@ -104,6 +104,9 @@ public struct ActivityView: View {
                             .font(.harcCaption)
                     }
                 case .completed(let report):
+                    Text("Last archive check: \(report.completedAt.formatted(date: .omitted, time: .standard))")
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
                     Label(
                         report.headline,
                         systemImage: report.issues.isEmpty && report.securityBlocked == 0
@@ -129,6 +132,12 @@ public struct ActivityView: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                    }
+                    if report.retryRequested > 0 {
+                        Text("The archive check has finished. Host delivery continues separately; its current status is shown below.")
+                            .font(.harcCaption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if let transfer = bridge.clientTransferStatusText {
                         VStack(alignment: .leading, spacing: HarcSpacing.xs) {
@@ -176,7 +185,7 @@ public struct ActivityView: View {
                             .font(.harcCaption)
                     }
                 } else {
-                    Text("Nothing running")
+                    Text("No local processing running")
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
                 }
