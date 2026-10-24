@@ -19,7 +19,7 @@ repo = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="harc-tls-regression-") as scratch:
     root = Path(scratch)
     for parent, names in [("Sources", ["HarcDomain", "HarcIdentity"]),
-                          ("Tests", ["HarcIdentityTests"])]:
+                          ("Tests", ["HarcIdentityTests", "HarcTestSupport"])]:
         (root / parent).mkdir()
         for name in names:
             (root / parent / name).symlink_to(repo / parent / name)
@@ -28,11 +28,14 @@ import PackageDescription
 let package = Package(name: "HarcTLSRegression", platforms: [.macOS(.v26)], targets: [
  .target(name: "HarcDomain", exclude: ["README.md"]),
  .target(name: "HarcIdentity", dependencies: ["HarcDomain"], exclude: ["README.md"]),
- .testTarget(name: "HarcIdentityTests", dependencies: ["HarcIdentity", "HarcDomain"])
+ .target(name: "HarcTestSupport", path: "Tests/HarcTestSupport"),
+ .testTarget(name: "HarcIdentityTests", dependencies: ["HarcIdentity", "HarcDomain", "HarcTestSupport"], resources: [.copy("Fixtures")])
 ])
 ''')
     command = ["swift", "test", "--package-path", scratch, "--build-system", "native",
-               "--jobs", "2", "--filter", "HostTLSServerIdentityTests"]
+               "--jobs", "2", "--filter",
+               "HostTLSServerIdentityTests" if args.identity_only else
+               "HostTLSServerIdentityTests|ListenerTestCycleTests"]
     if args.identity_only:
         print("Listener qualification explicitly excluded.", flush=True)
         command += ["--skip", "listenerRestartsDoNotInstallCertificates"]
