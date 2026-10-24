@@ -1,7 +1,7 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-10-20
-**Candidate configuration:** HarcMobile 0.14.19 (74), iOS 26+, iPhone only
+**Updated:** 2026-10-24
+**Candidate configuration:** HarcMobile 0.14.20 (75), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.
@@ -10,6 +10,14 @@ This is the active candidate and gap register. Update its configuration when
 source version/build changes, then attach evidence scoped to the exact pushed
 candidate commit. A matching version line lets repository preflight identify
 what is being prepared; it does not transfer old passes or close external gates.
+
+Source preparation inputs were refreshed on 2026-10-24 for the separate
+[Mac maintenance preparation](2026-10-24-mac-maintenance-preparation.md).
+The shared project settings now identify 0.14.20 (75) for Mac, iPhone and its
+widget extension. This is source preparation only: no phone artifact is selected,
+no historical pass transfers, and companion physical, codec, product-path,
+archive, privacy and submission gates remain open. Unmerged #153 continuation
+work remains with its owner and is excluded from this preparation.
 
 Source preparation inputs were refreshed on 2026-10-23 to match the shared
 `project.yml` configuration, 0.14.19 (74). This identifies preparation inputs only:
