@@ -107,6 +107,30 @@ class MetadataSectionsTests(unittest.TestCase):
                                     **{'Promotional text': 'p' * 170, 'Description': 'd' * 4000,
                                        'Keywords': 'k' * 100, 'Review notes': 'r' * 4000})))
 
+    def test_bullets_and_emphasis_are_nonblank_body_content(self):
+        for field in ('Description', 'Review notes', 'Promotional text'):
+            for body in ('* Offline capture', '  * Offline capture', '*Private* recording',
+                         '**Offline capture**', '#Offline capture', '####### Capture', '    # Capture'):
+                with self.subTest(field=field, body=body):
+                    self.assert_valid(deck(dict(FIELDS, **{field: body})))
+
+    def test_bullets_and_emphasis_cannot_hide_overlong_content(self):
+        for field, limit in (('Description', 4000), ('Review notes', 4000),
+                             ('Promotional text', 170)):
+            for prefix in ('* ', '  * ', '*Private* ', '**Private** ', '#hashtag ', '####### ', '    # '):
+                with self.subTest(field=field, prefix=prefix):
+                    body = 'Short intro\n' + prefix + 'x' * (limit + 1)
+                    self.assert_invalid(deck(dict(FIELDS, **{field: body})),
+                                        '1-4000 bytes' if field == 'Review notes' else 'product-page limit')
+
+    def test_markdown_heading_ends_body_without_consuming_later_prose(self):
+        self.assert_valid(deck(dict(FIELDS, Description='Short intro\n\n### Other section\n' + 'x' * 4001)))
+
+    def test_future_update_field_still_bounds_keywords(self):
+        copy = deck(FIELDS).replace('**Review notes**',
+                                   "**What's New (future updates; not entered for the first version)**\nFuture copy\n\n**Review notes**")
+        self.assert_valid(copy)
+
     def test_trailing_whitespace_and_crlf(self):
         self.assert_valid(deck(FIELDS).replace('**\n', '**  \n').replace('\n', '\r\n'))
 

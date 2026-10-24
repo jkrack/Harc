@@ -179,14 +179,16 @@ require_future_profile_date() {
   fi
 }
 
-# A value ends at the next Markdown field or heading, never at a later
-# hardcoded field (optional fields may be absent).
+# A value ends at the next known metadata field or Markdown heading.
+# Bullets and emphasis are body text and must remain in the length checks.
 metadata_block() {
   local marker="$1"
   awk -v marker="$marker" '
     { line = $0; sub(/[[:space:]]+$/, "", line) }
     line == marker { found = 1; next }
-    found && (line ~ /^\*/ || line ~ /^#/) { exit }
+    found && (line ~ /^\*\*(Name|Subtitle|Promotional text|Description|Keywords|Review notes)\*\*$/ ||
+              line == "**What\047s New (future updates; not entered for the first version)**" ||
+              line ~ /^ ? ? ?##?#?#?#?#?[ \t]/) { exit }
     found { print }
   ' "$REPO_ROOT/docs/app-store/harcmobile-metadata.md"
 }
@@ -197,6 +199,7 @@ metadata_single_line() {
 
 validate_metadata_sections() {
   /usr/bin/python3 - "$METADATA" <<'PY_METADATA'
+import re
 import sys
 from pathlib import Path
 
@@ -219,7 +222,8 @@ for line in Path(sys.argv[1]).read_text().splitlines():
         else:
             sections[label].append([])
             active = sections[label][-1]
-    elif stripped.startswith(("*", "#")):
+    elif (stripped == "**What's New (future updates; not entered for the first version)**"
+          or re.match(r"^ {0,3}#{1,6}[ \t]", line)):
         active = None
     elif active is not None:
         active.append(line)
