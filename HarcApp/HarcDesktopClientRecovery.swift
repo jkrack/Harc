@@ -73,8 +73,9 @@ enum HarcDesktopClientRecovery {
                        try HarcDesktopClientTransferCoordinator.hasVerifiedHostCopy(existing,
                             store: store, expectedTrust: activeTrust) {
                         let sidecar = try decodeSidecar(sidecarURL)
-                        guard sidecar.capture == existing.finalizedCapture.capture,
-                              sidecar.capture.producingDeviceID == deviceID else { throw RecoveryError.identityMismatch }
+                        try validateHostOnlyCapture(sidecar.capture,
+                            stored: existing.finalizedCapture.capture,
+                            recordingUUID: recordingUUID, deviceID: deviceID)
                         try DurableFileIO.synchronizeFileAndParent(at: sidecarURL)
                         alreadyTracked += 1
                         continue
@@ -215,6 +216,31 @@ enum HarcDesktopClientRecovery {
                     < $1.sidecar.capture.captureStartedAt
             }
         )
+    }
+
+    /// Compare through the store's Date codec, not Foundation's sidecar codec.
+    /// Converting between the two epochs can change the last floating-point bit.
+    /// This is exact codec normalization, not a tolerance for changed facts.
+    static func validateHostOnlyCapture(
+        _ capture: FinalizedCapture,
+        stored: FinalizedCapture,
+        recordingUUID: UUID,
+        deviceID: DeviceID
+    ) throws {
+        guard capture.producingDeviceID == deviceID,
+              capture.originRecordingID.deviceID == deviceID else {
+            throw RecoveryError.identityMismatch
+        }
+        guard capture.originRecordingID.recordingUUID == recordingUUID else {
+            throw RecoveryError.filenameConflict
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let persisted = try decoder.decode(FinalizedCapture.self,
+            from: encoder.encode(capture))
+        guard persisted == stored else { throw RecoveryError.captureConflict }
     }
 
     private static func decodeSidecar(
@@ -370,6 +396,7 @@ private enum RecoveryError: LocalizedError {
     case missingMaster
     case invalidSidecar
     case identityMismatch
+    case captureConflict
     case filenameConflict
     case audioConflict
     case invalidDuration
@@ -382,6 +409,8 @@ private enum RecoveryError: LocalizedError {
             "The capture metadata is unreadable. It was left untouched."
         case .identityMismatch:
             "The capture belongs to a different Client identity. It was security blocked and left untouched."
+        case .captureConflict:
+            "The capture metadata conflicts with its verified Host copy. It was left untouched."
         case .filenameConflict:
             "The capture filename conflicts with its durable identity. It was left untouched."
         case .audioConflict:

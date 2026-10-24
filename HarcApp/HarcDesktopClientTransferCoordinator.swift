@@ -83,6 +83,28 @@ struct HarcDesktopHostEvidenceBinding: Codable, Equatable, Sendable {
     }
 }
 
+/// Presentation history survives an automatic retry, but each recording's
+/// successful delivery clears only its own failure. Never infer audio safety
+/// from this display state; the verified-receipt store remains authoritative.
+struct HarcDesktopDeliveryFailures {
+    private var messages: [UUID: String] = [:]
+
+    mutating func record(_ recording: UUID, message: String) {
+        messages[recording] = message
+    }
+
+    mutating func resolve(_ recording: UUID) {
+        messages.removeValue(forKey: recording)
+    }
+
+    var summary: String? {
+        guard let recording = messages.keys.sorted(by: { $0.uuidString < $1.uuidString }).first,
+              let message = messages[recording] else { return nil }
+        let others = messages.count > 1 ? " (and \(messages.count - 1) other recording(s))" : ""
+        return "Recording \(recording.uuidString.prefix(8).lowercased()): \(message)" + others
+    }
+}
+
 @MainActor
 final class HarcDesktopClientTransferCoordinator: ObservableObject {
     enum HostProbeState: Equatable, Sendable {
@@ -105,7 +127,21 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         case securityBlocked(UUID, String)
     }
 
-    @Published private(set) var state: State = .idle
+    @Published private(set) var state: State = .idle {
+        didSet {
+            switch state {
+            case .retryNeeded(let recording, let message),
+                 .securityBlocked(let recording, let message),
+                 .edgeArtifactDeferred(let recording, let message):
+                deliveryFailures.record(recording, message: message)
+            case .uploaded(let recording):
+                deliveryFailures.resolve(recording)
+            default:
+                break
+            }
+        }
+    }
+    private var deliveryFailures = HarcDesktopDeliveryFailures()
     @Published private(set) var pendingCount = 0
     @Published private(set) var pendingProcessingCount = 0
     @Published private(set) var pendingSpeakerCount = 0
@@ -176,6 +212,22 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
     var statusMessage: String {
         switch state {
+        case .connecting, .encoding, .uploading:
+            if let failure = deliveryFailures.summary {
+                return currentStatusMessage + ". Unresolved delivery failure: " + failure
+            }
+        case .idle, .uploaded:
+            if let failure = deliveryFailures.summary {
+                return "Host delivery still needs attention. Unresolved delivery failure: " + failure
+            }
+        default:
+            break
+        }
+        return currentStatusMessage
+    }
+
+    private var currentStatusMessage: String {
+        switch state {
         case .idle:
             if case .pairingRepairRequired(let message) = hostProbeState {
                 message
@@ -203,7 +255,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         case .connecting:
             "Connecting securely to Host"
         case .uploading:
-            "Uploading a recording to Host"
+            "Delivering audio or updates to Host"
         case .uploaded:
             if pendingCount > 0 {
                 "\(pendingCount) recording(s) still waiting for Host"
@@ -450,6 +502,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     /// been removed. Durable recordings and their outboxes are untouched.
     func forgetHostState() {
         shutdown()
+        deliveryFailures = HarcDesktopDeliveryFailures()
         lastAuthenticatedContact = nil
         retrySchedule.reset()
         nextAutomaticRetryAt = nil
@@ -831,6 +884,9 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             route: opened.path,
             adoption: opened.adoption
         )
+        // Authentication is complete, including when only derived metadata
+        // remains. Do not leave Activity displaying a handshake in progress.
+        state = .uploading(master.originRecordingID.recordingUUID)
         let connection = opened.connection
         do {
             if alreadyCommitted {

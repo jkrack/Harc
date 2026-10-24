@@ -5,6 +5,15 @@ import Testing
 
 @Suite("Transport error diagnostics")
 struct HarcTransportErrorDiagnosticTests {
+    @Test("ambiguous commit preserves uncertainty and explains retained local audio")
+    func missingReceiptFeedback() {
+        let diagnostic = HarcTransportErrorDiagnostic.describe(
+            HarcForegroundRecordingOutboxError.missingReceiptAfterCommit)
+        #expect(diagnostic.userFacingMessage.contains("could not be confirmed"))
+        #expect(diagnostic.userFacingMessage.contains("local recording is retained"))
+        #expect(diagnostic.userFacingMessage.contains("verified Host receipt"))
+    }
+
     @Test("Settings distinguishes RPC failures without showing their underlying cause")
     func rpcUserFacingMessage() {
         let diagnostic = HarcTransportErrorDiagnostic.describe(RPCError(

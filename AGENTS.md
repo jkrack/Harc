@@ -883,3 +883,12 @@ Embedded helper scripts resolve executables with `swift build --show-bin-path`
 using the same product, architecture, configuration and scratch path as the build.
 Do not hard-code SwiftPM output directories; Xcode 27 changes the default engine.
 The release build verifies that both embedded helpers are arm64 and signed.
+
+Client archive recovery compares Host-only sidecars through the transfer store's
+millisecond-since-1970 Date codec before exact capture-fact comparison. Keep
+foreign identity, filename conflicts and changed metadata fail-closed and distinct;
+never use a broad time tolerance or rewrite evidence to clear a warning. Activity
+reports archive completion independently of delivery and retains per-recording
+failure feedback through retries until that recording succeeds. Validate with
+`HarcDesktopClientRecoveryTests`, `HarcDesktopSpeakerReviewCoordinatorTests`,
+`ClientHostConnectionStateTests`, and `HarcTransportErrorDiagnosticTests`.

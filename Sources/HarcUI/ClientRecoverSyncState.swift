@@ -16,6 +16,7 @@ public struct ClientRecoverSyncIssue: Equatable, Sendable, Identifiable {
 
 /// Auditable result of one ClientState inventory/reconciliation pass.
 public struct ClientRecoverSyncReport: Equatable, Sendable {
+    public let completedAt: Date
     public let mastersFound: Int
     public let sidecarsFound: Int
     public let sidecarsRebuilt: Int
@@ -32,6 +33,7 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
     public let issues: [ClientRecoverSyncIssue]
 
     public init(
+        completedAt: Date = Date(),
         mastersFound: Int,
         sidecarsFound: Int,
         sidecarsRebuilt: Int,
@@ -47,6 +49,7 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
         securityBlocked: Int,
         issues: [ClientRecoverSyncIssue]
     ) {
+        self.completedAt = completedAt
         self.mastersFound = mastersFound
         self.sidecarsFound = sidecarsFound
         self.sidecarsRebuilt = sidecarsRebuilt
@@ -72,7 +75,10 @@ public struct ClientRecoverSyncReport: Equatable, Sendable {
                 ? localLibraryAdded : transcribedLocally
             return "Recovered \(recovered) recording\(recovered == 1 ? "" : "s") on this Mac"
         }
-        if mastersFound > 0, alreadyOnHost == mastersFound {
+        if retryRequested > 0 {
+            return "Archive check finished; Host delivery is pending"
+        }
+        if alreadyOnHost > 0 {
             return "All Client recordings are on the Host"
         }
         return mastersFound == 0
