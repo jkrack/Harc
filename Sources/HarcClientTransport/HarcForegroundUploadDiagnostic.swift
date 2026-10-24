@@ -63,6 +63,14 @@ public struct HarcTransportErrorDiagnostic: Equatable, Sendable {
                 cause: rpc.cause.map { String(describing: $0) }
             )
         }
+        if let outbox = error as? HarcForegroundRecordingOutboxError,
+           outbox == .missingReceiptAfterCommit {
+            return Self(
+                type: String(reflecting: Swift.type(of: error)),
+                summary: "Host delivery could not be confirmed. The local recording is retained; Harc will retry and check for a verified Host receipt.",
+                rpcCode: nil, rpcCodeNumber: nil, rpcMessage: nil, cause: nil
+            )
+        }
         let summary = (error as? any LocalizedError)?.errorDescription
             ?? String(describing: error)
         return Self(

@@ -3,6 +3,23 @@ import Testing
 @testable import HarcUI
 
 struct ClientHostConnectionStateTests {
+    @Test("archive completion does not claim queued recordings are on Host")
+    func pendingRecoveryDelivery() {
+        let report = ClientRecoverSyncReport(mastersFound: 2, sidecarsFound: 4,
+            sidecarsRebuilt: 0, outboxesRepaired: 0, alreadyTracked: 4,
+            retryRequested: 2, alreadyOnHost: 2, securityBlocked: 0, issues: [])
+        #expect(report.headline == "Archive check finished; Host delivery is pending")
+        #expect(report.detail.contains("Host delivery queued for 2"))
+        let blocked = ClientRecoverSyncReport(mastersFound: 2, sidecarsFound: 4,
+            sidecarsRebuilt: 0, outboxesRepaired: 0, alreadyTracked: 4,
+            retryRequested: 2, alreadyOnHost: 2, securityBlocked: 1, issues: [])
+        #expect(blocked.headline.contains("needing attention"))
+        let hostOnly = ClientRecoverSyncReport(mastersFound: 0, sidecarsFound: 2,
+            sidecarsRebuilt: 0, outboxesRepaired: 0, alreadyTracked: 2,
+            retryRequested: 0, alreadyOnHost: 2, securityBlocked: 0, issues: [])
+        #expect(hostOnly.headline == "All Client recordings are on the Host")
+    }
+
     @Test("local Client readiness is not treated as Host connectivity")
     func pairingAndConnectivityRemainDistinct() {
         let notPaired = ClientHostConnectionState.notPaired(pending: 3)
