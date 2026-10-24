@@ -37,14 +37,21 @@ if [[ -z "$HARC_RELAY_AUDIT_TOKEN" ]]; then
   exit 1
 fi
 
-curl --disable \
+if ! JOBS_JSON="$(curl --disable \
+  --connect-timeout 5 \
+  --max-time 20 \
   --silent \
   --show-error \
   --fail \
   --header @- \
   "$API_ORIGIN/accounts/$ACCOUNT_ID/logpush/jobs" \
-  <<< "Authorization: Bearer $HARC_RELAY_AUDIT_TOKEN" \
-  | node -e '
+  <<< "Authorization: Bearer $HARC_RELAY_AUDIT_TOKEN"
+)"; then
+  echo "error: account Logpush request failed (5-second connect, 20-second total deadline)" >&2
+  exit 1
+fi
+
+node -e '
 const chunks = [];
 process.stdin.on("data", (chunk) => chunks.push(chunk));
 process.stdin.on("end", () => {
@@ -82,7 +89,7 @@ process.stdin.on("end", () => {
     );
   }
 });
-'
+' <<< "$JOBS_JSON"
 
 echo "  Result:                   no account-level Workers export"
 echo "  Checked UTC:              $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
