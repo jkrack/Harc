@@ -328,6 +328,45 @@ jobs:
         run: |
           mkdir -p .build/mobile-configuration
           bash scripts/test-mobile-configuration.sh 2>&1 | tee .build/mobile-configuration/console.log
+      - name: Summarize mobile execution
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p .build/mobile-configuration
+          if [[ -d .build/mobile-configuration/configuration.xcresult ]]; then
+            xcrun xcresulttool get test-results summary \
+              --path .build/mobile-configuration/configuration.xcresult \
+              > .build/mobile-configuration/configuration-summary.json || true
+          fi
+          python3 - <<'PYDIAGNOSTIC'
+          import json, os
+          from pathlib import Path
+          root = Path('.build/mobile-configuration')
+          try:
+              summary = json.loads((root / 'configuration-summary.json').read_text())
+          except (OSError, ValueError):
+              summary = {'diagnostic': 'No readable test summary; inspect build/setup errors below'}
+          console = root / 'console.log'
+          errors = []
+          if console.exists():
+              for line in console.read_text(errors='replace').splitlines():
+                  if any(marker in line for marker in ('error:', 'Testing failed:', 'XCTAssert', '** TEST FAILED **')):
+                      errors.append(line[:1000])
+          report = {'sourceSHA': os.environ['GITHUB_SHA'], 'summary': summary,
+                    'boundedBuildOrTestErrors': errors[-20:]}
+          output = json.dumps(report, indent=2)
+          (root / 'execution-diagnostic.json').write_text(output + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write('### Mobile execution diagnostic\n```json\n' + output + '\n```\n')
+          PYDIAGNOSTIC
+      - name: Preserve compact mobile diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-execution-diagnostic
+          path: .build/mobile-configuration/execution-diagnostic.json
+          if-no-files-found: error
+          retention-days: 3
       - name: Preserve mobile configuration evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -340,3 +379,16 @@ jobs:
             .build/mobile-configuration/diagnostics
           if-no-files-found: warn
           retention-days: 3
+
+  mobile-diagnostics:
+    if: always() && github.event_name == 'pull_request'
+    # Actual artifact dependency: keep diagnostics readable without the large build log.
+    needs: mobile-configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mobile-execution-diagnostic
+      - name: Report mobile execution diagnostic
+        run: cat execution-diagnostic.json

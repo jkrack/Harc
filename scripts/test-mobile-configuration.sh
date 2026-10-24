@@ -23,6 +23,7 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
   -only-testing:HarcMobileAppTests/HarcMobileConfigurationTests \
   -only-testing:HarcMobileAppTests/HarcMobileCaptureExperienceTests \
+  -only-testing:HarcMobileAppTests/HarcMobileCapturePipelineTests \
   -only-testing:HarcMobileAppTests/HarcMobileSyncStatusPresentationTests \
   -only-testing:HarcMobileAppTests/HarcMobileLocalLibraryTests \
   -only-testing:HarcMobileAppTests/HarcMobileLibraryRefreshPresentationTests \
@@ -36,3 +37,19 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromEmptyLocalRecordings \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRepeatedOfflineNavigationPreservesEachTabStack \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA" test
+
+# A successful xcodebuild exit alone does not prove the selected tests ran.
+xcrun xcresulttool get test-results summary --path "$OUTPUT/configuration.xcresult" \
+  > "$OUTPUT/configuration-summary.json"
+xcrun xcresulttool get test-results tests --path "$OUTPUT/configuration.xcresult" \
+  > "$OUTPUT/configuration-test-tree.json"
+python3 scripts/check-xcode-test-results.py \
+  --summary "$OUTPUT/configuration-summary.json" \
+  --tests "$OUTPUT/configuration-test-tree.json" \
+  --require-bundle HarcMobileAppTests \
+  --require-bundle HarcMobileUITests \
+  --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testDequeuedReconfigurationCheckpointFailureReleasesEveryCaller \
+  --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testCancelledReconfigurationCheckpointFailureReleasesEveryCaller \
+  --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testReconfigurationAfterWriterFailureFailsInsteadOfWaiting \
+  --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testFormatChangingRouteRebuildsConverterWithoutSplittingMaster \
+  --output "$OUTPUT/configuration-execution-gate.json"
