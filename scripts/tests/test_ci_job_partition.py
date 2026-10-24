@@ -1,4 +1,5 @@
 import pathlib
+import re
 import unittest
 
 
@@ -10,12 +11,21 @@ class CIJobPartitionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         workflow = WORKFLOW.read_text()
-        cls.smoke_job = workflow.split("  smoke:\n", 1)[1].split("  build:\n", 1)[0]
-        cls.package_job = workflow.split("  build:\n", 1)[1].split("  macos:\n", 1)[0]
-        cls.macos_job = workflow.split("  macos:\n", 1)[1].split(
-            "  mobile-configuration:\n", 1
-        )[0]
-        cls.mobile_job = workflow.split("  mobile-configuration:\n", 1)[1]
+        def job(name):
+            # Stop at the next job, including diagnostic jobs added later.
+            match = re.search(
+                rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)",
+                workflow,
+            )
+            if match is None:
+                raise AssertionError(f"Missing CI job: {name}")
+            return match.group(1)
+
+        cls.smoke_job = job("smoke")
+        cls.package_job = job("build")
+        cls.macos_job = job("macos")
+        cls.mobile_job = job("mobile-configuration")
+        cls.diagnostic_job = job("mobile-diagnostics")
 
     def test_package_and_macos_compilation_are_separate_jobs(self):
         self.assertIn("Build package tests", self.package_job)
@@ -33,6 +43,11 @@ class CIJobPartitionTests(unittest.TestCase):
     def test_independent_validation_jobs_do_not_wait_for_each_other(self):
         for job in [self.package_job, self.macos_job, self.mobile_job]:
             self.assertNotIn("needs:", job)
+
+    def test_diagnostics_wait_only_for_their_mobile_artifact(self):
+        self.assertIn("needs: mobile-configuration", self.diagnostic_job)
+        self.assertIn("name: mobile-execution-diagnostic", self.diagnostic_job)
+        self.assertIn("if: always()", self.diagnostic_job)
 
     def test_full_validation_is_reserved_for_pull_requests(self):
         for job in [self.package_job, self.macos_job, self.mobile_job]:
