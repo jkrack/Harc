@@ -62,25 +62,6 @@ package actor HarcGRPCListenerReadinessSignal {
     }
 }
 
-private actor HarcGRPCListenerBindingControl {
-    private var listener: NWListener?
-    private var isCancelled = false
-
-    func register(_ listener: NWListener) -> Bool {
-        guard !isCancelled else {
-            listener.cancel()
-            return false
-        }
-        self.listener = listener
-        return true
-    }
-
-    func cancel() {
-        isCancelled = true
-        listener?.cancel()
-    }
-}
-
 /// Adapts a process-owned `NWListener` to gRPC Swift's custom HTTP/2 server
 /// transport. The host owns listener construction so it can apply Harc's exact
 /// TLS policy and attach `_harc._tcp` Bonjour metadata before gRPC starts it.
@@ -93,7 +74,7 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
     private let listenerProvider: @Sendable () async throws -> NWListener
     private let bonjourAdvertisement:
         (any HarcBonjourListenerAdvertisementBoundary)?
-    private let bindingControl: HarcGRPCListenerBindingControl
+    private let bindingControl: HarcNIOTSListenerCancellation
     private let bindingTimeout: Duration
     private let nioBindingTimeout: TimeAmount
     private let sleep: @Sendable (Duration) async throws -> Void
@@ -112,7 +93,7 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
         self.eventLoopGroup = eventLoopGroup
         self.servedIdentityBinding = servedIdentityBinding
         self.readiness = HarcGRPCListenerReadinessSignal()
-        self.bindingControl = HarcGRPCListenerBindingControl()
+        self.bindingControl = HarcNIOTSListenerCancellation()
         let advertisement = HarcBonjourListenerAdvertisement(
             generationID: lease.generationID,
             hints: bonjourHints
@@ -166,7 +147,7 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
         self.eventLoopGroup = eventLoopGroup
         self.servedIdentityBinding = servedIdentityBinding
         self.readiness = readiness
-        self.bindingControl = HarcGRPCListenerBindingControl()
+        self.bindingControl = HarcNIOTSListenerCancellation()
         self.bonjourAdvertisement = bonjourAdvertisement
         self.bindingTimeout = bindingTimeout
         self.nioBindingTimeout = Self.nioTimeAmount(bindingTimeout)
@@ -199,7 +180,8 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
             throw error
         }
 
-        guard await bindingControl.register(listener) else {
+        guard await bindingControl.canBeginBinding() else {
+            listener.cancel() // Not handed to NIOTS yet.
             let error = HarcGRPCListenerReadinessError.bindingCancelled
             invalidateServedIdentity()
             await readiness.markFailed(error)
@@ -233,7 +215,11 @@ public struct HarcGRPCNWListenerFactory: HTTP2ServerTransport.ListenerFactory {
                 .bindTimeout(nioBindingTimeout)
                 .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
                 .serverChannelInitializer { channel in
-                    listenerConfigurator.configure(channel: channel)
+                    channel.eventLoop.makeFutureWithTask {
+                        try await bindingControl.register(channel)
+                    }.flatMap {
+                        listenerConfigurator.configure(channel: channel)
+                    }
                 }
                 .withNWListener(listener) { channel in
                     connectionConfigurator.configure(

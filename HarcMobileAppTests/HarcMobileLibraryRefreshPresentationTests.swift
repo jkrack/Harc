@@ -10,6 +10,53 @@ import Testing
 @Suite("Host Library refresh presentation")
 @MainActor
 struct HarcMobileLibraryRefreshPresentationTests {
+    @Test("zero-row presentation distinguishes loading, empty, unpaired, denied, cancelled and failure")
+    func emptyLibraryStates() {
+        let states: [HarcMobileLibraryCoordinator.State] = [
+            .loadingCache, .refreshing, .ready(lastUpdated: Date()),
+            .unpaired, .accessNotGranted, .cancelled,
+            .failed("Library metadata refresh: Host request failed (unavailable).")
+        ]
+        let statuses = states.map {
+            HarcMobileLibraryRefreshPresentation.status($0, hasRows: false)
+        }
+        #expect(Set(statuses.map(\.title)).count == states.count)
+        #expect(statuses.map(\.isLoading) == [true, true, false, false, false, false, false])
+        #expect(statuses.map(\.action) == [nil, nil, .refresh, .setup, .setup, .refresh, .refresh])
+        #expect(statuses[2].title == "No recordings yet")
+        #expect(statuses[6].detail.contains("unavailable"))
+        for status in statuses {
+            #expect(!status.title.contains("up to date"))
+            #expect(!status.detail.isEmpty)
+        }
+    }
+
+    @Test("cached and zero-row failures use the same retained sanitized reason and retry")
+    func visibleFailureReasons() {
+        for hasRows in [false, true] {
+            let message = HarcMobileLibraryRefreshPresentation.failureMessage(
+                RPCError(code: .permissionDenied, message: "private fixture-token"),
+                operation: .metadata, hasCachedRows: hasRows
+            )
+            for state in [HarcMobileLibraryCoordinator.State.failed(message), .offline(message: message)] {
+                let status = HarcMobileLibraryRefreshPresentation.status(state, hasRows: hasRows)
+                #expect(status.detail == message)
+                #expect(status.detail.count <= 140)
+                #expect(!status.detail.contains("fixture-token"))
+                #expect(status.action == .refresh)
+                #expect(!status.isLoading)
+                #expect(status.title != "No recordings yet")
+            }
+        }
+    }
+
+    private func visibleStatus(_ coordinator: HarcMobileLibraryCoordinator)
+        -> HarcMobileLibraryRefreshPresentation.Status {
+        HarcMobileLibraryRefreshPresentation.status(
+            coordinator.state, hasRows: !coordinator.recordings.isEmpty
+        )
+    }
+
     @Test("preserves actual RPC status instead of NSError's generic error 1")
     func actualRPCStatus() {
         for code in [RPCError.Code.cancelled, .deadlineExceeded, .permissionDenied, .unavailable] {
@@ -138,9 +185,15 @@ struct HarcMobileLibraryRefreshPresentationTests {
             defer { coordinator.shutdown() }
             coordinator.refresh()
             try await waitUntil { !coordinator.isRefreshing }
-            #expect(coordinator.state != .refreshing)
+            let failedStatus = visibleStatus(coordinator)
+            #expect(failedStatus.action == .refresh)
+            coordinator.shutdown() // Dismissing an idle surface must retain failure.
+            #expect(visibleStatus(coordinator) == failedStatus)
             coordinator.refresh()
             #expect(coordinator.state == .refreshing)
+            #expect(visibleStatus(coordinator).isLoading)
+            #expect(visibleStatus(coordinator).action == nil)
+            coordinator.refresh() // Repeated retry must not start another session.
             try await waitUntil { !coordinator.isRefreshing }
             guard case .ready(let updatedAt) = coordinator.state else {
                 Issue.record("Successful retry must clear the previous error")
@@ -229,10 +282,13 @@ struct HarcMobileLibraryRefreshPresentationTests {
             coordinator.shutdown()
             #expect(!coordinator.isRefreshing)
             #expect(coordinator.state == .cancelled)
+            #expect(visibleStatus(coordinator).title == "Library refresh cancelled")
+            #expect(visibleStatus(coordinator).action == .refresh)
             pending.release()
             try await waitUntil { aborts == 1 }
             #expect(!coordinator.isRefreshing)
             #expect(coordinator.state == .cancelled)
+            #expect(visibleStatus(coordinator).title == "Library refresh cancelled")
             #expect(coordinator.recordings == (cached ? [fixture.original] : []))
         }
     }
@@ -265,9 +321,9 @@ struct HarcMobileLibraryRefreshPresentationTests {
         }
     }
 
-    @Test("a grant without metadata access closes cleanly and never runs Library work")
-    func metadataAccessDenied() async throws {
-        try await withRefreshFixture(cached: true) { fixture in
+    @Test("a grant without metadata access closes cleanly and never runs Library work", arguments: [false, true])
+    func metadataAccessDenied(cached: Bool) async throws {
+        try await withRefreshFixture(cached: cached) { fixture in
             var finished = false
             let coordinator = fixture.coordinator {
                 HarcMobileLibraryRefreshSession(
@@ -281,8 +337,10 @@ struct HarcMobileLibraryRefreshPresentationTests {
             coordinator.refresh()
             try await waitUntil { !coordinator.isRefreshing }
             #expect(coordinator.state == .accessNotGranted)
+            #expect(visibleStatus(coordinator).title == "Mac Library access not granted")
+            #expect(visibleStatus(coordinator).action == .setup)
             #expect(finished)
-            #expect(coordinator.recordings == [fixture.original])
+            #expect(coordinator.recordings == (cached ? [fixture.original] : []))
         }
     }
 

@@ -216,6 +216,24 @@ final class HarcMobileAppModel {
                 installationDeviceID: identity.deviceID
             )
             let libraryCache = try HarcLibraryCache(rootDirectory: root)
+#if DEBUG
+            // Metadata-only navigation fixture, restricted to a freshly reset,
+            // explicitly scoped UI-test root. It never creates audio or adoption.
+            if uiTestRootID != nil, shouldResetUITestRoot,
+               processArguments.contains("--harc-ui-test-cached-library") {
+                let start = Date(timeIntervalSince1970: 1_800_000_000)
+                let summary = try LibraryRecordingSummary(
+                    canonicalID: .random(), originID: identity.originRecordingID(),
+                    revision: EntityRevision(1), startedAt: start,
+                    endedAt: start.addingTimeInterval(10),
+                    title: "Synthetic cached Library recording"
+                )
+                try libraryCache.replace(with: AnchoredLibrarySnapshot(
+                    libraryID: .random(), anchor: ChangeCursor(1),
+                    recordings: [summary], tombstones: []
+                ))
+            }
+#endif
             try Self.protectTransferState(
                 root: root,
                 locations: clientLocations

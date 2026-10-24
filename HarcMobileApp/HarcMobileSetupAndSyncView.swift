@@ -23,7 +23,7 @@ struct HarcMobileSetupAndSyncView: View {
 
                 Section("Sync") {
                     NavigationLink {
-                        HarcMobileSendingToMacView()
+                        HarcMobileSendingToMacView(setupDestination: .existingSetup)
                     } label: {
                         Label {
                             LabeledContent(
@@ -40,7 +40,8 @@ struct HarcMobileSetupAndSyncView: View {
 
                     NavigationLink {
                         HarcMobileSendingToMacView(
-                            initialSection: .macLibrary
+                            initialSection: .macLibrary,
+                            setupDestination: .existingSetup
                         )
                     } label: {
                         Label {
@@ -176,7 +177,7 @@ struct HarcMobileSetupAndSyncView: View {
 
     private var sendingSummary: String {
         let count = syncStatus.pendingCount
-        return count == 0 ? "Up to date" : "\(count) waiting"
+        return count == 0 ? "None waiting" : "\(count) waiting"
     }
 
     private var libraryUpdatedSummary: String {
@@ -321,11 +322,23 @@ struct HarcMobileSendingToMacView: View {
         case macLibrary
     }
 
-    @Environment(HarcMobileAppModel.self) private var model
-    let initialSection: SectionTarget
+    enum SetupDestination {
+        case existingSetup
+        case sheet
+    }
 
-    init(initialSection: SectionTarget = .status) {
+    @Environment(HarcMobileAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let initialSection: SectionTarget
+    let setupDestination: SetupDestination
+    @State private var showsLibrarySetup = false
+
+    init(
+        initialSection: SectionTarget = .status,
+        setupDestination: SetupDestination
+    ) {
         self.initialSection = initialSection
+        self.setupDestination = setupDestination
     }
 
     var body: some View {
@@ -377,6 +390,13 @@ struct HarcMobileSendingToMacView: View {
                 }
 
                 Section("Mac Library") {
+                    HarcMobileLibraryRefreshStatusView(
+                        state: model.libraryCoordinator?.state ?? .loadingCache,
+                        hasRows: !(model.libraryCoordinator?.recordings.isEmpty ?? true),
+                        refreshIsActive: model.libraryCoordinator?.isRefreshing ?? false,
+                        refresh: { model.libraryCoordinator?.refresh() },
+                        setup: openLibrarySetup
+                    )
                     if let date = model.libraryCoordinator?.lastUpdatedAt {
                         LabeledContent("Last updated") {
                             Text(date, style: .relative)
@@ -384,10 +404,6 @@ struct HarcMobileSendingToMacView: View {
                     } else {
                         LabeledContent("Last updated", value: "Not yet")
                     }
-                    Button("Refresh Library") {
-                        model.libraryCoordinator?.refresh()
-                    }
-                    .disabled(model.libraryCoordinator?.isRefreshing ?? true)
                 }
                 .id(SectionTarget.macLibrary)
             }
@@ -398,9 +414,21 @@ struct HarcMobileSendingToMacView: View {
                 }
             }
         }
+        .sheet(isPresented: $showsLibrarySetup) {
+            HarcMobileSetupAndSyncView()
+        }
         .navigationTitle("Sending to Mac")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier(HarcMobileSyncAccessibilityID.detail)
+    }
+
+    private func openLibrarySetup() {
+        switch setupDestination {
+        case .existingSetup:
+            dismiss()
+        case .sheet:
+            showsLibrarySetup = true
+        }
     }
 
     private var presentation: HarcMobileSyncStatusPresentation {
@@ -421,7 +449,7 @@ struct HarcMobileSendingToMacView: View {
 
     private var presentationTitle: String {
         let count = presentation.pendingCount
-        if count == 0 { return "Everything is up to date" }
+        if count == 0 { return "No recordings waiting to send" }
         return "\(count) recording\(count == 1 ? "" : "s") waiting"
     }
 
@@ -435,7 +463,7 @@ struct HarcMobileSendingToMacView: View {
         case .working:
             "Sending"
         case .nothingPending, .receiptVerified:
-            "Up to date"
+            "Nothing waiting"
         case .securityBlocked, .retryNeeded:
             "Needs attention"
         default:
