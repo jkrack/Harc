@@ -3,6 +3,7 @@
 This is process-interruption evidence, not power-loss or Library qualification.
 """
 import argparse
+from build_concurrency import job_arguments
 import hashlib
 import json
 import os
@@ -35,6 +36,10 @@ def run():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence-dir', type=Path)
     args = parser.parse_args()
+    try:
+        build_jobs = job_arguments("-j")
+    except ValueError as error:
+        parser.error(str(error))
     stats = os.statvfs(REPO)
     if stats.f_bavail * stats.f_frsize < 5 * 1024**3:
         raise SystemExit('Requires at least 5 GiB free')
@@ -46,7 +51,7 @@ def run():
         'limitations': ['not power-loss proof', 'no Library commit or live capture',
                         'not a sealed release candidate'],
         'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
-        'files': {p: digest(REPO / p) for p in SOURCES + ['scripts/qualify-publication-faults.py']},
+        'files': {p: digest(REPO / p) for p in SOURCES + ['scripts/qualify-publication-faults.py', 'scripts/build_concurrency.py']},
         'cases': [],
     }
     (evidence / 'worktree.txt').write_text(subprocess.check_output(
@@ -56,7 +61,7 @@ def run():
         root = Path(temp)
         binary = root / 'publication-driver'
         with (evidence / 'compile.log').open('w') as log:
-            subprocess.run(['swiftc', '-j', '2', '-o', str(binary)] +
+            subprocess.run(['swiftc', *build_jobs, '-o', str(binary)] +
                            [str(REPO / p) for p in SOURCES], stdout=log, stderr=subprocess.STDOUT,
                            check=True, timeout=120)
         manifest['driver_sha256'] = digest(binary)

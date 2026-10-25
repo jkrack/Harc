@@ -301,10 +301,15 @@ Requires Xcode with Swift 6.2 and Homebrew:
 
 ```sh
 brew install xcodegen
-swift test --jobs 2
+swift test
 xcodegen generate
-xcodebuild -project Harc.xcodeproj -scheme Harc -destination 'platform=macOS' -jobs 2 build
+xcodebuild -project Harc.xcodeproj -scheme Harc -destination 'platform=macOS' build
 ```
+
+Local builds use tool-selected concurrency. Harc scripts accept a positive
+`HARC_BUILD_JOBS` override; embedded helpers also accept `HARC_EMBED_BUILD_JOBS`.
+Keep at least 5 GiB free and use SSD-backed build caches. CI retains its own
+worker and test-serialization limits.
 
 `swift test` does not compile `HarcApp/`; always finish with an Xcode build.
 Relay development is isolated under [`CloudflareRelay/`](CloudflareRelay/).

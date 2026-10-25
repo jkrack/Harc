@@ -11,20 +11,26 @@ HARC_BOUNDARY_TMP=$(mktemp -d "${TMPDIR:-/tmp}/harc-trust-boundary.XXXXXX")
 trap 'rm -rf "$HARC_BOUNDARY_TMP"' EXIT
 
 cd "$HARC_BOUNDARY_REPO_ROOT"
+source scripts/build-concurrency.sh
+harc_configure_build_jobs
+HARC_BOUNDARY_SWIFT_OPTIONS=(--disable-sandbox)
+if [[ -n "$HARC_BUILD_JOB_COUNT" ]]; then
+    HARC_BOUNDARY_SWIFT_OPTIONS+=(--jobs "$HARC_BUILD_JOB_COUNT")
+fi
 
 env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/build-module-cache" \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/build-clang-cache" \
-    swift build --jobs 2 --disable-sandbox --target HarcHost
+    swift build "${HARC_BOUNDARY_SWIFT_OPTIONS[@]}" --target HarcHost
 env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/build-module-cache" \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/build-clang-cache" \
-    swift build --jobs 2 --disable-sandbox --target HarcProtocol
+    swift build "${HARC_BOUNDARY_SWIFT_OPTIONS[@]}" --target HarcProtocol
 
 HARC_BOUNDARY_BIN_PATH=$(env \
     SWIFT_MODULECACHE_PATH="$HARC_BOUNDARY_TMP/path-module-cache" \
     CLANG_MODULE_CACHE_PATH="$HARC_BOUNDARY_TMP/path-clang-cache" \
-    swift build --jobs 2 --disable-sandbox --show-bin-path)
+    swift build "${HARC_BOUNDARY_SWIFT_OPTIONS[@]}" --show-bin-path)
 # Native SwiftPM uses Modules/; Xcode 27's Swift Build engine puts the
 # architecture-specific .swiftmodule bundles directly in the products directory.
 HARC_BOUNDARY_MODULE_PATH="$HARC_BOUNDARY_BIN_PATH/Modules"
