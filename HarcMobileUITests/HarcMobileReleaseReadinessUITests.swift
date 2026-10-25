@@ -849,7 +849,20 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             ])
             app.launch()
             for tab in ["Record", "Library", "Search"] {
-                if tab != "Record" { selectTab(tab, in: app) }
+                if tab == "Search" {
+                    let search = app.tabBars.buttons["Search"]
+                    XCTAssertTrue(search.waitForExistence(timeout: 10))
+                    XCTAssertTrue(search.isHittable)
+                    search.tap()
+                    // iOS can replace the selected Search tab button with
+                    // its native search field. Verify the destination itself.
+                    XCTAssertTrue(app.descendants(matching: .any)["harc.mobile.search"].waitForExistence(timeout: 10))
+                    let searchField = app.searchFields["Search meetings and transcripts"]
+                    XCTAssertTrue(searchField.waitForExistence(timeout: 10))
+                    XCTAssertTrue(searchField.isHittable)
+                } else if tab != "Record" {
+                    selectTab(tab, in: app)
+                }
                 let host = app.buttons["harc.mobile.host.health"]
                 XCTAssertTrue(host.waitForExistence(timeout: 10))
                 XCTAssertEqual(host.label, "Mac connection")
