@@ -4,9 +4,40 @@ Initial preparation: 2026-10-24; refreshed: 2026-10-25. **NO-GO for publication.
 Initial base: `2e8711e7af54d58d6716b4301e0d3eec9aa40fd3` (merged #154).
 Previous base: `206ba922487b84b02ecae24240815068a83f8335` (merged #153).
 Previous base: `2c9d3fd47bf65b17a2c373b2e62cfd154b4bdc85` (merged #157 and #156).
-Current base: `7ddea75d1efaf871816f10b8dd3c523967e780c0` (merged #158).
+Previous base: `7ddea75d1efaf871816f10b8dd3c523967e780c0` (merged #158).
+Current base: `02b3a22b2611499d65fbdea8557fe66031406ad9` (merged #146 and #160).
 This separate preparation changes version/fallback/readiness inputs, this
 record and a focused readiness-row regression. It does not qualify hardware or authorize distribution.
+
+## October 25 Mac mini refresh
+
+The isolated refresh merges current main without rewriting preparation history.
+It includes #146: Accessibility is optional for auto-paste, automatic permission
+prompts are avoided during finalization, and new users default to auto-paste off.
+It also includes #160: local compiler scheduling uses tool defaults with explicit
+positive-integer overrides; CI budgets, disk safeguards and test serialization
+remain unchanged. Existing #153/#154/#156/#157/#158 source fixes remain included.
+Unaccepted #159/#161, local Search work and the MacBook Trash draft are excluded.
+
+The authorized Mac mini is the primary development environment. Existing dirty
+checkouts and the installed app are preserved. Earlier missing-credential reports
+below describe earlier environments: read-only checks on this mini found a valid
+Developer ID identity/private-key pair, an authenticated harc-notary profile and
+Sparkle key metadata/tooling. Actual signing-key authorization, Sparkle private-key
+use and a signed/notarized artifact remain unverified. No credentials were changed.
+
+Prior candidate eb99402 and #160 d82d3a3 results are commit-specific historical
+evidence, not passes for this combined source. Fresh local tooling/source checks
+and final pushed-head CI are required and will be recorded in PR #155. No artifact
+or sealed release source is selected. Version remains 0.14.20 (75).
+
+Live Mac microphone/system-audio, Stop, playback and recovery gates remain open.
+Do not start capture while owner idle confirmation is pending; the diagnostic
+app's shared daemon socket/shutdown path also needs a safe isolation plan.
+An attached phone is hardware availability only, not physical qualification.
+Phone codec, production transfer/receipt, canonical PCM hash and protected-master
+retention gates remain open. No install, signing, tag or publication occurs here.
+The dated observations below retain their original scope and environment.
 
 ## Identity and scope
 
@@ -25,7 +56,7 @@ At initial inspection, open #146 (`codex/recording-permission-flow`) and draft #
 (`codex/mobile-route-failure-regression`) were authored by `jkrack`. They were
 excluded; their files/branches were not edited. #153's active continuation
 investigation remained with its owner at that point. Accessibility alerts addressed by #146
-remain unresolved in this candidate; do not claim their fix.
+remained unresolved at that checkpoint; the current refresh includes #146.
 
 Before final validation, #153 merged normally into main as
 `206ba922487b84b02ecae24240815068a83f8335`. This preparation then merged that
@@ -42,7 +73,7 @@ The later refresh integrates actual main
 NIOTS listener-close ordering fix and #156's truthful phone Library refresh/error
 presentation and contextual recovery navigation, as well as #153. These merged
 changes are source inclusion, not physical listener lifecycle, Library recovery,
-phone capture or release qualification. #146 remains excluded. Search work is
+phone capture or release qualification. #146 remained excluded at that checkpoint. Search work is
 local and excluded; no search change or publication approval is inferred.
 
 Version availability was rechecked on the October 24 refresh: published releases and the
@@ -84,8 +115,10 @@ metadata conflicts when recovering recordings already verified on the Host,
 reports local archiving separately from delivery, and keeps unresolved sync
 problems visible until the affected recording has verified completion. It also
 fixes a network listener shutdown ordering issue that could crash the process.
+Accessibility is now optional for auto-paste, with no automatic permission prompt
+during recording finalization; auto-paste defaults off for new users.
 
-## Preparation validation and limits
+## Earlier preparation validation and limits (historical)
 
 The Linux x86_64 cloud environment has Python and Node, but no Swift, Xcode,
 xcodegen, plutil or Apple signing/trust services. No Mac was contacted.
@@ -113,8 +146,10 @@ Mac operation. Required existing capabilities remain listed in the handoff below
 
 ## Remaining Mac qualification and artifact work
 
-The authorized MacBook is offline; other Macs are not authorized. The following
-is a handoff only, not permission to operate another machine or sign/publish.
+The Mac mini is authorized for preparation and validation; the MacBook remains
+unavailable. The following lists outstanding gates, not completed results. This
+turn excludes installation, signing, capture and publication. Standing publication
+authorization applies only after applicable validation and release gates pass.
 
 1. On an available authorized Apple Silicon Mac with existing compatible Xcode,
    Swift, xcodegen, SDKs and at least 5 GiB working headroom, check out the exact
@@ -142,8 +177,9 @@ is a handoff only, not permission to operate another machine or sign/publish.
    capture/upload, Host load/fallback, speaker sync/conflict, revocation and
    relay/direct recovery. Record latency, discontinuities, stalls and hashes.
    No such pair is currently authorized; this physical gate remains open.
-4. After applicable gates and separate authorization, build a clean Release
-   using `./scripts/build-release.sh` (two workers), existing Developer ID
+4. After applicable gates pass and signing-key access is authorized, build a clean Release
+   using `./scripts/build-release.sh` (tool defaults or an explicit positive
+   `HARC_BUILD_JOBS` override), existing Developer ID
    Application identity/private key, hardened runtime and secure timestamps.
    Retain full source SHA, dependency resolution (including official Sparkle
    version/revision), executable/helper hashes and build evidence. Do not ship
@@ -162,7 +198,8 @@ is a handoff only, not permission to operate another machine or sign/publish.
    0.14.20 75 build/release-dist/Harc-local.dmg`. Verify against the app's pinned
    public key; retain exact DMG bytes, signature, length and SHA-256. No keys
    were accessed and no credentials were created/configured in this task.
-7. Future publication needs separate authorization: upload both assets, verify
+7. After applicable gates pass under the standing publication authorization,
+   upload both assets, verify
    downloaded DMG and ZIP-contained DMG equal the stapled signed bytes, verify
    feed version/build/minimum OS/enclosure URL/length/EdDSA signature and actual
    asset availability, then verify update from the published baseline. Main

@@ -12,13 +12,16 @@ candidate commit. A matching version line lets repository preflight identify
 what is being prepared; it does not transfer old passes or close external gates.
 
 On 2026-10-25, the Mac preparation integrated main
-`7ddea75d1efaf871816f10b8dd3c523967e780c0`, including reviewed #158's app/widget
-preflight isolation and deterministic NotesStore test fixtures. Shared inputs
-remain 0.14.20 (75); artifact selection and all companion launch gates remain
-unchanged. The local Mac reported missing signing/notary/Sparkle capabilities,
-and its disconnected full package validation has an unknown outcome. These
-are environment/evidence limitations, with no physical pass or release artifact
-selected. Search remains excluded. See the Mac preparation record for details.
+`02b3a22b2611499d65fbdea8557fe66031406ad9`, including #146's optional
+Accessibility/auto-paste flow and #160's local compiler defaults, alongside
+previously included #153/#154/#156/#157/#158 fixes. Shared inputs remain
+0.14.20 (75). Unaccepted #159/#161, local Search and the MacBook Trash draft
+remain excluded. Prior eb99402 and d82d3a3 results do not qualify this combined
+source; fresh exact-head validation is required. Artifact selection and all
+physical, codec, production transfer/receipt, protection, archive and App Store
+gates remain unchanged and open. The authorized Mac mini has existing signing
+prerequisites, but private-key use and signed artifacts remain unverified; see
+the Mac preparation record for the current environment and historical limits.
 
 Source preparation inputs were refreshed on 2026-10-24 for the separate
 [Mac maintenance preparation](2026-10-24-mac-maintenance-preparation.md).
