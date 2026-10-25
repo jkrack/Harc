@@ -44,6 +44,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         populated.launch()
         XCTAssertTrue(populated.buttons["harc.mobile.record.start"].waitForExistence(timeout: 15))
         let populatedToday = populated.buttons["harc.mobile.record.today"]
+        XCTAssertTrue(populatedToday.waitForExistence(timeout: 10), "Today must retain its navigable button role")
         for _ in 0..<5 where !populatedToday.isHittable { populated.swipeUp() }
         let populatedTimeline = populated.descendants(matching: .any)[timelineID]
         XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
@@ -69,6 +70,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertEqual(connection.label, "Mac connection")
         XCTAssertEqual(connection.value as? String, "No Mac paired")
         let today = app.buttons["harc.mobile.record.today"]
+        XCTAssertTrue(today.waitForExistence(timeout: 10), "Empty Today must retain its navigable button role")
         for _ in 0..<5 where !today.isHittable { app.swipeUp() }
         XCTAssertTrue(today.isHittable)
         XCTAssertTrue(app.staticTexts["No recordings yet"].exists)

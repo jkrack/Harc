@@ -723,6 +723,7 @@ struct HarcMobileRootView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("harc.mobile.record.today")
         .accessibilityHint("Opens recordings on this iPhone")
     }
