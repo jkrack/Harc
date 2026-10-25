@@ -48,14 +48,29 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         for _ in 0..<5 where !populatedToday.isHittable { populated.swipeUp() }
         let populatedTimeline = populated.descendants(matching: .any)[timelineID]
         XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
-        for _ in 0..<5 where !populatedTimeline.isHittable { populated.swipeUp() }
-        XCTAssertTrue(populatedToday.isHittable)
-        XCTAssertTrue(populatedTimeline.isHittable)
-        XCTAssertTrue(populated.staticTexts["1 recordings · 5 min"].exists)
+        // The Canvas is informational, not an action. Check its rendered frame
+        // against the unobscured viewport; hittability belongs to the Today button.
+        func timelineViewport() -> CGRect {
+            let scroll = populated.scrollViews.firstMatch.frame.intersection(populated.frame)
+            let tabBar = populated.tabBars.firstMatch
+            let bottom = tabBar.exists ? min(scroll.maxY, tabBar.frame.minY) : scroll.maxY
+            return CGRect(x: scroll.minX, y: scroll.minY, width: scroll.width,
+                          height: max(0, bottom - scroll.minY))
+        }
+        for _ in 0..<5 where !timelineViewport().contains(populatedTimeline.frame) {
+            populated.swipeUp()
+        }
         let fixtureAttachment = XCTAttachment(screenshot: populated.screenshot())
         fixtureAttachment.name = "Record-populated-timeline-presentation-fixture-largest-text"
         fixtureAttachment.lifetime = .keepAlways
         add(fixtureAttachment)
+        XCTAssertTrue(populatedToday.isHittable)
+        XCTAssertFalse(populatedTimeline.frame.isEmpty)
+        XCTAssertTrue(
+            timelineViewport().contains(populatedTimeline.frame),
+            "Timeline frame \(populatedTimeline.frame) must fit viewport \(timelineViewport())"
+        )
+        XCTAssertTrue(populated.staticTexts["1 recordings · 5 min"].exists)
         populatedToday.tap()
         let populatedRecordings = populated.navigationBars["On This iPhone"]
         XCTAssertTrue(populatedRecordings.waitForExistence(timeout: 10))
