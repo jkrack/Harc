@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "$0")/build-concurrency.sh"
+harc_configure_build_jobs
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RELAY_ROOT="$PROJECT_ROOT/CloudflareRelay"
@@ -56,10 +59,10 @@ fi
 
 touch "$RUN_MARKER"
 cd "$PROJECT_ROOT"
-swift_test_options=(--jobs 2)
+swift_test_options=()
 if [[ "${HARC_SKIP_BUILD:-0}" == "1" ]]; then
     swift_test_options+=(--skip-build)
 fi
 HARC_RELAY_EMULATOR_ORIGIN="$RELAY_ORIGIN" \
-    swift test "${swift_test_options[@]}" \
+    harc_swift test ${swift_test_options[@]+"${swift_test_options[@]}"} \
         --filter PairingLifecycleLoopbackIntegrationTests

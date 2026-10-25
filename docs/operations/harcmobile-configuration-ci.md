@@ -14,8 +14,9 @@ Run the equivalent local check after `xcodegen generate`:
 bash scripts/test-mobile-configuration.sh
 ```
 
-The command caps Xcode at two workers, disables parallel testing, uses one
-simulator, and enforces a 30-minute process deadline. CI adds a 32-minute test
+Local runs leave compiler concurrency to Xcode unless `HARC_BUILD_JOBS` is set
+to a positive integer. CI retains a two-worker default. The command disables
+parallel testing, uses one simulator, and enforces a 30-minute process deadline. CI adds a 32-minute test
 step limit and 45-minute job limit. Apple Silicon and 5 GiB free disk are
 required. The bounded runner samples owned xcodebuild, xctest and SwiftPM test
 processes after rechecking their process identity, and cleans up owned children

@@ -121,7 +121,7 @@ revision changes. Speaker enrollment requires an explicit user-confirmed link;
 automatic Host assignments retain names but cannot train later matching or enter
 recognition packs. Preserve that provenance through corrections and merges. Fresh
 Host reevaluation excludes the current recording's own evidence; exact operation
-replay remains immutable. Validate with `swift test --jobs 2 --filter
+replay remains immutable. Validate with `swift test --filter
 'PeopleStoreTests|SpeakerConfirmationMigrationTests|SpeakerRecognitionMatcherTests'`. A local diarization failure is durable and visible separately
 from transcript coverage; Client recovery retries it from the protected master.
 Host transient processing failures retry in-process with bounded backoff, while
@@ -129,7 +129,7 @@ canonical artifact binding changes remain fail-closed. Explicit local receipt re
 approval, unchanged inode/ownership/permissions/length, and complete signed
 receipt/audio revalidation. Preserve the original publication identity; append
 an immutable, receipt-bound repair chain atomically. Incoming RPCs never authorize
-repair. Validate with `swift test --jobs 2 --filter CanonicalIngestServiceTests`. Closing or rejecting a
+repair. Validate with `swift test --filter CanonicalIngestServiceTests`. Closing or rejecting a
 pairing window must invalidate every suspended continuation before it can save
 route or adoption state.
 
@@ -140,7 +140,7 @@ binding event. Original publication identities and exact receipts remain unchang
 An authorized pre-receipt event must remain resumable if receipt completion fails;
 ordinary recovery and every incoming RPC remain unable to authorize rebinding.
 Validate metadata-only, copied-file, receipt-prepared, legacy-chain, and interrupted
-recovery cases with `swift test --jobs 2 --filter CanonicalIngestServiceTests`.
+recovery cases with `swift test --filter CanonicalIngestServiceTests`.
 
 Host speaker outcomes bind the exact canonical audio and Host transcript artifact.
 Publication accounts for every transcript cluster with either missing voice
@@ -165,7 +165,7 @@ including validity dates. The Host uses `publishedSpeakerRecognitionPack`;
 expiry renewal advances the pack revision atomically with publication so an
 `afterRevision` poll cannot strand a client on expired recognition data. Threshold
 edits advance both person and pack revisions. Keep same-revision client payload
-checks strict. Validate with `swift test --jobs 2 --filter
+checks strict. Validate with `swift test --filter
 'PeopleStoreTests|SpeakerConfirmationMigrationTests|HarcHostLibraryServiceTests'`.
 
 Desktop bound speaker batches must validate the exact signed processing bundle and
@@ -220,7 +220,7 @@ Retain those requests as durable pending-review observations in
 canonical names or use that table for enrollment. Host-local recognition retains
 its separate path. A future bound RPC must prove the currently selected artifact
 and resolve its cluster mapping before enabling remote name projection. Validate
-the boundary with `swift test --jobs 2 --filter UnmappedSpeakerBoundaryTests`.
+the boundary with `swift test --filter UnmappedSpeakerBoundaryTests`.
 
 Selected edge cluster maps commit with the exact transcript projection and invalidate
 on audio/origin/artifact replacement. Bound observation admission must recheck the
@@ -228,7 +228,7 @@ selected map and projection inside the naming transaction, including before exac
 replay, and resolve opaque cluster IDs instead of trusting client numeric indices.
 The Store admission API requires prior authenticated bundle membership/duration
 validation by the Host; its existence does not enable the legacy RPC. Validate
-with `swift test --jobs 2 --filter SpeakerEvidenceStoreTests`.
+with `swift test --filter SpeakerEvidenceStoreTests`.
 Bound edge decisions retain the complete original request, map digest and immutable
 voice snapshot in the naming transaction. Replay must verify that provenance;
 retention alone does not make a sample current or human-confirmed enrollment.
@@ -245,12 +245,12 @@ Historical processing revalidation uses HarcValidatedRetainedProcessingArtifactV
 a separate type from live submission authority. Resolve its expected hashes from
 Host selection, never from the requester. HarcValidatedProcessingSubmissionV1 must
 continue rejecting historicalEvidence. Both paths share exact bundle consistency
-and speaker membership checks; validate with `swift test --jobs 2 --filter ProcessingSubmissionTests`.
+and speaker membership checks; validate with `swift test --filter ProcessingSubmissionTests`.
 The bound Host service requires current speakerObservationWrite authority and
 recording ownership, reads only the selected local files with protocol size limits,
 and authenticates their exact consumed bytes. The naming transaction rechecks the
 selected signed-metadata reference as well as the bundle map. Validate this service
-with `swift test --jobs 2 --filter BoundSpeakerServiceTests`; the fixture seeds an
+with `swift test --filter BoundSpeakerServiceTests`; the fixture seeds an
 authenticated session and does not qualify session establishment or transport.
 Bound wire requests use SubmitSpeakerObservationRequestV1 field 3 and require
 critical field 3 plus negotiated harc.speaker-evidence.v1. Exactly one observation
@@ -261,24 +261,24 @@ sidecar SHA-256. Unchanged generations reuse the same protected submission; chan
 sidecars use a new generation path without overwriting old signed bytes. Legacy or
 Host-mismatched completion markers cannot suppress resubmission.
 Default feature advertisement is still unchanged. Validate with
-`swift test --jobs 2 --filter 'SpeakerEvidenceBindingTests|CapabilityNegotiationTests'`
+`swift test --filter 'SpeakerEvidenceBindingTests|CapabilityNegotiationTests'`
 and `./scripts/check-harc-protocol-schemas.sh`.
 Processing artifact persistence must repeat file/parent barriers and drive-cache
 flush on exact-byte retries. Existing files do not prove a prior barrier succeeded.
 Directory creation uses DurableFileIO; persistence retains no-follow file checks.
-Validate with `swift test --jobs 2 --filter 'ProcessingArtifactPersistenceTests|DurableFileIOTests'`.
+Validate with `swift test --filter 'ProcessingArtifactPersistenceTests|DurableFileIOTests'`.
 
 A fresh Host speaker nonmatch removes the prior unconfirmed automatic assignment
 and its pending suggestion, with a Library revision change. Preserve confirmed
 assignments and separately edited labels. Historical observation replay is
 immutable and must not restore a superseded displayed name. Validate with
-`swift test --jobs 2 --filter PeopleStoreTests`.
+`swift test --filter PeopleStoreTests`.
 
 Once a recording transitions to exact bound speaker enrollment, its legacy
 recording/index payloads must never become enrollment evidence again, including
 after all bound confirmations are withdrawn. Preserve historical labels and links;
 pack, Host matching and local reference queries must respect the durable transition.
-Validate with `swift test --jobs 2 --filter SpeakerEvidenceStoreTests`.
+Validate with `swift test --filter SpeakerEvidenceStoreTests`.
 
 Host edge adoption must preserve all speaker information it claims to accept.
 Until Client cluster IDs are explicitly bound to Host speaker identity, bundles
@@ -312,7 +312,7 @@ the Host retry path before staging or ready publication.
 
 - Interrupted WAV recovery and publication hashing must use bounded buffers and
   drain Foundation autoreleased read data per block. The opt-in
-  `HARC_LARGE_RECOVERY=1 swift test --jobs 2 --filter RecordingCacheRecoveryTests/largeStreamingRecovery`
+  `HARC_LARGE_RECOVERY=1 swift test --filter RecordingCacheRecoveryTests/largeStreamingRecovery`
   exercises a disposable 512 MiB PCM file and reports the test process peak RSS.
   Keep at least 6 GiB free before this diagnostic so its output stays above the
   5 GiB operational floor; it does not qualify live capture endurance.
@@ -357,18 +357,18 @@ the Host retry path before staging or ready publication.
 - Concurrent daemon startup callers must reuse the launcher's running child.
   Cancelling one waiter must end its polling without stopping other callers'
   daemon; stopping the launcher invalidates suspended startup attempts.
-  Validate with `swift test --jobs 2 --filter DaemonLauncherTests`.
+  Validate with `swift test --filter DaemonLauncherTests`.
 - Recording warmup completions belong to their capture attempt. Cancelled or
   replaced work must not change readiness or clear a successor's task; reset
   invalidates the completion even if the underlying operation ignores cancel.
-  Validate with `swift test --jobs 2 --filter RecordingWarmupControllerTests`.
+  Validate with `swift test --filter RecordingWarmupControllerTests`.
 - System audio denial is degraded "mic only" capture, not a hard block.
 - Summary generation must honor the runtime's final stop metadata. Output-limit
   and unexpected runtime stops must fail instead of publishing valid-looking but
   incomplete text. Actual caller cancellation/unload remains cancellation;
   unexpected runtime stops are visible generation failures. Interim token counts
   are not completion evidence. Validate with
-  `swift test --jobs 2 --filter SummaryTerminationTests`.
+  `swift test --filter SummaryTerminationTests`.
 - Short summaries extract confirmed commitments and factual prose in separate
   passes over the same transcript. A failed or malformed facts pass must not
   publish the first pass alone. Summaries use the dedicated deterministic
@@ -377,28 +377,28 @@ the Host retry path before staging or ready publication.
   every raw pass while scoring the combined service result. The parser supports
   legacy `Action Items` and `Confirmed Commitments` headings, but malformed rows
   still require review. Validate with
-  `swift test --jobs 2 --filter 'TwoPassSummaryTests|SummaryParserTests'`.
+  `swift test --filter 'TwoPassSummaryTests|SummaryParserTests'`.
 - New summary results must reject an explicit refusal emitted as an action item
   before publication, on both short and reconciled long paths. This narrow check
   is not semantic validation of every task; preserve legitimate removal work and
   negation inside an otherwise accepted task. Validate with
-  `swift test --jobs 2 --filter SummaryTaskValidationTests`.
+  `swift test --filter SummaryTaskValidationTests`.
 - Over-budget summaries must process every transcript section in chronological
   order and reconcile later cancellations/ownership changes before publication.
   Intermediate generation/format failures and non-shrinking reconciliation must
   fail the job, never save only the successful sections. Oversized utterances
   split without losing words or speaker attribution. Validate with
-  `swift test --jobs 2 --filter LongSummaryTests`.
+  `swift test --filter LongSummaryTests`.
 - Summary input-budget truncation must remain visible in stored/exported text,
   independently of whether the model follows the output format. Track the
   utterances actually omitted; never label a suffix-only summary as complete.
   Empty summary sections require review. Cancellation or unload invalidates a
   suspended summary generation even if the model ignores cancellation.
-  Validate with `swift test --jobs 2 --filter 'SummaryPromptTests|SummaryOutputTests|SummaryParserTests|SummarizerServiceTests|SummarizerConcurrencyTests'`.
+  Validate with `swift test --filter 'SummaryPromptTests|SummaryOutputTests|SummaryParserTests|SummarizerServiceTests|SummarizerConcurrencyTests'`.
 - Capture buffers may be planar or interleaved Int16/Float32. Copy complete
   native frames and use CoreMedia's PCM-copy API; never assume that
   `floatChannelData` exists for a hardware buffer. Validate this boundary with
-  `swift test --jobs 2 --filter 'PCMBufferCopyTests|AudioMixerTests'`.
+  `swift test --filter 'PCMBufferCopyTests|AudioMixerTests'`.
 - Diarization tracking is scoped to one complete recording. Model windows retain
   overlapping real audio context, including the final short tail, while emitted
   time intervals have disjoint ownership. For recordings shorter than the model
@@ -409,7 +409,7 @@ the Host retry path before staging or ready publication.
   FluidAudio tracker thresholds are
   cosine distances, whereas identity matching uses cosine similarity; do not
   confuse their directions. Validate with
-  `HARC_INTEGRATION_TESTS=1 swift test --jobs 2 --filter 'DiarizerTests|DiarizationWindowPlanTests'`.
+  `HARC_INTEGRATION_TESTS=1 swift test --filter 'DiarizerTests|DiarizationWindowPlanTests'`.
   Automatic identity matching pools prototypes by person and rejects ties or
   near competitors through the same Host/provisional ranking rule. Ambiguous
   observations retain the existing durable no-match/review path. Historical
@@ -418,7 +418,7 @@ the Host retry path before staging or ready publication.
   Host matching and client packs. Compact packs retain at most one valid prototype
   per recording/speaker source, including local/remote copies and repeated
   observations; invalid vectors must not consume the prototype budget. Validate with
-  `swift test --jobs 2 --filter 'SpeakerRecognitionMatcherTests|PeopleStoreTests'`.
+  `swift test --filter 'SpeakerRecognitionMatcherTests|PeopleStoreTests'`.
   Synthetic speaker fixtures and source-window timeline scores are regression
   diagnostics, not human-voice identification or standard DER qualification.
 - Accepted Client transcript artifacts project their validated words and overlap
@@ -453,7 +453,7 @@ the Host retry path before staging or ready publication.
   independently of the final tracked speaker timeline. A channel omitted for lack
   of isolated speech is not evidence of silence. If isolated activity or a valid
   re-extracted vector is unavailable, withhold that voice row rather than falling
-  back to its earlier centroid. Validate with `swift test --jobs 2 --filter
+  back to its earlier centroid. Validate with `swift test --filter
   'DiarizationWindowPlanTests|DiarizerTests'`; enable `HARC_INTEGRATION_TESTS=1`
   for the real-model cases. This does not qualify final overlap timelines.
 
@@ -467,11 +467,11 @@ the Host retry path before staging or ready publication.
   desktop observations. Missing legacy JSON identity means WeSpeaker; malformed
   explicit identity must not fall back. New-model observation IDs must not replay
   old-model decisions, while legacy operation IDs remain stable. Validate Core
-  compatibility with `swift test --jobs 2 --filter SpeakerEmbeddingProvenanceTests`
+  compatibility with `swift test --filter SpeakerEmbeddingProvenanceTests`
   and the app boundary with `HarcDesktopSpeakerObservationIdentityTests`.
 - WAV RIFF chunk sizes are little-endian and may be unaligned. Read them with
   unaligned loads and advance over even-byte padding after odd payloads. Validate
-  with `swift test --jobs 2 --filter WAVChunker`.
+  with `swift test --filter WAVChunker`.
 - Reconstruct SentencePiece continuations with `Word.displayWords` before speaker
   attribution. Never split a lexical word at a speaker/overlap boundary or infer
   a name from the previous/nearest segment when its midpoint lacks evidence.
@@ -489,7 +489,7 @@ the Host retry path before staging or ready publication.
   empty/invalid results and exhausted budgets must leave visible failure notices
   plus structured coverage issues. Accumulate short AVAudioFile reads until the
   requested frames are complete or EOF is proved. Validate with
-  `swift test --jobs 2 --filter 'SpeechCoverageRecoveryTests|ChunkedTranscriber'`.
+  `swift test --filter 'SpeechCoverageRecoveryTests|ChunkedTranscriber'`.
   This detector cannot prove complete coverage within partially transcribed segments.
 - Failed-audio notices must survive speaker-labelled transcript rendering, summary
   input, document exports and subtitles without being attributed to a speaker.
@@ -504,7 +504,7 @@ keep exact snapshots and transcript bytes together, reject stale recording/artif
 state, and archive previous slot assignments before a new generation reuses their
 indices. Selected historical voice evidence remains immutable. New local evidence
 must not inherit old numeric-slot enrollment. Validate with
-`swift test --jobs 2 --filter SpeakerEvidenceStoreTests`; actual app callers also
+`swift test --filter SpeakerEvidenceStoreTests`; actual app callers also
 require an Xcode build and live capture qualification.
 
 Settings archive reprocessing uses `ArchiveTranscriber.reprocess` and the resident
@@ -525,7 +525,7 @@ Standalone single-person suggestions use the shared identity-separation margin
 after pooling references per person; new-person backfill must compare competing
 people too. A runner-up below its own acceptance threshold still causes ambiguity.
 This consistency floor is not a calibrated accuracy guarantee. Validate with
-`swift test --jobs 2 --filter 'PeopleStoreTests|SpeakerRecognitionMatcherTests|SpeakerReIDServiceTests|SpeakerSuggestionEngineTests'`.
+`swift test --filter 'PeopleStoreTests|SpeakerRecognitionMatcherTests|SpeakerReIDServiceTests|SpeakerSuggestionEngineTests'`.
 
 Speaker identification evaluation must count query cases separately from enrollment
 replay and must not count absent speech as a successful unknown rejection. Use
@@ -537,7 +537,7 @@ Neither checker converts synthetic or audiobook fixtures into meeting qualificat
 
 For repeatable local STT diagnostics, generate synthetic fixtures with
 `scripts/quality/make-synthetic-stt-corpus.py <output-directory>`, then run
-`HARC_INTEGRATION_TESTS=1 HARC_STT_CORPUS=<output-directory>/corpus.json swift test --jobs 2 --filter RealModelGoldenSampleTests/test_localCorpus_reportsPerCaseAccuracyTimingAndCompleteness`.
+`HARC_INTEGRATION_TESTS=1 HARC_STT_CORPUS=<output-directory>/corpus.json swift test --filter RealModelGoldenSampleTests/test_localCorpus_reportsPerCaseAccuracyTimingAndCompleteness`.
 Retain the corpus, exact audio/model/source hashes, results.json and logs. These
 synthetic excerpts do not qualify real-world accuracy, diarization, summaries,
 or long-form capture. The ordinary suite skips real-model evaluations.
@@ -582,8 +582,13 @@ checks do not qualify physical audio capture or a release. CI's package, macOS,
 and mobile jobs build independently and must not wait on one another unless an
 actual artifact dependency is introduced.
 
-On the current constrained development Mac, cap Swift and Xcode concurrency at
-two workers and stop before free disk falls below 5 GiB.
+The Mac mini is the primary development environment. Let Swift and Xcode choose
+host-appropriate local build concurrency; do not impose a fixed worker cap.
+Local build scripts accept a positive `HARC_BUILD_JOBS` override when needed;
+`HARC_EMBED_BUILD_JOBS` takes precedence for embedded helper builds. Leave them
+unset for tool defaults. Hosted CI retains its existing two-worker budget and
+test-execution serialization. Stop before free disk falls below 5 GiB; retain
+SSD-backed caches and do not delete user files or caches to make room.
 
     swift test --filter RecordingCacheRecoveryTests
     swift test --filter LocalStackHealthTests
@@ -617,7 +622,7 @@ After handing an NWListener to NIOTS, cancel it only through its NIO channel.
 Direct NWListener cancellation can deliver `.cancelled` before NIOTS marks the
 channel closed and crash the package process. Record cancellation before channel
 registration so a late initializer closes through NIO too. Keep test teardown
-under the same owner. Validate with `swift test --jobs 2 --filter
+under the same owner. Validate with `swift test --filter
 'GRPCListenerCancellationIntegrationTests|BackgroundUploadListenerRuntimeV1Tests'`
 in addition to the full package and both pinned-TLS lifecycle gates.
 
@@ -684,7 +689,7 @@ The snapshot includes non-ignored documentation and tests, not just app code;
 it always remains unqualified and cannot substitute for artifact/device gates.
 
 The shared `Harc` scheme in `project.yml` includes `HarcAppTests` and
-`HarcAppUITests`. Run it with `xcodebuild -jobs 2 -project Harc.xcodeproj
+`HarcAppUITests`. Run it with `xcodebuild -project Harc.xcodeproj
 -scheme Harc -destination 'platform=macOS,arch=arm64'
 -parallel-testing-enabled NO test` for app-hosted and UI validation. CI also
 selects the Simulator-safe mobile UI cases explicitly; those do not qualify
@@ -879,7 +884,7 @@ Receipt repair requires local macOS owner authentication, unchanged inode, owner
 permissions and length, and full signed receipt/audio validation. Preserve original
 publication identity and append an immutable receipt-bound repair chain atomically.
 Incoming RPCs never authorize repair. Validate with
-`swift test --jobs 2 --filter CanonicalIngestServiceTests`.
+`swift test --filter CanonicalIngestServiceTests`.
 
 Moved-library recovery is a separate local owner-authorized action. It may rebind
 a changed device or inode only after exact signed evidence and full audio validation
