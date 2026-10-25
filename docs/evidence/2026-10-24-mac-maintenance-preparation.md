@@ -1,9 +1,10 @@
 # Harc 0.14.20 (75) Mac maintenance preparation
 
-Date: 2026-10-24. **NO-GO for publication. No artifact selected.**
+Initial preparation: 2026-10-24; refreshed: 2026-10-25. **NO-GO for publication. No artifact selected.**
 Initial base: `2e8711e7af54d58d6716b4301e0d3eec9aa40fd3` (merged #154).
 Previous base: `206ba922487b84b02ecae24240815068a83f8335` (merged #153).
-Current base: `2c9d3fd47bf65b17a2c373b2e62cfd154b4bdc85` (merged #157 and #156).
+Previous base: `2c9d3fd47bf65b17a2c373b2e62cfd154b4bdc85` (merged #157 and #156).
+Current base: `7ddea75d1efaf871816f10b8dd3c523967e780c0` (merged #158).
 This separate preparation changes version/fallback/readiness inputs, this
 record and a focused readiness-row regression. It does not qualify hardware or authorize distribution.
 
@@ -44,11 +45,22 @@ changes are source inclusion, not physical listener lifecycle, Library recovery,
 phone capture or release qualification. #146 remains excluded. Search work is
 local and excluded; no search change or publication approval is inferred.
 
-Version availability was rechecked on this refresh: published releases and the
+Version availability was rechecked on the October 24 refresh: published releases and the
 main feed still top out at 0.14.19 (74), no 0.14.20 tag/release exists, and among
 61 fetched remote project configurations only this preparation branch uses
 0.14.20 (75). The reserved preparation identity remains unchanged. New final-head
 CI is required; prior preparation CI is historical evidence only.
+
+On October 25, this preparation integrated main
+`7ddea75d1efaf871816f10b8dd3c523967e780c0` after reviewed #158 merged. Its source
+preflight now isolates the app from sibling/widget targets, retaining the app's
+install and other required setting checks. Its separate test-only change anchors
+NotesStore fixtures to an explicit day/time, with positive notes projection and
+cross-midnight/different-day rejection coverage. Production session validation
+is unchanged. #158 exact-head CI passed, including 1,845 Swift Testing tests and
+downstream publication/TLS gates; those results remain scoped to #158's head.
+This refreshed preparation requires its own final-head CI. Version 0.14.20 (75),
+NO-GO and artifact Not selected are preserved; search remains excluded.
 
 Since published 0.14.19, #154 adds actual Mac runtime value: exact transfer-store
 Date-codec normalization avoids false Host-only recovery conflicts; foreign
@@ -84,10 +96,20 @@ Post-edit results and exact pushed-head CI are recorded in the draft PR.
 
 Aggregate repository smoke stops at missing `xcodebuild`; xcodegen generation
 and Swift VersionTests/app tests cannot execute locally. The source/public-URL
-preflight exits 1 with 27 open items because Apple plist/image tools are missing;
-these are environment failures, not established source defects. Both public URLs
-returned HTTP 200 and support contact matching passed. No archive, exported app
-or screenshots were supplied. Keep the failure; rerun on the authorized Mac.
+preflight previously exited 1 with 27 open items. #158 subsequently confirmed
+and corrected the app/widget target parser defect among those items. After the
+correction the app-target check passes and 26 Apple-tool-dependent items remain
+open in the cloud environment. Both public URLs returned HTTP 200 and support
+contact matching passed. No archive, exported app or screenshots were supplied.
+Keep the incomplete preflight result; rerun on the authorized Mac.
+
+The reported local Mac validation environment had no available Developer ID
+identity, `harc-notary` profile or Sparkle key. These are current environment
+availability limitations. Its full package validation disconnected with an
+uncertain outcome and supplies no pass evidence; retain that run as unknown.
+No physical gate is closed by either observation. This cloud task does not
+inspect or modify credentials, create signed artifacts, or retry that disconnected
+Mac operation. Required existing capabilities remain listed in the handoff below.
 
 ## Remaining Mac qualification and artifact work
 

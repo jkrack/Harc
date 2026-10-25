@@ -1,6 +1,6 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-10-24
+**Updated:** 2026-10-25
 **Candidate configuration:** HarcMobile 0.14.20 (75), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
@@ -10,6 +10,15 @@ This is the active candidate and gap register. Update its configuration when
 source version/build changes, then attach evidence scoped to the exact pushed
 candidate commit. A matching version line lets repository preflight identify
 what is being prepared; it does not transfer old passes or close external gates.
+
+On 2026-10-25, the Mac preparation integrated main
+`7ddea75d1efaf871816f10b8dd3c523967e780c0`, including reviewed #158's app/widget
+preflight isolation and deterministic NotesStore test fixtures. Shared inputs
+remain 0.14.20 (75); artifact selection and all companion launch gates remain
+unchanged. The local Mac reported missing signing/notary/Sparkle capabilities,
+and its disconnected full package validation has an unknown outcome. These
+are environment/evidence limitations, with no physical pass or release artifact
+selected. Search remains excluded. See the Mac preparation record for details.
 
 Source preparation inputs were refreshed on 2026-10-24 for the separate
 [Mac maintenance preparation](2026-10-24-mac-maintenance-preparation.md).
