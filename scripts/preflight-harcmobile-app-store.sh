@@ -379,9 +379,11 @@ require_equal \
   "NSFileProtectionComplete" \
   "complete Data Protection entitlement"
 
+# Inspect only the app target, independent of sibling target names/order.
+# Extensions legitimately skip installation and cannot supply app requirements.
 MOBILE_TARGET="$(awk '
-  /^  HarcMobile:$/ { found = 1 }
-  found && /^  HarcMobileAppTests:$/ { exit }
+  /^  HarcMobile:$/ { found = 1; print; next }
+  found && (/^[^[:space:]#]/ || /^  [^[:space:]#]/) { exit }
   found { print }
 ' "$REPO_ROOT/project.yml")"
 if [[ "$MOBILE_TARGET" == *'deploymentTarget: "26.0"'* ]] && \

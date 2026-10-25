@@ -6,6 +6,7 @@ import Foundation
 /// OKF `## Notes` projection.
 @Suite("RecordingStore notes")
 struct NotesStoreTests {
+    private let fixtureCalendar = Calendar.current
 
     private func makeDayDir() throws -> URL {
         let root = FileManager.default.temporaryDirectory
@@ -16,12 +17,21 @@ struct NotesStoreTests {
     }
 
     @discardableResult
-    private func seed(store: RecordingStore, dayDir: URL, time: String) async throws -> Recording {
+    private func seed(
+        store: RecordingStore, dayDir: URL, time: String, dayOffset: Int = 0
+    ) async throws -> Recording {
+        // Match the explicit fixture day and filename, never the wall clock.
+        // Separate Date() calls can straddle midnight between async upserts.
+        let parts = time.split(separator: "-").compactMap { Int($0) }
+        let startedAt = try #require(fixtureCalendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 31 + dayOffset,
+            hour: parts[0], minute: parts[1], second: parts[2]
+        )))
         let wav = dayDir.appendingPathComponent("\(time).wav")
         return try await store.upsert(Recording(
             wavPath: wav.path,
-            startedAt: Date(),
-            endedAt: Date().addingTimeInterval(600),
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(600),
             title: "T \(time)",
             transcriptText: "words"
         ))
@@ -87,11 +97,27 @@ struct NotesStoreTests {
         try await store.appendSessionNote(id: sid, block: "and an agent follow-up")
 
         let session = try await store.session(id: sid)
+        #expect(session?.day == "2026-07-31")
         #expect(session?.notesMarkdown == "session-level context\n\nand an agent follow-up")
 
         let md = try String(
             contentsOf: day.appendingPathComponent("session-10-00-00.md"), encoding: .utf8
         )
         #expect(md.contains("## Notes\n\nsession-level context\n\nand an agent follow-up"))
+    }
+
+    @Test("session notes fixture preserves rejection across the midnight boundary")
+    func sessionNotesRejectsCrossMidnightMembers() async throws {
+        let store = try await RecordingStore.inMemory()
+        let day = try makeDayDir()
+        let before = try await seed(store: store, dayDir: day, time: "23-59-59")
+        let after = try await seed(store: store, dayDir: day, time: "00-00-01", dayOffset: 1)
+        #expect(SessionDay.key(for: before.startedAt) == "2026-07-31")
+        #expect(SessionDay.key(for: after.startedAt) == "2026-08-01")
+        await #expect(throws: StoreError.invalidData("Session recordings must all be on the same day.")) {
+            try await store.createSession(recordingIDs: [before.id!, after.id!], title: "Day")
+        }
+        #expect(try await store.sessionID(forRecording: before.id!) == nil)
+        #expect(try await store.sessionID(forRecording: after.id!) == nil)
     }
 }
