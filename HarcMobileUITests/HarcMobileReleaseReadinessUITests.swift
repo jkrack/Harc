@@ -33,6 +33,27 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
     }
 
     func testRecordEmptyTodayRemainsNavigableAtLargestText() {
+        let timelineID = "harc.mobile.record.today.timeline"
+        let populated = makeApp(
+            rootID: TestRoot.recordingEntry,
+            additionalArguments: [
+                "--harc-ui-test-today-timeline",
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+            ]
+        )
+        populated.launch()
+        XCTAssertTrue(populated.buttons["harc.mobile.record.start"].waitForExistence(timeout: 15))
+        let populatedToday = populated.buttons["harc.mobile.record.today"]
+        for _ in 0..<5 where !populatedToday.isHittable { populated.swipeUp() }
+        let populatedTimeline = populated.descendants(matching: .any)[timelineID]
+        XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
+        let fixtureAttachment = XCTAttachment(screenshot: populated.screenshot())
+        fixtureAttachment.name = "Record-populated-timeline-presentation-fixture-largest-text"
+        fixtureAttachment.lifetime = .keepAlways
+        add(fixtureAttachment)
+        populated.terminate()
+        XCTAssertTrue(populated.wait(for: .notRunning, timeout: 10))
+
         let app = makeApp(rootID: TestRoot.recordingEntry)
         app.launchArguments += [
             "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
@@ -46,8 +67,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let today = app.buttons["harc.mobile.record.today"]
         for _ in 0..<5 where !today.isHittable { app.swipeUp() }
         XCTAssertTrue(today.isHittable)
-        XCTAssertTrue(today.label.contains("No recordings yet"))
-        XCTAssertFalse(app.staticTexts["12 AM"].exists)
+        XCTAssertTrue(app.staticTexts["No recordings yet"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)[timelineID].exists)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Record-empty-largest-text"
         attachment.lifetime = .keepAlways

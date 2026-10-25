@@ -658,7 +658,22 @@ struct HarcMobileRootView: View {
         let today = transfer.localRecordings.filter {
             Calendar.current.isDateInToday($0.startedAt)
         }
-        let duration = today.reduce(0) { $0 + $1.duration }
+        var intervals = today.map {
+            DateInterval(start: $0.startedAt, duration: max(0, $0.duration))
+        }
+#if DEBUG
+        // Presentation-only fixture: no audio, capture, adoption or transfer state.
+        // Require a freshly reset scoped UI-test root, as with cached Library fixtures.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--harc-ui-test-today-timeline"),
+           let rootID = try? HarcMobileUITestConfiguration.rootID(arguments: arguments),
+           (try? HarcMobileUITestConfiguration.shouldResetRoot(
+               arguments: arguments, rootID: rootID
+           )) == true {
+            intervals = [DateInterval(start: Date.now.addingTimeInterval(-600), duration: 300)]
+        }
+#endif
+        let duration = intervals.reduce(0) { $0 + $1.duration }
         return Button { showsLocalRecordings = true } label: {
             VStack(alignment: .leading, spacing: 8) {
                 let layout = dynamicTypeSize.isAccessibilitySize
@@ -668,15 +683,14 @@ struct HarcMobileRootView: View {
                     Text("Today")
                         .font(.system(.headline, design: .rounded))
                     if !dynamicTypeSize.isAccessibilitySize { Spacer() }
-                    Text(today.isEmpty ? "No recordings yet" : "\(today.count) recordings · \(Int(duration / 60)) min")
+                    Text(intervals.isEmpty ? "No recordings yet" : "\(intervals.count) recordings · \(Int(duration / 60)) min")
                         .font(.system(size: daySummaryTextSize))
                         .foregroundStyle(.primary)
                 }
-                if !today.isEmpty {
-                    HarcTideDayTimeline(intervals: today.map {
-                        DateInterval(start: $0.startedAt, duration: max(0, $0.duration))
-                    })
-                    .frame(height: 48)
+                if !intervals.isEmpty {
+                    HarcTideDayTimeline(intervals: intervals)
+                        .frame(height: 48)
+                        .accessibilityIdentifier("harc.mobile.record.today.timeline")
                     let axisLayout = dynamicTypeSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                         : AnyLayout(HStackLayout())
@@ -703,6 +717,7 @@ struct HarcMobileRootView: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("harc.mobile.record.today")
         .accessibilityHint("Opens recordings on this iPhone")
     }
