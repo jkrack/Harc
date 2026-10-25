@@ -70,5 +70,34 @@ class ExecutionGateTests(unittest.TestCase):
         self.assertFalse(self.check()['passed'])
 
 
+class MobilePolishSelectionTests(unittest.TestCase):
+    case = ('HarcMobileUITests/HarcMobileReleaseReadinessUITests/'
+            'testRecordEmptyTodayRemainsNavigableAtLargestText')
+
+    def test_polish_regression_is_selected_and_required(self):
+        root = Path(__file__).resolve().parents[2]
+        runner = (root / 'scripts/test-mobile-configuration.sh').read_text()
+        self.assertIn('-only-testing:' + self.case + ' ', runner)
+        self.assertIn('--require-test ' + self.case + ' ', runner)
+        source = (root / 'HarcMobileUITests/HarcMobileReleaseReadinessUITests.swift').read_text()
+        self.assertIn('func ' + self.case.rsplit('/', 1)[1] + '()', source)
+
+    def test_polish_case_cannot_be_missing_or_skipped_in_an_otherwise_passing_run(self):
+        summary = dict(result='Passed', failedTests=0, skippedTests=0,
+                       expectedFailures=0, passedTests=1, totalTestCount=1, testFailures=[])
+        other = dict(nodeType='Test Case', nodeIdentifier='Other/testExisting()', result='Passed')
+        bundle = dict(nodeType='UI test bundle', name='HarcMobileUITests',
+                      result='Passed', children=[other])
+        tree = dict(testNodes=[bundle])
+        self.assertFalse(gate.check(summary, tree, ['HarcMobileUITests'], [self.case])['passed'])
+        polish = dict(nodeType='Test Case', nodeIdentifier=self.case.split('/', 1)[1] + '()',
+                      result='Passed')
+        bundle['children'].append(polish)
+        summary.update(passedTests=2, totalTestCount=2)
+        self.assertTrue(gate.check(summary, tree, ['HarcMobileUITests'], [self.case])['passed'])
+        polish['result'] = 'Skipped'
+        self.assertFalse(gate.check(summary, tree, ['HarcMobileUITests'], [self.case])['passed'])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -36,6 +36,7 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromSyncControl \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromEmptyLocalRecordings \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRepeatedOfflineNavigationPreservesEachTabStack \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA" test
 
 # A successful xcodebuild exit alone does not prove the selected tests ran.
@@ -48,6 +49,7 @@ python3 scripts/check-xcode-test-results.py \
   --tests "$OUTPUT/configuration-test-tree.json" \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
+  --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testDequeuedReconfigurationCheckpointFailureReleasesEveryCaller \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testCancelledReconfigurationCheckpointFailureReleasesEveryCaller \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testReconfigurationAfterWriterFailureFailsInsteadOfWaiting \
