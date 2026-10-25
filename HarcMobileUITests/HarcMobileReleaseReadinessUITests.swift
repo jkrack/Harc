@@ -56,6 +56,15 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         fixtureAttachment.name = "Record-populated-timeline-presentation-fixture-largest-text"
         fixtureAttachment.lifetime = .keepAlways
         add(fixtureAttachment)
+        populatedToday.tap()
+        let populatedRecordings = populated.navigationBars["On This iPhone"]
+        XCTAssertTrue(populatedRecordings.waitForExistence(timeout: 10))
+        XCTAssertFalse(populated.buttons["harc.mobile.record.stop"].exists)
+        populated.buttons["Done"].tap()
+        XCTAssertTrue(populatedRecordings.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(populatedToday.waitForExistence(timeout: 10))
+        XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
+        XCTAssertTrue(populatedToday.isHittable)
         populated.terminate()
         XCTAssertTrue(populated.wait(for: .notRunning, timeout: 10))
 
