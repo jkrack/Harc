@@ -1337,9 +1337,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             self?.dictationHistoryStore.record(entry)
             self?.dictationKeepWarm?.noteActivity()
         }
-        controller.onNeedsAccessibility = { [weak self] in
-            self?.presentAccessibilityPrompt()
-        }
         self.dictationController = controller
 
         // Settings "Test" button for mode instructions.
@@ -1391,7 +1388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             onDismiss: { [weak self] in self?.dictationController?.dismissAfterglow() },
             onFixAccessibility: { [weak self] in
                 self?.dictationController?.dismissAfterglow()
-                self?.presentAccessibilityPrompt()
+                RecordingPermissionRepair.openSettings(for: .accessibility)
             },
             onStartDictation: { [weak self] in Task { await self?.dictationController?.start() } },
             onHidePill: { [weak self] in
@@ -3636,6 +3633,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             bridge.reportPaste(.skipped, message: "Copied. Paste blocked for \(target).")
             return
         case .paste:
+            guard AXIsProcessTrusted() else {
+                bridge.reportPaste(.skipped, message: "Copied. Enable Accessibility in Settings to auto-paste.")
+                return
+            }
             // Meeting transcripts deliberately never restore the clipboard —
             // "prompt blob on the clipboard" is the product behaviour.
             Task { @MainActor [weak self] in
@@ -3644,13 +3645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                     try await FrontmostAppPaster.copyAndPaste(blob)
                     self.bridge.reportPaste(.success, message: "Pasted into \(self.bridge.frontmostAppName ?? "frontmost app").")
                 } catch FrontmostAppPaster.PasteError.accessibilityDenied {
-                    self.bridge.reportPaste(.failure, message: "Copied. Enable Accessibility to paste.")
-                    // Re-prompt every paste failure: the prompt itself notes that
-                    // the transcript is already on the clipboard, so re-showing it
-                    // is informative rather than annoying. A user who chose
-                    // "Later" once may want to act the next time auto-paste
-                    // silently failed.
-                    self.presentAccessibilityPrompt()
+                    self.bridge.reportPaste(.skipped, message: "Copied. Enable Accessibility in Settings to auto-paste.")
                 } catch {
                     self.bridge.reportPaste(.failure, message: "Copied. Paste failed.")
                 }
@@ -3683,20 +3678,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             trigger: nil
         )
         UNUserNotificationCenter.current().add(request)
-    }
-
-    @MainActor
-    private func presentAccessibilityPrompt() {
-        let alert = NSAlert()
-        alert.messageText = "Harc needs Accessibility permission"
-        alert.informativeText = "Auto-paste synthesises ⌘V into the frontmost app. macOS requires Accessibility permission for that. Your transcript is still on the clipboard — you can paste it manually with ⌘V."
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn,
-           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     private func appDisplayName(for bundleID: String) -> String {
@@ -3901,8 +3882,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             onOpenSettings: { [weak self] in
                 self?.openSettings()
             },
-            onEnableAccessibility: { [weak self] in
-                self?.presentAccessibilityPrompt()
+            onEnableAccessibility: {
+                RecordingPermissionRepair.openSettings(for: .accessibility)
             },
             setup: setup
         )

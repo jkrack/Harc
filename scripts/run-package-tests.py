@@ -118,7 +118,16 @@ def main():
     parser.add_argument('--diagnostics-dir', type=Path, default=Path('.build/test-diagnostics'))
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    command = args.command or ['swift', 'test', '--skip-build', '--jobs', '2']
+    command = args.command
+    if not command:
+        jobs = os.environ.get('HARC_BUILD_JOBS', '')
+        if not jobs and os.environ.get('CI') in ('true', '1'):
+            jobs = '2'
+        if jobs and (not jobs.isascii() or not jobs.isdecimal() or jobs.startswith('0')):
+            parser.error('HARC_BUILD_JOBS must be a positive integer')
+        command = ['swift', 'test', '--skip-build']
+        if jobs:
+            command += ['--jobs', jobs]
     if command[0] == '--':
         command = command[1:]
     args.diagnostics_dir.mkdir(parents=True, exist_ok=True)

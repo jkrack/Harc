@@ -1,6 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
+source "$(dirname "$0")/build-concurrency.sh"
+harc_configure_build_jobs
+
 script_directory=${0:A:h}
 repository_root=${script_directory:h}
 minimum_free_kib=$((5 * 1024 * 1024))
@@ -15,6 +18,5 @@ fi
 touch "$run_marker"
 trap 'rm -f -- "$run_marker"' EXIT INT TERM
 cd "$repository_root"
-swift test \
-    --jobs 2 \
+harc_swift test \
     --filter PairingLifecycleLoopbackIntegrationTests

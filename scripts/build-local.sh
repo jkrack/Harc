@@ -8,6 +8,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+source scripts/build-concurrency.sh
+harc_configure_build_jobs
+
 SCHEME="Harc"
 CONFIG="Release"
 DERIVED="build/local-derived"
@@ -18,7 +21,7 @@ rm -rf "$DIST"
 mkdir -p "$DIST"
 
 echo "==> Building $SCHEME ($CONFIG, ad-hoc signed)"
-xcodebuild \
+harc_xcodebuild \
   -skipMacroValidation \
   -skipPackagePluginValidation \
   -project Harc.xcodeproj \

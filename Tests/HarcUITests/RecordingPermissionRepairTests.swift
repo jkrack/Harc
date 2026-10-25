@@ -62,8 +62,8 @@ struct RecordingPermissionRepairTests {
 
     // MARK: - Snapshot
 
-    @Test("core grants ignore screen capture, which degrades rather than breaks")
-    func coreGrantsExcludeScreenCapture() {
+    @Test("recording needs microphone permission, not optional screen or paste grants")
+    func coreCaptureGrantIsMicrophoneOnly() {
         let noScreen = PermissionSnapshot(microphone: true, screenCapture: false, accessibility: true)
         #expect(noScreen.coreGrantsIntact)
 
@@ -71,7 +71,7 @@ struct RecordingPermissionRepairTests {
         #expect(!noMic.coreGrantsIntact)
 
         let noAX = PermissionSnapshot(microphone: true, screenCapture: true, accessibility: false)
-        #expect(!noAX.coreGrantsIntact)
+        #expect(noAX.coreGrantsIntact)
     }
 
     @Test("missing lists exactly the ungranted services")
@@ -131,8 +131,8 @@ struct RecordingPermissionRepairTests {
         #expect(!CoreGrantHistory.revocationDetected(current: declined, defaults: defaults))
     }
 
-    @Test("a grant seen granted that goes missing is a revocation")
-    func grantedToUngrantedIsARevocation() {
+    @Test("microphone revocation reoffers setup, accessibility revocation does not")
+    func onlyMicrophoneRevocationReoffersSetup() {
         let suiteName = "RecordingPermissionRepairTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -143,7 +143,21 @@ struct RecordingPermissionRepairTests {
         let micLost = PermissionSnapshot(microphone: false, screenCapture: true, accessibility: true)
         let axLost = PermissionSnapshot(microphone: true, screenCapture: true, accessibility: false)
         #expect(CoreGrantHistory.revocationDetected(current: micLost, defaults: defaults))
-        #expect(CoreGrantHistory.revocationDetected(current: axLost, defaults: defaults))
+        #expect(!CoreGrantHistory.revocationDetected(current: axLost, defaults: defaults))
+    }
+
+    @Test("legacy Accessibility history does not reoffer recording setup")
+    func legacyAccessibilityHistoryIsOptional() {
+        let suiteName = "RecordingPermissionRepairTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(
+            ["microphone": true, "accessibility": true],
+            forKey: CoreGrantHistory.key
+        )
+
+        let axLost = PermissionSnapshot(microphone: true, screenCapture: true, accessibility: false)
+        #expect(!CoreGrantHistory.revocationDetected(current: axLost, defaults: defaults))
     }
 
     /// Screen capture degrades rather than breaks (`coreGrantsIntact`

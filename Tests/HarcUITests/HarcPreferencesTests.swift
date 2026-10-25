@@ -4,6 +4,7 @@ import Foundation
 import HarcCore
 
 @MainActor
+@Suite(.serialized)
 struct HarcPreferencesTests {
     @Test("addEntry persists in memory and roundtrips through UserDefaults")
     func addEntryRoundTrip() {
@@ -49,12 +50,12 @@ struct HarcPreferencesTests {
         #expect(!prefs.vocabulary.entries.contains(where: { $0.id == id }))
     }
 
-    @Test("autoPasteEnabled defaults to true when UserDefaults has no key")
-    func autoPasteEnabledDefaultTrue() {
+    @Test("autoPasteEnabled defaults off when UserDefaults has no key")
+    func autoPasteEnabledDefaultOff() {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "harc.autoPasteEnabled")
         let prefs = HarcPreferences()
-        #expect(prefs.autoPasteEnabled == true)
+        #expect(prefs.autoPasteEnabled == false)
     }
 
     @Test("autoPasteEnabled persists and round-trips through UserDefaults")
@@ -67,6 +68,15 @@ struct HarcPreferencesTests {
         #expect(reloaded.autoPasteEnabled == false)
         // Restore default for subsequent tests.
         defaults.removeObject(forKey: "harc.autoPasteEnabled")
+    }
+
+    @Test("an explicit auto-paste choice survives the new opt-in default")
+    func explicitAutoPasteOptInPersists() {
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: "harc.autoPasteEnabled")
+        defer { defaults.removeObject(forKey: "harc.autoPasteEnabled") }
+
+        #expect(HarcPreferences().autoPasteEnabled)
     }
 
     @Test("pasteDenyListBundleIDs defaults to the seed list")

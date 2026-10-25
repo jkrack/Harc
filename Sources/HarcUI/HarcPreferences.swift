@@ -472,7 +472,7 @@ public final class HarcPreferences: ObservableObject {
                 "com.tinyspeck.slackmacgap": false,
             ]
         }
-        self.autoPasteEnabled = defaults.object(forKey: Key.autoPasteEnabled) as? Bool ?? true
+        self.autoPasteEnabled = defaults.object(forKey: Key.autoPasteEnabled) as? Bool ?? false
         let storedPasteDenyList = defaults.array(forKey: Key.pasteDenyListBundleIDs) as? [String]
         let normalizedPasteDenyList: Set<String>
         if let storedPasteDenyList {

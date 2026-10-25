@@ -1,4 +1,5 @@
 import AppKit
+@preconcurrency import ApplicationServices
 import AVFoundation
 import CoreGraphics
 import Foundation
@@ -22,11 +23,11 @@ public enum RecordingPermissionService: String, CaseIterable, Sendable {
     public var purpose: String {
         switch self {
         case .microphone:
-            return "Records your voice for meetings and dictation."
+            return "Required to record your voice for meetings and dictation."
         case .screenCapture:
-            return "Captures the other side of a call, so remote participants appear in the transcript."
+            return "Optional: captures the other side of a call so remote participants appear in the transcript."
         case .accessibility:
-            return "Lets Harc paste dictated text into the app you're using, and cancel with Esc."
+            return "Optional: enables auto-paste, dictation insertion, and Esc to cancel. Recording works without it."
         }
     }
 
@@ -107,16 +108,15 @@ public struct PermissionSnapshot: Equatable, Sendable {
         RecordingPermissionService.allCases.filter { !isGranted($0) }
     }
 
-    /// Recording needs a mic; dictation insertion needs Accessibility. Screen
-    /// capture is excluded deliberately — without it Harc still records the
-    /// user's own voice, so it degrades rather than breaks, and plenty of
-    /// people decline it on purpose.
+    /// Microphone permission is the only core capture grant. Screen capture
+    /// adds remote participants, while Accessibility enables optional text
+    /// insertion; neither should make recording look blocked.
     public var coreGrantsIntact: Bool {
-        microphone && accessibility
+        microphone
     }
 }
 
-/// The last core-grant state this install observed, persisted so launch can
+/// The last microphone-grant state this install observed, persisted so launch can
 /// tell "TCC revoked a grant underneath us" (re-offer the welcome) apart from
 /// "the user never granted it" (a standing choice — leave them alone). The
 /// previous gate was once-per-build, and every Sparkle update mints a new
@@ -133,8 +133,7 @@ public enum CoreGrantHistory {
         defaults: UserDefaults = .standard
     ) -> Bool {
         guard let last = defaults.dictionary(forKey: key) as? [String: Bool] else { return false }
-        return ((last["microphone"] ?? false) && !current.microphone)
-            || ((last["accessibility"] ?? false) && !current.accessibility)
+        return (last["microphone"] ?? false) && !current.microphone
     }
 
     /// Launch-time overwrite. Persisting the ungranted state right after the
@@ -145,7 +144,7 @@ public enum CoreGrantHistory {
         defaults: UserDefaults = .standard
     ) {
         defaults.set(
-            ["microphone": current.microphone, "accessibility": current.accessibility],
+            ["microphone": current.microphone],
             forKey: key
         )
     }
@@ -162,7 +161,6 @@ public enum CoreGrantHistory {
         defaults.set(
             [
                 "microphone": (last["microphone"] ?? false) || current.microphone,
-                "accessibility": (last["accessibility"] ?? false) || current.accessibility,
             ],
             forKey: key
         )
@@ -255,6 +253,14 @@ public enum RecordingPermissionRepair {
 
     public static func openSettings(for service: RecordingPermissionService) {
         guard let url = service.settingsURL else { return }
+        if service == .accessibility && !AXIsProcessTrusted() {
+            // This path is reached only from an explicit Settings/Welcome/HUD
+            // action. Register Harc with TCC and ask macOS to explain the
+            // grant if it has not done so already; always open the pane too,
+            // because the asynchronous prompt may have been used earlier.
+            let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue()
+            _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+        }
         NSWorkspace.shared.open(url)
     }
 
