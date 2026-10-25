@@ -40,11 +40,11 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         hostName: String?,
         lastVerifiedAt: Date?
     ) -> Self {
-        let name = hostName?.nonemptyTrimmed ?? "Harc Host"
+        let name = hostName?.nonemptyTrimmed ?? "Your Mac"
         switch status {
         case .unpaired:
             return Self(
-                title: "No Host paired",
+                title: "No Mac paired",
                 detail: "Recording stays protected on this iPhone",
                 systemImage: "macmini",
                 tone: .neutral,
@@ -61,7 +61,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .connected(let verifiedAt):
             return Self(
                 title: name,
-                detail: "Authenticated Host",
+                detail: "Authenticated Mac",
                 systemImage: "checkmark.shield.fill",
                 tone: .healthy,
                 relativeMoment: .seen(verifiedAt)
@@ -78,7 +78,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .pairingRepairRequired(let attemptedAt):
             return Self(
                 title: "Pairing with \(name) needs repair",
-                detail: "Recordings are safe · forget this Host and pair again",
+                detail: "Recordings are safe · forget this Mac and pair again",
                 systemImage: "lock.trianglebadge.exclamationmark",
                 tone: .critical,
                 relativeMoment: lastVerifiedAt.map(RelativeMoment.seen)
@@ -97,7 +97,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
             $0.transferState != .committed
         }
         let pending = max(pendingCount, locallyPending)
-        let destination = hostName?.nonemptyTrimmed ?? "your Host"
+        let destination = hostName?.nonemptyTrimmed ?? "your Mac"
 
         switch state {
         case .encoding:
@@ -124,7 +124,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
             return Self(
                 title: hostName?.nonemptyTrimmed.map {
                     "All recordings verified on \($0)"
-                } ?? "All recordings verified on Host",
+                } ?? "All recordings verified on Mac",
                 detail: "Verified durable receipt received",
                 systemImage: "checkmark",
                 tone: .healthy,
@@ -152,7 +152,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .retryNeeded:
             return Self(
                 title: protectedTitle(max(pending, 1)),
-                detail: "Transfers paused · Host transfer will retry",
+                detail: "Transfers paused · Mac transfer will retry",
                 systemImage: "iphone",
                 tone: .neutral,
                 relativeMoment: nil
@@ -160,7 +160,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .waitingForPairing(let waiting):
             return Self(
                 title: protectedTitle(max(max(pending, waiting), 1)),
-                detail: "Transfers paused · pair a Host when ready",
+                detail: "Transfers paused · pair a Mac when ready",
                 systemImage: "iphone",
                 tone: .neutral,
                 relativeMoment: nil
@@ -206,7 +206,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .unpaired:
             return Self(
                 title: "Library",
-                detail: "Available after Host pairing",
+                detail: "Available after Mac pairing",
                 systemImage: "rectangle.stack",
                 tone: .neutral,
                 relativeMoment: nil
@@ -214,7 +214,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         case .accessNotGranted:
             return Self(
                 title: "Library access not granted",
-                detail: "Recording and Host transfer remain available",
+                detail: "Recording and Mac transfer remain available",
                 systemImage: "lock",
                 tone: .caution,
                 relativeMoment: nil
@@ -305,12 +305,12 @@ struct HarcMobileHostPillPresentation: Equatable {
         status: HarcMobileHostHealthStatus,
         hostName: String?
     ) -> Self {
-        let name = hostName?.nonemptyTrimmed ?? "Harc Host"
+        let name = hostName?.nonemptyTrimmed ?? "Your Mac"
         switch status {
         case .unpaired:
             return Self(
-                title: "Pair a Host",
-                accessibilityValue: "No Host paired",
+                title: "Pair a Mac",
+                accessibilityValue: "No Mac paired",
                 tone: .neutral
             )
         case .checking:
@@ -458,7 +458,7 @@ struct HarcMobileCaptureHeroView: View {
             Label("Saved locally", systemImage: "checkmark.circle.fill")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(HarcMobilePalette.success)
-            Text("The protected master is ready for Host transfer.")
+            Text("The protected master is ready for Mac transfer.")
                 .foregroundStyle(.primary)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
@@ -544,7 +544,7 @@ struct HarcMobileHostPill: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Host")
+        .accessibilityLabel("Mac connection")
         .accessibilityValue(presentation.accessibilityValue)
         .accessibilityHint("Opens Setup and Sync.")
         .accessibilityIdentifier(HarcMobileAccessibilityID.hostHealth)

@@ -13,6 +13,7 @@ struct HarcMobileRootView: View {
     }
 
     @Environment(HarcMobileAppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedTab: RootTab = .record
     @State private var showsLocalRecordings = false
     @State private var showsSetupAndSync = false
@@ -226,7 +227,7 @@ struct HarcMobileRootView: View {
                             attention.isSecurityBlocked
                                 ? Color.orange : Color.primary
                         )
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                     .accessibilityIdentifier(
                         HarcMobileAccessibilityID.libraryAttention
@@ -633,10 +634,13 @@ struct HarcMobileRootView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 8)
         } else {
-            HStack(spacing: 16) {
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                : AnyLayout(HStackLayout(spacing: 16))
+            layout {
                 Text("Record")
                     .font(.system(.title, design: .rounded, weight: .bold))
-                Spacer(minLength: 8)
+                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
                 HarcMobileHostPill(
                     presentation: .make(
                         status: model.hostHealthCoordinator?.status
@@ -657,27 +661,39 @@ struct HarcMobileRootView: View {
         let duration = today.reduce(0) { $0 + $1.duration }
         return Button { showsLocalRecordings = true } label: {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
+                let layout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                layout {
                     Text("Today")
                         .font(.system(.headline, design: .rounded))
-                    Spacer()
-                    Text("\(today.count) recordings · \(Int(duration / 60)) min")
+                    if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                    Text(today.isEmpty ? "No recordings yet" : "\(today.count) recordings · \(Int(duration / 60)) min")
                         .font(.system(size: daySummaryTextSize))
                         .foregroundStyle(.primary)
                 }
-                HarcTideDayTimeline(intervals: today.map {
-                    DateInterval(start: $0.startedAt, duration: max(0, $0.duration))
-                })
-                .frame(height: 48)
-                HStack {
-                    Text("12 AM")
-                    Spacer()
-                    Text("On this iPhone")
-                    Spacer()
-                    Text("12 AM")
+                if !today.isEmpty {
+                    HarcTideDayTimeline(intervals: today.map {
+                        DateInterval(start: $0.startedAt, duration: max(0, $0.duration))
+                    })
+                    .frame(height: 48)
+                    let axisLayout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                        : AnyLayout(HStackLayout())
+                    axisLayout {
+                        Text("12 AM")
+                        if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                        Text("On this iPhone")
+                        if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                        Text("Midnight")
+                    }
+                    .font(.system(size: dayAxisTextSize, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
                 }
-                .font(.system(size: dayAxisTextSize, weight: .semibold))
-                .foregroundStyle(.primary)
+                Label("View recordings on this iPhone", systemImage: "chevron.right")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(14)
             .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
@@ -687,7 +703,8 @@ struct HarcMobileRootView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Opens protected recordings on this iPhone")
+        .accessibilityIdentifier("harc.mobile.record.today")
+        .accessibilityHint("Opens recordings on this iPhone")
     }
 
     private var recordingConditions: some View {

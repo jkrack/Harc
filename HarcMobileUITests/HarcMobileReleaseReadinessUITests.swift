@@ -32,6 +32,31 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         keepTideScreenshot("Tide-Record")
     }
 
+    func testRecordEmptyTodayRemainsNavigableAtLargestText() {
+        let app = makeApp(rootID: TestRoot.recordingEntry)
+        app.launchArguments += [
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+        let start = app.buttons["harc.mobile.record.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 15))
+        let connection = app.buttons["harc.mobile.host.health"]
+        XCTAssertEqual(connection.label, "Mac connection")
+        XCTAssertEqual(connection.value as? String, "No Mac paired")
+        let today = app.buttons["harc.mobile.record.today"]
+        for _ in 0..<5 where !today.isHittable { app.swipeUp() }
+        XCTAssertTrue(today.isHittable)
+        XCTAssertTrue(today.label.contains("No recordings yet"))
+        XCTAssertFalse(app.staticTexts["12 AM"].exists)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Record-empty-largest-text"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        today.tap()
+        XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+    }
+
     func testTideSearchAndSetupAreReachableWithoutStartingCapture() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()
