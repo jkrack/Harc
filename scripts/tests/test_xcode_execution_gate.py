@@ -104,5 +104,10 @@ class MobileLibrarySummarySelectionTests(MobilePolishSelectionTests):
             'testLibraryDaySummaryRemainsReadableAtLargestText')
 
 
+class MobileLibraryContrastSelectionTests(MobilePolishSelectionTests):
+    case = ('HarcMobileUITests/HarcMobileReleaseReadinessUITests/'
+            'testLibraryTextActionsHaveAccessibleContrast')
+
+
 if __name__ == '__main__':
     unittest.main()
