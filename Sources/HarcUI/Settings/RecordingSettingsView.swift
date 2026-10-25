@@ -47,25 +47,44 @@ public struct RecordingSettingsView: View {
                 Toggle("Auto-paste on stop", isOn: $prefs.autoPasteEnabled)
                     .tint(Color.accentColor)
 
-                // No Divider here: inside a grouped Form, a bare divider is
-                // laid out as its own full-height row, so it showed up as an
-                // empty gap between the toggle and the first app. The Form
-                // already draws separators between rows.
-                ForEach(pasteDenyListRows, id: \.self) { bundleID in
-                    pasteDenyListRow(bundleID)
+                if prefs.autoPasteEnabled && !bridge.accessibilityReady {
+                    HStack(alignment: .top, spacing: HarcSpacing.md) {
+                        Image(systemName: "hand.raised")
+                            .foregroundStyle(Color.harc(.attention))
+                        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                            Text("Accessibility is needed for auto-paste")
+                                .font(.harcCaption.weight(.semibold))
+                            Text("Recording still works. Harc copies the transcript so you can paste it yourself.")
+                                .font(.harcLabel)
+                                .foregroundStyle(Color.secondary)
+                            Button("Open Accessibility Settings") {
+                                RecordingPermissionRepair.openSettings(for: .accessibility)
+                            }
+                            .controlSize(.small)
+                        }
+                    }
                 }
 
-                Button {
-                    pickPasteDenyListApp()
-                } label: {
-                    Label("Add app…", systemImage: "plus")
+                if prefs.autoPasteEnabled {
+                    // The deny list only matters while auto-paste is active.
+                    ForEach(pasteDenyListRows, id: \.self) { bundleID in
+                        pasteDenyListRow(bundleID)
+                    }
+
+                    Button {
+                        pickPasteDenyListApp()
+                    } label: {
+                        Label("Add app…", systemImage: "plus")
+                    }
                 }
             } header: {
                 Text("Auto-paste")
             } footer: {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("When recording stops, the prompt-formatted transcript is pasted into the frontmost app.")
-                    Text("Hold ⇧ while clicking Stop, or ⌥-click the menu-bar icon, to skip for one recording. Locked apps are always skipped; you can add or remove your own apps above.")
+                    Text("After a normal stop, Harc copies the prompt-formatted transcript. Auto-paste also inserts it into the frontmost app and needs Accessibility permission.")
+                    if prefs.autoPasteEnabled {
+                        Text("Hold ⇧ while clicking Stop, or ⌥-click the menu-bar icon, to skip for one recording. Locked apps are always skipped; you can add or remove your own apps above.")
+                    }
                 }
                 .font(.harcLabel)
                 .foregroundStyle(Color.secondary)

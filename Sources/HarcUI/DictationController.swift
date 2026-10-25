@@ -70,7 +70,8 @@ public final class DictationController {
     /// record dictation history. Cancelled sessions never reach this.
     public var onDelivered: (DictationHistoryEntry) -> Void = { _ in }
     /// Called when a delivery fell back to copy because Accessibility is
-    /// missing — the caller may present the permission UI.
+    /// missing. Harc relies on the HUD's explicit Settings button rather than
+    /// assigning a modal alert here.
     public var onNeedsAccessibility: () -> Void = {}
 
     private var activeRecorder: (any DictationRecording)?
