@@ -109,5 +109,10 @@ class MobileLibraryContrastSelectionTests(MobilePolishSelectionTests):
             'testLibraryTextActionsHaveAccessibleContrast')
 
 
+class MobileLongHostNameSelectionTests(MobilePolishSelectionTests):
+    case = ('HarcMobileUITests/HarcMobileReleaseReadinessUITests/'
+            'testLongHostNameKeepsRecordAndToolbarsUsable')
+
+
 if __name__ == '__main__':
     unittest.main()

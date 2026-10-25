@@ -839,6 +839,48 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             "Accessibility audit found \(findings.count) issue(s) on \(surface)."
         )
     }
+    func testLongHostNameKeepsRecordAndToolbarsUsable() {
+        let name = "Fixture Mac mini — Design and Accessibility Review Workstation"
+        var layoutFailures: [String] = []
+        for category in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
+            let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
+                "--harc-ui-test-long-host-name", "--harc-ui-test-cached-library",
+                "-UIPreferredContentSizeCategoryName", category,
+            ])
+            app.launch()
+            for tab in ["Record", "Library", "Search"] {
+                if tab != "Record" { selectTab(tab, in: app) }
+                let host = app.buttons["harc.mobile.host.health"]
+                XCTAssertTrue(host.waitForExistence(timeout: 10))
+                XCTAssertEqual(host.label, "Mac connection")
+                XCTAssertEqual(host.value as? String, "\(name), unavailable")
+                let shot = XCTAttachment(screenshot: app.screenshot())
+                shot.name = "Long-host-\(tab)-\(category)"
+                shot.lifetime = .keepAlways
+                add(shot)
+                XCTAssertTrue(host.isHittable)
+                XCTAssertGreaterThanOrEqual(host.frame.height, 44)
+                if !app.frame.contains(host.frame) {
+                    layoutFailures.append("\(tab) \(category): host frame outside viewport \(host.frame)")
+                }
+                if tab != "Record", host.frame.height > 60 {
+                    layoutFailures.append("\(tab) \(category): oversized toolbar host \(host.frame)")
+                }
+                host.tap()
+                XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+                // The fixture changes presentation only; real pairing stays absent.
+                XCTAssertTrue(app.buttons["Pair a Mac"].exists)
+                app.buttons["Done"].tap()
+                XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 10))
+                XCTAssertTrue(host.waitForExistence(timeout: 10))
+                XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+            }
+            app.terminate()
+            XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        }
+        XCTAssertTrue(layoutFailures.isEmpty, layoutFailures.joined(separator: "\n"))
+    }
+
     func testLibraryTextActionsHaveAccessibleContrast() throws {
         let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
             "--harc-ui-test-cached-library",
