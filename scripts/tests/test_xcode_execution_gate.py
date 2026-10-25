@@ -99,5 +99,10 @@ class MobilePolishSelectionTests(unittest.TestCase):
         self.assertFalse(gate.check(summary, tree, ['HarcMobileUITests'], [self.case])['passed'])
 
 
+class MobileLibrarySummarySelectionTests(MobilePolishSelectionTests):
+    case = ('HarcMobileUITests/HarcMobileReleaseReadinessUITests/'
+            'testLibraryDaySummaryRemainsReadableAtLargestText')
+
+
 if __name__ == '__main__':
     unittest.main()
