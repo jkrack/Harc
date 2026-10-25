@@ -47,6 +47,10 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         for _ in 0..<5 where !populatedToday.isHittable { populated.swipeUp() }
         let populatedTimeline = populated.descendants(matching: .any)[timelineID]
         XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
+        for _ in 0..<5 where !populatedTimeline.isHittable { populated.swipeUp() }
+        XCTAssertTrue(populatedToday.isHittable)
+        XCTAssertTrue(populatedTimeline.isHittable)
+        XCTAssertTrue(populated.staticTexts["1 recordings · 5 min"].exists)
         let fixtureAttachment = XCTAttachment(screenshot: populated.screenshot())
         fixtureAttachment.name = "Record-populated-timeline-presentation-fixture-largest-text"
         fixtureAttachment.lifetime = .keepAlways

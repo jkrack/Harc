@@ -669,8 +669,13 @@ struct HarcMobileRootView: View {
            let rootID = try? HarcMobileUITestConfiguration.rootID(arguments: arguments),
            (try? HarcMobileUITestConfiguration.shouldResetRoot(
                arguments: arguments, rootID: rootID
-           )) == true {
-            intervals = [DateInterval(start: Date.now.addingTimeInterval(-600), duration: 300)]
+           )) == true,
+           let day = Calendar.current.dateInterval(of: .day, for: .now) {
+            // Mid-day stays in the local day across midnight and DST changes.
+            // This is synthetic presentation data, never a production recording.
+            intervals = [DateInterval(
+                start: day.start.addingTimeInterval(day.duration / 2), duration: 300
+            )]
         }
 #endif
         let duration = intervals.reduce(0) { $0 + $1.duration }
