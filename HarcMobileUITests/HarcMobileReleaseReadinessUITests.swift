@@ -887,6 +887,15 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
                 XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 10))
                 XCTAssertTrue(host.waitForExistence(timeout: 10))
                 XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+                if tab == "Search" {
+                    let searchField = app.searchFields["Search meetings and transcripts"]
+                    XCTAssertTrue(searchField.waitForExistence(timeout: 10))
+                    XCTAssertTrue(searchField.isEnabled)
+                    XCTAssertTrue(searchField.isHittable)
+                    searchField.tap()
+                    searchField.typeText("fixture")
+                    XCTAssertEqual(searchField.value as? String, "fixture")
+                }
             }
             app.terminate()
             XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
