@@ -51,6 +51,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let populatedTimeline = populatedTimelines.element
         XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
         XCTAssertEqual(populatedTimelines.count, 1)
+        XCTAssertEqual(populated.descendants(matching: .any).matching(identifier: timelineID).count, 1)
         // The Canvas is informational, not an action. Check its rendered frame
         // against the unobscured viewport; hittability belongs to the Today button.
         func timelineViewport() -> CGRect {
@@ -104,6 +105,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No recordings yet"].exists)
         XCTAssertEqual(app.buttons.matching(identifier: "harc.mobile.record.today").count, 1)
         XCTAssertEqual(app.otherElements.matching(identifier: timelineID).count, 0)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: timelineID).count, 0)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Record-empty-largest-text"
         attachment.lifetime = .keepAlways
