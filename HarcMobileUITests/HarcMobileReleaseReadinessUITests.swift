@@ -46,8 +46,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let populatedToday = populated.buttons["harc.mobile.record.today"]
         XCTAssertTrue(populatedToday.waitForExistence(timeout: 10), "Today must retain its navigable button role")
         for _ in 0..<5 where !populatedToday.isHittable { populated.swipeUp() }
-        // SwiftUI also propagates this ID to the enclosing Button. Query the
-        // informational Canvas role explicitly and reject duplicate Canvas nodes.
+        // Query the informational Canvas role explicitly and reject duplicate nodes.
         let populatedTimelines = populated.otherElements.matching(identifier: timelineID)
         let populatedTimeline = populatedTimelines.element
         XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
@@ -74,9 +73,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             timelineViewport().contains(populatedTimeline.frame),
             "Timeline frame \(populatedTimeline.frame) must fit viewport \(timelineViewport())"
         )
-        XCTAssertEqual(populated.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "1 recordings · 5 min")
-        ).count, 1)
+        XCTAssertTrue(populated.staticTexts["1 recording · 5 min"].exists)
+        XCTAssertEqual(populated.buttons.matching(identifier: "harc.mobile.record.today").count, 1)
         populatedToday.tap()
         let populatedRecordings = populated.navigationBars["On This iPhone"]
         XCTAssertTrue(populatedRecordings.waitForExistence(timeout: 10))
@@ -103,9 +101,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(today.waitForExistence(timeout: 10), "Empty Today must retain its navigable button role")
         for _ in 0..<5 where !today.isHittable { app.swipeUp() }
         XCTAssertTrue(today.isHittable)
-        XCTAssertEqual(app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "No recordings yet")
-        ).count, 1)
+        XCTAssertTrue(app.staticTexts["No recordings yet"].exists)
+        XCTAssertEqual(app.buttons.matching(identifier: "harc.mobile.record.today").count, 1)
         XCTAssertEqual(app.otherElements.matching(identifier: timelineID).count, 0)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Record-empty-largest-text"

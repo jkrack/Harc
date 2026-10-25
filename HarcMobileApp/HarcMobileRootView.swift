@@ -679,53 +679,58 @@ struct HarcMobileRootView: View {
         }
 #endif
         let duration = intervals.reduce(0) { $0 + $1.duration }
-        return Button { showsLocalRecordings = true } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                let layout = dynamicTypeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
-                layout {
-                    Text("Today")
-                        .font(.system(.headline, design: .rounded))
-                    if !dynamicTypeSize.isAccessibilitySize { Spacer() }
-                    Text(intervals.isEmpty ? "No recordings yet" : "\(intervals.count) recordings · \(Int(duration / 60)) min")
-                        .font(.system(size: daySummaryTextSize))
-                        .foregroundStyle(.primary)
-                }
-                if !intervals.isEmpty {
-                    HarcTideDayTimeline(intervals: intervals)
-                        .frame(height: 48)
-                        .accessibilityIdentifier("harc.mobile.record.today.timeline")
-                    let axisLayout = dynamicTypeSize.isAccessibilitySize
-                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                        : AnyLayout(HStackLayout())
-                    axisLayout {
-                        Text("12 AM")
-                        if !dynamicTypeSize.isAccessibilitySize { Spacer() }
-                        Text("On this iPhone")
-                        if !dynamicTypeSize.isAccessibilitySize { Spacer() }
-                        Text("Midnight")
-                    }
-                    .font(.system(size: dayAxisTextSize, weight: .semibold))
+        return VStack(alignment: .leading, spacing: 8) {
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+            layout {
+                Text("Today")
+                    .font(.system(.headline, design: .rounded))
+                if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                Text(intervals.isEmpty ? "No recordings yet" : "\(intervals.count) recording\(intervals.count == 1 ? "" : "s") · \(Int(duration / 60)) min")
+                    .font(.system(size: daySummaryTextSize))
                     .foregroundStyle(.primary)
-                    .accessibilityHidden(true)
+            }
+            if !intervals.isEmpty {
+                HarcTideDayTimeline(intervals: intervals)
+                    .frame(height: 48)
+                    .accessibilityIdentifier("harc.mobile.record.today.timeline")
+                let axisLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout())
+                axisLayout {
+                    Text("12 AM")
+                    if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                    Text("On this iPhone")
+                    if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                    Text("Midnight")
                 }
-                Label("View recordings on this iPhone", systemImage: "chevron.right")
-                    .font(.subheadline)
-                    .fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: dayAxisTextSize, weight: .semibold))
+                .foregroundStyle(.primary)
+                .accessibilityHidden(true)
             }
-            .padding(14)
-            .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(.primary.opacity(0.10), lineWidth: 1)
+            Button { showsLocalRecordings = true } label: {
+                HStack {
+                    Text("View recordings on this iPhone")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .accessibilityHidden(true)
+                }
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("harc.mobile.record.today")
+            .accessibilityHint("Opens recordings on this iPhone")
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityIdentifier("harc.mobile.record.today")
-        .accessibilityHint("Opens recordings on this iPhone")
+        .padding(14)
+        .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(.primary.opacity(0.10), lineWidth: 1)
+        }
     }
 
     private var recordingConditions: some View {
