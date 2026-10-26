@@ -1,6 +1,86 @@
 # iPhone companion launch plan
 
-## Current checkpoint — October 19, 2026
+## Current checkpoint — October 26, 2026
+
+This checkpoint supersedes dated status and continuation instructions below.
+Historical results remain scoped to their recorded source, artifact and device;
+no old pass closes a current physical or submission gate.
+
+Main is `02b3a22b2611499d65fbdea8557fe66031406ad9`. It includes
+[#146](https://github.com/jkrack/Harc/pull/146), making Accessibility optional
+for auto-paste and avoiding automatic permission prompts during finalization,
+and [#160](https://github.com/jkrack/Harc/pull/160), removing fixed local compiler
+caps while retaining CI budgets, disk safeguards and test serialization.
+[#106](https://github.com/jkrack/Harc/pull/106)'s bounded-validation work is
+merged and complete within its tested scope; do not reopen it solely because
+older snapshots below describe a draft or failed run. Mobile configuration CI
+is now present. Physical product acceptance remains distinct from these results.
+
+The latest listed Mac release is
+[v0.14.19 (74)](https://github.com/jkrack/Harc/releases/tag/v0.14.19).
+This is repository/release metadata reconciliation, not fresh verification of
+published asset bytes, the live feed, signatures or the installed upgrade path.
+Draft [#155](https://github.com/jkrack/Harc/pull/155) prepares 0.14.20 (75) at
+`3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a`; its
+[exact-head CI](https://github.com/jkrack/Harc/actions/runs/40214998656) passed.
+The October 25 retained native diagnostic build receipt also passed metadata,
+arm64 app/helper and ad-hoc signature checks, plus source/public-URL preflight:
+`/Users/jlane/Documents/Codex/2026-10-25/task/harc-pr155-diagnostic-build-result.json`.
+That local receipt is not a signed/notarized release artifact, physical capture
+acceptance or phone qualification. The candidate remains draft and unqualified
+for release; its [current gate register](https://github.com/jkrack/Harc/blob/3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a/docs/evidence/harcmobile-current-candidate-readiness.md)
+and [Mac preparation record](https://github.com/jkrack/Harc/blob/3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a/docs/evidence/2026-10-24-mac-maintenance-preparation.md)
+retain their own source-specific evidence and ownership.
+
+The UI draft stack is separate from main and #155:
+
+| Draft | Exact reviewed head | Automated evidence |
+| --- | --- | --- |
+| [#159](https://github.com/jkrack/Harc/pull/159) | `c044b9464815dc3b3d30b2cfa9d43877653790cb` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40155990145) |
+| [#161](https://github.com/jkrack/Harc/pull/161), based on #159 | `05d086149ba486c2e727a38aeaee280769a741f6` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40213894471) |
+| [#162](https://github.com/jkrack/Harc/pull/162), based on #161 | `2ca64686ee130878ae5abc84779c4a73de9d1fbc` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40215659159) |
+| [#163](https://github.com/jkrack/Harc/pull/163), based on #162 | `784e652bade24e874c9fec8ea14b629248c5e40b` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40220604960) |
+
+All four are unmerged. CI and focused visual checks do not establish full
+accessibility acceptance: VoiceOver, broad accessibility-audit flags and affected
+physical traversal remain open. Device Hub approval for the independent UI task
+is pending; this plan reconciliation does not authorize or duplicate that work.
+
+### Current phone critical path
+
+1. Select and seal the exact candidate source/build on an available physical
+   iPhone. Prove bit-exact canonical PCM encode/decode including exact EOF,
+   production-path transfer, a durable verified Host receipt, a complete
+   Host/phone canonical PCM hash match, and protected-master retention until
+   receipt verification. Follow the [physical qualification runbook](../operations/mobile-physical-qualification.md).
+2. On that qualified source and a known-good signed Mac Host, complete ordinary
+   phone recording → Host receipt/processing → phone Library refresh, playback
+   and transcript acceptance. Keep capture, delivery, processing and Library
+   failures separate; pairing or a receipt alone is not the full round trip.
+3. Complete applicable physical reliability, protection, upgrade and accessibility
+   gates, then the exact archive/export, privacy/dependency review, owner fields,
+   current screenshots and submission package in the
+   [App Store runbook](../operations/app-store-release-readiness.md). **App Store
+   remains NO-GO; submission requires owner approval.**
+
+The [October 18 physical diagnostic](../evidence/2026-10-18-omega-alac-product-path-diagnostic.md)
+was an engineering pass with an unsealed source/Debug override, not current
+release qualification. The [October 20 reconciliation](../evidence/2026-10-20-omega-processing-and-library-diagnosis.md)
+retains independent Host file-binding and stale phone Library cursor failures;
+neither failure is explained away by the other or by subsequent CI. Reproduce
+and close affected failures with exact-candidate evidence rather than deleting
+or relabeling their records. Named phone-model pairs and three-hour endurance
+runs are optional coverage, not codec-enablement blockers; Omega is eligible.
+
+Mac-only maintenance capture/Stop/playback/recovery and signed-artifact gates
+remain separate from companion-launch qualification. Owner idle/closed-app
+confirmation is pending for the exclusive Mac test window. Issue #105,
+secondary-Mac Client qualification, Mac App Store distribution and standalone
+phone inference remain deferred from this critical path unless evidence proves
+a dependency. This documentation task does not merge, build, capture, use
+credentials, install, publish or waive any physical/security/submission gate.
+
+## Historical checkpoint — October 19, 2026
 
 The active delivery branch is `codex/omega-delivery`, based on main `3afdccf`.
 Navigation, Setup/Sync, unified Library and recording motion (#130–133) are
@@ -234,7 +314,7 @@ the launch scope of the
 [production reliability plan](2026-08-23-production-reliability.md); it does not
 silently waive its applicable requirements.
 
-## Assessment and evidence limits
+## Historical assessment and evidence limits — October 14, 2026
 
 The review covered the complete tracked file inventory, package/project
 configuration, mobile application composition, capture and transfer paths,
@@ -254,7 +334,7 @@ Stop control. The last recorded automation-mode timeout is therefore a historica
 test-service blocker, not proof that today's service is still broken. A fresh
 physical run must establish its current state.
 
-## Existing foundation
+## Historical foundation inventory — October 14, 2026
 
 These capabilities are implemented and have focused or historical validation:
 
@@ -281,7 +361,11 @@ physical behavior still require acceptance evidence. See the
 [archive/export evidence](../evidence/2026-08-09-harcmobile-release-archive.md), and
 [latest physical diagnostics](../evidence/2026-08-23-harcmobile-current-tree-physical-diagnostics.md).
 
-## Verified gaps
+## Historical gap assessment — October 14–15, 2026
+
+The baseline/configuration and CI statements in this section are historical,
+not current instructions. Use the October 26 checkpoint for active status;
+preserve the unclosed safety and physical acceptance requirements.
 
 ### Production codec and new-recording transfer
 
@@ -302,7 +386,7 @@ retention. The October 18 owner correction supersedes the former four-cell,
 named-device and mandatory three-hour requirements. Optional endurance results
 remain useful characterization; they do not block this delivery.
 
-### Current validation and physical acceptance
+### Historical validation and physical acceptance
 
 **2026-10-15 update:** PR #106 is merged. Combined main `c802dce6` passed
 [CI 38738216824](https://github.com/jkrack/Harc/actions/runs/38738216824),
@@ -348,6 +432,11 @@ and submission readiness remain required.
 
 ## Milestones and completion evidence
 
+This original milestone breakdown retains the planning baseline. Milestone 1’s
+“Finish PR #106” is complete; current-source selection and validation remain
+required. Historical version/configuration gaps above must not be treated as
+new implementation tasks. The October 26 critical path governs remaining work.
+
 | Milestone | Work and dependencies | Evidence required to complete |
 | --- | --- | --- |
 | 1. Reliable current baseline | Finish PR #106; select clean source; run bounded package, macOS Host, and iOS build/test checks; refresh preparation drift. | Exact SHA/version/build, successful required CI and local app-target results, declared skips and real-model coverage limits. No bypassed failure. |
@@ -383,7 +472,10 @@ pricing/regions/agreements and other account fields, exact-build privacy/export
 decisions, and App Store submission confirmation. Do not create credentials,
 change security settings, or accept agreements without the required approval.
 
-## Effort and scope control
+## Historical effort estimate — October 14, 2026
+
+The following estimate is retained for provenance, not a current remaining-work
+forecast. Re-estimate from the October 26 critical path after physical acceptance.
 
 Plan for **15–30 focused person-days**, plus **5–10 days contingency** for failures
 and repeat qualification: approximately 3–6 focused working weeks with 1–2 reserve
