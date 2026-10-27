@@ -20,7 +20,12 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
                         interval(-600, -300), interval(86400, 87000), interval(120, 120)],
             day: day, calendar: calendar, locale: Locale(identifier: "en_US_POSIX")
         )
-        XCTAssertEqual(value, "Oct 27, 2026. 3 recordings: 12:00 AM to 12:01 AM; 1:00 AM to 1:05 AM; 11:59 PM to end of day")
+        // ICU versions differ only in the space before AM/PM. Preserve all time assertions.
+        func normalizedSpacing(_ value: String) -> String {
+            value.replacingOccurrences(of: "\u{202F}", with: " ")
+                .replacingOccurrences(of: "\u{00A0}", with: " ")
+        }
+        XCTAssertEqual(normalizedSpacing(value), "Oct 27, 2026. 3 recordings: 12:00 AM to 12:01 AM; 1:00 AM to 1:05 AM; 11:59 PM to end of day")
         XCTAssertEqual(HarcTideDayTimeline.accessibilitySummary(
             intervals: [interval(-600, -300)], day: day, calendar: calendar,
             locale: Locale(identifier: "en_US_POSIX")
@@ -30,10 +35,10 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         let springDay = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8))!
         let bounds = calendar.dateInterval(of: .day, for: springDay)!
         XCTAssertEqual(bounds.duration, 23 * 3600)
-        XCTAssertEqual(HarcTideDayTimeline.accessibilitySummary(
+        XCTAssertEqual(normalizedSpacing(HarcTideDayTimeline.accessibilitySummary(
             intervals: [DateInterval(start: bounds.end.addingTimeInterval(-60), duration: 120)],
             day: springDay, calendar: calendar, locale: Locale(identifier: "en_US_POSIX")
-        ), "Mar 8, 2026. 1 recording: 11:59 PM to end of day")
+        )), "Mar 8, 2026. 1 recording: 11:59 PM to end of day")
     }
 
     func testSetupMacIconInkStaysInsideItsTileAtEveryTextSize() throws {
