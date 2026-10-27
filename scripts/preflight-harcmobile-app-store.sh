@@ -94,14 +94,19 @@ require_equal() {
 # Keep source, archive, and exported-app declarations equally strict.
 # CA92.1 covers the app-local Host presentation cache and relay preference.
 # Apple reasons: https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitypereasons
-require_mobile_required_reason_apis() {
+require_mobile_privacy_manifest() {
   local manifest="$1"
   local label="$2"
+  # Optional means absent, not a present value of the wrong plist type.
+  local domains_type
+  if domains_type="$(plutil -type NSPrivacyTrackingDomains "$manifest" 2>/dev/null)"; then
+    require_equal "$domains_type" "array" "$label tracking domains must be an array"
+  fi
   local index
   local category
   local reason
   require_equal \
-    "$(plutil -extract NSPrivacyAccessedAPITypes raw -o - "$manifest" 2>/dev/null || true)" \
+    "$(plutil -extract NSPrivacyAccessedAPITypes raw -expect array -o - "$manifest" 2>/dev/null || true)" \
     "2" \
     "$label contains exactly two required-reason API declarations"
   for index in 0 1; do
@@ -113,15 +118,15 @@ require_mobile_required_reason_apis() {
       reason="CA92.1"
     fi
     require_equal \
-      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPIType raw -o - "$manifest" 2>/dev/null || true)" \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPIType raw -expect string -o - "$manifest" 2>/dev/null || true)" \
       "$category" \
       "$label category $index"
     require_equal \
-      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons raw -o - "$manifest" 2>/dev/null || true)" \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons raw -expect array -o - "$manifest" 2>/dev/null || true)" \
       "1" \
       "$label category $index reason count"
     require_equal \
-      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$manifest" 2>/dev/null || true)" \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons.0 raw -expect string -o - "$manifest" 2>/dev/null || true)" \
       "$reason" \
       "$label category $index reason"
   done
@@ -358,11 +363,11 @@ for USAGE_KEY in NSMicrophoneUsageDescription NSCameraUsageDescription NSLocalNe
     "$USAGE_KEY"
 done
 require_equal \
-  "$(plutil -extract NSPrivacyTracking raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+  "$(plutil -extract NSPrivacyTracking raw -expect bool -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
   "false" \
   "privacy manifest tracking declaration"
 require_equal \
-  "$(plutil -extract NSPrivacyCollectedDataTypes raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+  "$(plutil -extract NSPrivacyCollectedDataTypes raw -expect array -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
   "0" \
   "privacy manifest collected-data list is empty"
 SOURCE_TRACKING_DOMAIN_COUNT="$(plutil -extract NSPrivacyTrackingDomains raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)"
@@ -371,7 +376,7 @@ if [[ -z "$SOURCE_TRACKING_DOMAIN_COUNT" || "$SOURCE_TRACKING_DOMAIN_COUNT" == "
 else
   fail "privacy manifest tracking-domain list must be absent or empty"
 fi
-require_mobile_required_reason_apis \
+require_mobile_privacy_manifest \
   "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" \
   "privacy manifest"
 require_equal \
@@ -647,11 +652,11 @@ if [[ -n "$ARCHIVE" ]]; then
       if [[ -f "$APP/PrivacyInfo.xcprivacy" ]]; then
         pass "privacy manifest is bundled in the archive"
         require_equal \
-          "$(plutil -extract NSPrivacyTracking raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyTracking raw -expect bool -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "false" \
           "archived privacy manifest tracking declaration"
         require_equal \
-          "$(plutil -extract NSPrivacyCollectedDataTypes raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyCollectedDataTypes raw -expect array -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "0" \
           "archived privacy manifest collected-data list is empty"
         ARCHIVE_TRACKING_DOMAIN_COUNT="$(plutil -extract NSPrivacyTrackingDomains raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)"
@@ -660,7 +665,7 @@ if [[ -n "$ARCHIVE" ]]; then
         else
           fail "archived privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_mobile_required_reason_apis \
+        require_mobile_privacy_manifest \
           "$APP/PrivacyInfo.xcprivacy" \
           "archived privacy manifest"
       else
@@ -801,11 +806,11 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
       if [[ -f "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" ]]; then
         pass "privacy manifest is bundled in the distribution app"
         require_equal \
-          "$(plutil -extract NSPrivacyTracking raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyTracking raw -expect bool -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "false" \
           "distribution privacy manifest tracking declaration"
         require_equal \
-          "$(plutil -extract NSPrivacyCollectedDataTypes raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyCollectedDataTypes raw -expect array -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "0" \
           "distribution privacy manifest collected-data list is empty"
         DISTRIBUTION_TRACKING_DOMAIN_COUNT="$(plutil -extract NSPrivacyTrackingDomains raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)"
@@ -814,7 +819,7 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
         else
           fail "distribution privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_mobile_required_reason_apis \
+        require_mobile_privacy_manifest \
           "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" \
           "distribution privacy manifest"
       else
