@@ -4,9 +4,38 @@ import XCTest
 import SwiftUI
 import UIKit
 @testable import HarcMobile
+@testable import HarcPresenceUI
 
 @MainActor
 final class HarcMobileCaptureExperienceTests: XCTestCase {
+    func testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let day = calendar.date(from: DateComponents(year: 2026, month: 10, day: 27))!
+        func interval(_ start: Double, _ end: Double) -> DateInterval {
+            DateInterval(start: day.addingTimeInterval(start), end: day.addingTimeInterval(end))
+        }
+        let value = HarcTideDayTimeline.accessibilitySummary(
+            intervals: [interval(3600, 3900), interval(86340, 86700), interval(-60, 60),
+                        interval(-600, -300), interval(86400, 87000), interval(120, 120)],
+            day: day, calendar: calendar, locale: Locale(identifier: "en_US_POSIX")
+        )
+        XCTAssertEqual(value, "Oct 27, 2026. 3 recordings: 12:00 AM to 12:01 AM; 1:00 AM to 1:05 AM; 11:59 PM to end of day")
+        XCTAssertEqual(HarcTideDayTimeline.accessibilitySummary(
+            intervals: [interval(-600, -300)], day: day, calendar: calendar,
+            locale: Locale(identifier: "en_US_POSIX")
+        ), "Oct 27, 2026. No recordings")
+        // A daylight-saving day is not assumed to contain 24 hours.
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let springDay = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8))!
+        let bounds = calendar.dateInterval(of: .day, for: springDay)!
+        XCTAssertEqual(bounds.duration, 23 * 3600)
+        XCTAssertEqual(HarcTideDayTimeline.accessibilitySummary(
+            intervals: [DateInterval(start: bounds.end.addingTimeInterval(-60), duration: 120)],
+            day: springDay, calendar: calendar, locale: Locale(identifier: "en_US_POSIX")
+        ), "Mar 8, 2026. 1 recording: 11:59 PM to end of day")
+    }
+
     func testSetupMacIconInkStaysInsideItsTileAtEveryTextSize() throws {
         for size in DynamicTypeSize.allCases {
             let renderer = ImageRenderer(content:
