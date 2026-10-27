@@ -7,6 +7,45 @@ import UIKit
 
 @MainActor
 final class HarcMobileCaptureExperienceTests: XCTestCase {
+    func testSetupMacIconInkStaysInsideItsTileAtEveryTextSize() throws {
+        for size in DynamicTypeSize.allCases {
+            let renderer = ImageRenderer(content:
+                HarcMobileMacIcon()
+                    .foregroundStyle(.black)
+                    .environment(\.colorScheme, .light)
+                    .environment(\.dynamicTypeSize, size)
+                    .frame(width: 160, height: 160)
+                    .background(.white)
+            )
+            renderer.scale = 1
+            let image = try XCTUnwrap(renderer.cgImage)
+            let attachment = XCTAttachment(image: UIImage(cgImage: image))
+            attachment.name = "Setup-Mac-symbol-\(size)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            var bytes = [UInt8](repeating: 0, count: 160 * 160 * 4)
+            let context = try XCTUnwrap(CGContext(
+                data: &bytes, width: 160, height: 160, bitsPerComponent: 8,
+                bytesPerRow: 640, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 160, height: 160))
+            var ink = 0
+            var escapedInk = 0
+            for y in 0..<160 {
+                for x in 0..<160 {
+                    let i = (y * 160 + x) * 4
+                    if bytes[i] < 64 && bytes[i + 1] < 64 && bytes[i + 2] < 64 && bytes[i + 3] > 240 {
+                        ink += 1
+                        if x < 58 || x >= 102 || y < 58 || y >= 102 { escapedInk += 1 }
+                    }
+                }
+            }
+            XCTAssertGreaterThan(ink, 20, "The symbol must actually render at \(size)")
+            XCTAssertEqual(escapedInk, 0, "Symbol ink escaped the 44-point tile at \(size)")
+        }
+    }
+
     func testTextActionContrastOnLibrarySurfaces() {
         func luminance(_ color: UIColor) -> Double {
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
