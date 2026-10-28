@@ -1197,6 +1197,15 @@ extension HarcTransferStore {
                     field: "chunkOutbox"
                 )
                 if machine.state != .durableAtHost {
+                    // A transport failure can follow Host acceptance but precede
+                    // its ACK. Reconciliation above binds the exact chunk facts;
+                    // restore the immutable ready bytes before accepting durability.
+                    if machine.state == .failedRecoverable {
+                        try machine.retryRecoverable()
+                    }
+                    if machine.state == .ready {
+                        try machine.schedule()
+                    }
                     try machine.markDurableAtHost()
                     try persistChunkMachine(
                         machine,
