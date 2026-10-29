@@ -54,10 +54,14 @@ struct HarcForegroundRecordingOutboxCoordinatorTests {
         #expect(await rpc.callCounts() == callsBeforeReplay)
     }
 
-    @Test("cancellation after host commit preserves exact manifest and resumes idempotently")
-    func cancellationAfterCommitResumes() async throws {
+    @Test("cancellation after host commit preserves exact manifest across reopen and retry", arguments: [false, true])
+    func cancellationAfterCommitResumes(reopen: Bool) async throws {
         let fixture = try ForegroundCoordinatorFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let origin = fixture.plan.originRecordingID
+        let masterBytes = try Data(contentsOf: fixture.masterURL)
+        let chunkBytes = try fixture.plan.chunks.map { try Data(contentsOf: $0.encodedFileURL) }
+        _ = try fixture.store.requestCleanup(for: origin, requestedAt: fixture.now)
         let rpc = ForegroundRecordingRPCFake(
             fixture: fixture,
             mode: .cancelFirstCommittedResponse
@@ -75,6 +79,7 @@ struct HarcForegroundRecordingOutboxCoordinatorTests {
                 deviceSigner: fixture.deviceKey
             )
         }
+        let hostReceipt = try #require(await rpc.acceptedReceipt())
         let pendingAttempt = try #require(
             try fixture.store.uploadAttempt(id: fixture.plan.uploadID)
         ).attempt
@@ -86,17 +91,58 @@ struct HarcForegroundRecordingOutboxCoordinatorTests {
             for: fixture.plan.originRecordingID
         ) == nil)
 
-        let committed = try await coordinator.drive(
-            fixture.plan,
+        #expect(try fixture.store.cleanupIntent(for: origin)?.isEligible == false)
+        #expect(try Data(contentsOf: fixture.masterURL) == masterBytes)
+        let store = try reopen ? HarcTransferStore(
+            rootDirectory: fixture.root, installationDeviceID: origin.deviceID,
+            storageAttributes: ForegroundCoordinatorStorageAttributes(), now: { fixture.now }
+        ) : fixture.store
+        let intent = try #require(try store.uploadBeginIntent(for: origin)).intent
+        let restoredPlan = try HarcForegroundRecordingUploadPlan(
+            trustTuple: intent.trustTuple, uploadID: intent.uploadID,
+            originRecordingID: intent.originRecordingID, frozenProfile: intent.frozenProfile,
+            chunks: intent.chunks.map {
+                try HarcForegroundEncodedChunk(descriptor: $0.descriptor, encodedFileURL: $0.encodedFileURL)
+            }
+        )
+        #expect(restoredPlan == fixture.plan)
+        #expect(try store.verifiedRecordingReceipt(for: origin) == nil)
+        #expect(try store.cleanupIntent(for: origin)?.isEligible == false)
+        #expect(try store.uploadAttempt(id: intent.uploadID)?.attempt.boundManifest?.exactBytes == exactManifest)
+        let resumed = reopen ? HarcForegroundRecordingOutboxCoordinator(
+            store: store, transport: rpc, now: { fixture.now }
+        ) : coordinator
+        let committed = try await resumed.drive(
+            restoredPlan,
             openedSession: fixture.session,
             deviceSigner: fixture.deviceKey
         )
         #expect(committed.uploadID == fixture.plan.uploadID)
+        #expect(committed.exactReceiptObject == hostReceipt)
         #expect(await rpc.commitCallCount() == 1)
         #expect(await rpc.acceptedManifestBytes() == exactManifest)
-        #expect(try fixture.store.uploadAttempt(
+        #expect(try store.uploadAttempt(
             id: fixture.plan.uploadID
         )?.attempt.boundManifest?.exactBytes == exactManifest)
+        #expect(await rpc.uploadedIndexes() == [0, 1])
+        #expect(try store.verifiedRecordingReceipt(for: origin) == committed)
+        #expect(try store.cleanupIntent(for: origin)?.isEligible == true)
+        #expect(committed.canonicalPCMSHA256 == fixture.capture.canonicalPCMSHA256)
+        #expect(committed.totalCanonicalFrames == fixture.capture.totalCanonicalFrames)
+        #expect(try Data(contentsOf: fixture.masterURL) == masterBytes)
+        #expect(try restoredPlan.chunks.map { try Data(contentsOf: $0.encodedFileURL) } == chunkBytes)
+        let calls = await rpc.callCounts()
+        let replay = try await resumed.drive(
+            restoredPlan, openedSession: fixture.session, deviceSigner: fixture.deviceKey
+        )
+        #expect(replay == committed)
+        #expect(await rpc.callCounts() == calls)
+        let persisted = try HarcTransferStore(
+            rootDirectory: fixture.root, installationDeviceID: origin.deviceID,
+            storageAttributes: ForegroundCoordinatorStorageAttributes(), now: { fixture.now }
+        )
+        #expect(try persisted.verifiedRecordingReceipt(for: origin) == committed)
+        #expect(try persisted.cleanupIntent(for: origin)?.isEligible == true)
     }
 
     @Test("valid response for another request cannot advance durable state")
@@ -1347,6 +1393,7 @@ private actor ForegroundRecordingRPCFake:
         heldBeginContinuation = nil
     }
     func acceptedManifestBytes() -> Data? { exactManifest }
+    func acceptedReceipt() -> OpaqueExactObjectSlot? { receipt }
 
     func callCounts() -> [Int] {
         [
