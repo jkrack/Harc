@@ -1,8 +1,58 @@
 # iPhone companion launch plan
 
-## Current checkpoint — October 26, 2026
+## Current checkpoint — October 30, 2026
 
-This checkpoint supersedes dated status and continuation instructions below.
+This checkpoint supersedes the dated status snapshots below; historical test
+results remain scoped to their original source, artifact and device.
+
+The preparation base is main `ec04ea8329afc02a40555581a3b52c52422c767a`.
+It includes #164's plan reconciliation, [#167](https://github.com/jkrack/Harc/pull/167)'s
+typed privacy checks, [#168](https://github.com/jkrack/Harc/pull/168)'s lost chunk
+acknowledgment recovery and [#169](https://github.com/jkrack/Harc/pull/169)'s
+receipt-recovery regression after persistence reopen. The separate
+[0.14.20 (75) preparation refresh](../evidence/2026-10-30-mac-maintenance-refresh.md)
+uses this main without rewriting held draft [#155](https://github.com/jkrack/Harc/pull/155)
+at `3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a`. Neither draft is release-qualified.
+
+Published [0.14.19 (74)](https://github.com/jkrack/Harc/releases/tag/v0.14.19)
+remains live. October 28 independent downloads passed GitHub digest/size checks,
+ZIP-to-DMG byte matching, signatures, stapled-ticket and Gatekeeper verification;
+the live feed's version/build, URL, length and Ed25519 signature matched the
+published app's public key. This qualifies those published bytes, not installation,
+an upgrade or physical capture. The release notes retain the owner-waived affected-Mac
+audible-recording check. Evidence is linked in the preparation refresh record.
+
+For held #155, October 26 development signing preserved hardened runtime and
+entitlements and enabled diagnostic startup after the ad-hoc library-validation
+failure. A microphone-only Start then visible Stop left Saving unresolved and no
+persisted test audio at the last permitted lifecycle check. Owner idle/normal-quit
+and diagnostic-signing approvals had arrived; the outstanding blocker is reporting
+and resolving the pending OS dialog, not those older approvals. No dialog permission
+is inferred. Mac capture, visible/hotkey Stop, durable playback, recovery and final
+release-artifact gates remain open on the eventual selected candidate.
+
+On unchanged main, the October 30 independent audits reported 57 passing receipt
+fail-closed tests and 15 passing Library/cache fixtures, with no source change
+warranted. Full-resync RPC was reviewed statically only; the physical stale-cache
+cause is still unresolved. Preserve the independent October 20 Host file-binding
+and phone Library-cursor failures. These fixture results do not close either
+physical failure or qualify a newly versioned build.
+
+The phone critical path remains sealed exact-source codec bit-exact PCM/EOF,
+production transfer, durable verified receipt, complete canonical PCM hash match
+and protected-master retention, followed by ordinary phone → Host → phone Library
+playback/transcript acceptance. Use the [physical runbook](../operations/mobile-physical-qualification.md).
+Named model pairs and three-hour endurance are optional coverage, not codec blockers.
+The UI drafts #159/#161/#162/#163/#165/#166 remain separate and unaccepted as a full
+physical/accessibility release surface; do not import them into this maintenance draft.
+Mac-only maintenance gates are separate from phone launch gates. App Store remains
+NO-GO: exact archive/export, privacy review, owner fields, screenshots, physical
+acceptance and explicit submission approval remain open. Issue #105, secondary-Mac
+qualification, Mac App Store and standalone phone inference remain deferred.
+
+## Historical checkpoint — October 26, 2026
+
+This checkpoint records the October 26 state and is superseded by the current checkpoint above.
 Historical results remain scoped to their recorded source, artifact and device;
 no old pass closes a current physical or submission gate.
 
