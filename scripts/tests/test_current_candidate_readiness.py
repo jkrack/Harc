@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -51,6 +52,33 @@ class CurrentCandidateReadinessTests(unittest.TestCase):
             capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def assert_live_gate_identity(self, record, version, build):
+        rows = [line for line in record.splitlines()
+                if line.startswith('| Candidate version/build identification |')]
+        self.assertEqual(len(rows), 1, 'exactly one live candidate identity row required')
+        self.assertIn(f'Match source {version} ({build});', rows[0])
+        self.assertIn(f'No {version} phone artifact is selected or qualified;', rows[0])
+
+    def test_live_gate_row_matches_project_configuration(self):
+        root = SCRIPT.parents[1]
+        project = (root / 'project.yml').read_text()
+        version = re.search(r'^    MARKETING_VERSION: "([^"\n]+)"$', project, re.M)[1]
+        build = re.search(r'^    CURRENT_PROJECT_VERSION: "([^"\n]+)"$', project, re.M)[1]
+        self.assert_live_gate_identity((root / ACTIVE).read_text(), version, build)
+
+    def test_live_gate_row_rejects_drift_without_relabeling_history(self):
+        row = ('| Candidate version/build identification | Identified only | '
+               'Match source 0.14.13 (68); retain receipts. '
+               'No 0.14.13 phone artifact is selected or qualified; |')
+        history = '\nSource preparation inputs were refreshed for 0.14.10 (65).'
+        self.assert_live_gate_identity(row + history, '0.14.13', '68')
+        for changed in (row.replace('Match source 0.14.13', 'Match source 0.14.10'),
+                        row.replace('(68)', '(65)'),
+                        row.replace('No 0.14.13', 'No 0.14.10'),
+                        '', row + '\n' + row):
+            with self.subTest(record=changed), self.assertRaises(AssertionError):
+                self.assert_live_gate_identity(changed + history, '0.14.13', '68')
 
     def test_current_record_matches_without_relabeling_history(self):
         self.assertEqual(self.run_gate(VALID, OLD), 0)
