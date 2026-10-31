@@ -226,10 +226,7 @@ struct HarcMobileMacCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Image(systemName: "macmini")
-                    .font(.title2)
-                    .frame(width: 44, height: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                HarcMobileMacIcon()
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
@@ -944,5 +941,17 @@ private struct HarcMobilePairingFlowView: View {
             return []
         }
         return phrase.split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+}
+
+/// Decorative host symbol; its tile must contain the rendered glyph at every text size.
+struct HarcMobileMacIcon: View {
+    var body: some View {
+        Image(systemName: "macmini")
+            .resizable()
+            .scaledToFit()
+            .padding(10)
+            .frame(width: 44, height: 44)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
 }

@@ -6,6 +6,32 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testSetupMacCardRemainsUsableAtNormalAndLargestText() {
+        for category in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
+            let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
+                "-UIPreferredContentSizeCategoryName", category,
+            ])
+            app.launch()
+            openSetupAndSync(in: app)
+            XCTAssertTrue(app.staticTexts["Pair your Mac"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["Not paired"].exists)
+            let pair = app.buttons["Pair a Mac"]
+            XCTAssertTrue(pair.isEnabled)
+            XCTAssertTrue(pair.isHittable)
+            XCTAssertTrue(app.frame.contains(pair.frame))
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Setup-Mac-card-\(category)"
+            shot.lifetime = .keepAlways
+            add(shot)
+            app.buttons["Done"].tap()
+            XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["harc.mobile.record.start"].exists)
+            XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+            app.terminate()
+            XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        }
+    }
+
     func testRecordingEntryIsExplicitAndDisclosesLocalHandling() {
         let app = makeApp(rootID: TestRoot.recordingEntry)
         app.launch()
