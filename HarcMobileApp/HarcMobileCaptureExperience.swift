@@ -6,6 +6,13 @@ import UIKit
 enum HarcMobilePalette {
     // White text on this blue exceeds the 4.5:1 normal-text contrast floor.
     static let action = Color(red: 0, green: 0.34, blue: 0.72)
+    // Text actions need a lighter blue on dark surfaces; filled actions retain
+    // the darker background above so their white labels remain readable.
+    static let actionText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.40, green: 0.72, blue: 1, alpha: 1)
+            : UIColor(red: 0, green: 0.34, blue: 0.72, alpha: 1)
+    })
     static let indigo = Color(red: 0.20, green: 0.18, blue: 0.55)
     static let violet = Color(red: 0.47, green: 0.22, blue: 0.72)
     static let cyan = Color(red: 0.10, green: 0.58, blue: 0.75)

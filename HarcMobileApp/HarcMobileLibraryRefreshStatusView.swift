@@ -44,6 +44,7 @@ struct HarcMobileLibraryRefreshStatusView: View {
             }
         }
         .buttonStyle(.borderless)
+        .tint(HarcMobilePalette.actionText)
         .padding(.vertical, 6)
     }
 

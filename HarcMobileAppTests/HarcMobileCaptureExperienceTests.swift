@@ -1,10 +1,76 @@
 import AVFAudio
 import HarcDomain
 import XCTest
+import SwiftUI
+import UIKit
 @testable import HarcMobile
 
 @MainActor
 final class HarcMobileCaptureExperienceTests: XCTestCase {
+    func testTextActionContrastOnLibrarySurfaces() {
+        func luminance(_ color: UIColor) -> Double {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            XCTAssertTrue(color.getRed(&r, green: &g, blue: &b, alpha: &a))
+            func linear(_ value: CGFloat) -> Double {
+                let v = Double(value)
+                return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        }
+        for style: UIUserInterfaceStyle in [.light, .dark] {
+            let traits = UITraitCollection(userInterfaceStyle: style)
+            let foreground = luminance(UIColor(HarcMobilePalette.actionText).resolvedColor(with: traits))
+            for surface in [UIColor.systemBackground, .secondarySystemGroupedBackground] {
+                let background = luminance(surface.resolvedColor(with: traits))
+                let ratio = (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05)
+                XCTAssertGreaterThanOrEqual(ratio, 4.5, "Text action contrast in \(style)")
+            }
+        }
+    }
+
+    func testLongHostNameIsPreservedInAccessiblePresentation() {
+        let name = "Fixture Mac mini — Design and Accessibility Review Workstation"
+        let presentation = HarcMobileHostPillPresentation.make(
+            status: .connected(lastVerifiedAt: Date(timeIntervalSinceReferenceDate: 100)),
+            hostName: name
+        )
+        XCTAssertEqual(presentation.title, name)
+        XCTAssertEqual(presentation.accessibilityValue, "\(name), connected")
+    }
+
+    func testLongHostNameAtNormalAndLargestText() {
+        let name = "Fixture Mac mini — Design and Accessibility Review Workstation"
+        let presentation = HarcMobileHostPillPresentation.make(
+            status: .connected(lastVerifiedAt: Date(timeIntervalSinceReferenceDate: 100)),
+            hostName: name
+        )
+        for size: DynamicTypeSize in [.large, .accessibility5] {
+            let host = UIHostingController(rootView:
+                HarcMobileHostPill(presentation: presentation, action: {})
+                    .environment(\.dynamicTypeSize, size)
+                    .padding(16)
+            )
+            host.safeAreaRegions = []
+            let fit = host.sizeThatFits(in: CGSize(width: 390, height: 844))
+            XCTAssertLessThanOrEqual(fit.width, 390)
+            XCTAssertLessThan(fit.height, 844)
+            XCTAssertGreaterThanOrEqual(fit.height, 76)
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: fit.height))
+            window.rootViewController = host
+            window.isHidden = false
+            host.view.frame = window.bounds
+            host.view.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "Long-Mac-name-component-\(size)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            window.isHidden = true
+        }
+    }
+
     func testAudioMeterReportsActivityAndResetsWithoutTouchingCaptureState() {
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,

@@ -839,6 +839,44 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             "Accessibility audit found \(findings.count) issue(s) on \(surface)."
         )
     }
+    func testLibraryTextActionsHaveAccessibleContrast() throws {
+        let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
+            "--harc-ui-test-cached-library",
+        ])
+        app.launch()
+        defer { app.terminate() }
+        selectTab("Library", in: app)
+        let identifiers = ["harc.mobile.library.refresh-action", "harc.mobile.library.refresh-setup"]
+        for identifier in identifiers {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Library-text-action-contrast"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        // This regression targets the confirmed text-action defect. Other audit
+        // findings remain part of the separate full-screen accessibility review.
+        var actionFindings: [String] = []
+        try app.performAccessibilityAudit(for: .contrast) { issue in
+            if let element = issue.element,
+               identifiers.contains(element.identifier)
+                || ["Refresh Library", "Setup & Sync", "All"].contains(element.label) {
+                actionFindings.append("\(element.identifier) \(element.label): \(issue.compactDescription)")
+            }
+            return true
+        }
+        XCTAssertTrue(actionFindings.isEmpty, actionFindings.joined(separator: "\n"))
+        let setup = app.buttons["harc.mobile.library.refresh-setup"]
+        for _ in 0..<5 where !setup.isHittable { app.swipeUp() }
+        XCTAssertTrue(setup.isHittable)
+        setup.tap()
+        XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+    }
+
     func testLibraryDaySummaryRemainsReadableAtLargestText() {
         for category in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
             let app = makeApp(rootID: UUID().uuidString, additionalArguments: [

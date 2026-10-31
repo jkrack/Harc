@@ -307,8 +307,10 @@ struct HarcMobileRootView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 Button("All") { libraryDay = nil }
-                    .buttonStyle(.bordered)
-                    .tint(libraryDay == nil ? HarcMobilePalette.action : .secondary)
+                    .buttonStyle(.borderedProminent)
+                    .tint(libraryDay == nil ? HarcMobilePalette.action : Color(uiColor: .tertiarySystemFill))
+                    .foregroundStyle(libraryDay == nil ? Color.white : Color.primary)
+                    .accessibilityAddTraits(libraryDay == nil ? .isSelected : [])
                 ForEach(days, id: \.self) { day in
                     Button { libraryDay = day } label: {
                         VStack(spacing: 4) {
@@ -321,6 +323,7 @@ struct HarcMobileRootView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(libraryDay == day ? HarcMobilePalette.action : .secondary)
+                    .foregroundStyle(.primary)
                     .accessibilityLabel(day.formatted(date: .complete, time: .omitted))
                     .accessibilityAddTraits(libraryDay == day ? .isSelected : [])
                 }
