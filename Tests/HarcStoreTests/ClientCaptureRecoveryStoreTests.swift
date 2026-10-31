@@ -5,6 +5,28 @@ import Testing
 
 @Suite("Client capture local Library recovery")
 struct ClientCaptureRecoveryStoreTests {
+    @Test("Client discontinuities survive Library persistence and reject conflicting replay")
+    func preservesDiscontinuities() async throws {
+        let store = try await RecordingStore.inMemory()
+        let facts = try fixtureFacts()
+        let issue = try CaptureDiscontinuity(recordingID: facts.origin,
+            monotonicTimeNanoseconds: 100, wallTime: facts.started,
+            reason: .bufferOverrun, affectedFrames: CanonicalFrameRange(startFrame: 100, endFrameExclusive: 100),
+            canonicalizationPolicy: .annotateGapWithoutInsertedSilence)
+        func save(_ issues: [CaptureDiscontinuity]) async throws -> ClientCaptureLibraryResult {
+            try await store.reconcileClientCapture(originID: facts.origin, canonicalPCMHash: facts.hash,
+                canonicalPCMFrames: 16000, masterURL: facts.master, startedAt: facts.started,
+                endedAt: facts.started.addingTimeInterval(1), transcriptText: nil,
+                transcriptJSONURL: nil, transcriptMarkdownURL: nil, sttModelID: nil,
+                transcribedAt: nil, discontinuities: issues)
+        }
+        let first = try await save([issue])
+        let replay = try await save([issue])
+        #expect(replay.recording.captureDiscontinuities == [issue])
+        #expect(replay.recording.id == first.recording.id)
+        await #expect(throws: StoreError.originIdentityConflict) { try await save([]) }
+    }
+
     @Test("verified Client capture is inserted once with durable identity")
     func insertsIdempotently() async throws {
         let store = try await RecordingStore.inMemory()
@@ -81,7 +103,7 @@ struct ClientCaptureRecoveryStoreTests {
                 )!
             ),
             hash: try CanonicalPCMHash(Data(repeating: 0x31, count: 32)),
-            master: URL(fileURLWithPath: "/tmp/client-recovered.wav"),
+            master: FileManager.default.temporaryDirectory.appendingPathComponent("harc-client-recovered-\(UUID().uuidString).wav"),
             started: Date(timeIntervalSince1970: 1_800_000_000)
         )
     }

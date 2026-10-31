@@ -10,18 +10,21 @@ cd "$SRCROOT"
 # Shares the daemon's scratch dir — same package, same dependency graph, so
 # a combined build reuses every module the harc-stt phase already compiled.
 SCRATCH="$SRCROOT/.build-daemon"
-BUILD_JOBS="${HARC_EMBED_BUILD_JOBS:-2}"
+mkdir -p "$SCRATCH"
+# Match the daemon and direct Swift test invocations through SSD symlinks.
+SCRATCH="$(cd "$SCRATCH" && pwd -P)"
+source "$SRCROOT/scripts/build-concurrency.sh"
+harc_configure_build_jobs "${HARC_EMBED_BUILD_JOBS:-${HARC_BUILD_JOBS:-}}"
 echo "note: building harc-mcp into $SCRATCH"
 
-swift build \
-  --jobs "$BUILD_JOBS" \
+harc_swift build \
   -c release \
   --product harc-mcp \
   --scratch-path "$SCRATCH" \
   --arch arm64
 
 # SwiftPM's default build engine changed in Xcode 27; query its output path.
-BIN_DIR="$(swift build --jobs "$BUILD_JOBS" -c release --product harc-mcp \
+BIN_DIR="$(harc_swift build -c release --product harc-mcp \
   --scratch-path "$SCRATCH" --arch arm64 --show-bin-path)"
 MCP_SRC="$BIN_DIR/harc-mcp"
 MCP_DST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/harc-mcp"

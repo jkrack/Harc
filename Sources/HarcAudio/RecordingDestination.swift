@@ -1,10 +1,48 @@
 import Foundation
+import HarcCore
 
 public struct RecordingDestination: Sendable {
     public let baseDirectory: URL
+    private let volumeIdentity: String?
 
     public init(baseDirectory: URL) {
         self.baseDirectory = baseDirectory
+        // Freeze the filesystem identity when capture/import is configured,
+        // before finalization can observe a vanished mount as a local path.
+        self.volumeIdentity = try? RecordingPublication.volumeIdentity(
+            containing: baseDirectory.appendingPathComponent(".harc-volume-probe")
+        )
+    }
+
+    public func validate() throws {
+        guard let volumeIdentity,
+              try RecordingPublication.volumeIdentity(containing: baseDirectory.appendingPathComponent(".harc-volume-probe")) == volumeIdentity else {
+            throw RecordingPublication.PublicationError.destinationUnavailable
+        }
+    }
+
+    public func persistBinding(for source: URL) throws {
+        try validate()
+        guard let volumeIdentity else { throw RecordingPublication.PublicationError.destinationUnavailable }
+        try CaptureDestinationBinding(source: source, baseDirectory: baseDirectory,
+                                      volumeIdentity: volumeIdentity).save()
+    }
+
+    func restoringBinding(for source: URL) throws -> Self {
+        guard let binding = try CaptureDestinationBinding.load(for: source) else { return self }
+        try binding.validate()
+        return Self(baseDirectory: binding.baseDirectory, volumeIdentity: binding.volumeIdentity)
+    }
+
+    private init(baseDirectory: URL, volumeIdentity: String) {
+        self.baseDirectory = baseDirectory
+        self.volumeIdentity = volumeIdentity
+    }
+
+    public func preparePublication(from source: URL, to destination: URL) throws -> RecordingPublication {
+        try validate()
+        return try RecordingPublication.prepare(source: source, destination: destination,
+                                                expectedVolumeIdentity: volumeIdentity)
     }
 
     /// Default base: `~/Documents/Harc/`. Plan 5 will replace this with user-configurable.
@@ -22,13 +60,45 @@ public struct RecordingDestination: Sendable {
     /// Directory that holds in-progress recordings before they are finalized
     /// into the user's public destination folder.
     public static func cacheDirectory() -> URL {
+        #if DEBUG
+        if let isolated = uiTestCacheDirectory(
+            environment: ProcessInfo.processInfo.environment,
+            temporaryDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
+            processIdentifier: ProcessInfo.processInfo.processIdentifier
+        ) {
+            return isolated
+        }
+        #endif
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return caches.appendingPathComponent("Harc/recordings", isDirectory: true)
     }
 
+    #if DEBUG
+    /// Capture and recovery must share the same isolated cache in UI tests.
+    /// Match AppDelegate's fallback root when the harness omits an explicit root.
+    static func uiTestCacheDirectory(
+        environment: [String: String],
+        temporaryDirectory: URL,
+        processIdentifier: Int32
+    ) -> URL? {
+        guard environment["HARC_UI_TESTING"] == "1" else { return nil }
+        let root: URL
+        if let path = environment["HARC_UI_TEST_ROOT"],
+           !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            root = URL(fileURLWithPath: path, isDirectory: true)
+        } else {
+            root = temporaryDirectory.appendingPathComponent(
+                "harc-ui-test-\(processIdentifier)", isDirectory: true
+            )
+        }
+        return root.appendingPathComponent("RecordingCache", isDirectory: true)
+    }
+    #endif
+
     /// The final public path for a recording started at `date`.
     /// Shape: `<base>/YYYY/YYYY-MM-DD/HH-mm-ss.wav`. Appends `-1`, `-2`, … on collision.
     public func publicPath(for date: Date) throws -> URL {
+        try validate()
         let cal = Calendar.current
         let year = String(format: "%04d", cal.component(.year, from: date))
         let month = String(format: "%02d", cal.component(.month, from: date))
@@ -44,7 +114,8 @@ public struct RecordingDestination: Sendable {
 
         var candidate = dayDir.appendingPathComponent("\(base).wav")
         var suffix = 1
-        while FileManager.default.fileExists(atPath: candidate.path) {
+        while FileManager.default.fileExists(atPath: candidate.path)
+            || FileManager.default.fileExists(atPath: CaptureIntegrityReport.sidecarURL(for: candidate).path) {
             candidate = dayDir.appendingPathComponent("\(base)-\(suffix).wav")
             suffix += 1
         }
@@ -52,15 +123,9 @@ public struct RecordingDestination: Sendable {
     }
 
     /// Move a finished recording into the destination hierarchy, creating parent directories.
-    /// Uses `replaceItem` for atomicity across the rename + potential overwrite.
+    /// Refuse an occupied destination, including a collision after publicPath
+    /// was selected. Publication never has authority to replace another master.
     public static func atomicMove(from src: URL, to dst: URL) throws {
-        let parent = dst.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-        // replaceItem handles both pre-existing dst and fresh dst.
-        if FileManager.default.fileExists(atPath: dst.path) {
-            _ = try FileManager.default.replaceItemAt(dst, withItemAt: src)
-        } else {
-            try FileManager.default.moveItem(at: src, to: dst)
-        }
+        try RecordingPublication.prepare(source: src, destination: dst).publish()
     }
 }

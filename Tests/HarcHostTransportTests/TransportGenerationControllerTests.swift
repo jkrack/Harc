@@ -3,11 +3,12 @@ import Foundation
 import HarcHost
 import HarcProtocol
 @testable import HarcHostTransport
+import HarcTestSupport
 import NIOTransportServices
 import Network
 import Testing
 
-@Suite("Transport generation controller")
+@Suite("Transport generation controller", .processWideSystemResource)
 struct TransportGenerationControllerTests {
     @Test("advertised upload port must match the bound upload listener port")
     func uploadPortHintMustMatch() throws {

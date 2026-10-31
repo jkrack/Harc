@@ -162,6 +162,9 @@ public struct LibraryRecordingDetail: Codable, Equatable, Hashable, Sendable {
     public let actionItemsMarkdown: String?
     public let notesMarkdown: String?
     public let discontinuities: [CaptureDiscontinuity]
+    /// A recorded capture failure needs review even when no producing-device
+    /// origin exists. False means no reported issue, not verified completeness.
+    public let captureNeedsReview: Bool
 
     public init(
         summary: LibraryRecordingSummary,
@@ -170,7 +173,8 @@ public struct LibraryRecordingDetail: Codable, Equatable, Hashable, Sendable {
         summaryMarkdown: String? = nil,
         actionItemsMarkdown: String? = nil,
         notesMarkdown: String? = nil,
-        discontinuities: [CaptureDiscontinuity] = []
+        discontinuities: [CaptureDiscontinuity] = [],
+        captureNeedsReview: Bool = false
     ) throws {
         let labelIndices = speakerLabels.map(\.speakerIndex)
         guard labelIndices == labelIndices.sorted() else {
@@ -206,6 +210,7 @@ public struct LibraryRecordingDetail: Codable, Equatable, Hashable, Sendable {
         self.actionItemsMarkdown = actionItemsMarkdown
         self.notesMarkdown = notesMarkdown
         self.discontinuities = discontinuities
+        self.captureNeedsReview = captureNeedsReview || !discontinuities.isEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -216,6 +221,7 @@ public struct LibraryRecordingDetail: Codable, Equatable, Hashable, Sendable {
         case actionItemsMarkdown
         case notesMarkdown
         case discontinuities
+        case captureNeedsReview
     }
 
     public init(from decoder: any Decoder) throws {
@@ -228,7 +234,8 @@ public struct LibraryRecordingDetail: Codable, Equatable, Hashable, Sendable {
                 summaryMarkdown: container.decodeIfPresent(String.self, forKey: .summaryMarkdown),
                 actionItemsMarkdown: container.decodeIfPresent(String.self, forKey: .actionItemsMarkdown),
                 notesMarkdown: container.decodeIfPresent(String.self, forKey: .notesMarkdown),
-                discontinuities: container.decode([CaptureDiscontinuity].self, forKey: .discontinuities)
+                discontinuities: container.decode([CaptureDiscontinuity].self, forKey: .discontinuities),
+                captureNeedsReview: container.decodeIfPresent(Bool.self, forKey: .captureNeedsReview) ?? false
             )
         } catch {
             throw DecodingError.dataCorrupted(

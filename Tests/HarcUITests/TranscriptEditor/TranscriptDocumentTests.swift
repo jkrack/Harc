@@ -21,6 +21,42 @@ struct TranscriptDocumentTests {
         try encoder.encode(transcript).write(to: url)
     }
 
+    @Test("refresh generated overlap labels but preserve manual and external edits")
+    func overlapRefreshProtectsEdits() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let wav = dir.appendingPathComponent("overlap.wav")
+        let txt = dir.appendingPathComponent("overlap.txt")
+        let json = dir.appendingPathComponent("overlap.json")
+        let overlap = [try SpeechOverlapRange(startMs: 0, endMs: 500)]
+        var transcript = SessionTranscript(startedAt: Date(), endedAt: Date(), audioPath: wav.path,
+            joinedText: "mixed speech", words: [.init(text: "mixed speech", startMs: 0, endMs: 500)],
+            speakers: [.init(speaker: 0, startMs: 0, endMs: 500)], chunks: [])
+        transcript.overlapRanges = overlap
+        var rec = Recording(wavPath: wav.path, startedAt: Date())
+        rec.txtPath = txt.path; rec.jsonPath = json.path; rec.speakerNames = [0: "Alice"]
+        for (text, edited, shouldRefresh) in [
+            ("mixed speech", false, true), ("Speaker 1: mixed speech", false, true),
+            ("Alice: mixed speech", false, true), ("Alice: mixed speech", true, false),
+            ("My corrected wording", false, false), ("Alice: My corrected wording", false, false)
+        ] {
+            transcript.manualEditAt = edited ? Date() : nil
+            try writeJSON(transcript, to: json)
+            try text.write(to: txt, atomically: true, encoding: .utf8)
+            let document = TranscriptDocument.load(recording: rec)
+            if shouldRefresh {
+                #expect(document.initialText.contains("Overlapping voices: mixed speech"))
+                #expect(!document.initialText.contains("Alice:"))
+            } else {
+                #expect(document.initialText == text)
+            }
+            #expect(document.overlapWarning != nil)
+            #expect(document.overlapRanges == overlap)
+            #expect(document.replacingInitialText("edited presentation").overlapRanges == overlap)
+            #expect(try String(contentsOf: txt, encoding: .utf8) == text)
+        }
+    }
+
     @Test("loads .txt + .json happy path")
     func happyPath() throws {
         let dir = try makeTempDir()

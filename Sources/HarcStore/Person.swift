@@ -33,20 +33,24 @@ public struct Person: Sendable, Equatable, Identifiable {
     }
 }
 
-/// "Speaker S in recording R is Person P, confirmed at T."
+/// A speaker assignment with separate human-confirmation provenance.
 /// PRIMARY KEY (recording_id, speaker_index) — a slot can only link to
 /// one Person.
 public struct PersonSpeakerLink: Sendable, Equatable {
     public let personID: Int64
     public let recordingID: Int64
     public let speakerIndex: Int
+    /// Historical assignment timestamp; only a confirmation when isUserConfirmed is true.
     public let confirmedAt: Date
+    public let isUserConfirmed: Bool
 
-    public init(personID: Int64, recordingID: Int64, speakerIndex: Int, confirmedAt: Date) {
+    public init(personID: Int64, recordingID: Int64, speakerIndex: Int, confirmedAt: Date,
+                isUserConfirmed: Bool = true) {
         self.personID = personID
         self.recordingID = recordingID
         self.speakerIndex = speakerIndex
         self.confirmedAt = confirmedAt
+        self.isUserConfirmed = isUserConfirmed
     }
 }
 

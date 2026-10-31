@@ -60,6 +60,67 @@ final class ModelManagerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: cfg, encoding: .utf8), "hello")
     }
 
+    func test_bootstrapRejectsIncompleteOrMismatchedInstallRecords() async throws {
+        let descriptor = Self.makeDescriptor(id: "readiness", files: [Self.namedFile(path: "weights.bin", bytes: 5)])
+        let directory = storage.modelDirectory(for: descriptor.id)
+        try storage.ensureModelDirectory(for: descriptor.id)
+        let file = directory.appendingPathComponent("weights.bin")
+        for variant in ["missing", "truncated", "directory", "revision", "identity", "recordBytes", "complete"] {
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+            if variant == "directory" {
+                try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+            } else if variant != "missing" {
+                try Data((variant == "truncated" ? "he" : "hello").utf8).write(to: file)
+            }
+            let record = ModelStorage.InstallRecord(
+                modelID: variant == "identity" ? "another-model" : descriptor.id,
+                revision: variant == "revision" ? "old-revision" : descriptor.revision,
+                bytes: variant == "recordBytes" ? 99 : descriptor.totalBytes,
+                skippedSHAVerification: false
+            )
+            try storage.writeInstallRecord(record)
+            if variant == "identity" {
+                try Data(contentsOf: storage.installMarker(for: record.modelID)).write(to: storage.installMarker(for: descriptor.id))
+            }
+            let manager = ModelManager(storage: storage, catalog: [descriptor])
+            await manager.bootstrap()
+            let state = await manager.state(of: descriptor.id)
+            XCTAssertEqual(state, variant == "complete" ? .installed : .absent, variant)
+        }
+    }
+
+    func test_requireInstalledRechecksFilesRemovedAfterBootstrap() async throws {
+        let descriptor = Self.makeDescriptor(id: "removed", files: [Self.namedFile(path: "weights.bin", bytes: 5)])
+        try storage.ensureModelDirectory(for: descriptor.id)
+        let file = storage.fileURL(forDescriptor: descriptor, file: descriptor.files[0])
+        try Data("hello".utf8).write(to: file)
+        try storage.writeInstallRecord(.init(modelID: descriptor.id, revision: descriptor.revision,
+                                             bytes: descriptor.totalBytes, skippedSHAVerification: false))
+        let manager = ModelManager(storage: storage, catalog: [descriptor])
+        await manager.bootstrap()
+        _ = try await manager.requireInstalled(descriptor.id)
+        try FileManager.default.removeItem(at: file)
+        do {
+            _ = try await manager.requireInstalled(descriptor.id)
+            XCTFail("Removed weights must not be returned as installed")
+        } catch ModelManager.Failure.notInstalled { }
+        let state = await manager.state(of: descriptor.id)
+        XCTAssertEqual(state, .absent)
+        XCTAssertNotNil(storage.readInstallRecord(for: descriptor.id), "Readiness must not delete user files or markers")
+    }
+
+    func test_downloadRepairsInstallWhoseFileWasRemoved() async throws {
+        let descriptor = Self.makeDescriptor(id: "repair", files: [Self.namedFile(path: "weights.bin", bytes: 5)])
+        let manager = ModelManager(storage: storage, engine: FakeDownloadEngine { _ in .writeBytes(Data("hello".utf8)) }, catalog: [descriptor])
+        try await manager.startDownload(descriptor.id)
+        _ = await awaitState(manager, id: descriptor.id, where: { $0.isInstalled || $0.isFailed })
+        try FileManager.default.removeItem(at: storage.fileURL(forDescriptor: descriptor, file: descriptor.files[0]))
+        try await manager.startDownload(descriptor.id)
+        let final = await awaitState(manager, id: descriptor.id, where: { $0.isInstalled || $0.isFailed })
+        XCTAssertEqual(final, .installed)
+        XCTAssertEqual(try Data(contentsOf: storage.fileURL(forDescriptor: descriptor, file: descriptor.files[0])), Data("hello".utf8))
+    }
+
     // MARK: - Cancel
 
     func test_cancel_midDownload_returnsToAbsent() async throws {

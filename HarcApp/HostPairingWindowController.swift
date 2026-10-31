@@ -9,6 +9,7 @@ import HarcHostTransport
 import HarcIdentity
 import HarcProtocol
 import SwiftUI
+import HarcPresenceUI
 import UniformTypeIdentifiers
 
 @MainActor
@@ -327,6 +328,7 @@ private struct HostPairingView: View {
         .padding(28)
         .frame(width: 520)
         .frame(minHeight: 620)
+        .background { HarcTideBackground() }
         .confirmationDialog(
             "Revoke this device?",
             isPresented: Binding(
@@ -521,7 +523,7 @@ private struct HostPairingView: View {
         VStack(spacing: 18) {
             Text(claim.requiresTransportTrustRepair
                  ? "Repair transport trust for \(claim.deviceLabel)?"
-                 : "Approve \(claim.deviceLabel)?")
+                 : "Does \(claim.deviceLabel) show these words?")
                 .font(.headline)
             deviceIdentityCard(
                 label: claim.deviceLabel,
@@ -535,12 +537,7 @@ private struct HostPairingView: View {
             Text("Confirm these four words match exactly on the device:")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Text(claim.sasWords.joined(separator: "  "))
-                .font(.system(.title3, design: .rounded, weight: .semibold))
-                .textSelection(.enabled)
-                .padding(14)
-                .frame(maxWidth: .infinity)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+            HarcTideSecurityWords(claim.sasWords.joined(separator: " "))
             VStack(alignment: .leading, spacing: 10) {
                 Text("Approved access")
                     .font(.subheadline.weight(.semibold))
@@ -574,7 +571,7 @@ private struct HostPairingView: View {
             HStack {
                 Button("Deny", role: .destructive) { model.deny() }
                 Spacer()
-                Button("Words Match — Approve") { model.approve() }
+                Button("They match, approve") { model.approve() }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.approvedScopes.isEmpty)
             }

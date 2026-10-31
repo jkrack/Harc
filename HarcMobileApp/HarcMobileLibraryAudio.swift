@@ -293,6 +293,8 @@ final class HarcMobileRecordingAudioController: NSObject {
     }
 
     private(set) var state: State = .idle
+    private(set) var envelope: [Float] = []
+    private var envelopeTask: Task<Void, Never>?
     private let coordinator: HarcMobileLibraryCoordinator
     private let summary: LibraryRecordingSummary
     private var player: AVAudioPlayer?
@@ -300,6 +302,17 @@ final class HarcMobileRecordingAudioController: NSObject {
     private var sessionOwner: UUID?
     #endif
     private var playbackGeneration: UInt64 = 0
+
+    var currentTime: TimeInterval { player?.currentTime ?? 0 }
+    var duration: TimeInterval {
+        player?.duration ?? Double(summary.canonicalAudio.totalFrames ?? 0) / 16_000
+    }
+    var canSeek: Bool { player != nil }
+
+    func seek(to time: TimeInterval) {
+        guard time.isFinite, let player else { return }
+        player.currentTime = min(player.duration, max(0, time))
+    }
 
     init(
         coordinator: HarcMobileLibraryCoordinator,
@@ -314,11 +327,17 @@ final class HarcMobileRecordingAudioController: NSObject {
             if player.isPlaying {
                 player.pause()
                 state = .paused
-            } else if player.play() {
-                state = .playing
             } else {
-                stopAndRelease()
-                state = .failed("Harc could not resume audio playback.")
+                do {
+                    #if os(iOS)
+                    try HarcMobilePlaybackSession.shared.reactivate(sessionOwner)
+                    #endif
+                    guard player.play() else { throw HarcMobileLibraryAudioError.playbackFailed }
+                    state = .playing
+                } catch {
+                    stopAndRelease()
+                    state = .failed(error.localizedDescription)
+                }
             }
             return
         }
@@ -351,6 +370,19 @@ final class HarcMobileRecordingAudioController: NSObject {
             }
             self.player = player
             state = .playing
+            envelopeTask?.cancel()
+            envelopeTask = Task { [weak self] in
+                let worker = Task.detached(priority: .utility) {
+                    (try? Self.readEnvelope(url: url)) ?? []
+                }
+                let samples = await withTaskCancellationHandler {
+                    await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled else { return }
+                self?.envelope = samples
+            }
         } catch {
             guard generation == playbackGeneration else { return }
             player?.stop()
@@ -362,6 +394,9 @@ final class HarcMobileRecordingAudioController: NSObject {
     }
 
     func stopAndRelease() {
+        envelopeTask?.cancel()
+        envelopeTask = nil
+        envelope = []
         playbackGeneration &+= 1
         player?.stop()
         player = nil
@@ -372,6 +407,28 @@ final class HarcMobileRecordingAudioController: NSObject {
         }
     }
 
+    /// Bounded-memory display data derived only from verified downloaded audio.
+    nonisolated static func readEnvelope(url: URL) throws -> [Float] {
+        let file = try AVAudioFile(forReading: url)
+        guard file.length > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)
+        else { return [] }
+        let binCount = min(320, Int(file.length))
+        var peaks = [Float](repeating: 0, count: binCount)
+        var position: AVAudioFramePosition = 0
+        while position < file.length {
+            try Task.checkCancellation()
+            try file.read(into: buffer)
+            guard buffer.frameLength > 0, let channel = buffer.floatChannelData?[0] else { break }
+            for frame in 0..<Int(buffer.frameLength) {
+                let bin = min(binCount - 1, Int(Double(position + Int64(frame)) / Double(file.length) * Double(binCount)))
+                let value = abs(channel[frame])
+                if value.isFinite { peaks[bin] = max(peaks[bin], min(1, value)) }
+            }
+            position += Int64(buffer.frameLength)
+        }
+        return peaks
+    }
     private func releaseSession() {
         #if os(iOS)
         guard let owner = sessionOwner else { return }

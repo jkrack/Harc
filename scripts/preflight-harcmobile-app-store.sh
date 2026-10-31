@@ -94,14 +94,19 @@ require_equal() {
 # Keep source, archive, and exported-app declarations equally strict.
 # CA92.1 covers the app-local Host presentation cache and relay preference.
 # Apple reasons: https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitypereasons
-require_mobile_required_reason_apis() {
+require_mobile_privacy_manifest() {
   local manifest="$1"
   local label="$2"
+  # Optional means absent, not a present value of the wrong plist type.
+  local domains_type
+  if domains_type="$(plutil -type NSPrivacyTrackingDomains "$manifest" 2>/dev/null)"; then
+    require_equal "$domains_type" "array" "$label tracking domains must be an array"
+  fi
   local index
   local category
   local reason
   require_equal \
-    "$(plutil -extract NSPrivacyAccessedAPITypes raw -o - "$manifest" 2>/dev/null || true)" \
+    "$(plutil -extract NSPrivacyAccessedAPITypes raw -expect array -o - "$manifest" 2>/dev/null || true)" \
     "2" \
     "$label contains exactly two required-reason API declarations"
   for index in 0 1; do
@@ -113,15 +118,15 @@ require_mobile_required_reason_apis() {
       reason="CA92.1"
     fi
     require_equal \
-      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPIType raw -o - "$manifest" 2>/dev/null || true)" \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPIType raw -expect string -o - "$manifest" 2>/dev/null || true)" \
       "$category" \
       "$label category $index"
     require_equal \
-      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons raw -o - "$manifest" 2>/dev/null || true)" \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons raw -expect array -o - "$manifest" 2>/dev/null || true)" \
       "1" \
       "$label category $index reason count"
     require_equal \
-      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons.0 raw -o - "$manifest" 2>/dev/null || true)" \
+      "$(plutil -extract NSPrivacyAccessedAPITypes.$index.NSPrivacyAccessedAPITypeReasons.0 raw -expect string -o - "$manifest" 2>/dev/null || true)" \
       "$reason" \
       "$label category $index reason"
   done
@@ -179,24 +184,71 @@ require_future_profile_date() {
   fi
 }
 
-metadata_single_line() {
+# A value ends at the next known metadata field or Markdown heading.
+# Bullets and emphasis are body text and must remain in the length checks.
+metadata_block() {
   local marker="$1"
   awk -v marker="$marker" '
     { line = $0; sub(/[[:space:]]+$/, "", line) }
     line == marker { found = 1; next }
-    found && NF { print; exit }
+    found && (line ~ /^\*\*(Name|Subtitle|Promotional text|Description|Keywords|Review notes)\*\*$/ ||
+              line == "**What\047s New (future updates; not entered for the first version)**" ||
+              line ~ /^ ? ? ?##?#?#?#?#?[ \t]/) { exit }
+    found { print }
   ' "$REPO_ROOT/docs/app-store/harcmobile-metadata.md"
 }
 
-metadata_block() {
-  local start="$1"
-  local finish="$2"
-  awk -v start="$start" -v finish="$finish" '
-    { line = $0; sub(/[[:space:]]+$/, "", line) }
-    line == start { found = 1; next }
-    found && line == finish { exit }
-    found { print }
-  ' "$REPO_ROOT/docs/app-store/harcmobile-metadata.md"
+metadata_single_line() {
+  metadata_block "$1" | awk 'NF { print; exit }'
+}
+
+validate_metadata_sections() {
+  /usr/bin/python3 - "$METADATA" <<'PY_METADATA'
+import re
+import sys
+from pathlib import Path
+
+required = {"Name", "Description", "Keywords", "Review notes"}
+optional = {"Subtitle", "Promotional text"}
+fields = required | optional
+single_line = {"Name", "Subtitle", "Keywords"}
+sections = {field: [] for field in fields}
+errors = []
+active = None
+for line in Path(sys.argv[1]).read_text().splitlines():
+    stripped = line.strip()
+    # Recognize misspelled Markdown delimiters as boundaries too, so their
+    # text cannot silently become the previous field's value.
+    label = stripped.rstrip(":").strip("*# \t")
+    if label in fields:
+        active = None
+        if line.rstrip() != "**" + label + "**":
+            errors.append(f"malformed metadata section: {label}")
+        else:
+            sections[label].append([])
+            active = sections[label][-1]
+    elif (stripped == "**What's New (future updates; not entered for the first version)**"
+          or re.match(r"^ {0,3}#{1,6}[ \t]", line)):
+        active = None
+    elif active is not None:
+        active.append(line)
+
+for field in sorted(fields):
+    values = sections[field]
+    if len(values) > 1:
+        errors.append(f"duplicate metadata section: {field}")
+    if field in required and not values:
+        errors.append(f"missing metadata section: {field}")
+    for value in values:
+        nonblank = [line for line in value if line.strip()]
+        if field in required and not nonblank:
+            errors.append(f"blank metadata section: {field}")
+        if field in single_line and len(nonblank) > 1:
+            errors.append(f"metadata section must be a single line: {field}")
+for error in errors:
+    print(error)
+sys.exit(bool(errors))
+PY_METADATA
 }
 
 character_count() {
@@ -311,11 +363,11 @@ for USAGE_KEY in NSMicrophoneUsageDescription NSCameraUsageDescription NSLocalNe
     "$USAGE_KEY"
 done
 require_equal \
-  "$(plutil -extract NSPrivacyTracking raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+  "$(plutil -extract NSPrivacyTracking raw -expect bool -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
   "false" \
   "privacy manifest tracking declaration"
 require_equal \
-  "$(plutil -extract NSPrivacyCollectedDataTypes raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+  "$(plutil -extract NSPrivacyCollectedDataTypes raw -expect array -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
   "0" \
   "privacy manifest collected-data list is empty"
 SOURCE_TRACKING_DOMAIN_COUNT="$(plutil -extract NSPrivacyTrackingDomains raw -o - "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" 2>/dev/null || true)"
@@ -324,7 +376,7 @@ if [[ -z "$SOURCE_TRACKING_DOMAIN_COUNT" || "$SOURCE_TRACKING_DOMAIN_COUNT" == "
 else
   fail "privacy manifest tracking-domain list must be absent or empty"
 fi
-require_mobile_required_reason_apis \
+require_mobile_privacy_manifest \
   "$REPO_ROOT/HarcMobileApp/PrivacyInfo.xcprivacy" \
   "privacy manifest"
 require_equal \
@@ -332,9 +384,11 @@ require_equal \
   "NSFileProtectionComplete" \
   "complete Data Protection entitlement"
 
+# Inspect only the app target, independent of sibling target names/order.
+# Extensions legitimately skip installation and cannot supply app requirements.
 MOBILE_TARGET="$(awk '
-  /^  HarcMobile:$/ { found = 1 }
-  found && /^  HarcMobileAppTests:$/ { exit }
+  /^  HarcMobile:$/ { found = 1; print; next }
+  found && (/^[^[:space:]#]/ || /^  [^[:space:]#]/) { exit }
   found { print }
 ' "$REPO_ROOT/project.yml")"
 if [[ "$MOBILE_TARGET" == *'deploymentTarget: "26.0"'* ]] && \
@@ -385,12 +439,17 @@ fi
 
 METADATA="$REPO_ROOT/docs/app-store/harcmobile-metadata.md"
 if [[ -f "$METADATA" ]]; then
+  if SECTION_ERRORS="$(validate_metadata_sections)"; then
+    pass "metadata section structure and required values"
+  else
+    fail "metadata section structure: $SECTION_ERRORS"
+  fi
   NAME="$(metadata_single_line '**Name**')"
   SUBTITLE="$(metadata_single_line '**Subtitle**')"
-  PROMOTIONAL_TEXT="$(metadata_block '**Promotional text**' '**Description**' | awk 'NF { if (text) text = text " "; text = text $0 } END { print text }')"
-  DESCRIPTION="$(metadata_block '**Description**' '**Keywords**')"
+  PROMOTIONAL_TEXT="$(metadata_block '**Promotional text**' | awk 'NF { if (text) text = text " "; text = text $0 } END { print text }')"
+  DESCRIPTION="$(metadata_block '**Description**')"
   KEYWORDS="$(metadata_single_line '**Keywords**')"
-  REVIEW_NOTES="$(metadata_block '**Review notes**' '## Account-holder decisions still required')"
+  REVIEW_NOTES="$(metadata_block '**Review notes**')"
 
   NAME_COUNT="$(printf '%s' "$NAME" | character_count)"
   SUBTITLE_COUNT="$(printf '%s' "$SUBTITLE" | character_count)"
@@ -593,11 +652,11 @@ if [[ -n "$ARCHIVE" ]]; then
       if [[ -f "$APP/PrivacyInfo.xcprivacy" ]]; then
         pass "privacy manifest is bundled in the archive"
         require_equal \
-          "$(plutil -extract NSPrivacyTracking raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyTracking raw -expect bool -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "false" \
           "archived privacy manifest tracking declaration"
         require_equal \
-          "$(plutil -extract NSPrivacyCollectedDataTypes raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyCollectedDataTypes raw -expect array -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "0" \
           "archived privacy manifest collected-data list is empty"
         ARCHIVE_TRACKING_DOMAIN_COUNT="$(plutil -extract NSPrivacyTrackingDomains raw -o - "$APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)"
@@ -606,7 +665,7 @@ if [[ -n "$ARCHIVE" ]]; then
         else
           fail "archived privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_mobile_required_reason_apis \
+        require_mobile_privacy_manifest \
           "$APP/PrivacyInfo.xcprivacy" \
           "archived privacy manifest"
       else
@@ -747,11 +806,11 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
       if [[ -f "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" ]]; then
         pass "privacy manifest is bundled in the distribution app"
         require_equal \
-          "$(plutil -extract NSPrivacyTracking raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyTracking raw -expect bool -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "false" \
           "distribution privacy manifest tracking declaration"
         require_equal \
-          "$(plutil -extract NSPrivacyCollectedDataTypes raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
+          "$(plutil -extract NSPrivacyCollectedDataTypes raw -expect array -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)" \
           "0" \
           "distribution privacy manifest collected-data list is empty"
         DISTRIBUTION_TRACKING_DOMAIN_COUNT="$(plutil -extract NSPrivacyTrackingDomains raw -o - "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" 2>/dev/null || true)"
@@ -760,7 +819,7 @@ if [[ -n "$DISTRIBUTION_APP" ]]; then
         else
           fail "distribution privacy manifest tracking-domain list must be absent or empty"
         fi
-        require_mobile_required_reason_apis \
+        require_mobile_privacy_manifest \
           "$DISTRIBUTION_APP/PrivacyInfo.xcprivacy" \
           "distribution privacy manifest"
       else

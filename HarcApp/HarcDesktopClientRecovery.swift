@@ -1,4 +1,6 @@
 import Foundation
+import HarcCore
+import HarcAudio
 import HarcClientStore
 import HarcDomain
 import HarcTransfer
@@ -46,6 +48,7 @@ enum HarcDesktopClientRecovery {
         }
         let sidecars = Dictionary<String, URL>(uniqueKeysWithValues: sidecarPairs)
 
+        let activeTrust = try store.activeAdoption()?.tuple
         let originalOutboxes = try store.recordingOutboxes()
         let originalByStem = Dictionary(uniqueKeysWithValues: originalOutboxes.map {
             ($0.finalizedCapture.capture.originRecordingID.recordingUUID.uuidString.lowercased(), $0)
@@ -66,6 +69,17 @@ enum HarcDesktopClientRecovery {
             let sidecarURL = sidecars[stem]
             do {
                 if let sidecarURL {
+                    if masterURL == nil, let existing = originalByStem[stem],
+                       try HarcDesktopClientTransferCoordinator.hasVerifiedHostCopy(existing,
+                            store: store, expectedTrust: activeTrust) {
+                        let sidecar = try decodeSidecar(sidecarURL)
+                        try validateHostOnlyCapture(sidecar.capture,
+                            stored: existing.finalizedCapture.capture,
+                            recordingUUID: recordingUUID, deviceID: deviceID)
+                        try DurableFileIO.synchronizeFileAndParent(at: sidecarURL)
+                        alreadyTracked += 1
+                        continue
+                    }
                     guard let masterURL else {
                         throw RecoveryError.missingMaster
                     }
@@ -152,6 +166,21 @@ enum HarcDesktopClientRecovery {
             if blockedOrigins.contains(capture.capture.originRecordingID) {
                 continue
             }
+            if try HarcDesktopClientTransferCoordinator.hasVerifiedHostCopy(outbox,
+                store: store, expectedTrust: activeTrust) {
+                if !FileManager.default.fileExists(atPath: capture.masterFileURL.path), sidecars[stem] == nil {
+                    // Reconstruct only immutable capture metadata from the verified
+                    // outbox. There is no local audio to reprocess or transcript to invent.
+                    let rebuilt = HarcDesktopClientCaptureSidecar(capture: capture.capture,
+                        transcript: nil, speakerEmbeddings: nil, persistedAt: capture.persistedAt)
+                    let destination = directory.appendingPathComponent("\(stem).capture.json")
+                    try HarcDesktopClientFiles.writeSidecar(rebuilt, to: destination)
+                    try DurableFileIO.synchronizeFileAndParent(at: destination)
+                    sidecarsRebuilt += 1
+                }
+                alreadyOnHost += 1
+                continue
+            }
             guard FileManager.default.fileExists(atPath: capture.masterFileURL.path),
                   capture.masterFileState == .present else {
                 blockedOrigins.insert(capture.capture.originRecordingID)
@@ -187,6 +216,31 @@ enum HarcDesktopClientRecovery {
                     < $1.sidecar.capture.captureStartedAt
             }
         )
+    }
+
+    /// Compare through the store's Date codec, not Foundation's sidecar codec.
+    /// Converting between the two epochs can change the last floating-point bit.
+    /// This is exact codec normalization, not a tolerance for changed facts.
+    static func validateHostOnlyCapture(
+        _ capture: FinalizedCapture,
+        stored: FinalizedCapture,
+        recordingUUID: UUID,
+        deviceID: DeviceID
+    ) throws {
+        guard capture.producingDeviceID == deviceID,
+              capture.originRecordingID.deviceID == deviceID else {
+            throw RecoveryError.identityMismatch
+        }
+        guard capture.originRecordingID.recordingUUID == recordingUUID else {
+            throw RecoveryError.filenameConflict
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let persisted = try decoder.decode(FinalizedCapture.self,
+            from: encoder.encode(capture))
+        guard persisted == stored else { throw RecoveryError.captureConflict }
     }
 
     private static func decodeSidecar(
@@ -259,6 +313,9 @@ enum HarcDesktopClientRecovery {
         let endedAt = values.contentModificationDate ?? values.creationDate ?? Date()
         let startedAt = endedAt.addingTimeInterval(-duration)
         let origin = OriginRecordingID(deviceID: deviceID, recordingUUID: recordingUUID)
+        let recoveredCapture = CapturedRecording(localMasterURL: masterURL,
+            startedAt: startedAt, endedAt: endedAt,
+            integrity: try CaptureIntegrityReport.load(nextTo: masterURL))
         let capture = try FinalizedCapture(
             producingDeviceID: deviceID,
             originRecordingID: origin,
@@ -270,7 +327,7 @@ enum HarcDesktopClientRecovery {
             totalCanonicalFrames: prepared.frames,
             totalCanonicalBytes: prepared.frames * 2,
             canonicalPCMSHA256: try CanonicalPCMHash(prepared.pcmSHA256),
-            discontinuities: []
+            discontinuities: try recoveredCapture.boundDiscontinuities(to: origin, totalFrames: prepared.frames)
         )
         return HarcDesktopClientCaptureSidecar(
             capture: capture,
@@ -339,6 +396,7 @@ private enum RecoveryError: LocalizedError {
     case missingMaster
     case invalidSidecar
     case identityMismatch
+    case captureConflict
     case filenameConflict
     case audioConflict
     case invalidDuration
@@ -351,6 +409,8 @@ private enum RecoveryError: LocalizedError {
             "The capture metadata is unreadable. It was left untouched."
         case .identityMismatch:
             "The capture belongs to a different Client identity. It was security blocked and left untouched."
+        case .captureConflict:
+            "The capture metadata conflicts with its verified Host copy. It was left untouched."
         case .filenameConflict:
             "The capture filename conflicts with its durable identity. It was left untouched."
         case .audioConflict:

@@ -19,7 +19,7 @@ public enum SummaryParser {
 
         // 2. Split on the NEXT `## Action Items`. If absent, everything
         //    after `## Summary` is the summary; no items; warning.
-        guard let actionsHeader = afterSummary.range(of: "## Action Items") else {
+        guard let actionsHeader = ["## Action Items", "## Confirmed Commitments"].compactMap({ afterSummary.range(of: $0) }).min(by: { $0.lowerBound < $1.lowerBound }) else {
             let summary = afterSummary.trimmingCharacters(in: .whitespacesAndNewlines)
             return SummaryParseResult(summary: String(summary), actionItems: [], parseWarning: true)
         }
@@ -30,7 +30,20 @@ public enum SummaryParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let items = parseActionItems(actionsBody)
-        return SummaryParseResult(summary: String(summaryText), actionItems: items, parseWarning: false)
+        let lines = actionsBody.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let explicitNone = actionsBody.lowercased() == noneIdentifiedMarker
+        // A successful header split does not mean the action body was understood.
+        // Preserve the response when any line would otherwise disappear, including
+        // mixed valid/invalid lists and truncated empty sections. Do not infer tasks
+        // from prose or silently turn malformed output into "no items".
+        let complete = !summaryText.isEmpty && (explicitNone || (!lines.isEmpty && lines.count == items.count))
+        return SummaryParseResult(
+            summary: complete ? String(summaryText) : raw.trimmingCharacters(in: .whitespacesAndNewlines),
+            actionItems: items,
+            parseWarning: !complete
+        )
     }
 
     // MARK: - Internals
@@ -50,6 +63,17 @@ public enum SummaryParser {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             // Match "- [ ]" or "- [x]" / "- [X]". Anything else is ignored
             // (stray prose between lines, extra fences, etc.).
+            // Explicit bracketed-owner form emitted by the commitment prompt.
+            if line.hasPrefix("- ["), let end = line.range(of: "]: ") {
+                let owner = String(line[line.index(line.startIndex, offsetBy: 3)..<end.lowerBound]).trimmingCharacters(in: .whitespaces)
+                let task = String(line[end.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !owner.isEmpty, !owner.contains("["), !owner.contains("]"), !task.isEmpty {
+                    let parsed = parseActionItemBody("Owner: " + task, done: false)
+                    guard !parsed.text.isEmpty else { continue }
+                    items.append(ActionItem(text: parsed.text, actor: owner, due: parsed.due, done: false))
+                }
+                continue
+            }
             let unchecked = "- [ ]"
             let checkedLower = "- [x]"
             let checkedUpper = "- [X]"
@@ -62,7 +86,9 @@ public enum SummaryParser {
                 : unchecked
             let bodyText = String(line.dropFirst(prefix.count))
                 .trimmingCharacters(in: .whitespaces)
-            items.append(parseActionItemBody(bodyText, done: isChecked))
+            let item = parseActionItemBody(bodyText, done: isChecked)
+            guard !item.text.isEmpty else { continue }
+            items.append(item)
         }
         return items
     }

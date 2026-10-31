@@ -83,6 +83,41 @@ struct HarcDesktopHostEvidenceBinding: Codable, Equatable, Sendable {
     }
 }
 
+/// Presentation history survives an automatic retry, but each recording's
+/// successful delivery clears only its own failure. Never infer audio safety
+/// from this display state; the verified-receipt store remains authoritative.
+struct HarcDesktopDeliveryFailures {
+    private var messages: [UUID: String] = [:]
+    private var inventoryFailure: String?
+
+    var recordingIDs: Set<UUID> { Set(messages.keys) }
+
+    mutating func recordInventoryFailure(_ message: String) {
+        inventoryFailure = message
+    }
+
+    mutating func inventorySucceeded(completedRecordings: Set<UUID>) {
+        inventoryFailure = nil
+        messages = messages.filter { !completedRecordings.contains($0.key) }
+    }
+
+    mutating func record(_ recording: UUID, message: String) {
+        messages[recording] = message
+    }
+
+    mutating func resolve(_ recording: UUID) {
+        messages.removeValue(forKey: recording)
+    }
+
+    var summary: String? {
+        if let inventoryFailure { return "Archive inventory: " + inventoryFailure }
+        guard let recording = messages.keys.sorted(by: { $0.uuidString < $1.uuidString }).first,
+              let message = messages[recording] else { return nil }
+        let others = messages.count > 1 ? " (and \(messages.count - 1) other recording(s))" : ""
+        return "Recording \(recording.uuidString.prefix(8).lowercased()): \(message)" + others
+    }
+}
+
 @MainActor
 final class HarcDesktopClientTransferCoordinator: ObservableObject {
     enum HostProbeState: Equatable, Sendable {
@@ -101,11 +136,30 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         case uploading(UUID)
         case uploaded(UUID)
         case edgeArtifactDeferred(UUID, String)
-        case retryNeeded(UUID, String)
+        case retryNeeded(UUID?, String)
         case securityBlocked(UUID, String)
     }
 
-    @Published private(set) var state: State = .idle
+    @Published private(set) var state: State = .idle {
+        didSet {
+            switch state {
+            case .retryNeeded(let recording, let message):
+                if let recording {
+                    deliveryFailures.record(recording, message: message)
+                } else {
+                    deliveryFailures.recordInventoryFailure(message)
+                }
+            case .securityBlocked(let recording, let message),
+                 .edgeArtifactDeferred(let recording, let message):
+                deliveryFailures.record(recording, message: message)
+            case .uploaded(let recording):
+                deliveryFailures.resolve(recording)
+            default:
+                break
+            }
+        }
+    }
+    private var deliveryFailures = HarcDesktopDeliveryFailures()
     @Published private(set) var pendingCount = 0
     @Published private(set) var pendingProcessingCount = 0
     @Published private(set) var pendingSpeakerCount = 0
@@ -125,6 +179,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private let retryURL: URL
     private let contactURL: URL
     private let diagnosticLog: HarcDiagnosticLogStore
+    private let readOutboxes: () throws -> [StoredRecordingOutbox]
+    private let transferOverride: ((HarcMobileFinalizedMaster) async throws -> String?)?
     private var queue: [HarcMobileFinalizedMaster] = []
     private var queuedOrigins = Set<OriginRecordingID>()
     /// Set by Client archive reconciliation. These origins remain fail-closed
@@ -142,7 +198,9 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         libraryCache: HarcLibraryCache,
         clientRoot: URL,
         routeURL: URL,
-        diagnosticLog: HarcDiagnosticLogStore
+        diagnosticLog: HarcDiagnosticLogStore,
+        readOutboxes: (() throws -> [StoredRecordingOutbox])? = nil,
+        transferOverride: ((HarcMobileFinalizedMaster) async throws -> String?)? = nil
     ) throws {
         self.identity = identity
         self.store = store
@@ -155,6 +213,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         retryURL = clientRoot.appendingPathComponent("host-retry.json")
         contactURL = clientRoot.appendingPathComponent("host-contact.json")
         self.diagnosticLog = diagnosticLog
+        self.readOutboxes = readOutboxes ?? { try store.recordingOutboxes() }
+        self.transferOverride = transferOverride
         if let data = try? Data(contentsOf: retryURL, options: .mappedIfSafe),
            let persisted = try? JSONDecoder().decode(
                HarcDesktopRetrySchedule.self,
@@ -176,6 +236,22 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
 
     var statusMessage: String {
         switch state {
+        case .connecting, .encoding, .uploading:
+            if let failure = deliveryFailures.summary {
+                return currentStatusMessage + ". Unresolved sync problem: " + failure
+            }
+        case .idle, .uploaded:
+            if let failure = deliveryFailures.summary {
+                return "Client sync still needs attention. Unresolved sync problem: " + failure
+            }
+        default:
+            break
+        }
+        return currentStatusMessage
+    }
+
+    private var currentStatusMessage: String {
+        switch state {
         case .idle:
             if case .pairingRepairRequired(let message) = hostProbeState {
                 message
@@ -188,7 +264,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             } else if speakerRepairCount > 0 {
                 "\(speakerRepairCount) local speaker pass(es) retrying"
             } else if speakerReviewCount > 0 {
-                "\(speakerReviewCount) speaker match(es) need review"
+                "\(speakerReviewCount) speaker outcome(s) need attention"
             } else {
                 "Client storage ready"
             }
@@ -203,7 +279,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         case .connecting:
             "Connecting securely to Host"
         case .uploading:
-            "Uploading a recording to Host"
+            "Delivering audio or updates to Host"
         case .uploaded:
             if pendingCount > 0 {
                 "\(pendingCount) recording(s) still waiting for Host"
@@ -214,8 +290,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             }
         case .edgeArtifactDeferred(_, let message):
             "Audio is safe on Host; local metadata handoff will retry: \(message)"
-        case .retryNeeded(_, let message):
-            "Host transfer needs retry: \(message)"
+        case .retryNeeded(let recording, let message):
+            recording == nil
+                ? "Client archive check needs retry: \(message)"
+                : "Host transfer needs retry: \(message)"
         case .securityBlocked(_, let message):
             "Host transfer blocked for security: \(message)"
         }
@@ -346,14 +424,15 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     private func inventoryPending() {
         do {
             let activeTrust = try store.activeAdoption()?.tuple
-            let outboxes = try store.recordingOutboxes()
+            let outboxes = try readOutboxes()
             let eligibleOutboxes = outboxes.filter { outbox in
                 !recoveryBlockedOrigins.contains(
                     outbox.finalizedCapture.capture.originRecordingID
                 )
                     && outbox.stateMachine.state != .securityBlocked
                     && outbox.integrityBlock == nil
-                    && outbox.finalizedCapture.masterFileState == .present
+                    && (outbox.finalizedCapture.masterFileState == .present
+                        || (try? Self.hasVerifiedHostCopy(outbox, store: store, expectedTrust: activeTrust)) == true)
             }
             let pending = eligibleOutboxes.filter { outbox in
                 outbox.stateMachine.state != .securityBlocked && (
@@ -413,16 +492,76 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 else { continue }
                 queue.append(master)
             }
+            // A successful scan clears only the scan-level error and recording
+            // errors independently proved complete by receipt/metadata evidence.
+            // An empty eligible queue is not itself completion evidence.
+            let failedIDs = deliveryFailures.recordingIDs
+            let completed = try durablyCompletedRecordings(outboxes.filter {
+                failedIDs.contains($0.finalizedCapture.capture.originRecordingID.recordingUUID)
+            }, expectedTrust: activeTrust)
+            deliveryFailures.inventorySucceeded(completedRecordings: completed)
             if pending.isEmpty {
                 state = .idle
                 clearAutomaticRetry()
+                scheduleNextSpeakerReview()
             }
             startWorkerIfNeeded()
         } catch {
             logFailure(error, stage: "queue-inventory", recording: nil)
-            state = .retryNeeded(UUID(), error.localizedDescription)
+            state = .retryNeeded(nil, error.localizedDescription)
             scheduleAutomaticRetry(reason: "queue-inventory")
         }
+    }
+
+    /// Reconcile post-commit transport/cleanup failures without inventing a new
+    /// upload for already-complete work. Missing, foreign, corrupt, blocked or
+    /// pending evidence leaves the recording's original failure visible.
+    func durablyCompletedRecordings(
+        _ outboxes: [StoredRecordingOutbox], expectedTrust: AdoptedTrustTuple?
+    ) throws -> Set<UUID> {
+        var completed = Set<UUID>()
+        for outbox in outboxes {
+            let capture = outbox.finalizedCapture.capture
+            let origin = capture.originRecordingID
+            guard origin.deviceID == identity.deviceID,
+                  !recoveryBlockedOrigins.contains(origin),
+                  try Self.hasVerifiedHostCopy(outbox, store: store, expectedTrust: expectedTrust) else { continue }
+            let sidecarURL = Self.captureSidecarURL(origin: origin, clientRoot: clientRoot)
+            do {
+                let sidecarData = try Data(contentsOf: sidecarURL, options: .mappedIfSafe)
+                let sidecar = try JSONDecoder().decode(HarcDesktopClientCaptureSidecar.self, from: sidecarData)
+                try HarcDesktopClientRecovery.validateHostOnlyCapture(sidecar.capture,
+                    stored: capture, recordingUUID: origin.recordingUUID, deviceID: identity.deviceID)
+                guard !sidecar.speakerProcessingNeedsRetry,
+                      !Self.needsProcessingArtifact(origin: origin, clientRoot: clientRoot, expectedTrust: expectedTrust),
+                      !Self.needsSpeakerObservations(origin: origin, clientRoot: clientRoot, expectedTrust: expectedTrust) else { continue }
+                let processingURL = Self.processingMarkerURL(origin: origin, clientRoot: clientRoot)
+                let speakerURL = Self.speakerObservationMarkerURL(origin: origin, clientRoot: clientRoot)
+                let processingData = sidecar.transcript == nil ? nil : try Data(contentsOf: processingURL)
+                let speakerData = try Data(contentsOf: speakerURL)
+                // Existing bytes can survive a failed write barrier. Complete
+                // the barriers before allowing display history to claim success.
+                try DurableFileIO.synchronizeFileAndParent(at: sidecarURL)
+                if sidecar.transcript != nil {
+                    try DurableFileIO.synchronizeFileAndParent(at: processingURL)
+                }
+                try DurableFileIO.synchronizeFileAndParent(at: speakerURL)
+                guard try Data(contentsOf: sidecarURL) == sidecarData,
+                      try Data(contentsOf: speakerURL) == speakerData else { continue }
+                if let processingData {
+                    guard try Data(contentsOf: processingURL) == processingData else { continue }
+                }
+                completed.insert(origin.recordingUUID)
+            } catch {
+                diagnosticLog.append(severity: .info, area: "transfer",
+                    stage: "completion-proof-deferred",
+                    message: "Retained delivery failure because completion evidence could not be verified",
+                    context: recordingContext(origin.recordingUUID,
+                        extra: ["error_type": String(reflecting: Swift.type(of: error))]))
+                continue
+            }
+        }
+        return completed
     }
 
     func setRecoveryBlockedOrigins(_ origins: Set<OriginRecordingID>) {
@@ -448,6 +587,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
     /// been removed. Durable recordings and their outboxes are untouched.
     func forgetHostState() {
         shutdown()
+        deliveryFailures = HarcDesktopDeliveryFailures()
         lastAuthenticatedContact = nil
         retrySchedule.reset()
         nextAutomaticRetryAt = nil
@@ -488,7 +628,12 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             guard !Task.isCancelled else { return }
             let master = queue.removeFirst()
             do {
-                let artifactFailure = try await transfer(master)
+                let artifactFailure: String?
+                if let transferOverride {
+                    artifactFailure = try await transferOverride(master)
+                } else {
+                    artifactFailure = try await transfer(master)
+                }
                 activeStages.removeValue(
                     forKey: master.originRecordingID.recordingUUID
                 )
@@ -583,6 +728,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             speakers: pendingSpeakerCount
         ) {
             clearAutomaticRetry()
+            scheduleNextSpeakerReview()
         }
     }
 
@@ -596,7 +742,8 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             )
                 && outbox.stateMachine.state != .securityBlocked
                 && outbox.integrityBlock == nil
-                && outbox.finalizedCapture.masterFileState == .present
+                && (outbox.finalizedCapture.masterFileState == .present
+                        || (try? Self.hasVerifiedHostCopy(outbox, store: store, expectedTrust: activeTrust)) == true)
         }
         pendingCount = transferable.filter {
             $0.stateMachine.state != .committed
@@ -626,12 +773,56 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         )
     }
 
+    /// Only independently verified Host commit evidence permits metadata work
+    /// after the local audio has gone. This never authorizes encoding absent audio.
+    nonisolated static func hasVerifiedHostCopy(_ outbox: StoredRecordingOutbox,
+        store: HarcTransferStore, expectedTrust: AdoptedTrustTuple?) throws -> Bool {
+        let capture = outbox.finalizedCapture.capture
+        guard let expectedTrust, outbox.stateMachine.state == .committed,
+              outbox.integrityBlock == nil, outbox.finalizedCapture.masterFileState != .integrityMismatch,
+              let receipt = try store.verifiedRecordingReceipt(for: capture.originRecordingID) else { return false }
+        return receipt.hostTrust.libraryID == expectedTrust.libraryID
+            && receipt.hostTrust.hostAuthorityID == expectedTrust.hostAuthorityID
+            && receipt.originRecordingID == capture.originRecordingID
+            && receipt.producingDeviceID == capture.producingDeviceID
+            && receipt.canonicalPCMSHA256 == capture.canonicalPCMSHA256
+            && receipt.totalCanonicalFrames == capture.totalCanonicalFrames
+    }
+
     nonisolated static func hasPendingWork(
         recordings: Int,
         processing: Int,
         speakers: Int
     ) -> Bool {
         recordings > 0 || processing > 0 || speakers > 0
+    }
+
+    /// Reconstruct the timer from persisted evidence after launch and after a
+    /// successful drain. Reviews do not increment the failure-backoff counter.
+    private func scheduleNextSpeakerReview() {
+        guard retryTask == nil else { return }
+        do {
+            guard let trust = try store.activeAdoption()?.tuple else { return }
+            let now = Date()
+            var earliest: Date?
+            for outbox in try store.recordingOutboxes() {
+                let origin = outbox.finalizedCapture.capture.originRecordingID
+                guard outbox.stateMachine.state == .committed,
+                      outbox.integrityBlock == nil,
+                      (outbox.finalizedCapture.masterFileState == .present
+                        || (try? Self.hasVerifiedHostCopy(outbox, store: store, expectedTrust: trust)) == true),
+                      !recoveryBlockedOrigins.contains(origin),
+                      let data = try? Data(contentsOf: Self.speakerObservationMarkerURL(origin: origin, clientRoot: clientRoot)),
+                      let marker = try? JSONDecoder().decode(HarcDesktopSpeakerObservationMarker.self, from: data),
+                      marker.hostBinding?.matches(trust) == true,
+                      let deadline = marker.reviewDeadline, deadline > now else { continue }
+                earliest = min(earliest ?? deadline, deadline)
+            }
+            if let earliest { scheduleInventory(after: earliest.timeIntervalSince(now)) }
+        } catch {
+            logFailure(error, stage: "speaker-review-inventory", recording: nil)
+            scheduleAutomaticRetry(reason: "speaker-review-inventory")
+        }
     }
 
     private func scheduleAutomaticRetry(reason: String) {
@@ -783,6 +974,9 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             route: opened.path,
             adoption: opened.adoption
         )
+        // Authentication is complete, including when only derived metadata
+        // remains. Do not leave Activity displaying a handshake in progress.
+        state = .uploading(master.originRecordingID.recordingUUID)
         let connection = opened.connection
         do {
             if alreadyCommitted {
@@ -1033,7 +1227,7 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         }
     }
 
-    private func submitSpeakerObservationsIfPresent(
+    func submitSpeakerObservationsIfPresent(
         origin: OriginRecordingID,
         canonicalID: CanonicalRecordingID,
         opened: HarcDesktopOpenedHostConnection
@@ -1043,12 +1237,47 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 origin: origin,
                 clientRoot: clientRoot
             )
+            let sidecarData = try Data(contentsOf: sidecarURL, options: .mappedIfSafe)
+            let sidecarSHA256 = Data(SHA256.hash(data: sidecarData))
             let sidecar = try JSONDecoder().decode(
-                HarcDesktopClientCaptureSidecar.self,
-                from: Data(contentsOf: sidecarURL, options: .mappedIfSafe)
+                HarcDesktopClientCaptureSidecar.self, from: sidecarData
             )
+            guard sidecar.capture.originRecordingID == origin,
+                  sidecar.capture.producingDeviceID == identity.deviceID else {
+                throw HarcDesktopClientTransferError.invalidSpeakerEvidence
+            }
+            // Host-owned work needs no local embedding or retained edge command.
+            // Fetch through the authenticated session before preparing any sender batch.
+            var statusRequest = Harc_V1_GetProcessingStatusRequestV1()
+            statusRequest.protocol = opened.negotiated.protocolVersion.protobufV1()
+            statusRequest.originRecordingID = Harc_V1_OriginRecordingIDV1(origin)
+            let statusResponse = try await opened.connection.getProcessingStatus(statusRequest,
+                authorization: HarcProcessingAuthorization(openedSession: opened.session))
+            try Self.validateLibraryProtocol(statusResponse.hasProtocol, statusResponse.protocol)
+            guard statusResponse.hasStatus else {
+                throw HarcDesktopClientTransferError.malformedProcessingResponse
+            }
+            if let outcome = try statusResponse.status.validatedHostSpeakerOutcome(
+                canonicalID: canonicalID, originID: origin,
+                canonicalPCMHash: sidecar.capture.canonicalPCMSHA256,
+                producerDeviceID: DeviceID(opened.adoption.hostTrust.hostAuthorityID.rawBytes)) {
+                let now = Date()
+                let marker = HarcDesktopSpeakerObservationMarker(canonicalRecordingID: canonicalID,
+                    sourcePackRevision: nil, decisions: nil, acceptedAt: now,
+                    nextReviewAt: now.addingTimeInterval(6 * 60 * 60),
+                    hostBinding: HarcDesktopHostEvidenceBinding(adoption: opened.adoption),
+                    sidecarSHA256: sidecarSHA256, hostOutcome: outcome)
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+                let markerURL = Self.speakerObservationMarkerURL(origin: origin, clientRoot: clientRoot)
+                try HarcDesktopClientFiles.writeProtectedData(encoder.encode(marker), to: markerURL,
+                    replacingExistingRegularFile: true)
+                try DurableFileIO.synchronizeFileAndParent(at: markerURL)
+                return nil
+            }
             let embeddings = sidecar.speakerEmbeddings ?? []
-            guard !embeddings.isEmpty else { return nil }
+            guard !embeddings.isEmpty else {
+                throw HarcDesktopClientTransferError.hostSpeakerOutcomePending
+            }
             guard opened.adoption.grant.scopes.contains(
                 .speakerObservationWrite
             ) else {
@@ -1091,42 +1320,53 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 }
             }
 
-            var decisions: [HarcDesktopSpeakerDecisionRecord] = []
-            for row in embeddings {
-                guard row.speakerIndex >= 0,
-                      row.totalMs > 0,
-                      row.segmentCount > 0 else { continue }
-                let quantized = try QuantizedSpeakerEmbedding.quantizing(
-                    row.vector
-                )
-                let match = pack.flatMap {
-                    SpeakerRecognitionMatcher.bestMatch(
-                        embedding: quantized,
-                        modelID: "wespeaker_v2",
-                        pack: $0
-                    )
+            let features = Set(opened.negotiated.selectedFeatureIDs)
+            let observations: [SpeakerEmbeddingObservation]
+            let requests: [Harc_V1_SubmitSpeakerObservationRequestV1]
+            let selectedArtifactSHA256: Data?
+            var durableBatch: (value: HarcDesktopBoundSpeakerBatch, url: URL)?
+            if features.contains(HarcSpeakerObservationRequestV1.boundFeatureID) {
+                // Read retained bytes without renewing their command lifetime:
+                // historical evidence remains usable only for the Host's selection.
+                let submissionURL = Self.processingSubmissionURL(origin: origin,
+                    grantID: opened.adoption.grant.grantID,
+                    grantEpoch: opened.adoption.grant.registryEpoch,
+                    sidecarSHA256: sidecarSHA256, clientRoot: clientRoot)
+                let submission = try JSONDecoder().decode(HarcDesktopProcessingSubmission.self,
+                    from: Data(contentsOf: submissionURL))
+                let proposed = try HarcDesktopProcessingArtifactBuilder.boundSpeakerObservations(
+                    submission: submission, sidecarData: sidecarData, origin: origin,
+                    canonicalID: canonicalID, producerPublicKey: identity.publicKey,
+                    hostTrust: AdoptedTrustTuple(libraryID: opened.adoption.hostTrust.libraryID,
+                        hostAuthorityID: opened.adoption.hostTrust.hostAuthorityID), pack: pack)
+                try HarcDesktopProcessingArtifactBuilder.validateSelectedArtifactStatus(statusResponse.status,
+                    submission: submission, origin: origin, canonicalID: canonicalID,
+                    canonicalPCMHash: sidecar.capture.canonicalPCMSHA256)
+                selectedArtifactSHA256 = statusResponse.status.selectedEdgeBundleSha256.value
+                let bundleDigest = statusResponse.status.selectedEdgeBundleSha256.value
+                    .map { String(format: "%02x", $0) }.joined()
+                let batchURL = submissionURL.appendingPathExtension("speakers-" + bundleDigest)
+                let batch = try HarcDesktopProcessingArtifactBuilder.durableSpeakerBatch(at: batchURL,
+                    proposed: proposed, host: HarcDesktopHostEvidenceBinding(adoption: opened.adoption),
+                    sidecarSHA256: sidecarSHA256)
+                durableBatch = (batch, batchURL)
+                let bound = batch.observations
+                observations = bound.map(\.observation)
+                requests = try bound.map { try HarcSpeakerObservationRequestV1.boundRequest($0,
+                    negotiatedFeatureIDs: features, protocolVersion: opened.negotiated.protocolVersion) }
+            } else {
+                selectedArtifactSHA256 = nil
+                observations = try Self.prepareSpeakerObservations(embeddings, origin: origin,
+                    canonicalID: canonicalID, pack: pack, sidecarSHA256: sidecarSHA256)
+                requests = observations.map { observation in
+                    var request = Harc_V1_SubmitSpeakerObservationRequestV1()
+                    request.protocol = HarcProtocolVersion.v1.protobufV1()
+                    request.observation = Harc_V1_SpeakerEmbeddingObservationV1(observation)
+                    return request
                 }
-                let observation = try SpeakerEmbeddingObservation(
-                    operationID: Self.observationOperationID(
-                        origin: origin,
-                        speakerIndex: row.speakerIndex,
-                        packRevision: pack?.revision
-                    ),
-                    canonicalRecordingID: canonicalID,
-                    speakerIndex: UInt32(row.speakerIndex),
-                    embedding: quantized,
-                    modelID: "wespeaker_v2",
-                    speechDurationMs: UInt64(row.totalMs),
-                    segmentCount: UInt32(row.segmentCount),
-                    sourcePackRevision: match?.packRevision ?? pack?.revision,
-                    proposedPersonID: match?.personID,
-                    proposedScore: match?.score
-                )
-                var request = Harc_V1_SubmitSpeakerObservationRequestV1()
-                request.protocol = HarcProtocolVersion.v1.protobufV1()
-                request.observation = Harc_V1_SpeakerEmbeddingObservationV1(
-                    observation
-                )
+            }
+            var decisions: [HarcDesktopSpeakerDecisionRecord] = []
+            for (observation, request) in zip(observations, requests) {
                 let response = try await opened.connection
                     .submitSpeakerObservation(
                         request,
@@ -1149,26 +1389,32 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                         .malformedSpeakerResponse
                 }
                 decisions.append(HarcDesktopSpeakerDecisionRecord(
-                    speakerIndex: row.speakerIndex,
+                    speakerIndex: Int(observation.speakerIndex),
                     decision: decision
                 ))
             }
 
             let acceptedAt = Date()
+            if var batch = durableBatch {
+                batch.value.completedAt = acceptedAt
+                try batch.value.persist(to: batch.url)
+            }
             let hasConcerns = decisions.contains {
                 $0.decision.disposition != .matched
             }
             let marker = HarcDesktopSpeakerObservationMarker(
                 canonicalRecordingID: canonicalID,
-                sourcePackRevision: pack?.revision,
+                sourcePackRevision: observations.first?.sourcePackRevision ?? pack?.revision,
                 decisions: decisions,
                 acceptedAt: acceptedAt,
-                nextReviewAt: hasConcerns
+                nextReviewAt: hasConcerns || selectedArtifactSHA256 != nil
                     ? acceptedAt.addingTimeInterval(6 * 60 * 60)
                     : nil,
                 hostBinding: HarcDesktopHostEvidenceBinding(
                     adoption: opened.adoption
-                )
+                ),
+                sidecarSHA256: sidecarSHA256,
+                processingArtifactSHA256: selectedArtifactSHA256
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -1193,6 +1439,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         opened: HarcDesktopOpenedHostConnection
     ) async throws -> String? {
         do {
+            // Speaker rechecks must not rotate a completed processing artifact.
+            guard Self.needsProcessingArtifact(origin: origin, clientRoot: clientRoot,
+                expectedTrust: AdoptedTrustTuple(libraryID: opened.adoption.hostTrust.libraryID,
+                    hostAuthorityID: opened.adoption.hostTrust.hostAuthorityID)) else { return nil }
             guard let submission = try durableProcessingSubmission(
                 origin: origin,
                 adoption: opened.adoption
@@ -1226,10 +1476,13 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                     SHA256.hash(data: submission.exactSignedMetadata)
                 ),
                 disposition: response.disposition.rawValue,
+                sidecarSHA256: submission.sidecarSHA256,
                 acceptedAt: Date(),
                 hostBinding: HarcDesktopHostEvidenceBinding(
                     adoption: opened.adoption
-                )
+                ),
+                selectedEdgeBundleSHA256: response.hasStatus && response.status.hasSelectedEdgeBundleSha256
+                    ? response.status.selectedEdgeBundleSha256.value : nil
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -1253,26 +1506,16 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         origin: OriginRecordingID,
         adoption: ValidatedClientAdoptionEvidence
     ) throws -> HarcDesktopProcessingSubmission? {
+        let sidecarData = try Data(contentsOf: Self.captureSidecarURL(origin: origin, clientRoot: clientRoot), options: .mappedIfSafe)
+        let sidecarSHA256 = Data(SHA256.hash(data: sidecarData))
         let url = Self.processingSubmissionURL(
             origin: origin,
             grantID: adoption.grant.grantID,
             grantEpoch: adoption.grant.registryEpoch,
-            clientRoot: clientRoot
+            sidecarSHA256: sidecarSHA256, clientRoot: clientRoot
         )
-        if FileManager.default.fileExists(atPath: url.path) {
-            let persisted = try JSONDecoder().decode(
-                HarcDesktopProcessingSubmission.self,
-                from: Data(contentsOf: url, options: .mappedIfSafe)
-            )
-            guard !persisted.exactSignedMetadata.isEmpty,
-                  persisted.exactSignedMetadata.count
-                    <= HarcProtocolLimits.signedObjectBytes,
-                  !persisted.exactBundle.isEmpty,
-                  persisted.exactBundle.count
-                    <= HarcProcessingBundleV1.maximumExactBytes else {
-                throw HarcDesktopClientTransferError
-                    .invalidDurableProcessingSubmission
-            }
+        if let persisted = try HarcDesktopProcessingArtifactBuilder.reusableSubmission(
+            at: url, sidecarSHA256: sidecarSHA256, producerPublicKey: identity.publicKey) {
             return persisted
         }
         guard let submission = try HarcDesktopProcessingArtifactBuilder
@@ -1280,41 +1523,35 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
                 origin: origin,
                 clientRoot: clientRoot,
                 adoption: adoption,
-                identity: identity
+                identity: identity, sidecarData: sidecarData
             ) else { return nil }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         try HarcDesktopClientFiles.writeProtectedData(
             encoder.encode(submission),
-            to: url
+            to: url, replacingExistingRegularFile: true
         )
+        try DurableFileIO.synchronizeFileAndParent(at: url)
         return submission
     }
 
-    private static func needsProcessingArtifact(
+    static func needsProcessingArtifact(
         origin: OriginRecordingID,
         clientRoot: URL,
         expectedTrust: AdoptedTrustTuple?
     ) -> Bool {
+        let sidecar = captureSidecarURL(origin: origin, clientRoot: clientRoot)
+        guard let data = try? Data(contentsOf: sidecar, options: .mappedIfSafe),
+              let decoded = try? JSONDecoder().decode(HarcDesktopClientCaptureSidecar.self, from: data),
+              decoded.transcript != nil else { return false }
         let marker = processingMarkerURL(origin: origin, clientRoot: clientRoot)
-        if let data = try? Data(contentsOf: marker, options: .mappedIfSafe),
-           let decoded = try? JSONDecoder().decode(
-               HarcDesktopProcessingMarker.self,
-               from: data
-           ), decoded.hostBinding?.matches(expectedTrust) == true {
+        if let markerData = try? Data(contentsOf: marker, options: .mappedIfSafe),
+           let completed = try? JSONDecoder().decode(HarcDesktopProcessingMarker.self, from: markerData),
+           completed.hostBinding?.matches(expectedTrust) == true,
+           completed.matchesSidecar(Data(SHA256.hash(data: data))) {
             return false
         }
-        let sidecar = clientRoot
-            .appendingPathComponent("Captures", isDirectory: true)
-            .appendingPathComponent(
-                "\(origin.recordingUUID.uuidString.lowercased()).capture.json"
-            )
-        guard let data = try? Data(contentsOf: sidecar, options: .mappedIfSafe),
-              let decoded = try? JSONDecoder().decode(
-                HarcDesktopClientCaptureSidecar.self,
-                from: data
-              ) else { return false }
-        return decoded.transcript != nil
+        return true
     }
 
     private static func needsSpeakerObservations(
@@ -1333,7 +1570,6 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             HarcDesktopClientCaptureSidecar.self,
             from: data
         ) else { return false }
-        guard !(sidecar.speakerEmbeddings ?? []).isEmpty else { return false }
 
         let markerURL = speakerObservationMarkerURL(
             origin: origin,
@@ -1350,6 +1586,25 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         }
         guard marker.hostBinding?.matches(expectedTrust) == true else {
             return true
+        }
+        guard marker.matchesSidecar(data) else { return true }
+        if let outcome = marker.hostOutcome {
+            guard marker.decisions == nil, marker.processingArtifactSHA256 == nil,
+                  outcome.canonicalRecordingID == marker.canonicalRecordingID,
+                  outcome.canonicalPCMHash == sidecar.capture.canonicalPCMSHA256,
+                  outcome.producerDeviceID.rawBytes == expectedTrust?.hostAuthorityID.rawBytes else { return true }
+            // A previous save may have written the bytes but failed its barrier.
+            // Existence alone must not suppress the retry that makes them durable.
+            do { try DurableFileIO.synchronizeFileAndParent(at: markerURL) }
+            catch { return true }
+            return marker.needsReview(at: now)
+        }
+        if marker.processingArtifactSHA256 != nil {
+            guard let processingData = try? Data(contentsOf: processingMarkerURL(origin: origin, clientRoot: clientRoot)),
+                  let processing = try? JSONDecoder().decode(HarcDesktopProcessingMarker.self, from: processingData),
+                  processing.hostBinding?.matches(expectedTrust) == true,
+                  processing.matchesSidecar(Data(SHA256.hash(data: data))),
+                  marker.matchesSelectedArtifact(processing.selectedEdgeBundleSHA256) else { return true }
         }
         return marker.needsReview(at: now)
     }
@@ -1370,7 +1625,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             ), let marker = try? JSONDecoder().decode(
                 HarcDesktopSpeakerObservationMarker.self,
                 from: data
-            ), marker.hostBinding?.matches(expectedTrust) == true else {
+            ), marker.hostBinding?.matches(expectedTrust) == true,
+               let sidecarData = try? Data(contentsOf: captureSidecarURL(
+                    origin: outbox.finalizedCapture.capture.originRecordingID, clientRoot: clientRoot)),
+               marker.matchesSidecar(sidecarData) else {
                 return
             }
             count += marker.concernCount
@@ -1430,17 +1688,18 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             )
     }
 
-    private static func processingSubmissionURL(
+    static func processingSubmissionURL(
         origin: OriginRecordingID,
         grantID: GrantID,
         grantEpoch: UInt64,
-        clientRoot: URL
+        sidecarSHA256: Data, clientRoot: URL
     ) -> URL {
         clientRoot
             .appendingPathComponent("Captures", isDirectory: true)
             .appendingPathComponent(
                 "\(origin.recordingUUID.uuidString.lowercased()).edge-submission."
-                    + "\(grantID.description).\(grantEpoch).json"
+                    + "\(grantID.description).\(grantEpoch)."
+                    + sidecarSHA256.map { String(format: "%02x", $0) }.joined() + ".json"
             )
     }
 
@@ -1499,9 +1758,10 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         return ChunkID(uuid)
     }
 
-    private static func observationOperationID(
+    nonisolated static func observationOperationID(
         origin: OriginRecordingID,
         speakerIndex: Int,
+        modelID: String,
         packRevision: EntityRevision?
     ) -> OperationID {
         var input = Data("harc-desktop-speaker-observation-v2".utf8)
@@ -1511,6 +1771,11 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
         withUnsafeBytes(of: &index) { input.append(contentsOf: $0) }
         var revision = (packRevision?.rawValue ?? 0).bigEndian
         withUnsafeBytes(of: &revision) { input.append(contentsOf: $0) }
+        // Preserve historical operation IDs; a new model must not replay the old model's decision.
+        if modelID != SpeakerEmbeddingRow.legacyModelID {
+            input.append(Data("\0speaker-model\0".utf8))
+            input.append(Data(modelID.utf8))
+        }
         var bytes = Array(SHA256.hash(data: input).prefix(16))
         bytes[6] = (bytes[6] & 0x0f) | 0x50
         bytes[8] = (bytes[8] & 0x3f) | 0x80
@@ -1518,6 +1783,83 @@ final class HarcDesktopClientTransferCoordinator: ObservableObject {
             UUID(uuidString: NSUUID(uuidBytes: buffer.baseAddress!).uuidString)!
         }
         return OperationID(uuid)
+    }
+
+    /// Validate every row before submitting any observation or recording completion.
+    nonisolated static func prepareSpeakerObservations(
+        _ rows: [SpeakerEmbeddingRow], origin: OriginRecordingID,
+        canonicalID: CanonicalRecordingID, pack: SpeakerRecognitionPack?, sidecarSHA256: Data
+    ) throws -> [SpeakerEmbeddingObservation] {
+        var seen: Set<UInt32> = []
+        return try rows.map { row in
+            guard let speakerIndex = UInt32(exactly: row.speakerIndex),
+                  let segmentCount = UInt32(exactly: row.segmentCount), segmentCount > 0,
+                  let speechDurationMs = UInt64(exactly: row.totalMs), speechDurationMs > 0,
+                  seen.insert(speakerIndex).inserted,
+                  row.vector.contains(where: { $0 != 0 }) else {
+                throw HarcDesktopClientTransferError.invalidSpeakerEvidence
+            }
+            let quantized = try QuantizedSpeakerEmbedding.quantizing(
+                row.vector
+            )
+            let match = pack.flatMap {
+                SpeakerRecognitionMatcher.bestMatch(
+                    embedding: quantized,
+                    modelID: row.modelID,
+                    pack: $0
+                )
+            }
+            let candidate = try SpeakerEmbeddingObservation(
+                operationID: Self.observationOperationID(
+                    origin: origin,
+                    speakerIndex: row.speakerIndex,
+                    modelID: row.modelID,
+                    packRevision: pack?.revision
+                ),
+                canonicalRecordingID: canonicalID,
+                speakerIndex: speakerIndex,
+                embedding: quantized,
+                modelID: row.modelID,
+                speechDurationMs: speechDurationMs,
+                segmentCount: segmentCount,
+                sourcePackRevision: match?.packRevision ?? pack?.revision,
+                proposedPersonID: match?.personID,
+                proposedScore: match?.score
+            )
+            return try Self.bindSpeakerObservation(candidate, sidecarSHA256: sidecarSHA256)
+        }
+    }
+
+    /// Include the exact evidence and complete proposed request in the retry identity.
+    /// Identical retries stay idempotent; replaced clusters or changed proposals
+    /// must not replay an older decision or collide with its request hash.
+    nonisolated static func bindSpeakerObservation(
+        _ observation: SpeakerEmbeddingObservation, sidecarSHA256: Data, processingArtifactSHA256: Data? = nil
+    ) throws -> SpeakerEmbeddingObservation {
+        guard sidecarSHA256.count == 32,
+              processingArtifactSHA256 == nil || processingArtifactSHA256?.count == 32 else {
+            throw HarcDesktopClientTransferError.malformedSpeakerResponse
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var input = Data((processingArtifactSHA256 == nil
+            ? "harc-desktop-speaker-observation-evidence-v3"
+            : "harc-desktop-speaker-observation-evidence-v4").utf8)
+        input.append(sidecarSHA256)
+        if let processingArtifactSHA256 { input.append(processingArtifactSHA256) }
+        input.append(try encoder.encode(observation))
+        var bytes = Array(SHA256.hash(data: input).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x50
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        let uuid = bytes.withUnsafeBufferPointer { buffer in
+            UUID(uuidString: NSUUID(uuidBytes: buffer.baseAddress!).uuidString)!
+        }
+        return try SpeakerEmbeddingObservation(operationID: OperationID(uuid),
+            canonicalRecordingID: observation.canonicalRecordingID,
+            speakerIndex: observation.speakerIndex, embedding: observation.embedding,
+            modelID: observation.modelID, speechDurationMs: observation.speechDurationMs,
+            segmentCount: observation.segmentCount, sourcePackRevision: observation.sourcePackRevision,
+            proposedPersonID: observation.proposedPersonID, proposedScore: observation.proposedScore)
     }
 
     private static func validateLibraryProtocol(
@@ -1576,6 +1918,8 @@ private enum HarcDesktopClientTransferError: LocalizedError {
     case missingVerifiedReceipt
     case speakerScopeNotGranted
     case malformedSpeakerResponse
+    case hostSpeakerOutcomePending
+    case invalidSpeakerEvidence
 
     var errorDescription: String? {
         switch self {
@@ -1589,17 +1933,28 @@ private enum HarcDesktopClientTransferError: LocalizedError {
             "The Host did not return a verified recording receipt."
         case .speakerScopeNotGranted:
             "This pairing predates shared speaker identity. Re-pair this Mac with the Host."
+        case .invalidSpeakerEvidence:
+            "Speaker identification could not be submitted because its saved evidence is invalid or duplicated."
+        case .hostSpeakerOutcomePending:
+            "Waiting for the Host to report its speaker-processing outcome."
         case .malformedSpeakerResponse:
             "The Host returned invalid speaker identity data."
         }
     }
 }
 
-private struct HarcDesktopProcessingMarker: Codable, Sendable {
+struct HarcDesktopProcessingMarker: Codable, Sendable {
     let exactSignedMetadataSHA256: Data
     let disposition: Int
+    let sidecarSHA256: Data?
     let acceptedAt: Date
     let hostBinding: HarcDesktopHostEvidenceBinding?
+
+    var selectedEdgeBundleSHA256: Data? = nil
+
+    func matchesSidecar(_ digest: Data) -> Bool {
+        digest.count == 32 && sidecarSHA256 == digest
+    }
 }
 
 struct HarcDesktopSpeakerObservationMarker: Codable, Sendable {
@@ -1609,6 +1964,9 @@ struct HarcDesktopSpeakerObservationMarker: Codable, Sendable {
     let acceptedAt: Date
     let nextReviewAt: Date?
     let hostBinding: HarcDesktopHostEvidenceBinding?
+    let sidecarSHA256: Data?
+    let processingArtifactSHA256: Data?
+    let hostOutcome: HostSpeakerProcessingOutcome?
 
     init(
         canonicalRecordingID: CanonicalRecordingID,
@@ -1616,7 +1974,10 @@ struct HarcDesktopSpeakerObservationMarker: Codable, Sendable {
         decisions: [HarcDesktopSpeakerDecisionRecord]?,
         acceptedAt: Date,
         nextReviewAt: Date? = nil,
-        hostBinding: HarcDesktopHostEvidenceBinding? = nil
+        hostBinding: HarcDesktopHostEvidenceBinding? = nil,
+        sidecarSHA256: Data? = nil,
+        processingArtifactSHA256: Data? = nil,
+        hostOutcome: HostSpeakerProcessingOutcome? = nil
     ) {
         self.canonicalRecordingID = canonicalRecordingID
         self.sourcePackRevision = sourcePackRevision
@@ -1624,17 +1985,39 @@ struct HarcDesktopSpeakerObservationMarker: Codable, Sendable {
         self.acceptedAt = acceptedAt
         self.nextReviewAt = nextReviewAt
         self.hostBinding = hostBinding
+        self.sidecarSHA256 = sidecarSHA256
+        self.processingArtifactSHA256 = processingArtifactSHA256
+        self.hostOutcome = hostOutcome
+    }
+
+    func matchesSelectedArtifact(_ digest: Data?) -> Bool {
+        guard let digest, digest.count == 32 else { return false }
+        return processingArtifactSHA256 == digest
+    }
+
+    func matchesSidecar(_ data: Data) -> Bool {
+        sidecarSHA256 == Data(SHA256.hash(data: data))
     }
 
     var concernCount: Int {
-        decisions?.filter {
+        if let hostOutcome {
+            if hostOutcome.diarization == .disabled { return 1 }
+            return hostOutcome.clusters.filter { $0.disposition != .matched }.count
+        }
+        return decisions?.filter {
             $0.decision.disposition != .matched
         }.count ?? 0
     }
 
+    var reviewDeadline: Date? {
+        if processingArtifactSHA256 != nil || hostOutcome != nil {
+            return nextReviewAt ?? acceptedAt.addingTimeInterval(6 * 60 * 60)
+        }
+        return concernCount > 0 ? (nextReviewAt ?? acceptedAt) : nil
+    }
+
     func needsReview(at now: Date) -> Bool {
-        guard concernCount > 0 else { return false }
-        return (nextReviewAt ?? acceptedAt) <= now
+        reviewDeadline.map { $0 <= now } ?? false
     }
 }
 

@@ -1,6 +1,136 @@
 # iPhone companion launch plan
 
-## Current checkpoint — October 16, 2026
+## Current checkpoint — October 26, 2026
+
+This checkpoint supersedes dated status and continuation instructions below.
+Historical results remain scoped to their recorded source, artifact and device;
+no old pass closes a current physical or submission gate.
+
+Main is `02b3a22b2611499d65fbdea8557fe66031406ad9`. It includes
+[#146](https://github.com/jkrack/Harc/pull/146), making Accessibility optional
+for auto-paste and avoiding automatic permission prompts during finalization,
+and [#160](https://github.com/jkrack/Harc/pull/160), removing fixed local compiler
+caps while retaining CI budgets, disk safeguards and test serialization.
+[#106](https://github.com/jkrack/Harc/pull/106)'s bounded-validation work is
+merged and complete within its tested scope; do not reopen it solely because
+older snapshots below describe a draft or failed run. Mobile configuration CI
+is now present. Physical product acceptance remains distinct from these results.
+
+The latest listed Mac release is
+[v0.14.19 (74)](https://github.com/jkrack/Harc/releases/tag/v0.14.19).
+This is repository/release metadata reconciliation, not fresh verification of
+published asset bytes, the live feed, signatures or the installed upgrade path.
+Draft [#155](https://github.com/jkrack/Harc/pull/155) prepares 0.14.20 (75) at
+`3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a`; its
+[exact-head CI](https://github.com/jkrack/Harc/actions/runs/40214998656) passed.
+The October 25 retained native diagnostic build receipt also passed metadata,
+arm64 app/helper and ad-hoc signature checks, plus source/public-URL preflight:
+`/Users/jlane/Documents/Codex/2026-10-25/task/harc-pr155-diagnostic-build-result.json`.
+That local receipt is not a signed/notarized release artifact, physical capture
+acceptance or phone qualification. The candidate remains draft and unqualified
+for release; its [current gate register](https://github.com/jkrack/Harc/blob/3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a/docs/evidence/harcmobile-current-candidate-readiness.md)
+and [Mac preparation record](https://github.com/jkrack/Harc/blob/3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a/docs/evidence/2026-10-24-mac-maintenance-preparation.md)
+retain their own source-specific evidence and ownership.
+
+The UI draft stack is separate from main and #155:
+
+| Draft | Exact reviewed head | Automated evidence |
+| --- | --- | --- |
+| [#159](https://github.com/jkrack/Harc/pull/159) | `c044b9464815dc3b3d30b2cfa9d43877653790cb` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40155990145) |
+| [#161](https://github.com/jkrack/Harc/pull/161), based on #159 | `05d086149ba486c2e727a38aeaee280769a741f6` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40213894471) |
+| [#162](https://github.com/jkrack/Harc/pull/162), based on #161 | `2ca64686ee130878ae5abc84779c4a73de9d1fbc` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40215659159) |
+| [#163](https://github.com/jkrack/Harc/pull/163), based on #162 | `784e652bade24e874c9fec8ea14b629248c5e40b` | [CI passed](https://github.com/jkrack/Harc/actions/runs/40220604960) |
+
+All four are unmerged. CI and focused visual checks do not establish full
+accessibility acceptance: VoiceOver, broad accessibility-audit flags and affected
+physical traversal remain open. Device Hub approval for the independent UI task
+is pending; this plan reconciliation does not authorize or duplicate that work.
+
+### Current phone critical path
+
+1. Select and seal the exact candidate source/build on an available physical
+   iPhone. Prove bit-exact canonical PCM encode/decode including exact EOF,
+   production-path transfer, a durable verified Host receipt, a complete
+   Host/phone canonical PCM hash match, and protected-master retention until
+   receipt verification. Follow the [physical qualification runbook](../operations/mobile-physical-qualification.md).
+2. On that qualified source and a known-good signed Mac Host, complete ordinary
+   phone recording → Host receipt/processing → phone Library refresh, playback
+   and transcript acceptance. Keep capture, delivery, processing and Library
+   failures separate; pairing or a receipt alone is not the full round trip.
+3. Complete applicable physical reliability, protection, upgrade and accessibility
+   gates, then the exact archive/export, privacy/dependency review, owner fields,
+   current screenshots and submission package in the
+   [App Store runbook](../operations/app-store-release-readiness.md). **App Store
+   remains NO-GO; submission requires owner approval.**
+
+The [October 18 physical diagnostic](../evidence/2026-10-18-omega-alac-product-path-diagnostic.md)
+was an engineering pass with an unsealed source/Debug override, not current
+release qualification. The [October 20 reconciliation](../evidence/2026-10-20-omega-processing-and-library-diagnosis.md)
+retains independent Host file-binding and stale phone Library cursor failures;
+neither failure is explained away by the other or by subsequent CI. Reproduce
+and close affected failures with exact-candidate evidence rather than deleting
+or relabeling their records. Named phone-model pairs and three-hour endurance
+runs are optional coverage, not codec-enablement blockers; Omega is eligible.
+
+Mac-only maintenance capture/Stop/playback/recovery and signed-artifact gates
+remain separate from companion-launch qualification. Owner idle/closed-app
+confirmation is pending for the exclusive Mac test window. Issue #105,
+secondary-Mac Client qualification, Mac App Store distribution and standalone
+phone inference remain deferred from this critical path unless evidence proves
+a dependency. This documentation task does not merge, build, capture, use
+credentials, install, publish or waive any physical/security/submission gate.
+
+## Historical checkpoint — October 19, 2026
+
+The active delivery branch is `codex/omega-delivery`, based on main `3afdccf`.
+Navigation, Setup/Sync, unified Library and recording motion (#130–133) are
+merged. The 0.14.17 (72) candidate combines the physical ALAC EOF correction,
+upload-capacity error mapping, and prepared-receipt recovery. Its normal mobile
+configuration selects CAF/ALAC; no Debug launch override is required. Matching
+Mac and phone builds and physical recording-to-Library acceptance are pending.
+
+Omega is eligible. Named-device pairs and three-hour endurance runs are optional
+coverage, not release blockers. Preserve bit-exact PCM, verified receipt, matching
+Host/client hashes and protected-master retention requirements. App Store
+submission is outside this delivery checkpoint and remains unqualified.
+
+## Historical checkpoint — October 17, 2026
+
+**Mac Sparkle: approved 0.14.15 (70) candidate. App Store: NO-GO.**
+GitHub main at `c715538c34ba97de37cc1f955d9220ad0f5eb1ca` includes the
+reviewed P-256 correction from PR #124. Its
+[push CI 39037211911](https://github.com/jkrack/Harc/actions/runs/39037211911)
+passed. The October 16 signature failures below are retained historical evidence;
+they do not describe current main.
+
+PR #125 merged into the stacked correction branch at
+`e68ca972d546b2aba902705dfa08764567ecfdd9`. The release integrates that reviewed
+mobile change with main. Both final apps embed built source
+`5f16c7427f320b5de68daab33a3f59b9b80f7245` and identify 0.14.15 (70).
+The shared fallback version is aligned with the marketing version. On this exact
+source, local validation passed 1,616 Swift Testing tests, 124 XCTest tests with
+four skips, 31 strict-executor tests, and the direct and local encrypted-relay
+pinned-TLS pairing lifecycle. The native Swift 6.4 test-launcher issue and its
+isolated main-thread runner workaround are preserved with unchanged test bodies
+and object-file provenance in the SSD release evidence.
+
+Apple accepted notarization `c8ae24ea-d526-4c2e-a6a1-d9dd9f6a42df`; stapling,
+Gatekeeper, nested signatures and Sparkle verification passed. The final DMG is
+66,948,477 bytes with SHA-256
+`3bd23a1c256e3ed69e89c5113446752008f2c1190ea6fabc964c533030930804`.
+James explicitly approved publishing this Mac update. The separate signed iOS
+development archive remains private; neither app has been installed by this
+release task. The superseded private candidate and all original failures remain
+in `/Volumes/MacMiniSDD/HarcBuilds/release-0-14-15-evidence-20261017/`.
+
+Named-device codec, durable physical phone-to-Host-to-Library acceptance,
+real-model, accessibility, privacy and App Store gates remain open. This Mac
+release does not enable a closed codec/upload gate, submit to the App Store,
+change credentials or accept new agreements. Historical observations below are
+superseded only for their dated source/build/CI status, not for unclosed physical
+or submission requirements.
+
+## Historical checkpoint — October 16, 2026
 
 **Release eligibility: NO-GO for public Sparkle or App Store distribution.**
 Reviewed main is `3f9f090ae4bd1266651ceb94f2a553f10d1de08a`; no open PRs were
@@ -37,14 +167,16 @@ Installed 0.14.13 (68) builds remain the baseline. Codec/upload gates remain clo
 | Discoverable Sync details / PR #122 | Codex | Merged; final branch CI passed 70 logical / 87 mobile case executions; current-main mobile job skipped | Retain branch evidence; run required combined-source checks after a supported security correction. Manual and physical checks remain open. |
 | Private 0.14.14 (69) retry artifacts | James for pending choice; Codex for execution | Mac notarized/verified; iOS signed/verified; neither installed | Await the existing install choice and idle-app confirmation before an in-place test update. |
 | Host Library diagnosis | Codex + James | No fresh typed physical result from the new Sync surface | After an authorized update, inspect Host Library operation/RPC status without recording; paused transfer copy alone does not identify a cause. |
-| Named-device codec matrix and durable phone → Host → Library acceptance | Codex + James for hardware | Unqualified; gate closed | Follow the sealed-source physical runbooks; Omega is supplementary Pro hardware. |
+| Physical codec and durable phone → Host → Library acceptance | Codex + James for hardware | Unqualified; gate closed | Qualify the selected codec and full product path on the recorded physical phone; Omega is eligible. |
 | Privacy, accessibility and submission | Codex + James | Open; not release-ready | Complete owner fields, manual checks and exact-archive acceptance in the milestones below. |
 
 No physical recording, gate bypass, credentials/trust/permission change, external
 bug report, App Store action or public release occurred in this follow-up. Dirty
 checkouts, recordings and unique diagnostic evidence were preserved. The dated
 snapshot below is historical, including its draft-PR and continuation instructions;
-use this checkpoint for current status.
+use this checkpoint for current status. References in that snapshot to two named
+codec-matrix phones are superseded by the physical qualification decision in the
+current plan and runbook.
 
 ## Mac mini handoff snapshot — October 15, 2026 (Pacific)
 
@@ -79,7 +211,7 @@ release is authorized by this validation task.
 | --- | --- | --- | --- |
 | Current development baseline: both apps identified, signed Mac accepted, existing adoption retained | Codex | Done for installed `0ce24fe` candidate | Preserve the dated installation evidence below. |
 | Discoverable Sync details: Library and Host entry points; accurate pending/Host/Library states; valid recovery actions; local playback/export retained | Codex | Draft PR #122; native tests, app/test compilation and hosted app/UI checks passed | Complete code review; manual accessibility and physical checks remain open. |
-| Codec: all four named-device three-hour cells pass frozen thresholds before enablement | Codex + James for hardware | Open; gate closed | Follow the physical qualification runbook; no bypass or threshold change. |
+| Codec: physical bit-exact regression and one verified phone → Host receipt before enablement | Codex + James for hardware | Open; gate closed | Follow the revised physical qualification runbook on an available physical iPhone; no named marketing model is required. |
 | Phone → Host → Library: verified durable receipt, matching audio identity, one canonical recording, retry/restart behavior | Codex + James | Unqualified; depends on qualified codec | Run sealed-source physical acceptance after codec decision. |
 | Host Library diagnosis: actual operation/RPC result, distinct from transfer availability | Codex + James | User-visible failure not yet reproduced with a fresh typed result | Use the new status surface after it is validated; do not infer cause from paused copy. |
 | Submission: exact archive, privacy/dependencies, screenshots and owner fields accepted | Codex + James | Open; not release-ready | Complete applicable gates in the milestones below. |
@@ -132,8 +264,8 @@ release is authorized by this validation task.
 
 The Mac mini is an Apple M4 Mac16,10 on macOS 26.6.2 (25G83). The connected
 physical phone was an iPhone 15 Pro Max, iPhone16,2, on iOS 26.6 (23G71), wired,
-paired and with Developer Mode enabled. It is supplementary Pro-device evidence,
-not either named codec-matrix phone and not a simulator. A later read-only source
+paired and with Developer Mode enabled. It is an eligible physical qualification
+phone and not a simulator. A later read-only source
 query was blocked by the phone's locked/passcode state; no unlock was attempted.
 
 Apple accepted notarization submission `c68b27a0-361c-42b6-921f-cabf3cbe7302`.
@@ -182,7 +314,7 @@ the launch scope of the
 [production reliability plan](2026-08-23-production-reliability.md); it does not
 silently waive its applicable requirements.
 
-## Assessment and evidence limits
+## Historical assessment and evidence limits — October 14, 2026
 
 The review covered the complete tracked file inventory, package/project
 configuration, mobile application composition, capture and transfer paths,
@@ -202,7 +334,7 @@ Stop control. The last recorded automation-mode timeout is therefore a historica
 test-service blocker, not proof that today's service is still broken. A fresh
 physical run must establish its current state.
 
-## Existing foundation
+## Historical foundation inventory — October 14, 2026
 
 These capabilities are implemented and have focused or historical validation:
 
@@ -229,7 +361,11 @@ physical behavior still require acceptance evidence. See the
 [archive/export evidence](../evidence/2026-08-09-harcmobile-release-archive.md), and
 [latest physical diagnostics](../evidence/2026-08-23-harcmobile-current-tree-physical-diagnostics.md).
 
-## Verified gaps
+## Historical gap assessment — October 14–15, 2026
+
+The baseline/configuration and CI statements in this section are historical,
+not current instructions. Use the October 26 checkpoint for active status;
+preserve the unclosed safety and physical acceptance requirements.
 
 ### Production codec and new-recording transfer
 
@@ -244,14 +380,13 @@ transfer. Pairing, local capture/playback/export, Host health, and reading an ex
 authorized Host Library are separate paths. Packaging preflight alone cannot prove
 capture-to-Host transfer works.
 
-Complete the four physical three-hour codec cells and review their results before
-enabling the production condition. The earlier ALAC run was bit-exact but failed
-the frozen thermal threshold. Current production encoding, negotiation, and Host
-decoding use CAF/ALAC; FLAC is a qualification candidate, not a drop-in production
-choice. If ALAC fails, review additional integration scope rather than bypassing
-the gate or loosening thresholds without a reviewed specification change.
+Qualify CAF/ALAC on the available physical iPhone using bit-exact decoding,
+a production transfer, verified receipt, matching canonical hashes, and master
+retention. The October 18 owner correction supersedes the former four-cell,
+named-device and mandatory three-hour requirements. Optional endurance results
+remain useful characterization; they do not block this delivery.
 
-### Current validation and physical acceptance
+### Historical validation and physical acceptance
 
 **2026-10-15 update:** PR #106 is merged. Combined main `c802dce6` passed
 [CI 38738216824](https://github.com/jkrack/Harc/actions/runs/38738216824),
@@ -272,11 +407,11 @@ Neither the reviewed main workflow nor that PR workflow includes iOS build/mobil
 app-test execution. Add focused mobile continuous validation after the baseline
 is stable. Simulator and unit tests do not replace physical acceptance.
 
-Open evidence includes named-device capture/endurance, background/system-termination
+Open evidence includes physical capture/endurance, background/system-termination
 transfer, delayed capabilities, Host restart and route/leaf rotation, cellular
 transitions, revocation, manual accessibility, protection transitions, and installed
 upgrade. Prior Omega diagnostics establish specific historical behavior; they do
-not close the full matrix for new bytes.
+not close the revised product-path qualification for new bytes.
 
 ### Packaging, privacy, and metadata
 
@@ -297,10 +432,15 @@ and submission readiness remain required.
 
 ## Milestones and completion evidence
 
+This original milestone breakdown retains the planning baseline. Milestone 1’s
+“Finish PR #106” is complete; current-source selection and validation remain
+required. Historical version/configuration gaps above must not be treated as
+new implementation tasks. The October 26 critical path governs remaining work.
+
 | Milestone | Work and dependencies | Evidence required to complete |
 | --- | --- | --- |
 | 1. Reliable current baseline | Finish PR #106; select clean source; run bounded package, macOS Host, and iOS build/test checks; refresh preparation drift. | Exact SHA/version/build, successful required CI and local app-target results, declared skips and real-model coverage limits. No bypassed failure. |
-| 2. Qualified codec | Obtain both named phones; stabilize physical test execution; run short functional checks and all codec cells. | Four fresh-process sealed-source reports, independent matrix validation, frozen integrity/performance/thermal thresholds, reviewed codec decision, then tested production enablement. |
+| 2. Qualified codec | Use an available physical iPhone; stabilize physical test execution; run the bit-exact codec regression and production-path transfer. | Exact sealed-source physical test result, matching decoded hash, one verified durable Host receipt with the local master retained until verification, reviewed codec decision, then tested production enablement. |
 | 3. Safe phone → Host → Library round trip | Use milestone 2 codec and a known-good signed Mac Host. Record ordinarily, transfer, obtain receipt, process, and refresh the phone Library. | Matching source/Host PCM hashes, exactly one canonical recording, verified durable receipt, retained source until receipt, visible processing result, phone playback/transcript and separate failure states. |
 | 4. Physical reliability | Execute applicable C/T/P/H, two-network/security, accessibility, protection and upgrade scenarios against sealed source. | Named device/OS/build identities, required repetitions, hashes/logs and pass/fail per scenario; no silent gaps, duplicate publication, trust bypass or premature final-copy deletion. |
 | 5. Submission candidate | Create exact archive/export and screenshots; refresh privacy/dependencies/URLs/copy; resolve owner fields; upload only after applicable gates pass. | Passing archive/distribution and screenshot preflight, exact source/artifact identity, processing warnings resolved, owner-confirmed privacy/export/metadata, reviewable submission package. Submission requires confirmation. |
@@ -310,11 +450,10 @@ results as current passes. Follow the
 [physical qualification runbook](../operations/mobile-physical-qualification.md)
 and [App Store release runbook](../operations/app-store-release-readiness.md).
 
-The repository currently names an iPhone XR/iOS 18 and a current non-Pro iPhone 17
-on current iOS. Omega is supplementary Pro-device evidence. Codec cells alone
-require 12 device-hours; repeated C1 and C2 add 24 device-hours, before other
-scenarios and reruns. Some runs can overlap on two phones. A changed launch floor
-or matrix requires an explicit specification decision.
+The earlier repository plan named an oldest/current pair. That requirement is
+superseded: no iPhone SE (2nd generation), iPhone 17, or other named marketing
+model is required. Omega may supply the physical codec and product-path evidence.
+Additional devices broaden confidence but do not block the selected codec.
 
 ## Work ownership and dependencies
 
@@ -333,7 +472,10 @@ pricing/regions/agreements and other account fields, exact-build privacy/export
 decisions, and App Store submission confirmation. Do not create credentials,
 change security settings, or accept agreements without the required approval.
 
-## Effort and scope control
+## Historical effort estimate — October 14, 2026
+
+The following estimate is retained for provenance, not a current remaining-work
+forecast. Re-estimate from the October 26 critical path after physical acceptance.
 
 Plan for **15–30 focused person-days**, plus **5–10 days contingency** for failures
 and repeat qualification: approximately 3–6 focused working weeks with 1–2 reserve

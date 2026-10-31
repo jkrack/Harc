@@ -7,11 +7,17 @@ import HarcProtocol
 import HarcTransfer
 
 struct HarcMobileOpenedHostConnection: Sendable {
+    enum Path: Equatable, Sendable {
+        case direct
+        case encryptedRelay
+    }
+
     let connection: HarcPinnedGRPCConnection
     let adoption: ValidatedClientAdoptionEvidence
     let session: HarcOpenedClientSession
     let negotiated: HarcValidatedNegotiatedCapabilitiesV1
     let hostDisplayName: String
+    let path: Path
 }
 
 enum HarcMobileHostSessionConnector {
@@ -138,7 +144,8 @@ enum HarcMobileHostSessionConnector {
             return try await finishOpening(
                 connection: connection,
                 adoption: adoption,
-                identity: identity
+                identity: identity,
+                path: .encryptedRelay
             )
         } catch {
             await connection.shutdownImmediately()
@@ -166,7 +173,8 @@ enum HarcMobileHostSessionConnector {
             return try await finishOpening(
                 connection: connection,
                 adoption: adoption,
-                identity: identity
+                identity: identity,
+                path: .direct
             )
         } catch {
             await connection.shutdownImmediately()
@@ -177,7 +185,8 @@ enum HarcMobileHostSessionConnector {
     private static func finishOpening(
         connection: HarcPinnedGRPCConnection,
         adoption: ValidatedClientAdoptionEvidence,
-        identity: InstallationSigningIdentity
+        identity: InstallationSigningIdentity,
+        path: HarcMobileOpenedHostConnection.Path
     ) async throws -> HarcMobileOpenedHostConnection {
         let policy = try capabilityPolicy()
         let client = HarcBootstrapClient(
@@ -199,7 +208,8 @@ enum HarcMobileHostSessionConnector {
             adoption: adoption,
             session: session,
             negotiated: negotiated.negotiated,
-            hostDisplayName: negotiated.hostInfo.displayName
+            hostDisplayName: negotiated.hostInfo.displayName,
+            path: path
         )
     }
 

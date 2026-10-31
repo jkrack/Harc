@@ -8,18 +8,21 @@ set -euo pipefail
 cd "$SRCROOT"
 
 SCRATCH="$SRCROOT/.build-daemon"
-BUILD_JOBS="${HARC_EMBED_BUILD_JOBS:-2}"
+mkdir -p "$SCRATCH"
+# Use one cache identity when regenerable output is symlinked to an SSD.
+SCRATCH="$(cd "$SCRATCH" && pwd -P)"
+source "$SRCROOT/scripts/build-concurrency.sh"
+harc_configure_build_jobs "${HARC_EMBED_BUILD_JOBS:-${HARC_BUILD_JOBS:-}}"
 echo "note: building harc-stt into $SCRATCH"
 
-swift build \
-  --jobs "$BUILD_JOBS" \
+harc_swift build \
   -c release \
   --product harc-stt \
   --scratch-path "$SCRATCH" \
   --arch arm64
 
 # SwiftPM's default build engine changed in Xcode 27; query its output path.
-BIN_DIR="$(swift build --jobs "$BUILD_JOBS" -c release --product harc-stt \
+BIN_DIR="$(harc_swift build -c release --product harc-stt \
   --scratch-path "$SCRATCH" --arch arm64 --show-bin-path)"
 DAEMON_SRC="$BIN_DIR/harc-stt"
 DAEMON_DST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/harc-stt"

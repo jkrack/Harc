@@ -3,14 +3,90 @@ import GRDB
 import HarcDomain
 @testable import HarcIdentity
 import HarcProtocol
+import HarcTestSupport
 import Testing
+import Synchronization
 @testable import HarcHost
 
 // Security.framework's process-global certificate/identity lookup is not a
 // concurrency-isolated test fixture. Serialize this suite so one test cannot
 // remove its temporary Keychain material while another is resolving identity.
-@Suite("Host transport-set lifecycle", .serialized)
+@Suite(
+    "Host transport-set lifecycle",
+    .serialized,
+    .processWideSystemResource
+)
 struct HostTransportLifecycleTests {
+    @Test("concurrent leaf creation invokes the issuer only once")
+    func concurrentLeafIssuance() async throws {
+        let fixture = try await makePermanentFixture()
+        defer {
+            fixture.keys.deleteAllBestEffort()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        let verified = try makeSet(
+            state: fixture.state,
+            epoch: 1,
+            now: fixture.now
+        )
+        try await fixture.store.prepareTransportSetPublication(
+            verified,
+            kind: .initial,
+            expectedActiveSPKISHA256:
+                fixture.state.activeTLSIdentity.tlsSPKISHA256,
+            secondarySPKISHA256: nil,
+            retirementFloorUnixMilliseconds: 0,
+            at: fixture.now
+        )
+        _ = try await fixture.crypto.advanceHighestIssuedTransportSetEpoch(
+            for: fixture.state.tuple,
+            from: 0,
+            to: 1
+        )
+        let pending = try #require(
+            await fixture.store.transportDatabaseSnapshot().pending
+        )
+        try await fixture.store.applyPendingTransportSetPublication(
+            expected: pending,
+            verified: verified,
+            at: fixture.now
+        )
+        let entry = try #require(verified.entries.first)
+        let request = try HostTLSServerCertificateRequest(
+            transportSetEntryNotBefore: Date(
+                timeIntervalSince1970:
+                    Double(entry.notBeforeUnixMilliseconds) / 1_000
+            ),
+            transportSetEntryNotAfter: Date(
+                timeIntervalSince1970:
+                    Double(entry.notAfterUnixMilliseconds) / 1_000
+            ),
+            expectedTLSSPKISHA256:
+                fixture.state.activeTLSIdentity.tlsSPKISHA256,
+            framedSignedTransportSet: verified.exactSignedBytes
+        )
+        let facts = try fixture.state.activeTLSIdentity.issueServerCertificate(
+            request: request
+        )
+        let issued = Mutex(0)
+        let issue: @Sendable () throws -> HostTLSServerCertificateFacts = {
+            issued.withLock { $0 += 1 }
+            return facts
+        }
+        async let first = fixture.store.resolveOrCreateTLSLeaf(
+            for: verified, tlsSPKISHA256: facts.tlsSPKISHA256,
+            at: fixture.now, issue: issue
+        )
+        async let second = fixture.store.resolveOrCreateTLSLeaf(
+            for: verified, tlsSPKISHA256: facts.tlsSPKISHA256,
+            at: fixture.now, issue: issue
+        )
+        let results = try await (first, second)
+        #expect(results.0 == facts.certificateDER)
+        #expect(results.1 == facts.certificateDER)
+        #expect(issued.withLock { $0 } == 1)
+    }
+
     @Test("pending N+1 is advanced in Keychain and atomically applied on reopen")
     func pendingRecoveryAdvancesThenApplies() async throws {
         let fixture = try await makeFixture()
@@ -791,10 +867,10 @@ struct HostTransportLifecycleTests {
             tlsSPKISHA256: state.activeTLSIdentity.tlsSPKISHA256,
             notBeforeUnixMilliseconds: notBefore ?? nowMilliseconds - 300_000,
             // Default fixtures are comfortably outside the production
-            // seven-day proactive-renewal window. Tests exercising expiry or
+            // 30-day proactive-renewal window. Tests exercising expiry or
             // renewal pass an explicit boundary.
             notAfterUnixMilliseconds: notAfter
-                ?? nowMilliseconds + (30 * 86_400_000)
+                ?? nowMilliseconds + (60 * 86_400_000)
         )
         return try TestHostTransportSetProtocolBoundaryV1().issueTransportSet(
             HostTransportSetIssueRequest(

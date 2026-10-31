@@ -140,6 +140,11 @@ struct RecordingSessionTranscriptionTests {
         await awaitFirstChunk(transcriber.updates, timeout: .seconds(10))
 
         let captured = try await session.stop()
+        defer {
+            try? FileManager.default.removeItem(at: captured.localMasterURL)
+            try? FileManager.default.removeItem(at: RecordingPublication.journalURL(for: captured.localMasterURL))
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: captured.localMasterURL))
+        }
         #expect(FileManager.default.fileExists(atPath: captured.localMasterURL.path))
         #expect(captured.transcript != nil)
         #expect(captured.transcript?.startedAt == captured.startedAt)

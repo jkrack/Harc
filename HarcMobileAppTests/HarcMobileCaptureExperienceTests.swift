@@ -1,4 +1,5 @@
 import AVFAudio
+import HarcDomain
 import XCTest
 @testable import HarcMobile
 
@@ -93,9 +94,14 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         XCTAssertEqual(presentation.tone, .healthy)
     }
 
-    func testCodecGateNamesTheBuildRestrictionAndLocalCount() {
+    func testCodecGateKeepsExplanationInsideSetupAndSync() {
+        let id = UUID()
         let recording = HarcMobileLocalRecording(
-            id: UUID(),
+            id: id,
+            originID: OriginRecordingID(
+                deviceID: try! DeviceID(Data(repeating: 0x42, count: 32)),
+                recordingUUID: id
+            ),
             startedAt: Date(timeIntervalSinceReferenceDate: 10),
             duration: 30,
             masterFileURL: URL(fileURLWithPath: "/tmp/capture.caf"),
@@ -114,11 +120,10 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
         )
         XCTAssertEqual(
             presentation.detail,
-            "Audio transfers are not enabled in this build. Recordings stay available here."
+            "Open Setup & Sync to review sending status."
         )
         XCTAssertEqual(presentation.tone, .neutral)
         XCTAssertFalse(presentation.detail.contains("codec"))
-        XCTAssertTrue(presentation.detail.contains("not enabled in this build"))
     }
 
     func testHostPillMapsHealthWithoutDashboardCopy() {

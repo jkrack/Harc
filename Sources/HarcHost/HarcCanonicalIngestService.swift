@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import HarcDomain
 import HarcIdentity
@@ -16,6 +17,28 @@ public struct HostCanonicalRecoveryReport: Equatable, Sendable {
         failedUploadIDs: [UploadID]
     ) {
         self.attemptedUploadCount = attemptedUploadCount
+        self.recoveredReceiptCount = recoveredReceiptCount
+        self.failedUploadIDs = failedUploadIDs
+    }
+}
+
+public struct HostCanonicalLibraryMigrationReport: Equatable, Sendable {
+    public let checkedArtifactCount: Int
+    public let eligibleArtifactCount: Int
+    public let reboundArtifactCount: Int
+    public let recoveredReceiptCount: Int
+    public let failedUploadIDs: [UploadID]
+
+    public init(
+        checkedArtifactCount: Int,
+        eligibleArtifactCount: Int,
+        reboundArtifactCount: Int,
+        recoveredReceiptCount: Int,
+        failedUploadIDs: [UploadID]
+    ) {
+        self.checkedArtifactCount = checkedArtifactCount
+        self.eligibleArtifactCount = eligibleArtifactCount
+        self.reboundArtifactCount = reboundArtifactCount
         self.recoveredReceiptCount = recoveredReceiptCount
         self.failedUploadIDs = failedUploadIDs
     }
@@ -42,6 +65,9 @@ enum HostCanonicalIngestFailureCode: String, Sendable {
     case ingestFailed = "canonical-ingest-failed"
 
     static func classify(_ error: any Error) -> Self {
+        if case StoreError.canonicalArtifactIdentityMismatch = error {
+            return .artifactIdentityMismatch
+        }
         guard let hostError = error as? HarcHostError else {
             return .ingestFailed
         }
@@ -366,26 +392,90 @@ public actor HarcCanonicalIngestService {
         }
         try activityGate.claim(work.uploadID)
         defer { activityGate.release(work.uploadID) }
+        guard let artifact = try await validatedReceiptRepairArtifact(work: work) else { return false }
+        guard try await hostStore.localOSAuthenticationBoundary.authorizeCanonicalReceiptRepair(for: canonicalRecordingID) else {
+            throw HarcHostError.localOSAuthenticationRequired
+        }
+        try Task.checkCancellation()
+        try artifact.validateCanonicalContent()
+        try await commitValidatedReceiptRepair(work: work, artifact: artifact)
+        return true
+    }
+
+    /// One explicit local approval covers only this fully verified snapshot.
+    /// No descriptors or audio buffers accumulate across the preflight pass.
+    public func repairReceiptBindings(
+        progress: (@Sendable (Int, Int) async -> Void)? = nil
+    ) async throws -> (checked: Int, repaired: Int, failed: Int) {
+        let ids = try await hostStore.committedReceiptRecordingIDs()
+        var candidates: [(HostReceiptProcessingWork, HostCanonicalArtifactIdentity)] = []
+        var failed = 0
+        for (index, id) in ids.enumerated() {
+            try Task.checkCancellation()
+            await progress?(index, ids.count)
+            do {
+                guard let work = try await hostStore.receiptProcessingWork(canonicalRecordingID: id) else {
+                    throw HarcHostError.canonicalArtifactIdentityMismatch
+                }
+                try activityGate.claim(work.uploadID)
+                defer { activityGate.release(work.uploadID) }
+                if let artifact = try await validatedReceiptRepairArtifact(work: work) {
+                    candidates.append((work, artifact.identity))
+                }
+            } catch is CancellationError { throw CancellationError() }
+            catch { failed += 1 }
+        }
+        await progress?(ids.count, ids.count)
+        guard !candidates.isEmpty else { return (ids.count, 0, failed) }
+        guard try await hostStore.localOSAuthenticationBoundary.authorizeCanonicalReceiptRepairBatch(
+            recordingCount: candidates.count
+        ) else { throw HarcHostError.localOSAuthenticationRequired }
+        var repaired = 0
+        for (work, approvedIdentity) in candidates {
+            try Task.checkCancellation()
+            do {
+                try activityGate.claim(work.uploadID)
+                defer { activityGate.release(work.uploadID) }
+                // Reopen and rehash against the exact pre-approval identity.
+                // Database commit also rechecks the original work and receipt.
+                guard let artifact = try await validatedReceiptRepairArtifact(work: work),
+                      artifact.identity == approvedIdentity else {
+                    throw HarcHostError.canonicalArtifactIdentityMismatch
+                }
+                try await commitValidatedReceiptRepair(work: work, artifact: artifact)
+                repaired += 1
+            } catch is CancellationError { throw CancellationError() }
+            catch { failed += 1 }
+        }
+        return (ids.count, repaired, failed)
+    }
+
+    private func validatedReceiptRepairArtifact(
+        work: HostReceiptProcessingWork
+    ) async throws -> HostValidatedCanonicalArtifact? {
         let paths = try HostCanonicalPublicationPaths.make(
             rootAnchor: canonicalRootAnchor, canonicalRecordingID: work.canonicalRecordingID,
             persistedRelativeWAVPath: work.publicationRelativePath, temporaryName: work.temporaryName
         )
-        // Capture a fresh descriptor and validate all bytes before considering
-        // any metadata transition. Retain it through authentication and commit.
-        let artifact = try HostValidatedCanonicalArtifact(
-            at: paths.wavURL, in: paths, totalFrames: work.canonicalPCMFrames,
-            expectedPCMHash: work.canonicalPCMHash
-        )
+        // Inspect identity before hashing: unchanged bindings need no repair,
+        // and replaced/moved files require the distinct migration operation.
+        // This prepass grants no authority. Eligible bytes are still fully
+        // validated on a retained descriptor before and after owner approval.
         let old = work.canonicalArtifactIdentity
-        let fresh = artifact.identity
-        if old == fresh { return false }
-        guard old.inodeNumber == fresh.inodeNumber,
+        let fresh = try currentCanonicalArtifactIdentity(at: paths.wavURL, in: paths)
+        if old == fresh { return nil }
+        guard old.deviceNumber == fresh.deviceNumber,
+              old.inodeNumber == fresh.inodeNumber,
               old.ownerUserID == fresh.ownerUserID,
               old.posixMode == fresh.posixMode,
               old.linkCount == fresh.linkCount,
               old.fileByteCount == fresh.fileByteCount else {
             throw HarcHostError.canonicalArtifactIdentityMismatch
         }
+        let artifact = try HostValidatedCanonicalArtifact(
+            at: paths.wavURL, in: paths, totalFrames: work.canonicalPCMFrames,
+            expectedPCMHash: work.canonicalPCMHash, expectedIdentity: fresh
+        )
         let manifest = try await hostStore.validateBoundManifest(uploadID: work.uploadID, using: manifestValidator)
         let receipt = try receiptValidator.validateRecordingReceipt(
             exactSignedReceiptBytes: work.exactReceipt.exactBytes,
@@ -397,17 +487,119 @@ public actor HarcCanonicalIngestService {
               receipt.totalCanonicalFrames == work.canonicalPCMFrames else {
             throw HarcHostError.canonicalArtifactIdentityMismatch
         }
-        guard try await hostStore.localOSAuthenticationBoundary.authorizeCanonicalReceiptRepair(for: canonicalRecordingID) else {
-            throw HarcHostError.localOSAuthenticationRequired
-        }
+        return artifact
+    }
+
+    private func commitValidatedReceiptRepair(
+        work: HostReceiptProcessingWork, artifact: HostValidatedCanonicalArtifact
+    ) async throws {
         try Task.checkCancellation()
-        try artifact.validateCanonicalContent()
         let capability = canonicalCommitCapability
-        try await hostStore.commitReceiptBindingRepair(work: work, identity: fresh, at: now()) {
+        try await hostStore.commitReceiptBindingRepair(work: work, identity: artifact.identity, at: now()) {
             guard capability.isActive else { throw StoreError.hostWriterCapabilityRequired }
             try artifact.validateBinding()
         }
-        return true
+    }
+
+    /// Explicit local administration for a canonical library that was copied
+    /// or moved. Ordinary recovery remains fail-closed on device/inode drift.
+    /// Every candidate is fully re-hashed before and after the single batch
+    /// owner authorization, and each accepted transition is append-only.
+    public func migrateCanonicalLibraryBindings() async throws
+        -> HostCanonicalLibraryMigrationReport
+    {
+        let uploadIDs = try await hostStore.canonicalArtifactBindingCandidateUploadIDs()
+        var eligible: [UploadID] = []
+        var readyForRecovery: [UploadID] = []
+        var failures: [UploadID] = []
+        for uploadID in uploadIDs {
+            try Task.checkCancellation()
+            do {
+                try activityGate.claim(uploadID)
+                defer { activityGate.release(uploadID) }
+                let inspection = try await inspectCanonicalLibraryBinding(
+                    uploadID: uploadID,
+                    commit: false
+                )
+                if inspection.changed {
+                    eligible.append(uploadID)
+                } else if inspection.needsRecovery {
+                    readyForRecovery.append(uploadID)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failures.append(uploadID)
+            }
+        }
+
+        var recovered = 0
+        for uploadID in readyForRecovery {
+            try Task.checkCancellation()
+            do {
+                _ = try await recoverPublication(uploadID: uploadID)
+                recovered += 1
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failures.append(uploadID)
+            }
+        }
+
+        guard !eligible.isEmpty else {
+            return HostCanonicalLibraryMigrationReport(
+                checkedArtifactCount: uploadIDs.count,
+                eligibleArtifactCount: 0,
+                reboundArtifactCount: 0,
+                recoveredReceiptCount: recovered,
+                failedUploadIDs: Array(Set(failures)).sorted {
+                    $0.description < $1.description
+                }
+            )
+        }
+        guard try await hostStore.localOSAuthenticationBoundary
+            .authorizeCanonicalLibraryMigration(recordingCount: eligible.count)
+        else { throw HarcHostError.localOSAuthenticationRequired }
+        try Task.checkCancellation()
+
+        var rebound = 0
+        for uploadID in eligible {
+            try Task.checkCancellation()
+            let inspection: CanonicalLibraryBindingInspection
+            do {
+                try activityGate.claim(uploadID)
+                do {
+                    inspection = try await inspectCanonicalLibraryBinding(
+                        uploadID: uploadID,
+                        commit: true
+                    )
+                    activityGate.release(uploadID)
+                } catch {
+                    activityGate.release(uploadID)
+                    throw error
+                }
+                if inspection.changed {
+                    rebound += 1
+                }
+                if inspection.needsRecovery {
+                    _ = try await recoverPublication(uploadID: uploadID)
+                    recovered += 1
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failures.append(uploadID)
+            }
+        }
+        return HostCanonicalLibraryMigrationReport(
+            checkedArtifactCount: uploadIDs.count,
+            eligibleArtifactCount: eligible.count,
+            reboundArtifactCount: rebound,
+            recoveredReceiptCount: recovered,
+            failedUploadIDs: Array(Set(failures)).sorted {
+                $0.description < $1.description
+            }
+        )
     }
 
     /// Reconstructs and revalidates the exact durable processing request for a
@@ -445,6 +637,217 @@ public actor HarcCanonicalIngestService {
 }
 
 private extension HarcCanonicalIngestService {
+    struct CanonicalLibraryBindingInspection {
+        let changed: Bool
+        let needsRecovery: Bool
+    }
+
+    /// Reports whether a binding changed and whether a pre-receipt publication
+    /// should continue through the ordinary recovery state machine afterward.
+    func inspectCanonicalLibraryBinding(
+        uploadID: UploadID,
+        commit: Bool
+    ) async throws -> CanonicalLibraryBindingInspection {
+        if let receiptWork = try await hostStore.receiptProcessingWork(
+            uploadID: uploadID
+        ) {
+            let paths = try HostCanonicalPublicationPaths.make(
+                rootAnchor: canonicalRootAnchor,
+                canonicalRecordingID: receiptWork.canonicalRecordingID,
+                persistedRelativeWAVPath: receiptWork.publicationRelativePath,
+                temporaryName: receiptWork.temporaryName
+            )
+            let old = receiptWork.canonicalArtifactIdentity
+            let fresh = try currentCanonicalArtifactIdentity(
+                at: paths.wavURL,
+                in: paths
+            )
+            if old == fresh {
+                return CanonicalLibraryBindingInspection(
+                    changed: false,
+                    needsRecovery: false
+                )
+            }
+            guard HarcHostStore.bindingStableFieldsMatch(old, fresh) else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            let artifact = try HostValidatedCanonicalArtifact(
+                at: paths.wavURL,
+                in: paths,
+                totalFrames: receiptWork.canonicalPCMFrames,
+                expectedPCMHash: receiptWork.canonicalPCMHash,
+                expectedIdentity: fresh
+            )
+            let manifest = try await hostStore.validateBoundManifest(
+                uploadID: uploadID,
+                using: manifestValidator
+            )
+            let receipt = try receiptValidator.validateRecordingReceipt(
+                exactSignedReceiptBytes: receiptWork.exactReceipt.exactBytes,
+                validatedManifest: manifest,
+                hostTrust: hostTrust
+            )
+            guard receipt.exactReceiptObject == receiptWork.exactReceipt,
+                  receipt.canonicalRecordingID == receiptWork.canonicalRecordingID,
+                  receipt.canonicalPCMSHA256 == receiptWork.canonicalPCMHash,
+                  receipt.totalCanonicalFrames == receiptWork.canonicalPCMFrames
+            else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+            if commit {
+                let kind = HarcHostStore.canonicalArtifactBindingEventKind(
+                    from: old,
+                    to: fresh,
+                    metadataKind: .receiptMetadataRepair
+                )
+                let capability = canonicalCommitCapability
+                try await hostStore.commitCanonicalArtifactBindingEvent(
+                    uploadID: uploadID,
+                    expectedIdentity: old,
+                    identity: fresh,
+                    eventKind: kind,
+                    evidenceKind: .receipt,
+                    evidenceSHA256: receiptWork.exactReceipt.objectSHA256.rawBytes,
+                    at: now()
+                ) {
+                    guard capability.isActive else {
+                        throw StoreError.hostWriterCapabilityRequired
+                    }
+                    try artifact.validateBinding()
+                }
+            }
+            return CanonicalLibraryBindingInspection(
+                changed: true,
+                needsRecovery: false
+            )
+        }
+
+        let work = try await hostStore.canonicalPublicationWorkForBindingRepair(
+            uploadID: uploadID
+        )
+        guard work.checkpoint == .failedRecoverable,
+              work.attempt.status == .active,
+              let old = work.canonicalArtifactIdentity
+        else {
+            throw HarcHostError.publicationRecoveryRequired(
+                "Only a failed pre-receipt publication can be rebound."
+            )
+        }
+        let paths = try HostCanonicalPublicationPaths.make(
+            rootAnchor: canonicalRootAnchor,
+            canonicalRecordingID: work.canonicalRecordingID,
+            persistedRelativeWAVPath: work.publicationRelativePath,
+            temporaryName: work.temporaryName
+        )
+        let fresh = try currentCanonicalArtifactIdentity(
+            at: paths.wavURL,
+            in: paths
+        )
+        if old == fresh {
+            return CanonicalLibraryBindingInspection(
+                changed: false,
+                needsRecovery: true
+            )
+        }
+        guard HarcHostStore.bindingStableFieldsMatch(old, fresh) else {
+            throw HarcHostError.canonicalArtifactIdentityMismatch
+        }
+        let artifact = try HostValidatedCanonicalArtifact(
+            at: paths.wavURL,
+            in: paths,
+            totalFrames: work.capture.capture.totalCanonicalFrames,
+            expectedPCMHash: work.capture.capture.canonicalPCMSHA256,
+            expectedIdentity: fresh
+        )
+        let manifest = try await hostStore.validateBoundManifest(
+            uploadID: uploadID,
+            using: manifestValidator
+        )
+        guard manifest.uploadID == uploadID,
+              manifest.finalizedCapture == work.capture,
+              manifest.exactManifestObject == work.attempt.boundManifest
+        else { throw HarcHostError.manifestEvidenceRequired }
+        try validatePreparedReceiptIfPresent(work, manifest: manifest)
+        if commit {
+            let kind = HarcHostStore.canonicalArtifactBindingEventKind(
+                from: old,
+                to: fresh,
+                metadataKind: .publicationMetadataRepair
+            )
+            let capability = canonicalCommitCapability
+            try await hostStore.commitCanonicalArtifactBindingEvent(
+                uploadID: uploadID,
+                expectedIdentity: old,
+                identity: fresh,
+                eventKind: kind,
+                evidenceKind: .manifest,
+                evidenceSHA256: manifest.exactManifestObject.objectSHA256.rawBytes,
+                at: now()
+            ) {
+                guard capability.isActive else {
+                    throw StoreError.hostWriterCapabilityRequired
+                }
+                try artifact.validateBinding()
+            }
+        }
+        return CanonicalLibraryBindingInspection(
+            changed: true,
+            needsRecovery: true
+        )
+    }
+
+    /// A receipt-prepared publication is still an active upload, but its exact
+    /// signed receipt is already durable. Verify that evidence before an
+    /// immutable binding event is appended; recovery must never discover a
+    /// corrupt prepared receipt only after recording repair provenance.
+    func validatePreparedReceiptIfPresent(
+        _ work: HostCanonicalPublicationWork,
+        manifest: ValidatedRecordingManifestEvidence
+    ) throws {
+        guard let exactReceipt = work.exactPersistedReceipt else { return }
+        guard let receiptID = work.receiptID,
+              let revision = work.canonicalRevision,
+              let cursor = work.changeCursor,
+              let durableCommitTime = work.durableCommitTime
+        else {
+            throw HarcHostError.publicationRecoveryRequired(
+                "prepared receipt evidence is incomplete"
+            )
+        }
+        let evidence = try receiptValidator.validateRecordingReceipt(
+            exactSignedReceiptBytes: exactReceipt.exactBytes,
+            validatedManifest: manifest,
+            hostTrust: manifest.hostTrust
+        )
+        guard evidence.exactReceiptObject == exactReceipt,
+              evidence.uploadID == work.attempt.uploadID,
+              evidence.receiptID == receiptID,
+              evidence.canonicalRecordingID == work.canonicalRecordingID,
+              evidence.canonicalRevision == revision,
+              evidence.changeCursor == cursor,
+              evidence.durableCommitTime == durableCommitTime,
+              evidence.canonicalPCMSHA256
+                == work.capture.capture.canonicalPCMSHA256,
+              evidence.totalCanonicalFrames
+                == work.capture.capture.totalCanonicalFrames,
+              evidence.processingState == .pending
+        else {
+            throw HarcHostError.publicationRecoveryRequired(
+                "prepared receipt evidence drifted"
+            )
+        }
+    }
+
+    func currentCanonicalArtifactIdentity(
+        at url: URL,
+        in paths: HostCanonicalPublicationPaths
+    ) throws -> HostCanonicalArtifactIdentity {
+        let descriptor = try paths.openExistingRegularFile(at: url)
+        defer { _ = Darwin.close(descriptor) }
+        return try HostCanonicalArtifactIdentity(
+            validatingOpenFileDescriptor: descriptor,
+            boundTo: url
+        )
+    }
+
     enum ProcessingHandoff {
         case asynchronous
         case bestEffortSynchronous
@@ -672,7 +1075,8 @@ private extension HarcCanonicalIngestService {
             canonicalWAVURL: paths.wavURL,
             artifactIdentity: artifact.identity,
             startedAt: capture.captureStartedAt,
-            endedAt: capture.captureEndedAt
+            endedAt: capture.captureEndedAt,
+            discontinuities: capture.discontinuities
         )
         try artifact.validateBinding()
         let result = try await recordingStore.commitCanonicalRemoteRecording(

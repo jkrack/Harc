@@ -20,7 +20,8 @@ CONFIG="Release"
 DERIVED="build/release-derived"
 DIST="${HARC_RELEASE_DIST:-build/release-dist}"
 APP_NAME="Harc.app"
-BUILD_JOBS="${HARC_BUILD_JOBS:-2}"
+source scripts/build-concurrency.sh
+harc_configure_build_jobs
 STAGING="$(mktemp -d /private/tmp/harc-release.XXXXXX)"
 KEEP_STAGING="${HARC_KEEP_STAGING:-0}"
 VERIFY_MOUNT=""
@@ -76,8 +77,7 @@ mkdir -p "$DIST"
 # output. The authoritative release signature is applied below, inside-out,
 # with hardened runtime and secure timestamps before the DMG is created.
 echo "==> Building $SCHEME $VERSION ($CONFIG, unsigned intermediates)"
-xcodebuild \
-  -jobs "$BUILD_JOBS" \
+harc_xcodebuild \
   -skipMacroValidation \
   -skipPackagePluginValidation \
   -project Harc.xcodeproj \
@@ -92,7 +92,6 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=NO \
   ARCHS=arm64 \
-  SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS="$BUILD_JOBS" \
   ONLY_ACTIVE_ARCH=NO \
   build
 

@@ -31,6 +31,50 @@ enum HarcMobileLibraryRefreshOperation: String, Sendable {
 }
 
 enum HarcMobileLibraryRefreshPresentation {
+    enum Action: Equatable { case refresh, setup }
+
+    struct Status: Equatable {
+        let title: String
+        let detail: String
+        let symbol: String
+        let isLoading: Bool
+        let action: Action?
+    }
+
+    /// Both Library surfaces consume the coordinator's app-owned, sanitized state.
+    static func status(_ state: HarcMobileLibraryCoordinator.State, hasRows: Bool) -> Status {
+        switch state {
+        case .loadingCache:
+            Status(title: "Opening Mac Library…", detail: "Opening the protected Library cache.",
+                   symbol: "rectangle.stack", isLoading: true, action: nil)
+        case .refreshing:
+            Status(title: "Refreshing Mac Library…",
+                   detail: hasRows ? "Your saved recordings are still available." : "Checking your Mac for recordings.",
+                   symbol: "arrow.clockwise", isLoading: true, action: nil)
+        case .unpaired:
+            Status(title: "Pair a Mac for its Library",
+                   detail: "Local recording, playback and export work without a Mac.",
+                   symbol: "desktopcomputer", isLoading: false, action: .setup)
+        case .accessNotGranted:
+            Status(title: "Mac Library access not granted",
+                   detail: "Your Mac has not granted Library access. Check Setup & Sync and the invitation permissions on your Mac.",
+                   symbol: "lock", isLoading: false, action: .setup)
+        case .cancelled:
+            Status(title: "Library refresh cancelled",
+                   detail: hasRows ? "Your saved recordings are still available. Refresh when you’re ready."
+                       : "The Mac Library has not been checked. Refresh when you’re ready.",
+                   symbol: "arrow.clockwise", isLoading: false, action: .refresh)
+        case .offline(let message), .failed(let message):
+            Status(title: "Couldn’t refresh Mac Library", detail: message,
+                   symbol: "exclamationmark.triangle", isLoading: false, action: .refresh)
+        case .ready:
+            Status(title: hasRows ? "Mac Library updated" : "No recordings yet",
+                   detail: hasRows ? "Showing the saved Mac Library."
+                       : "Your Mac Library has no recordings. You can still record on this iPhone without a Mac.",
+                   symbol: "rectangle.stack", isLoading: false, action: .refresh)
+        }
+    }
+
     static func failureMessage(
         _ error: any Error,
         operation: HarcMobileLibraryRefreshOperation,
@@ -76,6 +120,8 @@ final class HarcMobileLibraryCoordinator {
         let recording: LibraryRecordingSummary
         let score: Double?
         let snippets: [String]
+        let matchSpeakerIndex: UInt32?
+        let matchTimestamp: TimeInterval?
 
         var id: CanonicalRecordingID { recording.canonicalID }
     }
@@ -688,7 +734,9 @@ final class HarcMobileLibraryCoordinator {
                 SearchResult(
                     recording: try $0.domainValue(),
                     score: nil,
-                    snippets: []
+                    snippets: [],
+                    matchSpeakerIndex: nil,
+                    matchTimestamp: nil
                 )
             })
             guard response.hasNextPageToken else { return results }
@@ -729,17 +777,30 @@ final class HarcMobileLibraryCoordinator {
                 guard hit.hasRecording, hit.score.isFinite else {
                     throw HarcMobileLibraryError.malformedResponse
                 }
-                for snippet in hit.snippets {
+                let recording = try hit.recording.domainValue()
+                var matchTimestamp: TimeInterval?
+                for (index, snippet) in hit.snippets.enumerated() {
                     guard snippet.hasFrames else {
                         throw HarcMobileLibraryError.malformedResponse
                     }
-                    _ = try snippet.frames.domainValue()
+                    let frames = try snippet.frames.domainValue()
+                    if index == 0 {
+                        let sampleRate = recording.canonicalAudio.format?
+                            .sampleRateHz
+                            ?? CanonicalPCMFormat.harcV1.sampleRateHz
+                        matchTimestamp = TimeInterval(frames.startFrame)
+                            / TimeInterval(sampleRate)
+                    }
                 }
                 results.append(
                     SearchResult(
-                        recording: try hit.recording.domainValue(),
+                        recording: recording,
                         score: hit.score,
-                        snippets: hit.snippets.map(\.text)
+                        snippets: hit.snippets.map(\.text),
+                        matchSpeakerIndex: hit.snippets.first.flatMap {
+                            $0.hasSpeakerIndex ? $0.speakerIndex : nil
+                        },
+                        matchTimestamp: matchTimestamp
                     )
                 )
             }
@@ -761,7 +822,13 @@ final class HarcMobileLibraryCoordinator {
                     $0.localizedCaseInsensitiveContains(query)
                 })
         }.map {
-            SearchResult(recording: $0, score: nil, snippets: [])
+            SearchResult(
+                recording: $0,
+                score: nil,
+                snippets: [],
+                matchSpeakerIndex: nil,
+                matchTimestamp: nil
+            )
         }
     }
 

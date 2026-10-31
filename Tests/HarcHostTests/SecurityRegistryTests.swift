@@ -459,6 +459,11 @@ struct SecurityRegistryTests {
                 highWaterMarkStore: highWater,
                 capacityProvider: FixedHostVolumeCapacityProvider()
             )
+            let durability = try await reopened.dbReader.read { database in
+                [try Int.fetchOne(database, sql: "PRAGMA synchronous"),
+                 try Int.fetchOne(database, sql: "PRAGMA fullfsync")]
+            }
+            #expect(durability == [3, 1])
             if point == .beforePendingMutation {
                 #expect(try await reopened.registryRevision() == 0)
                 #expect(try await reopened.deviceRegistryEntry(deviceID: fixture.deviceID) == nil)

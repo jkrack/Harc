@@ -35,7 +35,8 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
         privateKey: SecKey,
         applicationTag: Data,
         protection: InstallationKeyProtection,
-        keychainDomain: KeychainDomain
+        keychainDomain: KeychainDomain,
+        legacyKeychain: CFTypeRef? = nil
     ) throws {
         guard !applicationTag.isEmpty else {
             throw HostCryptographicStateError.privateKeyUnavailable(role: .tlsServer)
@@ -48,7 +49,8 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
             of: privateKey,
             applicationTag: applicationTag,
             protection: protection,
-            keychainDomain: keychainDomain
+            keychainDomain: keychainDomain,
+            legacyKeychain: legacyKeychain
         )
         self.publicKey = try Self.publicKey(for: privateKey)
     }
@@ -132,6 +134,17 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     static func createLegacyKeychainTestFixture(applicationTag: Data) throws -> Self {
         try createLegacyKeychain(applicationTag: applicationTag)
     }
+
+#if os(macOS)
+    static func createLegacyKeychainTestFixture(
+        applicationTag: Data, keychain: SecKeychain
+    ) throws -> Self {
+        try withKeychainLifecycle {
+            try create(applicationTag: applicationTag, protection: .keychainSoftware,
+                       keychainDomain: .legacyMacOS, legacyKeychain: keychain)
+        }
+    }
+#endif
 
     static func createLegacyKeychain(applicationTag: Data) throws -> Self {
         try withKeychainLifecycle {
@@ -407,7 +420,8 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
     private static func create(
         applicationTag: Data,
         protection: InstallationKeyProtection,
-        keychainDomain: KeychainDomain
+        keychainDomain: KeychainDomain,
+        legacyKeychain: CFTypeRef? = nil
     ) throws -> Self {
         precondition(!applicationTag.isEmpty)
         var privateAttributes: [String: Any] = [
@@ -444,6 +458,11 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
         }
         attributes[kSecPrivateKeyAttrs as String] = privateAttributes
 
+#if os(macOS)
+        if let legacyKeychain {
+            attributes[kSecUseKeychain as String] = legacyKeychain
+        }
+#endif
         var creationError: Unmanaged<CFError>?
         guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &creationError) else {
             if let error = creationError?.takeRetainedValue(),
@@ -460,18 +479,18 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
                 privateKey: key,
                 applicationTag: applicationTag,
                 protection: protection,
-                keychainDomain: keychainDomain
+                keychainDomain: keychainDomain,
+                legacyKeychain: legacyKeychain
             )
         } catch {
             // `SecKeyCreateRandomKey` may have committed the permanent item
             // before a post-creation policy/public-key validation fails.
             // Never strand that unreferenced candidate.
-            _ = SecItemDelete(
-                keyQuery(
-                    applicationTag: applicationTag,
-                    keychainDomain: keychainDomain
-                ) as CFDictionary
-            )
+            var cleanup = keyQuery(applicationTag: applicationTag, keychainDomain: keychainDomain)
+#if os(macOS)
+            if let legacyKeychain { cleanup[kSecMatchSearchList as String] = [legacyKeychain] }
+#endif
+            _ = SecItemDelete(cleanup as CFDictionary)
             throw error
         }
     }
@@ -514,7 +533,8 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
         of key: SecKey,
         applicationTag: Data,
         protection: InstallationKeyProtection,
-        keychainDomain: KeychainDomain
+        keychainDomain: KeychainDomain,
+        legacyKeychain: CFTypeRef? = nil
     ) throws {
         guard let attributes = SecKeyCopyAttributes(key) as? [String: Any],
               (attributes[kSecAttrKeySizeInBits as String] as? NSNumber)?.intValue == 256
@@ -543,6 +563,9 @@ final class HostSecurityP256SigningKey: @unchecked Sendable {
             applicationTag: applicationTag,
             keychainDomain: keychainDomain
         )
+#if os(macOS)
+        if let legacyKeychain { query[kSecMatchSearchList as String] = [legacyKeychain] }
+#endif
         query[kSecUseAuthenticationContext as String] = noninteractiveContext()
         query[kSecReturnRef as String] = kCFBooleanTrue
         query[kSecReturnAttributes as String] = kCFBooleanTrue

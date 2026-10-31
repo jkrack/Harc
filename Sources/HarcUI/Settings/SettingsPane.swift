@@ -18,7 +18,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Hashable, Sendable
     var title: String {
         switch self {
         case .general: return "General"
-        case .hostSync: return "Host & Sync"
+        case .hostSync: return "Devices & Sync"
         case .recording: return "Recording"
         case .transcription: return "Transcription"
         case .dictation: return "Dictation"

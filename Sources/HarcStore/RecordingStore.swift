@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 import GRDB
 import HarcDomain
 
@@ -63,6 +64,13 @@ public actor RecordingStore {
             // fails immediately with SQLITE_BUSY instead of waiting its turn.
             var config = Configuration()
             config.busyMode = .timeout(5)
+            config.prepareDatabase { database in
+                // Recovery may delete its cache source after this transaction.
+                // EXTRA includes rollback-journal directory synchronization;
+                // fullfsync requests the Apple drive-cache barrier.
+                try database.execute(sql: "PRAGMA synchronous = EXTRA")
+                try database.execute(sql: "PRAGMA fullfsync = ON")
+            }
             guard let resolvedDatabaseURL = writerCoordinator.databaseURL else {
                 throw StoreError.databaseOpenFailed("Resolved database path is unavailable")
             }
@@ -209,6 +217,8 @@ public actor RecordingStore {
                     rec.revision = existing.revision
                     rec.processing = existing.processing
                     rec.projection = existing.projection
+                    rec.captureIntegrity = existing.captureIntegrity
+                    rec.captureDiscontinuities = existing.captureDiscontinuities
                     if existing.originID != nil {
                         // The producing-device manifest binds capture time in
                         // addition to origin, PCM hash, and frame count. Generic
@@ -236,9 +246,13 @@ public actor RecordingStore {
                     }
                     return try Recording.fetchOne(db, key: existing.id!)!
                 } else {
+                    if !rec.captureIntegrity.hasIssues {
+                        rec.captureIntegrity = try CaptureIntegrityReport.load(nextTo: URL(fileURLWithPath: rec.wavPath))
+                    }
                     rec.createdAt = now
                     rec.canonicalID = .random()
                     rec.originID = nil
+                    rec.captureDiscontinuities = []
                     rec.canonicalPCMHash = nil
                     rec.canonicalPCMFrames = nil
                     rec.revision = .initial
@@ -756,7 +770,7 @@ public actor RecordingStore {
         embedderKind: String? = nil
     ) async throws -> [SpeakerEmbeddingRow] {
         try await db.read { db in
-            var clauses: [String] = []
+            var clauses: [String] = ["NOT EXISTS (SELECT 1 FROM bound_speaker_enrollment_sources b WHERE b.recording_id = speaker_embeddings.recording_id)"]
             var args: [DatabaseValueConvertible] = []
             if let excluded = excludingRecording {
                 clauses.append("recording_id != ?")
@@ -861,6 +875,14 @@ public actor RecordingStore {
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            let evidencePeople = Set(try Int64.fetchAll(db, sql: """
+                SELECT DISTINCT c.person_id FROM confirmed_speaker_evidence c
+                JOIN speaker_evidence_snapshots e ON e.evidence_sha256 = c.evidence_sha256
+                WHERE e.recording_id = ?
+                """, arguments: [id]))
+            if !evidencePeople.isEmpty {
+                _ = try Self.bumpSpeakerProfiles(in: db, personIDs: evidencePeople, at: now.timeIntervalSince1970)
+            }
             try Self.bumpRevisionAndAppendLibraryChange(
                 in: db,
                 recordingID: id,
@@ -885,6 +907,14 @@ public actor RecordingStore {
                 ]
             )
             guard count > 0 else { throw StoreError.notFound }
+            let evidencePeople = Set(try Int64.fetchAll(db, sql: """
+                SELECT DISTINCT c.person_id FROM confirmed_speaker_evidence c
+                JOIN speaker_evidence_snapshots e ON e.evidence_sha256 = c.evidence_sha256
+                WHERE e.recording_id = ?
+                """, arguments: [id]))
+            if !evidencePeople.isEmpty {
+                _ = try Self.bumpSpeakerProfiles(in: db, personIDs: evidencePeople, at: now.timeIntervalSince1970)
+            }
             try Self.bumpRevisionAndAppendLibraryChange(
                 in: db,
                 recordingID: id,

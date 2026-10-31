@@ -1,7 +1,7 @@
 import Foundation
 import HarcDomain
 @testable import HarcIdentity
-import HarcTransfer
+@testable import HarcTransfer
 @testable import HarcClientStore
 
 enum ClientStoreFixtures {
@@ -290,10 +290,11 @@ struct ClientStoreValidatedEvidenceFixture {
     init(
         library: UInt32 = 700,
         manifestByte: UInt8 = 24,
-        receiptByte: UInt8 = 23
+        receiptByte: UInt8 = 23,
+        deviceKey: SoftwareP256SigningKey = SoftwareP256SigningKey()
     ) throws {
         let hostPublicKey = SoftwareP256SigningKey().publicKey
-        let devicePublicKey = SoftwareP256SigningKey().publicKey
+        let devicePublicKey = deviceKey.publicKey
         let tuple = AdoptedTrustTuple(
             libraryID: LibraryID(ClientStoreFixtures.uuid(library)),
             hostAuthorityID: hostPublicKey.hostAuthorityID

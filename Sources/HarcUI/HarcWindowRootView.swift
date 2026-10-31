@@ -8,6 +8,7 @@ import HarcCore
 import HarcModels
 import HarcSummarize
 import HarcAudio
+import HarcPresenceUI
 import AppKit
 import UniformTypeIdentifiers
 
@@ -29,6 +30,7 @@ public extension NSNotification.Name {
 /// Toolbar actions (Edit, Export, Delete, recording pill) are wired in.
 /// This view is hosted by `HarcWindowController`.
 public struct HarcWindowRootView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var libraryVM: LibraryViewModel
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var bridge: HarcAppBridge
@@ -101,6 +103,9 @@ public struct HarcWindowRootView: View {
     /// computed at load for the boundary-jump commands.
     @State var speakerBoundaries: [Int] = []
     @State var titleDraft: String = ""
+    @State var librarySearchFocusToken = 0
+    @State var showTideNotes = false
+    @State var showTideActions = false
     /// The one playback transport for the pane — the transcript's
     /// ⌘-click-to-seek and word highlight drive the same clock the waveform
     /// shows, instead of the second player the editor window used to own.
@@ -121,6 +126,9 @@ public struct HarcWindowRootView: View {
 
     // Task 8.1: pending suggestions for the inspector chip system
     @State var inspectorPendingSuggestions: [PendingSuggestion] = []
+    @State var inspectorSuggestionReviews = SpeakerSuggestionReviewBatch.empty
+    @State var inspectorSlotReviews = SpeakerSlotReviewBatch.empty
+    @State var inspectorSuggestionLoadID = UUID()
     /// Stats for Nerds for the current selection, assembled async from the
     /// JSON sidecar + store. Nil hides the section.
     @State var nerdStats: RecordingNerdStats? = nil
@@ -373,11 +381,9 @@ public struct HarcWindowRootView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
-        .searchable(
-            text: $libraryVM.searchText,
-            placement: .sidebar,
-            prompt: "Search titles and transcripts"
-        )
+        .onReceive(NotificationCenter.default.publisher(for: .harcLibraryFocusSearch)) { _ in
+            librarySearchFocusToken += 1
+        }
         .toolbar {
             // Record left the toolbar for the sidebar's top (design 3e): a
             // permanent card can hold state — the live timer, envelope, and
@@ -603,6 +609,37 @@ public struct HarcWindowRootView: View {
 
     // MARK: - Sidebar
 
+    private var tideTodayOverview: some View {
+        let today = libraryVM.recordings.filter { Calendar.current.isDateInToday($0.startedAt) }
+        let intervals = today.compactMap { recording -> DateInterval? in
+            guard let end = recording.endedAt, end >= recording.startedAt else { return nil }
+            return DateInterval(start: recording.startedAt, end: end)
+        }
+        return VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+            HStack {
+                Text("Today").font(.system(size: 19, weight: .bold, design: .rounded))
+                Spacer()
+                Text(Pluralize.count(today.count, "recording"))
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+            }
+            HarcTideDayTimeline(intervals: intervals)
+                .frame(height: 40)
+            HStack {
+                Text("12 AM")
+                Spacer()
+                Text("12 PM")
+                Spacer()
+                Text("12 AM")
+            }
+            .font(.harcCaption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, HarcSpacing.md)
+        .padding(.top, HarcSpacing.md)
+        .padding(.bottom, HarcSpacing.xs)
+    }
+
     @ViewBuilder
     var sidebar: some View {
         VStack(spacing: 0) {
@@ -614,6 +651,7 @@ public struct HarcWindowRootView: View {
                 recordingState: recordingState,
                 postProcessing: postProcessing
             )
+            tideTodayOverview
             dateScopeBar
             Group {
                 if libraryVM.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -623,9 +661,14 @@ public struct HarcWindowRootView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+        }
+        .background {
+            HarcTideBackground()
+                .overlay(.black.opacity(colorScheme == .dark ? 0.25 : 0.06))
         }
         .navigationTitle("Library")
-        .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 480)
+        .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
         // Attached to the sidebar container, NOT to groupedList: the grouped
         // list leaves the hierarchy while a search is active, and a modifier
         // on a removed view never fires. Stopping a recording mid-search
@@ -756,6 +799,7 @@ public struct HarcWindowRootView: View {
                 Label("People", systemImage: "person.2")
             }
         }
+        .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
     }
 
     /// The saturated row is reserved for this — the one place urgency is
@@ -792,6 +836,7 @@ public struct HarcWindowRootView: View {
         .tag(LibrarySelection.live)
         .accessibilityIdentifier("harc.library.liveRow")
         .accessibilityLabel("Recording in progress")
+        .onTapGesture { selection = .live }
     }
 
 
@@ -952,6 +997,7 @@ public struct HarcWindowRootView: View {
                 }
             }
             .tag(LibrarySelection.person(id: item.person.id))
+            .onTapGesture { selection = .person(id: item.person.id) }
         }
         Button {
             showingAddPerson = true
@@ -1031,10 +1077,14 @@ public struct HarcWindowRootView: View {
                             selection = .recording(wavPath: hit.recording.wavPath)
                         })
                         .tag(LibrarySelection.recording(wavPath: hit.recording.wavPath))
+                        .onTapGesture {
+                            selection = .recording(wavPath: hit.recording.wavPath)
+                        }
                         .contextMenu { contextMenu(for: hit.recording) }
                     }
                 }
             }
+            .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
         }
     }
 
@@ -1059,6 +1109,13 @@ public struct HarcWindowRootView: View {
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let deviceID = rec.originID?.deviceID {
+                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(libraryVM.originLabel(for: rec))
+                }
                 // One line of what was actually said, so a row is scannable
                 // without opening it. Only when the title is a real title —
                 // under a bare timestamp a snippet just adds noise to noise.
@@ -1164,17 +1221,14 @@ public struct HarcWindowRootView: View {
                 pendingSuggestions: inspectorPendingSuggestions,
                 personNamesByID: allPeopleByID,
                 onConfirmSuggestion: { s in
+                    let reviews = inspectorSuggestionReviews
                     Task {
                         do {
-                            try await store.confirmSuggestion(
-                                personID: s.personID,
-                                recordingID: s.recordingID,
-                                speakerIndex: s.speakerIndex
-                            )
-                            try await mirrorResolvedSpeakerName(
-                                recordingID: s.recordingID,
-                                speakerIndex: s.speakerIndex
-                            )
+                            let needsLegacyLabel = try await reviews.confirm(s, store: store)
+                            if needsLegacyLabel {
+                                try await mirrorResolvedSpeakerName(
+                                    recordingID: s.recordingID, speakerIndex: s.speakerIndex)
+                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1192,6 +1246,7 @@ public struct HarcWindowRootView: View {
                                 speakerIndex: s.speakerIndex
                             )
                             await loadInspectorSummaryData(for: recording)
+                            await loadResolvedLabels()
                             mutationFailure = nil
                         } catch {
                             reportMutationFailure(.dismissSpeakerSuggestion, error: error)
@@ -1202,13 +1257,14 @@ public struct HarcWindowRootView: View {
                 allPeople: allPeople,
                 onLinkPerson: { personID, speakerIndex in
                     guard let rid = recording.id else { return }
+                    let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            try await store.linkSpeaker(personID: personID, recordingID: rid, speakerIndex: speakerIndex)
-                            try await mirrorResolvedSpeakerName(
-                                recordingID: rid,
-                                speakerIndex: speakerIndex
-                            )
+                            let needsLegacyLabel = try await reviews.link(personID: personID,
+                                recordingID: rid, speakerIndex: speakerIndex, store: store)
+                            if needsLegacyLabel {
+                                try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
+                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1219,14 +1275,15 @@ public struct HarcWindowRootView: View {
                 },
                 onCreatePerson: { name, speakerIndex in
                     guard let rid = recording.id else { return }
+                    let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            let pid = try await store.createPerson(displayName: name, matchThreshold: nil)
-                            try await store.linkSpeaker(personID: pid, recordingID: rid, speakerIndex: speakerIndex)
-                            try await mirrorResolvedSpeakerName(
-                                recordingID: rid,
-                                speakerIndex: speakerIndex
-                            )
+                            let created = try await reviews.createPerson(displayName: name,
+                                recordingID: rid, speakerIndex: speakerIndex, store: store)
+                            let pid = created.personID
+                            if created.needsLegacyLabel {
+                                try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
+                            }
                             // Best-effort, non-blocking: backfill suggestions for the new person.
                             Task.detached { [store] in
                                 let engine = SpeakerSuggestionEngine(store: store, embedderKind: "wespeaker_v2")
@@ -1242,13 +1299,14 @@ public struct HarcWindowRootView: View {
                 },
                 onUnlinkPerson: { speakerIndex in
                     guard let rid = recording.id else { return }
+                    let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            try await store.unlinkSpeaker(recordingID: rid, speakerIndex: speakerIndex)
-                            try await clearMirroredSpeakerName(
-                                recordingID: rid,
-                                speakerIndex: speakerIndex
-                            )
+                            let needsLegacyLabel = try await reviews.unlink(recordingID: rid,
+                                speakerIndex: speakerIndex, store: store)
+                            if needsLegacyLabel {
+                                try await clearMirroredSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
+                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
                             mutationFailure = nil
@@ -1264,6 +1322,13 @@ public struct HarcWindowRootView: View {
             }
 
             FileInspectorSection(recording: recording)
+            if let deviceID = recording.originID?.deviceID {
+                Section("Recording origin") {
+                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                    LabeledContent("Device ID", value: deviceID.description)
+                        .textSelection(.enabled)
+                }
+            }
         }
         .formStyle(.grouped)
         .background(.thinMaterial)
@@ -1311,14 +1376,26 @@ public struct HarcWindowRootView: View {
     }
 
     func loadInspectorSummaryData(for recording: Recording) async {
+        let loadID = UUID()
+        inspectorSuggestionLoadID = loadID
         let people = (try? await store.fetchPeople()) ?? []
+        let suggestions: [PendingSuggestion]
+        if let id = recording.id {
+            suggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
+        } else {
+            suggestions = []
+        }
+        let reviews = await SpeakerSuggestionReviewBatch.load(suggestions, store: store)
+        let slots: SpeakerSlotReviewBatch
+        if let id = recording.id {
+            slots = await SpeakerSlotReviewBatch.load(recordingID: id, indices: speakerIndices(for: recording), store: store)
+        } else { slots = .empty }
+        guard inspectorSuggestionLoadID == loadID else { return }
         allPeople = people
         allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
-        if let id = recording.id {
-            inspectorPendingSuggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
-        } else {
-            inspectorPendingSuggestions = []
-        }
+        inspectorSlotReviews = slots
+        inspectorSuggestionReviews = reviews
+        inspectorPendingSuggestions = suggestions
     }
 
     /// Keep the recording's portable speaker-name metadata in step with its
@@ -1456,7 +1533,7 @@ public struct HarcWindowRootView: View {
     /// Loads `transcriptText` from cache or disk. Called on selection change.
     /// Also loads the structured .json sidecar when available so the detail
     /// pane can render per-turn timestamps instead of the flat .txt blob.
-    func loadTranscript() {
+    func loadTranscript(recording observedRecording: Recording? = nil) {
         transcriptLoadError = nil
         transcriptText = ""
         transcriptSegments = []
@@ -1468,7 +1545,7 @@ public struct HarcWindowRootView: View {
         lastAutosaveAt = nil
         speakerBoundaries = []
         renderedSpeakerLabels = [:]
-        guard let recording = selectedRecording else { return }
+        guard let recording = observedRecording ?? selectedRecording else { return }
         titleDraft = recording.title ?? ""
 
         // The pane edits in place now, so it loads through the same tolerant
@@ -1673,7 +1750,18 @@ public struct HarcWindowRootView: View {
     func observeRecording(recording: Recording) async {
         guard let id = recording.id else { return }
         for await latest in store.observe(id: id) {
+            guard !Task.isCancelled,
+                  selection == .recording(wavPath: recording.wavPath) else { return }
             guard let latest else { continue }
+            // Stop can select the destination before the Library observation
+            // delivers its row. Initialize from this observation's value,
+            // rather than waiting for another selection change. Never replace
+            // an editor containing user edits with a later processing result.
+            if !editorDirty, editorText.isEmpty,
+               detailDocument == nil || detailDocument?.initialText.isEmpty == true,
+               hasTranscriptSource(latest) {
+                loadTranscript(recording: latest)
+            }
             if transcriptText.isEmpty, let cached = latest.transcriptText, !cached.isEmpty {
                 transcriptText = cached
             }

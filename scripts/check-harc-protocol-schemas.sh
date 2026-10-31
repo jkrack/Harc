@@ -125,8 +125,8 @@ if ! awk '
             print "unterminated enum declaration" > "/dev/stderr"
             failed = 1
         }
-        if (enum_count != 29) {
-            print "expected 29 V1 enums, found " enum_count > "/dev/stderr"
+        if (enum_count != 31) {
+            print "expected 31 V1 enums, found " enum_count > "/dev/stderr"
             failed = 1
         }
         exit failed
@@ -169,4 +169,4 @@ if ! shasum -a 256 -c "$inventory_file" >/dev/null; then
     fail "a schema or generator-config checksum changed; review and deliberately refresh the V1 inventory"
 fi
 
-printf 'Harc protocol schema guard passed: 7 schemas, 6 services, 27 RPCs, 29 enums.\n'
+printf 'Harc protocol schema guard passed: 7 schemas, 6 services, 27 RPCs, 31 enums.\n'

@@ -31,6 +31,12 @@ final class HarcMobilePlaybackSession {
         deactivate()
     }
 
+    func reactivate(_ id: UUID?) throws {
+        guard !captureActive else { throw PlaybackError.captureActive }
+        guard let id, owner?.id == id else { throw PlaybackError.ownershipLost }
+        try activate()
+    }
+
     func beginCapture() {
         captureActive = true
         captureGeneration &+= 1
@@ -48,6 +54,12 @@ final class HarcMobilePlaybackSession {
 
     private enum PlaybackError: LocalizedError {
         case captureActive
-        var errorDescription: String? { "Playback is paused while recording." }
+        case ownershipLost
+        var errorDescription: String? {
+            switch self {
+            case .captureActive: "Playback is paused while recording."
+            case .ownershipLost: "Another recording or player took over audio playback."
+            }
+        }
     }
 }

@@ -144,7 +144,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
                 title: protectedCount > 0
                     ? protectedTitle(protectedCount)
                     : "New recordings stay safe on this iPhone",
-                detail: "Audio transfers are not enabled in this build. Recordings stay available here.",
+                detail: "Open Setup & Sync to review sending status.",
                 systemImage: "iphone",
                 tone: .neutral,
                 relativeMoment: nil
@@ -358,8 +358,8 @@ struct HarcMobileCaptureHeroView: View {
                     VStack(spacing: 6) {
                         Text("Tap to record")
                             .font(.title3.weight(.semibold))
-                        Text("Records to protected storage on this iPhone")
-                            .font(.footnote)
+                        Text("Saved on this iPhone first, then sent to your Mac")
+                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -371,9 +371,11 @@ struct HarcMobileCaptureHeroView: View {
                         startedAt: startedAt,
                         presentation: .hero
                     )
+                    HarcMobileLiveEnergyView(audioLevel: audioLevel)
+                        .frame(height: 110)
                     control
                     VStack(spacing: 6) {
-                        Text("Tap to stop")
+                        Text("Stop and save")
                             .font(.subheadline.weight(.semibold))
                         Text("Protected on this iPhone")
                             .font(.footnote)
@@ -404,10 +406,11 @@ struct HarcMobileCaptureHeroView: View {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
                     size: .hero,
+                    motion: .classic,
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(HarcMobileBlobButtonStyle())
+            .buttonStyle(HarcMobileBlobButtonStyle(fluid: true))
             .accessibilityLabel("Start Recording")
             .accessibilityHint(
                 "Starts a protected microphone recording on this iPhone."
@@ -421,10 +424,11 @@ struct HarcMobileCaptureHeroView: View {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
                     size: .hero,
+                    motion: .classic,
                     audioLevel: audioLevel
                 )
             }
-            .buttonStyle(HarcMobileBlobButtonStyle())
+            .buttonStyle(HarcMobileBlobButtonStyle(fluid: true))
             .accessibilityLabel("Stop Recording")
             .accessibilityHint(
                 "Stops and durably saves the recording on this iPhone."
@@ -434,6 +438,7 @@ struct HarcMobileCaptureHeroView: View {
             HarcPresenceBlob(
                 state: state.harcPresenceState,
                 size: .hero,
+                motion: .classic,
                 audioLevel: audioLevel
             )
             .accessibilityHidden(true)
@@ -484,13 +489,28 @@ struct HarcMobileCaptureHeroView: View {
 }
 
 private struct HarcMobileBlobButtonStyle: ButtonStyle {
+    let fluid: Bool
+
+    init(fluid: Bool = false) {
+        self.fluid = fluid
+    }
+
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(
-                .easeOut(duration: 0.12),
-                value: configuration.isPressed
-            )
+        if fluid {
+            configuration.label
+                .environment(
+                    \.harcPresenceIsPressed,
+                    configuration.isPressed
+                )
+        } else {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(
+                    .easeOut(duration: 0.12),
+                    value: configuration.isPressed
+                )
+        }
     }
 }
 
@@ -504,13 +524,20 @@ struct HarcMobileHostPill: View {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
                 Text(presentation.title)
-                    .font(.caption)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityHidden(true)
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
+            .frame(minHeight: 44)
             .background(.thinMaterial, in: Capsule())
             .overlay {
                 Capsule().stroke(.primary.opacity(0.08), lineWidth: 1)
@@ -519,7 +546,7 @@ struct HarcMobileHostPill: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Host")
         .accessibilityValue(presentation.accessibilityValue)
-        .accessibilityHint("Opens Host status and pairing.")
+        .accessibilityHint("Opens Setup and Sync.")
         .accessibilityIdentifier(HarcMobileAccessibilityID.hostHealth)
     }
 
@@ -629,10 +656,11 @@ struct HarcMobileTransferSummaryView: View {
 
 struct HarcMobileRecordingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TimelineView(
-            .animation(minimumInterval: 1 / 24, paused: reduceMotion)
+            .animation(minimumInterval: 1.0 / 60, paused: reduceMotion || scenePhase != .active)
         ) { context in
             let phase = context.date.timeIntervalSinceReferenceDate * 3.5
             let pulse = reduceMotion ? 0 : ((sin(phase) + 1) / 2)
@@ -703,8 +731,8 @@ struct HarcMobileElapsedTime: View {
         case .hero:
             .system(
                 size: heroSize,
-                weight: .ultraLight,
-                design: .monospaced
+                weight: .light,
+                design: .rounded
             )
         case .compact:
             .body.monospacedDigit()
@@ -791,6 +819,38 @@ private extension HarcMobileCaptureCoordinator.State {
         case .saved: 5
         case .storageExhausted: 6
         case .failed: 7
+        }
+    }
+}
+
+/// Samples the existing atomic meter only while visible. This trace is recent
+/// foreground activity, not a claim about the full recording or durable audio.
+private struct HarcMobileLiveEnergyView: View {
+    let audioLevel: () -> Double
+    @State private var samples: [Float] = []
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HarcTideEnergyTrace(samples: samples, isLive: true)
+            HStack {
+                Text("Recent microphone activity")
+                Spacer()
+                Text("now")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                let value = audioLevel()
+                samples.append(Float(value.isFinite ? min(1, max(0, value)) : 0))
+                if samples.count > 600 { samples.removeFirst(samples.count - 600) }
+                do { try await Task.sleep(for: .milliseconds(reduceMotion ? 250 : 33)) }
+                catch { return }
+            }
         }
     }
 }

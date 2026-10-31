@@ -64,6 +64,7 @@ public actor RecordingSession {
     private let mic: any MicCaptureSource
     private let systemAudio: any SystemAudioCaptureSource
     private let transcriber: ChunkedTranscriber?
+    nonisolated private let integrity: CaptureIntegrityRecorder
 
     nonisolated(unsafe) private let mixer = AudioMixer()
     nonisolated(unsafe) private var writer: AudioFileWriter?
@@ -77,7 +78,10 @@ public actor RecordingSession {
 
     private var cacheURL: URL?
     private var startedAt: Date?
+    private var startedMonotonicNanoseconds: UInt64 = 0
     private var pumpTask: Task<Void, Never>?
+    private var captureProgressTask: Task<Void, Never>?
+    private var captureActive = false
     private var systemAudioAvailable = false
     private var captureWarnings: [CaptureWarning] = []
 
@@ -105,12 +109,14 @@ public actor RecordingSession {
         mic: any MicCaptureSource,
         systemAudio: any SystemAudioCaptureSource,
         transcriber: ChunkedTranscriber? = nil,
-        onWriteFailure: (@Sendable (String) -> Void)? = nil
+        onWriteFailure: (@Sendable (String) -> Void)? = nil,
+        onCaptureIssue: (@Sendable (CaptureIntegrityReport) -> Void)? = nil
     ) {
         self.mic = mic
         self.systemAudio = systemAudio
         self.transcriber = transcriber
         self.onWriteFailure = onWriteFailure
+        self.integrity = CaptureIntegrityRecorder(onIssue: onCaptureIssue, onPersistenceFailure: onWriteFailure)
         var continuation: AsyncStream<AudioLevels>.Continuation!
         self.levels = AsyncStream(bufferingPolicy: .bufferingNewest(2)) { continuation = $0 }
         self.levelsContinuation = continuation
@@ -127,7 +133,8 @@ public actor RecordingSession {
     ///
     /// Writing it here — before `transcriber.start` — means the pre-roll flows
     /// through the ordinary chunking path rather than needing a second one.
-    public func start(at date: Date, preRoll: [Int16] = []) async throws {
+    public func start(at date: Date, preRoll: [Int16] = [],
+                      prepareCapture: @Sendable (URL) throws -> Void = { _ in }) async throws {
         try await mic.requestPermission()
         do {
             try await systemAudio.requestPermission()
@@ -136,8 +143,13 @@ public actor RecordingSession {
             systemAudioAvailable = false
         }
 
+        startedMonotonicNanoseconds = DispatchTime.now().uptimeNanoseconds
         let cache = RecordingDestination.cachePath()
         self.cacheURL = cache
+        try prepareCapture(cache)
+        integrity.configure(audioURL: cache)
+        await mic.setIntegrityHandler { [integrity] reason in integrity.observe(.microphone, reason) }
+        await systemAudio.setIntegrityHandler { [integrity] reason in integrity.observe(.systemAudio, reason) }
         let newWriter = try AudioFileWriter(url: cache)
         self.writer = newWriter
 
@@ -150,7 +162,9 @@ public actor RecordingSession {
                 do {
                     try newWriter.write(buffer)
                     preRollFramesWritten += Int(buffer.frameLength)
+                    integrity.wrote(frames: buffer.frameLength)
                 } catch {
+                    integrity.observe(.microphone, .writerFailure)
                     FileHandle.standardError.write(Data(
                         "harc-audio: pre-roll write failed: \(error.localizedDescription)\n".utf8
                     ))
@@ -166,6 +180,7 @@ public actor RecordingSession {
         let preRollSeconds = Double(preRollFramesWritten) / RollingAudioBuffer.sampleRate
         self.startedAt = date.addingTimeInterval(-preRollSeconds)
         self.preRolledSeconds = preRollSeconds
+        startedMonotonicNanoseconds -= min(startedMonotonicNanoseconds, UInt64(preRollSeconds * 1_000_000_000))
 
         if let transcriber {
             await transcriber.start(audioURL: cache)
@@ -191,6 +206,7 @@ public actor RecordingSession {
                 systemAudioAvailable = false
                 systemAudioFellBack = true
                 captureWarnings.append(.systemAudioUnavailable(message: error.localizedDescription))
+                integrity.observe(.systemAudio, .sourceStopped)
             }
         } else {
             sysStream = nil
@@ -199,12 +215,31 @@ public actor RecordingSession {
         self.pumpTask = Task.detached { [self, micStream, sysStream] in
             await pumpStreams(session: self, mic: micStream, system: sysStream)
         }
+        captureActive = true
+        captureProgressTask = Task { [weak self, integrity] in
+            var lastFrameCount = integrity.writtenFrameCount
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+                guard let self else { return }
+                let nextFrameCount = integrity.writtenFrameCount
+                guard await self.captureActive else { return }
+                if nextFrameCount == lastFrameCount {
+                    integrity.observe(.microphone, .sourceStopped)
+                    return
+                }
+                lastFrameCount = nextFrameCount
+            }
+        }
     }
 
     /// Stop accepting audio, drain every accepted buffer, close the durable
     /// local master, and finalize optional processing artifacts. Publication
     /// is deliberately left to a `RecordingCommitter`.
     public func stop() async throws -> CapturedRecording {
+        captureActive = false
+        captureProgressTask?.cancel()
+        captureProgressTask = nil
         await mic.stop()
         await systemAudio.stop()
         // This is the one capture end timestamp used by both the returned
@@ -212,6 +247,7 @@ public actor RecordingSession {
         // before pump draining, writer close, retries, or diarization can add
         // non-capture latency to the recording's duration.
         let endedAt = Date()
+        let endedMonotonicNanoseconds = DispatchTime.now().uptimeNanoseconds
         // Drain, don't cancel: both capture streams were just finished, so
         // the pump exits once it consumes what was already buffered.
         // Cancelling here discarded that backlog — the final fraction of a
@@ -219,7 +255,12 @@ public actor RecordingSession {
         // source that fails to finish its stream.
         if let pumpTask {
             let watchdog = Task {
-                try? await Task.sleep(for: .seconds(5))
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
+                integrity.observe(.mixed, .drainTimedOut)
                 pumpTask.cancel()
             }
             _ = await pumpTask.value
@@ -231,7 +272,13 @@ public actor RecordingSession {
         guard let writer, let cache = cacheURL, let startedAt else {
             throw AudioError.audioEngineFailed("stop called before start")
         }
-        try writer.close()
+        do { try writer.close() }
+        catch {
+            integrity.observe(.mixed, .writerFailure)
+            try? integrity.flush()
+            throw error
+        }
+        try integrity.flush()
         self.writer = nil
 
         // Finalize transcriber while cache file still exists.
@@ -264,7 +311,10 @@ public actor RecordingSession {
             transcript: finalTranscript,
             speakerEmbeddings: speakerEmbeddings,
             warnings: captureWarnings,
-            discontinuities: []
+            discontinuities: [],
+            integrity: integrity.snapshot(),
+            startedMonotonicNanoseconds: startedMonotonicNanoseconds,
+            endedMonotonicNanoseconds: endedMonotonicNanoseconds
         )
     }
 
@@ -275,6 +325,9 @@ public actor RecordingSession {
     /// phantom "Recovered" library row. An aborted start leaves nothing
     /// behind: captures stopped, writer closed, cache file deleted.
     public func abort() async {
+        captureActive = false
+        captureProgressTask?.cancel()
+        captureProgressTask = nil
         await mic.stop()
         await systemAudio.stop()
         pumpTask?.cancel()
@@ -289,7 +342,10 @@ public actor RecordingSession {
             _ = try? await transcriber.finalize(startedAt: startedAt ?? Date(), endedAt: Date())
         }
         if let cache = cacheURL {
+            try? integrity.flush()
             try? FileManager.default.removeItem(at: cache)
+            try? FileManager.default.removeItem(at: CaptureIntegrityReport.sidecarURL(for: cache))
+            try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: cache))
         }
         cacheURL = nil
     }
@@ -300,8 +356,11 @@ public actor RecordingSession {
     nonisolated fileprivate func ingestSystem(_ buffers: [AVAudioPCMBuffer], into fifo: SampleFIFO) {
         for buffer in buffers {
             do {
-                fifo.append(try mixer.processSystem(buffer))
+                if fifo.append(try mixer.processSystem(buffer)) > 0 {
+                    integrity.observe(.systemAudio, .bufferOverrun)
+                }
             } catch {
+                integrity.observe(.systemAudio, .conversionFailed)
                 FileHandle.standardError.write(Data(
                     "harc-audio: system resample failed: \(error.localizedDescription)\n".utf8
                 ))
@@ -327,7 +386,9 @@ public actor RecordingSession {
             let mixed = try sysMono.map { try mixer.sum(mic: micMono, system: $0) } ?? micMono
             do {
                 try writer?.write(mixed)
+                integrity.wrote(frames: mixed.frameLength)
             } catch {
+                integrity.observe(.mixed, .writerFailure)
                 FileHandle.standardError.write(Data(
                     "harc-audio: WAV write failed: \(error.localizedDescription)\n".utf8
                 ))
@@ -343,11 +404,31 @@ public actor RecordingSession {
             )
             levelsContinuation.yield(levels)
         } catch {
+            integrity.observe(.microphone, .conversionFailed)
             FileHandle.standardError.write(Data(
                 "harc-audio: processPair failed: \(error.localizedDescription)\n".utf8
             ))
         }
     }
+
+    /// The system stream can finish after the last mic tick. Preserve its
+    /// accepted tail using the same unity system gain as the mixed path.
+    nonisolated fileprivate func drainSystemTail(_ fifo: SampleFIFO) {
+        while let buffer = fifo.take(4096, format: AudioMixer.targetFormat) {
+            do {
+                try writer?.write(buffer)
+                integrity.wrote(frames: buffer.frameLength)
+            } catch {
+                integrity.observe(.systemAudio, .writerFailure)
+                if writeFailureLatch.claim() {
+                    onWriteFailure?(error.localizedDescription)
+                }
+                return
+            }
+        }
+    }
+
+    nonisolated fileprivate func systemQueueOverflow() { integrity.observe(.systemAudio, .bufferOverrun) }
 
     /// RMS of a mono Float32 buffer in dBFS. Floor at -120 dB so a totally
     /// silent buffer yields a finite number (`-.infinity` if there are no frames).
@@ -386,7 +467,7 @@ private func pumpStreams(
     // Cancellation-safe.
     let sysTask = Task.detached { [queue, carrier = StreamCarrier(stream: sysStream)] in
         for await buf in carrier.stream {
-            await queue.put(buf)
+            if await queue.put(buf) { session.systemQueueOverflow() }
         }
     }
 
@@ -401,8 +482,17 @@ private func pumpStreams(
         session.processPair(mic: micBuffer, systemFIFO: systemFIFO)
     }
 
-    sysTask.cancel()
-    _ = await sysTask.value
+    // Normal Stop finishes both producers. Await the system consumer before
+    // draining its mailbox; cancelling it here drops accepted system buffers.
+    // Propagate watchdog/abort cancellation to the detached consumer so a
+    // broken producer cannot prevent shutdown forever.
+    await withTaskCancellationHandler {
+        _ = await sysTask.value
+    } onCancel: {
+        sysTask.cancel()
+    }
+    session.ingestSystem(await queue.drain().buffers, into: systemFIFO)
+    session.drainSystemTail(systemFIFO)
 }
 
 /// Thread-safe fire-once flag for the write-failure signal.
@@ -440,11 +530,13 @@ private actor SystemBufferQueue {
     private var buffers: [PCMBox] = []
     private let cap = 256
 
-    func put(_ buffer: AVAudioPCMBuffer) {
+    func put(_ buffer: AVAudioPCMBuffer) -> Bool {
         buffers.append(PCMBox(buffer: buffer))
         if buffers.count > cap {
             buffers.removeFirst(buffers.count - cap)
+            return true
         }
+        return false
     }
 
     func drain() -> PCMBatch {

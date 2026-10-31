@@ -80,7 +80,7 @@ public actor ModelManager {
     public func bootstrap() {
         for d in catalog {
             let previous = states[d.id] ?? .absent
-            let next = storage.persistedState(for: d.id)
+            let next = storage.persistedState(for: d)
             if previous != next {
                 transition(d.id, to: next)
             } else if states[d.id] == nil {
@@ -106,6 +106,11 @@ public actor ModelManager {
         guard case .installed = state(of: id) else {
             throw Failure.notInstalled(id)
         }
+        guard let descriptor = descriptor(for: id),
+              storage.persistedState(for: descriptor) == .installed else {
+            transition(id, to: .absent)
+            throw Failure.notInstalled(id)
+        }
         return storage.modelDirectory(for: id)
     }
 
@@ -119,7 +124,8 @@ public actor ModelManager {
             throw Failure.manifestUnverified(id)
         }
         if case .installed = state(of: id) {
-            return   // already done
+            if storage.persistedState(for: descriptor) == .installed { return }
+            transition(id, to: .absent)
         }
         if let active = activeDownload, active != id {
             throw Failure.otherDownloadRunning(current: active)

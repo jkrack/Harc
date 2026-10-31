@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import HarcDomain
 
 /// Re-runs transcription over already-captured audio.
 ///
@@ -18,6 +19,19 @@ public protocol ArchiveTranscriber: Sendable {
     var modelID: String { get }
     /// Re-transcribe the WAV at `wavPath`, returning the transcript text.
     func retranscribe(wavPath: String) async throws -> String
+    /// Structured engines publish their complete generation here. The archive
+    /// counts success only after this operation commits.
+    func reprocess(recording: Recording, store: RecordingStore) async throws
+}
+
+public extension ArchiveTranscriber {
+    func reprocess(recording: Recording, store: RecordingStore) async throws {
+        guard let id = recording.id else { throw StoreError.notFound }
+        let text = try await retranscribe(wavPath: recording.wavPath)
+        try Task.checkCancellation()
+        try await store.applyReprocessedTranscript(recordingID: id, text: text,
+            modelID: modelID, expectedRevision: recording.revision)
+    }
 }
 
 public actor ArchiveReprocessor {
@@ -130,12 +144,7 @@ public actor ArchiveReprocessor {
             }
 
             do {
-                let text = try await transcriber.retranscribe(wavPath: recording.wavPath)
-                try await store.applyReprocessedTranscript(
-                    recordingID: id,
-                    text: text,
-                    modelID: transcriber.modelID
-                )
+                try await transcriber.reprocess(recording: recording, store: store)
                 reprocessed += 1
             } catch {
                 failed += 1
@@ -204,13 +213,19 @@ public extension RecordingStore {
         recordingID: Int64,
         text: String,
         modelID: String,
-        now: Date = Date()
+        now: Date = Date(), expectedRevision: EntityRevision? = nil
     ) async throws {
         // Milliseconds, not a Date: `transcribed_at` is an INTEGER column and
         // Recording decodes it as Int64. Handing GRDB a Date here would store a
         // date string that silently decodes back as nil.
         let stamp = Int64(now.timeIntervalSince1970 * 1000)
         try await db.write { db in
+            if let expectedRevision {
+                guard let current = try Recording.fetchOne(db, key: recordingID), current.deletedAt == nil,
+                      current.revision == expectedRevision else {
+                    throw StoreError.invalidData("The recording changed during archive reprocessing")
+                }
+            }
             let count = try Recording.filter(key: recordingID).updateAll(
                 db,
                 [

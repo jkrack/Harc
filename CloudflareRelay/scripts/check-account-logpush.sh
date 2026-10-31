@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +x # Never trace credential expansion, including when invoked with bash -x.
 set -euo pipefail
 
 # Read-only account-level proof that no Workers Trace Events Logpush job can
@@ -26,18 +27,31 @@ else
 fi
 trap 'unset HARC_RELAY_AUDIT_TOKEN' EXIT
 
+if [[ "$HARC_RELAY_AUDIT_TOKEN" == *$'\n'* || "$HARC_RELAY_AUDIT_TOKEN" == *$'\r'* ]]; then
+  echo "error: invalid multiline Cloudflare token" >&2
+  exit 1
+fi
+
 if [[ -z "$HARC_RELAY_AUDIT_TOKEN" ]]; then
   echo "error: the Harc Cloudflare API token is empty" >&2
   exit 1
 fi
 
-curl \
+if ! JOBS_JSON="$(curl --disable \
+  --connect-timeout 5 \
+  --max-time 20 \
   --silent \
   --show-error \
   --fail \
-  --header "Authorization: Bearer $HARC_RELAY_AUDIT_TOKEN" \
+  --header @- \
   "$API_ORIGIN/accounts/$ACCOUNT_ID/logpush/jobs" \
-  | node -e '
+  <<< "Authorization: Bearer $HARC_RELAY_AUDIT_TOKEN"
+)"; then
+  echo "error: account Logpush request failed (5-second connect, 20-second total deadline)" >&2
+  exit 1
+fi
+
+node -e '
 const chunks = [];
 process.stdin.on("data", (chunk) => chunks.push(chunk));
 process.stdin.on("end", () => {
@@ -47,6 +61,7 @@ process.stdin.on("end", () => {
       "error: Cloudflare account Logpush jobs were not readable; use a " +
         "token with account Logs access or verify them in the dashboard"
     );
+    process.exitCode = 1;
     return;
   }
   const payload = JSON.parse(raw);
@@ -74,7 +89,7 @@ process.stdin.on("end", () => {
     );
   }
 });
-'
+' <<< "$JOBS_JSON"
 
 echo "  Result:                   no account-level Workers export"
 echo "  Checked UTC:              $(date -u '+%Y-%m-%dT%H:%M:%SZ')"

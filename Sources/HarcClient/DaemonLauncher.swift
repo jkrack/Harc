@@ -12,79 +12,101 @@ public actor DaemonLauncher {
     /// value falls back to v2 there rather than failing the launch.
     private let asrEngine: String?
     private var process: Process?
+    private var lifecycleGeneration: UInt64 = 0
 
     public init(
         binaryURL: URL? = nil,
         socketPath: String = HarcSTTClient.defaultSocketPath,
-        asrEngine: String? = nil
+        asrEngine: String? = nil,
+        logURL: URL? = nil
     ) {
         self.binaryURL = binaryURL
         self.socketPath = socketPath
         self.asrEngine = asrEngine
 
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        self.logPath = caches.appendingPathComponent("Harc/daemon.log").path
+        self.logPath = (logURL ?? caches.appendingPathComponent("Harc/daemon.log")).path
     }
 
     /// Ensures the daemon is running and responsive. Returns the socket path.
     public func ensureRunning() async throws -> String {
-        // If the socket exists and a `status` call works, we're done.
+        try Task.checkCancellation()
+        let generation = lifecycleGeneration
+        // A status response can suspend this actor. Recheck cancellation and
+        // stop generation before either accepting it or spawning a process.
         if FileManager.default.fileExists(atPath: socketPath) {
             let client = HarcSTTClient(socketPath: socketPath)
-            if (try? await client.status()) != nil {
-                return socketPath
-            }
+            let status = try? await client.status()
+            try checkStartup(generation: generation)
+            if status != nil { return socketPath }
         }
 
-        // Spawn the daemon.
-        let bin = try resolveBinaryURL()
+        // No suspension between checking ownership and registering the child:
+        // concurrent callers share an in-flight launch, even before its socket
+        // exists. Cancelling one waiter does not terminate another's daemon.
+        let child: Process
+        if let existing = process, existing.isRunning {
+            child = existing
+        } else {
+            child = try launchProcess()
+            process = child
+        }
 
-        // Ensure log directory exists.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+        while ContinuousClock.now < deadline {
+            try checkStartup(generation: generation)
+            guard child.isRunning else {
+                throw ClientError.daemonLaunchFailed(
+                    "exited before becoming responsive (status \(child.terminationStatus))"
+                )
+            }
+            if FileManager.default.fileExists(atPath: socketPath) {
+                let client = HarcSTTClient(socketPath: socketPath)
+                let status = try? await client.status()
+                try checkStartup(generation: generation)
+                if status != nil { return socketPath }
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        throw ClientError.daemonLaunchFailed("timed out waiting for socket \(socketPath)")
+    }
+
+    private func checkStartup(generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard generation == lifecycleGeneration else { throw CancellationError() }
+    }
+
+    private func launchProcess() throws -> Process {
+        let bin = try resolveBinaryURL()
         let parent = (logPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: logPath) {
             FileManager.default.createFile(atPath: logPath, contents: Data())
         }
         let logHandle = FileHandle(forWritingAtPath: logPath)
+        defer { try? logHandle?.close() }
         _ = try? logHandle?.seekToEnd()
 
-        let p = Process()
-        p.executableURL = bin
-        // Pass the socket path so the daemon binds to the correct location.
+        let child = Process()
+        child.executableURL = bin
         var arguments = ["--socket", socketPath]
-        if let asrEngine {
-            arguments += ["--asr-engine", asrEngine]
-        }
-        p.arguments = arguments
-        p.standardError = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
-        p.standardOutput = logHandle ?? FileHandle(forWritingAtPath: "/dev/null")
+        if let asrEngine { arguments += ["--asr-engine", asrEngine] }
+        child.arguments = arguments
+        child.standardError = logHandle ?? FileHandle.nullDevice
+        child.standardOutput = logHandle ?? FileHandle.nullDevice
         do {
-            try p.run()
+            try child.run()
         } catch {
             throw ClientError.daemonLaunchFailed("run: \(error.localizedDescription)")
         }
-        self.process = p
-
-        // Wait up to 60s for the socket to appear and respond to status.
-        let deadline = Date().addingTimeInterval(60)
-        while Date() < deadline {
-            if FileManager.default.fileExists(atPath: socketPath) {
-                let client = HarcSTTClient(socketPath: socketPath)
-                if (try? await client.status()) != nil {
-                    return socketPath
-                }
-            }
-            try? await Task.sleep(nanoseconds: 200_000_000) // 200 ms
-        }
-        throw ClientError.daemonLaunchFailed("timed out waiting for socket \(socketPath)")
+        return child
     }
 
     public func stop() async {
-        guard let p = process else { return }
-        if p.isRunning {
-            p.terminate()
-        }
-        self.process = nil
+        lifecycleGeneration &+= 1
+        guard let child = process else { return }
+        if child.isRunning { child.terminate() }
+        process = nil
     }
 
     /// Stops the speech daemon at application termination. The IPC request is

@@ -45,6 +45,7 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var preRollStatus: PreRollStatus? = nil
     @Published public var destinationReady: Bool = true
     @Published public var destinationPath: String = ""
+    @Published public var captureIntegrityWarning: String?
     @Published public var captureReadinessText: String = "Mic + system audio"
     @Published public var captureReadinessWarning: Bool = false
     @Published public var availableMicrophones: [AudioInputDevice] = []
@@ -95,9 +96,18 @@ public final class HarcAppBridge: ObservableObject {
     /// The configured role is only a preference; this reports whether the
     /// resident Host graph actually completed startup.
     @Published public var hostRuntimeReady: Bool = false
+    @Published public var hostDevices: [HarcHostDevicePresentation] = []
+    @Published public var hostDevicesLoaded = false
+    @Published public var hostDevicesError: String?
+    public var refreshHostDevices: @MainActor () async -> Void = {}
+    @Published public var todayRecordingIntervals: [DateInterval]?
+    public var refreshTodayRecordings: @MainActor () async -> Void = {}
     @Published public var hostReceiptRepairInProgress = false
     @Published public var hostReceiptRepairStatus: String?
     public var onRepairHostReceipts: () -> Void = {}
+    @Published public var hostLibraryMigrationInProgress = false
+    @Published public var hostLibraryMigrationStatus: String?
+    public var onMigrateHostLibraryBindings: () -> Void = {}
     /// Mirrors completion of the desktop Client graph and the preserved
     /// On This Mac library bootstrap. Settings uses this instead of treating a
     /// configured Client preference as proof that pairing/storage are usable.
@@ -245,6 +255,7 @@ public final class HarcAppBridge: ObservableObject {
 
     public func setActiveCaptureStatus(_ status: ActiveCaptureStatus?) {
         activeCaptureStatus = status
+        if status == nil { captureIntegrityWarning = nil }
     }
 
     public func updateActiveCaptureSource(_ sourceState: ActiveCaptureStatus.SourceState) {
@@ -305,5 +316,22 @@ public struct StopRecoveryInfo: Equatable, Sendable {
         self.message = message
         self.cacheDirectoryPath = cacheDirectoryPath
         self.isRecovering = isRecovering
+    }
+}
+
+/// Presentation of durable registry evidence, never an inferred live connection.
+public struct HarcHostDevicePresentation: Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let isPhone: Bool
+    public let isRevoked: Bool
+    public let lastConnectedAt: Date?
+
+    public init(id: String, name: String, isPhone: Bool, isRevoked: Bool, lastConnectedAt: Date?) {
+        self.id = id
+        self.name = name
+        self.isPhone = isPhone
+        self.isRevoked = isRevoked
+        self.lastConnectedAt = lastConnectedAt
     }
 }

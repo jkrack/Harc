@@ -11,7 +11,10 @@ set -euo pipefail
 #     --destination-id <UDID> \
 #     --platform simulator|physical \
 #     --output-dir <new-directory> \
+#     [--derived-data-path <new-directory>] \
 #     [--development-team <10-character-team-id>] \
+#     [--diagnostic-bundle-suffix <suffix>] \
+#     [--diagnostic-test-case <Class/method>] \
 #     [--attempts 1-3] \
 #     [--allow-dirty-diagnostic]
 
@@ -19,6 +22,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DESTINATION_ID=""
 PLATFORM=""
 OUTPUT_DIR=""
+DERIVED_DATA_PATH=""
+DIAGNOSTIC_BUNDLE_SUFFIX=""
+DIAGNOSTIC_TEST_CASE=""
 ALLOW_DIRTY=0
 ATTEMPTS=0
 DEVELOPMENT_TEAM="${HARC_DEVELOPMENT_TEAM:-}"
@@ -40,6 +46,21 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_DIR="$2"
       shift 2
       ;;
+    --derived-data-path)
+      [[ $# -ge 2 ]] || { echo "error: --derived-data-path requires a value" >&2; exit 64; }
+      DERIVED_DATA_PATH="$2"
+      shift 2
+      ;;
+    --diagnostic-bundle-suffix)
+      [[ $# -ge 2 ]] || { echo "error: --diagnostic-bundle-suffix requires a value" >&2; exit 64; }
+      DIAGNOSTIC_BUNDLE_SUFFIX="$2"
+      shift 2
+      ;;
+    --diagnostic-test-case)
+      [[ $# -ge 2 ]] || { echo "error: --diagnostic-test-case requires a value" >&2; exit 64; }
+      DIAGNOSTIC_TEST_CASE="$2"
+      shift 2
+      ;;
     --attempts)
       [[ $# -ge 2 ]] || { echo "error: --attempts requires a value" >&2; exit 64; }
       ATTEMPTS="$2"
@@ -55,7 +76,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "usage: $0 --destination-id <UDID> --platform simulator|physical --output-dir <new-directory> [--development-team <10-character-team-id>] [--attempts 1-3] [--allow-dirty-diagnostic]" >&2
+      echo "usage: $0 --destination-id <UDID> --platform simulator|physical --output-dir <new-directory> [--development-team <team-id>] [--derived-data-path <cache>] [--diagnostic-bundle-suffix <suffix>] [--diagnostic-test-case <Class/testMethod>] [--attempts 1-3] [--allow-dirty-diagnostic]" >&2
       exit 64
       ;;
   esac
@@ -69,6 +90,19 @@ if [[ "$PLATFORM" != "simulator" && "$PLATFORM" != "physical" ]]; then
   echo "error: --platform must be simulator or physical" >&2
   exit 64
 fi
+if [[ -n "$DIAGNOSTIC_BUNDLE_SUFFIX" ]]; then
+  if [[ ! "$DIAGNOSTIC_BUNDLE_SUFFIX" =~ ^[A-Za-z][A-Za-z0-9]*$ || "$ALLOW_DIRTY" -ne 1 ]]; then
+    echo "error: diagnostic bundle suffix must be alphanumeric and requires --allow-dirty-diagnostic" >&2
+    exit 64
+  fi
+fi
+if [[ -n "$DIAGNOSTIC_TEST_CASE" ]]; then
+  if [[ ! "$DIAGNOSTIC_TEST_CASE" =~ ^[A-Za-z][A-Za-z0-9_]+/test[A-Za-z0-9_]+$ || "$ALLOW_DIRTY" -ne 1 ]]; then
+    echo "error: a diagnostic test case must be Class/testMethod and requires --allow-dirty-diagnostic" >&2
+    exit 64
+  fi
+fi
+TEST_SELECTION="HarcMobileUITests${DIAGNOSTIC_TEST_CASE:+/$DIAGNOSTIC_TEST_CASE}"
 if [[ "$PLATFORM" == "physical" && ! "$DEVELOPMENT_TEAM" =~ ^[A-Z0-9]{10}$ ]]; then
   echo "error: physical qualification requires --development-team with a 10-character Apple team ID" >&2
   exit 64
@@ -92,6 +126,14 @@ if [[ -e "$OUTPUT_DIR" ]]; then
   echo "error: output path already exists: $OUTPUT_DIR" >&2
   exit 1
 fi
+if [[ -n "$DERIVED_DATA_PATH" && -e "$DERIVED_DATA_PATH" && "$ALLOW_DIRTY" -ne 1 ]]; then
+  echo "error: derived data path already exists: $DERIVED_DATA_PATH" >&2
+  exit 1
+fi
+if [[ -n "$DERIVED_DATA_PATH" && "$DERIVED_DATA_PATH" != /* ]]; then
+  echo "error: derived data path must be absolute: $DERIVED_DATA_PATH" >&2
+  exit 1
+fi
 
 for TOOL in git xcodebuild xcrun shasum ditto; do
   command -v "$TOOL" >/dev/null 2>&1 || {
@@ -101,9 +143,26 @@ for TOOL in git xcodebuild xcrun shasum ditto; do
 done
 
 AVAILABLE_GIB="$(df -Pk "$REPO_ROOT" | awk 'NR == 2 { print int($4 / 1024 / 1024) }')"
-if [[ "$AVAILABLE_GIB" -lt 8 ]]; then
-  echo "error: free disk is ${AVAILABLE_GIB} GiB; qualification requires 8 GiB of starting headroom to preserve the 5 GiB operational floor" >&2
+BUILD_VOLUME="$REPO_ROOT"
+if [[ -n "$DERIVED_DATA_PATH" && -d "$DERIVED_DATA_PATH" ]]; then
+  BUILD_VOLUME="$DERIVED_DATA_PATH"
+fi
+BUILD_AVAILABLE_GIB="$(df -Pk "$BUILD_VOLUME" | awk 'NR == 2 { print int($4 / 1024 / 1024) }')"
+if [[ "$AVAILABLE_GIB" -lt 5 || "$BUILD_AVAILABLE_GIB" -lt 8 ]]; then
+  echo "error: qualification requires 5 GiB on the source volume and 8 GiB of starting headroom on the build volume" >&2
   exit 1
+fi
+if [[ -n "$DERIVED_DATA_PATH" ]]; then
+  DERIVED_DATA_PARENT="$(dirname "$DERIVED_DATA_PATH")"
+  [[ -d "$DERIVED_DATA_PARENT" ]] || {
+    echo "error: derived data parent does not exist: $DERIVED_DATA_PARENT" >&2
+    exit 1
+  }
+  DERIVED_AVAILABLE_GIB="$(df -Pk "$DERIVED_DATA_PARENT" | awk 'NR == 2 { print int($4 / 1024 / 1024) }')"
+  if [[ "$DERIVED_AVAILABLE_GIB" -lt 8 ]]; then
+    echo "error: derived data filesystem has ${DERIVED_AVAILABLE_GIB} GiB free; qualification requires 8 GiB of starting headroom" >&2
+    exit 1
+  fi
 fi
 
 cd "$REPO_ROOT"
@@ -116,6 +175,13 @@ if [[ -n "$SOURCE_STATUS" && "$ALLOW_DIRTY" -ne 1 ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+XCODE_DERIVED_DATA_OPTIONS=()
+if [[ -n "$DERIVED_DATA_PATH" ]]; then
+  # Only explicit diagnostic runs may reuse a cache; release qualification
+  # continues to require a fresh directory, as checked above.
+  mkdir -p "$DERIVED_DATA_PATH"
+  XCODE_DERIVED_DATA_OPTIONS=(-derivedDataPath "$DERIVED_DATA_PATH")
+fi
 SOURCE_MANIFEST="$OUTPUT_DIR/source-files.sha256"
 while IFS= read -r SOURCE_FILE; do
   [[ -n "$SOURCE_FILE" ]] || continue
@@ -124,11 +190,14 @@ done <<< "$SOURCE_FILE_LIST" > "$SOURCE_MANIFEST"
 SOURCE_FINGERPRINT="$(shasum -a 256 "$SOURCE_MANIFEST" | awk '{ print $1 }')"
 
 printf '%s\n' "$SOURCE_STATUS" > "$OUTPUT_DIR/source-status.txt"
+git diff --binary HEAD > "$OUTPUT_DIR/source.patch"
 {
   echo "head=$SOURCE_HEAD"
   echo "source_manifest_sha256=$SOURCE_FINGERPRINT"
   echo "tree_clean=$([[ -z "$SOURCE_STATUS" ]] && echo true || echo false)"
   echo "diagnostic_dirty_tree=$([[ "$ALLOW_DIRTY" -eq 1 ]] && echo true || echo false)"
+  echo "diagnostic_bundle_suffix=$DIAGNOSTIC_BUNDLE_SUFFIX"
+  echo "test_selection=$TEST_SELECTION"
 } > "$OUTPUT_DIR/source-identity.txt"
 
 STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -149,19 +218,34 @@ for ATTEMPT in $(seq 1 "$ATTEMPTS"); do
   if [[ "$PLATFORM" == "physical" ]]; then
     SIGNING_OPTIONS+=(DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM")
   fi
+  if [[ -n "$DIAGNOSTIC_BUNDLE_SUFFIX" ]]; then
+    SIGNING_OPTIONS+=(HARC_DIAGNOSTIC_SUFFIX=".$DIAGNOSTIC_BUNDLE_SUFFIX" "HARC_MOBILE_DISPLAY_NAME=Harc Tide Test")
+  fi
+  # Keep test logs, screenshots and xcresult evidence, but avoid the optional
+  # system-wide sysdiagnose in diagnostic iterations. CoreSimulator's collector
+  # can stall for ten minutes after the tests have already finished.
+  DIAGNOSTIC_COLLECTION="on-failure"
+  if [[ "$ALLOW_DIRTY" -eq 1 ]]; then
+    DIAGNOSTIC_COLLECTION="never"
+  fi
+  source "$REPO_ROOT/scripts/build-concurrency.sh"
+  harc_configure_build_jobs
   set +e
-  xcodebuild \
+  harc_xcodebuild \
     -project Harc.xcodeproj \
     -scheme HarcMobile \
     -configuration Debug \
     -destination "id=$DESTINATION_ID" \
-    -jobs 2 \
+    "${XCODE_DERIVED_DATA_OPTIONS[@]}" \
     -parallel-testing-enabled NO \
-    SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
+    -collect-test-diagnostics "$DIAGNOSTIC_COLLECTION" \
+    -test-timeouts-enabled YES \
+    -default-test-execution-time-allowance 180 \
+    -maximum-test-execution-time-allowance 300 \
     HARC_BUILD_SHA="$SOURCE_HEAD" \
-    "${SIGNING_OPTIONS[@]}" \
+    ${SIGNING_OPTIONS[@]+"${SIGNING_OPTIONS[@]}"} \
     -resultBundlePath "$ATTEMPT_BUNDLE" \
-    -only-testing:HarcMobileUITests \
+    "-only-testing:$TEST_SELECTION" \
     test 2>&1 | tee "$ATTEMPT_LOG"
   ATTEMPT_STATUS="${PIPESTATUS[0]}"
   XCODE_STATUS="$ATTEMPT_STATUS"
@@ -278,8 +362,12 @@ fi
   echo "selected_attempt=$SELECTED_ATTEMPT"
   echo "xcode_status=$XCODE_STATUS"
   echo "result_bundle=$RESULT_BUNDLE"
+  echo "derived_data_path=$DERIVED_DATA_PATH"
   echo "source_head=$SOURCE_HEAD"
   echo "source_manifest_sha256=$SOURCE_FINGERPRINT"
+  echo "test_selection=$TEST_SELECTION"
+  echo "system_diagnostics=$DIAGNOSTIC_COLLECTION"
+  echo "diagnostic_dirty_tree=$([[ "$ALLOW_DIRTY" -eq 1 ]] && echo true || echo false)"
 } > "$OUTPUT_DIR/qualification.txt"
 
 echo ""

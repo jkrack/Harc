@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.14.13"
-    CURRENT_PROJECT_VERSION: "68"
+    MARKETING_VERSION: "0.14.19"
+    CURRENT_PROJECT_VERSION: "74"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
   configs:
@@ -136,18 +136,20 @@ targets:
 
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.harc.Harc
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.Harc$(HARC_MAC_DIAGNOSTIC_SUFFIX)
         CODE_SIGN_ENTITLEMENTS: HarcApp/Harc.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         HARC_BUILD_SHA: unrecorded
         ARCHS: arm64
     postCompileScripts:
       - name: Embed harc-stt daemon
+        basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/build-daemon.sh"
         outputFiles:
           - $(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/harc-stt
       - name: Embed harc-mcp agent bridge
+        basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/build-mcp.sh"
         outputFiles:
@@ -171,6 +173,9 @@ targets:
     platform: macOS
     sources:
       - path: HarcAppTests
+      - path: Tests/HarcClientStoreTests/ClientStoreFixtures.swift
+      - path: Tests/HarcHostTransportTests/Support
+      - path: Tests/HarcHostTransportTests/RecordingTransferFactoryTestDoubles.swift
     dependencies:
       - target: Harc
     settings:
@@ -188,7 +193,10 @@ targets:
       - path: HarcMobileApp
         excludes:
           - README.md
+      - path: HarcMobileActivityShared
     dependencies:
+      - target: HarcMobileWidgets
+        embed: true
       - package: HarcCore
         product: HarcAudioMobile
       - package: HarcCore
@@ -211,7 +219,7 @@ targets:
       path: HarcMobileApp/Info.plist
       properties:
         CFBundleName: Harc
-        CFBundleDisplayName: Harc
+        CFBundleDisplayName: "$(HARC_MOBILE_DISPLAY_NAME)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         HarcBuildSHA: "$(HARC_BUILD_SHA)"
@@ -223,6 +231,7 @@ targets:
         HarcRemoteRelayOrigin: "https://relay.adaptcontext.com"
         NSBonjourServices:
           - _harc._tcp
+        NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
         UILaunchScreen: {}
@@ -235,15 +244,43 @@ targets:
         com.apple.developer.default-data-protection: NSFileProtectionComplete
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile$(HARC_DIAGNOSTIC_SUFFIX)
+        HARC_MOBILE_DISPLAY_NAME: Harc
         PRODUCT_NAME: Harc
         PRODUCT_MODULE_NAME: HarcMobile
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) HARC_MOBILE_QUALIFIED_CAF_ALAC"
         CODE_SIGN_ENTITLEMENTS: HarcMobileApp/HarcMobile.entitlements
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         ENABLE_HARDENED_RUNTIME: NO
         HARC_BUILD_SHA: unrecorded
+
+  HarcMobileWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: HarcMobileWidgets
+      - path: HarcMobileActivityShared
+    dependencies:
+      - package: HarcCore
+        product: HarcPresenceUI
+    info:
+      path: HarcMobileWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Harc Recording
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harc.HarcMobile$(HARC_DIAGNOSTIC_SUFFIX).RecordingActivity
+        PRODUCT_NAME: HarcMobileWidgets
+        TARGETED_DEVICE_FAMILY: 1
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        GENERATE_INFOPLIST_FILE: YES
+        SUPPORTS_MACCATALYST: NO
 
   HarcMobileAppTests:
     type: bundle.unit-test
@@ -332,6 +369,18 @@ targets:
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
 
 schemes:
+  Harc:
+    build:
+      targets:
+        Harc: all
+    run:
+      config: Debug
+    test:
+      environmentVariables:
+        HARC_UI_TESTING: "1"
+      targets:
+        - HarcAppTests
+        - HarcAppUITests
   HarcMobile:
     build:
       targets:

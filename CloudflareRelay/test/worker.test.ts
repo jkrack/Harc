@@ -3,6 +3,7 @@ import {
   evictDurableObject,
   reset,
   runInDurableObject,
+  runDurableObjectAlarm,
   SELF,
 } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
@@ -157,6 +158,46 @@ describe("Harc Remote Worker", () => {
     expect(alarm as number).toBeLessThanOrEqual(
       Date.now() + SESSION_IDLE_TIMEOUT_MS,
     );
+  });
+
+  it.each([false, true])("runs retention cleanup after eviction (idle expired: %s)", async (expired) => {
+    const sessionID = randomOpaqueToken();
+    const hostCapability = randomOpaqueToken();
+    const createdAt = Date.now() - (expired ? SESSION_IDLE_TIMEOUT_MS + 1_000 : 0);
+    const initialization: SessionInitialization = {
+      version: 1,
+      rendezvousRouteID: randomOpaqueToken(),
+      sessionID,
+      hostCapabilityHash: await hashOpaqueToken(hostCapability),
+      clientCapabilityHash: await hashOpaqueToken(randomOpaqueToken()),
+      createdAt,
+      expiresAt: createdAt + SESSION_LIFETIME_MS,
+    };
+    const stub = env.RELAY_SESSION.get(env.RELAY_SESSION.idFromName(sessionID));
+    const body = JSON.stringify(initialization);
+    const initialized = await stub.fetch("https://relay.internal/initialize", {
+      method: "POST",
+      headers: { "content-length": String(new TextEncoder().encode(body).byteLength) },
+      body,
+    });
+    expect(initialized.status).toBe(201);
+    await initialized.text(); // Drain the request before waiting for eviction.
+    await evictDurableObject(stub);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const retained = await runInDurableObject(stub, async (_instance, state) => ({
+      count: (await state.storage.list()).size,
+      alarm: await state.storage.getAlarm(),
+    }));
+    if (expired) {
+      expect(retained.count).toBe(0);
+      expect(retained.alarm).toBeNull();
+      expect((await SELF.fetch(`https://relay.test/v1/sessions/${sessionID}/connect`, {
+        headers: websocketHeaders(sessionID, "host", hostCapability),
+      })).status).toBe(401);
+    } else {
+      expect(retained.count).toBeGreaterThan(0);
+      expect(retained.alarm).toBe(createdAt + SESSION_IDLE_TIMEOUT_MS);
+    }
   });
 
   it("atomically consumes each role capability under concurrent replay", async () => {

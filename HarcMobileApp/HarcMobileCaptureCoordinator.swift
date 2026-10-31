@@ -20,6 +20,8 @@ final class HarcMobileCaptureCoordinator {
 
     private(set) var state: State = .idle
 
+    var durableAudioSeconds: Double { audioLevelMeter.durableAudioSeconds }
+
     var audioActivityLevel: Double {
         Double(audioLevelMeter.level)
     }
@@ -27,6 +29,7 @@ final class HarcMobileCaptureCoordinator {
     private let producingDeviceID: DeviceID
     private let locations: HarcMobileCaptureLocations
     private let audioLevelMeter = HarcMobileAudioLevelMeter()
+    private let liveActivity = HarcMobileLiveActivity()
     private let storageExhaustionAfterCanonicalBytesForTesting: UInt64?
     private let onFinalized: @MainActor (HarcMobileFinalizedMaster) throws -> Void
     private var engine: AVAudioEngine?
@@ -133,6 +136,11 @@ final class HarcMobileCaptureCoordinator {
             pipeline.start()
             installObservers()
             state = .recording(startedAt: startedAt)
+            liveActivity.start(
+                startedAt: startedAt,
+                durableSeconds: { [weak self] in self?.durableAudioSeconds ?? 0 },
+                stop: { [weak self] in self?.stop() }
+            )
         } catch {
             teardownEngine()
             captureInput = nil
@@ -168,6 +176,7 @@ final class HarcMobileCaptureCoordinator {
     ) {
         guard case .recording = state, let pipeline else { return }
         state = .stopping
+        liveActivity.finish()
         teardownEngine()
         activeRoute = nil
         captureInput = nil
@@ -178,6 +187,7 @@ final class HarcMobileCaptureCoordinator {
     private func pipelineCompleted(
         _ result: Result<HarcMobileFinalizedMaster, any Error>
     ) async {
+        liveActivity.finish()
         defer { HarcMobilePlaybackSession.shared.endCapture() }
         audioLevelMeter.reset()
         pipeline = nil

@@ -62,9 +62,13 @@ public enum ExportInputBuilder {
     /// Collapse `words` + `speakers` into contiguous same-speaker segments.
     /// If `speakers` is empty, emit a single `speaker: nil` segment.
     static func collapseToSegments(transcript: SessionTranscript) -> [ExportInput.Segment] {
-        guard !transcript.speakers.isEmpty else {
+        let overlaps = transcript.overlapRanges ?? []
+        let warnings: [ExportInput.Segment] = overlaps.isEmpty ? [] : [
+            .init(speaker: nil, text: "Overlapping voices detected. Speaker attribution may be incomplete.")
+        ]
+        guard (!transcript.speakers.isEmpty || !overlaps.isEmpty), !transcript.words.isEmpty else {
             let t = transcript.joinedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return t.isEmpty ? [] : [.init(speaker: nil, text: t)]
+            return warnings + (t.isEmpty ? [] : [.init(speaker: nil, text: t)])
         }
 
         // Parakeet/FluidAudio emits SentencePiece-style tokens where a leading
@@ -76,26 +80,46 @@ public enum ExportInputBuilder {
         let sentencePieceStyle = transcript.words.contains { $0.text.first?.isWhitespace == true }
 
         var currentSpeaker: Int? = nil
+        var currentOverlap = false
         var bucketText = ""
-        var output: [ExportInput.Segment] = []
+        var output: [ExportInput.Segment] = warnings
 
         func flush() {
             let t = bucketText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !t.isEmpty {
-                output.append(.init(speaker: currentSpeaker, text: t))
+                output.append(.init(speaker: currentOverlap ? nil : currentSpeaker,
+                                    text: currentOverlap ? "Overlapping voices: \(t)" : t))
             }
             bucketText = ""
         }
 
+        let notices = UntranscribedAudioMarker.parse(in: transcript.joinedText)
+        var noticeIndex = 0
+        func emitNotices(through timestamp: Int) {
+            while noticeIndex < notices.count, notices[noticeIndex].startMs <= timestamp {
+                flush()
+                currentSpeaker = nil
+                currentOverlap = false
+                output.append(.init(speaker: nil, text: notices[noticeIndex].text))
+                noticeIndex += 1
+            }
+        }
+
         for word in transcript.words {
+            emitNotices(through: word.startMs)
             let midpoint = (word.startMs + word.endMs) / 2
-            let assigned = transcript.speakers.first { seg in
+            let isOverlap = overlaps.contains {
+                word.startMs < $0.endMs && max(word.startMs, word.endMs) > $0.startMs
+                    || word.startMs == word.endMs && $0.startMs <= word.startMs && word.startMs < $0.endMs
+            }
+            let assigned: Int? = isOverlap ? nil : transcript.speakers.first { seg in
                 midpoint >= seg.startMs && midpoint < seg.endMs
             }?.speaker ?? currentSpeaker
 
-            if assigned != currentSpeaker {
+            if assigned != currentSpeaker || isOverlap != currentOverlap {
                 flush()
                 currentSpeaker = assigned
+                currentOverlap = isOverlap
             }
             if sentencePieceStyle {
                 bucketText += word.text
@@ -106,6 +130,7 @@ public enum ExportInputBuilder {
             }
         }
         flush()
+        emitNotices(through: Int.max)
 
         if output.isEmpty {
             let t = transcript.joinedText.trimmingCharacters(in: .whitespacesAndNewlines)

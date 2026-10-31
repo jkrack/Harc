@@ -68,6 +68,9 @@ public struct SessionTranscript: Codable, Equatable, Sendable {
     public var joinedText: String
     public var words: [Word]
     public var speakers: [SpeakerSegment]
+    /// Retains utterance-level attribution even when there are no word timings.
+    /// Absent in legacy transcripts; belongs to this exact speaker generation.
+    public var attributedUtterances: [AttributedTranscriptUtterance]? = nil
     public var chunks: [ChunkResult]
     /// Set when the user has manually edited `joinedText` in the editor.
     /// Signals downstream tools that word timings are approximate.
@@ -75,6 +78,8 @@ public struct SessionTranscript: Codable, Equatable, Sendable {
     /// Explicit processing coverage for signed Client artifacts. Missing on
     /// legacy JSON and therefore intentionally not treated as complete.
     public var processingCoverage: TranscriptProcessingCoverage?
+    /// Raw concurrent-speech evidence; nil means it was not assessed.
+    public var overlapRanges: [SpeechOverlapRange]?
 
     public init(
         startedAt: Date, endedAt: Date, audioPath: String,
@@ -93,6 +98,18 @@ public struct SessionTranscript: Codable, Equatable, Sendable {
             manualEditAt: manualEditAt,
             processingCoverage: nil
         )
+    }
+
+    /// Preserve daemon-derived metadata when rebuilding a saved transcript after
+    /// Host processing or Client recovery. Legacy daemon evidence remains nil.
+    public init(
+        startedAt: Date, endedAt: Date, audioPath: String,
+        result: TranscribeResult, processingCoverage: TranscriptProcessingCoverage? = nil
+    ) {
+        self.init(startedAt: startedAt, endedAt: endedAt, audioPath: audioPath,
+                  joinedText: result.text, words: result.words, speakers: result.speakers,
+                  chunks: [], processingCoverage: processingCoverage)
+        self.overlapRanges = result.overlapRanges
     }
 
     /// Creates a transcript with explicit processing-completeness evidence.
@@ -116,6 +133,7 @@ public struct SessionTranscript: Codable, Equatable, Sendable {
         self.chunks = chunks
         self.manualEditAt = manualEditAt
         self.processingCoverage = processingCoverage
+        self.overlapRanges = nil
     }
 }
 

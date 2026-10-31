@@ -12,9 +12,12 @@ import XCTest
 
 @MainActor
 final class HarcMobileUploadPreparationTests: XCTestCase {
+    func testDeliveryBuildSelectsCAFALAC() {
+        XCTAssertEqual(HarcMobileLosslessReleaseGate.selected, .cafALAC)
+    }
+
     func testLostBeginReusesWholeIntentUnderAdditiveCapabilitiesWithoutEncoding() async throws {
-        let fixture = try await Fixture.make()
-        defer { fixture.remove() }
+        let fixture = try await makeFixture()
         let rpc = DroppedBeginRPC()
         var encodingCalls = 0
         let initialArtifacts: [Int]? = try await HarcMobileUploadPreparation.artifacts(
@@ -54,8 +57,7 @@ final class HarcMobileUploadPreparationTests: XCTestCase {
 
     func testCurrentSessionStillMustSupportFrozenCapabilitiesAndAuthorization() async throws {
         for invalidSession in 0 ..< 3 {
-            let fixture = try await Fixture.make()
-            defer { fixture.remove() }
+            let fixture = try await makeFixture()
             let rpc = DroppedBeginRPC()
             let plan = try fixture.plan()
             try await fixture.loseBegin(plan, session: fixture.session, rpc: rpc)
@@ -81,8 +83,7 @@ final class HarcMobileUploadPreparationTests: XCTestCase {
     }
 
     func testOldHostJobCannotDelayCurrentHostJobInSameQueuePass() async throws {
-        let fixture = try await Fixture.make()
-        defer { fixture.remove() }
+        let fixture = try await makeFixture()
         let oldPlan = try fixture.plan()
         try await fixture.loseBegin(oldPlan, session: fixture.session, rpc: DroppedBeginRPC())
         XCTAssertTrue(try fixture.store.forgetActiveHost())
@@ -166,8 +167,7 @@ final class HarcMobileUploadPreparationTests: XCTestCase {
             ("ordinary", Fault.lostResponse, false),
         ]
         for (name, injectedError, expectsStop) in cases {
-            let fixture = try await Fixture.make()
-            defer { fixture.remove() }
+            let fixture = try await makeFixture()
             let second = OriginRecordingID(deviceID: fixture.origin.deviceID, recordingUUID: UUID())
             let secondURL = fixture.root.appendingPathComponent("second-master.pcm")
             try fixture.bytes.write(to: secondURL)
@@ -236,6 +236,15 @@ final class HarcMobileUploadPreparationTests: XCTestCase {
         return (adoption, try await client.openSession(adoption: adoption, negotiatedCapabilities: fixture.negotiated, deviceSigner: fixture.deviceKey))
     }
 
+    private func makeFixture() async throws -> Fixture {
+        let fixture = try await Fixture.make()
+        let root = fixture.root
+        addTeardownBlock {
+            try FileManager.default.removeItem(at: root)
+        }
+        return fixture
+    }
+
     private struct Fixture {
         let root: URL
         let bootstrap: BootstrapClientFixture
@@ -259,7 +268,6 @@ final class HarcMobileUploadPreparationTests: XCTestCase {
             _ = try store.persistFinalizedCapture(result.capture(origin), masterFileURL: result.masterURL)
             return result
         }
-        func remove() { try? FileManager.default.removeItem(at: root) }
         func capture(_ origin: OriginRecordingID) throws -> FinalizedCapture {
             try FinalizedCapture(producingDeviceID: origin.deviceID, originRecordingID: origin,
                 captureStartedAt: Date(timeIntervalSince1970: Double(bootstrap.now - 1000) / 1000),

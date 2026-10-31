@@ -14,6 +14,66 @@
     <description>Local speech-to-text for macOS — meeting capture and dictation.</description>
     <language>en</language>
     <item>
+      <title>Harc v0.14.19</title>
+      <link>https://github.com/jkrack/Harc/releases/tag/v0.14.19</link>
+      <sparkle:version>74</sparkle:version>
+      <sparkle:shortVersionString>0.14.19</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <pubDate>Fri, 23 Oct 2026 14:22:25 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jkrack/Harc/releases/download/v0.14.19/Harc-local.dmg"
+        sparkle:edSignature="UiUziyvsYlpnkCVOB7Y83Vf1QeIrECvq4mk1Zw8ZB2+HiASeLZ85vAusEn+mBSA4iYUa+Uf9gJa5OswvsR10Aw==" length="51301863"
+        type="application/octet-stream"/>
+    </item>
+    <item>
+      <title>Harc v0.14.18</title>
+      <link>https://github.com/jkrack/Harc/releases/tag/v0.14.18</link>
+      <sparkle:version>73</sparkle:version>
+      <sparkle:shortVersionString>0.14.18</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <pubDate>Wed, 21 Oct 2026 06:09:46 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jkrack/Harc/releases/download/v0.14.18/Harc-local.dmg"
+        sparkle:edSignature="GG4RBR5UyjBJ6zI3Q7ZH22fZluriODP5E4q5pHH6rojJZ+90IH+QfFd8mEwke37MqHO2qlmhTWDgySLdgv0FCg==" length="51287818"
+        type="application/octet-stream"/>
+    </item>
+    <item>
+      <title>Harc v0.14.17</title>
+      <link>https://github.com/jkrack/Harc/releases/tag/v0.14.17</link>
+      <sparkle:version>72</sparkle:version>
+      <sparkle:shortVersionString>0.14.17</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <pubDate>Wed, 21 Oct 2026 02:18:29 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jkrack/Harc/releases/download/v0.14.17/Harc-local.dmg"
+        sparkle:edSignature="vNxUkhbVlyBMw4LEkQhnGAoPlbEQuu5bjPlcYRe3f4LuneB6UistZUrU9zNke+GByU3j4rsnJ8fPxKaFRApwAw==" length="51014213"
+        type="application/octet-stream"/>
+    </item>
+    <item>
+      <title>Harc v0.14.16</title>
+      <link>https://github.com/jkrack/Harc/releases/tag/v0.14.16</link>
+      <sparkle:version>71</sparkle:version>
+      <sparkle:shortVersionString>0.14.16</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <pubDate>Sat, 17 Oct 2026 16:50:02 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jkrack/Harc/releases/download/v0.14.16/Harc-local.dmg"
+        sparkle:edSignature="L5z9gtXMMzjEAEb8Dm1j8fyGVMYcsdcKO5sTRZOPwh+uo37+eVWQHreNKieoSgX6K/YOuDGrfkZcu4bCGgGwCQ==" length="50776315"
+        type="application/octet-stream"/>
+    </item>
+    <item>
+      <title>Harc v0.14.15</title>
+      <link>https://github.com/jkrack/Harc/releases/tag/v0.14.15</link>
+      <sparkle:version>70</sparkle:version>
+      <sparkle:shortVersionString>0.14.15</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <pubDate>Sat, 17 Oct 2026 14:56:16 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jkrack/Harc/releases/download/v0.14.15/Harc-local.dmg"
+        sparkle:edSignature="jtUSg7e74nLU5vaMN3P66NezC+A+yzx/GGEg+hddayHi9+HD5TyKYHjB7kiZocKGQoCoyaVj5D4fSrLtSf6IBQ==" length="66948477"
+        type="application/octet-stream"/>
+    </item>
+    <item>
       <title>Harc v0.14.13</title>
       <link>https://github.com/jkrack/Harc/releases/tag/v0.14.13</link>
       <sparkle:version>68</sparkle:version>

@@ -11,6 +11,7 @@ public struct MenuBarPanelView: View {
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var trayState: PostStopTrayState
     let amplitudeHistory: [Float]
+    let todayRecordingIntervals: [DateInterval]?
     let onStartStop: () -> Void
     let onOpenWindow: () -> Void
     let onCopy: () -> Void
@@ -45,6 +46,7 @@ public struct MenuBarPanelView: View {
     let destinationPath: String
     let captureReadinessText: String
     let captureReadinessWarning: Bool
+    let captureIntegrityWarning: String?
     let sttReadinessText: String
     let sttReady: Bool
     let summarizerReadinessText: String
@@ -85,6 +87,7 @@ public struct MenuBarPanelView: View {
         recordingState: RecordingState,
         trayState: PostStopTrayState,
         amplitudeHistory: [Float] = [],
+        todayRecordingIntervals: [DateInterval]? = nil,
         onStartStop: @escaping () -> Void,
         onOpenWindow: @escaping () -> Void,
         onCopy: @escaping () -> Void,
@@ -114,6 +117,7 @@ public struct MenuBarPanelView: View {
         destinationPath: String = "",
         captureReadinessText: String = "Mic + system audio",
         captureReadinessWarning: Bool = false,
+        captureIntegrityWarning: String? = nil,
         sttReadinessText: String = "Local STT ready",
         sttReady: Bool = true,
         summarizerReadinessText: String = "Summary unavailable",
@@ -147,6 +151,7 @@ public struct MenuBarPanelView: View {
         self.recordingState = recordingState
         self.trayState = trayState
         self.amplitudeHistory = amplitudeHistory
+        self.todayRecordingIntervals = todayRecordingIntervals
         self.onStartStop = onStartStop
         self.onOpenWindow = onOpenWindow
         self.onCopy = onCopy
@@ -176,6 +181,7 @@ public struct MenuBarPanelView: View {
         self.destinationPath = destinationPath
         self.captureReadinessText = captureReadinessText
         self.captureReadinessWarning = captureReadinessWarning
+        self.captureIntegrityWarning = captureIntegrityWarning
         self.sttReadinessText = sttReadinessText
         self.sttReady = sttReady
         self.summarizerReadinessText = summarizerReadinessText
@@ -214,7 +220,7 @@ public struct MenuBarPanelView: View {
             Button {
                 onStartStop()
             } label: {
-                Label(recordingState.isRecording ? "Stop" : "Record",
+                Label(recordingState.isRecording ? "Stop and save" : "Record",
                       systemImage: recordingState.isRecording ? "stop.fill" : "record.circle")
                     .frame(maxWidth: .infinity)
             }
@@ -392,6 +398,26 @@ public struct MenuBarPanelView: View {
                 // panel that scrolls is a window in denial.
                 statusRow
 
+                if !recordingState.isRecording, !dictationActive,
+                   let intervals = todayRecordingIntervals {
+                    Button(action: onOpenWindow) {
+                        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                            HStack {
+                                Text("Today").font(.harcTitle)
+                                Spacer()
+                                Text(intervals.count == 1 ? "1 recording" : "\(intervals.count) recordings")
+                                    .font(.harcCaption)
+                            }
+                            HarcTideDayTimeline(intervals: intervals)
+                                .frame(height: 40) // token-exempt: compact panel day map.
+                        }
+                        .padding(HarcSpacing.sm)
+                        .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open today's Library")
+                }
+
                 if recordingState.isRecording {
                     durabilityLine
                 }
@@ -413,7 +439,8 @@ public struct MenuBarPanelView: View {
         .padding(.horizontal, HarcSpacing.md)
         .padding(.top, HarcSpacing.md)
         .padding(.bottom, HarcSpacing.sm)
-        .frame(width: 320)
+        .frame(width: 360)
+        .background { HarcTideBackground() }
         .animation(.easeInOut(duration: 0.2), value: trayState.isVisible)
         .onAppear { startTicker() }
         .onDisappear { stopTicker() }
@@ -430,50 +457,46 @@ public struct MenuBarPanelView: View {
     // MARK: - Sub-views
 
     private var presenceHero: some View {
-        HStack(spacing: HarcSpacing.md) {
-            Button {
-                onStartStop()
-            } label: {
-                HarcPresenceBlob(
-                    state: presenceState,
-                    size: .standard,
-                    audioLevel: { currentAmplitude }
-                )
+        VStack(spacing: HarcSpacing.md) {
+            HarcTideConditions {
+                Text(captureReadinessText)
+                    .lineLimit(2)
+                Text("LOCAL")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                recordingState.isRecording
-                    ? "Stop recording"
-                    : "Start recording"
-            )
-            .help(
-                recordingState.isRecording
-                    ? "Stop and save"
-                    : "Start recording"
-            )
-
-            VStack(alignment: .leading, spacing: HarcSpacing.xs) {
-                stateLine
-                if recordingState.isRecording {
-                    LiveWaveformView(
-                        history: amplitudeHistory,
-                        size: .panel,
-                        isActive: true,
-                        tint: microphoneIsSilent
-                            ? Color.harc(.attention)
-                            : HarcBrand.live
+            if recordingState.isRecording {
+                Text(elapsedText)
+                    .font(.system(size: 48, weight: .light, design: .rounded)) // token-exempt: Tide capture clock
+                    .monospacedDigit()
+                    .accessibilityLabel("Recording duration")
+                Text(presenceTitle)
+                    .font(.harcLabel)
+                    .foregroundStyle(Color.harc(microphoneIsSilent ? .attention : .live))
+                HarcTideEnergyTrace(samples: amplitudeHistory, isLive: true)
+                    .frame(height: 64)
+                Text("Recent audio activity")
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button(action: onStartStop) {
+                    HarcPresenceBlob(
+                        state: presenceState,
+                        size: .standard,
+                        audioLevel: { currentAmplitude }
                     )
-                    .frame(height: 22)
-                } else {
-                    Text(presenceSubtitle)
-                        .font(.harcCaption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Start recording")
+                .help("Start recording")
+                Text(recordingState.isPreparing ? "Starting…" : "Click to record")
+                    .font(.harcTitle)
+                Text(presenceSubtitle)
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var stateLine: some View {
@@ -600,7 +623,8 @@ public struct MenuBarPanelView: View {
     }
 
     private var statusSummary: String {
-        LocalStackHealthModel.summary(for: healthItems)
+        if captureIntegrityWarning != nil { return "Audio capture needs review" }
+        return LocalStackHealthModel.summary(for: healthItems)
     }
 
     private enum StatusTone { case ready, attention, broken }
@@ -616,6 +640,7 @@ public struct MenuBarPanelView: View {
     /// The single most urgent transient, one line, under the summary. The
     /// full story lives in Activity; this is the trailer.
     private var statusSubtitle: String? {
+        if let captureIntegrityWarning { return captureIntegrityWarning }
         if let stopRecovery { return stopRecovery.title }
         let pending = RecoveryInboxModel.unresolvedCount(in: recoveryArtifacts)
         if pending > 0 { return "\(Pluralize.count(pending, "recording")) awaiting recovery" }
@@ -678,7 +703,7 @@ public struct MenuBarPanelView: View {
             Image(systemName: "internaldrive")
                 .font(.harcCaption)
                 .foregroundStyle(.secondary)
-            Text("Saving to \(destinationDisplayText) — safe through a crash.")
+            Text("\(destinationDisplayText) — safe through a crash.")
                 .font(.harcCaption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

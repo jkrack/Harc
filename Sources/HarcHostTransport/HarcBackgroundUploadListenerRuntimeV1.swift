@@ -669,7 +669,7 @@ package actor HarcBackgroundUploadListenerRuntimeV1:
     private struct Current {
         let runtimeID: UUID
         let generationID: UUID
-        let listener: NWListener
+        let listenerCancellation: HarcNIOTSListenerCancellation
         let servingGeneration: HarcBackgroundUploadServingGenerationBinding
         let unexpectedExitHandler: @Sendable (UUID) async -> Void
         var phase: Phase
@@ -741,10 +741,11 @@ package actor HarcBackgroundUploadListenerRuntimeV1:
             throw HarcBackgroundUploadListenerRuntimeV1Error.alreadyRunning
         }
         let runtimeID = UUID()
+        let listenerCancellation = HarcNIOTSListenerCancellation()
         current = Current(
             runtimeID: runtimeID,
             generationID: servingGeneration.generationID,
-            listener: listener,
+            listenerCancellation: listenerCancellation,
             servingGeneration: servingGeneration,
             unexpectedExitHandler: unexpectedExitHandler,
             phase: .starting,
@@ -757,6 +758,11 @@ package actor HarcBackgroundUploadListenerRuntimeV1:
                 group: eventLoopGroup
             )
             .childChannelOption(ChannelOptions.autoRead, value: true)
+            .serverChannelInitializer { channel in
+                channel.eventLoop.makeFutureWithTask {
+                    try await listenerCancellation.register(channel)
+                }
+            }
             .withNWListener(
                 listener,
                 serverBackPressureStrategy: .init(
@@ -815,7 +821,7 @@ package actor HarcBackgroundUploadListenerRuntimeV1:
         case .starting:
             generation.phase = .stopping
             current = generation
-            generation.listener.cancel()
+            await generation.listenerCancellation.cancel()
             return
         case .running, .failed:
             generation.phase = .draining
@@ -834,7 +840,7 @@ package actor HarcBackgroundUploadListenerRuntimeV1:
         if generation.phase == .starting
             || (generation.phase == .stopping
                 && generation.acceptor == nil) {
-            generation.listener.cancel()
+            await generation.listenerCancellation.cancel()
             _ = await runtimeExits(
                 runtimeID: generation.runtimeID,
                 before: hardStopTimeout
@@ -860,7 +866,7 @@ package actor HarcBackgroundUploadListenerRuntimeV1:
         guard var generation = current else { return }
         generation.phase = .stopping
         current = generation
-        generation.listener.cancel()
+        await generation.listenerCancellation.cancel()
         generation.acceptor?.close(promise: nil)
         closeChildren(runtimeID: generation.runtimeID)
 

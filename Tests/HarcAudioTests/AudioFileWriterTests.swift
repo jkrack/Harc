@@ -5,6 +5,28 @@ import AVFoundation
 
 @Suite("AudioFileWriter")
 struct AudioFileWriterTests {
+    @Test("failed final sync throws on every close until synchronization succeeds")
+    func failedCloseRemainsRetryable() throws {
+        let url = tempWAVPath()
+        let moved = url.appendingPathExtension("moved")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: moved)
+        }
+        let writer = try AudioFileWriter(url: url)
+        try writer.write(makeSineBuffer(frames: 1600))
+        try FileManager.default.moveItem(at: url, to: moved)
+        #expect(throws: AudioError.self) { try writer.close() }
+        #expect(throws: AudioError.self) { try writer.close() }
+        try FileManager.default.moveItem(at: moved, to: url)
+        try writer.close()
+        try writer.close()
+        #expect(try AVAudioFile(forReading: url).length == 1600)
+        #expect(throws: AudioError.self) {
+            try writer.write(makeSineBuffer(frames: 1600))
+        }
+    }
+
     private func tempWAVPath() -> URL {
         URL(fileURLWithPath: "/tmp/harc-wavwrite-\(UUID().uuidString.prefix(8)).wav")
     }

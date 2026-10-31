@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +x # Never trace credential expansion, including when invoked with bash -x.
 set -euo pipefail
 
 # Read-only proof that an active relay deployment has no persistent request
@@ -13,11 +14,8 @@ API_ORIGIN="https://api.cloudflare.com/client/v4"
 RELAY_HEALTH_URL="${HARC_RELAY_HEALTH_URL:-https://relay.adaptcontext.com/health}"
 EXPECTED_TAIL_CONSUMER="${HARC_RELAY_EXPECTED_TAIL_CONSUMER:-}"
 
-DEPLOYMENT_JSON="$(
-  WRANGLER_SEND_ERROR_REPORTS=false npx wrangler deployments status \
-    --name "$WORKER_NAME" \
-    --json
-)"
+SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOYMENT_JSON="$(node "$SCRIPT_DIRECTORY/read-deployment-status.mjs" "$WORKER_NAME")"
 
 if [[ -n "${HARC_CLOUDFLARE_API_TOKEN:-}" ]]; then
   HARC_RELAY_AUDIT_TOKEN="$HARC_CLOUDFLARE_API_TOKEN"
@@ -36,18 +34,29 @@ else
 fi
 trap 'unset HARC_RELAY_AUDIT_TOKEN' EXIT
 
+if [[ "$HARC_RELAY_AUDIT_TOKEN" == *$'\n'* || "$HARC_RELAY_AUDIT_TOKEN" == *$'\r'* ]]; then
+  echo "error: invalid multiline Cloudflare token" >&2
+  exit 1
+fi
+
 if [[ -z "$HARC_RELAY_AUDIT_TOKEN" ]]; then
   echo "error: the Harc Cloudflare API token is empty" >&2
   exit 1
 fi
 
-SETTINGS_JSON="$(curl \
+if ! SETTINGS_JSON="$(curl --disable \
+  --connect-timeout 5 \
+  --max-time 20 \
   --silent \
   --show-error \
   --fail \
-  --header "Authorization: Bearer $HARC_RELAY_AUDIT_TOKEN" \
-  "$API_ORIGIN/accounts/$ACCOUNT_ID/workers/scripts/$WORKER_NAME/script-settings"
-)"
+  --header @- \
+  "$API_ORIGIN/accounts/$ACCOUNT_ID/workers/scripts/$WORKER_NAME/script-settings" \
+  <<< "Authorization: Bearer $HARC_RELAY_AUDIT_TOKEN"
+)"; then
+  echo "error: relay settings request failed (5-second connect, 20-second total deadline)" >&2
+  exit 1
+fi
 
 VERSION_ID="$(node -e '
 const payload = JSON.parse(process.argv[1]);
@@ -81,6 +90,14 @@ if (expectedTailConsumer === "") {
 } else if (services.length !== 1 || services[0] !== expectedTailConsumer) {
   throw new Error("relay must have exactly the named temporary Tail Worker");
 }
+// Do not interpret an omitted field as proof that no streaming observer exists.
+if (!Object.hasOwn(settings, "streaming_tail_consumers")) {
+  throw new Error("streaming Tail Workers were not reported; deployed privacy remains unverified");
+}
+const streamingConsumers = settings.streaming_tail_consumers;
+if (streamingConsumers !== null && (!Array.isArray(streamingConsumers) || streamingConsumers.length !== 0)) {
+  throw new Error("relay must have no streaming Tail Workers");
+}
 const observability = settings.observability;
 if (observability !== null && observability !== undefined) {
   if (observability.enabled !== false) {
@@ -101,7 +118,10 @@ if (observability !== null && observability !== undefined) {
 }
 ' "$SETTINGS_JSON" "$EXPECTED_TAIL_CONSUMER"
 
-HEALTH_BODY="$(curl --silent --show-error --fail "$RELAY_HEALTH_URL")"
+if ! HEALTH_BODY="$(curl --disable --connect-timeout 5 --max-time 20 --silent --show-error --fail "$RELAY_HEALTH_URL")"; then
+  echo "error: relay health request failed (5-second connect, 20-second total deadline)" >&2
+  exit 1
+fi
 if [[ "$HEALTH_BODY" != '{"status":"ok"}' ]]; then
   echo "error: unexpected relay health response: $HEALTH_BODY" >&2
   exit 1
@@ -116,6 +136,7 @@ if [[ -z "$EXPECTED_TAIL_CONSUMER" ]]; then
 else
   echo "  Tail Workers:  $EXPECTED_TAIL_CONSUMER (temporary expected observer)"
 fi
+echo "  Streaming Tail Workers: none"
 echo "  Observability: disabled"
 echo "  Health:        ok"
 echo "  Checked UTC:   $(date -u '+%Y-%m-%dT%H:%M:%SZ')"

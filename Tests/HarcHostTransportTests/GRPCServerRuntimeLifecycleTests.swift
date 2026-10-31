@@ -1,10 +1,11 @@
 #if canImport(Network)
 import Foundation
 @testable import HarcHostTransport
+import HarcTestSupport
 import Network
 import Testing
 
-@Suite("gRPC server runtime lifecycle")
+@Suite("gRPC server runtime lifecycle", .processWideSystemResource)
 struct GRPCServerRuntimeLifecycleTests {
     @Test("startup uses Harc readiness and never needs a socket address")
     func harcOwnedReadiness() async throws {

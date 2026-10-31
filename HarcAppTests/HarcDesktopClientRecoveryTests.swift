@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import HarcClient
 import HarcClientStore
 import HarcCore
@@ -269,6 +271,103 @@ struct HarcDesktopClientRecoveryTests {
         #expect(try fixture.store.recordingOutboxes().count == 1)
     }
 
+    @Test("Host-only capture comparison survives persisted fractional dates and preserves conflicts")
+    func hostOnlyCaptureDates() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let recording = UUID(uuidString: "abababab-2222-4333-8444-555555555555")!
+        try fixture.writeCapture(recording: recording, deviceID: fixture.deviceID,
+            startedAt: Date(timeIntervalSinceReferenceDate: 800_000_000.778443))
+        let capture = try fixture.readSidecar(recording).capture
+        _ = try fixture.store.persistFinalizedCapture(capture,
+            masterFileURL: fixture.masterURL(recording))
+        let stored = try #require(try fixture.store.recordingOutbox(for: capture.originRecordingID))
+            .finalizedCapture.capture
+        #expect(capture != stored) // Reproduces the cross-epoch floating-point drift.
+        try HarcDesktopClientRecovery.validateHostOnlyCapture(capture, stored: stored,
+            recordingUUID: recording, deviceID: fixture.deviceID)
+
+        let sidecarBytes = try Data(contentsOf: fixture.sidecarURL(recording))
+        var object = try #require(try JSONSerialization.jsonObject(with: sidecarBytes) as? [String: Any])
+        var facts = try #require(object["capture"] as? [String: Any])
+        facts["captureEndedAt"] = capture.captureEndedAt.timeIntervalSinceReferenceDate + 1
+        object["capture"] = facts
+        let conflict = try JSONDecoder().decode(HarcDesktopClientCaptureSidecar.self,
+            from: JSONSerialization.data(withJSONObject: object)).capture
+        do {
+            try HarcDesktopClientRecovery.validateHostOnlyCapture(conflict, stored: stored,
+                recordingUUID: recording, deviceID: fixture.deviceID)
+            Issue.record("Changed capture facts must remain blocked")
+        } catch {
+            #expect(error.localizedDescription.contains("metadata conflicts"))
+            #expect(!error.localizedDescription.contains("different Client identity"))
+        }
+        do {
+            try HarcDesktopClientRecovery.validateHostOnlyCapture(capture, stored: stored,
+                recordingUUID: UUID(), deviceID: fixture.deviceID)
+            Issue.record("Filename mismatch must remain blocked")
+        } catch {
+            #expect(error.localizedDescription.contains("filename conflicts"))
+        }
+        do {
+            try HarcDesktopClientRecovery.validateHostOnlyCapture(capture, stored: stored,
+                recordingUUID: recording, deviceID: DeviceID(Data(repeating: 0x77, count: 32)))
+            Issue.record("Foreign identity must remain blocked")
+        } catch {
+            #expect(error.localizedDescription.contains("different Client identity"))
+        }
+        #expect(try Data(contentsOf: fixture.sidecarURL(recording)) == sidecarBytes)
+    }
+
+    @Test("Activity renders completed inventory separately from pending delivery")
+    @MainActor
+    func rendersRecoveryActivity() throws {
+        let bridge = HarcAppBridge(recordingState: RecordingState(), trayState: PostStopTrayState())
+        bridge.clientRecoverSyncState = .completed(ClientRecoverSyncReport(
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            mastersFound: 6, sidecarsFound: 8, sidecarsRebuilt: 0,
+            outboxesRepaired: 0, alreadyTracked: 8, alreadyInLocalLibrary: 6,
+            retryRequested: 2, alreadyOnHost: 6, securityBlocked: 0, issues: []))
+        bridge.clientTransferStatusText = "Delivering audio or updates to Host. Unresolved sync problem: Recording 11111111: Host delivery could not be confirmed; Harc will retry."
+        let view = NSHostingView(rootView: ActivityView(bridge: bridge,
+            importState: MediaImportState(), onDismiss: {})
+            .environmentObject(RecordingPostProcessingState())
+            .environment(\.colorScheme, .light)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        view.appearance = NSAppearance(named: .aqua)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = view
+        defer { window.contentView = nil }
+        view.frame = NSRect(x: 0, y: 0, width: 480, height: 520)
+        view.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        #expect(png.count > 0)
+        // The rendered diagnostic contains only this synthetic fixture.
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-recovery-activity-\(UUID().uuidString).png")
+        try png.write(to: output)
+        print("Recovery Activity rendering: \(output.path)")
+    }
+
+    @Test("delivery failure history survives retries and resolves only the successful recording")
+    func deliveryFailureHistory() {
+        let first = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
+        let second = UUID(uuidString: "22222222-2222-4333-8444-555555555555")!
+        var history = HarcDesktopDeliveryFailures()
+        history.record(first, message: "Host could not confirm delivery")
+        history.record(second, message: "Host internal error")
+        #expect(history.summary?.contains("11111111") == true)
+        history.resolve(second)
+        #expect(history.summary?.contains("Host could not confirm delivery") == true)
+        history.resolve(first)
+        #expect(history.summary == nil)
+    }
+
     @Test("foreign Client identity stays fail-closed")
     func blocksForeignIdentity() throws {
         let fixture = try Fixture()
@@ -365,12 +464,12 @@ private final class Fixture {
         )
     }
 
-    func writeCapture(recording: UUID, deviceID: DeviceID) throws {
+    func writeCapture(recording: UUID, deviceID: DeviceID,
+        startedAt: Date = Date(timeIntervalSince1970: 1_800_000_000)) throws {
         let master = masterURL(recording)
         try makeWAV().write(to: master)
         let prepared = try HarcDesktopClientFiles.inspectCanonicalWAV(master)
         let origin = OriginRecordingID(deviceID: deviceID, recordingUUID: recording)
-        let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
         let capture = try FinalizedCapture(
             producingDeviceID: deviceID,
             originRecordingID: origin,
@@ -382,7 +481,12 @@ private final class Fixture {
             totalCanonicalFrames: prepared.frames,
             totalCanonicalBytes: prepared.frames * 2,
             canonicalPCMSHA256: try CanonicalPCMHash(prepared.pcmSHA256),
-            discontinuities: []
+            discontinuities: [try CaptureDiscontinuity(recordingID: origin,
+                monotonicTimeNanoseconds: 1,
+                wallTime: startedAt,
+                reason: .interruptionBegan,
+                affectedFrames: CanonicalFrameRange(startFrame: 0, endFrameExclusive: 0),
+                canonicalizationPolicy: .annotateGapWithoutInsertedSilence)]
         )
         let sidecar = HarcDesktopClientCaptureSidecar(
             capture: capture,

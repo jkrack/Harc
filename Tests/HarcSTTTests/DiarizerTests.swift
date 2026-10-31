@@ -6,6 +6,33 @@ import FluidAudio
 
 @Suite("Diarizer", .tags(.slow))
 struct DiarizerTests {
+    @Test func overlapOnlyVoicesAreWithheldWithoutChangingRetainedEvidence() throws {
+        let rows = (0...3).map { SpeakerEmbeddingRow(speakerIndex: $0, vector: [1, 0], totalMs: 1000, segmentCount: 1) }
+        let segments: [SpeakerSegment] = [
+            .init(speaker: 0, startMs: 0, endMs: 1000),
+            .init(speaker: 1, startMs: 1000, endMs: 2000),
+            .init(speaker: 2, startMs: 1000, endMs: 2000),
+            .init(speaker: 3, startMs: 2000, endMs: 3000)
+        ]
+        let overlap = [try SpeechOverlapRange(startMs: 0, endMs: 1000),
+            try SpeechOverlapRange(startMs: 2000, endMs: 2500)]
+        let retained = Diarizer.retainSpeakersWithExclusiveSupport(rows, segments: segments, overlap: overlap)
+        // Raw-only overlap blocks 0; simultaneous tracked speakers block 1/2.
+        // A partially isolated row survives byte-for-byte, without duration clipping.
+        #expect(retained == [rows[3]])
+        #expect(segments.count == 4)
+    }
+
+    @Test func exclusiveSupportHandlesAdjacentAndRepeatedSameSpeakerSegments() throws {
+        let rows = (0...2).map { SpeakerEmbeddingRow(speakerIndex: $0, vector: [1, 0], totalMs: 1000, segmentCount: 1) }
+        let segments: [SpeakerSegment] = [.init(speaker: 0, startMs: 0, endMs: 1000),
+            .init(speaker: 0, startMs: 500, endMs: 1000), .init(speaker: 1, startMs: 1000, endMs: 2000)]
+        #expect(Diarizer.retainSpeakersWithExclusiveSupport(rows, segments: segments, overlap: []) == Array(rows.prefix(2)))
+        #expect(Diarizer.retainSpeakersWithExclusiveSupport(rows, segments: segments,
+            overlap: [try SpeechOverlapRange(startMs: 0, endMs: 1000),
+                      try SpeechOverlapRange(startMs: 1000, endMs: 2000)]).isEmpty)
+    }
+
     @Test(
         "diarizing short-speech.wav returns at least one speaker segment",
         .enabled(

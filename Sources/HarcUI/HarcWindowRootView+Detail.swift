@@ -4,6 +4,7 @@ import HarcStore
 import HarcExport
 import HarcClient
 import HarcCore
+import HarcPresenceUI
 import HarcModels
 import HarcSummarize
 import AppKit
@@ -31,7 +32,17 @@ extension HarcWindowRootView {
 
     @ViewBuilder
     var detailBody: some View {
-        libraryDetail
+        VStack(spacing: 0) {
+            TideLibrarySearchField(text: $libraryVM.searchText, focusToken: librarySearchFocusToken)
+            .frame(width: 310, height: 30)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .frame(height: 52)
+
+            libraryDetail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background { HarcTideBackground() }
     }
 
     func mutationFailureBanner(_ failure: LibraryMutationFailure) -> some View {
@@ -127,56 +138,77 @@ extension HarcWindowRootView {
 
     func detailContent(recording: Recording) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: HarcSpacing.md) {
-                detailTitleRow(recording: recording)
+            VStack(alignment: .leading, spacing: 12) {
+                HarcTideConditions {
+                    if let endedAt = recording.endedAt {
+                        Text(Self.formatDuration(from: recording.startedAt, to: endedAt))
+                    }
+                    let speakerCount = speakerIndices(for: recording).count
+                    if speakerCount > 0 {
+                        Text(Pluralize.count(speakerCount, "speaker"))
+                    }
+                    if let actions = recording.actionItemsMarkdown,
+                       !SummaryParser.parseActionItems(actions).isEmpty {
+                        let parsed = SummaryParser.parseActionItems(actions)
+                        Text(Pluralize.count(parsed.count, "action"))
+                    }
+                    Label("On this Mac", systemImage: "desktopcomputer")
+                }
+                .frame(maxWidth: .infinity)
+                HStack(alignment: .bottom, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        detailTitleRow(recording: recording)
+                        HStack(spacing: 5) {
+                            Text(recording.startedAt, format: .dateTime.weekday(.wide).month(.abbreviated).day().hour().minute())
+                            if let endedAt = recording.endedAt {
+                                Text("–")
+                                Text(endedAt, format: .dateTime.hour().minute())
+                            }
+                            Text("·")
+                            Label(libraryVM.originLabel(for: recording), systemImage: "record.circle")
+                                .textSelection(.enabled)
+                                .accessibilityIdentifier("harc.recording.origin")
+                        }
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(formatTimestamp(seconds: Int(playerModel.currentTime)))
+                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                        if let endedAt = recording.endedAt {
+                            Text("of \(Self.formatDuration(from: recording.startedAt, to: endedAt))")
+                                .font(.harcCaption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if recording.captureIntegrity.hasIssues || !recording.captureDiscontinuities.isEmpty {
+                    Label("Some audio may be missing. Review capture interruptions before relying on this recording.", systemImage: "exclamationmark.triangle")
+                        .font(.harcCaption)
+                        .foregroundStyle(Color.harc(.attention))
+                        .accessibilityIdentifier("harc.recording.captureIntegrityWarning")
+                }
 
                 WaveformPlayerView(
                     envelope: detailEnvelope,
                     audioURL: URL(fileURLWithPath: recording.wavPath),
+                    speakerSegments: detailDocument?.speakers ?? [],
                     model: playerModel
                 )
-
-                inspectorSummaryChips(for: recording)
-
-                // Summary card — requires SummarizationQueueStore and
-                // ModelManagerStore injected as environment objects by the
-                // window controller. Scrolls internally past a bound so a
-                // long summary can't push the transcript off screen.
-                ScrollView {
-                    SummaryCardView(
-                        recording: recording,
-                        store: store,
-                        activeSummarizerID: prefs.activeSummarizerID,
-                        hasTranscript: hasTranscriptSource(recording),
-                        onClearSummary: { id in
-                            Task {
-                                do {
-                                    try await store.clearSummaryStatus(id: id)
-                                    mutationFailure = nil
-                                } catch {
-                                    reportMutationFailure(.clearSummary(recording.displayTitle), error: error)
-                                }
-                            }
-                        }
-                    )
-                }
-                .frame(maxWidth: .infinity, maxHeight: 280, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-
-                if let recID = recording.id {
-                    NotesCardView(
-                        itemID: recID,
-                        notes: recording.notesMarkdown,
-                        onSave: { [store] text in
-                            try await store.updateNotes(id: recID, markdown: text)
-                        }
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
 
                 if transcriptFindVisible {
                     transcriptFindBar()
                         .frame(maxWidth: .infinity)
+                }
+
+                if let warning = detailDocument?.overlapWarning, !editorText.contains(warning) {
+                    Label(warning, systemImage: "person.2.wave.2")
+                        .font(.harcCaption)
+                        .foregroundStyle(Color.harc(.attention))
+                        .accessibilityIdentifier("harc.transcript.overlap-warning")
                 }
 
                 vocabularySuggestionBar
@@ -185,13 +217,31 @@ extension HarcWindowRootView {
             // the document responds continuously as the split view or window
             // is resized.
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding([.horizontal, .top])
-            .padding(.bottom, HarcSpacing.sm)
+            .padding(.horizontal, 24)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
 
             // The transcript, editable in place. This pane is the single
             // surface — the separate editor window, its second toolbar,
             // second find bar and hash-derived waveform are gone.
-            transcriptEditorBody
+            GeometryReader { geometry in
+                if geometry.size.width >= 760 { // token-exempt: two-column detail breakpoint.
+                    HStack(alignment: .top, spacing: 18) {
+                        transcriptEditorBody
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        detailInsights(recording: recording)
+                            .frame(width: 350) // token-exempt: Tide insight column.
+                    }
+                    .padding(.horizontal, 24)
+                } else {
+                    VStack(spacing: 8) {
+                        transcriptEditorBody
+                        detailInsights(recording: recording)
+                            .frame(maxHeight: 150)
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
         }
         .navigationTitle(recording.displayTitle)
         .background(transcriptKeyboardShortcuts())
@@ -202,6 +252,14 @@ extension HarcWindowRootView {
         // which starved the "N speakers to review" chip whenever the
         // inspector was closed.
         .task(id: recording.wavPath) {
+            // A restored selection can arrive before the observed library
+            // rows. Its selection-change handler then has no document to
+            // load; initialize when the actual detail first becomes available.
+            if detailDocument == nil {
+                loadTranscript()
+                await loadEnvelope()
+                await loadResolvedLabels()
+            }
             async let observation: Void = observeRecording(recording: recording)
             async let inspectorData: Void = loadInspectorSummaryData(for: recording)
             _ = await (observation, inspectorData)
@@ -221,6 +279,144 @@ extension HarcWindowRootView {
         }
     }
 
+    private func detailInsights(recording: Recording) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: HarcSpacing.md) {
+                SummaryCardView(
+                    recording: recording,
+                    store: store,
+                    activeSummarizerID: prefs.activeSummarizerID,
+                    hasTranscript: hasTranscriptSource(recording),
+                    showActionItems: false,
+                    onClearSummary: { id in
+                        Task {
+                            do {
+                                try await store.clearSummaryStatus(id: id)
+                                mutationFailure = nil
+                            } catch {
+                                reportMutationFailure(.clearSummary(recording.displayTitle), error: error)
+                            }
+                        }
+                    }
+                )
+                HStack(alignment: .top, spacing: 10) {
+                    if let markdown = recording.actionItemsMarkdown?.harcTrimmedNonEmpty {
+                        tideActionsCard(markdown)
+                            .frame(maxWidth: .infinity)
+                    }
+                    if let speakers = detailDocument?.speakers, !speakers.isEmpty {
+                        tideTalkTimeCard(speakers)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                if recording.notesMarkdown?.harcTrimmedNonEmpty != nil || showTideNotes {
+                    if let recID = recording.id {
+                        NotesCardView(
+                            itemID: recID,
+                            notes: recording.notesMarkdown,
+                            onSave: { [store] text in
+                                try await store.updateNotes(id: recID, markdown: text)
+                            }
+                        )
+                    }
+                } else if recording.id != nil {
+                    Button("Add notes") { showTideNotes = true }
+                        .font(.harcCaption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(HarcSpacing.md)
+        }
+        .background(.clear)
+    }
+
+    private func tideInsightCard<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label(title, systemImage: icon)
+                .font(.harcCaption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func tideActionsCard(_ markdown: String) -> some View {
+        let actions = SummaryParser.parseActionItems(markdown)
+        let needsReview = actions.isEmpty && markdown.lowercased() != "_none identified._"
+        return tideInsightCard(title: "Action items", icon: "checklist") {
+            Button {
+                showTideActions = true
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(needsReview ? "—" : "\(actions.count)")
+                        .font(.system(size: 27, weight: .bold, design: .rounded))
+                    Text(needsReview ? "Review source" : actions.count == 1 ? "View action" : "View actions")
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showTideActions) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Action items").font(.headline)
+                        if actions.isEmpty {
+                            Text(.init(markdown))
+                        } else {
+                            ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                                Label(action.text, systemImage: action.done ? "checkmark.circle.fill" : "circle")
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(16)
+                }
+                .frame(width: 320, height: 220)
+            }
+        }
+    }
+
+    private func tideTalkTimeCard(_ segments: [SpeakerSegment]) -> some View {
+        let durations = Dictionary(grouping: segments, by: \.speaker)
+            .mapValues { values in
+                values.reduce(0) { $0 + max(0, $1.endMs - $1.startMs) }
+            }
+        let total = max(1, durations.values.reduce(0, +))
+        return tideInsightCard(title: "Talk time", icon: "person.2.wave.2") {
+            ForEach(durations.keys.sorted(), id: \.self) { index in
+                let name = resolvedSpeakerLabels[index] ?? "Speaker \(index + 1)"
+                HStack(spacing: 5) {
+                    Text(name)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("\(Int((Double(durations[index, default: 0]) / Double(total) * 100).rounded()))%")
+                        .monospacedDigit()
+                }
+                GeometryReader { geometry in
+                    Capsule()
+                        .fill(tideSpeakerColor(index).opacity(0.8))
+                        .frame(width: max(3, geometry.size.width * CGFloat(durations[index, default: 0]) / CGFloat(total)))
+                }
+                .frame(height: 6)
+                .font(.harcCaption)
+            }
+        }
+    }
+
+    private func tideSpeakerColor(_ index: Int) -> Color {
+        let colors: [Color] = [HarcTideStyle.cyan, .purple, .orange, .teal, .green, .pink]
+        return colors[abs(index) % colors.count]
+    }
+
     /// Title as an editable field — the rename affordance the Library never
     /// had (the view-model API existed with no caller; the retired editor
     /// window was the only place a title could be changed).
@@ -231,9 +427,9 @@ extension HarcWindowRootView {
             // via displayTitle, and a field that says "Untitled" under a
             // titled window reads as two surfaces disagreeing about the
             // recording's name.
-            TextField(recording.suggestedTitle ?? "Untitled", text: $titleDraft)
+            TextField(recording.displayTitle, text: $titleDraft)
                 .textFieldStyle(.plain)
-                .font(.title2.weight(.semibold))
+                .font(.system(size: 29, weight: .bold, design: .rounded)) // token-exempt: Tide's primary title.
                 .onSubmit { commitTitle(for: recording) }
             Spacer(minLength: 8)
             if let error = editorSaveError {
@@ -266,7 +462,8 @@ extension HarcWindowRootView {
                     subtitle: err
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            } else if editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !editorDirty, detailDocument?.initialText.isEmpty != false {
                 EmptyStateView(
                     icon: "doc.text.magnifyingglass",
                     title: "No transcript available",
@@ -298,7 +495,10 @@ extension HarcWindowRootView {
 
     func editorTextDidChange() {
         guard let doc = detailDocument else { return }
-        guard editorText != doc.initialText || editorDirty else { return }
+        // Undo can return to the initially loaded text after another edit has
+        // already autosaved. Compare with the persisted text, not the load
+        // snapshot, so that undo is itself saved.
+        guard editorText != (lastSavedEditorText ?? doc.initialText) || editorDirty else { return }
         editorDirty = true
         // Word ranges no longer line up once the text shifts — stop
         // highlighting rather than highlight the wrong words. This is the

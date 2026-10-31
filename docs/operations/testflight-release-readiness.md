@@ -13,12 +13,15 @@ passing gate.
 - Use one clean, pushed source commit and record its version/build, archived app
   executable SHA-256, signature CDHash, and provisioning profile UUID.
 - Keep `TARGETED_DEVICE_FAMILY = 1`; iPad remains outside this release.
-- Complete the physical codec matrix and freeze the selected lossless codec.
-- Complete C1-C7, T1-T7, T2b-T2e, P1, and H1. C1, C2, T1, and T2 require three
-  consecutive passes on both named iPhones.
+- Complete physical codec and product-path qualification and freeze the selected
+  lossless codec.
+- Complete C1, C3-C7, T1-T7, T2b-T2e, P1, and H1; C2 is optional endurance
+  evidence. C1, T1, and T2 require three
+  consecutive passes on the recorded physical qualification iPhone.
 - Verify microphone consent, the persistent in-app recording banner and Stop
-  control, lock/background continuation, and accurate post-stop state on both
-  named iPhones with VoiceOver and the largest supported Dynamic Type sizes.
+  control, lock/background continuation, and accurate post-stop state on the
+  recorded qualification phone with VoiceOver and the largest supported Dynamic
+  Type sizes.
 - Run the client-store upgrade fixtures and an installed-build upgrade without
   losing a protected master, outbox entry, receipt, adoption, or library cursor.
 

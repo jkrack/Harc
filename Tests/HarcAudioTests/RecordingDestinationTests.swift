@@ -4,6 +4,30 @@ import Foundation
 
 @Suite("RecordingDestination")
 struct RecordingDestinationTests {
+    #if DEBUG
+    @Test("UI test capture and recovery cannot fall back to the normal recording cache")
+    func isolatedUITestCache() {
+        let temporary = URL(fileURLWithPath: "/tmp/cache-isolation", isDirectory: true)
+        func resolve(_ environment: [String: String]) -> URL? {
+            RecordingDestination.uiTestCacheDirectory(
+                environment: environment,
+                temporaryDirectory: temporary,
+                processIdentifier: 123
+            )
+        }
+        #expect(resolve([:]) == nil)
+        #expect(resolve(["HARC_UI_TEST_ROOT": "/tmp/ignored"]) == nil)
+        #expect(resolve(["HARC_UI_TESTING": "1", "HARC_UI_TEST_ROOT": "/tmp/fixture"])?.path
+            == "/tmp/fixture/RecordingCache")
+        for root in [nil, "", " \n"] as [String?] {
+            var environment = ["HARC_UI_TESTING": "1"]
+            environment["HARC_UI_TEST_ROOT"] = root
+            #expect(resolve(environment)?.path
+                == "/tmp/cache-isolation/harc-ui-test-123/RecordingCache")
+        }
+    }
+    #endif
+
     private func makeTempBase() throws -> URL {
         let base = URL(fileURLWithPath: "/tmp/harc-dest-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -59,6 +83,26 @@ struct RecordingDestinationTests {
         let cache = RecordingDestination.cachePath()
         #expect(cache.pathExtension == "wav")
         #expect(cache.path.contains("/Library/Caches/Harc/recordings/"))
+    }
+
+    @Test("publication collision preserves the existing master and recoverable source")
+    func publicationCollisionPreservesBoth() throws {
+        let base = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let src = base.appendingPathComponent("src.wav")
+        let destination = RecordingDestination(baseDirectory: base)
+        let dst = try destination.publicPath(for: Date())
+        try FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let sourceBytes = Data([1, 2, 3])
+        let existingBytes = Data([4, 5, 6])
+        try sourceBytes.write(to: src)
+        // Another publisher wins after filename selection.
+        try existingBytes.write(to: dst)
+        #expect(throws: (any Error).self) {
+            try RecordingDestination.atomicMove(from: src, to: dst)
+        }
+        #expect(try Data(contentsOf: src) == sourceBytes)
+        #expect(try Data(contentsOf: dst) == existingBytes)
     }
 
     @Test("atomicMove relocates a file and removes the source")

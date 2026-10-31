@@ -2,6 +2,21 @@ import XCTest
 @testable import HarcSummarize
 
 final class SummaryPromptTests: XCTestCase {
+    func test_coverageCountsOnlyUtterancesActuallyExcluded() {
+        let utterances: [PromptTranscript.Utterance] = [
+            .init(speaker: "Ada", text: "Earlier important facts."),
+            .init(speaker: "Ben", text: "Bye.")
+        ]
+        let full = SummaryPrompt.renderWithCoverage(transcript: .init(utterances: utterances), budgetWords: 100)
+        XCTAssertEqual(full.omittedUtterances, 0)
+        let tail = SummaryPrompt.renderWithCoverage(transcript: .init(utterances: utterances), budgetWords: 2)
+        XCTAssertEqual(tail.omittedUtterances, 1)
+        XCTAssertFalse(tail.body.contains("Earlier important facts"))
+        XCTAssertTrue(tail.body.contains("Ben: Bye."))
+        let oversized = SummaryPrompt.renderWithCoverage(transcript: .init(utterances: [utterances[0]]), budgetWords: 1)
+        XCTAssertEqual(oversized.omittedUtterances, 0, "The single oversized utterance is retained in full.")
+    }
+
 
     func test_build_multiSpeaker_producesLabeledLinesAndTemplate() {
         let transcript = PromptTranscript(utterances: [
@@ -16,8 +31,8 @@ final class SummaryPromptTests: XCTestCase {
             "Second speaker line should appear verbatim.")
         XCTAssertTrue(prompt.contains("## Summary"),
             "Template's ## Summary section header must be in the prompt.")
-        XCTAssertTrue(prompt.contains("## Action Items"),
-            "Template's ## Action Items section header must be in the prompt.")
+        XCTAssertTrue(prompt.contains("## Confirmed Commitments"),
+            "Template's ## Confirmed Commitments section header must be in the prompt.")
         XCTAssertFalse(prompt.contains("{TRANSCRIPT}"),
             "Placeholder must be replaced.")
     }

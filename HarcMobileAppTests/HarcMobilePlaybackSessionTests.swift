@@ -4,6 +4,21 @@ import XCTest
 
 @MainActor
 final class HarcMobilePlaybackSessionTests: XCTestCase {
+    func testReactivationRequiresCurrentOwnerAndCannotInterruptCapture() throws {
+        let fixture = Fixture()
+        let first = try fixture.session.acquire {}
+        try fixture.session.reactivate(first)
+        XCTAssertEqual(fixture.activations, 2)
+        let second = try fixture.session.acquire {}
+        XCTAssertThrowsError(try fixture.session.reactivate(first))
+        XCTAssertEqual(fixture.activations, 3)
+        fixture.session.beginCapture()
+        XCTAssertThrowsError(try fixture.session.reactivate(second))
+        fixture.session.endCapture()
+        XCTAssertThrowsError(try fixture.session.reactivate(second))
+        XCTAssertEqual(fixture.activations, 3)
+    }
+
     func testIdleRowDisappearanceCannotReleaseCaptureOrAnotherPlayer() async throws {
         let fixture = Fixture()
         let idle = fixture.controller()

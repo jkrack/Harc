@@ -11,7 +11,7 @@ summarize with local models, and dictate into any Mac app. Use one Mac as your
 private Host when you want the same canonical library from an iPhone or another
 Mac—without moving speech recognition or your library into a SaaS account.
 
-[Download Harc 0.14.3](https://github.com/jkrack/Harc/releases/latest) ·
+[Download Harc](https://github.com/jkrack/Harc/releases/latest) ·
 [See the product](#the-product) ·
 [Host and clients](#one-host-your-clients) ·
 [Privacy](#privacy-boundary) ·
@@ -46,10 +46,10 @@ Host:
 
 | Surface | Public status |
 | --- | --- |
-| **macOS standalone recording, Library, dictation, local AI, and MCP** | Current release: Harc 0.14.3 |
-| **Mac Host and secondary-Mac Client** | Available in Harc 0.14.3 with direct-LAN/relay pairing and durable transfer; the real two-Mac acceptance matrix remains open |
+| **macOS standalone recording, Library, dictation, local AI, and MCP** | Available in the macOS app; see the latest release for version and signed artifacts |
+| **Mac Host and secondary-Mac Client** | Implemented with direct-LAN/relay pairing and durable transfer; the real two-Mac acceptance matrix remains open |
 | **HarcMobile for iPhone** | Implemented in the current source; App Store distribution is tracked separately |
-| **Harc Remote** | Available in Harc 0.14.3 through `relay.adaptcontext.com`; opt-in and off until the Host owner enables it |
+| **Harc Remote** | Implemented through `relay.adaptcontext.com`; opt-in and off until the Host owner enables it |
 
 Harc Remote is a production feature, not a beta service. It remains opt-in so a
 Host owner explicitly chooses when remote clients may use the relay.
@@ -301,10 +301,15 @@ Requires Xcode with Swift 6.2 and Homebrew:
 
 ```sh
 brew install xcodegen
-swift test --jobs 2
+swift test
 xcodegen generate
-xcodebuild -project Harc.xcodeproj -scheme Harc -destination 'platform=macOS' -jobs 2 build
+xcodebuild -project Harc.xcodeproj -scheme Harc -destination 'platform=macOS' build
 ```
+
+Local builds use tool-selected concurrency. Harc scripts accept a positive
+`HARC_BUILD_JOBS` override; embedded helpers also accept `HARC_EMBED_BUILD_JOBS`.
+Keep at least 5 GiB free and use SSD-backed build caches. CI retains its own
+worker and test-serialization limits.
 
 `swift test` does not compile `HarcApp/`; always finish with an Xcode build.
 Relay development is isolated under [`CloudflareRelay/`](CloudflareRelay/).

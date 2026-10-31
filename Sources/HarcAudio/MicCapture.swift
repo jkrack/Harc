@@ -1,4 +1,5 @@
 import Foundation
+import HarcCore
 @preconcurrency import AVFoundation
 @preconcurrency import AVFAudio
 import HarcAudioObjC
@@ -13,6 +14,11 @@ public protocol MicCaptureSource: Sendable {
     func start() async throws -> AsyncStream<AVAudioPCMBuffer>
 
     func stop() async
+    func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async
+}
+
+public extension MicCaptureSource {
+    func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async {}
 }
 
 /// Real implementation backed by AVAudioEngine.
@@ -21,6 +27,13 @@ public actor MicCapture: MicCaptureSource {
     private let selection: MicrophoneSelection
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
     private var isRunning = false
+    private var configurationObserver: NSObjectProtocol?
+    private var integrityHandler: (@Sendable (CaptureIntegrityReport.Reason) -> Void)?
+    private var livenessTask: Task<Void, Never>?
+    private var tapBlock: AVAudioNodeTapBlock?
+    private var tapActivity: MicrophoneTapActivity?
+
+    public func setIntegrityHandler(_ handler: @escaping @Sendable (CaptureIntegrityReport.Reason) -> Void) async { integrityHandler = handler }
 
     public init(selection: MicrophoneSelection = .systemDefault) {
         self.selection = selection
@@ -55,38 +68,51 @@ public actor MicCapture: MicCaptureSource {
                     : "\(name) is not connected. Choose another microphone in Harc."
             )
         }
-        do {
-            try input.auAudioUnit.setDeviceID(selectedDevice.deviceID)
-        } catch {
-            throw AudioError.audioEngineFailed(
-                "\(selectedDevice.name) could not be selected: \(error.localizedDescription)"
-            )
+        if !selection.usesSystemDefault {
+            do {
+                try input.auAudioUnit.setDeviceID(selectedDevice.deviceID)
+            } catch {
+                throw AudioError.audioEngineFailed(
+                    "\(selectedDevice.name) could not be selected: \(error.localizedDescription)"
+                )
+            }
         }
+        guard input.auAudioUnit.canPerformInput else {
+            throw AudioError.audioEngineFailed("\(selectedDevice.name) cannot capture microphone audio.")
+        }
+        // AUAudioUnit's input is disabled by default. Device selection may
+        // rebuild its I/O configuration, so enable input after routing and
+        // before asking AVAudioEngine for the hardware format.
+        input.auAudioUnit.isInputEnabled = true
         let outputFormat = input.outputFormat(forBus: 0)
         let inputFormat = input.inputFormat(forBus: 0)
-        guard Self.isValidInputFormat(outputFormat) || Self.isValidInputFormat(inputFormat) else {
+        // The input-side format describes whether hardware capture is actually
+        // enabled. A valid output bus alone can still belong to a dead input.
+        guard Self.isValidInputFormat(inputFormat) else {
             throw AudioError.audioEngineFailed(
                 "Microphone input format is unavailable. Check the selected input device in System Settings."
             )
         }
 
-        let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+        let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream(bufferingPolicy: .bufferingOldest(256))
         self.continuation = cont
 
-        let tapBlock: AVAudioNodeTapBlock = { [cont] buffer, _ in
+        let handler = integrityHandler
+        let activity = MicrophoneTapActivity()
+        let tapBlock: AVAudioNodeTapBlock = { [cont, handler, activity] buffer, _ in
             // Copy the buffer — AVAudioEngine reuses the underlying storage.
-            guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-                return
+            guard let copy = try? PCMBufferCopy.copy(buffer) else { handler?(.conversionFailed); return }
+            switch cont.yield(copy) {
+            case .enqueued:
+                activity.noteFrames()
+            case .dropped:
+                handler?(.bufferOverrun)
+                activity.noteFrames()
+            case .terminated:
+                break
+            @unknown default:
+                break
             }
-            copy.frameLength = buffer.frameLength
-            let bytesPerFrame = Int(buffer.format.streamDescription.pointee.mBytesPerFrame)
-            let total = Int(buffer.frameLength) * bytesPerFrame
-            if let src = buffer.floatChannelData, let dst = copy.floatChannelData {
-                for ch in 0..<Int(buffer.format.channelCount) {
-                    memcpy(dst[ch], src[ch], total)
-                }
-            }
-            cont.yield(copy)
         }
 
         var tapError: NSError?
@@ -104,12 +130,18 @@ public actor MicCapture: MicCaptureSource {
             let reason = tapError?.localizedDescription ?? "Microphone tap could not be installed."
             throw AudioError.audioEngineFailed(reason)
         }
+        self.tapBlock = tapBlock
+        self.tapActivity = activity
 
         do {
+            engine.prepare()
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
             cont.finish()
+            continuation = nil
+            self.tapBlock = nil
+            self.tapActivity = nil
             // An input node reporting 0 ch / 0 Hz while the output side looks
             // fine is what a process without effective microphone access sees
             // — the engine then fails deep in AUGraphParser with
@@ -126,6 +158,19 @@ public actor MicCapture: MicCaptureSource {
             throw AudioError.audioEngineFailed(error.localizedDescription)
         }
         isRunning = true
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            Task { await self?.configurationChanged() }
+        }
+        livenessTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+                guard let self else { return }
+                await self.checkTapLiveness(activity)
+            }
+        }
         return stream
     }
 
@@ -134,14 +179,27 @@ public actor MicCapture: MicCaptureSource {
     }
 
     static func tapFormatCandidates(outputFormat: AVAudioFormat, inputFormat: AVAudioFormat) -> [AVAudioFormat?] {
-        var candidates: [AVAudioFormat?] = [nil]
+        var candidates: [AVAudioFormat?] = []
         if isValidInputFormat(outputFormat) {
             candidates.append(outputFormat)
         }
         if isValidInputFormat(inputFormat), inputFormat != outputFormat {
             candidates.append(inputFormat)
         }
+        // A nil format is the last fallback. An explicit output-bus format is
+        // the documented AVAudioEngine input-tap configuration and avoids a
+        // successful install with an unusable device-negotiated format.
+        candidates.append(nil)
         return candidates
+    }
+
+    private func checkTapLiveness(_ activity: MicrophoneTapActivity) async {
+        guard isRunning, activity.secondsSinceLastFrame >= 5 else { return }
+        FileHandle.standardError.write(Data(
+            "harc-audio: microphone engine is running but its tap delivered no frames for five seconds\n".utf8
+        ))
+        integrityHandler?(.sourceStopped)
+        await stop()
     }
 
     private static func installInputTap(
@@ -162,12 +220,81 @@ public actor MicCapture: MicCaptureSource {
         return false
     }
 
+    private func configurationChanged() async {
+        guard isRunning, !engine.isRunning else { return }
+        let input = engine.inputNode
+        do {
+            guard let device = AudioInputDeviceCatalog.resolvedDevice(for: selection) else {
+                throw AudioError.audioEngineFailed("The selected microphone disconnected.")
+            }
+            input.removeTap(onBus: 0)
+            if !selection.usesSystemDefault {
+                try input.auAudioUnit.setDeviceID(device.deviceID)
+            }
+            guard input.auAudioUnit.canPerformInput else {
+                throw AudioError.audioEngineFailed("\(device.name) cannot capture microphone audio.")
+            }
+            input.auAudioUnit.isInputEnabled = true
+            let outputFormat = input.outputFormat(forBus: 0)
+            let inputFormat = input.inputFormat(forBus: 0)
+            guard Self.isValidInputFormat(inputFormat), let tapBlock else {
+                throw AudioError.audioEngineFailed("Microphone input format is unavailable after a device change.")
+            }
+            var tapError: NSError?
+            guard Self.installInputTap(
+                on: input,
+                bufferSize: 4096,
+                preferredFormats: Self.tapFormatCandidates(
+                    outputFormat: outputFormat, inputFormat: inputFormat
+                ),
+                block: tapBlock,
+                error: &tapError
+            ) else {
+                throw AudioError.audioEngineFailed(
+                    tapError?.localizedDescription ?? "Microphone tap could not be restarted."
+                )
+            }
+            engine.prepare()
+            try engine.start()
+            tapActivity?.noteFrames()
+            integrityHandler?(.sourceInterrupted)
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harc-audio: microphone restart failed: \(error.localizedDescription)\n".utf8
+            ))
+            integrityHandler?(.sourceStopped)
+            await stop()
+        }
+    }
+
     public func stop() async {
         guard isRunning else { return }
+        isRunning = false
+        livenessTask?.cancel()
+        livenessTask = nil
+        if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer) }
+        configurationObserver = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        tapBlock = nil
+        tapActivity = nil
         continuation?.finish()
         continuation = nil
         isRunning = false
+    }
+}
+
+/// The audio callback only updates a clock; the actor's timer does the slow
+/// work. A running AVAudioEngine with no tap frames must not appear healthy.
+private final class MicrophoneTapActivity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastFrameAt = ProcessInfo.processInfo.systemUptime
+
+    func noteFrames() {
+        lock.withLock { lastFrameAt = ProcessInfo.processInfo.systemUptime }
+    }
+
+    var secondsSinceLastFrame: TimeInterval {
+        lock.withLock { ProcessInfo.processInfo.systemUptime - lastFrameAt }
     }
 }

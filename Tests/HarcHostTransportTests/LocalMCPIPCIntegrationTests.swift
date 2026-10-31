@@ -4,9 +4,14 @@ import Foundation
 import HarcHost
 import HarcHostTransport
 import HarcIPCSystem
+import HarcTestSupport
 import Testing
 
-@Suite("Authenticated local MCP IPC", .serialized)
+@Suite(
+    "Authenticated local MCP IPC",
+    .serialized,
+    .processWideSystemResource
+)
 struct LocalMCPIPCIntegrationTests {
     @Test("nonce hello and allowlisted request round-trip through the Host facade")
     func roundTrip() async throws {

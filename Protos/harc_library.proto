@@ -99,6 +99,26 @@ message SpeakerEmbeddingObservationV1 {
   optional double proposed_score = 10;
 }
 
+// Prepared bound-evidence contract. No V1 RPC currently accepts this envelope.
+// Activation requires negotiated capability and Host artifact/cluster validation;
+// it must never be downgraded to a bare legacy observation on transmission.
+message SpeakerEvidenceSnapshotV1 {
+  CanonicalRecordingIDV1 canonical_recording_id = 1;
+  bytes canonical_pcm_sha256 = 2;
+  DeviceIDV1 producer_device_id = 3;
+  bytes processing_artifact_sha256 = 4;
+  string local_cluster_id = 5;
+  QuantizedSpeakerEmbeddingV1 embedding = 6;
+  string model_id = 7;
+  uint64 speech_duration_ms = 8;
+  uint32 segment_count = 9;
+}
+
+message BoundSpeakerEmbeddingObservationV1 {
+  SpeakerEmbeddingObservationV1 observation = 1;
+  SpeakerEvidenceSnapshotV1 evidence = 2;
+}
+
 enum SpeakerObservationDispositionV1 {
   SPEAKER_OBSERVATION_DISPOSITION_UNSPECIFIED = 0;
   SPEAKER_OBSERVATION_DISPOSITION_MATCHED = 1;
@@ -118,7 +138,10 @@ message SpeakerObservationDecisionV1 {
 
 message SubmitSpeakerObservationRequestV1 {
   ProtocolVersionV1 protocol = 1;
+  // Exactly one observation form is permitted. Bound requests require field 3
+  // as critical and negotiated harc.speaker-evidence.v1 support.
   SpeakerEmbeddingObservationV1 observation = 2;
+  BoundSpeakerEmbeddingObservationV1 bound_observation = 3;
 }
 
 message SubmitSpeakerObservationResponseV1 {
@@ -134,6 +157,9 @@ message LibraryRecordingDetailV1 {
   optional string action_items_markdown = 5;
   optional string notes_markdown = 6;
   repeated CaptureDiscontinuityV1 discontinuities = 7;
+  // Additive advisory for local Host recordings without an origin identity.
+  // Absence/false does not attest that the recording has no missing audio.
+  bool capture_needs_review = 8;
 }
 
 message RecordingTombstoneV1 {

@@ -2,10 +2,11 @@
 import Foundation
 import HarcHost
 @testable import HarcHostTransport
+import HarcTestSupport
 import Network
 import Testing
 
-@Suite("Resident transport generation driver")
+@Suite("Resident transport generation driver", .processWideSystemResource)
 struct ResidentTransportGenerationDriverTests {
     @Test("withdrawal precedes concurrent admission stop and drain")
     func readinessAndConcurrentDrainOrder() async throws {

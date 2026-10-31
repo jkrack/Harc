@@ -96,6 +96,7 @@ actor HarcHostProcessingWorker {
 
     private let store: RecordingStore
     private let launcher: DaemonLauncher
+    private let producerDeviceID: DeviceID
     private let diarize: Bool
     private let vad: Bool
     private let clientArtifactGrace: TimeInterval
@@ -111,6 +112,7 @@ actor HarcHostProcessingWorker {
     init(
         store: RecordingStore,
         launcher: DaemonLauncher,
+        producerDeviceID: DeviceID,
         diarize: Bool,
         vad: Bool,
         clientArtifactGrace: TimeInterval = 15,
@@ -120,6 +122,7 @@ actor HarcHostProcessingWorker {
     ) {
         self.store = store
         self.launcher = launcher
+        self.producerDeviceID = producerDeviceID
         self.diarize = diarize
         self.vad = vad
         self.clientArtifactGrace = max(0, clientArtifactGrace)
@@ -234,35 +237,59 @@ actor HarcHostProcessingWorker {
             guard try await store.beginHostProcessingIfNotReady(
                 id: recordingID
             ) else { return }
-            _ = try await launcher.ensureRunning()
+            let socketPath = try await launcher.ensureRunning()
 
             // Revalidate immediately before the daemon opens the path. This is
             // the final same-UID path-swap boundary for derived processing.
             try request.artifactIdentity.validatePathBinding(
                 at: request.canonicalWAVURL
             )
-            let result = try await HarcSTTClient().transcribe(
-                audioPath: request.canonicalWAVURL.path,
-                diarize: diarize,
-                vad: vad
-            )
+            let client = HarcSTTClient(socketPath: socketPath)
+            let result: TranscribeResult
+            if diarize {
+                result = try await client.transcribeRequiringDiarization(
+                    audioPath: request.canonicalWAVURL.path, vad: vad, diarizer: client)
+            } else {
+                result = try await client.transcribe(
+                    audioPath: request.canonicalWAVURL.path, diarize: false, vad: vad)
+            }
 
             let transcript = SessionTranscript(
                 startedAt: recording.startedAt,
                 endedAt: recording.endedAt ?? recording.startedAt,
                 audioPath: recording.wavPath,
-                joinedText: result.text,
-                words: result.words,
-                speakers: result.speakers,
-                chunks: []
+                result: result
             )
             let renderedText = TranscriptPlainTextRenderer.render(transcript)
+            let transcriptEncoder = JSONEncoder()
+            transcriptEncoder.dateEncodingStrategy = .secondsSince1970
+            transcriptEncoder.outputFormatting = [.sortedKeys]
+            let structuredTranscriptData = try transcriptEncoder.encode(transcript)
 
             guard try await store.stageHostProcessedTranscriptIfNotReady(
                 recordingID: recordingID,
                 text: renderedText,
-                modelID: HarcVersion.sttEngineVersion
+                modelID: HarcVersion.sttEngineVersion,
+                structuredTranscriptData: structuredTranscriptData
             ) else { return }
+
+            // Bind every retained voice to the exact Host-produced JSON bytes,
+            // canonical audio and this Host's public producer identity. Retention
+            // alone grants neither enrollment nor a current review assignment.
+            var publishedSpeakerEvidence: [Int: Data] = [:]
+            for evidence in try Self.speakerEvidenceSnapshots(result,
+                canonicalID: request.canonicalRecordingID, canonicalPCMHash: request.canonicalPCMHash,
+                producerDeviceID: producerDeviceID, structuredTranscriptData: structuredTranscriptData) {
+                let digest = try await store.retainSpeakerEvidence(evidence)
+                guard let index = Int(evidence.localClusterID.dropFirst("host-speaker-".count)),
+                      publishedSpeakerEvidence.updateValue(digest, forKey: index) == nil else {
+                    throw DomainValidationError.invalidState(reason: "Duplicate Host speaker evidence")
+                }
+            }
+
+            guard try await store.stageHostSpeakerEvidenceIfNotReady(recordingID: recordingID,
+                expectedArtifactSHA256: Data(SHA256.hash(data: structuredTranscriptData)),
+                speakerEvidence: publishedSpeakerEvidence) else { return }
 
             if !result.speakerEmbeddings.isEmpty {
                 let rows = result.speakerEmbeddings.map {
@@ -272,7 +299,7 @@ actor HarcHostProcessingWorker {
                         embedding: EmbeddingBlob.encode($0.vector),
                         segmentCount: $0.segmentCount,
                         totalMs: $0.totalMs,
-                        embedderKind: EmbedderKind.wespeakerV2
+                        embedderKind: $0.modelID
                     )
                 }
                 try await store.upsertSpeakerEmbeddings(
@@ -280,31 +307,44 @@ actor HarcHostProcessingWorker {
                     rows: rows
                 )
             }
+            var speakerDecisions: [Int: SpeakerObservationDecision] = [:]
             if let sourceDeviceID = recording.originID?.deviceID {
+                let recognitionRevision = try await store.publishedSpeakerRecognitionPack().revision
                 for embedding in result.speakerEmbeddings {
                     guard embedding.speakerIndex >= 0,
                           embedding.totalMs > 0,
                           embedding.segmentCount > 0 else { continue }
-                    let observation = try SpeakerEmbeddingObservation(
-                        operationID: Self.observationOperationID(
-                            canonicalID: request.canonicalRecordingID,
-                            speakerIndex: embedding.speakerIndex
-                        ),
-                        canonicalRecordingID: request.canonicalRecordingID,
-                        speakerIndex: UInt32(embedding.speakerIndex),
-                        embedding: try .quantizing(embedding.vector),
-                        modelID: EmbedderKind.wespeakerV2,
-                        speechDurationMs: UInt64(embedding.totalMs),
-                        segmentCount: UInt32(embedding.segmentCount)
+                    guard let evidenceSHA256 = publishedSpeakerEvidence[embedding.speakerIndex] else {
+                        throw DomainValidationError.invalidState(reason: "Host speaker evidence is missing")
+                    }
+                    let observation = try Self.speakerObservation(
+                        embedding, canonicalID: request.canonicalRecordingID,
+                        evidenceSHA256: evidenceSHA256, packRevision: recognitionRevision
                     )
-                    _ = try await store.submitSpeakerObservation(
+                    let decision = try await store.submitSpeakerObservation(
                         observation,
-                        from: sourceDeviceID
+                        from: sourceDeviceID, expectedEvidenceSHA256: evidenceSHA256
                     )
+                    speakerDecisions[embedding.speakerIndex] = decision
                 }
             }
+            let clusters = try Set(result.speakers.map(\.speaker)).map { index in
+                guard let boundedIndex = UInt32(exactly: index) else {
+                    throw DomainValidationError.invalidState(reason: "Host transcript has an invalid speaker index")
+                }
+                return try HostSpeakerProcessingOutcome.Cluster(speakerIndex: boundedIndex,
+                    evidenceSHA256: publishedSpeakerEvidence[index], decisionOperationID: speakerDecisions[index]?.operationID,
+                    disposition: speakerDecisions[index]?.disposition,
+                    recognitionPackRevision: speakerDecisions[index]?.recognitionPackRevision)
+            }
+            let speakerOutcome = try HostSpeakerProcessingOutcome(
+                canonicalRecordingID: request.canonicalRecordingID, canonicalPCMHash: request.canonicalPCMHash,
+                producerDeviceID: producerDeviceID,
+                processingArtifactSHA256: Data(SHA256.hash(data: structuredTranscriptData)),
+                diarization: diarize ? .completed : .disabled, clusters: clusters)
             _ = try await store.publishHostProcessedProjectionIfNotReady(
-                recordingID: recordingID
+                recordingID: recordingID, speakerEvidence: publishedSpeakerEvidence,
+                speakerOutcome: speakerOutcome, structuredTranscriptData: structuredTranscriptData
             )
             failureCounts.removeValue(forKey: request.canonicalRecordingID)
         } catch {
@@ -366,13 +406,85 @@ actor HarcHostProcessingWorker {
         return true
     }
 
-    private static func observationOperationID(
+    nonisolated static func speakerEvidenceSnapshots(
+        _ result: TranscribeResult, canonicalID: CanonicalRecordingID,
+        canonicalPCMHash: CanonicalPCMHash, producerDeviceID: DeviceID,
+        structuredTranscriptData: Data
+    ) throws -> [SpeakerEvidenceSnapshot] {
+        let indices = Set(result.speakers.map(\.speaker))
+        let artifactDigest = Data(SHA256.hash(data: structuredTranscriptData))
+        return try result.speakerEmbeddings.map { embedding in
+            guard embedding.speakerIndex >= 0, indices.contains(embedding.speakerIndex),
+                  let duration = UInt64(exactly: embedding.totalMs),
+                  let count = UInt32(exactly: embedding.segmentCount) else {
+                throw DomainValidationError.invalidState(reason: "Host voice evidence has no matching transcript cluster")
+            }
+            return try SpeakerEvidenceSnapshot(canonicalRecordingID: canonicalID,
+                canonicalPCMHash: canonicalPCMHash, producerDeviceID: producerDeviceID,
+                processingArtifactSHA256: artifactDigest,
+                localClusterID: "host-speaker-\(embedding.speakerIndex)",
+                embedding: .quantizing(embedding.vector), modelID: embedding.modelID,
+                speechDurationMs: duration, segmentCount: count)
+        }
+    }
+
+    nonisolated static func speakerObservation(
+        _ embedding: HarcCore.SpeakerEmbeddingRow,
         canonicalID: CanonicalRecordingID,
-        speakerIndex: Int
+        evidenceSHA256: Data? = nil,
+        packRevision: EntityRevision? = nil
+    ) throws -> SpeakerEmbeddingObservation {
+        guard let index = UInt32(exactly: embedding.speakerIndex),
+              let duration = UInt64(exactly: embedding.totalMs), duration > 0,
+              let count = UInt32(exactly: embedding.segmentCount), count > 0 else {
+            throw DomainValidationError.invalidState(reason: "A speaker observation requires bounded positive speech evidence")
+        }
+        let generation: Data?
+        if let evidenceSHA256, let packRevision {
+            guard evidenceSHA256.count == 32 else {
+                throw DomainValidationError.invalidState(reason: "Host speaker evidence digest is invalid")
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            var material = Data("host-speaker-generation-v3".utf8)
+            material.append(evidenceSHA256)
+            var revision = packRevision.rawValue.bigEndian
+            withUnsafeBytes(of: &revision) { material.append(contentsOf: $0) }
+            material.append(try encoder.encode(embedding))
+            generation = Data(SHA256.hash(data: material))
+        } else {
+            guard evidenceSHA256 == nil, packRevision == nil else {
+                throw DomainValidationError.invalidState(reason: "Host speaker generation binding is incomplete")
+            }
+            generation = nil
+        }
+        return try SpeakerEmbeddingObservation(
+            operationID: observationOperationID(canonicalID: canonicalID,
+                speakerIndex: embedding.speakerIndex, modelID: embedding.modelID, generation: generation),
+            canonicalRecordingID: canonicalID, speakerIndex: index,
+            embedding: .quantizing(embedding.vector), modelID: embedding.modelID,
+            speechDurationMs: duration, segmentCount: count, sourcePackRevision: packRevision)
+    }
+
+    nonisolated static func observationOperationID(
+        canonicalID: CanonicalRecordingID,
+        speakerIndex: Int,
+        modelID: String,
+        generation: Data? = nil
     ) -> OperationID {
-        let material = Data(
+        var material = Data(
             "host-speaker-observation-v1:\(canonicalID.description):\(speakerIndex)".utf8
         )
+        // Retain existing WeSpeaker replay IDs. A different model must receive
+        // its own decision rather than replaying another embedding space.
+        if modelID != HarcCore.SpeakerEmbeddingRow.legacyModelID {
+            material.append(Data("\0speaker-model\0".utf8))
+            material.append(Data(modelID.utf8))
+        }
+        if let generation {
+            material.append(Data("\0generation\0".utf8))
+            material.append(generation)
+        }
         var bytes = Array(SHA256.hash(data: material).prefix(16))
         bytes[6] = (bytes[6] & 0x0f) | 0x50
         bytes[8] = (bytes[8] & 0x3f) | 0x80

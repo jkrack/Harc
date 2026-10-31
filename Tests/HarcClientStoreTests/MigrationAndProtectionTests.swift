@@ -251,6 +251,12 @@ struct MigrationAndProtectionTests {
 
             #expect(try synchronousMode(of: transfer.database) == 2, "transfer pass \(pass)")
             #expect(try synchronousMode(of: cache.database) == 2, "cache pass \(pass)")
+            for database in [transfer.database, cache.database] {
+                let fullSync = try database.queue.read { db in
+                    try Int.fetchOne(db, sql: "PRAGMA fullfsync")
+                }
+                #expect(fullSync == 1, "Apple full-sync policy, pass \(pass)")
+            }
         }
     }
 

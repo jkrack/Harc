@@ -22,6 +22,17 @@ struct HostReceiptProcessingWork: Sendable {
     let canonicalArtifactIdentity: HostCanonicalArtifactIdentity
 }
 
+enum HostCanonicalArtifactBindingEventKind: String, Sendable {
+    case receiptMetadataRepair
+    case publicationMetadataRepair
+    case libraryMigration
+}
+
+enum HostCanonicalArtifactBindingEvidenceKind: String, Sendable {
+    case receipt
+    case manifest
+}
+
 extension HarcHostStore {
     /// Atomically binds the exact descriptor-derived WAV identity to the first
     /// durable published-audio checkpoint. No later phase may infer identity
@@ -151,7 +162,8 @@ extension HarcHostStore {
             ), let state = HostUploadJournalState(rawValue: row["state"] as String),
                   row["canonical_recording_id"] as String == canonicalRecordingID.description,
                   row["publication_relative_path"] as String == publicationRelativePath,
-                  try Self.canonicalArtifactIdentity(from: row) == artifactIdentity
+                  try Self.effectiveCanonicalArtifactIdentity(in: db, row: row)
+                    == artifactIdentity
             else {
                 throw HarcHostError.databaseFailure("Canonical publication linkage is missing or drifted.")
             }
@@ -487,7 +499,10 @@ extension HarcHostStore {
                   let temporaryName: String = row["host_generated_temporary_name"],
                   let canonicalPCMHashBytes: Data = row["canonical_pcm_sha256"],
                   let canonicalPCMFramesValue: Int64 = row["canonical_frame_count"],
-                  let artifactIdentity = try Self.receiptArtifactIdentity(in: db, row: row),
+                  let artifactIdentity = try Self.effectiveCanonicalArtifactIdentity(
+                    in: db,
+                    row: row
+                  ),
                   row["exact_receipt_bytes"] as Data? == exactReceipt.exactBytes,
                   row["receipt_object_sha256"] as Data?
                     == exactReceipt.objectSHA256.rawBytes
@@ -744,24 +759,121 @@ extension HarcHostStore {
 extension HarcHostStore {
     /// Keep the original publication journal immutable. Local repairs form an
     /// append-only chain bound to its exact receipt; gaps or drift fail closed.
-    static func receiptArtifactIdentity(in db: Database, row: Row) throws -> HostCanonicalArtifactIdentity? {
+    static func effectiveCanonicalArtifactIdentity(
+        in db: Database,
+        row: Row
+    ) throws -> HostCanonicalArtifactIdentity? {
         guard var identity = try canonicalArtifactIdentity(from: row) else { return nil }
-        let repairs = try Row.fetchAll(db, sql: "SELECT * FROM canonical_receipt_repairs WHERE upload_id = ? ORDER BY repair_sequence",
-            arguments: [row["upload_id"] as String])
+        let uploadID = row["upload_id"] as String
+        let repairs = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT * FROM canonical_receipt_repairs
+                WHERE upload_id = ? ORDER BY repair_sequence
+                """,
+            arguments: [uploadID]
+        )
         let decoder = JSONDecoder()
         for repair in repairs {
-            let old = try decoder.decode(HostCanonicalArtifactIdentity.self, from: repair["old_identity_json"] as Data)
-            let new = try decoder.decode(HostCanonicalArtifactIdentity.self, from: repair["new_identity_json"] as Data)
+            let old = try decoder.decode(
+                HostCanonicalArtifactIdentity.self,
+                from: repair["old_identity_json"] as Data
+            )
+            let new = try decoder.decode(
+                HostCanonicalArtifactIdentity.self,
+                from: repair["new_identity_json"] as Data
+            )
             guard old == identity,
                   repair["receipt_sha256"] as Data? == row["receipt_object_sha256"] as Data?,
-                  old.inodeNumber == new.inodeNumber, old.ownerUserID == new.ownerUserID,
-                  old.posixMode == new.posixMode, old.linkCount == new.linkCount,
-                  old.fileByteCount == new.fileByteCount else {
+                  old.inodeNumber == new.inodeNumber,
+                  bindingStableFieldsMatch(old, new) else {
                 throw HarcHostError.canonicalArtifactIdentityMismatch
             }
             identity = new
         }
+
+        let events = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT * FROM canonical_artifact_binding_events
+                WHERE upload_id = ? ORDER BY event_sequence
+                """,
+            arguments: [uploadID]
+        )
+        for event in events {
+            let old = try decoder.decode(
+                HostCanonicalArtifactIdentity.self,
+                from: event["old_identity_json"] as Data
+            )
+            let new = try decoder.decode(
+                HostCanonicalArtifactIdentity.self,
+                from: event["new_identity_json"] as Data
+            )
+            guard let eventKind = HostCanonicalArtifactBindingEventKind(
+                rawValue: event["event_kind"] as String
+            ), let evidenceKind = HostCanonicalArtifactBindingEvidenceKind(
+                rawValue: event["evidence_kind"] as String
+            ), old == identity,
+                  bindingStableFieldsMatch(old, new)
+            else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+
+            let expectedEvidence: Data?
+            switch evidenceKind {
+            case .receipt:
+                expectedEvidence = row["receipt_object_sha256"]
+            case .manifest:
+                expectedEvidence = row["signed_manifest_object_sha256"]
+            }
+            guard event["evidence_sha256"] as Data? == expectedEvidence else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            switch eventKind {
+            case .receiptMetadataRepair:
+                guard evidenceKind == .receipt,
+                      old.deviceNumber == new.deviceNumber,
+                      old.inodeNumber == new.inodeNumber else {
+                    throw HarcHostError.canonicalArtifactIdentityMismatch
+                }
+            case .publicationMetadataRepair:
+                guard evidenceKind == .manifest,
+                      old.deviceNumber == new.deviceNumber,
+                      old.inodeNumber == new.inodeNumber else {
+                    throw HarcHostError.canonicalArtifactIdentityMismatch
+                }
+            case .libraryMigration:
+                guard old.deviceNumber != new.deviceNumber
+                        || old.inodeNumber != new.inodeNumber else {
+                    throw HarcHostError.canonicalArtifactIdentityMismatch
+                }
+            }
+            identity = new
+        }
         return identity
+    }
+
+    static func bindingStableFieldsMatch(
+        _ old: HostCanonicalArtifactIdentity,
+        _ new: HostCanonicalArtifactIdentity
+    ) -> Bool {
+        old.ownerUserID == new.ownerUserID
+            && old.posixMode == new.posixMode
+            && old.linkCount == new.linkCount
+            && old.fileByteCount == new.fileByteCount
+    }
+
+    static func canonicalArtifactBindingEventKind(
+        from old: HostCanonicalArtifactIdentity,
+        to new: HostCanonicalArtifactIdentity,
+        metadataKind: HostCanonicalArtifactBindingEventKind
+    ) -> HostCanonicalArtifactBindingEventKind {
+        precondition(
+            metadataKind == .receiptMetadataRepair
+                || metadataKind == .publicationMetadataRepair
+        )
+        return old.deviceNumber == new.deviceNumber
+                && old.inodeNumber == new.inodeNumber
+            ? metadataKind
+            : .libraryMigration
     }
 
     public func committedReceiptRecordingIDs() async throws -> [CanonicalRecordingID] {
@@ -779,7 +891,16 @@ extension HarcHostStore {
         work: HostReceiptProcessingWork, identity: HostCanonicalArtifactIdentity,
         at date: Date, validateArtifact: @escaping @Sendable () throws -> Void
     ) async throws {
-        guard date.timeIntervalSince1970.isFinite else { throw HarcHostError.databaseFailure("Invalid repair time.") }
+        guard date.timeIntervalSince1970.isFinite,
+              work.canonicalArtifactIdentity.deviceNumber == identity.deviceNumber,
+              work.canonicalArtifactIdentity.inodeNumber == identity.inodeNumber,
+              Self.bindingStableFieldsMatch(work.canonicalArtifactIdentity, identity)
+        else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+        let eventKind = Self.canonicalArtifactBindingEventKind(
+            from: work.canonicalArtifactIdentity,
+            to: identity,
+            metadataKind: .receiptMetadataRepair
+        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let oldJSON = try encoder.encode(work.canonicalArtifactIdentity)
@@ -787,7 +908,8 @@ extension HarcHostStore {
         try await dbQueue.write { db in
             guard let row = try Row.fetchOne(db, sql: "SELECT * FROM publication_journal WHERE upload_id = ?", arguments: [work.uploadID.description]),
                   ["receipted", "processing", "complete"].contains(row["state"] as String),
-                  try Self.receiptArtifactIdentity(in: db, row: row) == work.canonicalArtifactIdentity,
+                  try Self.effectiveCanonicalArtifactIdentity(in: db, row: row)
+                    == work.canonicalArtifactIdentity,
                   row["exact_receipt_bytes"] as Data? == work.exactReceipt.exactBytes,
                   row["canonical_recording_id"] as String? == work.canonicalRecordingID.description,
                   row["publication_relative_path"] as String? == work.publicationRelativePath,
@@ -800,12 +922,121 @@ extension HarcHostStore {
             }
             try validateArtifact()
             try db.execute(sql: """
-                INSERT INTO canonical_receipt_repairs
-                (repair_id, upload_id, receipt_sha256, old_identity_json, new_identity_json, repaired_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """, arguments: [UUID().uuidString.lowercased(), work.uploadID.description,
-                    work.exactReceipt.objectSHA256.rawBytes, oldJSON, newJSON, Self.unixTime(date)])
+                INSERT INTO canonical_artifact_binding_events (
+                    event_id, upload_id, event_kind, evidence_kind,
+                    evidence_sha256, old_identity_json, new_identity_json,
+                    authorized_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [
+                    UUID().uuidString.lowercased(),
+                    work.uploadID.description,
+                    eventKind.rawValue,
+                    HostCanonicalArtifactBindingEvidenceKind.receipt.rawValue,
+                    work.exactReceipt.objectSHA256.rawBytes,
+                    oldJSON,
+                    newJSON,
+                    Self.unixTime(date),
+                ])
             // A replaced pathname after the first check rolls back both writes.
+            try validateArtifact()
+        }
+    }
+
+    /// Commits only an append-only binding transition. The original journal
+    /// identity remains immutable, and a second descriptor check is inside the
+    /// same FULL-sync transaction so pathname replacement rolls everything back.
+    func commitCanonicalArtifactBindingEvent(
+        uploadID: UploadID,
+        expectedIdentity: HostCanonicalArtifactIdentity,
+        identity: HostCanonicalArtifactIdentity,
+        eventKind: HostCanonicalArtifactBindingEventKind,
+        evidenceKind: HostCanonicalArtifactBindingEvidenceKind,
+        evidenceSHA256: Data,
+        at date: Date,
+        validateArtifact: @escaping @Sendable () throws -> Void
+    ) async throws {
+        guard date.timeIntervalSince1970.isFinite,
+              evidenceSHA256.count == 32,
+              Self.bindingStableFieldsMatch(expectedIdentity, identity)
+        else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+        switch eventKind {
+        case .receiptMetadataRepair:
+            guard evidenceKind == .receipt,
+                  expectedIdentity.deviceNumber == identity.deviceNumber,
+                  expectedIdentity.inodeNumber == identity.inodeNumber else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+        case .publicationMetadataRepair:
+            guard evidenceKind == .manifest,
+                  expectedIdentity.deviceNumber == identity.deviceNumber,
+                  expectedIdentity.inodeNumber == identity.inodeNumber else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+        case .libraryMigration:
+            guard expectedIdentity.deviceNumber != identity.deviceNumber
+                    || expectedIdentity.inodeNumber != identity.inodeNumber else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let oldJSON = try encoder.encode(expectedIdentity)
+        let newJSON = try encoder.encode(identity)
+        try await dbQueue.write { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM publication_journal WHERE upload_id = ?",
+                arguments: [uploadID.description]
+            ), try Self.effectiveCanonicalArtifactIdentity(in: db, row: row)
+                == expectedIdentity
+            else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+
+            guard let state = row["state"] as String?,
+                  let attempt = try self.fetchUploadAttempt(
+                    in: db,
+                    uploadID: uploadID
+                  )
+            else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+            let storedEvidence: Data?
+            switch evidenceKind {
+            case .receipt:
+                guard ["receipted", "processing", "complete"].contains(state),
+                      attempt.status == .committed,
+                      attempt.exactReceipt?.objectSHA256.rawBytes == evidenceSHA256,
+                      eventKind == .receiptMetadataRepair
+                        || eventKind == .libraryMigration
+                else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+                storedEvidence = row["receipt_object_sha256"]
+            case .manifest:
+                guard let resumeState = row["resume_state"] as String?,
+                      state == "failedRecoverable",
+                      [
+                        "audioPublished", "recordingCommitted",
+                        "receiptPrepared",
+                      ].contains(resumeState),
+                      attempt.status == .active,
+                      attempt.exactReceipt == nil,
+                      eventKind == .publicationMetadataRepair
+                        || eventKind == .libraryMigration
+                else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+                storedEvidence = row["signed_manifest_object_sha256"]
+            }
+            guard storedEvidence == evidenceSHA256 else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            try validateArtifact()
+            try db.execute(sql: """
+                INSERT INTO canonical_artifact_binding_events (
+                    event_id, upload_id, event_kind, evidence_kind,
+                    evidence_sha256, old_identity_json, new_identity_json,
+                    authorized_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [
+                    UUID().uuidString.lowercased(), uploadID.description,
+                    eventKind.rawValue, evidenceKind.rawValue, evidenceSHA256,
+                    oldJSON, newJSON, Self.unixTime(date),
+                ])
             try validateArtifact()
         }
     }

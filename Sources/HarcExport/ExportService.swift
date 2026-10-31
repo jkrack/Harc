@@ -1,5 +1,6 @@
 import Foundation
 import HarcStore
+import HarcCore
 
 public enum ExportFormat: Sendable {
     case markdown
@@ -60,7 +61,9 @@ public enum ExportService {
                 throw ExportError.noWordTimings
             }
             let cues = SubtitleExporter.makeCues(
-                words: transcript.words, speakers: transcript.speakers
+                words: transcript.words, speakers: transcript.speakers,
+                notices: UntranscribedAudioMarker.parse(in: transcript.joinedText),
+                overlapRanges: transcript.overlapRanges
             )
             let rendered = format == .srt
                 ? SubtitleExporter.srt(cues: cues, speakerNames: recording.speakerNames)

@@ -54,11 +54,15 @@ public struct MediaImportResult: Sendable {
     /// Original source filename without extension — used as the library title.
     public let originalTitle: String
     public let durationSeconds: Double
+    /// Local publication intent; cleared only after the Library row commits.
+    public let publicationSourceURL: URL?
 
-    public init(recording: RecordingResult, originalTitle: String, durationSeconds: Double) {
+    public init(recording: RecordingResult, originalTitle: String, durationSeconds: Double,
+                publicationSourceURL: URL? = nil) {
         self.recording = recording
         self.originalTitle = originalTitle
         self.durationSeconds = durationSeconds
+        self.publicationSourceURL = publicationSourceURL
     }
 }
 
@@ -133,6 +137,7 @@ public actor MediaImportService {
         // 1. Convert / extract the audio track to a cache WAV.
         progress(MediaImportProgress(phase: .converting, fraction: 0))
         let cacheURL = RecordingDestination.cachePath()
+        try destination.persistBinding(for: cacheURL)
         let durationSeconds: Double
         do {
             durationSeconds = try await convertToCacheWAV(
@@ -143,6 +148,7 @@ public actor MediaImportService {
             }
         } catch {
             try? FileManager.default.removeItem(at: cacheURL)
+            try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: cacheURL))
             throw error
         }
 
@@ -160,6 +166,7 @@ public actor MediaImportService {
             }
         } catch {
             try? FileManager.default.removeItem(at: cacheURL)
+            try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: cacheURL))
             throw error
         }
 
@@ -168,17 +175,20 @@ public actor MediaImportService {
         // Last cancellation point — past here the import completes.
         if Task.isCancelled {
             try? FileManager.default.removeItem(at: cacheURL)
+            try? FileManager.default.removeItem(at: CaptureDestinationBinding.url(for: cacheURL))
             throw CancellationError()
         }
         progress(MediaImportProgress(phase: .finalizing, fraction: 0.96))
         let wavURL = try destination.publicPath(for: importedAt)
-        try RecordingDestination.atomicMove(from: cacheURL, to: wavURL)
+        let publication = try destination.preparePublication(from: cacheURL, to: wavURL)
+        try publication.publish()
 
         var txtURL: URL? = nil
         var jsonURL: URL? = nil
         var transcript = transcribed.transcript
         transcript.audioPath = wavURL.path
         do {
+            try publication.verifyDestinationVolume()
             try TranscriptWriter.writeSiblings(transcript: transcript, nextTo: wavURL)
             let stem = wavURL.deletingPathExtension().lastPathComponent
             let parent = wavURL.deletingLastPathComponent()
@@ -200,7 +210,8 @@ public actor MediaImportService {
                 diarizationError: transcribed.diarizeError
             ),
             originalTitle: source.deletingPathExtension().lastPathComponent,
-            durationSeconds: durationSeconds
+            durationSeconds: durationSeconds,
+            publicationSourceURL: cacheURL
         )
     }
 

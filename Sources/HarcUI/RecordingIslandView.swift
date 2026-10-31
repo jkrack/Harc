@@ -90,12 +90,7 @@ public struct RecordingIslandView: View {
                     .font(.harcCaption)
                     .foregroundStyle(Color.harc(.attention))
             } else {
-                LiveWaveformView(
-                    history: bridge.microphoneAmplitudeHistory,
-                    size: .pill,
-                    isActive: true,
-                    tint: HarcBrand.live
-                )
+                HarcTideEnergyTrace(samples: bridge.microphoneAmplitudeHistory, isLive: true)
                 .frame(width: 44, height: 16)
             }
         }
@@ -120,12 +115,7 @@ public struct RecordingIslandView: View {
                 .foregroundStyle(micIsSilent ? Color.harc(.attention) : .white.opacity(0.72))
                 .lineLimit(1)
                 .frame(maxWidth: 150)
-            LiveWaveformView(
-                history: bridge.microphoneAmplitudeHistory,
-                size: .pill,
-                isActive: true,
-                tint: micIsSilent ? Color.harc(.attention) : HarcBrand.live
-            )
+            HarcTideEnergyTrace(samples: bridge.microphoneAmplitudeHistory, isLive: true)
             .frame(width: 96, height: 22)
             if micIsSilent {
                 islandButton(
@@ -275,7 +265,7 @@ public struct RecordingIslandView: View {
 
     private func islandBackground(borderTint: Color, cornerRadius: CGFloat = 17) -> some View {
         Capsule()
-            .fill(Color.black.opacity(0.82))
+            .fill(LinearGradient(colors: [HarcTideStyle.navy, HarcTideStyle.deepBlue], startPoint: .topLeading, endPoint: .bottomTrailing))
             .overlay(Capsule().strokeBorder(borderTint.opacity(0.55), lineWidth: 1))
     }
 }

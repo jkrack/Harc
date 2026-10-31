@@ -102,7 +102,10 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
         let recordings = try HarcMobileLocalRecording.load(from: store)
         XCTAssertEqual(recordings.count, 1)
         let recording = try XCTUnwrap(recordings.first)
-        XCTAssertEqual(recording.masterFileURL, url)
+        XCTAssertEqual(
+            recording.masterFileURL.resolvingSymlinksInPath(),
+            url.resolvingSymlinksInPath()
+        )
         XCTAssertEqual(recording.transferState, state)
         // Decode synthetic fixture metadata, without activating an audio session.
         XCTAssertEqual(try AVAudioFile(forReading: recording.masterFileURL).length, 1_000)

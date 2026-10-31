@@ -5,6 +5,7 @@ package harc.v1;
 option swift_prefix = "Harc_V1_";
 
 import "harc_common.proto";
+import "harc_library.proto";
 
 message ComponentRevisionV1 {
   string component_id = 1;
@@ -92,10 +93,17 @@ message TranscriptUtteranceV1 {
   repeated TranscriptWordV1 words = 6;
 }
 
+// Presence means overlap was assessed; an empty range list means none detected.
+// Transcript field 4 must be marked critical whenever this assessment is present.
+message SpeechOverlapAssessmentV1 {
+  repeated CanonicalFrameRangeV1 ranges = 1;
+}
+
 message TranscriptArtifactV1 {
   ProtocolVersionV1 protocol = 1;
   string locale = 2;
   repeated TranscriptUtteranceV1 utterances = 3;
+  SpeechOverlapAssessmentV1 overlap_assessment = 4;
 }
 
 message SpeakerTurnV1 {
@@ -166,6 +174,39 @@ enum ProcessingSubmissionDispositionV1 {
   PROCESSING_SUBMISSION_DISPOSITION_HOST_PROCESSING_SCHEDULED = 3;
 }
 
+// Historical evaluation outcomes, not assertions that a matched name is correct.
+// These are scoped to the authenticated own-recording status session. A missing
+// outcome is unknown; clients must not synthesize one from generic ready states.
+enum HostSpeakerDiarizationStateV1 {
+  HOST_SPEAKER_DIARIZATION_STATE_UNSPECIFIED = 0;
+  HOST_SPEAKER_DIARIZATION_STATE_DISABLED = 1;
+  HOST_SPEAKER_DIARIZATION_STATE_COMPLETED = 2;
+}
+
+enum HostSpeakerClusterStateV1 {
+  HOST_SPEAKER_CLUSTER_STATE_UNSPECIFIED = 0;
+  HOST_SPEAKER_CLUSTER_STATE_MISSING_EVIDENCE = 1;
+  HOST_SPEAKER_CLUSTER_STATE_EVALUATED = 2;
+}
+
+message HostSpeakerClusterOutcomeV1 {
+  optional uint32 speaker_index = 1;
+  HostSpeakerClusterStateV1 state = 2;
+  optional SHA256DigestV1 evidence_sha256 = 3;
+  optional OperationIDV1 decision_operation_id = 4;
+  SpeakerObservationDispositionV1 disposition = 5;
+  optional uint64 recognition_pack_revision = 6;
+}
+
+message HostSpeakerProcessingOutcomeV1 {
+  CanonicalRecordingIDV1 canonical_recording_id = 1;
+  SHA256DigestV1 canonical_audio_sha256 = 2;
+  DeviceIDV1 producer_device_id = 3;
+  SHA256DigestV1 processing_artifact_sha256 = 4;
+  HostSpeakerDiarizationStateV1 diarization = 5;
+  repeated HostSpeakerClusterOutcomeV1 clusters = 6;
+}
+
 message ProcessingStatusV1 {
   CanonicalRecordingIDV1 canonical_recording_id = 1;
   optional OriginRecordingIDV1 origin_recording_id = 2;
@@ -173,6 +214,10 @@ message ProcessingStatusV1 {
   ProjectionDescriptorV1 projection = 4;
   optional SHA256DigestV1 canonical_audio_sha256 = 5;
   uint64 updated_at_unix_ms = 6;
+  // Advisory current edge selection; absence is not permission to use legacy
+  // numeric speaker IDs. Admission rechecks selection transactionally.
+  optional SHA256DigestV1 selected_edge_bundle_sha256 = 7;
+  optional HostSpeakerProcessingOutcomeV1 host_speaker_outcome = 8;
 }
 
 message SubmitOwnArtifactResponseV1 {

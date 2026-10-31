@@ -25,6 +25,7 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
         + "Harc does not treat this export as synchronization."
 
     let id: UUID
+    let originID: OriginRecordingID
     let startedAt: Date
     let duration: TimeInterval
     let masterFileURL: URL
@@ -58,6 +59,7 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
                     }
                 return HarcMobileLocalRecording(
                     id: capture.originRecordingID.recordingUUID,
+                    originID: capture.originRecordingID,
                     startedAt: capture.captureStartedAt,
                     duration: capture.captureEndedAt.timeIntervalSince(
                         capture.captureStartedAt
@@ -146,14 +148,20 @@ final class HarcMobileTransferCoordinator {
         do {
             refreshLocalRecordings()
             let backgroundManagedUploadIDs = try activeBackgroundUploadIDs()
+            let hasRelayRoute = (try? HarcMobileHostRouteStore.load(
+                from: routeURL
+            ).relay) != nil
             let pending = try store.recordingOutboxes().filter {
                 $0.stateMachine.state != .committed
                     && $0.stateMachine.state != .securityBlocked
                     && $0.integrityBlock == nil
                     && $0.finalizedCapture.masterFileState == .present
-                    && ($0.uploadID.map {
-                        !backgroundManagedUploadIDs.contains($0)
-                    } ?? true)
+                    && !Self.shouldDeferToBackgroundUpload(
+                        uploadID: $0.uploadID,
+                        backgroundManagedUploadIDs:
+                            backgroundManagedUploadIDs,
+                        hasRelayRoute: hasRelayRoute
+                    )
             }
             let eligible = try pending.filter {
                 try HarcMobileUploadPreparation.canAttempt(
@@ -259,6 +267,20 @@ final class HarcMobileTransferCoordinator {
             uploadIDs.insert(batch.descriptor.uploadID)
         }
         return uploadIDs
+    }
+
+    /// A background URLSession capability is intentionally minted for the
+    /// Host's LAN-only `.local` endpoint. When the adoption also has an
+    /// encrypted relay route, keep the recording eligible for a foreground
+    /// retry: the connector may discover that only the relay is reachable.
+    /// `scheduleInBackground` remains idempotent when the direct route wins.
+    static func shouldDeferToBackgroundUpload(
+        uploadID: UploadID?,
+        backgroundManagedUploadIDs: Set<UploadID>,
+        hasRelayRoute: Bool
+    ) -> Bool {
+        guard !hasRelayRoute, let uploadID else { return false }
+        return backgroundManagedUploadIDs.contains(uploadID)
     }
 
     private func startWorkerIfNeeded() {
@@ -437,8 +459,25 @@ final class HarcMobileTransferCoordinator {
             )
             let uploader = HarcForegroundRecordingOutboxCoordinator(
                 store: store,
-                transport: connection
+                transport: connection,
+                diagnosticSink: { event in
+#if DEBUG
+                    print("[Harc host-transfer] stage=\(event.stage.rawValue)")
+#endif
+                }
             )
+            if opened.path == .encryptedRelay {
+                Self.logger.info(
+                    "Uploading through the end-to-end encrypted relay session"
+                )
+                _ = try await uploader.drive(
+                    plan,
+                    openedSession: opened.session,
+                    deviceSigner: identity
+                )
+                try await connection.shutdownGracefully()
+                return .committed
+            }
             let result = try await uploader.scheduleInBackground(
                 plan,
                 openedSession: opened.session,
@@ -550,10 +589,9 @@ final class HarcMobileTransferCoordinator {
     }
 }
 
-/// This compile-time gate is deliberately closed until the physical-iPhone
-/// matrix in the implementation spec freezes a release codec. Enabling it is
-/// a reviewed release change backed by the signed qualification report.
-private enum HarcMobileLosslessReleaseGate {
+/// CAF/ALAC selection for the physical delivery candidate. Qualification evidence
+/// must identify this exact build before it is distributed as a qualified release.
+enum HarcMobileLosslessReleaseGate {
     #if HARC_MOBILE_QUALIFIED_CAF_ALAC
     static let selected: LosslessEncodingConfiguration? = .cafALAC
     #else

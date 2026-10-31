@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// Role, pairing, connectivity, recovery, and transport diagnostics live in
 /// one place. General Settings should not require users to understand the
@@ -26,6 +27,14 @@ public struct HostSyncSettingsView: View {
             case .host:
                 hostSection
                 remoteSection
+            }
+        }
+        .task {
+            guard prefs.runtimeRole == .host else { return }
+            while !Task.isCancelled {
+                await bridge.refreshHostDevices()
+                do { try await Task.sleep(for: .seconds(30)) }
+                catch { return }
             }
         }
         .confirmationDialog(
@@ -378,14 +387,71 @@ public struct HostSyncSettingsView: View {
             if bridge.hostRuntimeReady {
                 Label("Host is available to paired devices", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(Color.harc(.ready))
-                Button("Pair a Device…") { bridge.onOpenHostPairing() }
+                HarcTideConditions {
+                    if bridge.hostDevicesLoaded {
+                        Text("\(bridge.hostDevices.filter { !$0.isRevoked }.count) paired devices")
+                    } else {
+                        Text("Checking devices…")
+                    }
+                    Text("Library on this Mac")
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: HarcSpacing.md) { // token-exempt: responsive device-card minimum.
+                ForEach(bridge.hostDevices) { device in
+                    HStack(spacing: HarcSpacing.md) {
+                        Image(systemName: device.isPhone ? "iphone" : "laptopcomputer")
+                        VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                            Text(device.name).font(.harcLabel)
+                            if device.isRevoked {
+                                Text("Access revoked").foregroundStyle(Color.harc(.attention))
+                            } else if let seen = device.lastConnectedAt {
+                                Text("Last connected \(seen, style: .relative) ago")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Paired · no connection recorded").foregroundStyle(.secondary)
+                            }
+                        }
+                        .font(.harcCaption)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading) // token-exempt: device card target.
+                    .padding(HarcSpacing.md)
+                    .background(HarcTideStyle.ocean.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                }
+                }
+                if let error = bridge.hostDevicesError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(Color.harc(.attention))
+                }
+                HStack(spacing: HarcSpacing.md) {
+                    Button("Pair a Device…") { bridge.onOpenHostPairing() }
+                        .buttonStyle(.borderedProminent)
+                    Button("Manage Devices…") { bridge.onOpenHostPairing() }
+                }
                 Button("Verify and Repair Recording Receipts…") { bridge.onRepairHostReceipts() }
-                    .disabled(bridge.hostReceiptRepairInProgress)
+                    .disabled(
+                        bridge.hostReceiptRepairInProgress
+                            || bridge.hostLibraryMigrationInProgress
+                    )
+                Button("Verify Moved Library…") {
+                    bridge.onMigrateHostLibraryBindings()
+                }
+                .disabled(
+                    bridge.hostReceiptRepairInProgress
+                        || bridge.hostLibraryMigrationInProgress
+                )
                 if bridge.hostReceiptRepairInProgress {
                     ProgressView("Verifying recordings…")
                         .font(.harcLabel)
                 }
                 if let status = bridge.hostReceiptRepairStatus {
+                    Text(status)
+                        .font(.harcLabel)
+                        .foregroundStyle(.secondary)
+                }
+                if bridge.hostLibraryMigrationInProgress {
+                    ProgressView("Re-hashing moved recordings…")
+                        .font(.harcLabel)
+                }
+                if let status = bridge.hostLibraryMigrationStatus {
                     Text(status)
                         .font(.harcLabel)
                         .foregroundStyle(.secondary)

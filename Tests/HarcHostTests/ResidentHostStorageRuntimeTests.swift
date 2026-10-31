@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Testing
 @testable import HarcHost
 import HarcDomain
@@ -24,6 +25,11 @@ struct ResidentHostStorageRuntimeTests {
         )
         let canonical = try await first.recordingStore.libraryMetadata()
         let host = try await first.hostStore.metadata()
+        let durability = try await first.hostStore.dbReader.read { database in
+            [try Int.fetchOne(database, sql: "PRAGMA synchronous"),
+             try Int.fetchOne(database, sql: "PRAGMA fullfsync")]
+        }
+        #expect(durability == [3, 1], "deferred-serving Host construction must apply the same barriers")
         #expect(canonical.writerMode == .host)
         #expect(canonical.libraryID == first.tuple.libraryID)
         #expect(canonical.hostAuthorityID == first.tuple.hostAuthorityID)

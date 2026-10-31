@@ -12,6 +12,7 @@ public final class AudioFileWriter {
 
     private let url: URL
     private var file: AVAudioFile?
+    private var closeSynchronized = false
     private var lastFsync = Date()
     private let fsyncInterval: TimeInterval = 5.0
 
@@ -40,7 +41,9 @@ public final class AudioFileWriter {
     /// (16 kHz, 1 channel). If it doesn't, the call throws; callers (e.g.
     /// AudioMixer) are responsible for converting first.
     public func write(_ buffer: AVAudioPCMBuffer) throws {
-        guard let file else { return }
+        guard let file else {
+            throw AudioError.fileWriteFailed("write after close")
+        }
         guard buffer.format.sampleRate == AudioFileWriter.targetSampleRate,
               buffer.format.channelCount == AudioFileWriter.targetChannels
         else {
@@ -66,11 +69,12 @@ public final class AudioFileWriter {
     }
 
     public func close() throws {
-        guard file != nil else { return }
+        guard !closeSynchronized else { return }
         // Dropping the reference triggers the AVAudioFile writer's finalization.
         self.file = nil
         // Final fsync to flush the RIFF header update.
-        try? fsyncFileAtURL()
+        try fsyncFileAtURL()
+        closeSynchronized = true
     }
 
     private func fsyncFileAtURL() throws {

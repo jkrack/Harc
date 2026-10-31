@@ -186,7 +186,9 @@ struct HarcMobileDurableMasterWriterTests {
             endedAt: fixture.started.addingTimeInterval(1),
             endedMonotonicNanoseconds: 2_000_000_000
         )
+        #expect(writer.durableCanonicalFrameCount == 0)
         let result = try writer.finalize(reason: .userStopped)
+        #expect(writer.durableCanonicalFrameCount == 16_000)
 
         #expect(result.totalCanonicalFrames == 16_000)
         #expect(result.totalCanonicalBytes == UInt64(bytes.count))
@@ -221,6 +223,7 @@ struct HarcMobileDurableMasterWriterTests {
             endedAt: fixture.started.addingTimeInterval(5.002),
             endedMonotonicNanoseconds: 6_002_000_000
         )
+        #expect(writer.durableCanonicalFrameCount == HarcMobileDurableMasterWriter.checkpointFrames)
         try writer.simulateProcessTerminationForTesting()
 
         let results = try HarcMobileCaptureRecovery.recoverDurablePrefixes(

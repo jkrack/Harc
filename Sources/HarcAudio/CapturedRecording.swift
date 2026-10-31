@@ -17,6 +17,9 @@ public struct CapturedRecording: Sendable {
     public let speakerEmbeddings: [SpeakerEmbeddingRow]
     public let warnings: [CaptureWarning]
     public let discontinuities: [CaptureDiscontinuity]
+    public let integrity: CaptureIntegrityReport
+    public let startedMonotonicNanoseconds: UInt64
+    public let endedMonotonicNanoseconds: UInt64
 
     public init(
         localMasterURL: URL,
@@ -25,7 +28,10 @@ public struct CapturedRecording: Sendable {
         transcript: SessionTranscript? = nil,
         speakerEmbeddings: [SpeakerEmbeddingRow] = [],
         warnings: [CaptureWarning] = [],
-        discontinuities: [CaptureDiscontinuity] = []
+        discontinuities: [CaptureDiscontinuity] = [],
+        integrity: CaptureIntegrityReport = .init(),
+        startedMonotonicNanoseconds: UInt64 = 0,
+        endedMonotonicNanoseconds: UInt64 = 0
     ) {
         self.localMasterURL = localMasterURL
         self.startedAt = startedAt
@@ -34,6 +40,9 @@ public struct CapturedRecording: Sendable {
         self.speakerEmbeddings = speakerEmbeddings
         self.warnings = warnings
         self.discontinuities = discontinuities
+        self.integrity = integrity
+        self.startedMonotonicNanoseconds = startedMonotonicNanoseconds
+        self.endedMonotonicNanoseconds = endedMonotonicNanoseconds
     }
 }
 
@@ -61,5 +70,38 @@ extension CapturedRecording {
             }
         }
         return nil
+    }
+}
+
+public extension CapturedRecording {
+    /// Bind observations only when the committer establishes the producing
+    /// installation identity. Empty frame ranges annotate omitted audio without
+    /// manufacturing silence or claiming an exact lost-frame count.
+    func boundDiscontinuities(to origin: OriginRecordingID, totalFrames: UInt64) throws -> [CaptureDiscontinuity] {
+        guard discontinuities.allSatisfy({ $0.recordingID == origin }) else {
+            throw DomainValidationError.invalidState(reason: "Capture discontinuities belong to another origin.")
+        }
+        let observed = try integrity.issues.map { issue in
+            let reason: CaptureDiscontinuityReason
+            switch issue.reason {
+            case .bufferOverrun: reason = .bufferOverrun
+            case .writerFailure: reason = .writerFailure
+            case .conversionFailed, .sourceInterrupted, .sourceStopped, .drainTimedOut:
+                reason = .interruptionBegan
+            }
+            let offset = min(issue.frameOffset, totalFrames)
+            return try CaptureDiscontinuity(
+                recordingID: origin, monotonicTimeNanoseconds: issue.monotonicNanoseconds,
+                wallTime: issue.detectedAt, reason: reason,
+                affectedFrames: CanonicalFrameRange(startFrame: offset, endFrameExclusive: offset),
+                canonicalizationPolicy: .annotateGapWithoutInsertedSilence
+            )
+        }
+        return (discontinuities + observed).sorted {
+            if $0.monotonicTimeNanoseconds != $1.monotonicTimeNanoseconds {
+                return $0.monotonicTimeNanoseconds < $1.monotonicTimeNanoseconds
+            }
+            return $0.wallTime < $1.wallTime
+        }
     }
 }

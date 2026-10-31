@@ -49,11 +49,15 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
             if player.isPlaying {
                 player.pause()
                 state = .paused
-            } else if player.play() {
-                state = .playing
             } else {
-                stop()
-                state = .failed("Harc could not resume local playback.")
+                do {
+                    try session.reactivate(sessionOwner)
+                    guard player.play() else { throw HarcMobileLocalPlaybackError.startFailed }
+                    state = .playing
+                } catch {
+                    stop()
+                    state = .failed(error.localizedDescription)
+                }
             }
             return
         }
