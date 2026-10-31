@@ -120,12 +120,32 @@ struct HarcMobileRootView: View {
         }
     }
 
+    private var hostPillPresentation: HarcMobileHostPillPresentation {
+#if DEBUG
+        // Synthetic display only: no adoption, credentials, network or health
+        // coordinator mutation. Require a freshly reset isolated test root.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--harc-ui-test-long-host-name"),
+           let rootID = try? HarcMobileUITestConfiguration.rootID(arguments: arguments),
+           (try? HarcMobileUITestConfiguration.shouldResetRoot(
+               arguments: arguments, rootID: rootID
+           )) == true {
+            return .make(
+                status: .unavailable(lastAttemptedAt: Date(timeIntervalSinceReferenceDate: 100)),
+                hostName: "Fixture Mac mini — Design and Accessibility Review Workstation"
+            )
+        }
+#endif
+        return .make(
+            status: model.hostHealthCoordinator?.status ?? .unpaired,
+            hostName: adoptedHostName
+        )
+    }
+
     private var hostPill: some View {
         HarcMobileHostPill(
-            presentation: .make(
-                status: model.hostHealthCoordinator?.status ?? .unpaired,
-                hostName: adoptedHostName
-            )
+            presentation: hostPillPresentation,
+            compact: true
         ) {
             showsSetupAndSync = true
         }
@@ -649,11 +669,7 @@ struct HarcMobileRootView: View {
                     .font(.system(.title, design: .rounded, weight: .bold))
                 if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
                 HarcMobileHostPill(
-                    presentation: .make(
-                        status: model.hostHealthCoordinator?.status
-                            ?? .unpaired,
-                        hostName: adoptedHostName
-                    )
+                    presentation: hostPillPresentation
                 ) {
                     showsSetupAndSync = true
                 }

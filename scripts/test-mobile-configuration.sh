@@ -44,6 +44,7 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLibraryDaySummaryRemainsReadableAtLargestText \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLibraryTextActionsHaveAccessibleContrast \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLongHostNameKeepsRecordAndToolbarsUsable \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA" test
 
 # A successful xcodebuild exit alone does not prove the selected tests ran.
@@ -55,6 +56,7 @@ python3 scripts/check-xcode-test-results.py \
   --summary "$OUTPUT/configuration-summary.json" \
   --tests "$OUTPUT/configuration-test-tree.json" \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLibraryTextActionsHaveAccessibleContrast \
+  --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLongHostNameKeepsRecordAndToolbarsUsable \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \

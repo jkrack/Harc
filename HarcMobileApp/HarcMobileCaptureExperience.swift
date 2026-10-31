@@ -522,32 +522,40 @@ private struct HarcMobileBlobButtonStyle: ButtonStyle {
 }
 
 struct HarcMobileHostPill: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let presentation: HarcMobileHostPillPresentation
+    var compact = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 8, height: 8)
-                    .accessibilityHidden(true)
-                Text(presentation.title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityHidden(true)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize && !compact {
+                    ViewThatFits(in: .horizontal) {
+                        inlineLabel.fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                statusDot
+                                Spacer(minLength: 8)
+                                disclosure
+                            }
+                            // Full row width prevents glyphs squeezing the name
+                            // into broken words. Short names keep the inline row.
+                            hostName
+                        }
+                    }
+                } else {
+                    inlineLabel
+                }
             }
+            .accessibilityHidden(true)
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
             .frame(minHeight: 44)
-            .background(.thinMaterial, in: Capsule())
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
             .overlay {
-                Capsule().stroke(.primary.opacity(0.08), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(.primary.opacity(0.08), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -555,6 +563,35 @@ struct HarcMobileHostPill: View {
         .accessibilityValue(presentation.accessibilityValue)
         .accessibilityHint("Opens Setup and Sync.")
         .accessibilityIdentifier(HarcMobileAccessibilityID.hostHealth)
+    }
+
+    private var inlineLabel: some View {
+        HStack(spacing: 7) {
+            statusDot
+            if compact {
+                hostName.lineLimit(1).truncationMode(.middle)
+            } else {
+                hostName
+            }
+            disclosure
+        }
+    }
+
+    private var hostName: some View {
+        Text(presentation.title)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var statusDot: some View {
+        Circle().fill(dotColor).frame(width: 8, height: 8)
+    }
+
+    private var disclosure: some View {
+        Image(systemName: "chevron.down")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
     }
 
     private var dotColor: Color {
