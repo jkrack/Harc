@@ -60,6 +60,7 @@ python3 scripts/check-xcode-test-results.py \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLongHostNameKeepsRecordAndToolbarsUsable \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSetupMacCardRemainsUsableAtNormalAndLargestText \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testSetupMacIconInkStaysInsideItsTileAtEveryTextSize \
+  --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \

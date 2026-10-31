@@ -76,6 +76,20 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let populatedTimelines = populated.otherElements.matching(identifier: timelineID)
         let populatedTimeline = populatedTimelines.element
         XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
+        XCTAssertEqual(populatedTimeline.label, "Recordings across the day")
+        let timelineValue = populatedTimeline.value as? String ?? ""
+        XCTAssertTrue(timelineValue.contains("1 recording:"), "Timeline must expose actual interval data: \(timelineValue)")
+        let dayBounds = Calendar.current.dateInterval(of: .day, for: .now)!
+        let fixtureStart = dayBounds.start.addingTimeInterval(dayBounds.duration / 2)
+        let time = DateFormatter()
+        time.timeStyle = .short
+        time.dateStyle = .none
+        XCTAssertTrue(timelineValue.contains("\(time.string(from: fixtureStart)) to \(time.string(from: fixtureStart.addingTimeInterval(300)))"))
+        XCTAssertEqual(populatedToday.label, "View recordings on this iPhone")
+        let tree = XCTAttachment(string: populated.debugDescription)
+        tree.name = "Timeline-accessibility-tree"
+        tree.lifetime = .keepAlways
+        add(tree)
         XCTAssertEqual(populatedTimelines.count, 1)
         XCTAssertEqual(populated.descendants(matching: .any).matching(identifier: timelineID).count, 1)
         // The Canvas is informational, not an action. Check its rendered frame
@@ -979,6 +993,10 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             let count = app.staticTexts["0 recordings"]
             XCTAssertTrue(day.waitForExistence(timeout: 10))
             XCTAssertTrue(count.waitForExistence(timeout: 10))
+            let timelines = app.otherElements.matching(NSPredicate(format: "label == %@", "Recordings across the day"))
+            XCTAssertEqual(timelines.count, 1)
+            XCTAssertTrue((timelines.element.value as? String ?? "").contains("No recordings"))
+
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "Library-day-summary-\(category)"
             screenshot.lifetime = .keepAlways

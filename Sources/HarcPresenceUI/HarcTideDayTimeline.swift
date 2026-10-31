@@ -5,6 +5,7 @@ public struct HarcTideDayTimeline: View {
     let intervals: [DateInterval]
     let day: Date
     @Environment(\.calendar) private var calendar
+    @Environment(\.locale) private var locale
 
     public init(intervals: [DateInterval], day: Date = .now) {
         self.intervals = intervals
@@ -38,6 +39,33 @@ public struct HarcTideDayTimeline: View {
             }
         }
         .accessibilityLabel("Recordings across the day")
-        .accessibilityValue("Each blue interval represents a recording; the dot marks the current time")
+        .accessibilityValue(Self.accessibilitySummary(intervals: intervals, day: day, calendar: calendar, locale: locale))
+    }
+
+    /// Describe the same clipped intervals that Canvas draws, in reading order.
+    static func accessibilitySummary(
+        intervals: [DateInterval], day: Date, calendar: Calendar, locale: Locale
+    ) -> String {
+        guard let bounds = calendar.dateInterval(of: .day, for: day) else { return "No recordings" }
+        let visible = intervals.compactMap { interval -> DateInterval? in
+            let start = max(interval.start, bounds.start)
+            let end = min(interval.end, bounds.end)
+            return end > start ? DateInterval(start: start, end: end) : nil
+        }.sorted { $0.start == $1.start ? $0.end < $1.end : $0.start < $1.start }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = locale
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        let date = formatter.string(from: day)
+        guard !visible.isEmpty else { return "\(date). No recordings" }
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        let times = visible.map { interval in
+            let end = interval.end == bounds.end ? "end of day" : formatter.string(from: interval.end)
+            return "\(formatter.string(from: interval.start)) to \(end)"
+        }.joined(separator: "; ")
+        return "\(date). \(visible.count) recording\(visible.count == 1 ? "" : "s"): \(times)"
     }
 }
