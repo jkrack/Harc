@@ -52,7 +52,11 @@ final class HarcWindowController: NSWindowController {
         let host = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: host)
         window.title = "Harc"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        // Full-size content under a transparent title bar: the Tide gradient
+        // is the window surface, so the title and toolbar sit on it instead
+        // of on a wallpaper-tinted system material.
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
         window.setContentSize(NSSize(width: 1200, height: 720))
         window.center()
         self.init(window: window)

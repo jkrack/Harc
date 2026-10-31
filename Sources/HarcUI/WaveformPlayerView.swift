@@ -48,20 +48,24 @@ public struct WaveformPlayerView: View {
                 Group {
                     if showsSpeakerTimeline {
                         speakerTimeline
-                    } else {
+                    } else if hasLevels {
                         waveform
+                    } else {
+                        // No envelope and no length: say so in one line
+                        // instead of drawing a 150pt empty chart.
+                        Text("No audio levels for this recording")
+                            .font(.harcCaption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
                 HStack(spacing: 8) {
-                    HStack(spacing: 7) {
-                        playButton
-                        Text(showsSpeakerTimeline ? "Speakers" : "Recording energy")
-                            .font(.harcCaption)
-                            .foregroundStyle(.white.opacity(0.88))
-                    }
-                    .padding(5)
-                    .padding(.trailing, 5)
-                    .background(.black.opacity(0.55), in: Capsule())
+                    // The mode is already named by the Energy / Speakers
+                    // control under the plot; a second label here competed
+                    // with the curve.
+                    playButton
+                        .padding(5)
+                        .background(.black.opacity(0.55), in: Capsule())
                     Spacer()
                     timeLabel
                         .padding(.horizontal, 9)
@@ -71,35 +75,37 @@ public struct WaveformPlayerView: View {
                 .padding(.horizontal, 4)
                 .padding(.top, 4)
             }
-            .frame(height: 150) // token-exempt: Tide's primary data plot.
+            .frame(height: hasLevels || showsSpeakerTimeline ? 150 : 72) // token-exempt: Tide's primary data plot.
             if !speakerSegments.isEmpty {
                 speakerLane
                     .frame(height: 7)
             }
-            HStack(spacing: 4) {
-                Text("0:00")
-                Spacer()
-                if model.duration > 0 {
-                    Text(formatTime(model.duration / 4))
+            if hasLevels || !speakerSegments.isEmpty {
+                HStack(spacing: 4) {
+                    Text("0:00")
                     Spacer()
-                }
-                modeButton("Energy", selected: !showsSpeakerTimeline) {
-                    showsSpeakerTimeline = false
-                }
-                if !speakerSegments.isEmpty {
-                    modeButton("Speakers", selected: showsSpeakerTimeline) {
-                        showsSpeakerTimeline = true
+                    if model.duration > 0 {
+                        Text(formatTime(model.duration / 4))
+                        Spacer()
+                    }
+                    modeButton("Energy", selected: !showsSpeakerTimeline) {
+                        showsSpeakerTimeline = false
+                    }
+                    if !speakerSegments.isEmpty {
+                        modeButton("Speakers", selected: showsSpeakerTimeline) {
+                            showsSpeakerTimeline = true
+                        }
+                    }
+                    Spacer()
+                    if model.duration > 0 {
+                        Text(formatTime(model.duration * 3 / 4))
+                        Spacer()
+                        Text(formatTime(model.duration))
                     }
                 }
-                Spacer()
-                if model.duration > 0 {
-                    Text(formatTime(model.duration * 3 / 4))
-                    Spacer()
-                    Text(formatTime(model.duration))
-                }
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
             }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -122,6 +128,11 @@ public struct WaveformPlayerView: View {
     }
 
     // MARK: - Sub-views
+
+    /// Whether there is anything to plot: a loaded envelope or a known length.
+    private var hasLevels: Bool {
+        envelope.count > 1 || model.duration > 0
+    }
 
     private var playButton: some View {
         Button {

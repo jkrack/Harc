@@ -222,6 +222,15 @@ public struct HarcWindowRootView: View {
             libraryFooter
         }
         .frame(minWidth: 900, minHeight: 600)
+        // Tide is one surface edge to edge. Without a window background the
+        // toolbar and footer fall back to system materials, which pick up
+        // the desktop wallpaper and read as a brown band above and below
+        // the ocean gradient.
+        // A plain background (not containerBackground) because this view is
+        // hosted in an AppKit NSWindow; HarcWindowController lets the content
+        // run under a transparent title bar so the gradient reaches the top.
+        .background { HarcTideBackground() }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .accessibilityIdentifier("harc.library.root")
         .onDrop(of: [.fileURL], isTargeted: $importDropTargeted) { providers in
             handleImportDrop(providers)
@@ -470,7 +479,6 @@ public struct HarcWindowRootView: View {
         .padding(.horizontal, HarcSpacing.lg)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
-        .background(.bar)
     }
 
     // MARK: - Media import
@@ -1098,8 +1106,12 @@ public struct HarcWindowRootView: View {
                 .frame(width: 18, alignment: .center)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(rec.displayTitle)
+                // An untitled row would repeat its date in the title and its
+                // time on the line below, under a day header that already
+                // names the date.
+                Text(rec.hasNameOrSuggestion ? rec.displayTitle : "Untitled recording")
                     .font(isSelected ? .body.weight(.semibold) : .body)
+                    .foregroundStyle(rec.hasNameOrSuggestion ? .primary : .secondary)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1119,8 +1131,7 @@ public struct HarcWindowRootView: View {
                 // One line of what was actually said, so a row is scannable
                 // without opening it. Only when the title is a real title —
                 // under a bare timestamp a snippet just adds noise to noise.
-                if rec.title?.isEmpty == false || rec.suggestedTitle?.isEmpty == false,
-                   !rec.preview.isEmpty {
+                if rec.hasNameOrSuggestion, !rec.preview.isEmpty {
                     Text(rec.preview)
                         .font(.harcCaption)
                         .foregroundStyle(.tertiary)
