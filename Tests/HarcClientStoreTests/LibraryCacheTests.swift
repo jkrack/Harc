@@ -146,6 +146,70 @@ struct LibraryCacheTests {
         #expect(try cache.recording(id: revisionTwo.canonicalID)?.title == "Current")
     }
 
+    @Test("a late delta failure rolls back earlier writes and remains retryable after reopen")
+    func mixedDeltaRollbackAndRetryAcrossReopen() throws {
+        let root = temporaryClientStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attributes = RecordingStorageAttributes()
+        let libraryID = LibraryID(ClientStoreFixtures.uuid(1))
+        let first = ClientStoreFixtures.summary(id: 1, revision: 2, title: "First")
+        let second = ClientStoreFixtures.summary(id: 2, revision: 2, title: "Second")
+        let updated = ClientStoreFixtures.summary(id: 1, revision: 3, title: "Updated")
+        let stale = try RecordingTombstone(
+            canonicalID: second.canonicalID,
+            revision: EntityRevision(1),
+            deletedAt: ClientStoreFixtures.baseDate.addingTimeInterval(20)
+        )
+        let corrected = try RecordingTombstone(
+            canonicalID: second.canonicalID,
+            revision: EntityRevision(3),
+            deletedAt: stale.deletedAt
+        )
+
+        do {
+            let cache = try HarcLibraryCache(rootDirectory: root, storageAttributes: attributes)
+            try cache.replace(with: AnchoredLibrarySnapshot(
+                libraryID: libraryID, anchor: ChangeCursor(10),
+                recordings: [first, second], tombstones: []
+            ))
+            let before = try cache.state()
+            // The first upsert is valid and executes before the stale tombstone.
+            // Rejecting only the cursor or the final row would leave a torn cache.
+            #expect(throws: ClientStoreError.revisionRollback(
+                stored: try EntityRevision(2), presented: try EntityRevision(1)
+            )) {
+                try cache.apply(ClientLibraryDelta(
+                    libraryID: libraryID, after: ChangeCursor(10), through: ChangeCursor(12),
+                    recordings: [updated], tombstones: [stale]
+                ))
+            }
+            #expect(try cache.state() == before)
+            #expect(try cache.recordings() == [first, second])
+            #expect(try cache.tombstones().isEmpty)
+        }
+
+        do {
+            let reopened = try HarcLibraryCache(rootDirectory: root, storageAttributes: attributes)
+            #expect(try reopened.state()?.changeCursor == ChangeCursor(10))
+            #expect(try reopened.recordings() == [first, second])
+            #expect(try reopened.tombstones().isEmpty)
+            // Reuse the rejected boundary: failure must not consume its cursor.
+            try reopened.apply(ClientLibraryDelta(
+                libraryID: libraryID, after: ChangeCursor(10), through: ChangeCursor(12),
+                recordings: [updated], tombstones: [corrected]
+            ))
+            #expect(try reopened.state()?.changeCursor == ChangeCursor(12))
+            #expect(try reopened.recordings() == [updated])
+            #expect(try reopened.tombstones() == [corrected])
+        }
+
+        let verified = try HarcLibraryCache(rootDirectory: root, storageAttributes: attributes)
+        #expect(try verified.state()?.libraryID == libraryID)
+        #expect(try verified.state()?.changeCursor == ChangeCursor(12))
+        #expect(try verified.recordings() == [updated])
+        #expect(try verified.tombstones() == [corrected])
+    }
+
     @Test("offline mutations and visible conflicts are path-free and durable")
     func mutationsAndConflicts() throws {
         let root = temporaryClientStoreDirectory()
