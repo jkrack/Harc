@@ -839,4 +839,45 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             "Accessibility audit found \(findings.count) issue(s) on \(surface)."
         )
     }
+    func testLibraryDaySummaryRemainsReadableAtLargestText() {
+        for category in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
+            let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
+                "--harc-ui-test-cached-library",
+                "-UIPreferredContentSizeCategoryName", category,
+            ])
+            app.launch()
+            selectTab("Library", in: app)
+            let day = app.staticTexts["Today"]
+            let count = app.staticTexts["0 recordings"]
+            XCTAssertTrue(day.waitForExistence(timeout: 10))
+            XCTAssertTrue(count.waitForExistence(timeout: 10))
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Library-day-summary-\(category)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            XCTAssertFalse(count.frame.isEmpty)
+            XCTAssertTrue(app.frame.contains(count.frame))
+            if category == "UICTContentSizeCategoryAccessibilityXXXL" {
+                // The old horizontal header squeezed the count into three lines
+                // ("0", "record-", "ings"). Keep full-size readable text below the day.
+                XCTAssertGreaterThanOrEqual(count.frame.minY, day.frame.maxY)
+                XCTAssertEqual(count.frame.minX, day.frame.minX, accuracy: 2)
+                XCTAssertLessThanOrEqual(count.frame.height, day.frame.height + 2)
+            } else {
+                XCTAssertGreaterThan(count.frame.minX, day.frame.maxX)
+            }
+            let attention = app.buttons["harc.mobile.library.attention"]
+            XCTAssertTrue(attention.waitForExistence(timeout: 10))
+            for _ in 0..<8 where !attention.isHittable { app.swipeUp() }
+            XCTAssertTrue(attention.isHittable)
+            attention.tap()
+            XCTAssertTrue(app.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
+            app.navigationBars["Sending to Mac"].buttons["Library"].tap()
+            XCTAssertTrue(app.tabBars.buttons["Library"].isSelected)
+            XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+            app.terminate()
+            XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        }
+    }
+
 }

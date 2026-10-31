@@ -279,12 +279,16 @@ struct HarcMobileRootView: View {
             Calendar.current.isDate($0.startedAt, inSameDayAs: day)
         }
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            let summaryLayout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                : AnyLayout(HStackLayout())
+            summaryLayout {
                 Text(Calendar.current.isDateInToday(day) ? "Today" : day.formatted(date: .abbreviated, time: .omitted))
                     .font(.system(.headline, design: .rounded))
-                Spacer()
+                if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                 Text("\(recordings.count) recordings")
                     .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HarcTideDayTimeline(intervals: recordings.map {
                 DateInterval(start: $0.startedAt,
