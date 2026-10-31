@@ -32,6 +32,89 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         keepTideScreenshot("Tide-Record")
     }
 
+    func testRecordEmptyTodayRemainsNavigableAtLargestText() {
+        let timelineID = "harc.mobile.record.today.timeline"
+        let populated = makeApp(
+            rootID: TestRoot.recordingEntry,
+            additionalArguments: [
+                "--harc-ui-test-today-timeline",
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+            ]
+        )
+        populated.launch()
+        XCTAssertTrue(populated.buttons["harc.mobile.record.start"].waitForExistence(timeout: 15))
+        let populatedToday = populated.buttons["harc.mobile.record.today"]
+        XCTAssertTrue(populatedToday.waitForExistence(timeout: 10), "Today must retain its navigable button role")
+        for _ in 0..<5 where !populatedToday.isHittable { populated.swipeUp() }
+        // Query the informational Canvas role explicitly and reject duplicate nodes.
+        let populatedTimelines = populated.otherElements.matching(identifier: timelineID)
+        let populatedTimeline = populatedTimelines.element
+        XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
+        XCTAssertEqual(populatedTimelines.count, 1)
+        XCTAssertEqual(populated.descendants(matching: .any).matching(identifier: timelineID).count, 1)
+        // The Canvas is informational, not an action. Check its rendered frame
+        // against the unobscured viewport; hittability belongs to the Today button.
+        func timelineViewport() -> CGRect {
+            let scroll = populated.scrollViews.firstMatch.frame.intersection(populated.frame)
+            let tabBar = populated.tabBars.firstMatch
+            let bottom = tabBar.exists ? min(scroll.maxY, tabBar.frame.minY) : scroll.maxY
+            return CGRect(x: scroll.minX, y: scroll.minY, width: scroll.width,
+                          height: max(0, bottom - scroll.minY))
+        }
+        for _ in 0..<5 where !timelineViewport().contains(populatedTimeline.frame) {
+            populated.swipeUp()
+        }
+        let fixtureAttachment = XCTAttachment(screenshot: populated.screenshot())
+        fixtureAttachment.name = "Record-populated-timeline-presentation-fixture-largest-text"
+        fixtureAttachment.lifetime = .keepAlways
+        add(fixtureAttachment)
+        XCTAssertTrue(populatedToday.isHittable)
+        XCTAssertFalse(populatedTimeline.frame.isEmpty)
+        XCTAssertTrue(
+            timelineViewport().contains(populatedTimeline.frame),
+            "Timeline frame \(populatedTimeline.frame) must fit viewport \(timelineViewport())"
+        )
+        XCTAssertTrue(populated.staticTexts["1 recording · 5 min"].exists)
+        XCTAssertEqual(populated.buttons.matching(identifier: "harc.mobile.record.today").count, 1)
+        populatedToday.tap()
+        let populatedRecordings = populated.navigationBars["On This iPhone"]
+        XCTAssertTrue(populatedRecordings.waitForExistence(timeout: 10))
+        XCTAssertFalse(populated.buttons["harc.mobile.record.stop"].exists)
+        populated.buttons["Done"].tap()
+        XCTAssertTrue(populatedRecordings.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(populatedToday.waitForExistence(timeout: 10))
+        XCTAssertTrue(populatedTimeline.waitForExistence(timeout: 10))
+        XCTAssertTrue(populatedToday.isHittable)
+        populated.terminate()
+        XCTAssertTrue(populated.wait(for: .notRunning, timeout: 10))
+
+        let app = makeApp(rootID: TestRoot.recordingEntry)
+        app.launchArguments += [
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+        let start = app.buttons["harc.mobile.record.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 15))
+        let connection = app.buttons["harc.mobile.host.health"]
+        XCTAssertEqual(connection.label, "Mac connection")
+        XCTAssertEqual(connection.value as? String, "No Mac paired")
+        let today = app.buttons["harc.mobile.record.today"]
+        XCTAssertTrue(today.waitForExistence(timeout: 10), "Empty Today must retain its navigable button role")
+        for _ in 0..<5 where !today.isHittable { app.swipeUp() }
+        XCTAssertTrue(today.isHittable)
+        XCTAssertTrue(app.staticTexts["No recordings yet"].exists)
+        XCTAssertEqual(app.buttons.matching(identifier: "harc.mobile.record.today").count, 1)
+        XCTAssertEqual(app.otherElements.matching(identifier: timelineID).count, 0)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: timelineID).count, 0)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Record-empty-largest-text"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        today.tap()
+        XCTAssertTrue(app.navigationBars["On This iPhone"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+    }
+
     func testTideSearchAndSetupAreReachableWithoutStartingCapture() {
         let app = makeApp(rootID: TestRoot.offlineReview)
         app.launch()

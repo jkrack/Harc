@@ -56,7 +56,7 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
             lastVerifiedAt: nil
         )
 
-        XCTAssertEqual(presentation.title, "Harc Host unavailable")
+        XCTAssertEqual(presentation.title, "Your Mac unavailable")
         XCTAssertEqual(presentation.relativeMoment, .checked(attemptedAt))
     }
 
@@ -86,7 +86,7 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
             localRecordings: []
         )
 
-        XCTAssertEqual(presentation.title, "All recordings verified on Host")
+        XCTAssertEqual(presentation.title, "All recordings verified on Mac")
         XCTAssertEqual(
             presentation.detail,
             "Verified durable receipt received"
@@ -144,8 +144,28 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
             status: .unpaired,
             hostName: nil
         )
-        XCTAssertEqual(unpaired.title, "Pair a Host")
+        XCTAssertEqual(unpaired.title, "Pair a Mac")
+        XCTAssertEqual(unpaired.accessibilityValue, "No Mac paired")
         XCTAssertEqual(unpaired.tone, .neutral)
+    }
+
+    func testMacPillFallbackKeepsConnectionAndRepairMeaning() {
+        let attemptedAt = Date(timeIntervalSinceReferenceDate: 200)
+        let unavailable = HarcMobileHostPillPresentation.make(
+            status: .unavailable(lastAttemptedAt: attemptedAt), hostName: "  "
+        )
+        XCTAssertEqual(unavailable.title, "Your Mac")
+        XCTAssertEqual(unavailable.accessibilityValue, "Your Mac, unavailable")
+        XCTAssertEqual(unavailable.tone, .unavailable)
+        let repair = HarcMobileHostPillPresentation.make(
+            status: .pairingRepairRequired(lastAttemptedAt: attemptedAt),
+            hostName: "Studio Mac"
+        )
+        XCTAssertEqual(repair.title, "Repair pairing")
+        XCTAssertEqual(
+            repair.accessibilityValue,
+            "Pairing with Studio Mac needs repair; recordings remain safe"
+        )
     }
 
     func testSecurityBlockedIsTheOnlyCriticalTransferSummary() {
