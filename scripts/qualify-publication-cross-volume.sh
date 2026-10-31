@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "$0")/build-concurrency.sh"
+harc_configure_build_jobs
+
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repository_root"
 minimum_free_kib=$((5 * 1024 * 1024))
@@ -67,12 +70,12 @@ if not any(e.get('mount-point') == sys.argv[1] for e in entities):
     raise SystemExit('Attached volume did not match the owned mount point')
 PY
 
-options=(--jobs 2)
+options=()
 if [[ "${HARC_SKIP_BUILD:-0}" == 1 ]]; then
     options+=(--skip-build)
 fi
 HARC_CROSS_VOLUME_DESTINATION="$mount_point" \
-    swift test "${options[@]}" --filter 'RecordingPublicationTests/crossVolumePublication' \
+    harc_swift test ${options[@]+"${options[@]}"} --filter 'RecordingPublicationTests/crossVolumePublication' \
     2>&1 | tee "$evidence_root/tests.log"
 python3 - "$evidence_root/tests.log" <<'PY'
 from pathlib import Path

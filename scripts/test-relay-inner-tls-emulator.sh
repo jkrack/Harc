@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "$0")/build-concurrency.sh"
+harc_configure_build_jobs
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RELAY_ROOT="$PROJECT_ROOT/CloudflareRelay"
@@ -47,4 +50,4 @@ fi
 
 cd "$PROJECT_ROOT"
 HARC_RELAY_EMULATOR_ORIGIN="$RELAY_ORIGIN" \
-    swift test --jobs 2 --filter PinnedGRPCLoopbackIntegrationTests
+    harc_swift test --filter PinnedGRPCLoopbackIntegrationTests

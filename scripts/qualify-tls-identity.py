@@ -7,6 +7,7 @@ The second phase runs two built test processes concurrently (no SwiftPM lock).
 This is not an installed app + harc-mcp launch qualification.
 """
 import argparse
+from build_concurrency import job_arguments
 import os
 from pathlib import Path
 import subprocess
@@ -15,6 +16,10 @@ import tempfile
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--identity-only", action="store_true")
 args = parser.parse_args()
+try:
+    build_jobs = job_arguments("--jobs")
+except ValueError as error:
+    parser.error(str(error))
 repo = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="harc-tls-regression-") as scratch:
     root = Path(scratch)
@@ -33,7 +38,7 @@ let package = Package(name: "HarcTLSRegression", platforms: [.macOS(.v26)], targ
 ])
 ''')
     command = ["swift", "test", "--package-path", scratch, "--build-system", "native",
-               "--jobs", "2", "--filter",
+               *build_jobs, "--filter",
                "HostTLSServerIdentityTests" if args.identity_only else
                "HostTLSServerIdentityTests|ListenerTestCycleTests"]
     if args.identity_only:

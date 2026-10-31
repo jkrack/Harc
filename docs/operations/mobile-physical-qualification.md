@@ -56,7 +56,8 @@ gate.
   10-character Apple team ID embedded in its sealed Info.plist.
 - A reachable adopted Host built from the recorded source.
 
-Generate the project, record the clean commit, and build with two workers. Supply
+Generate the project, record the clean commit, and use tool-selected local build
+concurrency (or an explicit `-jobs` override when needed). Supply
 the physical device destination and signing team appropriate to the development
 Mac:
 
@@ -68,10 +69,8 @@ xcodebuild \
   -scheme HarcMobileSpikes \
   -configuration Debug \
   -destination 'id=<physical-device-udid>' \
-  -jobs 2 \
   HARC_BUILD_SHA=<40-hex-commit> \
   DEVELOPMENT_TEAM=<10-character-team-id> \
-  SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
   build
 ```
 
@@ -115,7 +114,8 @@ Run the complete UI bundle through the provenance wrapper instead of an ad-hoc
   --output-dir build/qualification/<unique-run-name>
 ```
 
-The wrapper refuses to overwrite evidence, enforces two workers and requires
+The wrapper refuses to overwrite evidence, uses local tool defaults unless
+`HARC_BUILD_JOBS` is supplied (CI defaults to two workers), and requires
 8 GiB of starting headroom to preserve the 5 GiB operational floor, requires a
 clean tree for release evidence, and retains the
 source-file manifest/fingerprint, source status, destination details, build

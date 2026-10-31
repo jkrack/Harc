@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise ENOSPC and destination detachment on an owned 128 MiB APFS image."""
 import argparse
+from build_concurrency import job_arguments
 import errno
 import hashlib
 import json
@@ -29,6 +30,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence-dir', type=Path)
     args = parser.parse_args()
+    try:
+        build_jobs = job_arguments("-j")
+    except ValueError as error:
+        parser.error(str(error))
     if shutil.disk_usage(REPO).free < 6 * 1024**3:
         raise SystemExit('Requires 6 GiB free; only the owned 128 MiB image will be filled')
     evidence = (args.evidence_dir or REPO / 'build/qualification' /
@@ -41,7 +46,7 @@ def main():
     manifest = {'classification': 'diagnostic APFS image storage failure',
                 'limitations': ['not physical device or power-loss proof', 'no Library commit'],
                 'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
-                'files': {p: digest(REPO / p) for p in SOURCES + ['scripts/qualify-publication-storage.py']},
+                'files': {p: digest(REPO / p) for p in SOURCES + ['scripts/qualify-publication-storage.py', 'scripts/build_concurrency.py']},
                 'cases': {}}
     def command(args, log, check=True):
         with (evidence / log).open('w') as output:
@@ -56,7 +61,7 @@ def main():
         return source
     try:
         binary = root / 'driver'
-        command(['swiftc', '-j', '2', '-o', binary] + [REPO / p for p in SOURCES], 'compile.log')
+        command(['swiftc', *build_jobs, '-o', binary] + [REPO / p for p in SOURCES], 'compile.log')
         manifest['driver_sha256'] = digest(binary)
         command(['hdiutil', 'create', '-size', '128m', '-fs', 'APFS', '-type', 'SPARSE',
                  '-volname', 'HarcStorageQualification', image], 'create.log')

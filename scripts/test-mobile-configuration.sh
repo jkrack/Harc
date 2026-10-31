@@ -5,7 +5,12 @@ test "$(uname -m)" = arm64
 df -Pk "$PWD" | awk 'NR == 2 { exit ($4 < 5242880) }'
 OUTPUT="${HARC_MOBILE_CONFIGURATION_OUTPUT:-.build/mobile-configuration}"
 DERIVED="${HARC_MOBILE_CONFIGURATION_DERIVED:-$OUTPUT/derived}"
-XCODE_OPTIONS=(-skipMacroValidation -skipPackagePluginValidation -jobs 2)
+source scripts/build-concurrency.sh
+harc_configure_build_jobs
+XCODE_OPTIONS=(-skipMacroValidation -skipPackagePluginValidation)
+if [[ -n "$HARC_BUILD_JOB_COUNT" ]]; then
+  XCODE_OPTIONS+=(-jobs "$HARC_BUILD_JOB_COUNT")
+fi
 if [[ -n "${HARC_MOBILE_CONFIGURATION_PACKAGE_CACHE:-}" ]]; then
   mkdir -p "$HARC_MOBILE_CONFIGURATION_PACKAGE_CACHE"
   XCODE_OPTIONS+=(-packageCachePath "$HARC_MOBILE_CONFIGURATION_PACKAGE_CACHE")

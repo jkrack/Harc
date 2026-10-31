@@ -228,20 +228,20 @@ for ATTEMPT in $(seq 1 "$ATTEMPTS"); do
   if [[ "$ALLOW_DIRTY" -eq 1 ]]; then
     DIAGNOSTIC_COLLECTION="never"
   fi
+  source "$REPO_ROOT/scripts/build-concurrency.sh"
+  harc_configure_build_jobs
   set +e
-  xcodebuild \
+  harc_xcodebuild \
     -project Harc.xcodeproj \
     -scheme HarcMobile \
     -configuration Debug \
     -destination "id=$DESTINATION_ID" \
     "${XCODE_DERIVED_DATA_OPTIONS[@]}" \
-    -jobs 2 \
     -parallel-testing-enabled NO \
     -collect-test-diagnostics "$DIAGNOSTIC_COLLECTION" \
     -test-timeouts-enabled YES \
     -default-test-execution-time-allowance 180 \
     -maximum-test-execution-time-allowance 300 \
-    SWIFT_MAXIMUM_CONCURRENT_COMPILE_TASKS=2 \
     HARC_BUILD_SHA="$SOURCE_HEAD" \
     ${SIGNING_OPTIONS[@]+"${SIGNING_OPTIONS[@]}"} \
     -resultBundlePath "$ATTEMPT_BUNDLE" \
