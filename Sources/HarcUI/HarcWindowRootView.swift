@@ -147,6 +147,7 @@ public struct HarcWindowRootView: View {
     @EnvironmentObject var prefs: HarcPreferences
     @EnvironmentObject var postProcessing: RecordingPostProcessingState
     @EnvironmentObject var modelStore: ModelManagerStore
+    @EnvironmentObject var queueStore: SummarizationQueueStore
 
     // MARK: Init
 
@@ -230,6 +231,7 @@ public struct HarcWindowRootView: View {
         // hosted in an AppKit NSWindow; HarcWindowController lets the content
         // run under a transparent title bar so the gradient reaches the top.
         .background { HarcTideBackground() }
+        .tint(HarcTideStyle.cyan)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .accessibilityIdentifier("harc.library.root")
         .onDrop(of: [.fileURL], isTargeted: $importDropTargeted) { providers in
@@ -390,6 +392,7 @@ public struct HarcWindowRootView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .title)
         .onReceive(NotificationCenter.default.publisher(for: .harcLibraryFocusSearch)) { _ in
             librarySearchFocusToken += 1
         }
@@ -411,9 +414,16 @@ public struct HarcWindowRootView: View {
                 } label: {
                     // The actual job, labeled: this is what feeds an LLM.
                     Label("Copy for Prompt", systemImage: "doc.on.doc")
-                        .labelStyle(.titleAndIcon)
+                        .labelStyle(.titleOnly)
+                        .font(.harcLabel.weight(.semibold))
+                        .padding(.horizontal, HarcSpacing.md)
+                        .padding(.vertical, HarcSpacing.sm)
+                        .foregroundStyle(HarcTideStyle.onAccent)
+                        .background(HarcTideStyle.cyan, in: Capsule())
                 }
+                .buttonStyle(.plain)
                 .disabled(currentRecording == nil)
+                .opacity(currentRecording == nil ? 0.45 : 1)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .help("Copy the prompt-formatted transcript for pasting into an LLM")
 
@@ -454,6 +464,7 @@ public struct HarcWindowRootView: View {
                 }
                 .help("Toggle inspector panel")
             }
+            .sharedBackgroundVisibility(.hidden)
         }
     }
 
@@ -618,30 +629,41 @@ public struct HarcWindowRootView: View {
     // MARK: - Sidebar
 
     private var tideTodayOverview: some View {
-        let today = libraryVM.recordings.filter { Calendar.current.isDateInToday($0.startedAt) }
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            tideDayOverview(day: context.date)
+        }
+    }
+
+    private func tideDayOverview(day: Date) -> some View {
+        let today = libraryVM.recordings(on: day)
         let intervals = today.compactMap { recording -> DateInterval? in
             guard let end = recording.endedAt, end >= recording.startedAt else { return nil }
             return DateInterval(start: recording.startedAt, end: end)
         }
+        let seconds = intervals.reduce(0) { $0 + $1.duration }
         return VStack(alignment: .leading, spacing: HarcSpacing.xs) {
             HStack {
-                Text("Today").font(.system(size: 19, weight: .bold, design: .rounded))
+                Text("Today").font(HarcTideStyle.heading)
                 Spacer()
-                Text(Pluralize.count(today.count, "recording"))
+                Text(Pluralize.count(today.count, "recording")
+                     + (today.isEmpty ? "" : " · " + Self.durationFact(seconds)))
                     .font(.harcCaption)
+                    .lineLimit(1)
                     .foregroundStyle(.secondary)
             }
-            HarcTideDayTimeline(intervals: intervals)
-                .frame(height: 40)
-            HStack {
-                Text("12 AM")
-                Spacer()
-                Text("12 PM")
-                Spacer()
-                Text("12 AM")
+            if !today.isEmpty {
+                HarcTideDayTimeline(intervals: intervals, day: day)
+                    .frame(height: 40)
+                HStack {
+                    Text("12 AM")
+                    Spacer()
+                    Text("12 PM")
+                    Spacer()
+                    Text("12 AM")
+                }
+                .font(.harcCaption)
+                .foregroundStyle(.secondary)
             }
-            .font(.harcCaption)
-            .foregroundStyle(.secondary)
         }
         .padding(.horizontal, HarcSpacing.md)
         .padding(.top, HarcSpacing.md)
@@ -670,10 +692,14 @@ public struct HarcWindowRootView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .scrollEdgeEffectHidden()
+            .clipped()
         }
         .background {
+            // The mock gives the sidebar a darker opaque surface. A translucent
+            // wash exposes NavigationSplitView's wallpaper-tinted backdrop.
             HarcTideBackground()
-                .overlay(.black.opacity(colorScheme == .dark ? 0.25 : 0.06))
+                .overlay(.black.opacity(colorScheme == .dark ? 0.25 : 0.04))
         }
         .navigationTitle("Library")
         .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
@@ -807,7 +833,7 @@ public struct HarcWindowRootView: View {
                 Label("People", systemImage: "person.2")
             }
         }
-        .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
+        .tint(HarcTideStyle.cyan)
     }
 
     /// The saturated row is reserved for this — the one place urgency is
@@ -841,6 +867,7 @@ public struct HarcWindowRootView: View {
         .padding(.vertical, HarcSpacing.sm)
         .padding(.horizontal, HarcSpacing.sm)
         .background(HarcBrand.live, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(TideSidebarSelectionStyle().allowsHitTesting(false))
         .tag(LibrarySelection.live)
         .accessibilityIdentifier("harc.library.liveRow")
         .accessibilityLabel("Recording in progress")
@@ -890,7 +917,10 @@ public struct HarcWindowRootView: View {
                         recordingLabel(rec)
                     }
                 } header: {
-                    Text(bucket.label)
+                    // The fixed overview already labels today's recordings.
+                    if bucket.label != "Today" {
+                        Text(bucket.label)
+                    }
                 }
             }
         }
@@ -903,12 +933,12 @@ public struct HarcWindowRootView: View {
         let isSelected = selection == .session(id: overview.id)
         return HStack(alignment: .top, spacing: HarcSpacing.sm) {
             Image(systemName: "square.stack.3d.up")
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(HarcTideStyle.cyan)
                 .frame(width: 18, alignment: .center)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(overview.session.displayTitle)
-                    .font(isSelected ? .body.weight(.semibold) : .body)
+                    .font(isSelected ? .harcBody.weight(.semibold) : .harcBody)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
@@ -922,10 +952,11 @@ public struct HarcWindowRootView: View {
         .padding(.vertical, HarcSpacing.xs)
         .frame(minHeight: 44, alignment: .topLeading)
         .listRowBackground(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+            RoundedRectangle(cornerRadius: HarcTideStyle.selectionRadius, style: .continuous)
+                .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )
+        .background(TideSidebarSelectionStyle().allowsHitTesting(false))
         .tag(LibrarySelection.session(id: overview.id))
         .accessibilityIdentifier("harc.library.session.\(overview.id)")
         .contentShape(Rectangle())
@@ -959,11 +990,9 @@ public struct HarcWindowRootView: View {
 
     var recordingsEmptyState: some View {
         VStack(alignment: .leading, spacing: HarcSpacing.md) {
-            EmptyStateView(
-                icon: "waveform.slash",
-                title: "No recordings yet",
-                subtitle: emptyStateSubtitle
-            )
+            Text("Your recordings will appear here.")
+                .font(.harcCaption)
+                .foregroundStyle(.secondary)
             HStack(spacing: HarcSpacing.sm) {
                 Button("Record") { bridge.onStartStop() }
                     .buttonStyle(.borderedProminent)
@@ -1004,6 +1033,7 @@ public struct HarcWindowRootView: View {
                         .foregroundStyle(.primary)
                 }
             }
+            .background(TideSidebarSelectionStyle().allowsHitTesting(false))
             .tag(LibrarySelection.person(id: item.person.id))
             .onTapGesture { selection = .person(id: item.person.id) }
         }
@@ -1092,7 +1122,7 @@ public struct HarcWindowRootView: View {
                     }
                 }
             }
-            .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
+            .tint(HarcTideStyle.cyan)
         }
     }
 
@@ -1102,7 +1132,7 @@ public struct HarcWindowRootView: View {
         let isSelected = selection == .recording(wavPath: rec.wavPath)
         return HStack(alignment: .top, spacing: HarcSpacing.sm) {
             Image(systemName: rec.pinned ? "pin.fill" : "waveform")
-                .foregroundStyle(Color.accentColor) // pinned is decoration, not status — the glyph shape carries it
+                .foregroundStyle(HarcTideStyle.cyan) // pinned is decoration, not status — the glyph shape carries it
                 .frame(width: 18, alignment: .center)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
@@ -1110,8 +1140,8 @@ public struct HarcWindowRootView: View {
                 // time on the line below, under a day header that already
                 // names the date.
                 Text(rec.hasNameOrSuggestion ? rec.displayTitle : "Untitled recording")
-                    .font(isSelected ? .body.weight(.semibold) : .body)
-                    .foregroundStyle(rec.hasNameOrSuggestion ? .primary : .secondary)
+                    .font(isSelected ? .harcBody.weight(.semibold) : .harcBody)
+                    .foregroundStyle(.primary)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1122,7 +1152,7 @@ public struct HarcWindowRootView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let deviceID = rec.originID?.deviceID {
-                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Another device")
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1150,10 +1180,11 @@ public struct HarcWindowRootView: View {
         // the treatment Finder-class sidebars use; the saturated fill is
         // reserved for the live recording row, where urgency is real.
         .listRowBackground(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+            RoundedRectangle(cornerRadius: HarcTideStyle.selectionRadius, style: .continuous)
+                .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )
+        .background(TideSidebarSelectionStyle().allowsHitTesting(false))
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
         .accessibilityIdentifier("harc.library.recording.\(rec.id.map(String.init) ?? rec.wavPath)")
         .contentShape(Rectangle())
@@ -1335,14 +1366,15 @@ public struct HarcWindowRootView: View {
             FileInspectorSection(recording: recording)
             if let deviceID = recording.originID?.deviceID {
                 Section("Recording origin") {
-                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Another device")
                     LabeledContent("Device ID", value: deviceID.description)
                         .textSelection(.enabled)
                 }
             }
         }
         .formStyle(.grouped)
-        .background(.thinMaterial)
+        .scrollContentBackground(.hidden)
+        .background { HarcTideBackground() }
         .navigationTitle("Inspector")
         .task(id: recording.id) {
             async let summaryData: Void = loadInspectorSummaryData(for: recording)

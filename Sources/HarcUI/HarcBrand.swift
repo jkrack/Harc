@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// The desktop chrome's brand sliver: recording red, app-icon gradient, and
 /// the menu-bar bars motif (which lives in MenuBarBarsIcon). Harc's broader
@@ -10,7 +11,7 @@ import SwiftUI
 public enum HarcBrand {
     /// Recording / "live" red. Drives the menu-bar dot, the recording-state pill,
     /// and any chrome that signals "we are recording right now."
-    public static let live = Color(red: 0xF0/255.0, green: 0x55/255.0, blue: 0x4D/255.0)
+    public static let live = HarcTideStyle.now
 
     /// Static brand gradient. App icon, About panel only. Do not use as a
     /// control fill; interactive presence uses `HarcPresenceBlob`.

@@ -14,6 +14,7 @@ public struct WaveformPlayerView: View {
     let audioURL: URL?
     let tint: Color
     let speakerSegments: [SpeakerSegment]
+    let speakerColors: [Int: Color]
 
     // Owned externally when the caller needs to drive it (the detail pane's
     // ⌘-click-to-seek and playback word highlight); self-owned otherwise.
@@ -27,12 +28,14 @@ public struct WaveformPlayerView: View {
         audioURL: URL?,
         tint: Color = HarcTideStyle.ocean,
         speakerSegments: [SpeakerSegment] = [],
+        speakerColors: [Int: Color] = [:],
         model: WaveformPlayerModel? = nil
     ) {
         self.envelope = envelope
         self.audioURL = audioURL
         self.tint = tint
         self.speakerSegments = speakerSegments
+        self.speakerColors = speakerColors
         if let model {
             self._model = ObservedObject(wrappedValue: model)
         } else {
@@ -43,77 +46,73 @@ public struct WaveformPlayerView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 10) {
-            ZStack(alignment: .top) {
+        VStack(spacing: HarcSpacing.sm) {
+            if !hasLevels && !showsSpeakerTimeline {
+                HStack(spacing: HarcSpacing.md) {
+                    if model.duration > 0 { playButton }
+                    Text(model.duration <= 0 ? "No playable audio was saved"
+                         : model.duration < 1 ? "Less than a second of audio"
+                         : model.duration <= 1 ? "1 second of audio" : "Audio ready to play")
+                        .font(.harcCaption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    if model.duration > 1 {
+                        Text(formatTime(model.duration)).font(.harcMono)
+                    }
+                }
+            } else {
                 Group {
                     if showsSpeakerTimeline {
                         speakerTimeline
                     } else if hasLevels {
                         waveform
                     } else {
-                        // No envelope and no length: say so in one line
-                        // instead of drawing a 150pt empty chart.
                         Text("No audio levels for this recording")
                             .font(.harcCaption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-                HStack(spacing: 8) {
-                    // The mode is already named by the Energy / Speakers
-                    // control under the plot; a second label here competed
-                    // with the curve.
-                    playButton
-                        .padding(5)
-                        .background(.black.opacity(0.55), in: Capsule())
-                    Spacer()
-                    timeLabel
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 7)
-                        .background(.black.opacity(0.55), in: Capsule())
+                .frame(height: hasLevels || showsSpeakerTimeline ? 150 : 72) // token-exempt: Tide's primary data plot.
+                if !speakerSegments.isEmpty {
+                    speakerLane
+                        .frame(height: 7)
                 }
-                .padding(.horizontal, 4)
-                .padding(.top, 4)
-            }
-            .frame(height: hasLevels || showsSpeakerTimeline ? 150 : 72) // token-exempt: Tide's primary data plot.
-            if !speakerSegments.isEmpty {
-                speakerLane
-                    .frame(height: 7)
-            }
-            if hasLevels || !speakerSegments.isEmpty {
-                HStack(spacing: 4) {
-                    Text("0:00")
-                    Spacer()
-                    if model.duration > 0 {
-                        Text(formatTime(model.duration / 4))
+                if hasLevels || !speakerSegments.isEmpty {
+                    HStack(spacing: 4) {
+                        playButton
+                        Text("0:00")
                         Spacer()
-                    }
-                    modeButton("Energy", selected: !showsSpeakerTimeline) {
-                        showsSpeakerTimeline = false
-                    }
-                    if !speakerSegments.isEmpty {
-                        modeButton("Speakers", selected: showsSpeakerTimeline) {
-                            showsSpeakerTimeline = true
+                        if model.duration > 0 {
+                            Text(formatTime(model.duration / 4))
+                            Spacer()
+                        }
+                        modeButton("Energy", selected: !showsSpeakerTimeline) {
+                            showsSpeakerTimeline = false
+                        }
+                        if !speakerSegments.isEmpty {
+                            modeButton("Speakers", selected: showsSpeakerTimeline) {
+                                showsSpeakerTimeline = true
+                            }
+                        }
+                        Spacer()
+                        if model.duration > 0 {
+                            Text(formatTime(model.duration * 3 / 4))
+                            Spacer()
+                            Text(formatTime(model.duration))
                         }
                     }
-                    Spacer()
-                    if model.duration > 0 {
-                        Text(formatTime(model.duration * 3 / 4))
-                        Spacer()
-                        Text(formatTime(model.duration))
-                    }
+                    .font(.harcMono)
+                    .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
-        .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, HarcSpacing.lg)
+        .padding(.vertical, HarcSpacing.md)
+        .background(hasLevels ? HarcTideStyle.plotFill : HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .strokeBorder(.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius)
+                .strokeBorder(HarcTideStyle.cardBorder, lineWidth: 1)
         }
         .task(id: audioURL) {
             guard let audioURL else {
@@ -129,9 +128,10 @@ public struct WaveformPlayerView: View {
 
     // MARK: - Sub-views
 
-    /// Whether there is anything to plot: a loaded envelope or a known length.
+    /// Duration alone is not an energy envelope. Subsecond audio stays playable
+    /// in the compact row without a chart of repeated zero-second ticks.
     private var hasLevels: Bool {
-        envelope.count > 1 || model.duration > 0
+        envelope.count > 1 && model.duration > 1
     }
 
     private var playButton: some View {
@@ -140,9 +140,9 @@ public struct WaveformPlayerView: View {
         } label: {
             Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
                 .font(.harcLabel.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(HarcTideStyle.onAccent)
                 .frame(width: 28, height: 28)
-                .background(Circle().fill(tint))
+                .background(Circle().fill(HarcTideStyle.cyan))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(model.isPlaying ? "Pause recording" : "Play recording")
@@ -158,13 +158,16 @@ public struct WaveformPlayerView: View {
             .contentShape(Rectangle())
             .onTapGesture { location in
                 guard model.duration > 0 else { return }
-                let fraction = max(0, min(1, location.x / geo.size.width))
+                let fraction = max(0, min(1, (location.x - HarcTideStyle.curveInset)
+                                             / max(1, geo.size.width - 2 * HarcTideStyle.curveInset)))
                 let target = fraction * model.duration
                 Task { await model.seek(to: target, andPlay: true) }
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position")
+        // Synchronize fixture captures with the real asynchronous envelope load.
+        .accessibilityIdentifier(envelope.count > 1 ? "harc.player.waveform.ready" : "harc.player.waveform.loading")
         .accessibilityValue(formatRange(current: model.currentTime, total: model.duration))
         .accessibilityAdjustableAction { direction in
             let delta: Double = direction == .increment ? 10 : -10
@@ -221,16 +224,9 @@ public struct WaveformPlayerView: View {
     }
 
     private func speakerColor(_ index: Int) -> Color {
+        if let color = speakerColors[index] { return color }
         let colors: [Color] = [HarcTideStyle.cyan, .purple, .orange, .teal, .green, .pink]
         return colors[abs(index) % colors.count]
-    }
-
-    private var timeLabel: some View {
-        Text(formatRange(current: model.currentTime, total: model.duration))
-            .font(.harcMono)
-            .foregroundStyle(.white.opacity(0.88))
-            .monospacedDigit()
-            .frame(minWidth: 80, alignment: .trailing)
     }
 
     // MARK: - Drawing
@@ -238,43 +234,40 @@ public struct WaveformPlayerView: View {
     private func drawEnvelope(ctx: GraphicsContext, size: CGSize) {
         guard envelope.count > 1 else { return }
         let baseline = size.height - 8
-        let stepX = size.width / CGFloat(envelope.count - 1)
-        var trace = Path()
-        for i in envelope.indices {
-            let x = CGFloat(i) * stepX
-            let sample = envelope[i].isFinite ? min(1, max(0, envelope[i])) : 0
-            let point = CGPoint(x: x, y: baseline - CGFloat(sample) * (baseline - 6))
-            if i == 0 { trace.move(to: point) }
-            else { trace.addLine(to: point) }
-        }
+        let trace = HarcTideCurve(samples: envelope, size: size,
+                                  baseline: baseline, amplitude: baseline - 6,
+                                  horizontalInset: HarcTideStyle.curveInset).path
         var p = trace
         p.addLine(to: CGPoint(x: size.width, y: baseline))
         p.addLine(to: CGPoint(x: 0, y: baseline))
         p.closeSubpath()
         ctx.fill(p, with: .linearGradient(
-            Gradient(colors: [tint.opacity(0.45), tint.opacity(0.08)]),
+            Gradient(colors: [tint.opacity(0.35), .clear]),
             startPoint: .zero,
             endPoint: CGPoint(x: 0, y: baseline)
         ))
         ctx.stroke(trace, with: .color(tint), lineWidth: 2)
         if model.duration > 0 {
             var played = ctx
-            let width = size.width * min(1, max(0, model.currentTime / model.duration))
+            let width = HarcTideStyle.curveInset + max(0, size.width - 2 * HarcTideStyle.curveInset)
+                * min(1, max(0, model.currentTime / model.duration))
             played.clip(to: Path(CGRect(x: 0, y: 0, width: width, height: size.height)))
-            played.stroke(trace, with: .color(.primary), lineWidth: 2)
+            played.stroke(trace, with: .color(HarcTideStyle.played), lineWidth: 2)
         }
     }
 
     private func drawPlayhead(ctx: GraphicsContext, size: CGSize) {
         guard model.duration > 0 else { return }
         let fraction = min(1, max(0, model.currentTime / model.duration))
-        let x = CGFloat(fraction) * size.width
+        let x = HarcTideStyle.curveInset + CGFloat(fraction) * max(0, size.width - 2 * HarcTideStyle.curveInset)
         var p = Path()
         p.move(to: CGPoint(x: x, y: 0))
         p.addLine(to: CGPoint(x: x, y: size.height))
-        ctx.stroke(p, with: .color(tint), lineWidth: 1.5)
-        ctx.fill(Path(ellipseIn: CGRect(x: x - 4, y: size.height - 12, width: 8, height: 8)),
-                 with: .color(HarcTideStyle.cyan))
+        ctx.stroke(p, with: .color(HarcTideStyle.played.opacity(0.5)), lineWidth: 1)
+        let curve = HarcTideCurve(samples: envelope, size: size,
+                                  baseline: size.height - 8, amplitude: size.height - 14,
+                                  horizontalInset: HarcTideStyle.curveInset)
+        HarcTideStyle.drawNowDot(in: ctx, at: curve.point(at: fraction), radius: 7)
     }
 
     private func formatRange(current: Double, total: Double) -> String {
