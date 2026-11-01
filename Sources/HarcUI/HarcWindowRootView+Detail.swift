@@ -43,6 +43,7 @@ extension HarcWindowRootView {
                         .overlay {
                             RoundedRectangle(cornerRadius: HarcSpacing.sm)
                                 .strokeBorder(HarcTideStyle.cardBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
                         }
                 }
             }

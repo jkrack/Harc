@@ -19,6 +19,9 @@ struct TideLibrarySearchField: NSViewRepresentable {
         field.isBordered = false
         field.drawsBackground = false
         field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.searchChanged(_:))
+        field.sendsSearchStringImmediately = true
         return field
     }
 
@@ -46,6 +49,10 @@ struct TideLibrarySearchField: NSViewRepresentable {
 
         func searchFieldDidEndSearching(_ sender: NSSearchField) {
             // The native clear button ends searching without a typing event.
+            parent.text = sender.stringValue
+        }
+
+        @objc func searchChanged(_ sender: NSSearchField) {
             parent.text = sender.stringValue
         }
     }

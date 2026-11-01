@@ -43,7 +43,7 @@ final class HarcAppUITests: XCTestCase {
                     app.buttons["harc.library.capture.recordButton"].click()
                     XCTAssertTrue(app.descendants(matching: .any)["harc.library.liveRow"].waitForExistence(timeout: 10))
                 } else if state != "empty" {
-                    let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording.")).firstMatch
+                    let row = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording.")).firstMatch
                     XCTAssertTrue(row.waitForExistence(timeout: 60), app.debugDescription)
                     row.click()
                     if ["complete", "integrity", "origins"].contains(state) {
@@ -75,7 +75,7 @@ final class HarcAppUITests: XCTestCase {
                     add(scrolled)
                 }
                 if state == "origins" {
-                    let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording."))
+                    let rows = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording."))
                     if rows.count > 1 { rows.element(boundBy: 1).click() }
                     XCTAssertTrue(staticText(containing: "Recorded on James’s iPhone").waitForExistence(timeout: 10), app.debugDescription)
                     XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
