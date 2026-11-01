@@ -33,7 +33,7 @@ extension HarcWindowRootView {
     var detailBody: some View {
         libraryDetail
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("")
+            .navigationTitle("Library")
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     TideLibrarySearchField(text: $libraryVM.searchText, focusToken: librarySearchFocusToken)
@@ -246,7 +246,7 @@ extension HarcWindowRootView {
                 }
             }
         }
-        .navigationTitle("")
+        .navigationTitle(recording.displayTitle)
         .background(transcriptKeyboardShortcuts())
         // Reload transcript when the selection's recording row changes in the DB.
         // Two child tasks, not two awaits: `observeRecording` iterates a DB
@@ -292,8 +292,8 @@ extension HarcWindowRootView {
 
     private func conditionFacts(for recording: Recording) -> [String] {
         var facts: [String] = []
-        if let duration = recordedDuration(of: recording) {
-            facts.append(duration)
+        if recordedDuration(of: recording) != nil, let endedAt = recording.endedAt {
+            facts.append(Self.durationFact(endedAt.timeIntervalSince(recording.startedAt)))
         }
         let speakerCount = speakerIndices(for: recording).count
         if speakerCount > 0 {

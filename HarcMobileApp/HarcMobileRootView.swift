@@ -295,7 +295,7 @@ struct HarcMobileRootView: View {
             }
         }
         .padding(14)
-        .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
+        .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius))
     }
 
     private var libraryDayPicker: some View {
@@ -685,9 +685,9 @@ struct HarcMobileRootView: View {
                 }
             }
             .padding(14)
-            .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
+            .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius)
+                RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius)
                     .stroke(HarcTideStyle.cardBorder, lineWidth: 1)
             }
         }

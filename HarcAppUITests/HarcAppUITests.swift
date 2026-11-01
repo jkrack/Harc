@@ -51,6 +51,13 @@ final class HarcAppUITests: XCTestCase {
                         XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
                     }
                 }
+                if state == "untitled" {
+                    XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
+                } else if state == "short" {
+                    XCTAssertTrue(staticText(containing: "Less than a second of audio").waitForExistence(timeout: 10), app.debugDescription)
+                } else if state == "short-day" {
+                    XCTAssertTrue(staticText(containing: "1 second of audio").waitForExistence(timeout: 10), app.debugDescription)
+                }
                 if ["untitled", "zero", "short", "short-day"].contains(state) {
                     XCTAssertTrue(staticText(containing: "No transcript available").waitForExistence(timeout: 10), app.debugDescription)
                     XCTAssertFalse(app.buttons["Generate"].exists, app.debugDescription)

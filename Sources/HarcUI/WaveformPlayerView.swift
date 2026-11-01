@@ -127,9 +127,9 @@ public struct WaveformPlayerView: View {
         }
         .padding(.horizontal, HarcSpacing.lg)
         .padding(.vertical, HarcSpacing.md)
-        .background(hasLevels ? HarcTideStyle.plotFill : HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
+        .background(hasLevels ? HarcTideStyle.plotFill : HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius)
+            RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius)
                 .strokeBorder(HarcTideStyle.cardBorder, lineWidth: 1)
         }
         .task(id: audioURL) {
@@ -176,7 +176,8 @@ public struct WaveformPlayerView: View {
             .contentShape(Rectangle())
             .onTapGesture { location in
                 guard model.duration > 0 else { return }
-                let fraction = max(0, min(1, location.x / geo.size.width))
+                let fraction = max(0, min(1, (location.x - HarcTideStyle.curveInset)
+                                             / max(1, geo.size.width - 2 * HarcTideStyle.curveInset)))
                 let target = fraction * model.duration
                 Task { await model.seek(to: target, andPlay: true) }
             }
@@ -260,7 +261,8 @@ public struct WaveformPlayerView: View {
         guard envelope.count > 1 else { return }
         let baseline = size.height - 8
         let trace = HarcTideCurve(samples: envelope, size: size,
-                                  baseline: baseline, amplitude: baseline - 6).path
+                                  baseline: baseline, amplitude: baseline - 6,
+                                  horizontalInset: HarcTideStyle.curveInset).path
         var p = trace
         p.addLine(to: CGPoint(x: size.width, y: baseline))
         p.addLine(to: CGPoint(x: 0, y: baseline))
@@ -273,7 +275,8 @@ public struct WaveformPlayerView: View {
         ctx.stroke(trace, with: .color(tint), lineWidth: 2)
         if model.duration > 0 {
             var played = ctx
-            let width = size.width * min(1, max(0, model.currentTime / model.duration))
+            let width = HarcTideStyle.curveInset + max(0, size.width - 2 * HarcTideStyle.curveInset)
+                * min(1, max(0, model.currentTime / model.duration))
             played.clip(to: Path(CGRect(x: 0, y: 0, width: width, height: size.height)))
             played.stroke(trace, with: .color(HarcTideStyle.played), lineWidth: 2)
         }
@@ -282,14 +285,15 @@ public struct WaveformPlayerView: View {
     private func drawPlayhead(ctx: GraphicsContext, size: CGSize) {
         guard model.duration > 0 else { return }
         let fraction = min(1, max(0, model.currentTime / model.duration))
-        let x = CGFloat(fraction) * size.width
+        let x = HarcTideStyle.curveInset + CGFloat(fraction) * max(0, size.width - 2 * HarcTideStyle.curveInset)
         var p = Path()
         p.move(to: CGPoint(x: x, y: 0))
         p.addLine(to: CGPoint(x: x, y: size.height))
         ctx.stroke(p, with: .color(HarcTideStyle.played.opacity(0.5)), lineWidth: 1)
         let curve = HarcTideCurve(samples: envelope, size: size,
-                                  baseline: size.height - 8, amplitude: size.height - 14)
-        HarcTideStyle.drawNowDot(in: ctx, at: curve.point(at: fraction))
+                                  baseline: size.height - 8, amplitude: size.height - 14,
+                                  horizontalInset: HarcTideStyle.curveInset)
+        HarcTideStyle.drawNowDot(in: ctx, at: curve.point(at: fraction), radius: 7)
     }
 
     private func formatRange(current: Double, total: Double) -> String {

@@ -392,6 +392,7 @@ public struct HarcWindowRootView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .title)
         .onReceive(NotificationCenter.default.publisher(for: .harcLibraryFocusSearch)) { _ in
             librarySearchFocusToken += 1
         }
@@ -413,9 +414,16 @@ public struct HarcWindowRootView: View {
                 } label: {
                     // The actual job, labeled: this is what feeds an LLM.
                     Label("Copy for Prompt", systemImage: "doc.on.doc")
-                        .labelStyle(.titleAndIcon)
+                        .labelStyle(.titleOnly)
+                        .font(.harcLabel.weight(.semibold))
+                        .padding(.horizontal, HarcSpacing.md)
+                        .padding(.vertical, HarcSpacing.sm)
+                        .foregroundStyle(HarcTideStyle.onAccent)
+                        .background(HarcTideStyle.cyan, in: Capsule())
                 }
+                .buttonStyle(.plain)
                 .disabled(currentRecording == nil)
+                .opacity(currentRecording == nil ? 0.45 : 1)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .help("Copy the prompt-formatted transcript for pasting into an LLM")
 
@@ -456,6 +464,7 @@ public struct HarcWindowRootView: View {
                 }
                 .help("Toggle inspector panel")
             }
+            .sharedBackgroundVisibility(.hidden)
         }
     }
 
@@ -631,12 +640,15 @@ public struct HarcWindowRootView: View {
             guard let end = recording.endedAt, end >= recording.startedAt else { return nil }
             return DateInterval(start: recording.startedAt, end: end)
         }
+        let seconds = intervals.reduce(0) { $0 + $1.duration }
         return VStack(alignment: .leading, spacing: HarcSpacing.xs) {
             HStack {
                 Text("Today").font(HarcTideStyle.heading)
                 Spacer()
-                Text(Pluralize.count(today.count, "recording"))
+                Text(Pluralize.count(today.count, "recording")
+                     + (today.isEmpty ? "" : " · " + Self.durationFact(seconds)))
                     .font(.harcCaption)
+                    .lineLimit(1)
                     .foregroundStyle(.secondary)
             }
             if !today.isEmpty {
@@ -937,7 +949,7 @@ public struct HarcWindowRootView: View {
         .padding(.vertical, HarcSpacing.xs)
         .frame(minHeight: 44, alignment: .topLeading)
         .listRowBackground(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: HarcTideStyle.selectionRadius, style: .continuous)
                 .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )
@@ -1165,7 +1177,7 @@ public struct HarcWindowRootView: View {
         // the treatment Finder-class sidebars use; the saturated fill is
         // reserved for the live recording row, where urgency is real.
         .listRowBackground(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: HarcTideStyle.selectionRadius, style: .continuous)
                 .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )

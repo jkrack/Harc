@@ -8,7 +8,7 @@ enum HarcMobilePalette {
     static let indigo = Color(red: 0.20, green: 0.18, blue: 0.55)
     static let violet = Color(red: 0.47, green: 0.22, blue: 0.72)
     static let cyan = Color(red: 0.10, green: 0.58, blue: 0.75)
-    static let coral = Color(red: 0.91, green: 0.20, blue: 0.30)
+    static let coral = HarcTideStyle.now
     static let amber = Color(red: 0.86, green: 0.47, blue: 0.08)
     static let success = Color(red: 0.08, green: 0.55, blue: 0.34)
 }
@@ -356,7 +356,7 @@ struct HarcMobileCaptureHeroView: View {
                     control
                     VStack(spacing: 6) {
                         Text("Tap to record")
-                            .font(HarcTideStyle.heading)
+                            .font(HarcTideStyle.callToAction)
                         Text("Saved on this iPhone first, then sent to your Mac")
                             .font(.footnote)
                             .foregroundStyle(.secondary)

@@ -17,20 +17,25 @@ public enum HarcTideStyle {
     // Tide's surface and visualization roles are shared by both platforms.
     public static let mist = Color(red: 0.95, green: 0.97, blue: 1)
     public static let paleBlue = Color(red: 0.85, green: 0.92, blue: 0.98)
-    public static let selection = cyan.opacity(0.16)
-    public static let cardFill = Color.primary.opacity(0.055)
+    public static let selection = cyan.opacity(0.14)
+    public static let cardFill = Color.primary.opacity(0.06)
     public static let cardBorder = Color.primary.opacity(0.08)
-    public static let plotFill = adaptive(light: deepBlue.opacity(0.55), dark: cardFill)
+    public static let plotFill = adaptive(light: deepBlue.opacity(0.55), dark: Color.primary.opacity(0.05))
     public static let onAccent = adaptive(light: .white, dark: navy)
     public static let played = Color.white
-    public static let now = Color(red: 1, green: 85 / 255, blue: 96 / 255)
+    public static let now = Color(red: 240 / 255, green: 85 / 255, blue: 77 / 255)
     public static let nowRing = Color.white
     // token-exempt: Tide's mock has rounded display roles beyond Harc's body roles.
-    public static let title = Font.system(size: 29, weight: .bold, design: .rounded)
-    public static let numeral = Font.system(size: 36, weight: .bold, design: .rounded)
-    public static let metric = Font.system(size: 30, weight: .bold, design: .rounded)
+    public static let title = Font.system(size: 30, weight: .bold, design: .rounded)
+    public static let numeral = Font.system(size: 34, weight: .bold, design: .rounded)
+    public static let metric = Font.system(size: 28, weight: .bold, design: .rounded)
     public static let heading = Font.system(size: 20, weight: .bold, design: .rounded)
-    public static let cardRadius: CGFloat = 16
+    public static let callToAction = Font.system(.title2, design: .rounded, weight: .bold)
+    // token-exempt: imported Tide card geometry (14pt insights, 18pt plots).
+    public static let cardRadius: CGFloat = 14
+    public static let plotRadius: CGFloat = 18
+    public static let selectionRadius: CGFloat = 10
+    public static let curveInset: CGFloat = 8
     public static let deepBlue = Color(red: 23 / 255, green: 54 / 255, blue: 90 / 255)
 
     private static func adaptive(light: Color, dark: Color) -> Color {
@@ -91,7 +96,11 @@ public struct HarcTideSecurityWords: View {
 /// an adaptive layout so accessibility sizes never silently clip a status.
 public struct HarcTideConditions<Content: View>: View {
     private let content: Content
+#if os(macOS)
     @ScaledMetric(relativeTo: .body) private var textSize: CGFloat = 14
+#else
+    @ScaledMetric(relativeTo: .body) private var textSize: CGFloat = 13
+#endif
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     public init(@ViewBuilder content: () -> Content) {
@@ -106,9 +115,9 @@ public struct HarcTideConditions<Content: View>: View {
             content
         }
         .font(.system(size: textSize, weight: .semibold, design: .rounded))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 20))
+        .padding(.horizontal, 18) // token-exempt: mock conditions inset.
+        .padding(.vertical, 8)
+        .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 20))
         .overlay {
             RoundedRectangle(cornerRadius: 20)
                 .stroke(.primary.opacity(0.10), lineWidth: 1)
@@ -139,7 +148,8 @@ public struct HarcTideEnergyTrace: View {
 
             guard samples.count > 1 else { return }
             let curve = HarcTideCurve(samples: Array(samples.suffix(600)), size: size,
-                                      baseline: baseline, amplitude: size.height * 0.68)
+                                      baseline: baseline, amplitude: size.height * 0.68,
+                                      horizontalInset: HarcTideStyle.curveInset)
             let trace = curve.path
             var fill = trace
             fill.addLine(to: CGPoint(x: size.width, y: baseline))
@@ -153,7 +163,7 @@ public struct HarcTideEnergyTrace: View {
                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
             if let progress = playbackProgress, progress.isFinite {
                 let fraction = min(1, max(0, progress))
-                let x = size.width * fraction
+                let x = curve.point(at: fraction).x
                 var played = context
                 played.clip(to: Path(CGRect(x: 0, y: 0, width: x, height: size.height)))
                 played.stroke(trace, with: .color(HarcTideStyle.played), lineWidth: 2.5)
@@ -161,10 +171,10 @@ public struct HarcTideEnergyTrace: View {
                 marker.move(to: CGPoint(x: x, y: 0))
                 marker.addLine(to: CGPoint(x: x, y: baseline))
                 context.stroke(marker, with: .color(HarcTideStyle.played.opacity(0.5)), lineWidth: 1)
-                HarcTideStyle.drawNowDot(in: context, at: curve.point(at: fraction))
+                HarcTideStyle.drawNowDot(in: context, at: curve.point(at: fraction), radius: 6)
             }
             if isLive {
-                HarcTideStyle.drawNowDot(in: context, at: curve.point(at: 1))
+                HarcTideStyle.drawNowDot(in: context, at: curve.point(at: 1), radius: 6)
             }
         }
         .accessibilityLabel("Microphone energy")
@@ -174,8 +184,9 @@ public struct HarcTideEnergyTrace: View {
 
 
 public extension HarcTideStyle {
-    static func drawNowDot(in context: GraphicsContext, at point: CGPoint) {
-        let circle = Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8))
+    static func drawNowDot(in context: GraphicsContext, at point: CGPoint, radius: CGFloat = 4) {
+        let circle = Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius,
+                                          width: radius * 2, height: radius * 2))
         context.fill(circle, with: .color(now))
         context.stroke(circle, with: .color(nowRing), lineWidth: 2)
     }
@@ -188,7 +199,8 @@ public struct HarcTideCurve {
     private let points: [CGPoint]
     private let slopes: [CGFloat]
 
-    public init(samples: [Float], size: CGSize, baseline: CGFloat, amplitude: CGFloat) {
+    public init(samples: [Float], size: CGSize, baseline: CGFloat, amplitude: CGFloat,
+                horizontalInset: CGFloat = 0) {
         guard samples.count > 1 else {
             points = []; slopes = []
             return
@@ -203,8 +215,9 @@ public struct HarcTideCurve {
             }
             levels.append(CGFloat(sum / Float(upper - lower)))
         }
+        let inset = min(max(0, horizontalInset), max(0, size.width) / 2)
         points = levels.enumerated().map { index, level in
-            CGPoint(x: CGFloat(index) / CGFloat(count - 1) * size.width,
+            CGPoint(x: inset + CGFloat(index) / CGFloat(count - 1) * max(0, size.width - 2 * inset),
                     y: baseline - level * amplitude)
         }
         let differences = zip(points, points.dropFirst()).map { left, right in
