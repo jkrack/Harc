@@ -10,13 +10,14 @@ struct TideLibrarySearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
+        let field = TideSearchField()
+        field.cell = TideSearchCell(textCell: "")
         field.placeholderString = "Search meetings and transcripts"
         field.setAccessibilityIdentifier("harc.library.search")
         field.setAccessibilityLabel("Search meetings and transcripts")
         // Native bezels use wallpaper-tinted material even in an opaque window.
-        field.isBezeled = false
-        field.isBordered = false
+        // Keep native cell tracking for the search and clear buttons.
+        field.isBezeled = true
         field.drawsBackground = false
         field.delegate = context.coordinator
         field.target = context.coordinator
@@ -33,6 +34,16 @@ struct TideLibrarySearchField: NSViewRepresentable {
         DispatchQueue.main.async { [weak field] in
             guard let field, let window = field.window else { return }
             window.makeFirstResponder(field)
+        }
+    }
+
+    final class TideSearchField: NSSearchField {
+        override var mouseDownCanMoveWindow: Bool { false }
+    }
+
+    final class TideSearchCell: NSSearchFieldCell {
+        override func drawBezel(withFrame frameRect: NSRect, in controlView: NSView) {
+            // SwiftUI draws the opaque Tide surface around this native control.
         }
     }
 
