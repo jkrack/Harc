@@ -917,7 +917,10 @@ public struct HarcWindowRootView: View {
                         recordingLabel(rec)
                     }
                 } header: {
-                    Text(bucket.label)
+                    // The fixed overview already labels today's recordings.
+                    if bucket.label != "Today" {
+                        Text(bucket.label)
+                    }
                 }
             }
         }
