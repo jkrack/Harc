@@ -190,7 +190,7 @@ extension HarcWindowRootView {
                 if recording.captureIntegrity.hasIssues || !recording.captureDiscontinuities.isEmpty {
                     Label("Some audio may be missing. Review capture interruptions before relying on this recording.", systemImage: "exclamationmark.triangle")
                         .font(.harcCaption)
-                        .foregroundStyle(Color.harc(.attention))
+                        .foregroundStyle(.primary)
                         .accessibilityIdentifier("harc.recording.captureIntegrityWarning")
                 }
 
