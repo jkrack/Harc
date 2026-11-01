@@ -5,7 +5,7 @@
 This checkpoint supersedes the dated status snapshots below. Source merges,
 fixture checks and release qualification are separate evidence scopes.
 
-Current main is `ccc6bad4388dfe20e608abac25213fe6a29f2eae`, tree
+The implementation baseline verified on main is `ccc6bad4388dfe20e608abac25213fe6a29f2eae`, tree
 `6e7fab2b7d94316982143e2cb09af790a65e479b`. On October 31, corrected preparation
 [#170](https://github.com/jkrack/Harc/pull/170) and the UI stack
 #159 → #161 → #162 → #163 → #165 → #166 merged normally in dependency order.
@@ -20,7 +20,7 @@ cache regression: a valid update followed by a stale tombstone rolls back the
 whole delta, retains records/cursor after reopen, and accepts a corrected retry.
 All six focused cache tests passed. [Exact-head CI](https://github.com/jkrack/Harc/actions/runs/41234273680)
 passed at `1304c343ae58778d19878b01300f248b19e67ac9`; hosted tested merge
-`1dca5258987c994e328a72746186b33932aa2e8b` has the current main tree.
+`1dca5258987c994e328a72746186b33932aa2e8b` has that baseline tree.
 [Post-merge CI](https://github.com/jkrack/Harc/actions/runs/41237916396) passed
 smoke and relay. Heavy PR-only lanes were skipped on the push as designed.
 This is cache transaction/reopen coverage, not a physical stale-cursor diagnosis,

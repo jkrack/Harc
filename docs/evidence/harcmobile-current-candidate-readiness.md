@@ -35,7 +35,7 @@ remain useful history and must not be relabeled as current-candidate qualificati
 
 ## November 1 source checkpoint
 
-Current main is `ccc6bad4388dfe20e608abac25213fe6a29f2eae`, tree
+The implementation baseline verified on main is `ccc6bad4388dfe20e608abac25213fe6a29f2eae`, tree
 `6e7fab2b7d94316982143e2cb09af790a65e479b`. Corrected #170 and UI PRs
 #159/#161/#162/#163/#165/#166 merged October 31; #172 then added the Library
 mixed-delta rollback/reopen/retry regression. The stack is no longer an unmerged
@@ -45,7 +45,7 @@ for exact-source CI, ownership and preserved historical limits.
 
 [#172 CI](https://github.com/jkrack/Harc/actions/runs/41234273680) passed the
 package, mobile, macOS and relay checks. Hosted tested merge
-`1dca5258987c994e328a72746186b33932aa2e8b` has the same tree as current main;
+`1dca5258987c994e328a72746186b33932aa2e8b` has the same tree as that baseline;
 [post-merge smoke/relay](https://github.com/jkrack/Harc/actions/runs/41237916396)
 also passed. These are source/fixture results, not a sealed archive or physical
 phone/Host Library result. #170 needed one unchanged-head mobile retry after a
