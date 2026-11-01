@@ -121,11 +121,13 @@ extension HarcWindowRootView {
 
         let fmt = DateFormatter()
         fmt.dateStyle = .none
-        fmt.timeStyle = .short
+        let duration = rec.endedAt.map { max(0, $0.timeIntervalSince(rec.startedAt)) }
+        fmt.timeStyle = duration.map { $0 <= 1 } == true ? .medium : .short
         parts.append(fmt.string(from: rec.startedAt))
 
-        if let endedAt = rec.endedAt {
-            parts.append(formatDuration(from: rec.startedAt, to: endedAt))
+        if let duration, let endedAt = rec.endedAt {
+            parts.append(duration < 1 ? "Under 1 sec" : duration == 1 ? "1 sec"
+                         : formatDuration(from: rec.startedAt, to: endedAt))
         }
 
         // speakerNames is populated by diarization at save; its count is the

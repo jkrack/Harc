@@ -147,6 +147,7 @@ public struct HarcWindowRootView: View {
     @EnvironmentObject var prefs: HarcPreferences
     @EnvironmentObject var postProcessing: RecordingPostProcessingState
     @EnvironmentObject var modelStore: ModelManagerStore
+    @EnvironmentObject var queueStore: SummarizationQueueStore
 
     // MARK: Init
 
@@ -230,6 +231,7 @@ public struct HarcWindowRootView: View {
         // hosted in an AppKit NSWindow; HarcWindowController lets the content
         // run under a transparent title bar so the gradient reaches the top.
         .background { HarcTideBackground() }
+        .tint(HarcTideStyle.cyan)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .accessibilityIdentifier("harc.library.root")
         .onDrop(of: [.fileURL], isTargeted: $importDropTargeted) { providers in
@@ -618,30 +620,38 @@ public struct HarcWindowRootView: View {
     // MARK: - Sidebar
 
     private var tideTodayOverview: some View {
-        let today = libraryVM.recordings.filter { Calendar.current.isDateInToday($0.startedAt) }
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            tideDayOverview(day: context.date)
+        }
+    }
+
+    private func tideDayOverview(day: Date) -> some View {
+        let today = libraryVM.recordings(on: day)
         let intervals = today.compactMap { recording -> DateInterval? in
             guard let end = recording.endedAt, end >= recording.startedAt else { return nil }
             return DateInterval(start: recording.startedAt, end: end)
         }
         return VStack(alignment: .leading, spacing: HarcSpacing.xs) {
             HStack {
-                Text("Today").font(.system(size: 19, weight: .bold, design: .rounded))
+                Text("Today").font(HarcTideStyle.heading)
                 Spacer()
                 Text(Pluralize.count(today.count, "recording"))
                     .font(.harcCaption)
                     .foregroundStyle(.secondary)
             }
-            HarcTideDayTimeline(intervals: intervals)
-                .frame(height: 40)
-            HStack {
-                Text("12 AM")
-                Spacer()
-                Text("12 PM")
-                Spacer()
-                Text("12 AM")
+            if !today.isEmpty {
+                HarcTideDayTimeline(intervals: intervals, day: day)
+                    .frame(height: 40)
+                HStack {
+                    Text("12 AM")
+                    Spacer()
+                    Text("12 PM")
+                    Spacer()
+                    Text("12 AM")
+                }
+                .font(.harcCaption)
+                .foregroundStyle(.secondary)
             }
-            .font(.harcCaption)
-            .foregroundStyle(.secondary)
         }
         .padding(.horizontal, HarcSpacing.md)
         .padding(.top, HarcSpacing.md)
@@ -670,10 +680,11 @@ public struct HarcWindowRootView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .scrollEdgeEffectHidden()
+            .clipped()
         }
         .background {
-            HarcTideBackground()
-                .overlay(.black.opacity(colorScheme == .dark ? 0.25 : 0.06))
+            Color.black.opacity(colorScheme == .dark ? 0.16 : 0.035)
         }
         .navigationTitle("Library")
         .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
@@ -807,7 +818,7 @@ public struct HarcWindowRootView: View {
                 Label("People", systemImage: "person.2")
             }
         }
-        .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
+        .tint(HarcTideStyle.selection)
     }
 
     /// The saturated row is reserved for this — the one place urgency is
@@ -908,7 +919,7 @@ public struct HarcWindowRootView: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(overview.session.displayTitle)
-                    .font(isSelected ? .body.weight(.semibold) : .body)
+                    .font(isSelected ? .harcBody.weight(.semibold) : .harcBody)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
@@ -923,7 +934,7 @@ public struct HarcWindowRootView: View {
         .frame(minHeight: 44, alignment: .topLeading)
         .listRowBackground(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+                .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )
         .tag(LibrarySelection.session(id: overview.id))
@@ -959,11 +970,9 @@ public struct HarcWindowRootView: View {
 
     var recordingsEmptyState: some View {
         VStack(alignment: .leading, spacing: HarcSpacing.md) {
-            EmptyStateView(
-                icon: "waveform.slash",
-                title: "No recordings yet",
-                subtitle: emptyStateSubtitle
-            )
+            Text("Your recordings will appear here.")
+                .font(.harcCaption)
+                .foregroundStyle(.secondary)
             HStack(spacing: HarcSpacing.sm) {
                 Button("Record") { bridge.onStartStop() }
                     .buttonStyle(.borderedProminent)
@@ -1092,7 +1101,7 @@ public struct HarcWindowRootView: View {
                     }
                 }
             }
-            .tint(Color(red: 0.34, green: 0.43, blue: 0.55))
+            .tint(HarcTideStyle.selection)
         }
     }
 
@@ -1110,8 +1119,8 @@ public struct HarcWindowRootView: View {
                 // time on the line below, under a day header that already
                 // names the date.
                 Text(rec.hasNameOrSuggestion ? rec.displayTitle : "Untitled recording")
-                    .font(isSelected ? .body.weight(.semibold) : .body)
-                    .foregroundStyle(rec.hasNameOrSuggestion ? .primary : .secondary)
+                    .font(isSelected ? .harcBody.weight(.semibold) : .harcBody)
+                    .foregroundStyle(.primary)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1122,7 +1131,7 @@ public struct HarcWindowRootView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let deviceID = rec.originID?.deviceID {
-                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Another device")
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1151,7 +1160,7 @@ public struct HarcWindowRootView: View {
         // reserved for the live recording row, where urgency is real.
         .listRowBackground(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+                .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
@@ -1335,7 +1344,7 @@ public struct HarcWindowRootView: View {
             FileInspectorSection(recording: recording)
             if let deviceID = recording.originID?.deviceID {
                 Section("Recording origin") {
-                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Other device")
+                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Another device")
                     LabeledContent("Device ID", value: deviceID.description)
                         .textSelection(.enabled)
                 }

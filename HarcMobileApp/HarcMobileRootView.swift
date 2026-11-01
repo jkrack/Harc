@@ -171,9 +171,10 @@ struct HarcMobileRootView: View {
                             "Find a moment",
                             systemImage: "magnifyingglass",
                             description: Text(
-                                "Search Host titles, tags, and transcripts."
+                                "Search titles, tags, and transcripts on your Mac."
                             )
                         )
+                        .listRowBackground(HarcTideStyle.cardFill)
                     } else {
                         librarySearchView(coordinator)
                     }
@@ -246,7 +247,7 @@ struct HarcMobileRootView: View {
             }
 
             if unifiedLibraryGroups.isEmpty {
-                Section { unifiedLibraryEmptyState }
+                Section { unifiedLibraryEmptyState.listRowBackground(HarcTideStyle.cardFill) }
             } else {
                 ForEach(unifiedLibraryGroups.filter { libraryDay == nil || $0.day == libraryDay }) { group in
                     Section(group.title) {
@@ -285,14 +286,16 @@ struct HarcMobileRootView: View {
                 Text("\(recordings.count) recordings")
                     .font(.caption)
             }
-            HarcTideDayTimeline(intervals: recordings.map {
-                DateInterval(start: $0.startedAt,
-                             duration: libraryDuration($0))
-            }, day: day)
-            .frame(height: 64)
+            if !recordings.isEmpty {
+                HarcTideDayTimeline(intervals: recordings.map {
+                    DateInterval(start: $0.startedAt,
+                                 duration: libraryDuration($0))
+                }, day: day)
+                .frame(height: 64)
+            }
         }
         .padding(14)
-        .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
+        .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
     }
 
     private var libraryDayPicker: some View {
@@ -559,7 +562,7 @@ struct HarcMobileRootView: View {
                                     localRecordings: transfer.localRecordings,
                                     hostName: adoptedHostName
                                 )
-                            if transferSummaryKind(transfer) == .caughtUp {
+                            if transferSummaryKind(transfer) == .caughtUp, !transfer.localRecordings.isEmpty {
                                 HarcMobileTransferSummaryView(
                                     kind: .caughtUp,
                                     presentation: presentation,
@@ -661,29 +664,31 @@ struct HarcMobileRootView: View {
                     Text("Today")
                         .font(.system(.headline, design: .rounded))
                     Spacer()
-                    Text("\(today.count) recordings · \(Int(duration / 60)) min")
+                    Text(today.isEmpty ? "No recordings yet" : "\(today.count) recordings · \(Int(duration / 60)) min")
                         .font(.system(size: daySummaryTextSize))
                         .foregroundStyle(.primary)
                 }
-                HarcTideDayTimeline(intervals: today.map {
-                    DateInterval(start: $0.startedAt, duration: max(0, $0.duration))
-                })
-                .frame(height: 48)
-                HStack {
-                    Text("12 AM")
-                    Spacer()
-                    Text("On this iPhone")
-                    Spacer()
-                    Text("12 AM")
+                if !today.isEmpty {
+                    HarcTideDayTimeline(intervals: today.map {
+                        DateInterval(start: $0.startedAt, duration: max(0, $0.duration))
+                    })
+                    .frame(height: 48)
+                    HStack {
+                        Text("12 AM")
+                        Spacer()
+                        Text("On this iPhone")
+                        Spacer()
+                        Text("12 AM")
+                    }
+                    .font(.system(size: dayAxisTextSize, weight: .semibold))
+                    .foregroundStyle(.primary)
                 }
-                .font(.system(size: dayAxisTextSize, weight: .semibold))
-                .foregroundStyle(.primary)
             }
             .padding(14)
-            .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
+            .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(.primary.opacity(0.10), lineWidth: 1)
+                RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius)
+                    .stroke(HarcTideStyle.cardBorder, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -699,7 +704,7 @@ struct HarcMobileRootView: View {
                     pendingCount: transfer.pendingCount,
                     localRecordings: transfer.localRecordings
                 )
-                Text("\(pending) to send")
+                if pending > 0 { Text("\(pending) to send") }
             }
             if let capture = model.captureCoordinator, capture.isRecording {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in

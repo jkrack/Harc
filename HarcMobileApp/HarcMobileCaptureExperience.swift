@@ -4,8 +4,7 @@ import SwiftUI
 import UIKit
 
 enum HarcMobilePalette {
-    // White text on this blue exceeds the 4.5:1 normal-text contrast floor.
-    static let action = Color(red: 0, green: 0.34, blue: 0.72)
+    static let action = HarcTideStyle.cyan
     static let indigo = Color(red: 0.20, green: 0.18, blue: 0.55)
     static let violet = Color(red: 0.47, green: 0.22, blue: 0.72)
     static let cyan = Color(red: 0.10, green: 0.58, blue: 0.75)
@@ -44,7 +43,7 @@ struct HarcMobileCaptureStatusPresentation: Equatable {
         switch status {
         case .unpaired:
             return Self(
-                title: "No Host paired",
+                title: "No Mac paired",
                 detail: "Recording stays protected on this iPhone",
                 systemImage: "macmini",
                 tone: .neutral,
@@ -309,8 +308,8 @@ struct HarcMobileHostPillPresentation: Equatable {
         switch status {
         case .unpaired:
             return Self(
-                title: "Pair a Host",
-                accessibilityValue: "No Host paired",
+                title: "Pair a Mac",
+                accessibilityValue: "No Mac paired",
                 tone: .neutral
             )
         case .checking:
@@ -357,10 +356,10 @@ struct HarcMobileCaptureHeroView: View {
                     control
                     VStack(spacing: 6) {
                         Text("Tap to record")
-                            .font(.title3.weight(.semibold))
+                            .font(HarcTideStyle.heading)
                         Text("Saved on this iPhone first, then sent to your Mac")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .multilineTextAlignment(.center)
@@ -462,6 +461,7 @@ struct HarcMobileCaptureHeroView: View {
                 .foregroundStyle(.primary)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(HarcTideStyle.onAccent)
         case .storageExhausted:
             Label(
                 "iPhone storage is full",
@@ -474,6 +474,7 @@ struct HarcMobileCaptureHeroView: View {
                 .multilineTextAlignment(.center)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(HarcTideStyle.onAccent)
         case .failed(let message):
             Text("Recording ended")
                 .font(.title2.weight(.semibold))
@@ -482,6 +483,7 @@ struct HarcMobileCaptureHeroView: View {
                 .multilineTextAlignment(.center)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(HarcTideStyle.onAccent)
         case .idle, .recording:
             EmptyView()
         }

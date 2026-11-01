@@ -144,7 +144,7 @@ final class HarcMobileCaptureExperienceTests: XCTestCase {
             status: .unpaired,
             hostName: nil
         )
-        XCTAssertEqual(unpaired.title, "Pair a Host")
+        XCTAssertEqual(unpaired.title, "Pair a Mac")
         XCTAssertEqual(unpaired.tone, .neutral)
     }
 

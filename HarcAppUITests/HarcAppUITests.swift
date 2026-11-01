@@ -51,6 +51,10 @@ final class HarcAppUITests: XCTestCase {
                         XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
                     }
                 }
+                if ["untitled", "zero", "short", "short-day"].contains(state) {
+                    XCTAssertTrue(staticText(containing: "No transcript available").waitForExistence(timeout: 10), app.debugDescription)
+                    XCTAssertFalse(app.buttons["Generate"].exists, app.debugDescription)
+                }
                 let shot = XCTAttachment(screenshot: app.screenshot())
                 shot.name = "fidelity-mac-\(state)-\(appearance)"
                 shot.lifetime = .keepAlways
@@ -66,6 +70,8 @@ final class HarcAppUITests: XCTestCase {
                 if state == "origins" {
                     let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording."))
                     if rows.count > 1 { rows.element(boundBy: 1).click() }
+                    XCTAssertTrue(staticText(containing: "Recorded on James’s iPhone").waitForExistence(timeout: 10), app.debugDescription)
+                    XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
                     let origin = XCTAttachment(screenshot: app.screenshot())
                     origin.name = "fidelity-mac-origin-second-\(appearance)"
                     origin.lifetime = .keepAlways

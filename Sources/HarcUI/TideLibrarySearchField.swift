@@ -14,6 +14,10 @@ struct TideLibrarySearchField: NSViewRepresentable {
         field.placeholderString = "Search meetings and transcripts"
         field.setAccessibilityIdentifier("harc.library.search")
         field.setAccessibilityLabel("Search meetings and transcripts")
+        // Native bezels use wallpaper-tinted material even in an opaque window.
+        field.isBezeled = false
+        field.isBordered = false
+        field.drawsBackground = false
         field.delegate = context.coordinator
         return field
     }
