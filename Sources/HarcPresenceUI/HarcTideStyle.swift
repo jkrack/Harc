@@ -22,6 +22,7 @@ public enum HarcTideStyle {
     public static let cardBorder = Color.primary.opacity(0.08)
     public static let plotFill = adaptive(light: deepBlue.opacity(0.55), dark: Color.primary.opacity(0.05))
     public static let onAccent = adaptive(light: .white, dark: navy)
+    public static let caption = adaptive(light: deepBlue, dark: .white.opacity(0.75))
     public static let played = Color.white
     public static let now = Color(red: 240 / 255, green: 85 / 255, blue: 77 / 255)
     public static let nowRing = Color.white

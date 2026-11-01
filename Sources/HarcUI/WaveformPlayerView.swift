@@ -61,36 +61,17 @@ public struct WaveformPlayerView: View {
                     }
                 }
             } else {
-                ZStack(alignment: .top) {
-                    Group {
-                        if showsSpeakerTimeline {
-                            speakerTimeline
-                        } else if hasLevels {
-                            waveform
-                        } else {
-                            // No envelope and no length: say so in one line
-                            // instead of drawing a 150pt empty chart.
-                            Text("No audio levels for this recording")
-                                .font(.harcCaption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        }
+                Group {
+                    if showsSpeakerTimeline {
+                        speakerTimeline
+                    } else if hasLevels {
+                        waveform
+                    } else {
+                        Text("No audio levels for this recording")
+                            .font(.harcCaption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    HStack(spacing: 8) {
-                        // The mode is already named by the Energy / Speakers
-                        // control under the plot; a second label here competed
-                        // with the curve.
-                        playButton
-                            .padding(5)
-                            .background(.black.opacity(0.55), in: Capsule())
-                        Spacer()
-                        timeLabel
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 7)
-                            .background(.black.opacity(0.55), in: Capsule())
-                    }
-                    .padding(.horizontal, 4)
-                    .padding(.top, 4)
                 }
                 .frame(height: hasLevels || showsSpeakerTimeline ? 150 : 72) // token-exempt: Tide's primary data plot.
                 if !speakerSegments.isEmpty {
@@ -99,6 +80,7 @@ public struct WaveformPlayerView: View {
                 }
                 if hasLevels || !speakerSegments.isEmpty {
                     HStack(spacing: 4) {
+                        playButton
                         Text("0:00")
                         Spacer()
                         if model.duration > 0 {
@@ -245,14 +227,6 @@ public struct WaveformPlayerView: View {
         if let color = speakerColors[index] { return color }
         let colors: [Color] = [HarcTideStyle.cyan, .purple, .orange, .teal, .green, .pink]
         return colors[abs(index) % colors.count]
-    }
-
-    private var timeLabel: some View {
-        Text(formatRange(current: model.currentTime, total: model.duration))
-            .font(.harcMono)
-            .foregroundStyle(.white.opacity(0.88))
-            .monospacedDigit()
-            .frame(minWidth: 80, alignment: .trailing)
     }
 
     // MARK: - Drawing

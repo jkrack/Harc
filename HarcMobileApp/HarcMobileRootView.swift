@@ -536,6 +536,8 @@ struct HarcMobileRootView: View {
                             .padding(.top, 14)
 
                         if case .recording(let startedAt) = coordinator.state {
+                            // token-exempt: Tide's recording stack uses the shared 8/24pt rhythm;
+                            // HarcSpacing lives in the Mac-only HarcUI module.
                             VStack(spacing: 8) {
                                 HarcMobileElapsedTime(startedAt: startedAt, presentation: .hero)
                                 recordHeader(captureState: coordinator.state)

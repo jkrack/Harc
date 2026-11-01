@@ -26,65 +26,86 @@ final class HarcAppUITests: XCTestCase {
         rootURL = nil
     }
 
-    /// The same matrix is captured before and after the presentation pass.
-    func testTideFidelityStateMatrix() throws {
+    /// Separate cases bound screenshot memory and scratch audio per appearance.
+    func testTideFidelityStateMatrixDark() throws {
+        try captureTideMatrix(appearance: "dark")
+    }
+
+    func testTideFidelityStateMatrixLight() throws {
+        try captureTideMatrix(appearance: "light")
+    }
+
+    private func captureTideMatrix(appearance: String) throws {
         let states = ["complete", "untitled", "zero", "short", "integrity", "origins", "live", "short-day", "empty"]
-        for appearance in ["dark", "light"] {
-            for state in states {
-                app.terminate()
-                let fixtureRoot = rootURL.appendingPathComponent("\(state)-\(appearance)")
-                app.launchEnvironment["HARC_UI_TEST_ROOT"] = fixtureRoot.path
-                app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
-                app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = state
-                app.launchEnvironment["HARC_UI_TEST_FAKE_RECORDING"] = "1"
-                app.launch()
-                XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 60), app.debugDescription)
-                if state == "live" {
-                    app.buttons["harc.library.capture.recordButton"].click()
-                    XCTAssertTrue(app.descendants(matching: .any)["harc.library.liveRow"].waitForExistence(timeout: 10))
-                } else if state != "empty" {
-                    let row = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording.")).firstMatch
-                    XCTAssertTrue(row.waitForExistence(timeout: 60), app.debugDescription)
-                    row.click()
-                    if ["complete", "integrity", "origins"].contains(state) {
-                        XCTAssertTrue(staticText(containing: "Talk time").waitForExistence(timeout: 20), app.debugDescription)
-                        XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
-                    }
-                }
-                if state == "untitled" {
-                    XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
-                } else if state == "short" {
-                    XCTAssertTrue(staticText(containing: "Less than a second of audio").waitForExistence(timeout: 10), app.debugDescription)
-                } else if state == "short-day" {
-                    XCTAssertTrue(staticText(containing: "1 second of audio").waitForExistence(timeout: 10), app.debugDescription)
-                }
-                if ["untitled", "zero", "short", "short-day"].contains(state) {
-                    XCTAssertTrue(staticText(containing: "No transcript available").waitForExistence(timeout: 10), app.debugDescription)
-                    XCTAssertFalse(app.buttons["Generate"].exists, app.debugDescription)
-                }
-                let shot = XCTAttachment(screenshot: app.screenshot())
-                shot.name = "fidelity-mac-\(state)-\(appearance)"
-                shot.lifetime = .keepAlways
-                add(shot)
-                if state == "short-day" {
-                    let list = app.scrollViews.firstMatch
-                    list.swipeUp()
-                    let scrolled = XCTAttachment(screenshot: app.screenshot())
-                    scrolled.name = "fidelity-mac-short-day-scrolled-\(appearance)"
-                    scrolled.lifetime = .keepAlways
-                    add(scrolled)
-                }
-                if state == "origins" {
-                    let rows = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording."))
-                    if rows.count > 1 { rows.element(boundBy: 1).click() }
-                    XCTAssertTrue(staticText(containing: "Recorded on James’s iPhone").waitForExistence(timeout: 10), app.debugDescription)
-                    XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
-                    let origin = XCTAttachment(screenshot: app.screenshot())
-                    origin.name = "fidelity-mac-origin-second-\(appearance)"
-                    origin.lifetime = .keepAlways
-                    add(origin)
-                }
+        for state in states {
+            try autoreleasepool {
+                try captureTideState(state, appearance: appearance)
             }
+        }
+    }
+
+    private func captureTideState(_ state: String, appearance: String) throws {
+        app.terminate()
+        let fixtureRoot = rootURL.appendingPathComponent("\(state)-\(appearance)")
+        defer {
+            app.terminate()
+            try? FileManager.default.removeItem(at: fixtureRoot)
+        }
+        app.launchEnvironment["HARC_UI_TEST_ROOT"] = fixtureRoot.path
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
+        app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = state
+        app.launchEnvironment["HARC_UI_TEST_FAKE_RECORDING"] = "1"
+        app.launch()
+        XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 60), app.debugDescription)
+        app.activate() // Window screenshots otherwise include an occluding app in an empty fixture.
+        if state == "live" {
+            app.buttons["harc.library.capture.recordButton"].click()
+            XCTAssertTrue(app.descendants(matching: .any)["harc.library.liveRow"].waitForExistence(timeout: 10))
+        } else if state != "empty" {
+            let row = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording.")).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 60), app.debugDescription)
+            row.click()
+            if ["complete", "integrity", "origins"].contains(state) {
+                XCTAssertTrue(staticText(containing: "Talk time").waitForExistence(timeout: 20), app.debugDescription)
+                XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
+            }
+        }
+        if state == "untitled" {
+            XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
+        } else if state == "short" {
+            XCTAssertTrue(staticText(containing: "Less than a second of audio").waitForExistence(timeout: 10), app.debugDescription)
+        } else if state == "short-day" {
+            XCTAssertTrue(staticText(containing: "1 second of audio").waitForExistence(timeout: 10), app.debugDescription)
+        }
+        if ["untitled", "zero", "short", "short-day"].contains(state) {
+            XCTAssertTrue(staticText(containing: "No transcript available").waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertFalse(app.buttons["Generate"].exists, app.debugDescription)
+        }
+        let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        shot.name = "fidelity-mac-\(state)-\(appearance)"
+        shot.lifetime = .keepAlways
+        add(shot)
+        if state == "short-day" {
+            let list = app.scrollViews.firstMatch
+            list.swipeUp()
+            let scrolled = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            scrolled.name = "fidelity-mac-short-day-scrolled-\(appearance)"
+            scrolled.lifetime = .keepAlways
+            add(scrolled)
+        }
+        if state == "origins" {
+            // A row identifier is inherited by every child text element.
+            let phone = app.outlines.staticTexts.matching(NSPredicate(
+                format: "label == %@ OR value == %@", "James’s iPhone", "James’s iPhone"
+            )).firstMatch
+            XCTAssertTrue(phone.waitForExistence(timeout: 10), app.debugDescription)
+            phone.click()
+            XCTAssertTrue(staticText(containing: "Recorded on James’s iPhone").waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
+            let origin = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            origin.name = "fidelity-mac-origin-second-\(appearance)"
+            origin.lifetime = .keepAlways
+            add(origin)
         }
     }
 
@@ -100,7 +121,7 @@ final class HarcAppUITests: XCTestCase {
         launchFixtureLibrary()
         XCTAssertTrue(staticText(containing: "UI Test Customer Renewal").exists)
         XCTAssertTrue(warning.waitForExistence(timeout: 8), app.debugDescription)
-        let evidence = XCTAttachment(screenshot: app.screenshot())
+        let evidence = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         evidence.name = "Capture warning after relaunch"
         evidence.lifetime = .keepAlways
         add(evidence)
@@ -128,7 +149,7 @@ final class HarcAppUITests: XCTestCase {
             XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 4))
             XCTAssertTrue(staticText(containing: "Talk time").waitForExistence(timeout: 4), app.debugDescription)
             XCTAssertTrue(staticText(containing: "Action items").waitForExistence(timeout: 4), app.debugDescription)
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
             screenshot.name = "Tide Library – \(appearance)"
             screenshot.lifetime = .keepAlways
             add(screenshot)
@@ -318,7 +339,7 @@ final class HarcAppUITests: XCTestCase {
         picker().click()
         app.menuItems["UI Voice Carol"].click()
         XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)
-        let evidence = XCTAttachment(screenshot: app.screenshot())
+        let evidence = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         evidence.name = "Bound speaker identity after relink"
         evidence.lifetime = .keepAlways
         add(evidence)

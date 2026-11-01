@@ -359,7 +359,7 @@ struct HarcMobileCaptureHeroView: View {
                             .font(HarcTideStyle.callToAction)
                         Text("Saved on this iPhone first, then sent to your Mac")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HarcTideStyle.caption)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .multilineTextAlignment(.center)
