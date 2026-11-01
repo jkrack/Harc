@@ -357,6 +357,7 @@ struct HarcMobileCaptureHeroView: View {
                     VStack(spacing: 6) {
                         Text("Tap to record")
                             .font(HarcTideStyle.callToAction)
+                        // token-exempt: native Dynamic Type caption; HarcType is Mac-only.
                         Text("Saved on this iPhone first, then sent to your Mac")
                             .font(.footnote)
                             .foregroundStyle(HarcTideStyle.caption)

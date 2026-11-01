@@ -1373,7 +1373,8 @@ public struct HarcWindowRootView: View {
             }
         }
         .formStyle(.grouped)
-        .background(.thinMaterial)
+        .scrollContentBackground(.hidden)
+        .background { HarcTideBackground() }
         .navigationTitle("Inspector")
         .task(id: recording.id) {
             async let summaryData: Void = loadInspectorSummaryData(for: recording)
