@@ -82,3 +82,11 @@ do not establish rendering of populated Host results.
 
 Detailed logs, xcresult paths, manifests and chronological evidence are in
 [the implementation plan](../../../plans/2026-10-19-tide-mac-ios.md).
+
+## November 1 fidelity pass
+
+The expanded real-library state matrix, current findings, source identities and
+new test results are in [fidelity-gaps.md](fidelity-gaps.md). Compare the retained
+before/after PNGs in the [capture index](fidelity-comparison.md) or the
+[side-by-side gallery](fidelity-comparison.html). This pass is separate from the
+historical qualification above.

@@ -10,5 +10,35 @@
   },
   "macBuildLog": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-before-build-04.log",
   "iphoneResult": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-before.xcresult",
-  "wallpaper": "temporarily Red Orange; original Middle East"
+  "wallpaper": "temporarily Red Orange; original Middle East",
+  "additionalIPhoneRecordingBaseline": {
+    "kind": "replayed retained pre-fix simulator app after production fixes",
+    "appBuildSHA": "672b73dd3c49a6c51a681ddac61dea98cf4c6e6f",
+    "presentationSource": "d9392e7",
+    "executableSHA256": "b2f8dabe1428a8b48724333fc511e68d4af99c439d43e929e0f696594d39335e",
+    "testSourceSHA256": "4e2e91a4cf069ad84bef7fec9e01cd2aa77b9cbf525bbe9070acfd1c58d8d798",
+    "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-before-recording-retained.xcresult",
+    "result": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    "scope": "Four recording-state screenshots; original eight unpaired baseline captures retained"
+  },
+  "supplementaryMacReplays": {
+    "presenter": "immutable fixture-only baseline app; HarcBuildSHA=7cfb9e7",
+    "fixtureSourceSHA256": "44a1f7b58df9fccb4a05cb077230fc342d9bc551e4234fec6bee971e85520f3d",
+    "refreshedInitialCaptures": [
+      "manual-mac-complete-light.png",
+      "manual-mac-integrity-dark.png",
+      "manual-mac-integrity-light.png"
+    ],
+    "reason": "Fresh roots remove stale early fixture words and wait for the waveform; the original pre-fix rendering binary is retained.",
+    "addedComparisons": [
+      "manual-mac-inspector-dark.png",
+      "manual-mac-inspector-light.png",
+      "manual-mac-played-dark.png"
+    ],
+    "timing": "Replayed after the fidelity fixes; initial baseline and gap table preceded fixes."
+  }
 }
