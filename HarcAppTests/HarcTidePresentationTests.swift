@@ -31,10 +31,13 @@ struct HarcTidePresentationTests {
         let samples: [Float] = [.nan, -.infinity, -2, 0, 1, 8, .infinity, 0.5]
         let curve = HarcTideCurve(samples: samples, size: CGSize(width: 320, height: 100),
                                   baseline: 90, amplitude: 80)
+        // Flat Hermite segments can evaluate one floating-point ULP past a bound.
+        let epsilon: CGFloat = 1e-9
         for step in 0...100 {
             let point = curve.point(at: Double(step) / 100)
             #expect(point.x.isFinite && point.y.isFinite)
-            #expect(point.y >= 10 && point.y <= 90)
+            #expect(point.y >= 10 - epsilon && point.y <= 90 + epsilon,
+                    "Curve point \(point) exceeds the measured bounds")
         }
         #expect(curve.point(at: -1).x == 0)
         #expect(curve.point(at: 2).x == 320)
