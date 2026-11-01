@@ -43,6 +43,11 @@ struct TideLibrarySearchField: NSViewRepresentable {
             guard let field = notification.object as? NSSearchField else { return }
             parent.text = field.stringValue
         }
+
+        func searchFieldDidEndSearching(_ sender: NSSearchField) {
+            // The native clear button ends searching without a typing event.
+            parent.text = sender.stringValue
+        }
     }
 }
 
