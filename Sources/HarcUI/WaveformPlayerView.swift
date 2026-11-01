@@ -140,9 +140,9 @@ public struct WaveformPlayerView: View {
         } label: {
             Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
                 .font(.harcLabel.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(HarcTideStyle.onAccent)
                 .frame(width: 28, height: 28)
-                .background(Circle().fill(tint))
+                .background(Circle().fill(HarcTideStyle.cyan))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(model.isPlaying ? "Pause recording" : "Play recording")
