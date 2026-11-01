@@ -85,7 +85,7 @@ public struct SummaryCardView: View {
         tintedContainer {
             HStack(spacing: HarcSpacing.md) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(HarcTideStyle.cyan)
                 Text("No summary yet.")
                     .font(.harcBody)
                     .foregroundStyle(Color.secondary)
@@ -276,7 +276,7 @@ public struct SummaryCardView: View {
         VStack(alignment: .leading, spacing: HarcSpacing.xs) {
             HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(HarcTideStyle.cyan)
                 Text("Summary")
                     .font(.harcCaption.weight(.semibold))
                     .textCase(.uppercase)

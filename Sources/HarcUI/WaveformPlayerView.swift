@@ -14,6 +14,7 @@ public struct WaveformPlayerView: View {
     let audioURL: URL?
     let tint: Color
     let speakerSegments: [SpeakerSegment]
+    let speakerColors: [Int: Color]
 
     // Owned externally when the caller needs to drive it (the detail pane's
     // ⌘-click-to-seek and playback word highlight); self-owned otherwise.
@@ -27,12 +28,14 @@ public struct WaveformPlayerView: View {
         audioURL: URL?,
         tint: Color = HarcTideStyle.ocean,
         speakerSegments: [SpeakerSegment] = [],
+        speakerColors: [Int: Color] = [:],
         model: WaveformPlayerModel? = nil
     ) {
         self.envelope = envelope
         self.audioURL = audioURL
         self.tint = tint
         self.speakerSegments = speakerSegments
+        self.speakerColors = speakerColors
         if let model {
             self._model = ObservedObject(wrappedValue: model)
         } else {
@@ -238,6 +241,7 @@ public struct WaveformPlayerView: View {
     }
 
     private func speakerColor(_ index: Int) -> Color {
+        if let color = speakerColors[index] { return color }
         let colors: [Color] = [HarcTideStyle.cyan, .purple, .orange, .teal, .green, .pink]
         return colors[abs(index) % colors.count]
     }

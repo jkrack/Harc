@@ -33,6 +33,7 @@ extension HarcWindowRootView {
     var detailBody: some View {
         libraryDetail
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("")
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     TideLibrarySearchField(text: $libraryVM.searchText, focusToken: librarySearchFocusToken)
@@ -197,6 +198,7 @@ extension HarcWindowRootView {
                     envelope: detailEnvelope,
                     audioURL: URL(fileURLWithPath: recording.wavPath),
                     speakerSegments: detailDocument?.speakers ?? [],
+                    speakerColors: detailSpeakerColors,
                     model: playerModel
                 )
 
@@ -244,7 +246,7 @@ extension HarcWindowRootView {
                 }
             }
         }
-        .navigationTitle(recording.displayTitle)
+        .navigationTitle("")
         .background(transcriptKeyboardShortcuts())
         // Reload transcript when the selection's recording row changes in the DB.
         // Two child tasks, not two awaits: `observeRecording` iterates a DB
@@ -434,7 +436,7 @@ extension HarcWindowRootView {
                 HStack(spacing: HarcSpacing.xs) {
                     GeometryReader { geometry in
                         Capsule()
-                            .fill(tideSpeakerColor(index).opacity(0.8))
+                            .fill(Color(nsColor: TranscriptDetailEditor.speakerColor(for: name)).opacity(0.8))
                             .frame(width: max(3, geometry.size.width * CGFloat(durations[index, default: 0]) / CGFloat(total)))
                     }
                     .frame(width: 40, height: 6)
@@ -448,9 +450,8 @@ extension HarcWindowRootView {
         }
     }
 
-    private func tideSpeakerColor(_ index: Int) -> Color {
-        let colors: [Color] = [HarcTideStyle.cyan, .purple, .orange, .teal, .green, .pink]
-        return colors[abs(index) % colors.count]
+    private var detailSpeakerColors: [Int: Color] {
+        resolvedSpeakerLabels.mapValues { Color(nsColor: TranscriptDetailEditor.speakerColor(for: $0)) }
     }
 
     /// Title as an editable field — the rename affordance the Library never

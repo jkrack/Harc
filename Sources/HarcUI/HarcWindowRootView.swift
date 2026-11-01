@@ -684,7 +684,10 @@ public struct HarcWindowRootView: View {
             .clipped()
         }
         .background {
-            Color.black.opacity(colorScheme == .dark ? 0.16 : 0.035)
+            // The mock gives the sidebar a darker opaque surface. A translucent
+            // wash exposes NavigationSplitView's wallpaper-tinted backdrop.
+            HarcTideBackground()
+                .overlay(.black.opacity(colorScheme == .dark ? 0.25 : 0.04))
         }
         .navigationTitle("Library")
         .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
@@ -818,7 +821,7 @@ public struct HarcWindowRootView: View {
                 Label("People", systemImage: "person.2")
             }
         }
-        .tint(HarcTideStyle.selection)
+        .tint(HarcTideStyle.cyan)
     }
 
     /// The saturated row is reserved for this — the one place urgency is
@@ -852,6 +855,7 @@ public struct HarcWindowRootView: View {
         .padding(.vertical, HarcSpacing.sm)
         .padding(.horizontal, HarcSpacing.sm)
         .background(HarcBrand.live, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(TideSidebarSelectionStyle().allowsHitTesting(false))
         .tag(LibrarySelection.live)
         .accessibilityIdentifier("harc.library.liveRow")
         .accessibilityLabel("Recording in progress")
@@ -914,7 +918,7 @@ public struct HarcWindowRootView: View {
         let isSelected = selection == .session(id: overview.id)
         return HStack(alignment: .top, spacing: HarcSpacing.sm) {
             Image(systemName: "square.stack.3d.up")
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(HarcTideStyle.cyan)
                 .frame(width: 18, alignment: .center)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
@@ -937,6 +941,7 @@ public struct HarcWindowRootView: View {
                 .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )
+        .background(TideSidebarSelectionStyle().allowsHitTesting(false))
         .tag(LibrarySelection.session(id: overview.id))
         .accessibilityIdentifier("harc.library.session.\(overview.id)")
         .contentShape(Rectangle())
@@ -1013,6 +1018,7 @@ public struct HarcWindowRootView: View {
                         .foregroundStyle(.primary)
                 }
             }
+            .background(TideSidebarSelectionStyle().allowsHitTesting(false))
             .tag(LibrarySelection.person(id: item.person.id))
             .onTapGesture { selection = .person(id: item.person.id) }
         }
@@ -1101,7 +1107,7 @@ public struct HarcWindowRootView: View {
                     }
                 }
             }
-            .tint(HarcTideStyle.selection)
+            .tint(HarcTideStyle.cyan)
         }
     }
 
@@ -1111,7 +1117,7 @@ public struct HarcWindowRootView: View {
         let isSelected = selection == .recording(wavPath: rec.wavPath)
         return HStack(alignment: .top, spacing: HarcSpacing.sm) {
             Image(systemName: rec.pinned ? "pin.fill" : "waveform")
-                .foregroundStyle(Color.accentColor) // pinned is decoration, not status — the glyph shape carries it
+                .foregroundStyle(HarcTideStyle.cyan) // pinned is decoration, not status — the glyph shape carries it
                 .frame(width: 18, alignment: .center)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
@@ -1163,6 +1169,7 @@ public struct HarcWindowRootView: View {
                 .fill(isSelected ? HarcTideStyle.selection : Color.clear)
                 .padding(.horizontal, HarcSpacing.xs)
         )
+        .background(TideSidebarSelectionStyle().allowsHitTesting(false))
         .tag(LibrarySelection.recording(wavPath: rec.wavPath))
         .accessibilityIdentifier("harc.library.recording.\(rec.id.map(String.init) ?? rec.wavPath)")
         .contentShape(Rectangle())

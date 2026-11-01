@@ -45,3 +45,33 @@ struct TideLibrarySearchField: NSViewRepresentable {
         }
     }
 }
+
+
+/// Keep AppKit's native selection and keyboard navigation while drawing the
+/// selected row with the Tide wash. NSTableView otherwise paints its accent
+/// highlight over SwiftUI's listRowBackground, even for a translucent tint.
+struct TideSidebarSelectionStyle: NSViewRepresentable {
+    func makeNSView(context: Context) -> SelectionView { SelectionView() }
+    func updateNSView(_ view: SelectionView, context: Context) { view.apply() }
+
+    final class SelectionView: NSView {
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            apply()
+        }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+        func apply() {
+            var ancestor = superview
+            while let view = ancestor {
+                if let table = view as? NSTableView {
+                    table.selectionHighlightStyle = .none
+                    return
+                }
+                ancestor = view.superview
+            }
+        }
+    }
+}
