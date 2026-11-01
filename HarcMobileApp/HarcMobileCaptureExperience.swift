@@ -710,6 +710,7 @@ struct HarcMobileElapsedTime: View {
     let startedAt: Date
     var presentation: Presentation = .compact
 
+    // token-exempt: Tide's 56pt display clock scales with Dynamic Type.
     @ScaledMetric(relativeTo: .largeTitle) private var heroSize = 56.0
 
     var body: some View {
@@ -733,7 +734,7 @@ struct HarcMobileElapsedTime: View {
         case .hero:
             .system(
                 size: heroSize,
-                weight: .light,
+                weight: .bold,
                 design: .rounded
             )
         case .compact:

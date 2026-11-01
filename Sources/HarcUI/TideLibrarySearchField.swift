@@ -42,8 +42,13 @@ struct TideLibrarySearchField: NSViewRepresentable {
     }
 
     final class TideSearchCell: NSSearchFieldCell {
-        override func drawBezel(withFrame frameRect: NSRect, in controlView: NSView) {
+        override func draw(withFrame frameRect: NSRect, in controlView: NSView) {
             // SwiftUI draws the opaque Tide surface around this native control.
+            super.drawInterior(withFrame: frameRect, in: controlView)
+            searchButtonCell?.draw(withFrame: searchButtonRect(forBounds: frameRect), in: controlView)
+            if !stringValue.isEmpty {
+                cancelButtonCell?.draw(withFrame: cancelButtonRect(forBounds: frameRect), in: controlView)
+            }
         }
     }
 
