@@ -76,6 +76,10 @@ final class HarcAppUITests: XCTestCase {
             XCTAssertTrue(staticText(containing: "Less than a second of audio").waitForExistence(timeout: 10), app.debugDescription)
         } else if state == "short-day" {
             XCTAssertTrue(staticText(containing: "1 second of audio").waitForExistence(timeout: 10), app.debugDescription)
+        } else if state == "empty" {
+            let message = app.staticTexts["Ready for your first recording"]
+            XCTAssertTrue(message.waitForExistence(timeout: 10), app.debugDescription)
+            message.click() // Raise the agent app without focusing the search field.
         }
         if ["untitled", "zero", "short", "short-day"].contains(state) {
             XCTAssertTrue(staticText(containing: "No transcript available").waitForExistence(timeout: 10), app.debugDescription)
