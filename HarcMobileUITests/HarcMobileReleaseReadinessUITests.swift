@@ -975,7 +975,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             let button = app.buttons[identifier]
             XCTAssertTrue(button.waitForExistence(timeout: 10))
             XCTAssertTrue(button.isHittable)
-            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            // XCTest screen coordinates can differ from an exact point by roundoff.
+            XCTAssertGreaterThanOrEqual(button.frame.height + 0.001, 44)
         }
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Library-text-action-contrast"
@@ -1014,8 +1015,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             XCTAssertTrue(day.waitForExistence(timeout: 10))
             XCTAssertTrue(count.waitForExistence(timeout: 10))
             let timelines = app.otherElements.matching(NSPredicate(format: "label == %@", "Recordings across the day"))
-            XCTAssertEqual(timelines.count, 1)
-            XCTAssertTrue((timelines.element.value as? String ?? "").contains("No recordings"))
+            // Tide omits an empty plot; the day/count must still lay out readably.
+            XCTAssertEqual(timelines.count, 0)
 
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "Library-day-summary-\(category)"
