@@ -1,6 +1,70 @@
 # iPhone companion launch plan
 
-## Current checkpoint — October 30, 2026
+## Current checkpoint — November 1, 2026
+
+This checkpoint supersedes the dated status snapshots below. Source merges,
+fixture checks and release qualification are separate evidence scopes.
+
+The implementation baseline verified on main is `ccc6bad4388dfe20e608abac25213fe6a29f2eae`, tree
+`6e7fab2b7d94316982143e2cb09af790a65e479b`. On October 31, corrected preparation
+[#170](https://github.com/jkrack/Harc/pull/170) and the UI stack
+#159 → #161 → #162 → #163 → #165 → #166 merged normally in dependency order.
+The stack is no longer held as unmerged drafts. Integration
+[#171](https://github.com/jkrack/Harc/pull/171) is closed unmerged as evidence;
+its tested aggregate tree equals resulting main `ee4823f`. Source branches remain
+preserved. Held [#155](https://github.com/jkrack/Harc/pull/155) remains unmerged at
+`3c5c07b3b9078f660bc6fe1207b54bb46ab1b32a`; its diagnostic and artifacts are unchanged.
+
+[#172](https://github.com/jkrack/Harc/pull/172) then added a test-only Library
+cache regression: a valid update followed by a stale tombstone rolls back the
+whole delta, retains records/cursor after reopen, and accepts a corrected retry.
+All six focused cache tests passed. [Exact-head CI](https://github.com/jkrack/Harc/actions/runs/41234273680)
+passed at `1304c343ae58778d19878b01300f248b19e67ac9`; hosted tested merge
+`1dca5258987c994e328a72746186b33932aa2e8b` has that baseline tree.
+[Post-merge CI](https://github.com/jkrack/Harc/actions/runs/41237916396) passed
+smoke and relay. Heavy PR-only lanes were skipped on the push as designed.
+This is cache transaction/reopen coverage, not a physical stale-cursor diagnosis,
+whole-process termination drill or phone → Host → phone Library qualification.
+
+The [aggregate UI/preparation CI](https://github.com/jkrack/Harc/actions/runs/41209018171)
+and #172 CI each passed the selected mobile (89 tests) and macOS (86 tests)
+execution gates. #170's original Library-navigation assertion failure is retained;
+one unchanged-head mobile retry passed, without establishing the failure's cause.
+Local integrated visual testing passed 16 component tests and the light
+normal/largest-text Library summary/navigation case, then stopped at the disk
+floor: the overall run was interrupted (17 passed, one canceled failure) and its
+execution gate correctly failed. Fresh full dark/full-app acceptance and spoken
+VoiceOver remain incomplete. Separate local Tide fidelity work is active on
+November 1 and is not included in this recorded main; do not start competing
+simulator jobs or count its unfinished results as acceptance.
+
+Shared preparation configuration is 0.14.20 (75), but no sealed phone release
+source/archive or qualified Mac release artifact is selected. Current main now
+includes the UI stack; the October 30 maintenance branch's narrower scope must
+not be mistaken for the current main's contents. Select and validate the eventual
+exact source/artifact pair before distribution; matching version strings do not
+transfer historical passes. The [active candidate register](../evidence/harcmobile-current-candidate-readiness.md)
+retains the open gates. GitHub release metadata rechecked November 1 still lists
+[v0.14.19 (74)](https://github.com/jkrack/Harc/releases/tag/v0.14.19) as latest.
+Asset/feed byte verification remains scoped to the October 28 record, not this
+metadata check. Accumulated source improvements warrant continued preparation,
+but publication is blocked on applicable physical capture/Stop/recovery and final
+signed/notarized/Sparkle artifact checks. Mac Host distribution remains direct
+through Sparkle, not the Mac App Store.
+
+The phone critical path remains sealed exact-source codec PCM/EOF qualification,
+production transfer, durable verified receipt, complete canonical PCM hash and
+protected-master retention, then the ordinary Library playback/transcript round
+trip. The October 20 Host file-binding and stale phone Library failures remain
+separate and unresolved. Leave the diagnostic app and pending OS dialog untouched
+without the applicable authorization. App Store submission remains NO-GO;
+archive, privacy/owner fields, screenshots, physical acceptance and explicit
+submission approval are still open. Issue #105 remains separate absent a proved
+phone dependency. Preserve the one-time cache backup; the October 31 cleanup is
+not continuing deletion permission. Honor the 5 GiB internal disk floor and the
+existing denial of external simulator device-set creation.
+
+## Historical checkpoint — October 30, 2026
 
 This checkpoint supersedes the dated status snapshots below; historical test
 results remain scoped to their original source, artifact and device.

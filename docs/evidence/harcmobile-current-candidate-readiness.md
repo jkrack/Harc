@@ -1,6 +1,6 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-10-30
+**Updated:** 2026-11-01
 **Candidate configuration:** HarcMobile 0.14.20 (75), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
@@ -33,7 +33,39 @@ The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
 remain useful history and must not be relabeled as current-candidate qualification.
 
-## October 30 preparation refresh
+## November 1 source checkpoint
+
+The implementation baseline verified on main is `ccc6bad4388dfe20e608abac25213fe6a29f2eae`, tree
+`6e7fab2b7d94316982143e2cb09af790a65e479b`. Corrected #170 and UI PRs
+#159/#161/#162/#163/#165/#166 merged October 31; #172 then added the Library
+mixed-delta rollback/reopen/retry regression. The stack is no longer an unmerged
+alternative. #171 is closed unmerged as integration evidence, and held #155 and
+its artifacts remain unchanged. See the [current launch checkpoint](../plans/2026-10-14-iphone-companion-launch.md)
+for exact-source CI, ownership and preserved historical limits.
+
+[#172 CI](https://github.com/jkrack/Harc/actions/runs/41234273680) passed the
+package, mobile, macOS and relay checks. Hosted tested merge
+`1dca5258987c994e328a72746186b33932aa2e8b` has the same tree as that baseline;
+[post-merge smoke/relay](https://github.com/jkrack/Harc/actions/runs/41237916396)
+also passed. These are source/fixture results, not a sealed archive or physical
+phone/Host Library result. #170 needed one unchanged-head mobile retry after a
+retained navigation assertion failure; its cause remains unresolved.
+
+Current main includes the merged UI changes in the shared 0.14.20 (75)
+configuration. Do not select an older maintenance or diagnostic artifact by
+version/build alone or inherit its evidence for this source. No final release
+source/archive is selected, and none of the live gate statuses below is upgraded.
+The October 31 integrated local visual run was interrupted at the disk floor;
+full fresh dark/full-app and spoken VoiceOver acceptance remain incomplete.
+Separate active Tide fidelity work is outside this source checkpoint. Physical
+codec, verified transfer/master protection, Library playback/transcript, owner
+privacy fields and submission approval remain open. Publication remains blocked
+by applicable Mac capture/Stop/recovery and final signed-artifact gates as well.
+
+## Historical preparation refresh — October 30
+
+This records the preparation branch before its October 31 merge and is
+superseded by the source checkpoint above; its original evidence scope is retained.
 
 The separate [Mac maintenance refresh](2026-10-30-mac-maintenance-refresh.md)
 prepares shared version 0.14.20 (75) from main
