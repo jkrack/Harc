@@ -165,6 +165,8 @@ public struct WaveformPlayerView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position")
+        // Synchronize fixture captures with the real asynchronous envelope load.
+        .accessibilityIdentifier(envelope.count > 1 ? "harc.player.waveform.ready" : "harc.player.waveform.loading")
         .accessibilityValue(formatRange(current: model.currentTime, total: model.duration))
         .accessibilityAdjustableAction { direction in
             let delta: Double = direction == .increment ? 10 : -10

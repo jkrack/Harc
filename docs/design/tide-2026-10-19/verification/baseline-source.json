@@ -1,0 +1,14 @@
+{
+  "base": "7cfb9e7201f8eb9442466f454e7effd16902c55e",
+  "kind": "fixture-only diagnostic baseline",
+  "files": {
+    "HarcApp/AppDelegate.swift": "44a1f7b58df9fccb4a05cb077230fc342d9bc551e4234fec6bee971e85520f3d",
+    "HarcAppUITests/HarcAppUITests.swift": "a423be7a144de51c792cbf8bc8869eed4410300a394ff9277fc73dc10ef781d1",
+    "Sources/HarcUI/WaveformPlayerView.swift": "5effcd01a431d40cdde7285dc5fae089158a9af7a3ea3a5976730c8c9751160d",
+    "HarcMobileApp/HarcMobileApp.swift": "74fa3b9963207c55df17f9918f5e363a89292ee13e1b015ee9737cc1a7668901",
+    "HarcMobileUITests/HarcMobileReleaseReadinessUITests.swift": "f99c3879c4d30758446fb39e622b4e88275069b6a8377ef3fc8f134857b9f330"
+  },
+  "macBuildLog": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-before-build-04.log",
+  "iphoneResult": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-before.xcresult",
+  "wallpaper": "temporarily Red Orange; original Middle East"
+}

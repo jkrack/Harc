@@ -26,6 +26,55 @@ final class HarcAppUITests: XCTestCase {
         rootURL = nil
     }
 
+    /// The same matrix is captured before and after the presentation pass.
+    func testTideFidelityStateMatrix() throws {
+        let states = ["complete", "untitled", "zero", "short", "integrity", "origins", "live", "short-day", "empty"]
+        for appearance in ["dark", "light"] {
+            for state in states {
+                app.terminate()
+                let fixtureRoot = rootURL.appendingPathComponent("\(state)-\(appearance)")
+                app.launchEnvironment["HARC_UI_TEST_ROOT"] = fixtureRoot.path
+                app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
+                app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = state
+                app.launchEnvironment["HARC_UI_TEST_FAKE_RECORDING"] = "1"
+                app.launch()
+                XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 60), app.debugDescription)
+                if state == "live" {
+                    app.buttons["harc.library.capture.recordButton"].click()
+                    XCTAssertTrue(app.descendants(matching: .any)["harc.library.liveRow"].waitForExistence(timeout: 10))
+                } else if state != "empty" {
+                    let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording.")).firstMatch
+                    XCTAssertTrue(row.waitForExistence(timeout: 60), app.debugDescription)
+                    row.click()
+                    if ["complete", "integrity", "origins"].contains(state) {
+                        XCTAssertTrue(staticText(containing: "Talk time").waitForExistence(timeout: 20), app.debugDescription)
+                        XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 60), app.debugDescription)
+                    }
+                }
+                let shot = XCTAttachment(screenshot: app.screenshot())
+                shot.name = "fidelity-mac-\(state)-\(appearance)"
+                shot.lifetime = .keepAlways
+                add(shot)
+                if state == "short-day" {
+                    let list = app.scrollViews.firstMatch
+                    list.swipeUp()
+                    let scrolled = XCTAttachment(screenshot: app.screenshot())
+                    scrolled.name = "fidelity-mac-short-day-scrolled-\(appearance)"
+                    scrolled.lifetime = .keepAlways
+                    add(scrolled)
+                }
+                if state == "origins" {
+                    let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "harc.library.recording."))
+                    if rows.count > 1 { rows.element(boundBy: 1).click() }
+                    let origin = XCTAttachment(screenshot: app.screenshot())
+                    origin.name = "fidelity-mac-origin-second-\(appearance)"
+                    origin.lifetime = .keepAlways
+                    add(origin)
+                }
+            }
+        }
+    }
+
     func testCaptureIntegrityWarningSurvivesRelaunch() throws {
         app.launchEnvironment["HARC_UI_TEST_CAPTURE_ISSUE"] = "1"
         launchFixtureLibrary()
