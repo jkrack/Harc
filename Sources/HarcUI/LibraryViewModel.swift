@@ -40,7 +40,7 @@ public final class LibraryViewModel: ObservableObject {
 
     public func originLabel(for recording: Recording) -> String {
         guard let deviceID = recording.originID?.deviceID else {
-            return "Recording origin unavailable"
+            return "Device not recorded"
         }
         if let label = originDeviceLabels[deviceID]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !label.isEmpty {
@@ -78,6 +78,12 @@ public final class LibraryViewModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
 
     private var fullList: [Recording] = []
+    /// The day overview describes the Library inventory, independently of
+    /// the sidebar's date scope and search results. Zero-length rows count.
+    public func recordings(on day: Date, calendar: Calendar = .current) -> [Recording] {
+        fullList.filter { calendar.isDate($0.startedAt, inSameDayAs: day) }
+    }
+
     private var observedListRevision: UInt64 = 0
     private let fetchAllRecordings: @Sendable () async throws -> [Recording]
 

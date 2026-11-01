@@ -37,3 +37,4 @@ CloudflareRelay/.wrangler/
 CloudflareRelay/.dev.vars
 CloudflareRelay/.env
 CloudflareRelay/*.cpuprofile
+__pycache__/

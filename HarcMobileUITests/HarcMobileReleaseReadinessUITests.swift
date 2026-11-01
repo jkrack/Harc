@@ -32,6 +32,26 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         }
     }
 
+    func testTideFidelityUnpairedStateMatrix() {
+        for appearance in ["dark", "light"] {
+            let app = makeApp(rootID: TestRoot.offlineReview)
+            app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
+            app.launch()
+            XCTAssertTrue(app.buttons["harc.mobile.record.start"].waitForExistence(timeout: 20))
+            keepTideScreenshot("fidelity-iphone-unpaired-record-\(appearance)")
+            app.tabBars.buttons["Library"].tap()
+            XCTAssertTrue(app.navigationBars["Library"].waitForExistence(timeout: 10))
+            keepTideScreenshot("fidelity-iphone-unpaired-library-\(appearance)")
+            app.tabBars.buttons["Search"].tap()
+            XCTAssertTrue(app.staticTexts["Find a moment"].waitForExistence(timeout: 10))
+            keepTideScreenshot("fidelity-iphone-unpaired-search-\(appearance)")
+            app.buttons["harc.mobile.host.health"].tap()
+            XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+            keepTideScreenshot("fidelity-iphone-unpaired-setup-\(appearance)")
+            app.terminate()
+        }
+    }
+
     func testRecordingEntryIsExplicitAndDisclosesLocalHandling() {
         let app = makeApp(rootID: TestRoot.recordingEntry)
         app.launch()
@@ -955,7 +975,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             let button = app.buttons[identifier]
             XCTAssertTrue(button.waitForExistence(timeout: 10))
             XCTAssertTrue(button.isHittable)
-            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            // XCTest screen coordinates can differ from an exact point by roundoff.
+            XCTAssertGreaterThanOrEqual(button.frame.height + 0.001, 44)
         }
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Library-text-action-contrast"
@@ -994,8 +1015,8 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             XCTAssertTrue(day.waitForExistence(timeout: 10))
             XCTAssertTrue(count.waitForExistence(timeout: 10))
             let timelines = app.otherElements.matching(NSPredicate(format: "label == %@", "Recordings across the day"))
-            XCTAssertEqual(timelines.count, 1)
-            XCTAssertTrue((timelines.element.value as? String ?? "").contains("No recordings"))
+            // Tide omits an empty plot; the day/count must still lay out readably.
+            XCTAssertEqual(timelines.count, 0)
 
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "Library-day-summary-\(category)"

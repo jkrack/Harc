@@ -1,4 +1,7 @@
 import AppKit
+#if DEBUG
+import GRDB
+#endif
 import CryptoKit
 import HarcDomain
 import HarcIdentity
@@ -3970,6 +3973,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         let libraryVM = LibraryViewModel(store: store)
         libraryVM.loadOriginDeviceLabels = { [weak self] in
+#if DEBUG
+            if self?.isUITesting == true,
+               ProcessInfo.processInfo.environment["HARC_UI_TEST_LIBRARY_STATE"] == "origins" {
+                return [try DeviceID(Data(repeating: 42, count: 32)): "James’s iPhone"]
+            }
+#endif
             guard let runtime = self?.hostRuntime else { return [:] }
             let devices = try await runtime.pairedDevices()
             return Dictionary(uniqueKeysWithValues: devices.map { ($0.deviceID, $0.label) })
@@ -5449,6 +5458,10 @@ private extension AppDelegate {
               let root = uiTestRootURL else {
             return
         }
+        if let state = ProcessInfo.processInfo.environment["HARC_UI_TEST_LIBRARY_STATE"] {
+            try await seedTideFidelityLibrary(state: state, root: root, store: store)
+            return
+        }
         if !(try await store.fetchAll(includeDeleted: true)).isEmpty {
             return
         }
@@ -5523,13 +5536,90 @@ private extension AppDelegate {
         }
     }
 
+    /// Presentation fixtures only, always below the isolated DEBUG test root.
+    /// Zero/short captures are retained as distinct rows, including the same minute.
+    private func seedTideFidelityLibrary(state: String, root: URL, store: RecordingStore) async throws {
+        guard (try await store.fetchAll(includeDeleted: true)).isEmpty, state != "empty" else { return }
+        let directory = root.appendingPathComponent("Recordings/Fidelity", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let today = Calendar.current.startOfDay(for: .now)
+        let start = today.addingTimeInterval(9 * 3600)
+        let count = state == "short-day" ? 18 : state == "origins" ? 2 : 1
+        for index in 0..<count {
+            let long = state == "complete" || state == "integrity" || state == "origins" || state == "live"
+            let duration: Double = long ? 42 * 60 : state == "zero" ? 0 : state == "short" ? 0.4 : state == "short-day" ? [0, 0.4, 1][index % 3] : 90
+            let began = start.addingTimeInterval(Double(index * 2))
+            let ended = began.addingTimeInterval(duration)
+            let wav = directory.appendingPathComponent("fixture-\(index).wav")
+            let markdown = wav.deletingPathExtension().appendingPathExtension("md")
+            let json = wav.deletingPathExtension().appendingPathExtension("json")
+            let title = long ? "Customer renewal planning" : nil
+            let sentences = ["The customer renewal is healthy, but pricing risk is still open.",
+                             "Send the renewal plan by Friday.",
+                             "I will confirm the decision with the account team."]
+            let text = sentences.joined(separator: " ")
+            try writeUITestWaveform(to: wav, duration: duration)
+            // Untitled intentionally has an OKF file with no transcript: file existence
+            // alone must not make the summary's Generate action available.
+            try OKFMarkdown.render(OKFMarkdown.Fields(title: title ?? "", startedAt: began,
+                wavFileName: wav.lastPathComponent, transcript: long ? text : ""))
+                .write(to: markdown, atomically: true, encoding: .utf8)
+            if long {
+                var object = try JSONSerialization.jsonObject(with: Data(uiTestTranscriptJSON(
+                    audioPath: wav.path, startedAt: began, endedAt: ended, text: text).utf8)) as! [String: Any]
+                object["speakers"] = [
+                    ["startMs": 0, "endMs": 840000, "speaker": 0],
+                    ["startMs": 840000, "endMs": 1680000, "speaker": 1],
+                    ["startMs": 1680000, "endMs": 2520000, "speaker": 2]]
+                object["words"] = sentences.enumerated().flatMap { speaker, sentence in
+                    sentence.split(separator: " ").enumerated().map { offset, word in
+                        ["text": String(word), "startMs": speaker * 840000 + offset * 600,
+                         "endMs": speaker * 840000 + (offset + 1) * 600] as [String: Any]
+                    }
+                }
+                try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: json)
+            }
+            if state == "integrity" {
+                var report = CaptureIntegrityReport()
+                report.record(source: .systemAudio, reason: .bufferOverrun, frameOffset: 100)
+                try report.save(nextTo: wav)
+            }
+            let device = try DeviceID(Data(repeating: 42, count: 32))
+            _ = try await store.upsert(Recording(wavPath: wav.path, txtPath: markdown.path,
+                jsonPath: long ? json.path : nil, startedAt: began, endedAt: ended,
+                title: title, transcriptText: long ? text : nil,
+                speakerNames: long ? [0: "Amy", 1: "Jason", 2: "Priya"] : [:],
+                summaryMarkdown: long ? "The customer renewal is healthy. Pricing risk remains open; the team agreed to confirm the plan by Friday." : nil,
+                actionItemsMarkdown: long ? "- [ ] Jason: send the renewal plan by Friday\n- [ ] Priya: confirm the decision with the account team" : nil,
+                notesMarkdown: long ? "Ask the account team about the revised pricing before the next customer call." : nil,
+                summaryModelID: long ? "ui-test-model" : nil,
+                summaryGeneratedAt: long ? ended : nil,
+                originID: nil))
+            if state == "origins", index == 0 {
+                // Generic upsert correctly discards caller-supplied provenance.
+                // Seed only this fresh, isolated DEBUG database, before observers
+                // start; production origin admission and storage APIs stay intact.
+                guard let writer = store.dbReader as? any DatabaseWriter else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                let bytes = device.rawBytes
+                let recordingUUID = UUID().uuidString.lowercased()
+                let path = wav.path
+                try await writer.write { database in
+                    try database.execute(sql: "UPDATE recordings SET origin_device_id = ?, origin_recording_uuid = ? WHERE wav_path = ?",
+                                         arguments: [bytes, recordingUUID, path])
+                }
+            }
+        }
+    }
+
     /// A valid synthetic 16 kHz mono master lets visual tests exercise the
     /// actual waveform and player without touching a real recording.
-    private func writeUITestWaveform(to url: URL) throws {
-        let frameCount = 16_000 * 90
+    private func writeUITestWaveform(to url: URL, duration: Double = 90) throws {
+        let frameCount = Int(16_000 * duration)
         let dataBytes = UInt32(frameCount * 2)
         var wav = Data()
-        wav.reserveCapacity(Int(dataBytes) + 44)
+        wav.reserveCapacity(16_044)
         func bytes(_ value: UInt16) {
             var little = value.littleEndian
             withUnsafeBytes(of: &little) { wav.append(contentsOf: $0) }
@@ -5550,18 +5640,33 @@ private extension AppDelegate {
         bytes(UInt16(16))
         wav.append(contentsOf: "data".utf8)
         bytes(dataBytes)
-        for frame in 0..<frameCount {
-            let halfSecond = frame / 8_000
-            let isPause = halfSecond < 8 || (halfSecond % 31) < 3
-            let variation = (halfSecond * 37 + 11) % 29
-            let amplitude = isPause ? 80 : 2_500 + variation * 290
-            let cycle = frame % 160
-            let triangle = (cycle < 80 ? cycle : 160 - cycle) - 40
-            let sample = Int16(triangle * amplitude / 40)
-            wav.append(UInt8(truncatingIfNeeded: sample))
-            wav.append(UInt8(truncatingIfNeeded: sample >> 8))
+        FileManager.default.createFile(atPath: url.path, contents: wav)
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        // Precompute a small palette, then stream half-second PCM blocks.
+        // Long fixtures remain quick enough for the launch deadline.
+        let amplitudes = [80] + (0..<29).map { 2_500 + $0 * 290 }
+        let blocks = amplitudes.map { amplitude -> Data in
+            var block = Data(capacity: 16_000)
+            for frame in 0..<8_000 {
+                let cycle = frame % 160
+                let triangle = (cycle < 80 ? cycle : 160 - cycle) - 40
+                let sample = Int16(triangle * amplitude / 40)
+                block.append(UInt8(truncatingIfNeeded: sample))
+                block.append(UInt8(truncatingIfNeeded: sample >> 8))
+            }
+            return block
         }
-        try wav.write(to: url, options: .atomic)
+        var remaining = frameCount
+        var halfSecond = 0
+        while remaining > 0 {
+            let pause = halfSecond < 8 || (halfSecond % 31) < 3
+            let block = blocks[pause ? 0 : 1 + (halfSecond * 37 + 11) % 29]
+            try handle.write(contentsOf: block.prefix(min(8_000, remaining) * 2))
+            remaining -= min(8_000, remaining)
+            halfSecond += 1
+        }
     }
 
     func uiTestTranscriptJSON(audioPath: String, startedAt: Date, endedAt: Date, text: String) -> String {

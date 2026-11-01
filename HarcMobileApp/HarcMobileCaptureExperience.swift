@@ -4,19 +4,12 @@ import SwiftUI
 import UIKit
 
 enum HarcMobilePalette {
-    // White text on this blue exceeds the 4.5:1 normal-text contrast floor.
-    static let action = Color(red: 0, green: 0.34, blue: 0.72)
-    // Text actions need a lighter blue on dark surfaces; filled actions retain
-    // the darker background above so their white labels remain readable.
-    static let actionText = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.40, green: 0.72, blue: 1, alpha: 1)
-            : UIColor(red: 0, green: 0.34, blue: 0.72, alpha: 1)
-    })
+    static let action = HarcTideStyle.cyan
+    static let actionText = HarcTideStyle.cyan
     static let indigo = Color(red: 0.20, green: 0.18, blue: 0.55)
     static let violet = Color(red: 0.47, green: 0.22, blue: 0.72)
     static let cyan = Color(red: 0.10, green: 0.58, blue: 0.75)
-    static let coral = Color(red: 0.91, green: 0.20, blue: 0.30)
+    static let coral = HarcTideStyle.now
     static let amber = Color(red: 0.86, green: 0.47, blue: 0.08)
     static let success = Color(red: 0.08, green: 0.55, blue: 0.34)
 }
@@ -364,22 +357,19 @@ struct HarcMobileCaptureHeroView: View {
                     control
                     VStack(spacing: 6) {
                         Text("Tap to record")
-                            .font(.title3.weight(.semibold))
+                            .font(HarcTideStyle.callToAction)
+                        // token-exempt: native Dynamic Type caption; HarcType is Mac-only.
                         Text("Saved on this iPhone first, then sent to your Mac")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
+                            .font(.footnote)
+                            .foregroundStyle(HarcTideStyle.caption)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .multilineTextAlignment(.center)
                 }
-            case .recording(let startedAt):
+            case .recording:
                 VStack(spacing: 24) {
-                    HarcMobileElapsedTime(
-                        startedAt: startedAt,
-                        presentation: .hero
-                    )
                     HarcMobileLiveEnergyView(audioLevel: audioLevel)
-                        .frame(height: 110)
+                        .frame(height: HarcTideStyle.recordingPlotHeight)
                     control
                     VStack(spacing: 6) {
                         Text("Stop and save")
@@ -430,7 +420,7 @@ struct HarcMobileCaptureHeroView: View {
             } label: {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
-                    size: .hero,
+                    size: .tideRecording,
                     motion: .classic,
                     audioLevel: audioLevel
                 )
@@ -469,6 +459,7 @@ struct HarcMobileCaptureHeroView: View {
                 .foregroundStyle(.primary)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(HarcTideStyle.onAccent)
         case .storageExhausted:
             Label(
                 "iPhone storage is full",
@@ -481,6 +472,7 @@ struct HarcMobileCaptureHeroView: View {
                 .multilineTextAlignment(.center)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(HarcTideStyle.onAccent)
         case .failed(let message):
             Text("Recording ended")
                 .font(.title2.weight(.semibold))
@@ -489,6 +481,7 @@ struct HarcMobileCaptureHeroView: View {
                 .multilineTextAlignment(.center)
             Button("Record Again", action: reset)
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(HarcTideStyle.onAccent)
         case .idle, .recording:
             EmptyView()
         }
@@ -715,8 +708,8 @@ struct HarcMobileRecordingIndicator: View {
                     .scaleEffect(0.9 + (pulse * 0.35))
                     .opacity(0.75 + (pulse * 0.25))
                 Text("Recording")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(HarcMobilePalette.coral)
+                    .font(HarcTideStyle.callToAction)
+                    .foregroundStyle(.primary)
             }
         }
     }
@@ -752,7 +745,13 @@ struct HarcMobileElapsedTime: View {
     let startedAt: Date
     var presentation: Presentation = .compact
 
+    // token-exempt: Tide's 56pt display clock scales with Dynamic Type.
     @ScaledMetric(relativeTo: .largeTitle) private var heroSize = 56.0
+
+    init(startedAt: Date, presentation: Presentation = .compact) {
+        self.startedAt = startedAt
+        self.presentation = presentation
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -775,7 +774,7 @@ struct HarcMobileElapsedTime: View {
         case .hero:
             .system(
                 size: heroSize,
-                weight: .light,
+                weight: .bold,
                 design: .rounded
             )
         case .compact:
@@ -878,6 +877,7 @@ private struct HarcMobileLiveEnergyView: View {
     var body: some View {
         VStack(spacing: 4) {
             HarcTideEnergyTrace(samples: samples, isLive: true)
+                .background(HarcTideStyle.plotFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius))
             HStack {
                 Text("Recent microphone activity")
                 Spacer()
