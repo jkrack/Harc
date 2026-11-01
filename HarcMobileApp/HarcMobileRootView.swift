@@ -529,9 +529,19 @@ struct HarcMobileRootView: View {
             GeometryReader { geometry in
                 ScrollView {
                     VStack(spacing: 0) {
-                        recordHeader(captureState: coordinator.state)
+                        if !coordinator.isRecording {
+                            recordHeader(captureState: coordinator.state)
+                        }
                         recordingConditions
                             .padding(.top, 14)
+
+                        if case .recording(let startedAt) = coordinator.state {
+                            VStack(spacing: 8) {
+                                HarcMobileElapsedTime(startedAt: startedAt, presentation: .hero)
+                                recordHeader(captureState: coordinator.state)
+                            }
+                            .padding(.top, 24)
+                        }
 
                         Spacer(minLength: 24)
 

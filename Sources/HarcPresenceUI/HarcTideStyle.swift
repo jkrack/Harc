@@ -36,6 +36,10 @@ public enum HarcTideStyle {
     public static let plotRadius: CGFloat = 18
     public static let selectionRadius: CGFloat = 10
     public static let curveInset: CGFloat = 8
+    // token-exempt: the recording mock's plot and Stop-control geometry.
+    public static let recordingPlotHeight: CGFloat = 200
+    public static let recordingControlDiameter: CGFloat = 96
+    public static let recordingControlSymbolSize: CGFloat = 26
     public static let deepBlue = Color(red: 23 / 255, green: 54 / 255, blue: 90 / 255)
 
     private static func adaptive(light: Color, dark: Color) -> Color {
@@ -159,7 +163,7 @@ public struct HarcTideEnergyTrace: View {
                 Gradient(colors: [HarcTideStyle.ocean.opacity(0.35), .clear]),
                 startPoint: .zero, endPoint: CGPoint(x: 0, y: baseline)
             ))
-            context.stroke(trace, with: .color(HarcTideStyle.ocean),
+            context.stroke(trace, with: .color(isLive ? HarcTideStyle.played : HarcTideStyle.ocean),
                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
             if let progress = playbackProgress, progress.isFinite {
                 let fraction = min(1, max(0, progress))

@@ -12,6 +12,9 @@ struct TideLibrarySearchField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSSearchField {
         let field = TideSearchField()
         field.cell = TideSearchCell(textCell: "")
+        field.isEditable = true
+        field.isSelectable = true
+        field.cell?.usesSingleLineMode = true
         field.placeholderString = "Search meetings and transcripts"
         field.setAccessibilityIdentifier("harc.library.search")
         field.setAccessibilityLabel("Search meetings and transcripts")

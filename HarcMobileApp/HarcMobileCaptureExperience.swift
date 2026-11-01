@@ -364,14 +364,10 @@ struct HarcMobileCaptureHeroView: View {
                     }
                     .multilineTextAlignment(.center)
                 }
-            case .recording(let startedAt):
+            case .recording:
                 VStack(spacing: 24) {
-                    HarcMobileElapsedTime(
-                        startedAt: startedAt,
-                        presentation: .hero
-                    )
                     HarcMobileLiveEnergyView(audioLevel: audioLevel)
-                        .frame(height: 110)
+                        .frame(height: HarcTideStyle.recordingPlotHeight)
                     control
                     VStack(spacing: 6) {
                         Text("Stop and save")
@@ -422,7 +418,7 @@ struct HarcMobileCaptureHeroView: View {
             } label: {
                 HarcPresenceBlob(
                     state: state.harcPresenceState,
-                    size: .hero,
+                    size: .tideRecording,
                     motion: .classic,
                     audioLevel: audioLevel
                 )
@@ -673,8 +669,8 @@ struct HarcMobileRecordingIndicator: View {
                     .scaleEffect(0.9 + (pulse * 0.35))
                     .opacity(0.75 + (pulse * 0.25))
                 Text("Recording")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(HarcMobilePalette.coral)
+                    .font(HarcTideStyle.callToAction)
+                    .foregroundStyle(.primary)
             }
         }
     }
@@ -712,6 +708,11 @@ struct HarcMobileElapsedTime: View {
 
     // token-exempt: Tide's 56pt display clock scales with Dynamic Type.
     @ScaledMetric(relativeTo: .largeTitle) private var heroSize = 56.0
+
+    init(startedAt: Date, presentation: Presentation = .compact) {
+        self.startedAt = startedAt
+        self.presentation = presentation
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -837,6 +838,7 @@ private struct HarcMobileLiveEnergyView: View {
     var body: some View {
         VStack(spacing: 4) {
             HarcTideEnergyTrace(samples: samples, isLive: true)
+                .background(HarcTideStyle.plotFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.plotRadius))
             HStack {
                 Text("Recent microphone activity")
                 Spacer()
