@@ -6,6 +6,26 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testTideFidelityUnpairedStateMatrix() {
+        for appearance in ["dark", "light"] {
+            let app = makeApp(rootID: TestRoot.offlineReview)
+            app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
+            app.launch()
+            XCTAssertTrue(app.buttons["harc.mobile.record.start"].waitForExistence(timeout: 20))
+            keepTideScreenshot("fidelity-iphone-unpaired-record-\(appearance)")
+            app.tabBars.buttons["Library"].tap()
+            XCTAssertTrue(app.navigationBars["Library"].waitForExistence(timeout: 10))
+            keepTideScreenshot("fidelity-iphone-unpaired-library-\(appearance)")
+            app.tabBars.buttons["Search"].tap()
+            XCTAssertTrue(app.staticTexts["Find a moment"].waitForExistence(timeout: 10))
+            keepTideScreenshot("fidelity-iphone-unpaired-search-\(appearance)")
+            app.buttons["harc.mobile.host.health"].tap()
+            XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
+            keepTideScreenshot("fidelity-iphone-unpaired-setup-\(appearance)")
+            app.terminate()
+        }
+    }
+
     func testRecordingEntryIsExplicitAndDisclosesLocalHandling() {
         let app = makeApp(rootID: TestRoot.recordingEntry)
         app.launch()

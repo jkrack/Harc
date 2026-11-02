@@ -4,6 +4,7 @@ import HarcModels
 import HarcSummarize
 import HarcUI
 import HarcStore
+import HarcPresenceUI
 
 @MainActor
 final class HarcWindowController: NSWindowController {
@@ -57,6 +58,12 @@ final class HarcWindowController: NSWindowController {
         // of on a wallpaper-tinted system material.
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isOpaque = true
+        window.backgroundColor = NSColor(name: "TideWindowSurface") { appearance in
+            NSColor(appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? HarcTideStyle.navy : HarcTideStyle.mist)
+        }
         window.setContentSize(NSSize(width: 1200, height: 720))
         window.center()
         self.init(window: window)

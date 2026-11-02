@@ -1,0 +1,155 @@
+{
+  "kind": "isolated diagnostic visual verification; not release or physical-device qualification",
+  "base": "7cfb9e7201f8eb9442466f454e7effd16902c55e",
+  "mac": {
+    "sourceCommit": "71434cb9508f1463e9f331d53837b81bb2a85bf3",
+    "application": {
+      "buildSHA": "71434cb9508f1463e9f331d53837b81bb2a85bf3",
+      "bundleID": "com.harc.Harc.TideFidelity",
+      "keyExecutableSHA256": {
+        "Harc": "0cb2353aaef0bed1ee394194d2f4d6b7c3b64f93249e3f4e1777080dcff6d286",
+        "Harc.debug.dylib": "1fb024aaf48c651eaadae486650b87a46864a9d60545d9853bd730f86fc9341f"
+      }
+    },
+    "sourceFiles": {
+      "HarcApp/AppDelegate.swift": "44a1f7b58df9fccb4a05cb077230fc342d9bc551e4234fec6bee971e85520f3d",
+      "HarcApp/WindowControllers/HarcWindowController.swift": "95319ebdcf4b64d7f9cbd3b0c49399bd2e4b086261ff515654d8f5c952d15a96",
+      "HarcAppTests/HarcTidePresentationTests.swift": "2de92c184176cd6f7b54239b9a3c3eabdf5f941dffd11cbf7888d58daa8c077c",
+      "HarcAppUITests/HarcAppUITests.swift": "c11c633b6135d188c3b21e11395c612e3ac1cbcae296082a377c5e28d7260baf",
+      "Sources/HarcPresenceUI/HarcPresenceBlob.swift": "c0694378f17450b416fa82432878d3c62b1c74cf888cc0f356ba94ce94a92453",
+      "Sources/HarcPresenceUI/HarcTideDayTimeline.swift": "e9fa63ec0f41a1773b7878cccacbc79c6d4eca773d2926bb0cc5f3a33fef2dd4",
+      "Sources/HarcPresenceUI/HarcTideStyle.swift": "719eae3cf6b187effacf9782cb332b63c16a6a54b67bef633749251420322dc3",
+      "Sources/HarcUI/HarcBrand.swift": "dc712ee0afb380d7299edddf321d31327a7b17dbc663a0599bb3dc847770ed9b",
+      "Sources/HarcUI/HarcWindowRootView+Detail.swift": "39f2b10b220c717e0553c0c24b96db6f45d6c18035e8e8c1d60de894d2d8a17b",
+      "Sources/HarcUI/HarcWindowRootView+Grouping.swift": "d9f9a5abd280f9b182cccfc6066cc408d9e8d18082773997271d408b22c891e6",
+      "Sources/HarcUI/HarcWindowRootView.swift": "212892adae79d3679c65d2397292fdb9c4f0175a5f24ec55250207b57b3f2469",
+      "Sources/HarcUI/LibraryViewModel.swift": "443ba466789c0e08867b93d9d50ad5e424818946353180d78782bc3272e41f64",
+      "Sources/HarcUI/LiveTranscriptPane.swift": "baaf19aebb3ef5a35ab2cd764de98d53a4f5ed37986e44fc628d7d26ee1362bd",
+      "Sources/HarcUI/NotesCardView.swift": "4f080917c268c31b27c6fed567b37886084bca395ba9b517d7a7ccb5e5bba30e",
+      "Sources/HarcUI/RecordCardView.swift": "b9ae5a873fc7e022bc2c4d708f77981cb2a617b140711dc65fd0cdfe36a488c8",
+      "Sources/HarcUI/SummaryCardView.swift": "86d86e2b54debf1a2dc56a7e33f81ba7c0aacd0a5d886803931e8c84c2e8708a",
+      "Sources/HarcUI/TideLibrarySearchField.swift": "1b734db9281beadc8bb99b1568e8101c55daed2ae5b3cd02a371e44a44b9d28e",
+      "Sources/HarcUI/WaveformPlayerView.swift": "8b075d73fee0db53b16069030064ea1247508462fcc12f50265afb33b2d4de95"
+    }
+  },
+  "iPhoneUI": {
+    "sourceCommit": "b1995f29aa97c5d80c578063ea68c5a5477b5281",
+    "application": {
+      "buildSHA": "b1995f29aa97c5d80c578063ea68c5a5477b5281",
+      "bundleID": "com.harc.HarcMobile.TideFidelity",
+      "keyExecutableSHA256": {
+        "Harc": "d430c7db2185007f955681e97b04e97a426a4dea98cb2ff0d41f5350a51c1105",
+        "Harc.debug.dylib": "8e7abb13d92828f4c59f9b9a77ac54348b4c8aeea8018e45d7dec766e9e45d04"
+      }
+    },
+    "sourceFiles": {
+      "HarcMobileApp/HarcMobileApp.swift": "74fa3b9963207c55df17f9918f5e363a89292ee13e1b015ee9737cc1a7668901",
+      "HarcMobileApp/HarcMobileCaptureExperience.swift": "7f80e380800e25a3d5ada181b85aa7c4c25d56140b16af14b61d482f206e50c1",
+      "HarcMobileApp/HarcMobileRootView.swift": "98885f99a99d96183907b8d7def38d2a595949bdd1f81376057501a75eef11e8",
+      "HarcMobileApp/HarcMobileSetupAndSyncView.swift": "70d08f672585067397442185c970c3ce82258c7327f3e767e5f77d44850a5fcc",
+      "HarcMobileUITests/HarcMobileNavigationShellScreenshotUITests.swift": "4e2e91a4cf069ad84bef7fec9e01cd2aa77b9cbf525bbe9070acfd1c58d8d798",
+      "HarcMobileUITests/HarcMobileReleaseReadinessUITests.swift": "f99c3879c4d30758446fb39e622b4e88275069b6a8377ef3fc8f134857b9f330",
+      "Sources/HarcPresenceUI/HarcPresenceBlob.swift": "c0694378f17450b416fa82432878d3c62b1c74cf888cc0f356ba94ce94a92453",
+      "Sources/HarcPresenceUI/HarcTideDayTimeline.swift": "e9fa63ec0f41a1773b7878cccacbc79c6d4eca773d2926bb0cc5f3a33fef2dd4",
+      "Sources/HarcPresenceUI/HarcTideStyle.swift": "719eae3cf6b187effacf9782cb332b63c16a6a54b67bef633749251420322dc3"
+    },
+    "qualificationSourceManifestSHA256": "fdc073e69483d029e4577fa8b16c4c8448b7125c556f709f3535603af04036bf",
+    "laterChanges": "71434cb differs only in Mac code/tests and a token-exempt comment in the mobile caption."
+  },
+  "baselineMacApplication": {
+    "buildSHA": "7cfb9e7",
+    "bundleID": "com.harc.Harc.TideFidelity",
+    "keyExecutableSHA256": {
+      "Harc": "770f1ff128a2dc6807e6586a60c38032357520212fe3e68eca0fa7fcc95d5385",
+      "Harc.debug.dylib": "f745fe6d2b82e0feb8faebed266e6b354cafe67c99c5b7c9ca5b8b69daab2157"
+    }
+  },
+  "retainedBaselineIPhoneApplication": {
+    "buildSHA": "672b73dd3c49a6c51a681ddac61dea98cf4c6e6f",
+    "bundleID": "com.harc.HarcMobile.TideFidelity",
+    "keyExecutableSHA256": {
+      "Harc": "b2f8dabe1428a8b48724333fc511e68d4af99c439d43e929e0f696594d39335e",
+      "Harc.debug.dylib": "34fb2c6e37d4364bbd7974c314e905ac03691ca533cd708d28475bc4653f1309"
+    }
+  },
+  "xcodeOnlySparkleResolution": {
+    "version": "2.10.1",
+    "revision": "ab7d71291238df6e0492143b120c9b696a35f603",
+    "committedLockfile": "unchanged; Xcode-only pin and originHash churn excluded"
+  },
+  "environment": {
+    "macOS": "26.6.2",
+    "xcodeSDK": "27.0",
+    "iPhoneSimulator": "iPhone 18 Pro, iOS 27.0",
+    "warmWallpaper": "Red Orange",
+    "wallpaperToRestore": "Electric Blue",
+    "minimumInternalFreeGiB": 5,
+    "buildAndResultRoot": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101",
+    "wallpaperRestored": "Electric Blue",
+    "xcodebuildJobs": 2
+  },
+  "screenshots": "Only app-window Mac images and full iPhone simulator images are included. Desktop-wide test attachments remain local and are excluded.",
+  "iPhoneAppTests": {
+    "sourceCommit": "71434cb9508f1463e9f331d53837b81bb2a85bf3",
+    "buildSHA": "71434cb9508f1463e9f331d53837b81bb2a85bf3",
+    "bundleID": "com.harc.HarcMobile",
+    "result": "107 passed, 0 failed, 0 skipped"
+  },
+  "capturePairs": {
+    "Mac": 26,
+    "iPhone": 12,
+    "total": 38
+  },
+  "manualPlayedCapture": "Paused at 6:40 using accessibility increments, then refreshed the selected Energy view before capture.",
+  "nativeScreenshotEncoding": {
+    "convertedJPEGToPNG": 44,
+    "operation": "Native sips format conversion only for CUA app and browser captures; no crop, resize, recoloring or compositing. Original JPEG-encoded bytes retained on SSD.",
+    "originals": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/native-screenshot-encoded-originals",
+    "files": [
+      "before/manual-mac-short-dark.png",
+      "before/manual-mac-inspector-dark.png",
+      "before/manual-mac-zero-light.png",
+      "before/manual-mac-untitled-dark.png",
+      "before/manual-mac-integrity-dark.png",
+      "before/manual-mac-short-light.png",
+      "before/manual-mac-empty-light.png",
+      "before/manual-mac-origins-light.png",
+      "before/manual-mac-origin-second-light.png",
+      "before/manual-mac-empty-dark.png",
+      "before/manual-mac-live-dark.png",
+      "before/manual-mac-zero-dark.png",
+      "before/manual-mac-origins-dark.png",
+      "before/manual-mac-live-light.png",
+      "before/manual-mac-complete-light.png",
+      "before/manual-mac-short-day-dark.png",
+      "before/manual-mac-inspector-light.png",
+      "before/manual-mac-origin-second-dark.png",
+      "before/manual-mac-untitled-light.png",
+      "before/manual-mac-short-day-light.png",
+      "before/manual-mac-short-day-scrolled-dark.png",
+      "before/manual-mac-short-day-scrolled-light.png",
+      "before/manual-mac-integrity-light.png",
+      "before/manual-mac-played-dark.png",
+      "before/manual-mac-complete-dark.png",
+      "before/manual-mac-played-light.png",
+      "after/fidelity-mac-played-light.png",
+      "after/fidelity-mac-inspector-light.png",
+      "after/fidelity-mac-inspector-dark.png",
+      "after/fidelity-mac-played-dark.png",
+      "references/i5-Setup.png",
+      "references/m6-Floating.png",
+      "references/m2-MenuIdle.png",
+      "references/X2-TideMenuBar.png",
+      "references/i1-Record.png",
+      "references/mac-library-mock.png",
+      "references/i2-Recording.png",
+      "references/i4-Detail.png",
+      "references/i7-Search.png",
+      "references/m5-Pair.png",
+      "references/i3-Library.png",
+      "references/i6-Pair.png",
+      "references/LiveActivity.png",
+      "references/m4-Devices.png"
+    ]
+  }
+}

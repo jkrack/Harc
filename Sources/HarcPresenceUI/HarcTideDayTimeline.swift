@@ -32,8 +32,7 @@ public struct HarcTideDayTimeline: View {
                 }
                 if bounds.contains(context.date) {
                     let x = context.date.timeIntervalSince(bounds.start) / bounds.duration * size.width
-                    context2D.fill(Path(ellipseIn: CGRect(x: x - 3, y: baseline - 3, width: 6, height: 6)),
-                                   with: .color(.primary))
+                    HarcTideStyle.drawNowDot(in: context2D, at: CGPoint(x: x, y: baseline))
                 }
             }
         }

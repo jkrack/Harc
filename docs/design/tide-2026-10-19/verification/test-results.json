@@ -1,0 +1,216 @@
+{
+  "counting": "Top-level xcresult logical test counts; parameter-expanded device counts are not added again. Attempts are separate, never pooled as one passing run.",
+  "inconclusiveAttempts": "Earlier Mac automation-enablement timeouts executed no app cases. Cancelled/disk-floor runs and the normal-ID no-such-process startup attempt do not establish a passing suite.",
+  "runs": [
+    {
+      "scope": "iPhone baseline unpaired",
+      "result": "Passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-before.xcresult",
+      "note": "Fixture-only baseline"
+    },
+    {
+      "scope": "iPhone retained baseline recording",
+      "result": "Passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-before-recording-retained.xcresult",
+      "note": "Supplementary retained pre-fix app replay"
+    },
+    {
+      "scope": "Mac checkpoint",
+      "result": "Failed",
+      "passed": 79,
+      "failed": 3,
+      "skipped": 0,
+      "total": 82,
+      "failedTestNames": [
+        "curveRejectsNonfiniteAndOutOfRangeLevelsWithoutOvershoot()",
+        "testCaptureIntegrityWarningSurvivesRelaunch()",
+        "testLibrarySearchFindsRecordingByTitleAndTranscript()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-final-suite-20261101-195858.xcresult",
+      "note": "Floating-point assertion and UI failures; not final qualification"
+    },
+    {
+      "scope": "Mac checkpoint",
+      "result": "Failed",
+      "passed": 88,
+      "failed": 2,
+      "skipped": 0,
+      "total": 90,
+      "failedTestNames": [
+        "testLibrarySearchFindsRecordingByTitleAndTranscript()",
+        "testTideFidelityStateMatrix()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-final-suite-20261101-201003.xcresult",
+      "note": "Native search clear and origin selector failures"
+    },
+    {
+      "scope": "Mac checkpoint",
+      "result": "Failed",
+      "passed": 87,
+      "failed": 3,
+      "skipped": 0,
+      "total": 90,
+      "failedTestNames": [
+        "testLibrarySearchFindsRecordingByTitleAndTranscript()",
+        "testSettingsCanOpenAfterLibraryIsClosedAndReopened()",
+        "testTideFidelityStateMatrix()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-final-suite-20261101-201836.xcresult",
+      "note": "Search failure and UI process termination; concurrent iPhone build was then stopped"
+    },
+    {
+      "scope": "Mac focused search",
+      "result": "Failed",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "total": 1,
+      "failedTestNames": [
+        "testLibrarySearchFindsRecordingByTitleAndTranscript()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-search-native-cell.xcresult",
+      "note": "Replacement native cell was not editable"
+    },
+    {
+      "scope": "Mac focused search corrected",
+      "result": "Passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-search-native-cell-02.xcresult",
+      "note": "Native typing and clearing passed"
+    },
+    {
+      "scope": "Mac checkpoint",
+      "result": "Failed",
+      "passed": 89,
+      "failed": 1,
+      "skipped": 0,
+      "total": 90,
+      "failedTestNames": [
+        "testTideFidelityStateMatrix()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-final-suite-20261101-205722.xcresult",
+      "note": "Only the origin-selection fixture failed"
+    },
+    {
+      "scope": "Mac matrix partial",
+      "result": "Failed",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "total": 1,
+      "failedTestNames": [
+        "testTideFidelityStateMatrix()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-final-matrix.xcresult",
+      "note": "Runner terminated; partial display-wide captures excluded"
+    },
+    {
+      "scope": "Mac checkpoint",
+      "result": "Passed",
+      "passed": 91,
+      "failed": 0,
+      "skipped": 0,
+      "total": 91,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-final-suite-20261101-213013.xcresult",
+      "note": "91 passed, but visual review rejected two occluded empty-state captures; fixture then hardened"
+    },
+    {
+      "scope": "iPhone diagnostic-ID app tests",
+      "result": "Failed",
+      "passed": 106,
+      "failed": 1,
+      "skipped": 0,
+      "total": 107,
+      "failedTestNames": [
+        "testReleaseMetadataIsIPhoneOnlyAndMatchesExportDeclaration()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-after-unit.xcresult",
+      "note": "Normal-ID metadata assertion correctly rejected the diagnostic suffix"
+    },
+    {
+      "scope": "iPhone normal-ID checkpoint",
+      "result": "Passed",
+      "passed": 107,
+      "failed": 0,
+      "skipped": 0,
+      "total": 107,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-final-unit-normal.xcresult",
+      "note": "Normal bundle ID; earlier presentation revision"
+    },
+    {
+      "scope": "iPhone UI first full run",
+      "result": "Failed",
+      "passed": 12,
+      "failed": 1,
+      "skipped": 5,
+      "total": 18,
+      "failedTestNames": [
+        "testCriticalOfflineSurfacesPassAccessibilityAudit()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-final-ui/HarcMobileUITests-attempt-1.xcresult",
+      "note": "Privacy-caption contrast failure"
+    },
+    {
+      "scope": "iPhone UI corrected full run",
+      "result": "Passed",
+      "passed": 13,
+      "failed": 0,
+      "skipped": 5,
+      "total": 18,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-final-ui-02/HarcMobileUITests-attempt-1.xcresult",
+      "note": "Final mobile presentation at b1995f2; four physical-only cases and one opt-in screenshot case skipped"
+    },
+    {
+      "scope": "Mac final full run",
+      "result": "Failed",
+      "passed": 90,
+      "failed": 1,
+      "skipped": 0,
+      "total": 91,
+      "failedTestNames": [
+        "testBoundSpeakerCreateUnassignAndRelinkSurviveRelaunch()"
+      ],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-final-suite-20261101-215437.xcresult",
+      "note": "71434cb; all 78 app tests and 12 UI cases passed; speaker relink case terminated by SIGKILL"
+    },
+    {
+      "scope": "iPhone final normal-ID app tests",
+      "result": "Passed",
+      "passed": 107,
+      "failed": 0,
+      "skipped": 0,
+      "total": 107,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/iphone-final-unit-normal-714.xcresult",
+      "note": "71434cb; normal-ID metadata assertion retained"
+    },
+    {
+      "scope": "Mac final isolated speaker retry",
+      "result": "Passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1,
+      "failedTestNames": [],
+      "resultBundle": "/Volumes/MacMiniSDD/HarcBuilds/tide-fidelity-20261101/mac-speaker-retry-final.xcresult",
+      "note": "71434cb; unchanged products, retry only of the SIGKILL case"
+    }
+  ]
+}
