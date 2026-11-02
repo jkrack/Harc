@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 
 /// Editable free-form notes card, shared by the recording and session
 /// detail panes. Autosaves on pause (~1.5s after the last keystroke) and
@@ -28,7 +29,7 @@ struct NotesCardView: View {
         VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             HStack {
                 Text("Notes")
-                    .font(.harcLabel)
+                    .font(.harcCaption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let saveError {
@@ -48,10 +49,10 @@ struct NotesCardView: View {
                 .font(.harcBody)
                 .focused($focused)
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 54, maxHeight: 140)
+                .frame(minHeight: 40, maxHeight: 140)
                 .overlay(alignment: .topLeading) {
                     if draft.isEmpty {
-                        Text("Add context, links, or follow-ups. Agents connected over MCP append here too.")
+                        Text("Add context, links, or follow-ups.")
                             .font(.harcBody)
                             .foregroundStyle(.tertiary)
                             .padding(.top, 8)
@@ -61,7 +62,7 @@ struct NotesCardView: View {
                 }
         }
         .padding(HarcSpacing.md)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
         .task(id: itemID) {
             draft = notes ?? ""
             lastLoaded = notes

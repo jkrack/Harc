@@ -201,6 +201,12 @@ public struct Recording: Codable, Equatable, Hashable, Sendable, Identifiable {
         return fmt.string(from: startedAt)
     }
 
+    /// True when `displayTitle` is a real name (user or suggested) rather
+    /// than the start-time fallback.
+    public var hasNameOrSuggestion: Bool {
+        title?.isEmpty == false || suggestedTitle?.isEmpty == false
+    }
+
     /// First ~120 chars of transcript, trimmed. Empty string if no transcript.
     public var preview: String {
         guard let text = transcriptText else { return "" }

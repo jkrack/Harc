@@ -319,6 +319,8 @@ public enum HarcPresenceSize: Sendable {
     case standard
     /// Primary mobile capture control.
     case hero
+    /// Tide's compact Stop control, rendered by the same capture presence.
+    case tideRecording
 }
 
 struct HarcPresenceStyle {
@@ -518,6 +520,16 @@ private struct HarcPresenceMetrics {
             strokeWidth = 1
             symbolSize = 36
             symbolShadowRadius = 6
+        case .tideRecording:
+            diameter = HarcTideStyle.recordingControlDiameter
+            haloBlur = 9
+            haloOpacity = 0.28
+            shadowRadius = 11
+            shadowOpacity = 0.24
+            shadowY = 5
+            strokeWidth = 1
+            symbolSize = HarcTideStyle.recordingControlSymbolSize
+            symbolShadowRadius = 3
         }
     }
 }

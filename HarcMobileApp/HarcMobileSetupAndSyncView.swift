@@ -15,6 +15,7 @@ struct HarcMobileSetupAndSyncView: View {
     var body: some View {
         NavigationStack {
             List {
+                Group {
                 if !model.rejectedCaptureMetadataFiles.isEmpty {
                     Section { rejectedCaptureMetadataWarning }
                 }
@@ -101,6 +102,8 @@ struct HarcMobileSetupAndSyncView: View {
                         "Audio stays on your iPhone and your Mac. No cloud account."
                     )
                 }
+                }
+                .listRowBackground(HarcTideStyle.cardFill)
             }
             .scrollContentBackground(.hidden)
             .background { HarcTideBackground() }
@@ -247,10 +250,12 @@ struct HarcMobileMacCard: View {
             case .unpaired:
                 Button("Pair a Mac", action: pairOrChange)
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
                     .frame(maxWidth: .infinity)
             case .pairingRepairRequired:
                 Button("Repair", action: pairOrChange)
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
                     .frame(maxWidth: .infinity)
             case .checking:
                 HStack {
@@ -263,6 +268,7 @@ struct HarcMobileMacCard: View {
                 HStack {
                     Button("Check now", action: checkNow)
                         .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
                     Button("Change Mac", action: pairOrChange)
                         .buttonStyle(.bordered)
                 }
@@ -869,6 +875,7 @@ private struct HarcMobilePairingFlowView: View {
                     isScanning = true
                 }
                 .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
             }
         case .unpaired, .paired:
             scanStep
@@ -920,6 +927,7 @@ private struct HarcMobilePairingFlowView: View {
                 Task { await coordinator.confirmWordsMatch() }
             }
             .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
             .frame(maxWidth: .infinity)
             .accessibilityIdentifier(
                 HarcMobileAccessibilityID.pairingWordsMatch

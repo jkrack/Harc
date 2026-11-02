@@ -1,4 +1,5 @@
 import SwiftUI
+import HarcPresenceUI
 import AppKit
 import HarcStore
 import HarcModels
@@ -84,13 +85,14 @@ public struct SummaryCardView: View {
         tintedContainer {
             HStack(spacing: HarcSpacing.md) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(HarcTideStyle.cyan)
                 Text("No summary yet.")
                     .font(.harcBody)
                     .foregroundStyle(Color.secondary)
                 Spacer()
                 Button("Generate") { enqueueSelf() }
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
                     .controlSize(.small)
             }
         }
@@ -197,6 +199,7 @@ public struct SummaryCardView: View {
                 HStack(spacing: HarcSpacing.sm) {
                     Button("Retry") { enqueueSelf() }
                         .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
                         .controlSize(.small)
                     Button("Dismiss") { dismissFailureOnSelf() }
                         .buttonStyle(.bordered)
@@ -224,6 +227,7 @@ public struct SummaryCardView: View {
                 HStack(spacing: HarcSpacing.sm) {
                     Button("Generate") { enqueueSelf() }
                         .buttonStyle(.borderedProminent)
+                    .foregroundStyle(HarcTideStyle.onAccent)
                         .controlSize(.small)
                     Button("Dismiss") { dismissFailureOnSelf() }
                         .buttonStyle(.bordered)
@@ -272,10 +276,11 @@ public struct SummaryCardView: View {
         VStack(alignment: .leading, spacing: HarcSpacing.xs) {
             HStack(spacing: HarcSpacing.sm) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(HarcTideStyle.cyan)
                 Text("Summary")
-                    .font(.harcTitle)
-                    .foregroundStyle(Color.primary)
+                    .font(.harcCaption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
                     .fixedSize()
                 Spacer()
                 Button(action: enqueueSelf) {
@@ -301,17 +306,17 @@ public struct SummaryCardView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
             }
-            Text("Generated with \(persistedTierDisplay)")
-                .font(.harcLabel)
-                .foregroundStyle(Color.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let when = recording.summaryGeneratedAt {
-                Text(RelativeTimeFormatter.relativeOrDated(when))
-                    .font(.harcLabel)
-                    .foregroundStyle(Color.secondary)
-            }
+
         }
+        .help(summaryProvenance)
     }
+
+    private var summaryProvenance: String {
+        let model = "Generated with \(persistedTierDisplay)"
+        guard let when = recording.summaryGeneratedAt else { return model }
+        return "\(model) · \(RelativeTimeFormatter.relativeOrDated(when))"
+    }
+
 
     private var actionItemsLabel: some View {
         Text("ACTION ITEMS")
@@ -364,10 +369,12 @@ public struct SummaryCardView: View {
 
     @ViewBuilder
     private func tintedContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        GroupBox {
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
             content()
-                .padding(.vertical, 2)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(HarcSpacing.md)
+        .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
     }
 
     private var parsedActionItems: [ActionItem]? {

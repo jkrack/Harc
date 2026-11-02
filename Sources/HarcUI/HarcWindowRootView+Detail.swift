@@ -30,19 +30,23 @@ extension HarcWindowRootView {
             }
     }
 
-    @ViewBuilder
     var detailBody: some View {
-        VStack(spacing: 0) {
-            TideLibrarySearchField(text: $libraryVM.searchText, focusToken: librarySearchFocusToken)
-            .frame(width: 310, height: 30)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 24)
-            .frame(height: 52)
-
-            libraryDetail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background { HarcTideBackground() }
+        libraryDetail
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("Library")
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    TideLibrarySearchField(text: $libraryVM.searchText, focusToken: librarySearchFocusToken)
+                        .padding(.horizontal, HarcSpacing.sm)
+                        .frame(width: 310, height: 30) // token-exempt: mock toolbar search width.
+                        .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcSpacing.sm))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: HarcSpacing.sm)
+                                .strokeBorder(HarcTideStyle.cardBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
+                }
+            }
     }
 
     func mutationFailureBanner(_ failure: LibraryMutationFailure) -> some View {
@@ -128,9 +132,10 @@ extension HarcWindowRootView {
                     }
             } else {
                 ContentUnavailableView(
-                    "No Item Selected",
-                    systemImage: "sidebar.left",
-                    description: Text("Pick a person or recording from the sidebar.")
+                    libraryVM.recordings.isEmpty ? "Ready for your first recording" : "Choose a recording",
+                    systemImage: "waveform",
+                    description: Text(libraryVM.recordings.isEmpty
+                                      ? emptyStateSubtitle : "Pick a person or recording from the sidebar.")
                 )
             }
         }
@@ -139,22 +144,16 @@ extension HarcWindowRootView {
     func detailContent(recording: Recording) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                HarcTideConditions {
-                    if let endedAt = recording.endedAt {
-                        Text(Self.formatDuration(from: recording.startedAt, to: endedAt))
+                // Facts only. Location already sits in the origin line under
+                // the title, and a pill holding nothing but "On this Mac"
+                // reads as a lone button.
+                let facts = conditionFacts(for: recording)
+                if facts.count > 1 {
+                    HarcTideConditions {
+                        ForEach(facts, id: \.self) { Text($0) }
                     }
-                    let speakerCount = speakerIndices(for: recording).count
-                    if speakerCount > 0 {
-                        Text(Pluralize.count(speakerCount, "speaker"))
-                    }
-                    if let actions = recording.actionItemsMarkdown,
-                       !SummaryParser.parseActionItems(actions).isEmpty {
-                        let parsed = SummaryParser.parseActionItems(actions)
-                        Text(Pluralize.count(parsed.count, "action"))
-                    }
-                    Label("On this Mac", systemImage: "desktopcomputer")
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
                 HStack(alignment: .bottom, spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
                         detailTitleRow(recording: recording)
@@ -164,22 +163,26 @@ extension HarcWindowRootView {
                                 Text("–")
                                 Text(endedAt, format: .dateTime.hour().minute())
                             }
-                            Text("·")
-                            Label(libraryVM.originLabel(for: recording), systemImage: "record.circle")
-                                .textSelection(.enabled)
-                                .accessibilityIdentifier("harc.recording.origin")
+                            if recording.originID != nil {
+                                Text("·")
+                                Label(libraryVM.originLabel(for: recording), systemImage: "record.circle")
+                                    .textSelection(.enabled)
+                                    .accessibilityIdentifier("harc.recording.origin")
+                            }
                         }
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(formatTimestamp(seconds: Int(playerModel.currentTime)))
-                            .font(.system(size: 30, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                        if let endedAt = recording.endedAt {
-                            Text("of \(Self.formatDuration(from: recording.startedAt, to: endedAt))")
+                    // The playhead readout only means something against a
+                    // length; a bare "0:00" on an empty recording is noise.
+                    if let duration = recordedDuration(of: recording) {
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                            Text(formatTimestamp(seconds: Int(playerModel.currentTime)))
+                                .font(HarcTideStyle.numeral)
+                                .monospacedDigit()
+                            Text("of \(duration)")
                                 .font(.harcCaption)
                                 .foregroundStyle(.secondary)
                         }
@@ -188,7 +191,7 @@ extension HarcWindowRootView {
                 if recording.captureIntegrity.hasIssues || !recording.captureDiscontinuities.isEmpty {
                     Label("Some audio may be missing. Review capture interruptions before relying on this recording.", systemImage: "exclamationmark.triangle")
                         .font(.harcCaption)
-                        .foregroundStyle(Color.harc(.attention))
+                        .foregroundStyle(.primary)
                         .accessibilityIdentifier("harc.recording.captureIntegrityWarning")
                 }
 
@@ -196,6 +199,7 @@ extension HarcWindowRootView {
                     envelope: detailEnvelope,
                     audioURL: URL(fileURLWithPath: recording.wavPath),
                     speakerSegments: detailDocument?.speakers ?? [],
+                    speakerColors: detailSpeakerColors,
                     model: playerModel
                 )
 
@@ -279,26 +283,54 @@ extension HarcWindowRootView {
         }
     }
 
+    /// Length of the saved audio, or nil when the recording has none worth
+    /// showing (no end time, or at most a second).
+    private func recordedDuration(of recording: Recording) -> String? {
+        guard let endedAt = recording.endedAt,
+              endedAt.timeIntervalSince(recording.startedAt) > 1 else { return nil }
+        return Self.formatDuration(from: recording.startedAt, to: endedAt)
+    }
+
+    private func conditionFacts(for recording: Recording) -> [String] {
+        var facts: [String] = []
+        if recordedDuration(of: recording) != nil, let endedAt = recording.endedAt {
+            facts.append(Self.durationFact(endedAt.timeIntervalSince(recording.startedAt)))
+        }
+        let speakerCount = speakerIndices(for: recording).count
+        if speakerCount > 0 {
+            facts.append(Pluralize.count(speakerCount, "speaker"))
+        }
+        if let actions = recording.actionItemsMarkdown {
+            let count = SummaryParser.parseActionItems(actions).count
+            if count > 0 { facts.append(Pluralize.count(count, "action")) }
+        }
+        return facts
+    }
+
     private func detailInsights(recording: Recording) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: HarcSpacing.md) {
-                SummaryCardView(
-                    recording: recording,
-                    store: store,
-                    activeSummarizerID: prefs.activeSummarizerID,
-                    hasTranscript: hasTranscriptSource(recording),
-                    showActionItems: false,
-                    onClearSummary: { id in
-                        Task {
-                            do {
-                                try await store.clearSummaryStatus(id: id)
-                                mutationFailure = nil
-                            } catch {
-                                reportMutationFailure(.clearSummary(recording.displayTitle), error: error)
+                if hasTranscriptContent || recording.summaryMarkdown?.harcTrimmedNonEmpty != nil
+                    || recording.summaryStatusKind != nil
+                    || recording.id.map({ queueStore.isQueued($0) || queueStore.current == $0 }) == true {
+                    SummaryCardView(
+                        recording: recording,
+                        store: store,
+                        activeSummarizerID: prefs.activeSummarizerID,
+                        hasTranscript: hasTranscriptContent,
+                        showActionItems: false,
+                        onClearSummary: { id in
+                            Task {
+                                do {
+                                    try await store.clearSummaryStatus(id: id)
+                                    mutationFailure = nil
+                                } catch {
+                                    reportMutationFailure(.clearSummary(recording.displayTitle), error: error)
+                                }
                             }
                         }
-                    }
-                )
+                    )
+                }
                 HStack(alignment: .top, spacing: 10) {
                     if let markdown = recording.actionItemsMarkdown?.harcTrimmedNonEmpty {
                         tideActionsCard(markdown)
@@ -320,13 +352,21 @@ extension HarcWindowRootView {
                         )
                     }
                 } else if recording.id != nil {
-                    Button("Add notes") { showTideNotes = true }
-                        .font(.harcCaption)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
+                    Button {
+                        showTideNotes = true
+                    } label: {
+                        Label("Add notes", systemImage: "plus")
+                            .font(.harcCaption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, HarcSpacing.md)
+                            .padding(.vertical, HarcSpacing.sm)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(HarcTideStyle.cyan)
                 }
             }
-            .padding(HarcSpacing.md)
+            .padding(.bottom, HarcSpacing.md)
         }
         .background(.clear)
     }
@@ -344,8 +384,8 @@ extension HarcWindowRootView {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+        .padding(HarcSpacing.md)
+        .background(HarcTideStyle.cardFill, in: RoundedRectangle(cornerRadius: HarcTideStyle.cardRadius))
     }
 
     private func tideActionsCard(_ markdown: String) -> some View {
@@ -357,7 +397,7 @@ extension HarcWindowRootView {
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(needsReview ? "—" : "\(actions.count)")
-                        .font(.system(size: 27, weight: .bold, design: .rounded))
+                        .font(HarcTideStyle.metric)
                     Text(needsReview ? "Review source" : actions.count == 1 ? "View action" : "View actions")
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
@@ -394,27 +434,25 @@ extension HarcWindowRootView {
         return tideInsightCard(title: "Talk time", icon: "person.2.wave.2") {
             ForEach(durations.keys.sorted(), id: \.self) { index in
                 let name = resolvedSpeakerLabels[index] ?? "Speaker \(index + 1)"
-                HStack(spacing: 5) {
-                    Text(name)
-                        .lineLimit(1)
+                HStack(spacing: HarcSpacing.xs) {
+                    GeometryReader { geometry in
+                        Capsule()
+                            .fill(Color(nsColor: TranscriptDetailEditor.speakerColor(for: name)).opacity(0.8))
+                            .frame(width: max(3, geometry.size.width * CGFloat(durations[index, default: 0]) / CGFloat(total)))
+                    }
+                    .frame(width: 40, height: 6)
+                    Text(name).lineLimit(1)
                     Spacer(minLength: 0)
                     Text("\(Int((Double(durations[index, default: 0]) / Double(total) * 100).rounded()))%")
                         .monospacedDigit()
                 }
-                GeometryReader { geometry in
-                    Capsule()
-                        .fill(tideSpeakerColor(index).opacity(0.8))
-                        .frame(width: max(3, geometry.size.width * CGFloat(durations[index, default: 0]) / CGFloat(total)))
-                }
-                .frame(height: 6)
                 .font(.harcCaption)
             }
         }
     }
 
-    private func tideSpeakerColor(_ index: Int) -> Color {
-        let colors: [Color] = [HarcTideStyle.cyan, .purple, .orange, .teal, .green, .pink]
-        return colors[abs(index) % colors.count]
+    private var detailSpeakerColors: [Int: Color] {
+        resolvedSpeakerLabels.mapValues { Color(nsColor: TranscriptDetailEditor.speakerColor(for: $0)) }
     }
 
     /// Title as an editable field — the rename affordance the Library never
@@ -427,9 +465,14 @@ extension HarcWindowRootView {
             // via displayTitle, and a field that says "Untitled" under a
             // titled window reads as two surfaces disagreeing about the
             // recording's name.
-            TextField(recording.displayTitle, text: $titleDraft)
+            // With no real name the fallback is the start time, which the
+            // line below already shows; a 29pt grey date reads as a broken
+            // title rather than an invitation to name it.
+            TextField("Recording title", text: $titleDraft,
+                      prompt: Text(recording.hasNameOrSuggestion ? recording.displayTitle : "Name this recording")
+                        .foregroundStyle(.primary))
                 .textFieldStyle(.plain)
-                .font(.system(size: 29, weight: .bold, design: .rounded)) // token-exempt: Tide's primary title.
+                .font(HarcTideStyle.title)
                 .onSubmit { commitTitle(for: recording) }
             Spacer(minLength: 8)
             if let error = editorSaveError {
@@ -451,6 +494,10 @@ extension HarcWindowRootView {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var hasTranscriptContent: Bool {
+        !editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var transcriptEditorBody: some View {
