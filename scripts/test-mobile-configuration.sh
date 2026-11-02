@@ -61,6 +61,8 @@ python3 scripts/check-xcode-test-results.py \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSetupMacCardRemainsUsableAtNormalAndLargestText \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testSetupMacIconInkStaysInsideItsTileAtEveryTextSize \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder \
+  --require-test HarcMobileAppTests/HarcMobileLibraryRefreshPresentationTests/interruptedFullResyncAndRetry \
+  --require-test HarcMobileAppTests/HarcMobileLibraryRefreshPresentationTests/repeatedFullResyncIsBounded \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \
