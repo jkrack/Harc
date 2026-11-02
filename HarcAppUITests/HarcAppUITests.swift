@@ -131,6 +131,33 @@ final class HarcAppUITests: XCTestCase {
         add(evidence)
     }
 
+    func testRapidSwitchFromLargeTranscriptKeepsLatestSelection() throws {
+        app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = "selection-latency"
+        app.launch()
+        let large = app.outlines.staticTexts.matching(NSPredicate(
+            format: "label == %@ OR value == %@", "Large selection fixture", "Large selection fixture")).firstMatch
+        let quick = app.outlines.staticTexts.matching(NSPredicate(
+            format: "label == %@ OR value == %@", "Quick selection fixture", "Quick selection fixture")).firstMatch
+        XCTAssertTrue(large.waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(quick.waitForExistence(timeout: 10), app.debugDescription)
+        for _ in 0..<3 {
+            large.click()
+            quick.click()
+            let editor = app.textViews["harc.transcript.editor"]
+            let expected = NSPredicate { _, _ in
+                guard let text = editor.value as? String else { return false }
+                return text.contains("word0 word1 word2 word3") && text.count < 100
+            }
+            XCTAssertEqual(XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(predicate: expected, object: editor)],
+                timeout: 10), .completed, app.debugDescription)
+        }
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "Quick recording after repeated long-transcript selections"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testLaunchOpensFixtureLibraryAndShowsRecordingDetail() throws {
         launchFixtureLibrary()
 

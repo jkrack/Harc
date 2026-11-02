@@ -20,12 +20,17 @@ public enum ExportInputBuilder {
     }
 
     public static func build(from recording: Recording) -> ExportInput {
+        build(from: recording, transcript: loadTranscript(from: recording))
+    }
+
+    /// Reuse an already decoded sidecar without performing file I/O.
+    public static func build(from recording: Recording, transcript: SessionTranscript?) -> ExportInput {
         let duration: Int? = recording.endedAt.map {
             max(0, Int($0.timeIntervalSince(recording.startedAt)))
         }
         let title = recording.displayTitle
 
-        if let transcript = loadTranscript(from: recording) {
+        if let transcript {
             let segments = collapseToSegments(transcript: transcript)
             return ExportInput(
                 title: title,

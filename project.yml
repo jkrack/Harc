@@ -173,6 +173,7 @@ targets:
     platform: macOS
     sources:
       - path: HarcAppTests
+      - path: Tests/HarcUITests/RecordingDetailLoaderTests.swift
       - path: Tests/HarcClientStoreTests/ClientStoreFixtures.swift
       - path: Tests/HarcHostTransportTests/Support
       - path: Tests/HarcHostTransportTests/RecordingTransferFactoryTestDoubles.swift

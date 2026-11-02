@@ -250,7 +250,7 @@ extension HarcWindowRootView {
         .navigationTitle(recording.displayTitle)
         .background(transcriptKeyboardShortcuts())
         // Reload transcript when the selection's recording row changes in the DB.
-        // Two child tasks, not two awaits: `observeRecording` iterates a DB
+        // Concurrent child tasks: `observeRecording` iterates a DB
         // observation stream that never finishes, so anything sequenced after
         // it is dead code — the summary/suggestions load silently never ran,
         // which starved the "N speakers to review" chip whenever the
@@ -259,14 +259,13 @@ extension HarcWindowRootView {
             // A restored selection can arrive before the observed library
             // rows. Its selection-change handler then has no document to
             // load; initialize when the actual detail first becomes available.
-            if detailDocument == nil {
-                loadTranscript()
-                await loadEnvelope()
-                await loadResolvedLabels()
-            }
+            await loadTranscript(recording: recording)
+            guard !Task.isCancelled else { return }
+            async let envelope: Void = loadEnvelope(for: recording)
+            async let labels: Void = loadResolvedLabels()
             async let observation: Void = observeRecording(recording: recording)
             async let inspectorData: Void = loadInspectorSummaryData(for: recording)
-            _ = await (observation, inspectorData)
+            _ = await (envelope, labels, observation, inspectorData)
         }
         .onChange(of: transcriptSearchText) { _, _ in
             transcriptSearchIndex = 0
@@ -502,7 +501,11 @@ extension HarcWindowRootView {
 
     var transcriptEditorBody: some View {
         Group {
-            if let err = transcriptLoadError, editorText.isEmpty {
+            if detailDocument == nil {
+                ProgressView("Loading transcript…")
+                    .font(.harcCaption)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let err = transcriptLoadError, editorText.isEmpty {
                 EmptyStateView(
                     icon: "doc.text.magnifyingglass",
                     title: "No transcript available",

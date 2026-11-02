@@ -5540,6 +5540,10 @@ private extension AppDelegate {
     /// Zero/short captures are retained as distinct rows, including the same minute.
     private func seedTideFidelityLibrary(state: String, root: URL, store: RecordingStore) async throws {
         guard (try await store.fetchAll(includeDeleted: true)).isEmpty, state != "empty" else { return }
+        if state == "selection-latency" {
+            try await seedSelectionLatencyLibrary(root: root, store: store)
+            return
+        }
         let directory = root.appendingPathComponent("Recordings/Fidelity", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let today = Calendar.current.startOfDay(for: .now)
@@ -5610,6 +5614,43 @@ private extension AppDelegate {
                                          arguments: [bytes, recordingUUID, path])
                 }
             }
+        }
+    }
+
+    /// Large sidecar plus a small neighbor exercises selection without real data.
+    private func seedSelectionLatencyLibrary(root: URL, store: RecordingStore) async throws {
+        let directory = root.appendingPathComponent("Recordings/Selection", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let start = Calendar.current.startOfDay(for: .now).addingTimeInterval(9 * 3600)
+        for isLong in [true, false] {
+            let name = isLong ? "large" : "quick"
+            let wav = directory.appendingPathComponent(name + ".wav")
+            let md = directory.appendingPathComponent(name + ".md")
+            let json = directory.appendingPathComponent(name + ".json")
+            let duration: Double = isLong ? 2520 : 2
+            let title = isLong ? "Large selection fixture" : "Quick selection fixture"
+            let count = isLong ? 32000 : 4
+            let words = (0..<count).map { index in
+                Word(text: "word\(index % 100)", startMs: index * 75, endMs: index * 75 + 60)
+            }
+            let speakers = stride(from: 0, to: count, by: 8).map { index in
+                SpeakerSegment(speaker: (index / 8) % 3, startMs: index * 75,
+                               endMs: min(count, index + 8) * 75)
+            }
+            let text = words.map(\.text).joined(separator: " ")
+            let began = start.addingTimeInterval(isLong ? 60 : 0)
+            let ended = began.addingTimeInterval(duration)
+            let session = SessionTranscript(startedAt: began, endedAt: ended,
+                audioPath: wav.path, joinedText: text, words: words, speakers: speakers, chunks: [])
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .secondsSince1970
+            try encoder.encode(session).write(to: json)
+            try OKFMarkdown.render(OKFMarkdown.Fields(title: title, startedAt: began,
+                wavFileName: wav.lastPathComponent, transcript: text))
+                .write(to: md, atomically: true, encoding: .utf8)
+            try writeUITestWaveform(to: wav, duration: duration)
+            _ = try await store.upsert(Recording(wavPath: wav.path, txtPath: md.path,
+                jsonPath: json.path, startedAt: began, endedAt: ended, title: title,
+                transcriptText: text, speakerNames: [0: "Amy", 1: "Jason", 2: "Priya"]))
         }
     }
 
