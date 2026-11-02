@@ -1,6 +1,48 @@
 # iPhone companion launch plan
 
-## Current checkpoint — November 1, 2026
+## Current checkpoint — November 2, 2026
+
+The implementation/release baseline verified on main is
+`dbb48aa5f7dc004b1587bd5bec77aa2c6e9205b1`. GitHub metadata confirms
+[#175](https://github.com/jkrack/Harc/pull/175) merged into main and
+[v0.14.20 (75)](https://github.com/jkrack/Harc/releases/tag/v0.14.20)
+was published November 2. #174 merged into its non-main base before #175
+integrated Tide with the already-merged UI/preparation stack and #172.
+The November 1 checkpoint below is historical, not the current publication status.
+Held #155 remains separate; no second release or replacement artifact is proposed.
+
+The [release owner's committed evidence](../evidence/2026-11-02-tide-sparkle-release.md)
+binds the packaged app to `a5a60ff42c92020eb0d46abd93ff5d7f4c19bd3a`,
+with [exact-source CI](https://github.com/jkrack/Harc/actions/runs/41363153782).
+It records signed/notarized/stapled artifacts, matching public download hashes
+and Sparkle verification, visible Stop/save/playback, and the owner's physical
+Control-Option-R Start/Stop confirmation. This checkpoint verifies repository
+and release metadata and reads that evidence; it does not independently replay
+capture or reverify the artifact bytes, signatures or live feed. The historical
+Tide diagnostic's 90 passes, one SIGKILL and isolated retry remain distinct from
+the final source's reported 91 passing Mac app/UI tests. Earlier canceled or
+failed runs are not relabeled as clean qualification.
+
+Mac Host distribution remains direct through Sparkle, not the Mac App Store.
+Mac publication does not seal a phone archive or close the phone critical path:
+exact-source codec PCM/EOF, production transfer, durable verified receipt,
+complete canonical PCM hash and protected-master retention, then ordinary
+phone → Host → phone Library playback/transcript acceptance. Paired transfer,
+physical Live Activity and spoken VoiceOver acceptance remain unverified here.
+The October 20 Host file-binding/stale phone cursor findings and possible
+same-minute 0–1 second capture-start failures remain unresolved. Short Mac clips
+do not establish endurance, power-loss recovery or isolated audio-route coverage.
+
+The [active phone candidate register](../evidence/harcmobile-current-candidate-readiness.md)
+remains NO-GO for App Store submission: sealed archive, physical qualification,
+privacy/owner fields, screenshots and explicit submission approval remain open.
+Issue #105 stays separate absent a proved phone dependency. Preserve the held
+diagnostic/dialog, source branches and retained evidence; this documentation
+update grants no app-control or permission changes. The one-time cache cleanup
+is not continuing deletion permission. Keep the 5 GiB internal disk floor and
+the existing denial of external simulator device-set creation.
+
+## Historical checkpoint — November 1, 2026
 
 This checkpoint supersedes the dated status snapshots below. Source merges,
 fixture checks and release qualification are separate evidence scopes.

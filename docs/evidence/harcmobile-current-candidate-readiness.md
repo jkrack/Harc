@@ -1,9 +1,9 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-11-01
+**Updated:** 2026-11-02
 **Candidate configuration:** HarcMobile 0.14.20 (75), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
-**Sealed release source:** Not selected. Archive identity, executable digest, CDHash,
+**Sealed phone release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.
 
 This is the active candidate and gap register. Update its configuration when
@@ -33,7 +33,29 @@ The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
 remain useful history and must not be relabeled as current-candidate qualification.
 
-## November 1 source checkpoint
+## November 2 current checkpoint
+
+Main's verified implementation/release baseline is
+`dbb48aa5f7dc004b1587bd5bec77aa2c6e9205b1`, following #175's Tide integration.
+GitHub metadata confirms [Mac v0.14.20](https://github.com/jkrack/Harc/releases/tag/v0.14.20)
+is published. The [release owner's evidence](2026-11-02-tide-sparkle-release.md)
+identifies packaged source `a5a60ff42c92020eb0d46abd93ff5d7f4c19bd3a` and
+records signing/notarization, public asset/feed verification, visible
+Stop/save/playback and owner-confirmed physical shortcut Start/Stop. Those
+artifact and capture checks are attributed to that record, not independently
+repeated by this documentation review. The [current launch checkpoint](../plans/2026-10-14-iphone-companion-launch.md)
+separates current publication from historical failures and retry evidence.
+
+The shared 0.14.20 (75) version does not identify a sealed phone archive. None
+of the phone gates below is upgraded by Mac publication or simulator fixtures.
+Paired transfer, physical Live Activity, spoken VoiceOver, exact-source codec
+PCM/EOF, canonical hash/protected-master verification and the ordinary phone
+Library round trip remain unqualified here. The October 20 file-binding/cursor
+findings and possible same-minute 0–1 second capture-start failures remain
+unresolved. App Store submission remains NO-GO. The November 1 source checkpoint
+below retains its dated scope and no longer describes current Mac publication.
+
+## Historical source checkpoint — November 1
 
 The implementation baseline verified on main is `ccc6bad4388dfe20e608abac25213fe6a29f2eae`, tree
 `6e7fab2b7d94316982143e2cb09af790a65e479b`. Corrected #170 and UI PRs
