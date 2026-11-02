@@ -17,6 +17,8 @@ public struct TranscriptDocument: Sendable {
     public let wordIndex: WordIndex
     public let audioAvailable: Bool
     public let jsonAvailable: Bool
+    // Retain the decoded sidecar for detail metadata; rendering must not reopen it.
+    var structuredTranscript: SessionTranscript? = nil
     public var overlapRanges: [SpeechOverlapRange]? = nil
     public var overlapWarning: String? {
         overlapRanges?.isEmpty == false
@@ -121,6 +123,7 @@ public struct TranscriptDocument: Sendable {
             audioAvailable: audioAvailable,
             jsonAvailable: jsonAvailable
         )
+        document.structuredTranscript = structuredTranscript
         document.overlapRanges = structuredTranscript?.overlapRanges
         return document
     }
@@ -130,11 +133,16 @@ public struct TranscriptDocument: Sendable {
     ) -> Bool {
         var legacy = transcript
         legacy.overlapRanges = nil
-        let candidates = [transcript.joinedText,
-            TranscriptPlainTextRenderer.render(legacy),
-            TranscriptPlainTextRenderer.render(legacy) { recording.speakerNames[$0] ?? "Speaker \($0 + 1)" }]
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return candidates.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
+        // Most unedited sidecars match joinedText. Avoid constructing every
+        // alternate rendering before checking that cheap, common case.
+        if transcript.joinedText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed { return true }
+        if TranscriptPlainTextRenderer.render(legacy).trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+            return true
+        }
+        return TranscriptPlainTextRenderer.render(legacy) {
+            recording.speakerNames[$0] ?? "Speaker \($0 + 1)"
+        }.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
     }
 
     /// Return the same document metadata with a different presentation text
@@ -152,6 +160,7 @@ public struct TranscriptDocument: Sendable {
             audioAvailable: audioAvailable,
             jsonAvailable: jsonAvailable
         )
+        document.structuredTranscript = structuredTranscript
         document.overlapRanges = overlapRanges
         return document
     }

@@ -74,9 +74,8 @@ public struct HarcWindowRootView: View {
     /// Set when the user asks to dissolve a session — drives the confirm
     /// alert (recordings are untouched; the wording says so).
     @State var pendingDissolveSession: Session? = nil
-    /// When the .json sidecar is available, we render structured turns
-    /// (timestamp + speaker + text) instead of the flat .txt blob.
-    @State var transcriptSegments: [TranscriptDisplaySegment] = []
+    @State var detailSnapshot: RecordingDetailSnapshot? = nil
+    @State var detailLoader = RecordingDetailLoader()
     @State var transcriptLoadError: String? = nil
     @State var transcriptFindVisible = false
     @State var transcriptSearchText = ""
@@ -261,9 +260,7 @@ public struct HarcWindowRootView: View {
         .onChange(of: selection) { old, _ in
             flushPendingDetailEdits(previousSelection: old)
             persistNavigationSnapshot()
-            loadTranscript()
-            Task { await loadEnvelope() }
-            Task { await loadResolvedLabels() }
+            resetDetailState()
         }
         .onChange(of: navigationValidationToken) { _, _ in restoreOrValidateSelection() }
         .alert(
@@ -380,6 +377,7 @@ public struct HarcWindowRootView: View {
     }
 
     func handleDisappear() {
+        detailLoader.cancel()
         libraryVM.stop()
         peopleVM.stop()
     }
@@ -1376,7 +1374,8 @@ public struct HarcWindowRootView: View {
         .scrollContentBackground(.hidden)
         .background { HarcTideBackground() }
         .navigationTitle("Inspector")
-        .task(id: recording.id) {
+        .task(id: detailSnapshot?.wavPath) {
+            guard detailSnapshot?.wavPath == recording.wavPath else { return }
             async let summaryData: Void = loadInspectorSummaryData(for: recording)
             async let stats: Void = loadNerdStats(for: recording)
             _ = await (summaryData, stats)
@@ -1408,6 +1407,7 @@ public struct HarcWindowRootView: View {
         let wavBytes = (try? URL(fileURLWithPath: recording.wavPath)
             .resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
 
+        guard !Task.isCancelled, selectedRecording?.wavPath == recording.wavPath else { return }
         nerdStats = RecordingNerdStats.build(
             recording: recording,
             transcript: transcript,
@@ -1419,6 +1419,7 @@ public struct HarcWindowRootView: View {
     }
 
     func loadInspectorSummaryData(for recording: Recording) async {
+        guard !Task.isCancelled, selectedRecording?.wavPath == recording.wavPath else { return }
         let loadID = UUID()
         inspectorSuggestionLoadID = loadID
         let people = (try? await store.fetchPeople()) ?? []
@@ -1433,7 +1434,8 @@ public struct HarcWindowRootView: View {
         if let id = recording.id {
             slots = await SpeakerSlotReviewBatch.load(recordingID: id, indices: speakerIndices(for: recording), store: store)
         } else { slots = .empty }
-        guard inspectorSuggestionLoadID == loadID else { return }
+        guard !Task.isCancelled, inspectorSuggestionLoadID == loadID,
+              selectedRecording?.wavPath == recording.wavPath else { return }
         allPeople = people
         allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
         inspectorSlotReviews = slots
@@ -1514,37 +1516,25 @@ public struct HarcWindowRootView: View {
         return FileManager.default.fileExists(atPath: path)
     }
 
-    /// Derive distinct speaker indices from the JSON sidecar via
-    /// `ExportInputBuilder.build`. Returns [] for un-diarized recordings.
+    /// Rendering reads the selected snapshot, never the recording's files.
     func speakerIndices(for recording: Recording) -> [Int] {
-        let input = ExportInputBuilder.build(from: recording)
-        var seen: Set<Int> = []
-        for segment in input.segments {
-            if let id = segment.speaker { seen.insert(id) }
-        }
-        return seen.sorted()
+        guard detailSnapshot?.wavPath == recording.wavPath else { return [] }
+        return detailSnapshot?.speakerIndices ?? []
     }
 
-    func loadEnvelope() async {
-        guard let rec = currentRecording else {
-            detailEnvelope = []
-            return
-        }
-        do {
-            detailEnvelope = try await AmplitudeEnvelopeLoader.load(
-                url: URL(fileURLWithPath: rec.wavPath),
-                samples: 1024
-            )
-        } catch {
-            detailEnvelope = []
-        }
+    func loadEnvelope(for recording: Recording) async {
+        let envelope = (try? await AmplitudeEnvelopeLoader.load(
+            url: URL(fileURLWithPath: recording.wavPath), samples: 1024
+        )) ?? []
+        guard !Task.isCancelled, currentRecording?.wavPath == recording.wavPath else { return }
+        detailEnvelope = envelope
     }
 
     /// Pre-resolves speaker labels for the current selection via
     /// `RecordingStore.resolvedSpeakerName`. Covers up to 12 speaker indices —
     /// enough for any realistic meeting; the bound keeps store calls
     /// predictable. Results are cached in `resolvedSpeakerLabels` and used by
-    /// `buildDisplaySegments` so Person-linked display names appear in the
+    /// the editor so Person-linked display names appear in the
     /// transcript turns.
     func loadResolvedLabels() async {
         guard let rec = currentRecording, let id = rec.id else {
@@ -1561,98 +1551,57 @@ public struct HarcWindowRootView: View {
             }
         }
         await MainActor.run {
-            guard currentRecording?.id == id else { return }
+            guard !Task.isCancelled, currentRecording?.wavPath == rec.wavPath else { return }
             let previousLabels = renderedSpeakerLabels
             resolvedSpeakerLabels = out
-            // Rebuild transcript segments with the freshly-resolved labels so
-            // Person-linked names appear in the transcript turns. This handles
-            // the case where loadTranscript() ran before this async read
-            // completed and built segments with an empty dict.
-            rebuildTranscriptSegments()
             applyResolvedSpeakerLabels(from: previousLabels)
         }
     }
 
-    /// Loads `transcriptText` from cache or disk. Called on selection change.
-    /// Also loads the structured .json sidecar when available so the detail
-    /// pane can render per-turn timestamps instead of the flat .txt blob.
-    func loadTranscript(recording observedRecording: Recording? = nil) {
+    /// Clear the old recording immediately. The detail's selection-bound task
+    /// owns loading; changing selection cancels it and invalidates its result.
+    func resetDetailState() {
+        detailLoader.cancel()
+        detailSnapshot = nil
+        detailEnvelope = []
+        nerdStats = nil
+        inspectorSuggestionLoadID = UUID()
+        inspectorPendingSuggestions = []
+        inspectorSuggestionReviews = .empty
+        inspectorSlotReviews = .empty
+        resolvedSpeakerLabels = [:]
         transcriptLoadError = nil
         transcriptText = ""
-        transcriptSegments = []
         detailDocument = nil
         editorText = ""
         editorHighlight = nil
         editorDirty = false
         editorSaveError = nil
         lastAutosaveAt = nil
+        lastSavedEditorText = nil
         speakerBoundaries = []
         renderedSpeakerLabels = [:]
-        guard let recording = observedRecording ?? selectedRecording else { return }
-        titleDraft = recording.title ?? ""
+        vocabCandidates = []
+        titleDraft = selectedRecording?.title ?? ""
+    }
 
-        // The pane edits in place now, so it loads through the same tolerant
-        // document the editor window used: .md transcript section preferred,
-        // JSON joinedText fallback, word index for click-to-seek.
-        let doc = TranscriptDocument.load(recording: recording)
+    func loadTranscript(recording: Recording) async {
+        guard !editorDirty, selectedRecording?.wavPath == recording.wavPath else { return }
+        let expectedEditorText = editorText
+        if detailDocument == nil { titleDraft = recording.title ?? "" }
+        guard let snapshot = await detailLoader.load(recording: recording),
+              !Task.isCancelled, selectedRecording?.wavPath == recording.wavPath,
+              !editorDirty, editorText == expectedEditorText else { return }
+        detailSnapshot = snapshot
+        let doc = snapshot.document
         detailDocument = doc
         editorText = doc.initialText
         speakerBoundaries = Self.speakerTurnOffsets(in: doc.initialText)
         vocabCandidates = []
         lastSavedEditorText = doc.initialText
         renderedSpeakerLabels = recording.speakerNames
-
-        // Plain text for fallback / pasteboard copy.
-        if let cached = recording.transcriptText, !cached.isEmpty {
-            transcriptText = cached
-        } else if let txtPath = recording.txtPath {
-            do {
-                let raw = try String(contentsOf: URL(fileURLWithPath: txtPath), encoding: .utf8)
-                // OKF .md sidecars carry frontmatter + summary; show only
-                // the transcript section. Legacy .txt reads pass through.
-                transcriptText = OKFMarkdown.extractTranscript(from: raw) ?? raw
-            } catch {
-                transcriptLoadError = "Could not load transcript: \(error.localizedDescription)"
-            }
-        } else {
-            transcriptLoadError = "No transcript file — recording may not have been transcribed."
-        }
-
-        // Structured turns (preferred render path).
-        // Note: resolvedSpeakerLabels may still be loading at this point
-        // (loadResolvedLabels runs concurrently); if so, segments are built
-        // with an empty dict — falling back to "Speaker N+1" — and rebuilt
-        // once loadResolvedLabels completes and calls rebuildTranscriptSegments.
-        if let jsonPath = recording.jsonPath,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .secondsSince1970
-            if let session = try? decoder.decode(SessionTranscript.self, from: data) {
-                transcriptSegments = Self.buildDisplaySegments(
-                    session: session,
-                    speakerNames: resolvedSpeakerLabels
-                )
-            }
-        }
-    }
-
-    /// Rebuilds `transcriptSegments` for the current selection using the
-    /// already-resolved `resolvedSpeakerLabels`. Called from
-    /// `loadResolvedLabels()` after labels are populated so Person-linked names
-    /// appear in the transcript once the async store read completes.
-    @MainActor
-    func rebuildTranscriptSegments() {
-        guard let recording = selectedRecording,
-              let jsonPath = recording.jsonPath,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        if let session = try? decoder.decode(SessionTranscript.self, from: data) {
-            transcriptSegments = Self.buildDisplaySegments(
-                session: session,
-                speakerNames: resolvedSpeakerLabels
-            )
-        }
+        transcriptText = snapshot.transcriptText
+        transcriptLoadError = snapshot.transcriptLoadError
     }
 
     /// Project store-backed identity into the editable transcript's turn
@@ -1661,7 +1610,8 @@ public struct HarcWindowRootView: View {
     @MainActor
     func applyResolvedSpeakerLabels(from previousLabels: [Int: String]) {
         guard let recording = selectedRecording, let document = detailDocument else { return }
-        let turnSpeakerIndices = ExportInputBuilder.build(from: recording).segments.compactMap(\.speaker)
+        guard let snapshot = detailSnapshot, snapshot.wavPath == recording.wavPath else { return }
+        let turnSpeakerIndices = snapshot.turnSpeakerIndices
         let rewritten = TranscriptSpeakerLabelRewriter.rewrite(
             editorText,
             turnSpeakerIndices: turnSpeakerIndices,
@@ -1680,114 +1630,6 @@ public struct HarcWindowRootView: View {
         editorDirty = wasDirty
     }
 
-    static func buildDisplaySegments(
-        session: SessionTranscript,
-        speakerNames: [Int: String]
-    ) -> [TranscriptDisplaySegment] {
-        guard !session.speakers.isEmpty, !session.words.isEmpty else { return [] }
-
-        // First pass: assign each word to a speaker (mirrors
-        // TranscriptPlainTextRenderer's algorithm so we get the same
-        // SentencePiece-aware concat: "That's" tokenized as ["That", "'s"]
-        // joins back to "That's" inside a single turn).
-        struct AssignedWord {
-            let text: String
-            let startMs: Int
-            let endMs: Int
-            let speaker: Int
-        }
-
-        let sentencePieceStyle = session.words.contains { $0.text.first?.isWhitespace == true }
-        var assigned: [AssignedWord] = []
-        var lastSpeaker: Int? = nil
-        for w in session.words {
-            let mid = (w.startMs + w.endMs) / 2
-            let s: Int
-            if let containing = session.speakers.first(where: { mid >= $0.startMs && mid < $0.endMs }) {
-                s = containing.speaker
-            } else if let last = lastSpeaker {
-                s = last
-            } else {
-                s = session.speakers.min { a, b in
-                    distanceFromSegment(mid, segment: a) < distanceFromSegment(mid, segment: b)
-                }?.speaker ?? 0
-            }
-            assigned.append(AssignedWord(text: w.text, startMs: w.startMs, endMs: w.endMs, speaker: s))
-            lastSpeaker = s
-        }
-
-        // Smoothing pass: collapse sub-300ms speaker excursions that are
-        // surrounded by the same other speaker. Catches diarizer artifacts
-        // where a single token (often punctuation like "'") flips speaker
-        // mid-word.
-        let minRunMs = 300
-        var i = 0
-        while i < assigned.count {
-            // Find run [i, j) of same speaker.
-            var j = i + 1
-            while j < assigned.count && assigned[j].speaker == assigned[i].speaker { j += 1 }
-            let runDuration = assigned[j - 1].endMs - assigned[i].startMs
-            let prevSpeaker = i > 0 ? assigned[i - 1].speaker : nil
-            let nextSpeaker = j < assigned.count ? assigned[j].speaker : nil
-            let surroundedBySame = prevSpeaker != nil && prevSpeaker == nextSpeaker && prevSpeaker != assigned[i].speaker
-            if runDuration < minRunMs && surroundedBySame, let host = prevSpeaker {
-                for k in i..<j {
-                    assigned[k] = AssignedWord(
-                        text: assigned[k].text,
-                        startMs: assigned[k].startMs,
-                        endMs: assigned[k].endMs,
-                        speaker: host
-                    )
-                }
-            }
-            i = j
-        }
-
-        // Second pass: group consecutive same-speaker words into turns,
-        // concatenating with the right strategy for the tokenizer style.
-        var segments: [TranscriptDisplaySegment] = []
-        var currentSpeaker: Int? = nil
-        var currentStartMs: Int = 0
-        var bucket = ""
-
-        func flush() {
-            let trimmed = bucket.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty, let speaker = currentSpeaker {
-                let name = speakerNames[speaker] ?? "Speaker \(speaker + 1)"
-                segments.append(TranscriptDisplaySegment(
-                    speaker: speaker,
-                    speakerName: name,
-                    startSec: currentStartMs / 1000,
-                    text: trimmed
-                ))
-            }
-            bucket = ""
-        }
-
-        for w in assigned {
-            if w.speaker != currentSpeaker {
-                flush()
-                currentSpeaker = w.speaker
-                currentStartMs = w.startMs
-            }
-            if sentencePieceStyle {
-                bucket += w.text
-            } else if bucket.isEmpty {
-                bucket = w.text
-            } else {
-                bucket += " " + w.text
-            }
-        }
-        flush()
-        return segments
-    }
-
-    static func distanceFromSegment(_ point: Int, segment: SpeakerSegment) -> Int {
-        if point < segment.startMs { return segment.startMs - point }
-        if point >= segment.endMs  { return point - segment.endMs + 1 }
-        return 0
-    }
-
     /// Observe DB changes to the selected recording so the detail pane updates
     /// when the recording is renamed or its transcript is edited.
     func observeRecording(recording: Recording) async {
@@ -1800,11 +1642,14 @@ public struct HarcWindowRootView: View {
             // delivers its row. Initialize from this observation's value,
             // rather than waiting for another selection change. Never replace
             // an editor containing user edits with a later processing result.
-            if !editorDirty, editorText.isEmpty,
-               detailDocument == nil || detailDocument?.initialText.isEmpty == true,
-               hasTranscriptSource(latest) {
-                loadTranscript(recording: latest)
+            let newSource = detailSnapshot.map { !$0.matchesSource(recording: latest) } ?? false
+            if !editorDirty, newSource || (editorText.isEmpty &&
+                (detailDocument == nil || detailDocument?.initialText.isEmpty == true) &&
+                hasTranscriptSource(latest)) {
+                await loadTranscript(recording: latest)
             }
+            guard !Task.isCancelled,
+                  selection == .recording(wavPath: recording.wavPath) else { return }
             if transcriptText.isEmpty, let cached = latest.transcriptText, !cached.isEmpty {
                 transcriptText = cached
             }
