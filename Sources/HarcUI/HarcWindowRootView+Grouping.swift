@@ -114,6 +114,17 @@ extension HarcWindowRootView {
         return String(format: "%d:%02d", m, s)
     }
 
+    static func durationFact(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "Duration unavailable" }
+        if seconds < 1 { return "Under 1 sec" }
+        guard seconds < Double(Int.max) else { return "Duration unavailable" }
+        let whole = Int(seconds)
+        if whole < 60 { return "\(whole) sec" }
+        if whole < 3600 { return "\(whole / 60) min" }
+        let minutes = (whole % 3600) / 60
+        return minutes == 0 ? "\(whole / 3600) hr" : "\(whole / 3600) hr \(minutes) min"
+    }
+
     /// The row's secondary line: time · duration · speakers — the facts that
     /// used to masquerade as the title, demoted to context.
     static func rowSecondaryLine(for rec: Recording) -> String {
@@ -121,12 +132,11 @@ extension HarcWindowRootView {
 
         let fmt = DateFormatter()
         fmt.dateStyle = .none
-        fmt.timeStyle = .short
+        let duration = rec.endedAt.map { max(0, $0.timeIntervalSince(rec.startedAt)) }
+        fmt.timeStyle = duration.map { $0 <= 1 } == true ? .medium : .short
         parts.append(fmt.string(from: rec.startedAt))
 
-        if let endedAt = rec.endedAt {
-            parts.append(formatDuration(from: rec.startedAt, to: endedAt))
-        }
+        if let duration { parts.append(durationFact(duration)) }
 
         // speakerNames is populated by diarization at save; its count is the
         // cheap, already-on-the-row source for "how many voices".

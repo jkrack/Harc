@@ -45,14 +45,14 @@ struct LiveTranscriptPane: View {
             )
             .accessibilityHidden(true)
             Text("Recording")
-                .font(.harcTitle)
+                .font(HarcTideStyle.title)
             // TimelineView rather than a Timer: the pane only exists while
             // recording, so its clock should start and stop with it.
             if let start = recordingState.recordingStartedAt {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(ElapsedFormatter.string(since: start, now: context.date))
-                        .font(.harcLabel.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .font(HarcTideStyle.numeral.monospacedDigit())
+                        .foregroundStyle(.primary)
                 }
             }
             Spacer()

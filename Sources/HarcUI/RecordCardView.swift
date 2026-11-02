@@ -54,7 +54,7 @@ struct RecordCardView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Record")
                             .font(.harcBody.weight(.semibold))
-                            .foregroundStyle(HarcBrand.live)
+                            .foregroundStyle(Color.primary)
                         Text(bridge.selectedMicrophoneName)
                             .font(.harcCaption)
                             .foregroundStyle(.secondary)

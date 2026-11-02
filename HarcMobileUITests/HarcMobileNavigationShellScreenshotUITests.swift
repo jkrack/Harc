@@ -7,6 +7,12 @@ final class HarcMobileNavigationShellScreenshotUITests: XCTestCase {
     }
 
     func testCaptureNavigationShellSurfaces() {
+        for appearance in ["dark", "light"] {
+            captureNavigationShell(appearance: appearance)
+        }
+    }
+
+    private func captureNavigationShell(appearance: String) {
         addUIInterruptionMonitor(
             withDescription: "Microphone permission"
         ) { alert in
@@ -21,12 +27,13 @@ final class HarcMobileNavigationShellScreenshotUITests: XCTestCase {
             "A5000000-0000-4000-8000-202610170001",
             "--harc-ui-test-reset-root",
         ]
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
         app.launch()
 
         XCTAssertTrue(
             app.staticTexts["Tap to record"].waitForExistence(timeout: 15)
         )
-        keepScreenshot(named: "pr1-record-idle")
+        keepScreenshot(named: "fidelity-iphone-unpaired-record-\(appearance)")
 
         let searchTab = app.tabBars.buttons["Search"]
         XCTAssertTrue(searchTab.waitForExistence(timeout: 10))
@@ -35,7 +42,7 @@ final class HarcMobileNavigationShellScreenshotUITests: XCTestCase {
             app.descendants(matching: .any)["harc.mobile.search"]
                 .waitForExistence(timeout: 10)
         )
-        keepScreenshot(named: "pr1-search")
+        keepScreenshot(named: "fidelity-iphone-unpaired-search-\(appearance)")
 
         app.tabBars.buttons["Record"].tap()
         let hostPill = app.buttons["harc.mobile.host.health"]
@@ -46,7 +53,7 @@ final class HarcMobileNavigationShellScreenshotUITests: XCTestCase {
                 "harc.mobile.setup-and-sync"
             ].waitForExistence(timeout: 10)
         )
-        keepScreenshot(named: "pr1-setup-and-sync")
+        keepScreenshot(named: "fidelity-iphone-unpaired-setup-\(appearance)")
 
         app.buttons["Done"].tap()
         let start = app.buttons["harc.mobile.record.start"]
@@ -58,6 +65,8 @@ final class HarcMobileNavigationShellScreenshotUITests: XCTestCase {
                 .waitForExistence(timeout: 15)
         )
 
+        keepScreenshot(named: "fidelity-iphone-recording-record-\(appearance)")
+
         let libraryTab = app.tabBars.buttons["Library"]
         XCTAssertTrue(libraryTab.waitForExistence(timeout: 10))
         libraryTab.tap()
@@ -65,8 +74,10 @@ final class HarcMobileNavigationShellScreenshotUITests: XCTestCase {
             "harc.mobile.record.accessory.stop"
         ]
         XCTAssertTrue(accessoryStop.waitForExistence(timeout: 10))
-        keepScreenshot(named: "pr1-library-recording")
+        keepScreenshot(named: "fidelity-iphone-recording-library-\(appearance)")
         accessoryStop.tap()
+        XCTAssertTrue(accessoryStop.waitForNonExistence(timeout: 15))
+        app.terminate()
     }
 
     private func triggerPermissionMonitor(in app: XCUIApplication) {
