@@ -999,7 +999,7 @@ final class HarcMobileLibraryCoordinator {
     }
 
     private func replaceFromSnapshot(
-        transport: HarcPinnedGRPCConnection,
+        transport: any HarcLibraryRPCTransport,
         authorization: HarcLibraryAuthorization,
         libraryID: LibraryID
     ) async throws {
@@ -1087,8 +1087,9 @@ final class HarcMobileLibraryCoordinator {
         try cache.replace(with: snapshot)
     }
 
-    private func applyChanges(
-        transport: HarcPinnedGRPCConnection,
+    // Internal so fixtures exercise the production recovery loop through the RPC contract.
+    func applyChanges(
+        transport: any HarcLibraryRPCTransport,
         authorization: HarcLibraryAuthorization,
         libraryID: LibraryID,
         mayRestartSnapshot: Bool

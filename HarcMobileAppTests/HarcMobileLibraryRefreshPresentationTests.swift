@@ -4,6 +4,8 @@ import HarcClientStore
 import HarcDomain
 import HarcIdentity
 import HarcTransfer
+import HarcProtocol
+@testable import HarcClientTransport
 import Testing
 @testable import HarcMobile
 
@@ -395,6 +397,134 @@ struct HarcMobileLibraryRefreshPresentationTests {
         try await withTemporaryRoot(prefix: "HarcRefreshLifecycle") { root in
             let fixture = try await RefreshFixture(root: root, cached: cached)
             try await body(fixture)
+        }
+    }
+
+    @Test("interrupted full resync preserves durable cache and a complete retry converges")
+    func interruptedFullResyncAndRetry() async throws {
+        try await withTemporaryRoot(prefix: "full-resync") { root in
+            let fixture = try await RefreshFixture(root: root, cached: true)
+            let coordinator = fixture.coordinator { throw FixtureError.identity }
+            let credential = Data(repeating: 7, count: 32)
+            let authorization = try HarcLibraryAuthorization(
+                credential: credential,
+                authorizationHeader: HarcBootstrapAuthorization.sessionHeader(credential: credential)
+            )
+            let interrupted = SnapshotTransport(recording: fixture.updated, failSecondPage: true)
+            do {
+                try await coordinator.applyChanges(transport: interrupted, authorization: authorization,
+                    libraryID: fixture.libraryID, mayRestartSnapshot: true)
+                Issue.record("The interrupted snapshot must fail")
+            } catch SnapshotTransport.Failure.interrupted {}
+            let retained = try HarcLibraryCache(rootDirectory: root)
+            #expect(try retained.recordings() == [fixture.original])
+            #expect(try retained.state()?.changeCursor == ChangeCursor(1))
+            #expect(await interrupted.requests == ["changes:1", "begin", "page:first", "page:next"])
+
+            let retry = SnapshotTransport(recording: fixture.updated)
+            try await coordinator.applyChanges(transport: retry, authorization: authorization,
+                libraryID: fixture.libraryID, mayRestartSnapshot: true)
+            let reopened = try HarcLibraryCache(rootDirectory: root)
+            #expect(try reopened.recordings() == [fixture.updated])
+            #expect(try reopened.state()?.changeCursor == ChangeCursor(3))
+            #expect(await retry.requests == ["changes:1", "begin", "page:first", "page:next", "changes:2"])
+        }
+    }
+
+    @Test("a second full-resync response terminates without discarding the complete snapshot")
+    func repeatedFullResyncIsBounded() async throws {
+        try await withTemporaryRoot(prefix: "repeated-resync") { root in
+            let fixture = try await RefreshFixture(root: root, cached: true)
+            let coordinator = fixture.coordinator { throw FixtureError.identity }
+            let credential = Data(repeating: 7, count: 32)
+            let authorization = try HarcLibraryAuthorization(credential: credential,
+                authorizationHeader: HarcBootstrapAuthorization.sessionHeader(credential: credential))
+            let transport = SnapshotTransport(recording: fixture.updated, repeatResync: true)
+            do {
+                try await coordinator.applyChanges(transport: transport, authorization: authorization,
+                    libraryID: fixture.libraryID, mayRestartSnapshot: true)
+                Issue.record("A repeated full resync must fail rather than loop")
+            } catch HarcMobileLibraryError.repeatedFullResync {}
+            let reopened = try HarcLibraryCache(rootDirectory: root)
+            #expect(try reopened.recordings() == [fixture.updated])
+            #expect(try reopened.state()?.changeCursor == ChangeCursor(2))
+            #expect(await transport.requests == ["changes:1", "begin", "page:first", "page:next", "changes:2"])
+        }
+    }
+
+    private actor SnapshotTransport: HarcLibraryRPCTransport {
+        enum Failure: Error { case interrupted, unexpectedRPC }
+        let recording: LibraryRecordingSummary
+        let failSecondPage: Bool
+        let repeatResync: Bool
+        private(set) var requests: [String] = []
+        init(recording: LibraryRecordingSummary, failSecondPage: Bool = false, repeatResync: Bool = false) {
+            self.recording = recording
+            self.failSecondPage = failSecondPage
+            self.repeatResync = repeatResync
+        }
+        func listLibraryChanges(_ request: Harc_V1_ListChangesRequestV1,
+            authorization: HarcLibraryAuthorization) async throws -> Harc_V1_ListChangesResponseV1 {
+            requests.append("changes:\(request.afterCursor)")
+            // Fail immediately if an accidental retry loop asks for another snapshot.
+            guard requests.filter({ $0.hasPrefix("changes:") }).count <= 2 else { throw Failure.unexpectedRPC }
+            var response = Harc_V1_ListChangesResponseV1()
+            response.protocol = HarcProtocolVersion.v1.protobufV1()
+            response.disposition = request.afterCursor == 1 || repeatResync
+                ? .listChangesDispositionFullResyncRequired : .listChangesDispositionPage
+            response.nextCursor = 3
+            return response
+        }
+        func beginLibrarySnapshot(_ request: Harc_V1_BeginLibrarySnapshotRequestV1,
+            authorization: HarcLibraryAuthorization) async throws -> Harc_V1_BeginLibrarySnapshotResponseV1 {
+            requests.append("begin")
+            var response = Harc_V1_BeginLibrarySnapshotResponseV1()
+            response.protocol = HarcProtocolVersion.v1.protobufV1()
+            response.snapshotToken = Data(repeating: 9, count: 32)
+            response.snapshotAnchor = 2
+            response.recordingCount = 1
+            response.tombstoneCount = 0
+            return response
+        }
+        func listSnapshotPage(_ request: Harc_V1_ListSnapshotPageRequestV1,
+            authorization: HarcLibraryAuthorization) async throws -> Harc_V1_ListSnapshotPageResponseV1 {
+            guard request.snapshotToken == Data(repeating: 9, count: 32) else { throw Failure.unexpectedRPC }
+            requests.append(request.hasPageToken ? "page:next" : "page:first")
+            if request.hasPageToken && failSecondPage { throw Failure.interrupted }
+            var response = Harc_V1_ListSnapshotPageResponseV1()
+            response.protocol = HarcProtocolVersion.v1.protobufV1()
+            response.snapshotAnchor = 2
+            response.complete = request.hasPageToken
+            if request.hasPageToken {
+                guard request.pageToken == Data([1]) else { throw Failure.unexpectedRPC }
+            } else {
+                var item = Harc_V1_SnapshotItemV1()
+                item.recording = try Harc_V1_LibraryRecordingSummaryV1(recording)
+                response.items = [item]
+                response.nextPageToken = Data([1])
+            }
+            return response
+        }
+        func getLibraryRecording(_ request: Harc_V1_GetRecordingRequestV1,
+            authorization: HarcLibraryAuthorization) async throws -> Harc_V1_GetRecordingResponseV1 {
+            throw Failure.unexpectedRPC
+        }
+        func searchLibraryMetadata(_ request: Harc_V1_SearchMetadataRequestV1,
+            authorization: HarcLibraryAuthorization) async throws -> Harc_V1_SearchMetadataResponseV1 {
+            throw Failure.unexpectedRPC
+        }
+        func searchLibraryTranscripts(_ request: Harc_V1_SearchTranscriptsRequestV1,
+            authorization: HarcLibraryAuthorization) async throws -> Harc_V1_SearchTranscriptsResponseV1 {
+            throw Failure.unexpectedRPC
+        }
+        func applyLibraryMetadataMutation(_ request: Harc_V1_ApplyMetadataMutationRequestV1,
+            authorization: HarcLibraryAuthorization) async throws -> Harc_V1_ApplyMetadataMutationResponseV1 {
+            throw Failure.unexpectedRPC
+        }
+        func getLibraryAudio(_ request: Harc_V1_GetAudioRequestV1,
+            authorization: HarcLibraryAuthorization,
+            responseConsumer: @escaping HarcLibraryAudioResponseConsumer) async throws {
+            throw Failure.unexpectedRPC
         }
     }
 
