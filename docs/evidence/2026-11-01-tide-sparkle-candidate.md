@@ -1,3 +1,5 @@
+> Historical preparation record. Superseded by [the final November 2 release evidence](2026-11-02-tide-sparkle-release.md). Statements below describe preparation on November 1.
+
 # Tide Sparkle candidate: Harc 0.14.20 (75)
 
 Prepared November 1, 2026 following the owner request to cut a new Sparkle
