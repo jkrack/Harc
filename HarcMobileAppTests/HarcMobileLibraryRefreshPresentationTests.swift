@@ -405,7 +405,7 @@ struct HarcMobileLibraryRefreshPresentationTests {
         try await withTemporaryRoot(prefix: "full-resync") { root in
             let fixture = try await RefreshFixture(root: root, cached: true)
             let coordinator = fixture.coordinator { throw FixtureError.identity }
-            let credential = Data(repeating: 7, count: 32)
+            let credential = Data(repeating: 7, count: 48)
             let authorization = try HarcLibraryAuthorization(
                 credential: credential,
                 authorizationHeader: HarcBootstrapAuthorization.sessionHeader(credential: credential)
@@ -436,7 +436,7 @@ struct HarcMobileLibraryRefreshPresentationTests {
         try await withTemporaryRoot(prefix: "repeated-resync") { root in
             let fixture = try await RefreshFixture(root: root, cached: true)
             let coordinator = fixture.coordinator { throw FixtureError.identity }
-            let credential = Data(repeating: 7, count: 32)
+            let credential = Data(repeating: 7, count: 48)
             let authorization = try HarcLibraryAuthorization(credential: credential,
                 authorizationHeader: HarcBootstrapAuthorization.sessionHeader(credential: credential))
             let transport = SnapshotTransport(recording: fixture.updated, repeatResync: true)
