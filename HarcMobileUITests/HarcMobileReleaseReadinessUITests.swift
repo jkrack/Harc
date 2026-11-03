@@ -954,6 +954,11 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
                     XCTAssertTrue(searchField.isHittable)
                     searchField.tap()
                     searchField.typeText("fixture")
+                    // CI video confirms typing can finish after typeText returns.
+                    // Wait for the exact query; never retype or accept a prefix.
+                    let enteredQuery = NSPredicate(format: "value == %@", "fixture")
+                    expectation(for: enteredQuery, evaluatedWith: searchField)
+                    waitForExpectations(timeout: 10)
                     XCTAssertEqual(searchField.value as? String, "fixture")
                 }
             }
