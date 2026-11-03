@@ -175,7 +175,8 @@ require_future_profile_date() {
   local label="$2"
   local expiration_epoch
   local now_epoch
-  expiration_epoch="$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$actual" '+%s' 2>/dev/null || true)"
+  # The profile timestamp is UTC; a literal Z in the format does not set BSD date's zone.
+  expiration_epoch="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$actual" '+%s' 2>/dev/null || true)"
   now_epoch="$(date -u '+%s')"
   if [[ -n "$expiration_epoch" && "$expiration_epoch" -gt "$now_epoch" ]]; then
     pass "$label ($actual)"
