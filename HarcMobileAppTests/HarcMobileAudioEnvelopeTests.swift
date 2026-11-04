@@ -1,8 +1,22 @@
 import AVFAudio
 import XCTest
+import GRPCCore
 @testable import HarcMobile
 
 final class HarcMobileAudioEnvelopeTests: XCTestCase {
+    @MainActor
+    func testCanonicalPlaybackPreservesRPCStatusWithoutTransportCause() {
+        let unavailable = RPCError(code: .unavailable, message: "Canonical audio unavailable",
+                                   cause: NSError(domain: "private-path", code: 7))
+        let denied = RPCError(code: .permissionDenied, message: "Audio access denied")
+        XCTAssertEqual(HarcMobileRecordingAudioController.playbackFailureMessage(for: unavailable),
+                       "Canonical audio unavailable (unavailable)")
+        XCTAssertEqual(HarcMobileRecordingAudioController.playbackFailureMessage(for: denied),
+                       "Audio access denied (permissionDenied)")
+        XCTAssertFalse(HarcMobileRecordingAudioController.playbackFailureMessage(for: unavailable)
+            .contains("private-path"))
+    }
+
     @MainActor
     func testLocalPlaybackRestoresOutputSessionWhenResumingAfterCapture() async throws {
         let url = FileManager.default.temporaryDirectory
