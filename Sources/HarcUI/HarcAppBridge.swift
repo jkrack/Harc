@@ -113,6 +113,12 @@ public final class HarcAppBridge: ObservableObject {
             }
         }
     }
+    @Published public var hostReceiptInspectionUsesUploadID = false {
+        didSet { if !hostReceiptInspectionInProgress { hostReceiptInspectionStatus = nil; hostReceiptInspectedID = nil } }
+    }
+    public var inspectHostPublicationBinding: @MainActor (UUID) async throws -> String = { _ in
+        throw NSError(domain: "Harc.HostPublicationInspection", code: 1)
+    }
     @Published public var hostReceiptInspectionInProgress = false
     @Published public var hostReceiptInspectionStatus: String?
     @Published public var hostReceiptInspectedID: UUID?

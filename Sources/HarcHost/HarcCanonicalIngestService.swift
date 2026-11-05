@@ -398,7 +398,7 @@ public actor HarcCanonicalIngestService {
             Report(canonicalRecordingID: canonicalRecordingID, outcome: outcome,
                    completedStages: completed, failureStage: code == nil ? nil : stage,
                    failureCode: code, identityChanges: changes,
-                   audioFailureStep: code != nil && stage == .canonicalAudio ? audioTracker.current : nil)
+                   audioFailureStep: code != nil && stage == .canonicalAudio ? audioTracker.current : nil, isPreReceiptPublication: false)
         }
         do {
             try Task.checkCancellation()
@@ -471,6 +471,108 @@ public actor HarcCanonicalIngestService {
             guard try await hostStore.receiptProcessingWork(
                 canonicalRecordingID: canonicalRecordingID
             ) == work else { return report(.blocked, code: "diagnostic-snapshot-changed") }
+            try artifact.validateBinding()
+            try Task.checkCancellation()
+            completed.append(stage)
+            return report(changes.isEmpty ? .verifiedCurrentBinding : .verifiedMetadataDrift)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return report(.blocked, code: HostCanonicalIngestFailureCode.classify(error).rawValue)
+        }
+    }
+
+    /// Read-only inspection of one failed pre-receipt publication.
+    public func inspectPublicationBinding(
+        uploadID: UploadID
+    ) async throws -> HostReceiptBindingDiagnostic {
+        typealias Report = HostReceiptBindingDiagnostic
+        let work = try await hostStore.failedPublicationWorkForInspection(uploadID: uploadID)
+        let canonicalRecordingID = work.canonicalRecordingID
+        var stage = Report.Stage.publicationState
+        var completed: [Report.Stage] = []
+        var changes: [Report.IdentityChange] = []
+        let audioTracker = ReceiptAudioStepTracker()
+        func report(_ outcome: Report.Outcome, code: String? = nil) -> Report {
+            Report(canonicalRecordingID: canonicalRecordingID, outcome: outcome,
+                   completedStages: completed, failureStage: code == nil ? nil : stage,
+                   failureCode: code, identityChanges: changes,
+                   audioFailureStep: code != nil && stage == .canonicalAudio ? audioTracker.current : nil, isPreReceiptPublication: true)
+        }
+        do {
+            try Task.checkCancellation()
+            completed.append(stage)
+            stage = .publicationActivity
+            try activityGate.claim(uploadID)
+            defer { activityGate.release(uploadID) }
+            completed.append(stage)
+            stage = .trustedPath
+            let paths = try HostCanonicalPublicationPaths.make(
+                rootAnchor: canonicalRootAnchor, canonicalRecordingID: canonicalRecordingID,
+                persistedRelativeWAVPath: work.publicationRelativePath,
+                temporaryName: work.temporaryName, createDirectories: false
+            )
+            completed.append(stage)
+            stage = .filesystemIdentity
+            guard let old = work.canonicalArtifactIdentity else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            let fresh = try currentCanonicalArtifactIdentity(at: paths.wavURL, in: paths)
+            if old.deviceNumber != fresh.deviceNumber { changes.append(.device) }
+            if old.inodeNumber != fresh.inodeNumber { changes.append(.inode) }
+            if old.ownerUserID != fresh.ownerUserID { changes.append(.owner) }
+            if old.posixMode != fresh.posixMode { changes.append(.permissions) }
+            if old.linkCount != fresh.linkCount { changes.append(.linkCount) }
+            if old.fileByteCount != fresh.fileByteCount { changes.append(.byteCount) }
+            if old.changeTimeSeconds != fresh.changeTimeSeconds
+                || old.changeTimeNanoseconds != fresh.changeTimeNanoseconds {
+                changes.append(.changeTime)
+            }
+            guard changes.allSatisfy({ $0 == .changeTime }) else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            completed.append(stage)
+            stage = .canonicalAudio
+            let validation = Task.detached(priority: .utility) {
+                try Task.checkCancellation()
+                return try HostValidatedCanonicalArtifact(
+                    at: paths.wavURL, in: paths, totalFrames: work.capture.capture.totalCanonicalFrames,
+                    expectedPCMHash: work.capture.capture.canonicalPCMSHA256, expectedIdentity: fresh,
+                    diagnosticStep: { audioTracker.set($0) }
+                )
+            }
+            let artifact = try await withTaskCancellationHandler {
+                try await validation.value
+            } onCancel: {
+                validation.cancel()
+            }
+            completed.append(stage)
+            try Task.checkCancellation()
+            stage = .manifestEvidence
+            let manifest = try await hostStore.validateBoundManifestForInspection(
+                uploadID: uploadID, using: manifestValidator
+            )
+            completed.append(stage)
+            guard manifest.uploadID == uploadID,
+                  manifest.finalizedCapture == work.capture,
+                  manifest.exactManifestObject == work.attempt.boundManifest else {
+                throw HarcHostError.manifestEvidenceRequired
+            }
+            if work.exactPersistedReceipt != nil {
+                stage = .receiptEvidence
+                try validatePreparedReceiptIfPresent(work, manifest: manifest)
+                completed.append(stage)
+            }
+            stage = .snapshotRecheck
+            let rechecked = try await hostStore.failedPublicationWorkForInspection(uploadID: uploadID)
+            guard rechecked.attempt == work.attempt,
+                  rechecked.capture == work.capture,
+                  rechecked.canonicalArtifactIdentity == work.canonicalArtifactIdentity,
+                  rechecked.publicationRelativePath == work.publicationRelativePath,
+                  rechecked.temporaryName == work.temporaryName,
+                  rechecked.exactPersistedReceipt == work.exactPersistedReceipt else {
+                return report(.blocked, code: "diagnostic-snapshot-changed")
+            }
             try artifact.validateBinding()
             try Task.checkCancellation()
             completed.append(stage)

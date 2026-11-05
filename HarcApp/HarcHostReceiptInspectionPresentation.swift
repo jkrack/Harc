@@ -6,6 +6,10 @@ enum HarcHostReceiptInspectionPresentation {
     static func message(_ report: HostReceiptBindingDiagnostic) -> String {
         let headline: String
         switch report.outcome {
+        case .verifiedCurrentBinding where report.isPreReceiptPublication:
+            headline = "Publication audio and signed manifest match. No receipt authority was granted."
+        case .verifiedMetadataDrift where report.isPreReceiptPublication:
+            headline = "Publication audio and signed manifest verify, but filesystem metadata differs. No binding was changed."
         case .verifiedCurrentBinding:
             headline = "Stored identity, audio and signed evidence match."
         case .verifiedMetadataDrift:
@@ -30,6 +34,7 @@ enum HarcHostReceiptInspectionPresentation {
 
     private static func stageName(_ stage: HostReceiptBindingDiagnostic.Stage) -> String {
         switch stage {
+        case .publicationState: "failed publication checkpoint"
         case .receiptState: "stored receipt"
         case .publicationActivity: "publication activity"
         case .trustedPath: "retained directory binding"

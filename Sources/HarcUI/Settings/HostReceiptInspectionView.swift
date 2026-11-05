@@ -16,7 +16,9 @@ public struct HostReceiptInspectionView: View {
                 Text("Check one recording’s signed evidence without repairing it.")
                     .font(.harcLabel)
                     .foregroundStyle(.secondary)
-                TextField("Canonical recording ID", text: $bridge.hostReceiptInspectionInput)
+                Toggle("Inspect failed publication by upload ID", isOn: $bridge.hostReceiptInspectionUsesUploadID)
+                    .disabled(bridge.hostReceiptInspectionInProgress)
+                TextField(bridge.hostReceiptInspectionUsesUploadID ? "Upload ID" : "Canonical recording ID", text: $bridge.hostReceiptInspectionInput)
                     .textFieldStyle(.roundedBorder)
                     .font(.harcMono)
                     .accessibilityIdentifier("harc.host.receipt-inspection.id")
@@ -34,7 +36,7 @@ public struct HostReceiptInspectionView: View {
                         .font(.harcLabel)
                 }
                 if let id = bridge.hostReceiptInspectedID {
-                    Text("Recording: \(id.uuidString.lowercased())")
+                    Text((bridge.hostReceiptInspectionUsesUploadID ? "Upload: " : "Recording: ") + id.uuidString.lowercased())
                         .font(.harcMono)
                         .textSelection(.enabled)
                 }

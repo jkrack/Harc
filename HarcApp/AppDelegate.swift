@@ -226,6 +226,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             )
             return HarcHostReceiptInspectionPresentation.message(report)
         }
+        bridge.inspectHostPublicationBinding = { [weak self] id in
+            guard let self, let runtime = self.hostRuntime,
+                  self.bridge.hostRuntimeReady,
+                  !self.bridge.hostReceiptRepairInProgress,
+                  !self.bridge.hostLibraryMigrationInProgress else {
+                throw HarcHostError.processingSchedulerUnavailable
+            }
+            return HarcHostReceiptInspectionPresentation.message(
+                try await runtime.inspectPublicationBinding(uploadID: UploadID(id)))
+        }
         bridge.onRepairHostReceipts = { [weak self] in
             guard let self, let runtime = self.hostRuntime,
                   !self.bridge.hostReceiptRepairInProgress,

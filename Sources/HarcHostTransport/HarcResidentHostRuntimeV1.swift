@@ -478,6 +478,12 @@ public actor HarcResidentHostRuntimeV1 {
         )
     }
 
+    /// Local read-only inspection; absent from incoming network services.
+    public func inspectPublicationBinding(uploadID: UploadID) async throws -> HostReceiptBindingDiagnostic {
+        guard !transportStopped else { throw HarcHostError.processingSchedulerUnavailable }
+        return try await canonicalIngest.inspectPublicationBinding(uploadID: uploadID)
+    }
+
     /// Local app administration; deliberately absent from the network services.
     public func repairReceiptBindings(
         progress: (@Sendable (Int, Int) async -> Void)? = nil

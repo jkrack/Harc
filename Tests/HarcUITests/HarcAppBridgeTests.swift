@@ -6,6 +6,30 @@ import HarcStore
 @Suite("HarcAppBridge")
 @MainActor
 struct HarcAppBridgeTests {
+    @Test("upload inspection dispatches only to the read-only publication callback")
+    func uploadInspectionUsesExplicitMode() async {
+        let bridge = HarcAppBridge(recordingState: RecordingState(), trayState: PostStopTrayState())
+        bridge.hostRuntimeReady = true
+        bridge.hostReceiptInspectionUsesUploadID = true
+        let id = UUID()
+        bridge.hostReceiptInspectionInput = id.uuidString
+        var receiptCalls = 0
+        var publicationCalls = 0
+        bridge.inspectHostReceiptBinding = { _ in receiptCalls += 1; return "unexpected" }
+        bridge.inspectHostPublicationBinding = { received in
+            #expect(received == id)
+            publicationCalls += 1
+            return "Publication verified; no authority granted"
+        }
+        await bridge.requestHostReceiptInspection()
+        #expect(receiptCalls == 0)
+        #expect(publicationCalls == 1)
+        #expect(bridge.hostReceiptInspectionStatus == "Publication verified; no authority granted")
+        bridge.hostReceiptInspectionUsesUploadID = false
+        #expect(bridge.hostReceiptInspectionStatus == nil)
+        #expect(bridge.hostReceiptInspectedID == nil)
+    }
+
     @Test("receipt inspection routes exactly one UUID without invoking repair")
     func receiptInspectionRoutesOnlyReadOnlyCallback() async {
         let bridge = HarcAppBridge(recordingState: RecordingState(), trayState: PostStopTrayState())
