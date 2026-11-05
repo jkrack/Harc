@@ -105,6 +105,20 @@ public final class HarcAppBridge: ObservableObject {
     @Published public var hostReceiptRepairInProgress = false
     @Published public var hostReceiptRepairStatus: String?
     public var onRepairHostReceipts: () -> Void = {}
+    @Published public var hostReceiptInspectionInput = "" {
+        didSet {
+            if !hostReceiptInspectionInProgress {
+                hostReceiptInspectionStatus = nil
+                hostReceiptInspectedID = nil
+            }
+        }
+    }
+    @Published public var hostReceiptInspectionInProgress = false
+    @Published public var hostReceiptInspectionStatus: String?
+    @Published public var hostReceiptInspectedID: UUID?
+    public var inspectHostReceiptBinding: @MainActor (UUID) async throws -> String = { _ in
+        throw NSError(domain: "Harc.HostReceiptInspection", code: 1)
+    }
     @Published public var hostLibraryMigrationInProgress = false
     @Published public var hostLibraryMigrationStatus: String?
     public var onMigrateHostLibraryBindings: () -> Void = {}

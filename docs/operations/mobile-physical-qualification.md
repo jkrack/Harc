@@ -202,7 +202,21 @@ persistence, create missing directories, schedule processing or write a repair
 event. A verified metadata-drift result is descriptive; it grants no repair,
 receipt-replay or cleanup authority. Normal repair retains its existing owner
 authentication and full before/after validation. The diagnostic is deliberately
-absent from network services and does not add a shell command or Settings action.
-Using it against an installed resident runtime requires a separately authorized
-integration/deployment; an isolated test result does not inspect that process's
-retained root or earlier approval snapshot.
+absent from network services and does not add a shell command.
+
+Devices & Sync exposes **Inspect one recording (read-only)**. Enter a canonical
+recording UUID and press **Inspect recording**. The app calls its existing resident
+runtime; it does not construct a second Host graph or open another live writer.
+Invalid UUIDs, unavailable Host state and overlapping inspection/repair/migration
+requests are rejected before invocation. The result identifies the requested UUID;
+editing the input clears the old result. Unexpected thrown errors are redacted.
+This action never invokes either adjacent repair button and never requests owner
+authentication.
+
+The isolated integration candidate also contains the #179 Library timestamp fix;
+do not replace the installed Host with a main-based diagnostic-only build that
+omits it. Build/deployment and restart require separate approval. A restart creates
+new retained root state, so inspection can identify a present failure stage but
+cannot reconstruct a prior process's approval snapshot or attribute historical
+metadata changes. Preserve existing logs and publication/receipt evidence before
+any approved deployment. No repair is implied by a successful inspection.

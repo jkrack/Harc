@@ -214,9 +214,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         bridge.onOpenHostPairing = { [weak self] in
             self?.openRolePairing(nil)
         }
+        bridge.inspectHostReceiptBinding = { [weak self] id in
+            guard let self, let runtime = self.hostRuntime,
+                  self.bridge.hostRuntimeReady,
+                  !self.bridge.hostReceiptRepairInProgress,
+                  !self.bridge.hostLibraryMigrationInProgress else {
+                throw HarcHostError.processingSchedulerUnavailable
+            }
+            let report = try await runtime.inspectReceiptBinding(
+                canonicalRecordingID: CanonicalRecordingID(id)
+            )
+            return HarcHostReceiptInspectionPresentation.message(report)
+        }
         bridge.onRepairHostReceipts = { [weak self] in
             guard let self, let runtime = self.hostRuntime,
-                  !self.bridge.hostReceiptRepairInProgress else { return }
+                  !self.bridge.hostReceiptRepairInProgress,
+                  !self.bridge.hostReceiptInspectionInProgress else { return }
             self.bridge.hostReceiptRepairInProgress = true
             self.bridge.hostReceiptRepairStatus = nil
             Task { @MainActor [weak self] in
@@ -240,7 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         bridge.onMigrateHostLibraryBindings = { [weak self] in
             guard let self, let runtime = self.hostRuntime,
-                  !self.bridge.hostLibraryMigrationInProgress else { return }
+                  !self.bridge.hostLibraryMigrationInProgress,
+                  !self.bridge.hostReceiptInspectionInProgress else { return }
             self.bridge.hostLibraryMigrationInProgress = true
             self.bridge.hostLibraryMigrationStatus = nil
             Task { @MainActor [weak self] in
