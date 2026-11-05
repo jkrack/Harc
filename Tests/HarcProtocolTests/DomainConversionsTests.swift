@@ -396,6 +396,62 @@ struct DomainConversionsTests {
         #expect(decoded.endedAt == Date(timeIntervalSince1970: Double(wire.endedAtUnixMs) / 1_000))
     }
 
+    // GRDB decodes SQLite date strings through a UTC Calendar. Even whole
+    // milliseconds can differ from Date(timeIntervalSince1970:) by one ULP.
+    private func storedLibraryDate(milliseconds: Int) throws -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        return try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 11, day: 4, hour: 15, minute: 54,
+            second: 3, nanosecond: milliseconds * 1_000_000
+        )))
+    }
+
+    @Test("library change pages encode SQLite calendar dates", arguments: [1, 123, 253, 828, 999])
+    func libraryChangeStoredDatePrecision(milliseconds: Int) throws {
+        let changedAt = try storedLibraryDate(milliseconds: milliseconds)
+        let summary = try LibraryRecordingSummary(
+            canonicalID: CanonicalRecordingID(uuid(41)),
+            revision: EntityRevision(2), startedAt: baseDate
+        )
+        let descriptor = try LibraryChangeDescriptor(
+            cursor: ChangeCursor(396), canonicalID: summary.canonicalID,
+            revision: summary.revision, operation: .upsert, changedAt: changedAt
+        )
+        let change = try HarcValidatedLibraryChangeV1(descriptor: descriptor, value: .upsert(summary))
+        let wire = try change.protobufV1
+        let expected = UInt64((changedAt.timeIntervalSince1970 * 1_000).rounded())
+        #expect(wire.changedAtUnixMs == expected)
+        let decoded = try wire.domainValue()
+        #expect(decoded.descriptor.changedAt == Date(timeIntervalSince1970: Double(expected) / 1_000))
+        #expect(decoded.descriptor.cursor == descriptor.cursor)
+        #expect(decoded.descriptor.revision == descriptor.revision)
+        #expect(decoded.value == .upsert(summary))
+    }
+
+    @Test("library tombstones encode SQLite calendar dates", arguments: [1, 123, 253, 828, 999])
+    func libraryTombstoneStoredDatePrecision(milliseconds: Int) throws {
+        let deletedAt = try storedLibraryDate(milliseconds: milliseconds)
+        let tombstone = try RecordingTombstone(
+            canonicalID: CanonicalRecordingID(uuid(42)),
+            revision: EntityRevision(3), deletedAt: deletedAt
+        )
+        let wire = try Harc_V1_RecordingTombstoneV1(tombstone)
+        let expected = UInt64((deletedAt.timeIntervalSince1970 * 1_000).rounded())
+        #expect(wire.deletedAtUnixMs == expected)
+        let decoded = try wire.domainValue()
+        #expect(decoded.canonicalID == tombstone.canonicalID)
+        #expect(decoded.revision == tombstone.revision)
+        #expect(decoded.deletedAt == Date(timeIntervalSince1970: Double(expected) / 1_000))
+        let change = try HarcValidatedLibraryChangeV1(
+            descriptor: LibraryChangeDescriptor(
+                cursor: ChangeCursor(397), canonicalID: tombstone.canonicalID,
+                revision: tombstone.revision, operation: .tombstone, changedAt: deletedAt
+            ), value: .tombstone(tombstone)
+        )
+        #expect(try change.protobufV1.domainValue().value == .tombstone(decoded))
+    }
+
     @Test("speaker recognition packs and observations retain stable identities")
     func speakerIdentityRoundTrip() throws {
         let personID = PersonID(uuid(700))
