@@ -21,6 +21,10 @@ public struct HostReceiptBindingDiagnostic: Equatable, Sendable {
         case snapshotRecheck
     }
 
+    public enum AudioStep: String, Sendable {
+        case open, captureIdentity, compareExpectedIdentity, layout, preReadBinding, rewind, header, pcmHash, postReadBinding
+    }
+
     public enum IdentityChange: String, Sendable {
         case device, inode, owner, permissions, linkCount, byteCount, changeTime
     }
@@ -32,4 +36,5 @@ public struct HostReceiptBindingDiagnostic: Equatable, Sendable {
     /// A bounded classification, never an error's associated path or payload.
     public let failureCode: String?
     public let identityChanges: [IdentityChange]
+    public let audioFailureStep: AudioStep?
 }

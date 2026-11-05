@@ -71,18 +71,22 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         in paths: HostCanonicalPublicationPaths,
         totalFrames: UInt64,
         expectedPCMHash: CanonicalPCMHash,
-        expectedIdentity: HostCanonicalArtifactIdentity? = nil
+        expectedIdentity: HostCanonicalArtifactIdentity? = nil,
+        diagnosticStep: ((HostReceiptBindingDiagnostic.AudioStep) -> Void)? = nil
     ) throws {
         self.url = url
         self.paths = paths
         layout = try HostCanonicalWAVLayout(totalFrames: totalFrames)
         self.expectedPCMHash = expectedPCMHash
+        diagnosticStep?(.open)
         descriptor = try paths.openExistingRegularFile(at: url)
         do {
+            diagnosticStep?(.captureIdentity)
             let captured = try HostCanonicalArtifactIdentity(
                 validatingOpenFileDescriptor: descriptor,
                 boundTo: url
             )
+            diagnosticStep?(.compareExpectedIdentity)
             if let expectedIdentity {
                 guard captured == expectedIdentity else {
                     throw HarcHostError.canonicalArtifactIdentityMismatch
@@ -91,10 +95,11 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
             } else {
                 identity = captured
             }
+            diagnosticStep?(.layout)
             guard identity.fileByteCount == layout.fileByteCount else {
                 throw HarcHostError.unsafePublicationPath
             }
-            try validateCanonicalContent()
+            try validateCanonicalContent(diagnosticStep: diagnosticStep)
         } catch {
             _ = Darwin.close(descriptor)
             throw error
@@ -113,20 +118,24 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         try paths.validateOpenFile(descriptor, at: url)
     }
 
-    func validateCanonicalContent() throws {
+    func validateCanonicalContent(diagnosticStep: ((HostReceiptBindingDiagnostic.AudioStep) -> Void)? = nil) throws {
+        diagnosticStep?(.preReadBinding)
         try validateBinding()
+        diagnosticStep?(.rewind)
         guard lseek(descriptor, 0, SEEK_SET) == 0 else {
             throw HarcHostError.publicationIO(
                 "Could not rewind the canonical WAV: errno \(errno)."
             )
         }
 
+        diagnosticStep?(.header)
         let header = try HostCanonicalWAVAssembler.readExactly(
             Int(HostCanonicalWAVLayout.headerByteCount),
             from: descriptor
         )
         guard header == layout.header else { throw HarcHostError.invalidCanonicalWAV }
 
+        diagnosticStep?(.pcmHash)
         var hasher = SHA256()
         var remaining = layout.pcmByteCount
         while remaining > 0 {
@@ -144,6 +153,7 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         // This post-read identity check is part of the hash proof. Capturing
         // identity only after the read could bless bytes mutated behind the
         // reader after their region had already been hashed.
+        diagnosticStep?(.postReadBinding)
         try validateBinding()
     }
 }

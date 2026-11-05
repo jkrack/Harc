@@ -393,10 +393,12 @@ public actor HarcCanonicalIngestService {
         var stage = Report.Stage.receiptState
         var completed: [Report.Stage] = []
         var changes: [Report.IdentityChange] = []
+        let audioTracker = ReceiptAudioStepTracker()
         func report(_ outcome: Report.Outcome, code: String? = nil) -> Report {
             Report(canonicalRecordingID: canonicalRecordingID, outcome: outcome,
                    completedStages: completed, failureStage: code == nil ? nil : stage,
-                   failureCode: code, identityChanges: changes)
+                   failureCode: code, identityChanges: changes,
+                   audioFailureStep: code != nil && stage == .canonicalAudio ? audioTracker.current : nil)
         }
         do {
             try Task.checkCancellation()
@@ -437,7 +439,8 @@ public actor HarcCanonicalIngestService {
                 try Task.checkCancellation()
                 return try HostValidatedCanonicalArtifact(
                     at: paths.wavURL, in: paths, totalFrames: work.canonicalPCMFrames,
-                    expectedPCMHash: work.canonicalPCMHash, expectedIdentity: fresh
+                    expectedPCMHash: work.canonicalPCMHash, expectedIdentity: fresh,
+                    diagnosticStep: { audioTracker.set($0) }
                 )
             }
             let artifact = try await withTaskCancellationHandler {
@@ -1548,4 +1551,11 @@ private actor HostDecodedChunkSink {
             throw HarcHostError.canonicalHashMismatch
         }
     }
+}
+
+private final class ReceiptAudioStepTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var step: HostReceiptBindingDiagnostic.AudioStep?
+    func set(_ value: HostReceiptBindingDiagnostic.AudioStep) { lock.lock(); defer { lock.unlock() }; step = value }
+    var current: HostReceiptBindingDiagnostic.AudioStep? { lock.lock(); defer { lock.unlock() }; return step }
 }
