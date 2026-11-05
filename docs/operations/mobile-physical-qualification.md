@@ -187,3 +187,22 @@ Do not promote the automated audit or simulator Dynamic Type run as a substitute
 Repeat after any material layout, accessibility-label, release-configuration,
 or archive change. Record any additional-device runs as compatibility evidence,
 not as prerequisites invented after the candidate is ready.
+
+## Local receipt-binding inspection
+
+`HarcResidentHostRuntimeV1.inspectReceiptBinding(canonicalRecordingID:)` is a
+local, single-record diagnostic. It uses the resident ingest actor's retained
+canonical root, publication activity gate, persisted evidence and validators.
+It reports the completed stages, any failed stage, a bounded error code and
+which identity fields differ. It never returns local paths, signed bytes,
+credentials or an error's associated values.
+
+Inspection does not request owner authentication, repair security-registry
+persistence, create missing directories, schedule processing or write a repair
+event. A verified metadata-drift result is descriptive; it grants no repair,
+receipt-replay or cleanup authority. Normal repair retains its existing owner
+authentication and full before/after validation. The diagnostic is deliberately
+absent from network services and does not add a shell command or Settings action.
+Using it against an installed resident runtime requires a separately authorized
+integration/deployment; an isolated test result does not inspect that process's
+retained root or earlier approval snapshot.

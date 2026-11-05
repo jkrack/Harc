@@ -136,6 +136,15 @@ extension HarcHostStore {
         using validator: any RecordingManifestEvidenceValidating
     ) async throws -> ValidatedRecordingManifestEvidence {
         try await repairSecurityRegistryOnReopen()
+        return try await validateBoundManifestForInspection(uploadID: uploadID, using: validator)
+    }
+
+    /// Pure evidence inspection. Unlike ordinary publication, this must not
+    /// repair security-registry persistence or authorize any state transition.
+    func validateBoundManifestForInspection(
+        uploadID: UploadID,
+        using validator: any RecordingManifestEvidenceValidating
+    ) async throws -> ValidatedRecordingManifestEvidence {
         let inputs: StoredManifestValidationInputs = try await dbQueue.read { db in
             guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
