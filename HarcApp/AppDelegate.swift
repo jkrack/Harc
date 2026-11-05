@@ -3972,6 +3972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         let libraryVM = LibraryViewModel(store: store)
+        libraryVM.localOriginDeviceID = desktopClientRuntime?.identity.deviceID
         libraryVM.loadOriginDeviceLabels = { [weak self] in
 #if DEBUG
             if self?.isUITesting == true,
