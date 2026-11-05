@@ -384,6 +384,101 @@ public actor HarcCanonicalIngestService {
         )
     }
 
+    /// Inspects exactly one recording using this resident actor's retained
+    /// root and validators. No approval, repair, recovery, or processing is run.
+    public func inspectReceiptBinding(
+        canonicalRecordingID: CanonicalRecordingID
+    ) async throws -> HostReceiptBindingDiagnostic {
+        typealias Report = HostReceiptBindingDiagnostic
+        var stage = Report.Stage.receiptState
+        var completed: [Report.Stage] = []
+        var changes: [Report.IdentityChange] = []
+        func report(_ outcome: Report.Outcome, code: String? = nil) -> Report {
+            Report(canonicalRecordingID: canonicalRecordingID, outcome: outcome,
+                   completedStages: completed, failureStage: code == nil ? nil : stage,
+                   failureCode: code, identityChanges: changes)
+        }
+        do {
+            try Task.checkCancellation()
+            guard let work = try await hostStore.receiptProcessingWork(
+                canonicalRecordingID: canonicalRecordingID
+            ) else { return report(.notFound, code: "committed-receipt-not-found") }
+            completed.append(stage)
+            stage = .publicationActivity
+            try activityGate.claim(work.uploadID)
+            defer { activityGate.release(work.uploadID) }
+            completed.append(stage)
+            stage = .trustedPath
+            let paths = try HostCanonicalPublicationPaths.make(
+                rootAnchor: canonicalRootAnchor, canonicalRecordingID: canonicalRecordingID,
+                persistedRelativeWAVPath: work.publicationRelativePath,
+                temporaryName: work.temporaryName, createDirectories: false
+            )
+            completed.append(stage)
+            stage = .filesystemIdentity
+            let old = work.canonicalArtifactIdentity
+            let fresh = try currentCanonicalArtifactIdentity(at: paths.wavURL, in: paths)
+            if old.deviceNumber != fresh.deviceNumber { changes.append(.device) }
+            if old.inodeNumber != fresh.inodeNumber { changes.append(.inode) }
+            if old.ownerUserID != fresh.ownerUserID { changes.append(.owner) }
+            if old.posixMode != fresh.posixMode { changes.append(.permissions) }
+            if old.linkCount != fresh.linkCount { changes.append(.linkCount) }
+            if old.fileByteCount != fresh.fileByteCount { changes.append(.byteCount) }
+            if old.changeTimeSeconds != fresh.changeTimeSeconds
+                || old.changeTimeNanoseconds != fresh.changeTimeNanoseconds {
+                changes.append(.changeTime)
+            }
+            guard changes.allSatisfy({ $0 == .changeTime }) else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            completed.append(stage)
+            stage = .canonicalAudio
+            let validation = Task.detached(priority: .utility) {
+                try Task.checkCancellation()
+                return try HostValidatedCanonicalArtifact(
+                    at: paths.wavURL, in: paths, totalFrames: work.canonicalPCMFrames,
+                    expectedPCMHash: work.canonicalPCMHash, expectedIdentity: fresh
+                )
+            }
+            let artifact = try await withTaskCancellationHandler {
+                try await validation.value
+            } onCancel: {
+                validation.cancel()
+            }
+            completed.append(stage)
+            try Task.checkCancellation()
+            stage = .manifestEvidence
+            let manifest = try await hostStore.validateBoundManifestForInspection(
+                uploadID: work.uploadID, using: manifestValidator
+            )
+            completed.append(stage)
+            stage = .receiptEvidence
+            let receipt = try receiptValidator.validateRecordingReceipt(
+                exactSignedReceiptBytes: work.exactReceipt.exactBytes,
+                validatedManifest: manifest, hostTrust: hostTrust
+            )
+            guard receipt.exactReceiptObject == work.exactReceipt,
+                  receipt.canonicalRecordingID == work.canonicalRecordingID,
+                  receipt.canonicalPCMSHA256 == work.canonicalPCMHash,
+                  receipt.totalCanonicalFrames == work.canonicalPCMFrames else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+            completed.append(stage)
+            stage = .snapshotRecheck
+            guard try await hostStore.receiptProcessingWork(
+                canonicalRecordingID: canonicalRecordingID
+            ) == work else { return report(.blocked, code: "diagnostic-snapshot-changed") }
+            try artifact.validateBinding()
+            try Task.checkCancellation()
+            completed.append(stage)
+            return report(changes.isEmpty ? .verifiedCurrentBinding : .verifiedMetadataDrift)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return report(.blocked, code: HostCanonicalIngestFailureCode.classify(error).rawValue)
+        }
+    }
+
     /// Explicit local administration only. Incoming transfer RPCs never call this.
     /// A changed inode is still a replacement, even if its bytes happen to match.
     public func repairReceiptBinding(canonicalRecordingID: CanonicalRecordingID) async throws -> Bool {

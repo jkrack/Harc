@@ -6,6 +6,71 @@ import HarcStore
 @Suite("HarcAppBridge")
 @MainActor
 struct HarcAppBridgeTests {
+    @Test("receipt inspection routes exactly one UUID without invoking repair")
+    func receiptInspectionRoutesOnlyReadOnlyCallback() async {
+        let bridge = HarcAppBridge(recordingState: RecordingState(), trayState: PostStopTrayState())
+        bridge.hostRuntimeReady = true
+        let id = UUID()
+        bridge.hostReceiptInspectionInput = "  \(id.uuidString)\n"
+        var requested: [UUID] = []
+        var repairs = 0
+        var migrations = 0
+        bridge.onRepairHostReceipts = { repairs += 1 }
+        bridge.onMigrateHostLibraryBindings = { migrations += 1 }
+        bridge.inspectHostReceiptBinding = { [weak bridge] value in
+            requested.append(value)
+            #expect(bridge?.hostReceiptInspectionInProgress == true)
+            // A repeated request while suspended must not issue another call.
+            await bridge?.requestHostReceiptInspection()
+            return "Read-only fixture result"
+        }
+        #expect(requested.isEmpty)
+        await bridge.requestHostReceiptInspection()
+        #expect(requested == [id])
+        #expect(bridge.hostReceiptInspectedID == id)
+        #expect(bridge.hostReceiptInspectionStatus == "Read-only fixture result")
+        #expect(!bridge.hostReceiptInspectionInProgress)
+        #expect(repairs == 0 && migrations == 0)
+        bridge.hostReceiptInspectionInput = UUID().uuidString
+        #expect(bridge.hostReceiptInspectionStatus == nil)
+        #expect(bridge.hostReceiptInspectedID == nil)
+    }
+
+    @Test("invalid and unavailable receipt inspection never reaches the runtime",
+          arguments: ["invalid", "offline", "repairing", "migrating"])
+    func receiptInspectionRejectsUnavailableRequests(mode: String) async {
+        let bridge = HarcAppBridge(recordingState: RecordingState(), trayState: PostStopTrayState())
+        bridge.hostRuntimeReady = mode != "offline"
+        bridge.hostReceiptInspectionInput = mode == "invalid" ? "/private/not-a-recording-id" : UUID().uuidString
+        bridge.hostReceiptRepairInProgress = mode == "repairing"
+        bridge.hostLibraryMigrationInProgress = mode == "migrating"
+        var calls = 0
+        bridge.inspectHostReceiptBinding = { _ in calls += 1; return "unexpected" }
+        await bridge.requestHostReceiptInspection()
+        #expect(calls == 0)
+        #expect(!bridge.hostReceiptInspectionInProgress)
+        #expect(bridge.hostReceiptInspectedID == nil)
+        #expect(bridge.hostReceiptInspectionStatus != nil)
+    }
+
+    @Test("receipt inspection errors are redacted and cancellation releases the action",
+          arguments: [false, true])
+    func receiptInspectionRedactsErrors(cancelled: Bool) async {
+        let bridge = HarcAppBridge(recordingState: RecordingState(), trayState: PostStopTrayState())
+        bridge.hostRuntimeReady = true
+        bridge.hostReceiptInspectionInput = UUID().uuidString
+        bridge.inspectHostReceiptBinding = { _ in
+            if cancelled { throw CancellationError() }
+            throw NSError(domain: "private", code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "/private/audio.wav credential=secret"])
+        }
+        await bridge.requestHostReceiptInspection()
+        #expect(!bridge.hostReceiptInspectionInProgress)
+        #expect(bridge.hostReceiptInspectionStatus?.contains("credential") == false)
+        #expect(bridge.hostReceiptInspectionStatus?.contains("/private") == false)
+        #expect(bridge.hostReceiptInspectionStatus?.contains("No repair was requested") == true)
+    }
+
     @Test("reportPaste publishes status and flash state")
     func reportPastePublishesStatusAndFlashState() {
         let bridge = HarcAppBridge(

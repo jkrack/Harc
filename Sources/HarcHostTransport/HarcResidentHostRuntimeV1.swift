@@ -467,6 +467,17 @@ public actor HarcResidentHostRuntimeV1 {
         await remoteRelayHostAgent?.state()
     }
 
+    /// Local read-only inspection. Deliberately absent from network services;
+    /// this result grants no repair, receipt-replay, or cleanup authority.
+    public func inspectReceiptBinding(
+        canonicalRecordingID: CanonicalRecordingID
+    ) async throws -> HostReceiptBindingDiagnostic {
+        guard !transportStopped else { throw HarcHostError.processingSchedulerUnavailable }
+        return try await canonicalIngest.inspectReceiptBinding(
+            canonicalRecordingID: canonicalRecordingID
+        )
+    }
+
     /// Local app administration; deliberately absent from the network services.
     public func repairReceiptBindings(
         progress: (@Sendable (Int, Int) async -> Void)? = nil

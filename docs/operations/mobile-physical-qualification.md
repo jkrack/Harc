@@ -187,3 +187,36 @@ Do not promote the automated audit or simulator Dynamic Type run as a substitute
 Repeat after any material layout, accessibility-label, release-configuration,
 or archive change. Record any additional-device runs as compatibility evidence,
 not as prerequisites invented after the candidate is ready.
+
+## Local receipt-binding inspection
+
+`HarcResidentHostRuntimeV1.inspectReceiptBinding(canonicalRecordingID:)` is a
+local, single-record diagnostic. It uses the resident ingest actor's retained
+canonical root, publication activity gate, persisted evidence and validators.
+It reports the completed stages, any failed stage, a bounded error code and
+which identity fields differ. It never returns local paths, signed bytes,
+credentials or an error's associated values.
+
+Inspection does not request owner authentication, repair security-registry
+persistence, create missing directories, schedule processing or write a repair
+event. A verified metadata-drift result is descriptive; it grants no repair,
+receipt-replay or cleanup authority. Normal repair retains its existing owner
+authentication and full before/after validation. The diagnostic is deliberately
+absent from network services and does not add a shell command.
+
+Devices & Sync exposes **Inspect one recording (read-only)**. Enter a canonical
+recording UUID and press **Inspect recording**. The app calls its existing resident
+runtime; it does not construct a second Host graph or open another live writer.
+Invalid UUIDs, unavailable Host state and overlapping inspection/repair/migration
+requests are rejected before invocation. The result identifies the requested UUID;
+editing the input clears the old result. Unexpected thrown errors are redacted.
+This action never invokes either adjacent repair button and never requests owner
+authentication.
+
+The isolated integration candidate also contains the #179 Library timestamp fix;
+do not replace the installed Host with a main-based diagnostic-only build that
+omits it. Build/deployment and restart require separate approval. A restart creates
+new retained root state, so inspection can identify a present failure stage but
+cannot reconstruct a prior process's approval snapshot or attribute historical
+metadata changes. Preserve existing logs and publication/receipt evidence before
+any approved deployment. No repair is implied by a successful inspection.

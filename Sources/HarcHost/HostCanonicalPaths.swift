@@ -121,7 +121,7 @@ final class HostCanonicalDirectory: @unchecked Sendable {
         }
     }
 
-    init(rootAnchor: HostCanonicalRootAnchor, year: String, day: String) throws {
+    init(rootAnchor: HostCanonicalRootAnchor, year: String, day: String, create: Bool = true) throws {
         try rootAnchor.validateRetainedIdentity()
         var opened = rootAnchor.retainedRoot.components.map { $0.borrowed() }
         let borrowedCount = opened.count
@@ -130,7 +130,7 @@ final class HostCanonicalDirectory: @unchecked Sendable {
                 try Self.openChildDirectory(
                     named: year,
                     relativeTo: opened[opened.count - 1].descriptor,
-                    create: true,
+                    create: create,
                     allowTrustedSystemSymlink: false,
                     requireCurrentUserOwnership: true
                 )
@@ -139,7 +139,7 @@ final class HostCanonicalDirectory: @unchecked Sendable {
                 try Self.openChildDirectory(
                     named: day,
                     relativeTo: opened[opened.count - 1].descriptor,
-                    create: true,
+                    create: create,
                     allowTrustedSystemSymlink: false,
                     requireCurrentUserOwnership: true
                 )
@@ -619,7 +619,8 @@ struct HostCanonicalPublicationPaths: Equatable, Sendable {
         rootAnchor: HostCanonicalRootAnchor,
         canonicalRecordingID: CanonicalRecordingID,
         persistedRelativeWAVPath: String,
-        temporaryName: String
+        temporaryName: String,
+        createDirectories: Bool = true
     ) throws -> Self {
         guard isSafeTemporaryName(temporaryName) else {
             throw HarcHostError.unsafePublicationPath
@@ -635,7 +636,8 @@ struct HostCanonicalPublicationPaths: Equatable, Sendable {
         let trustedDirectory = try HostCanonicalDirectory(
             rootAnchor: rootAnchor,
             year: components.year,
-            day: components.day
+            day: components.day,
+            create: createDirectories
         )
 
         let wavURL = directory.appendingPathComponent(components.wavName)
