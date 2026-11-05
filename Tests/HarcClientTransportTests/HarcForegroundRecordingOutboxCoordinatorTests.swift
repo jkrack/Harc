@@ -453,6 +453,99 @@ struct HarcForegroundRecordingOutboxCoordinatorTests {
         #expect(await rpc.callCounts() == calls)
     }
 
+    @Test("successive Begin, chunk and commit response losses survive client-store reopens")
+    func repeatedResponseLossesResumeWithoutEarlyCleanup() async throws {
+        let fixture = try ForegroundCoordinatorFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let origin = fixture.plan.originRecordingID
+        let masterBytes = try Data(contentsOf: fixture.masterURL)
+        let chunkBytes = try fixture.plan.chunks.map { try Data(contentsOf: $0.encodedFileURL) }
+        _ = try fixture.store.requestCleanup(for: origin, requestedAt: fixture.now)
+        let rpc = ForegroundRecordingRPCFake(
+            fixture: fixture, mode: .loseBeginThenChunkThenCommittedResponse
+        )
+
+        func reopen() throws -> HarcTransferStore {
+            try HarcTransferStore(
+                rootDirectory: fixture.root, installationDeviceID: origin.deviceID,
+                storageAttributes: ForegroundCoordinatorStorageAttributes(), now: { fixture.now }
+            )
+        }
+        func restoredPlan(from store: HarcTransferStore) throws -> HarcForegroundRecordingUploadPlan {
+            let intent = try #require(try store.uploadBeginIntent(for: origin)).intent
+            let plan = try HarcForegroundRecordingUploadPlan(
+                trustTuple: intent.trustTuple, uploadID: intent.uploadID,
+                originRecordingID: intent.originRecordingID, frozenProfile: intent.frozenProfile,
+                chunks: intent.chunks.map {
+                    try HarcForegroundEncodedChunk(descriptor: $0.descriptor, encodedFileURL: $0.encodedFileURL)
+                }
+            )
+            #expect(plan == fixture.plan)
+            return plan
+        }
+
+        // Keep the synthetic Host alive, but recreate client persistence and the
+        // production coordinator after every independently injected interruption.
+        for interruption in 0..<3 {
+            let store = try reopen()
+            let plan = try interruption == 0 ? fixture.plan : restoredPlan(from: store)
+            let coordinator = HarcForegroundRecordingOutboxCoordinator(
+                store: store, transport: rpc, now: { fixture.now }
+            )
+            if interruption < 2 {
+                await #expect(throws: ForegroundRecordingRPCFakeError.lostResponse) {
+                    try await coordinator.drive(plan, openedSession: fixture.session, deviceSigner: fixture.deviceKey)
+                }
+            } else {
+                await #expect(throws: CancellationError.self) {
+                    try await coordinator.drive(plan, openedSession: fixture.session, deviceSigner: fixture.deviceKey)
+                }
+            }
+            #expect(try store.verifiedRecordingReceipt(for: origin) == nil)
+            #expect(try store.cleanupIntent(for: origin)?.isEligible == false)
+            #expect(try Data(contentsOf: fixture.masterURL) == masterBytes)
+            #expect(try plan.chunks.map { try Data(contentsOf: $0.encodedFileURL) } == chunkBytes)
+            #expect(await rpc.uploadedIndexes() == (interruption == 0 ? [] : interruption == 1 ? [0] : [0, 1]))
+            #expect(await rpc.commitCallCount() == (interruption == 2 ? 1 : 0))
+        }
+
+        let hostReceipt = try #require(await rpc.acceptedReceipt())
+        let exactManifest = try #require(await rpc.acceptedManifestBytes())
+        let resumedStore = try reopen()
+        #expect(try resumedStore.recordingOutbox(for: origin)?.stateMachine.state == .hostCommitPending)
+        #expect(try resumedStore.verifiedRecordingReceipt(for: origin) == nil)
+        #expect(try resumedStore.cleanupIntent(for: origin)?.isEligible == false)
+        #expect(try resumedStore.uploadAttempt(id: fixture.plan.uploadID)?.attempt.boundManifest?.exactBytes == exactManifest)
+        let resumed = HarcForegroundRecordingOutboxCoordinator(
+            store: resumedStore, transport: rpc, now: { fixture.now }
+        )
+        let committed = try await resumed.drive(
+            restoredPlan(from: resumedStore), openedSession: fixture.session, deviceSigner: fixture.deviceKey
+        )
+        #expect(committed.uploadID == fixture.plan.uploadID)
+        #expect(committed.exactReceiptObject == hostReceipt)
+        #expect(committed.canonicalPCMSHA256 == fixture.capture.canonicalPCMSHA256)
+        #expect(committed.totalCanonicalFrames == fixture.capture.totalCanonicalFrames)
+        #expect(await rpc.commitCallCount() == 1)
+        #expect(await rpc.uploadedIndexes() == [0, 1])
+        #expect(try resumedStore.cleanupIntent(for: origin)?.isEligible == true)
+
+        // A further reopen must replay the durable receipt without any RPCs.
+        let finalStore = try reopen()
+        let calls = await rpc.callCounts()
+        let replay = try await HarcForegroundRecordingOutboxCoordinator(
+            store: finalStore, transport: rpc, now: { fixture.now }
+        ).drive(restoredPlan(from: finalStore), openedSession: fixture.session, deviceSigner: fixture.deviceKey)
+        #expect(replay == committed)
+        #expect(await rpc.callCounts() == calls)
+        #expect(try finalStore.recordingOutboxes().count == 1)
+        #expect(try finalStore.verifiedRecordingReceipt(for: origin) == committed)
+        #expect(try finalStore.uploadAttempt(id: fixture.plan.uploadID)?.attempt.boundManifest?.exactBytes == exactManifest)
+        #expect(try finalStore.cleanupIntent(for: origin)?.isEligible == true)
+        #expect(try Data(contentsOf: fixture.masterURL) == masterBytes)
+        #expect(try fixture.plan.chunks.map { try Data(contentsOf: $0.encodedFileURL) } == chunkBytes)
+    }
+
     @Test("sub-millisecond clocks are floored once for manifest wire time")
     func subMillisecondManifestClock() async throws {
         let fixture = try ForegroundCoordinatorFixture()
@@ -956,9 +1049,10 @@ private enum ForegroundRecordingRPCMode: Equatable, Sendable {
     case holdFirstBegin
     case failFirstChunkTransport
     case loseFirstChunkAcknowledgement
+    case loseBeginThenChunkThenCommittedResponse
 }
 
-private enum ForegroundRecordingRPCFakeError: Error {
+private enum ForegroundRecordingRPCFakeError: Error, Equatable {
     case unsupported
     case invalidRequest
     case lostResponse
@@ -1056,7 +1150,7 @@ private actor ForegroundRecordingRPCFake:
             reconciliation: try reconciliation(),
             receipt: nil
         )
-        if mode == .loseFirstBeginResponse, beginCalls == 1 {
+        if (mode == .loseFirstBeginResponse || mode == .loseBeginThenChunkThenCommittedResponse), beginCalls == 1 {
             throw ForegroundRecordingRPCFakeError.lostResponse
         }
         if mode == .holdFirstBegin, beginCalls == 1 {
@@ -1110,7 +1204,7 @@ private actor ForegroundRecordingRPCFake:
     }
 
     private func shouldDropAcknowledgement() -> Bool {
-        mode == .loseFirstChunkAcknowledgement && uploadOrder.count == 1
+        (mode == .loseFirstChunkAcknowledgement || mode == .loseBeginThenChunkThenCommittedResponse) && uploadOrder.count == 1
     }
 
     private func acceptChunk(
@@ -1218,7 +1312,7 @@ private actor ForegroundRecordingRPCFake:
                 )
             }
         }
-        if mode == .cancelFirstCommittedResponse,
+        if (mode == .cancelFirstCommittedResponse || mode == .loseBeginThenChunkThenCommittedResponse),
            !didCancelCommittedResponse {
             didCancelCommittedResponse = true
             throw CancellationError()
