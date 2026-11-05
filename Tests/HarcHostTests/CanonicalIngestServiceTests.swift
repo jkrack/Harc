@@ -677,6 +677,26 @@ struct CanonicalIngestServiceTests {
         }
     }
 
+    @Test("audio diagnostic pinpoints mismatch against the expected identity")
+    func diagnosticPinpointsExpectedIdentityMismatch() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        try await Task.sleep(for: .milliseconds(2))
+        #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        var last: HostReceiptBindingDiagnostic.AudioStep?
+        #expect(throws: HarcHostError.self) {
+            _ = try HostValidatedCanonicalArtifact(at: paths.wavURL, in: paths,
+                totalFrames: work.canonicalPCMFrames, expectedPCMHash: work.canonicalPCMHash,
+                expectedIdentity: work.canonicalArtifactIdentity, diagnosticStep: { last = $0 })
+        }
+        #expect(last == .compareExpectedIdentity)
+    }
+
     @Test("single-record inspection reports stages without authorization or durable writes",
           arguments: ["unchanged", "ctime", "audio", "replacement", "missingDirectory", "rootReplaced", "manifest", "receipt", "duringEvidence"])
     func readOnlyReceiptInspection(scenario: String) async throws {
@@ -751,6 +771,7 @@ struct CanonicalIngestServiceTests {
             #expect(report.outcome == .verifiedCurrentBinding)
             #expect(report.identityChanges.isEmpty)
             #expect(report.completedStages.last == .snapshotRecheck)
+            #expect(report.audioFailureStep == nil)
         case "ctime":
             #expect(report.outcome == .verifiedMetadataDrift)
             #expect(report.identityChanges == [.changeTime])
@@ -758,6 +779,7 @@ struct CanonicalIngestServiceTests {
         case "audio":
             #expect(report.failureStage == .canonicalAudio)
             #expect(report.failureCode == "canonical-content-hash-mismatch")
+            #expect(report.audioFailureStep == .pcmHash)
         case "replacement":
             #expect(report.failureStage == .filesystemIdentity)
             #expect(report.identityChanges.contains(.inode))

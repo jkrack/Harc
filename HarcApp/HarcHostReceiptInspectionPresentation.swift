@@ -20,6 +20,7 @@ enum HarcHostReceiptInspectionPresentation {
             lines.append("Checked: " + report.completedStages.map(stageName).joined(separator: ", ") + ".")
         }
         if let code = report.failureCode { lines.append("Diagnostic code: " + code) }
+        if let step = report.audioFailureStep { lines.append("Audio validation step: " + step.rawValue) }
         if !report.identityChanges.isEmpty {
             lines.append("Changed identity fields: " + report.identityChanges.map(\.rawValue).joined(separator: ", ") + ".")
         }
