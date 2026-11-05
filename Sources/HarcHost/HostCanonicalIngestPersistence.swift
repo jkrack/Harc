@@ -10,7 +10,7 @@ enum HostPublicationSidecarKind: Sendable {
     case receipt
 }
 
-struct HostReceiptProcessingWork: Sendable {
+struct HostReceiptProcessingWork: Equatable, Sendable {
     let uploadID: UploadID
     let state: HostUploadJournalState
     let canonicalRecordingID: CanonicalRecordingID

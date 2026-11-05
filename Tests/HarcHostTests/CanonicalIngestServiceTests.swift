@@ -200,7 +200,8 @@ private struct PreparedCanonicalIngest {
         lease: HostWriterLease? = nil,
         scheduler: any HostReceiptDurableProcessingScheduling,
         failureInjector: any HostPublicationFailureInjector = NoHostPublicationFailureInjector(),
-        receiptValidator: (any RecordingReceiptEvidenceValidating)? = nil
+        receiptValidator: (any RecordingReceiptEvidenceValidating)? = nil,
+        manifestValidator: (any RecordingManifestEvidenceValidating)? = nil
     ) throws -> HarcCanonicalIngestService {
         try HarcCanonicalIngestService(
             hostStore: hostStore ?? self.hostStore,
@@ -208,7 +209,7 @@ private struct PreparedCanonicalIngest {
             canonicalCommitCapability: (lease ?? self.lease).canonicalCommitCapability,
             canonicalRoot: canonicalRoot,
             decoder: RawPCMFixtureHostChunkDecoder(),
-            manifestValidator: codec,
+            manifestValidator: manifestValidator ?? codec,
             receiptIssuer: codec,
             receiptValidator: receiptValidator ?? codec,
             hostAuthoritySigner: hostKey,
@@ -674,6 +675,158 @@ struct CanonicalIngestServiceTests {
             try await reopened.recordingStore.disableHostMode(reopened.lease)
             fixture.cleanup()
         }
+    }
+
+    @Test("single-record inspection reports stages without authorization or durable writes",
+          arguments: ["unchanged", "ctime", "audio", "replacement", "missingDirectory", "rootReplaced", "manifest", "receipt", "duringEvidence"])
+    func readOnlyReceiptInspection(scenario: String) async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let scheduler = IdempotentProcessingScheduler()
+        let service = try fixture.service(scheduler: scheduler)
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        // Settle the ordinary asynchronous handoff before measuring inspection.
+        for _ in 0..<100 {
+            if try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID)?.state == .processing { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(work.state == .processing)
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        var inspectionService = service
+        var preservedURL = paths.wavURL
+        var missingDirectory: URL?
+        try await Task.sleep(for: .milliseconds(2))
+        switch scenario {
+        case "ctime":
+            #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        case "audio":
+            var bytes = try Data(contentsOf: paths.wavURL)
+            bytes[44] ^= 1
+            try bytes.write(to: paths.wavURL)
+        case "replacement":
+            let bytes = try Data(contentsOf: paths.wavURL)
+            try FileManager.default.removeItem(at: paths.wavURL)
+            try bytes.write(to: paths.wavURL)
+            #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        case "missingDirectory":
+            let moved = paths.directory.appendingPathExtension("held")
+            try FileManager.default.moveItem(at: paths.directory, to: moved)
+            preservedURL = moved.appendingPathComponent(paths.wavURL.lastPathComponent)
+            missingDirectory = paths.directory
+        case "rootReplaced":
+            let moved = fixture.canonicalRoot.appendingPathExtension("held")
+            try FileManager.default.moveItem(at: fixture.canonicalRoot, to: moved)
+            try FileManager.default.createDirectory(at: fixture.canonicalRoot, withIntermediateDirectories: false)
+            #expect(chmod(fixture.canonicalRoot.path, 0o700) == 0)
+            preservedURL = moved.appendingPathComponent(work.publicationRelativePath)
+            missingDirectory = fixture.canonicalRoot.appendingPathComponent(String(work.publicationRelativePath.split(separator: "/")[0]))
+        case "manifest":
+            inspectionService = try fixture.service(scheduler: scheduler,
+                manifestValidator: RejectingDiagnosticManifestValidator())
+        case "receipt":
+            inspectionService = try fixture.service(scheduler: scheduler,
+                receiptValidator: RejectingRecordingReceiptValidator())
+        case "duringEvidence":
+            inspectionService = try fixture.service(scheduler: scheduler,
+                receiptValidator: MetadataChangingReceiptValidator(codec: fixture.codec, url: paths.wavURL))
+        default: break
+        }
+        let oldReceipt = try await exactReceiptBytes(fixture.hostStore, fixture.uploadID)
+        let beforeChanges = try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        }
+        let audioBefore = try Data(contentsOf: preservedURL)
+        let descriptor = open(preservedURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        #expect(descriptor >= 0)
+        defer { if descriptor >= 0 { close(descriptor) } }
+        let identityBefore = try HostCanonicalArtifactIdentity(
+            validatingOpenFileDescriptor: descriptor, boundTo: preservedURL)
+        let scheduledBefore = await scheduler.snapshot().attempts
+        let report = try await inspectionService.inspectReceiptBinding(canonicalRecordingID: work.canonicalRecordingID)
+        switch scenario {
+        case "unchanged":
+            #expect(report.outcome == .verifiedCurrentBinding)
+            #expect(report.identityChanges.isEmpty)
+            #expect(report.completedStages.last == .snapshotRecheck)
+        case "ctime":
+            #expect(report.outcome == .verifiedMetadataDrift)
+            #expect(report.identityChanges == [.changeTime])
+            #expect(report.completedStages.last == .snapshotRecheck)
+        case "audio":
+            #expect(report.failureStage == .canonicalAudio)
+            #expect(report.failureCode == "canonical-content-hash-mismatch")
+        case "replacement":
+            #expect(report.failureStage == .filesystemIdentity)
+            #expect(report.identityChanges.contains(.inode))
+        case "missingDirectory", "rootReplaced":
+            #expect(report.failureStage == .trustedPath)
+            #expect(!FileManager.default.fileExists(atPath: try #require(missingDirectory).path))
+        case "manifest":
+            #expect(report.failureStage == .manifestEvidence)
+        case "receipt":
+            #expect(report.failureStage == .receiptEvidence)
+        case "duringEvidence":
+            #expect(report.failureStage == .snapshotRecheck)
+        default: Issue.record("Unexpected scenario")
+        }
+        if report.failureStage != nil { #expect(report.outcome == .blocked) }
+        #expect(report.failureCode?.contains(fixture.root.path) != true)
+        #expect(try Data(contentsOf: preservedURL) == audioBefore)
+        if scenario != "duringEvidence" {
+            #expect(try HostCanonicalArtifactIdentity(
+                validatingOpenFileDescriptor: descriptor, boundTo: preservedURL) == identityBefore)
+        }
+        #expect(try await exactReceiptBytes(fixture.hostStore, fixture.uploadID) == oldReceipt)
+        #expect(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID) == work)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        } == beforeChanges)
+        #expect(await auth.calls == 0)
+        #expect(await auth.batchCounts.isEmpty)
+        #expect(await auth.migrationCalls == 0)
+        #expect(await scheduler.snapshot().attempts == scheduledBefore)
+    }
+
+    @Test("unknown recording inspection is read-only and does not authorize repair")
+    func readOnlyReceiptInspectionMissing() async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        let changes = try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        }
+        let report = try await service.inspectReceiptBinding(canonicalRecordingID: CanonicalRecordingID(UUID()))
+        #expect(report.outcome == .notFound)
+        #expect(report.failureStage == .receiptState)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        } == changes)
+        #expect(await auth.calls == 0)
+    }
+
+    @Test("cancelled inspection stops before validation without durable writes")
+    func readOnlyReceiptInspectionCancellation() async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        let changes = try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        }
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await service.inspectReceiptBinding(canonicalRecordingID: CanonicalRecordingID(UUID()))
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        } == changes)
+        #expect(await auth.calls == 0)
+        #expect(await auth.batchCounts.isEmpty)
     }
 
     @Test("local owner repair restores exact receipt replay after metadata drift and survives reopen")
@@ -2302,5 +2455,26 @@ private final class RepairValidationFailure: @unchecked Sendable {
         defer { lock.unlock() }
         count += 1
         if count == 2 { throw HarcHostError.canonicalArtifactIdentityMismatch }
+    }
+}
+
+private struct MetadataChangingReceiptValidator: RecordingReceiptEvidenceValidating {
+    let codec: LoopbackRecordingEvidenceCodec
+    let url: URL
+    func validateRecordingReceipt(exactSignedReceiptBytes: Data,
+        validatedManifest: ValidatedRecordingManifestEvidence,
+        hostTrust: RecordingHostTrustBinding) throws -> ValidatedRecordingReceiptEvidence {
+        let receipt = try codec.validateRecordingReceipt(exactSignedReceiptBytes: exactSignedReceiptBytes,
+            validatedManifest: validatedManifest, hostTrust: hostTrust)
+        guard chmod(url.path, 0o600) == 0 else { throw HarcHostError.canonicalArtifactIdentityMismatch }
+        return receipt
+    }
+}
+
+private struct RejectingDiagnosticManifestValidator: RecordingManifestEvidenceValidating {
+    func validateRecordingManifest(exactSignedManifestBytes: Data,
+        hostTrust: RecordingHostTrustBinding,
+        producingDevicePublicKey: P256X963PublicKey) throws -> ValidatedRecordingManifestEvidence {
+        throw HarcHostError.manifestEvidenceRequired
     }
 }
