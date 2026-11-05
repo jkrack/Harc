@@ -11,6 +11,7 @@ public struct HostReceiptBindingDiagnostic: Equatable, Sendable {
     }
 
     public enum Stage: String, Sendable {
+        case publicationState
         case receiptState
         case publicationActivity
         case trustedPath
@@ -37,4 +38,5 @@ public struct HostReceiptBindingDiagnostic: Equatable, Sendable {
     public let failureCode: String?
     public let identityChanges: [IdentityChange]
     public let audioFailureStep: AudioStep?
+    public let isPreReceiptPublication: Bool
 }

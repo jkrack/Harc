@@ -13,7 +13,7 @@ extension HarcAppBridge {
         }
         let input = hostReceiptInspectionInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let id = UUID(uuidString: input) else {
-            hostReceiptInspectionStatus = "Enter a valid canonical recording ID."
+            hostReceiptInspectionStatus = hostReceiptInspectionUsesUploadID ? "Enter a valid upload ID." : "Enter a valid canonical recording ID."
             hostReceiptInspectedID = nil
             return
         }
@@ -22,7 +22,8 @@ extension HarcAppBridge {
         hostReceiptInspectedID = id
         defer { hostReceiptInspectionInProgress = false }
         do {
-            hostReceiptInspectionStatus = try await inspectHostReceiptBinding(id)
+            hostReceiptInspectionStatus = try await (hostReceiptInspectionUsesUploadID
+                ? inspectHostPublicationBinding(id) : inspectHostReceiptBinding(id))
         } catch is CancellationError {
             hostReceiptInspectionStatus = "Inspection cancelled. No repair was requested."
         } catch {

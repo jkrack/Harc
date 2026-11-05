@@ -677,6 +677,90 @@ struct CanonicalIngestServiceTests {
         }
     }
 
+    @Test("failed publication inspection validates each pre-receipt checkpoint without writes",
+          arguments: [HostPublicationFailurePoint.afterCanonicalDatabaseCommit, .afterHostPublicationLinkage, .afterReceiptPersistence],
+          ["stable", "ctime", "corrupt"])
+    func inspectFailedPublication(point: HostPublicationFailurePoint, scenario: String) async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let scheduler = IdempotentProcessingScheduler()
+        let service = try fixture.service(scheduler: scheduler,
+            failureInjector: OneShotPublicationFailureInjector(point))
+        await #expect(throws: InjectedPublicationCrash.point(point)) {
+            _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+                generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        }
+        try await fixture.hostStore.markPublicationFailedRecoverable(uploadID: fixture.uploadID,
+            errorCode: "fixture-interruption", at: Date())
+        let work = try await fixture.hostStore.failedPublicationWorkForInspection(uploadID: fixture.uploadID)
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        if scenario == "ctime" {
+            try await Task.sleep(for: .milliseconds(2))
+            #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        } else if scenario == "corrupt" {
+            var bytes = try Data(contentsOf: paths.wavURL); bytes[44] ^= 1
+            try bytes.write(to: paths.wavURL)
+        }
+        let beforeBytes = try Data(contentsOf: paths.wavURL)
+        let beforeChanges = try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        }
+        let beforeScheduled = await scheduler.snapshot().attempts
+        let report = try await service.inspectPublicationBinding(uploadID: fixture.uploadID)
+        #expect(report.isPreReceiptPublication)
+        if scenario == "corrupt" {
+            #expect(report.outcome == .blocked)
+            #expect(report.audioFailureStep == .pcmHash)
+        } else {
+            #expect(report.outcome == (scenario == "ctime" ? .verifiedMetadataDrift : .verifiedCurrentBinding))
+            #expect(report.completedStages.last == .snapshotRecheck)
+        }
+        #expect(try Data(contentsOf: paths.wavURL) == beforeBytes)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT total_changes()")
+        } == beforeChanges)
+        let after = try await fixture.hostStore.failedPublicationWorkForInspection(uploadID: fixture.uploadID)
+        #expect(after.attempt == work.attempt)
+        #expect(after.canonicalArtifactIdentity == work.canonicalArtifactIdentity)
+        #expect(after.exactPersistedReceipt == work.exactPersistedReceipt)
+        #expect(await scheduler.snapshot().attempts == beforeScheduled)
+        #expect(await auth.calls == 0)
+        #expect(await auth.migrationCalls == 0)
+        #expect(report.failureCode?.contains(fixture.root.path) != true)
+    }
+
+    @Test("canonical artifact descriptor closes once on early failure, late failure and success",
+          arguments: ["early", "late", "success"])
+    func canonicalArtifactDescriptorSingleOwner(scenario: String) async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler())
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        if scenario == "early" {
+            try await Task.sleep(for: .milliseconds(2))
+            #expect(chmod(paths.wavURL.path, 0o600) == 0)
+        } else if scenario == "late" {
+            var bytes = try Data(contentsOf: paths.wavURL)
+            bytes[44] ^= 1
+            try bytes.write(to: paths.wavURL)
+        }
+        var closeCount = 0
+        let validate = {
+            let artifact = try HostValidatedCanonicalArtifact(at: paths.wavURL, in: paths,
+                totalFrames: work.canonicalPCMFrames, expectedPCMHash: work.canonicalPCMHash,
+                expectedIdentity: scenario == "early" ? work.canonicalArtifactIdentity : nil,
+                closeDescriptor: { fd in closeCount += 1; _ = close(fd) })
+            try artifact.validateBinding()
+        }
+        if scenario == "success" { try validate() }
+        else { #expect(throws: (any Error).self) { try validate() } }
+        #expect(closeCount == 1)
+    }
+
     @Test("audio diagnostic pinpoints mismatch against the expected identity")
     func diagnosticPinpointsExpectedIdentityMismatch() async throws {
         let fixture = try await makePreparedIngest()

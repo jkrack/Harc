@@ -253,6 +253,23 @@ extension HarcHostStore {
         return try materializePublicationWork(plan)
     }
 
+    /// Reads one eligible checkpoint; never invokes recovery or registry repair.
+    func failedPublicationWorkForInspection(uploadID: UploadID) async throws -> HostCanonicalPublicationWork {
+        let plan: StoredPublicationPlan = try await dbQueue.read { db in
+            guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID),
+                  attempt.status == .active,
+                  let row = try Row.fetchOne(db, sql: "SELECT * FROM publication_journal WHERE upload_id = ?",
+                                            arguments: [uploadID.description]),
+                  row["state"] as String? == "failedRecoverable",
+                  let resume = row["resume_state"] as String?,
+                  ["audioPublished", "recordingCommitted", "receiptPrepared"].contains(resume)
+            else { throw HarcHostError.publicationRecoveryRequired("No eligible failed publication") }
+            try Self.requireRecoverablePublicationRow(row)
+            return try self.decodePublicationPlan(row, attempt: attempt, in: db)
+        }
+        return try materializePublicationWork(plan)
+    }
+
     func canonicalArtifactBindingCandidateUploadIDs() async throws -> [UploadID] {
         try await dbQueue.read { db in
             try String.fetchAll(

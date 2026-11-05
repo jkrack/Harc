@@ -53,6 +53,16 @@ struct HostCanonicalWAVLayout: Equatable, Sendable {
     }
 }
 
+private final class HostCanonicalDescriptorOwner {
+    let descriptor: Int32
+    private let closeDescriptor: (Int32) -> Void
+    init(_ descriptor: Int32, closeDescriptor: @escaping (Int32) -> Void) {
+        self.descriptor = descriptor
+        self.closeDescriptor = closeDescriptor
+    }
+    deinit { closeDescriptor(descriptor) }
+}
+
 /// Retains the exact descriptor opened through a trusted canonical directory.
 /// Every content validation brackets the complete header/PCM read with the
 /// same persisted identity, so in-place mutation, leaf replacement, and root
@@ -61,7 +71,8 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
     let identity: HostCanonicalArtifactIdentity
     let url: URL
 
-    private let descriptor: Int32
+    private let descriptorOwner: HostCanonicalDescriptorOwner
+    private var descriptor: Int32 { descriptorOwner.descriptor }
     private let paths: HostCanonicalPublicationPaths
     private let layout: HostCanonicalWAVLayout
     private let expectedPCMHash: CanonicalPCMHash
@@ -72,18 +83,20 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         totalFrames: UInt64,
         expectedPCMHash: CanonicalPCMHash,
         expectedIdentity: HostCanonicalArtifactIdentity? = nil,
-        diagnosticStep: ((HostReceiptBindingDiagnostic.AudioStep) -> Void)? = nil
+        diagnosticStep: ((HostReceiptBindingDiagnostic.AudioStep) -> Void)? = nil,
+        closeDescriptor: @escaping (Int32) -> Void = { _ = Darwin.close($0) }
     ) throws {
         self.url = url
         self.paths = paths
         layout = try HostCanonicalWAVLayout(totalFrames: totalFrames)
         self.expectedPCMHash = expectedPCMHash
         diagnosticStep?(.open)
-        descriptor = try paths.openExistingRegularFile(at: url)
+        let openedDescriptor = try paths.openExistingRegularFile(at: url)
+        descriptorOwner = HostCanonicalDescriptorOwner(openedDescriptor, closeDescriptor: closeDescriptor)
         do {
             diagnosticStep?(.captureIdentity)
             let captured = try HostCanonicalArtifactIdentity(
-                validatingOpenFileDescriptor: descriptor,
+                validatingOpenFileDescriptor: openedDescriptor,
                 boundTo: url
             )
             diagnosticStep?(.compareExpectedIdentity)
@@ -101,13 +114,11 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
             }
             try validateCanonicalContent(diagnosticStep: diagnosticStep)
         } catch {
-            _ = Darwin.close(descriptor)
+            // The owner releases on partial initialization and on deinit.
+            // Closing here as well can close a reused descriptor after a
+            // failure occurring once all stored properties are initialized.
             throw error
         }
-    }
-
-    deinit {
-        _ = Darwin.close(descriptor)
     }
 
     /// Cheap interstitial proof used around actor hops and sidecar operations.
