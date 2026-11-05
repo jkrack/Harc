@@ -36,18 +36,32 @@ public enum LibraryFilter: Equatable, Sendable {
 @MainActor
 public final class LibraryViewModel: ObservableObject {
     @Published public private(set) var originDeviceLabels: [DeviceID: String] = [:]
+    public var localOriginDeviceID: DeviceID?
     public var loadOriginDeviceLabels: (@MainActor () async throws -> [DeviceID: String])?
 
     public func originLabel(for recording: Recording) -> String {
         guard let deviceID = recording.originID?.deviceID else {
             return "Device not recorded"
         }
+        if deviceID == localOriginDeviceID { return "Recorded on this Mac" }
         if let label = originDeviceLabels[deviceID]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !label.isEmpty {
-            return "Recorded on \(label)"
-        }
+           !label.isEmpty { return "Recorded on \(label)" }
         return "Recorded on another device"
     }
+
+    public func originDeviceLabel(for deviceID: DeviceID) -> String {
+        Self.originDeviceLabel(deviceID: deviceID, localDeviceID: localOriginDeviceID,
+                               labels: originDeviceLabels)
+    }
+
+    static func originDeviceLabel(deviceID: DeviceID, localDeviceID: DeviceID?,
+                                  labels: [DeviceID: String]) -> String {
+        if deviceID == localDeviceID { return "This Mac" }
+        if let label = labels[deviceID]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !label.isEmpty { return label }
+        return "Another device"
+    }
+
     @Published public var searchText: String = ""
     @Published public private(set) var recordings: [Recording] = []
     /// Virtual day sessions, newest first, with member counts/durations.
