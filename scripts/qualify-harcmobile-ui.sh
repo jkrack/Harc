@@ -231,12 +231,14 @@ for ATTEMPT in $(seq 1 "$ATTEMPTS"); do
   source "$REPO_ROOT/scripts/build-concurrency.sh"
   harc_configure_build_jobs
   set +e
+  # Guard both optional arrays: Bash 3.2 treats an empty array as unbound
+  # under nounset. The guarded expansions add no argument when empty.
   harc_xcodebuild \
     -project Harc.xcodeproj \
     -scheme HarcMobile \
     -configuration Debug \
     -destination "id=$DESTINATION_ID" \
-    "${XCODE_DERIVED_DATA_OPTIONS[@]}" \
+    ${XCODE_DERIVED_DATA_OPTIONS[@]+"${XCODE_DERIVED_DATA_OPTIONS[@]}"} \
     -parallel-testing-enabled NO \
     -collect-test-diagnostics "$DIAGNOSTIC_COLLECTION" \
     -test-timeouts-enabled YES \
