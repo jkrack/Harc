@@ -333,6 +333,12 @@ except Exception:
 done
 
 ENDED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+# A successful build/test process alone does not establish executed tests.
+# Preserve its raw status, but fail the wrapper if no passing attempt qualified.
+QUALIFICATION_STATUS="$XCODE_STATUS"
+if [[ "$SELECTED_ATTEMPT" -eq 0 && "$QUALIFICATION_STATUS" -eq 0 ]]; then
+  QUALIFICATION_STATUS=1
+fi
 if [[ "$SELECTED_ATTEMPT" -gt 0 && -d "$RESULT_BUNDLE" ]]; then
   ditto -c -k --sequesterRsrc --keepParent \
     "$RESULT_BUNDLE" "$OUTPUT_DIR/HarcMobileUITests.xcresult.zip"
@@ -361,6 +367,7 @@ fi
   echo "maximum_attempts=$ATTEMPTS"
   echo "selected_attempt=$SELECTED_ATTEMPT"
   echo "xcode_status=$XCODE_STATUS"
+  echo "qualification_status=$QUALIFICATION_STATUS"
   echo "result_bundle=$RESULT_BUNDLE"
   echo "derived_data_path=$DERIVED_DATA_PATH"
   echo "source_head=$SOURCE_HEAD"
@@ -374,4 +381,5 @@ echo ""
 echo "Evidence: $OUTPUT_DIR"
 echo "Source manifest SHA-256: $SOURCE_FINGERPRINT"
 echo "xcodebuild status: $XCODE_STATUS"
-exit "$XCODE_STATUS"
+echo "Qualification status: $QUALIFICATION_STATUS"
+exit "$QUALIFICATION_STATUS"
