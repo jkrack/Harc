@@ -222,6 +222,33 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 4))
     }
 
+    func testLibraryOwnsMenusAfterRepeatedCloseAndReopen() throws {
+        launchFixtureLibrary()
+        for _ in 0..<3 {
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), app.debugDescription)
+            let menu = app.menuBars.firstMatch
+            XCTAssertTrue(menu.menuBarItems["Edit"].exists, app.debugDescription)
+            XCTAssertTrue(menu.menuBarItems["File"].exists, app.debugDescription)
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4), app.debugDescription)
+            let statusItem = app.menuBars.element(boundBy: 1).children(matching: .any).firstMatch
+            XCTAssertTrue(statusItem.waitForExistence(timeout: 4), app.debugDescription)
+            statusItem.click()
+            let library = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Library")).firstMatch
+            XCTAssertTrue(library.waitForExistence(timeout: 4), app.debugDescription)
+            library.click()
+            XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
+            // Do not call activate() here: that would hide a failed handoff.
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), app.debugDescription)
+            let search = app.searchFields.firstMatch
+            search.click()
+            app.typeText("Customer")
+            app.typeKey("a", modifierFlags: .command)
+            app.typeText("Renewal")
+            XCTAssertEqual(search.value as? String, "Renewal", app.debugDescription)
+        }
+    }
+
     func testTranscriptEditingPreservesSpecialCharactersAcrossRelaunch() throws {
         launchFixtureLibrary()
         let editor = app.textViews["harc.transcript.editor"]

@@ -717,7 +717,14 @@ site, and open the pane in a real build.
 
 The Settings-only SwiftUI scene can replace the resident app's main menu.
 Check the installed Edit menu before handling events; a one-time installation
-flag does not prove editing shortcuts still exist. The UI suite checks Select
+flag does not prove editing shortcuts still exist. Validate Harc's Settings,
+Import and Close commands as well as Select All: SwiftUI can supply Edit while
+replacing the app menu. Promote and track managed windows before ordering them
+front; never deactivate and asynchronously reactivate to repair menus.
+Transcript reads and initial indexing run off the main actor, coalesce identical
+pending snapshots, and reject results after selection changes or dismissal.
+Validate with `HarcManagedWindowMenuTests`, the repeated Library reopen UI case,
+and `WordIndexTests|TranscriptDocumentTests|ExportInputBuilderTests`. The UI suite checks Select
 All in search and transcript replacement, undo/redo, autosave and relaunch.
 
 A newly stopped recording can be selected before its Library row arrives.

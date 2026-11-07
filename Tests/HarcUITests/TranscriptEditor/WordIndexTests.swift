@@ -86,4 +86,31 @@ struct WordIndexTests {
         #expect(idx.entries[0].range == NSRange(location: 0, length: 3))
         #expect(idx.entries[1].range == NSRange(location: 8, length: 3))
     }
+
+    @Test("repeated missing tokens do not hide later matches or change UTF-16 offsets")
+    func repeatedMissingTokens() {
+        let words = [word("removed", 0, 100), word("HELLO", 100, 200),
+                     word("removed", 200, 300), word("café", 300, 400),
+                     word("removed", 400, 500), word("hello", 500, 600)]
+        let text = "🙂 hello café hello"
+        let idx = WordIndex(words: words, text: text)
+        #expect(idx.entries.map(\.word) == [words[1], words[3], words[5]])
+        #expect(idx.entries.map(\.range) == [
+            NSRange(location: 3, length: 5), NSRange(location: 9, length: 4),
+            NSRange(location: 14, length: 5)
+        ])
+    }
+
+    @Test("large edited transcript skips repeated absent words and retains its matching tail")
+    func largeEditedTranscript() {
+        var words = (0..<15_000).map { word("removed", $0 * 100, $0 * 100 + 100) }
+        let tail = word("retained", 1_500_000, 1_500_100)
+        words.append(tail)
+        let text = String(repeating: "replacement ", count: 15_000) + "retained"
+        let idx = WordIndex(words: words, text: text)
+        #expect(idx.entries == [WordIndex.Entry(
+            word: tail, range: NSRange(location: 180_000, length: 8)
+        )])
+    }
+
 }

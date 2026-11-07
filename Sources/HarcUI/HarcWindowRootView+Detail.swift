@@ -502,7 +502,11 @@ extension HarcWindowRootView {
 
     var transcriptEditorBody: some View {
         Group {
-            if let err = transcriptLoadError, editorText.isEmpty {
+            if transcriptIsLoading {
+                ProgressView("Loading transcript…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("harc.transcript.loading")
+            } else if let err = transcriptLoadError, editorText.isEmpty {
                 EmptyStateView(
                     icon: "doc.text.magnifyingglass",
                     title: "No transcript available",
@@ -885,7 +889,7 @@ extension HarcWindowRootView {
     /// Speaker turns in flat text: line starts that look like "Name: ".
     /// Computed at load; jumping moves the highlight (and the scroll) to the
     /// start of the neighboring turn relative to the current highlight.
-    static func speakerTurnOffsets(in text: String) -> [Int] {
+    nonisolated static func speakerTurnOffsets(in text: String) -> [Int] {
         let ns = text as NSString
         var offsets: [Int] = []
         var lineStart = 0
