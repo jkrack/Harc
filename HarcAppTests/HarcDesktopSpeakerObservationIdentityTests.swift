@@ -339,6 +339,19 @@ struct HarcHostProcessingRequestValidationTests {
         #expect(await calls.count == 1)
     }
 
+    @Test func resourceDeferralPassesThroughWithoutImmediateRetry() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let calls = RefreshCalls()
+        await #expect(throws: HostCanonicalResourceDeferred.insufficientCapacity) {
+            _ = try await HarcHostProcessingRequestValidation.refresh(fixture.request()) { _ in
+                await calls.record()
+                throw HostCanonicalResourceDeferred.insufficientCapacity
+            }
+        }
+        #expect(await calls.count == 1)
+    }
+
     @Test func callbackFailureNeverFallsBackOrRetries() async throws {
         let fixture = try RefreshFixture()
         defer { fixture.remove() }
@@ -480,6 +493,54 @@ private struct RefreshFixture: Sendable {
 
 @Suite("Host processing worker metadata races")
 struct HarcHostProcessingWorkerMetadataTests {
+    @Test func resourceDeferralDoesNoExpensiveWorkUntilAllowed() async throws {
+        let fixture = try await WorkerRefreshFixture.make(drifts: 0, initiallyAllowed: false)
+        await fixture.worker.installRequestValidator { try await fixture.probe.validate($0) }
+        await fixture.worker.signal(fixture.request, isRecovery: true)
+        await fixture.probe.waitForAdmissions(2)
+        #expect(await fixture.probe.preparations == 0)
+        #expect(await fixture.probe.validations == 0)
+        #expect(await fixture.probe.transcriptions == 0)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .pending)
+        await fixture.probe.allowResources()
+        await fixture.worker.waitUntilIdle()
+        #expect(await fixture.probe.transcriptions == 1)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .ready)
+        await fixture.cleanup()
+    }
+
+    @Test func metadataRetryMustReadmitBeforeFullValidation() async throws {
+        let fixture = try await WorkerRefreshFixture.make(drifts: 1, deferAfterTranscription: true)
+        await fixture.worker.installRequestValidator { try await fixture.probe.validate($0) }
+        await fixture.worker.signal(fixture.request)
+        await fixture.probe.waitForAdmissions(3)
+        #expect(await fixture.probe.preparations == 1)
+        #expect(await fixture.probe.validations == 1)
+        #expect(await fixture.probe.transcriptions == 1)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .failedRecoverable)
+        await fixture.probe.allowResources()
+        await fixture.worker.waitUntilIdle()
+        #expect(await fixture.probe.transcriptions == 2)
+        #expect(await fixture.probe.validations == 2)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .ready)
+        await fixture.cleanup()
+    }
+
+    @Test func validationTimeResourceDeferralDoesNotMarkTranscribingOrFailure() async throws {
+        let fixture = try await WorkerRefreshFixture.make(drifts: 0, deferValidation: true)
+        await fixture.worker.installRequestValidator { try await fixture.probe.validate($0) }
+        await fixture.worker.signal(fixture.request)
+        await fixture.probe.waitForAdmissions(3)
+        #expect(await fixture.probe.validations >= 2)
+        #expect(await fixture.probe.transcriptions == 0)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .pending)
+        await fixture.probe.allowResources()
+        await fixture.worker.waitUntilIdle()
+        #expect(await fixture.probe.transcriptions == 1)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .ready)
+        await fixture.cleanup()
+    }
+
     @Test func queueWaitsForValidatorAndDiscardsChangedTranscription() async throws {
         let fixture = try await WorkerRefreshFixture.make(drifts: 1)
         await fixture.worker.signal(fixture.request)
@@ -491,7 +552,7 @@ struct HarcHostProcessingWorkerMetadataTests {
         await fixture.worker.waitUntilIdle()
         let row = try #require(try await fixture.store.fetch(id: fixture.recordingID))
         #expect(await fixture.probe.transcriptions == 2)
-        #expect(await fixture.probe.validations == 3)
+        #expect(await fixture.probe.validations == 2)
         #expect(row.processing.state == .ready)
         #expect(row.transcriptText?.contains("attempt 2") == true)
         #expect(row.transcriptText?.contains("attempt 1") == false)
@@ -505,7 +566,7 @@ struct HarcHostProcessingWorkerMetadataTests {
         await fixture.worker.waitUntilIdle()
         let row = try #require(try await fixture.store.fetch(id: fixture.recordingID))
         #expect(await fixture.probe.transcriptions == 3)
-        #expect(await fixture.probe.validations == 5)
+        #expect(await fixture.probe.validations == 3)
         #expect(row.processing.state == .failedRecoverable)
         #expect(row.transcriptText == nil)
         #expect(try await fixture.store.hostSpeakerProcessingOutcome(recordingID: fixture.recordingID) == nil)
@@ -535,15 +596,42 @@ private actor WorkerRefreshProbe {
     var preparations = 0
     var transcriptions = 0
     var validations = 0
+    var admissions = 0
+    var resourcesAllowed: Bool
+    var deferAfterTranscription: Bool
+    var deferValidation: Bool
 
-    init(request: HostDurableProcessingRequest, bytes: Data, drifts: Int) {
+    init(request: HostDurableProcessingRequest, bytes: Data, drifts: Int,
+         initiallyAllowed: Bool, deferAfterTranscription: Bool, deferValidation: Bool) {
         original = request
         self.bytes = bytes
         self.drifts = drifts
+        self.resourcesAllowed = initiallyAllowed
+        self.deferAfterTranscription = deferAfterTranscription
+        self.deferValidation = deferValidation
+    }
+    func admit() throws {
+        admissions += 1
+        guard resourcesAllowed, !(deferAfterTranscription && transcriptions > 0) else {
+            throw HostCanonicalResourceDeferred.insufficientCapacity
+        }
+    }
+    func allowResources() {
+        resourcesAllowed = true
+        deferAfterTranscription = false
+        deferValidation = false
+    }
+    func waitForAdmissions(_ count: Int) async {
+        let deadline = Date().addingTimeInterval(12)
+        while admissions < count, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(admissions >= count)
     }
     func prepare() -> String { preparations += 1; return "test-only-no-socket" }
     func validate(_ id: CanonicalRecordingID) throws -> HostDurableProcessingRequest {
         validations += 1
+        if deferValidation { throw HostCanonicalResourceDeferred.audioNotResident }
         guard id == original.canonicalRecordingID,
               try Data(contentsOf: original.canonicalWAVURL) == bytes else {
             throw HarcHostError.canonicalHashMismatch
@@ -578,7 +666,8 @@ private struct WorkerRefreshFixture: Sendable {
     let probe: WorkerRefreshProbe
     let worker: HarcHostProcessingWorker
 
-    static func make(drifts: Int) async throws -> Self {
+    static func make(drifts: Int, initiallyAllowed: Bool = true,
+                     deferAfterTranscription: Bool = false, deferValidation: Bool = false) async throws -> Self {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("host-worker-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("canonical.wav")
@@ -609,13 +698,16 @@ private struct WorkerRefreshFixture: Sendable {
         }
         let request = try HostDurableProcessingRequest(canonicalRecordingID: inserted.canonicalID,
             canonicalWAVURL: wav, canonicalPCMHash: hash, canonicalPCMFrames: 1, artifactIdentity: identity)
-        let probe = WorkerRefreshProbe(request: request, bytes: bytes, drifts: drifts)
+        let probe = WorkerRefreshProbe(request: request, bytes: bytes, drifts: drifts,
+            initiallyAllowed: initiallyAllowed, deferAfterTranscription: deferAfterTranscription,
+            deferValidation: deferValidation)
         let worker = HarcHostProcessingWorker(store: store,
             launcher: DaemonLauncher(binaryURL: root.appendingPathComponent("nonexistent"),
                 socketPath: root.appendingPathComponent("unused.sock").path,
                 logURL: root.appendingPathComponent("unused.log")),
             producerDeviceID: producer, diarize: false, vad: false, clientArtifactGrace: 0,
             transcription: .init(prepare: { await probe.prepare() }, run: { _, _, _, _ in try await probe.transcribe() }),
+            resourceAdmission: { _ in try await probe.admit() }, resourceDeferralDelay: 0.05,
             admissionSnapshot: {
                 HarcHostWorkAdmissionSnapshot(thermalPressure: .nominal, lowPowerModeEnabled: false,
                     oneMinuteLoad: 0, activeProcessorCount: 1, harcCaptureActive: false)

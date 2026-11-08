@@ -201,7 +201,8 @@ private struct PreparedCanonicalIngest {
         scheduler: any HostReceiptDurableProcessingScheduling,
         failureInjector: any HostPublicationFailureInjector = NoHostPublicationFailureInjector(),
         receiptValidator: (any RecordingReceiptEvidenceValidating)? = nil,
-        manifestValidator: (any RecordingManifestEvidenceValidating)? = nil
+        manifestValidator: (any RecordingManifestEvidenceValidating)? = nil,
+        backgroundResources: HostCanonicalResourceAdmission = .init()
     ) throws -> HarcCanonicalIngestService {
         try HarcCanonicalIngestService(
             hostStore: hostStore ?? self.hostStore,
@@ -215,7 +216,8 @@ private struct PreparedCanonicalIngest {
             hostAuthoritySigner: hostKey,
             processingScheduler: scheduler,
             failureInjector: failureInjector,
-            now: { clock.read() }
+            now: { clock.read() },
+            backgroundResources: backgroundResources
         )
     }
 
@@ -265,6 +267,118 @@ private struct PreparedCanonicalIngest {
 
 @Suite("Canonical ingest saga and receipt recovery", .serialized)
 struct CanonicalIngestServiceTests {
+    @Test("startup plan and stale recovery plan never reopen a durable processing handoff")
+    func backgroundPlanSkipsDurableHandoff() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let scheduler = FailingProcessingScheduler()
+        let service = try fixture.service(scheduler: scheduler)
+        let receipt = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        try await waitForSchedulerAttempt(scheduler)
+        #expect(try await service.pendingBackgroundPublicationIDs() == [fixture.uploadID])
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        try await fixture.hostStore.markPublicationProcessingScheduled(uploadID: fixture.uploadID, at: fixture.clock.read())
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        try FileManager.default.removeItem(at: paths.wavURL)
+        #expect(try await service.pendingBackgroundPublicationIDs().isEmpty)
+        try await service.recoverBackgroundPublication(uploadID: fixture.uploadID)
+        // A skipped background handoff grants no explicit replay authority.
+        await #expect(throws: (any Error).self) { _ = try await service.recoverPublication(uploadID: fixture.uploadID) }
+        #expect(try await exactReceiptBytes(fixture.hostStore, fixture.uploadID) == receipt.exactBytes)
+    }
+
+    @Test("startup queue expectation reads no audio and cannot replace a fresh proof")
+    func processingExpectationDoesNotOpenMissingAudio() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let scheduler = FailingProcessingScheduler()
+        let service = try fixture.service(scheduler: scheduler)
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        try await waitForSchedulerAttempt(scheduler)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        try FileManager.default.removeItem(at: paths.wavURL)
+        let expectation = try await service.processingRequestExpectation(canonicalRecordingID: work.canonicalRecordingID)
+        #expect(expectation.artifactIdentity == work.canonicalArtifactIdentity)
+        #expect(expectation.canonicalPCMHash == work.canonicalPCMHash)
+        await #expect(throws: (any Error).self) {
+            _ = try await service.validatedProcessingRequest(canonicalRecordingID: work.canonicalRecordingID)
+        }
+    }
+
+    @Test("background pre-receipt resource deferral preserves checkpoint and artifacts",
+          arguments: [HostPublicationFailurePoint.afterPublicationPlan, .afterTemporaryFileSynchronization,
+                      .afterCanonicalDatabaseCommit, .afterReceiptPersistence])
+    func backgroundDeferralDoesNotRestoreOrWrite(checkpoint: HostPublicationFailurePoint) async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let interrupted = try fixture.service(scheduler: IdempotentProcessingScheduler(),
+            failureInjector: OneShotPublicationFailureInjector(checkpoint))
+        await #expect(throws: InjectedPublicationCrash.point(checkpoint)) {
+            _ = try await interrupted.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+                generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        }
+        func journalSnapshot() async throws -> String? {
+            try await fixture.hostStore.dbQueue.read { db in
+                try String.fetchOne(db, sql: "SELECT state || ':' || COALESCE(resume_state, '') || ':' || COALESCE(last_error_code, '') FROM publication_journal WHERE upload_id = ?", arguments: [fixture.uploadID.description])
+            }
+        }
+        let before = try await journalSnapshot()
+        let filesBefore = try canonicalWAVURLs(in: fixture.canonicalRoot)
+        let blocked = try fixture.service(scheduler: IdempotentProcessingScheduler(),
+            backgroundResources: .init(checkResidentAudio: { _, _ in throw HostCanonicalResourceDeferred.audioNotResident },
+                                       checkCapacity: { _, _ in throw HostCanonicalResourceDeferred.insufficientCapacity }))
+        await #expect(throws: HostCanonicalResourceDeferred.insufficientCapacity) {
+            try await blocked.recoverBackgroundPublication(uploadID: fixture.uploadID)
+        }
+        #expect(try await journalSnapshot() == before)
+        #expect(try canonicalWAVURLs(in: fixture.canonicalRoot) == filesBefore)
+    }
+
+    @Test("resource-admitted background recovery still authenticates original prepared evidence")
+    func backgroundRecoveryRetainsExactReceiptAndIdentity() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let interrupted = try fixture.service(scheduler: IdempotentProcessingScheduler(),
+            failureInjector: OneShotPublicationFailureInjector(.afterReceiptPersistence))
+        await #expect(throws: InjectedPublicationCrash.point(.afterReceiptPersistence)) {
+            _ = try await interrupted.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+                generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        }
+        let before = try await publicationWork(for: fixture)
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler(),
+            backgroundResources: .init(checkResidentAudio: { _, _ in }, checkCapacity: { _, _ in }))
+        try await service.recoverBackgroundPublication(uploadID: fixture.uploadID)
+        let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(after.canonicalArtifactIdentity == before.canonicalArtifactIdentity)
+        #expect(after.exactReceipt == before.exactPersistedReceipt)
+        #expect(after.state == .processing)
+        #expect(try await service.pendingBackgroundPublicationIDs().isEmpty)
+    }
+
+    @Test("background admission never substitutes for audio integrity")
+    func backgroundProofRejectsCorruptAudio() async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let scheduler = FailingProcessingScheduler()
+        let service = try fixture.service(scheduler: scheduler,
+            backgroundResources: .init(checkResidentAudio: { _, _ in }, checkCapacity: { _, _ in }))
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        try await waitForSchedulerAttempt(scheduler)
+        let work = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
+        let handle = try FileHandle(forWritingTo: paths.wavURL)
+        try handle.seek(toOffset: 44)
+        try handle.write(contentsOf: Data([0xFA, 0xCE]))
+        try handle.close()
+        await #expect(throws: HarcHostError.canonicalHashMismatch) {
+            _ = try await service.validatedProcessingRequest(canonicalRecordingID: work.canonicalRecordingID, backgroundOnly: true)
+        }
+    }
+
     @Test("signed capture discontinuities survive Host commit, Library projection and receipt replay")
     func hostPreservesCaptureDiscontinuities() async throws {
         let fixture = try await makePreparedIngest(withDiscontinuity: true)

@@ -169,6 +169,7 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         var hasher = SHA256()
         var remaining = layout.pcmByteCount
         while remaining > 0 {
+            try Task.checkCancellation()
             let requested = Int(min(remaining, UInt64(256 * 1_024)))
             let fragment = try HostCanonicalWAVAssembler.readExactly(
                 requested,

@@ -10,15 +10,18 @@ public struct HostCanonicalRecoveryReport: Equatable, Sendable {
     public let attemptedUploadCount: Int
     public let recoveredReceiptCount: Int
     public let failedUploadIDs: [UploadID]
+    public let deferredUploadIDs: [UploadID]
 
     public init(
         attemptedUploadCount: Int,
         recoveredReceiptCount: Int,
-        failedUploadIDs: [UploadID]
+        failedUploadIDs: [UploadID],
+        deferredUploadIDs: [UploadID] = []
     ) {
         self.attemptedUploadCount = attemptedUploadCount
         self.recoveredReceiptCount = recoveredReceiptCount
         self.failedUploadIDs = failedUploadIDs
+        self.deferredUploadIDs = deferredUploadIDs
     }
 }
 
@@ -144,6 +147,7 @@ public actor HarcCanonicalIngestService {
     private let processingScheduler: any HostReceiptDurableProcessingScheduling
     private let failureInjector: any HostPublicationFailureInjector
     private let now: @Sendable () -> Date
+    private let backgroundResources: HostCanonicalResourceAdmission
     private var activityGate = HostPublicationActivityGate()
 
     public init(
@@ -158,7 +162,8 @@ public actor HarcCanonicalIngestService {
         hostAuthoritySigner: any P256DigestSigner,
         processingScheduler: any HostReceiptDurableProcessingScheduling = UnavailableHostProcessingScheduler(),
         failureInjector: any HostPublicationFailureInjector = NoHostPublicationFailureInjector(),
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        backgroundResources: HostCanonicalResourceAdmission = .init()
     ) throws {
         guard canonicalRoot.isFileURL,
               canonicalRoot.standardizedFileURL.path == canonicalRoot.path,
@@ -190,6 +195,7 @@ public actor HarcCanonicalIngestService {
         self.processingScheduler = processingScheduler
         self.failureInjector = failureInjector
         self.now = now
+        self.backgroundResources = backgroundResources
     }
 
     /// Authenticates and binds a device-signed final manifest using the same
@@ -324,7 +330,8 @@ public actor HarcCanonicalIngestService {
 
     /// Completes one plan without a live client or current grant. This is the
     /// focused primitive used by startup recovery and kill-point tests.
-    public func recoverPublication(uploadID: UploadID) async throws -> OpaqueExactObjectSlot {
+    public func recoverPublication(uploadID: UploadID, backgroundOnly: Bool = false) async throws -> OpaqueExactObjectSlot {
+        try Task.checkCancellation()
         try activityGate.claim(uploadID)
         defer { activityGate.release(uploadID) }
         let processing: HostReceiptProcessingWork?
@@ -336,10 +343,11 @@ public actor HarcCanonicalIngestService {
         }
         if let processing {
             do {
+                if backgroundOnly { try requireBackgroundRead(processing) }
                 return try await deliverReceipt(
                     processing,
                     expectedReceipt: processing.exactReceipt,
-                    handoff: .bestEffortSynchronous
+                    handoff: .bestEffortSynchronous, backgroundOnly: backgroundOnly
                 )
             } catch {
                 try? await markRecoverableFailure(uploadID: uploadID, error: error)
@@ -348,6 +356,10 @@ public actor HarcCanonicalIngestService {
         }
         let preparation: HostCanonicalPublicationPreparation
         do {
+            if backgroundOnly {
+                let inspection = try await hostStore.backgroundPublicationWorkForInspection(uploadID: uploadID)
+                try await requireBackgroundResources(inspection)
+            }
             preparation = try await hostStore.canonicalPublicationForRecovery(
                 uploadID: uploadID
             )
@@ -358,8 +370,20 @@ public actor HarcCanonicalIngestService {
         return try await drive(
             preparation,
             uploadID: uploadID,
-            processingHandoff: .bestEffortSynchronous
+            processingHandoff: .bestEffortSynchronous, backgroundOnly: backgroundOnly
         )
+    }
+
+    /// Metadata-only plan for the owned post-listener recovery scheduler.
+    public func pendingBackgroundPublicationIDs() async throws -> [UploadID] {
+        try await hostStore.pendingBackgroundPublicationIDs()
+    }
+
+    public func recoverBackgroundPublication(uploadID: UploadID) async throws {
+        try Task.checkCancellation()
+        if let current = try await hostStore.receiptProcessingWork(uploadID: uploadID),
+           current.state == .processing || current.state == .complete { return }
+        _ = try await recoverPublication(uploadID: uploadID, backgroundOnly: true)
     }
 
     /// Best-effort startup scan. One corrupt or externally blocked publication
@@ -802,13 +826,28 @@ public actor HarcCanonicalIngestService {
         )
     }
 
+    /// A queue expectation is not a content proof. No audio is opened or read;
+    /// the worker must obtain a fresh authenticated proof after admission.
+    public func processingRequestExpectation(canonicalRecordingID: CanonicalRecordingID) async throws -> HostDurableProcessingRequest {
+        guard let work = try await hostStore.receiptProcessingWork(canonicalRecordingID: canonicalRecordingID) else {
+            throw HarcHostError.publicationRecoveryRequired("canonical processing journal is missing")
+        }
+        let paths = try HostCanonicalPublicationPaths.make(rootAnchor: canonicalRootAnchor,
+            canonicalRecordingID: work.canonicalRecordingID, persistedRelativeWAVPath: work.publicationRelativePath,
+            temporaryName: work.temporaryName, createDirectories: false)
+        return try HostDurableProcessingRequest(canonicalRecordingID: work.canonicalRecordingID,
+            canonicalWAVURL: paths.wavURL, canonicalPCMHash: work.canonicalPCMHash,
+            canonicalPCMFrames: work.canonicalPCMFrames, artifactIdentity: work.canonicalArtifactIdentity)
+    }
+
     /// Reconstructs and revalidates the exact durable processing request for a
-    /// canonical row. App startup uses this after scanning the canonical
-    /// processing backlog; the Host journal supplies the original inode and
+    /// canonical row. Background workers call this only after admission;
+    /// startup queues expectations instead. The journal supplies the original inode and
     /// change-time identity that the canonical row intentionally does not
     /// duplicate.
     public func validatedProcessingRequest(
-        canonicalRecordingID: CanonicalRecordingID
+        canonicalRecordingID: CanonicalRecordingID,
+        backgroundOnly: Bool = false
     ) async throws -> HostDurableProcessingRequest {
         guard let work = try await hostStore.receiptProcessingWork(
             canonicalRecordingID: canonicalRecordingID
@@ -821,9 +860,9 @@ public actor HarcCanonicalIngestService {
             rootAnchor: canonicalRootAnchor,
             canonicalRecordingID: work.canonicalRecordingID,
             persistedRelativeWAVPath: work.publicationRelativePath,
-            temporaryName: work.temporaryName
+            temporaryName: work.temporaryName, createDirectories: false
         )
-        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths, backgroundOnly: backgroundOnly)
         let request = try HostDurableProcessingRequest(
             canonicalRecordingID: work.canonicalRecordingID,
             canonicalWAVURL: paths.wavURL,
@@ -1056,7 +1095,8 @@ private extension HarcCanonicalIngestService {
     func drive(
         _ initialPreparation: HostCanonicalPublicationPreparation,
         uploadID: UploadID,
-        processingHandoff: ProcessingHandoff
+        processingHandoff: ProcessingHandoff,
+        backgroundOnly: Bool = false
     ) async throws -> OpaqueExactObjectSlot {
         if case .alreadyReceipted(let receipt) = initialPreparation {
             guard let processing = try await hostStore.receiptProcessingWork(
@@ -1069,7 +1109,7 @@ private extension HarcCanonicalIngestService {
             return try await deliverReceipt(
                 processing,
                 expectedReceipt: receipt,
-                handoff: processingHandoff
+                handoff: processingHandoff, backgroundOnly: backgroundOnly
             )
         }
 
@@ -1089,23 +1129,25 @@ private extension HarcCanonicalIngestService {
                     return try await deliverReceipt(
                         processing,
                         expectedReceipt: receipt,
-                        handoff: processingHandoff
+                        handoff: processingHandoff, backgroundOnly: backgroundOnly
                     )
 
                 case .work(let work):
+                    try Task.checkCancellation()
+                    if backgroundOnly { try await requireBackgroundResources(work) }
                     switch work.checkpoint {
                     case .assembling:
-                        try await assembleCanonicalWAV(work)
+                        try await assembleCanonicalWAV(work, backgroundOnly: backgroundOnly)
                     case .temporarySynchronized:
-                        try await publishCanonicalWAV(work)
+                        try await publishCanonicalWAV(work, backgroundOnly: backgroundOnly)
                     case .audioRenamed:
-                        try await synchronizePublishedCanonicalWAV(work)
+                        try await synchronizePublishedCanonicalWAV(work, backgroundOnly: backgroundOnly)
                     case .audioPublished:
-                        try await commitCanonicalRecording(work)
+                        try await commitCanonicalRecording(work, backgroundOnly: backgroundOnly)
                     case .recordingCommitted:
-                        try await prepareExactReceipt(work)
+                        try await prepareExactReceipt(work, backgroundOnly: backgroundOnly)
                     case .receiptPrepared:
-                        let receipt = try await publishSidecarsAndFinalizeReceipt(work)
+                        let receipt = try await publishSidecarsAndFinalizeReceipt(work, backgroundOnly: backgroundOnly)
                         try await failureInjector.hit(.afterReceiptedCommit)
                         guard let processing = try await hostStore.receiptProcessingWork(
                             uploadID: uploadID
@@ -1117,7 +1159,7 @@ private extension HarcCanonicalIngestService {
                         return try await deliverReceipt(
                             processing,
                             expectedReceipt: receipt,
-                            handoff: processingHandoff
+                            handoff: processingHandoff, backgroundOnly: backgroundOnly
                         )
                     case .receipted, .processing, .complete:
                         guard let processing = try await hostStore.receiptProcessingWork(
@@ -1130,7 +1172,7 @@ private extension HarcCanonicalIngestService {
                         return try await deliverReceipt(
                             processing,
                             expectedReceipt: processing.exactReceipt,
-                            handoff: processingHandoff
+                            handoff: processingHandoff, backgroundOnly: backgroundOnly
                         )
                     case .receiving, .manifestVerified, .failedRecoverable,
                          .conflictBlocked, .abandoned:
@@ -1149,7 +1191,64 @@ private extension HarcCanonicalIngestService {
         }
     }
 
+    /// Resource checks do not grant any trust. They only prevent background
+    /// work from opening dataless files or consuming the operational reserve.
+    func requireBackgroundRead(paths: HostCanonicalPublicationPaths, url: URL, frames: UInt64) throws {
+        try Task.checkCancellation()
+        let bytes = try HostCanonicalWAVLayout(totalFrames: frames).fileByteCount
+        try backgroundResources.checkResidentAudio(url, bytes)
+        // Recheck through the retained directory immediately before data I/O.
+        try paths.requireResidentFile(at: url)
+    }
+
+    func requireBackgroundRead(_ work: HostReceiptProcessingWork) throws {
+        let paths = try HostCanonicalPublicationPaths.make(rootAnchor: canonicalRootAnchor,
+            canonicalRecordingID: work.canonicalRecordingID, persistedRelativeWAVPath: work.publicationRelativePath,
+            temporaryName: work.temporaryName, createDirectories: false)
+        try requireBackgroundRead(paths: paths, url: paths.wavURL, frames: work.canonicalPCMFrames)
+    }
+
+    func requireBackgroundResources(_ work: HostCanonicalPublicationWork) async throws {
+        try Task.checkCancellation()
+        // Authenticate the expected output before budgeting or restoring a
+        // failed checkpoint. This inspection never repairs the registry.
+        let manifest = try await hostStore.validateBoundManifestForInspection(
+            uploadID: work.attempt.uploadID, using: manifestValidator)
+        guard manifest.hostTrust == hostTrust,
+              manifest.finalizedCapture == work.capture,
+              manifest.exactManifestObject == work.attempt.boundManifest else {
+            throw HarcHostError.manifestEvidenceRequired
+        }
+        try validatePreparedReceiptIfPresent(work, manifest: manifest)
+        let bytes = try HostCanonicalWAVLayout(totalFrames: work.capture.capture.totalCanonicalFrames).fileByteCount
+        try backgroundResources.checkCapacity(canonicalRootAnchor.root, bytes)
+        if work.checkpoint == .assembling {
+            var maximumAdditionalBytes = bytes
+            for staged in work.stagedChunks {
+                let sum = maximumAdditionalBytes.addingReportingOverflow(staged.descriptor.encodedByteLength)
+                guard !sum.overflow else { throw HostCanonicalResourceDeferred.insufficientCapacity }
+                maximumAdditionalBytes = sum.partialValue
+                try hostStore.requireResidentStagedObject(staged)
+                let url = hostStore.stagingRoot.appendingPathComponent(staged.relativePath)
+                try backgroundResources.checkResidentAudio(url, staged.descriptor.encodedByteLength)
+            }
+            try backgroundResources.checkCapacity(canonicalRootAnchor.root, maximumAdditionalBytes)
+            return
+        }
+        let paths = try HostCanonicalPublicationPaths.make(rootAnchor: canonicalRootAnchor,
+            canonicalRecordingID: work.canonicalRecordingID, persistedRelativeWAVPath: work.publicationRelativePath,
+            temporaryName: work.temporaryName, createDirectories: false)
+        let audio: URL
+        if work.checkpoint == .temporarySynchronized, try paths.entryExists(at: paths.temporaryURL) {
+            audio = paths.temporaryURL
+        } else {
+            audio = paths.wavURL
+        }
+        try requireBackgroundRead(paths: paths, url: audio, frames: work.capture.capture.totalCanonicalFrames)
+    }
+
     private func markRecoverableFailure(uploadID: UploadID, error: any Error) async throws {
+        if error is HostCanonicalResourceDeferred || error is CancellationError { return }
         try await hostStore.markPublicationFailedRecoverable(
             uploadID: uploadID,
             errorCode: HostCanonicalIngestFailureCode.classify(error).rawValue,
@@ -1157,7 +1256,7 @@ private extension HarcCanonicalIngestService {
         )
     }
 
-    func assembleCanonicalWAV(_ work: HostCanonicalPublicationWork) async throws {
+    func assembleCanonicalWAV(_ work: HostCanonicalPublicationWork, backgroundOnly: Bool = false) async throws {
         let paths = try publicationPaths(for: work)
         guard try !paths.entryExists(at: paths.wavURL) else {
             throw HarcHostError.canonicalDestinationExists
@@ -1172,6 +1271,11 @@ private extension HarcCanonicalIngestService {
         try await failureInjector.hit(.afterTemporaryFileCreation)
 
         for staged in work.stagedChunks {
+            try Task.checkCancellation()
+            if backgroundOnly {
+                try backgroundResources.checkCapacity(canonicalRootAnchor.root, HostCanonicalWAVLayout(totalFrames: work.capture.capture.totalCanonicalFrames).fileByteCount)
+                try hostStore.requireResidentStagedObject(staged)
+            }
             let sink = HostDecodedChunkSink(
                 descriptor: staged.descriptor,
                 assembler: assembler,
@@ -1200,11 +1304,12 @@ private extension HarcCanonicalIngestService {
         )
     }
 
-    func publishCanonicalWAV(_ work: HostCanonicalPublicationWork) async throws {
+    func publishCanonicalWAV(_ work: HostCanonicalPublicationWork, backgroundOnly: Bool = false) async throws {
         let paths = try publicationPaths(for: work)
         let temporaryExists = try paths.entryExists(at: paths.temporaryURL)
         let finalExists = try paths.entryExists(at: paths.wavURL)
         if temporaryExists {
+            if backgroundOnly { try requireBackgroundRead(paths: paths, url: paths.temporaryURL, frames: work.capture.capture.totalCanonicalFrames) }
             guard !finalExists else { throw HarcHostError.canonicalDestinationExists }
             _ = try HostCanonicalWAVAssembler.validatePublishedFile(
                 at: paths.temporaryURL,
@@ -1220,6 +1325,7 @@ private extension HarcCanonicalIngestService {
                     "The synchronized canonical temporary file is missing."
                 )
             }
+            if backgroundOnly { try requireBackgroundRead(paths: paths, url: paths.wavURL, frames: work.capture.capture.totalCanonicalFrames) }
             _ = try HostCanonicalWAVAssembler.validatePublishedFile(
                 at: paths.wavURL,
                 in: paths,
@@ -1241,9 +1347,11 @@ private extension HarcCanonicalIngestService {
     }
 
     func synchronizePublishedCanonicalWAV(
-        _ work: HostCanonicalPublicationWork
+        _ work: HostCanonicalPublicationWork,
+        backgroundOnly: Bool = false
     ) async throws {
         let paths = try publicationPaths(for: work)
+        if backgroundOnly { try requireBackgroundRead(paths: paths, url: paths.wavURL, frames: work.capture.capture.totalCanonicalFrames) }
         let artifact = try HostCanonicalWAVAssembler.openValidatedPublishedFile(
             at: paths.wavURL,
             in: paths,
@@ -1263,12 +1371,12 @@ private extension HarcCanonicalIngestService {
         )
     }
 
-    func commitCanonicalRecording(_ work: HostCanonicalPublicationWork) async throws {
+    func commitCanonicalRecording(_ work: HostCanonicalPublicationWork, backgroundOnly: Bool = false) async throws {
         guard let publishedIdentity = work.canonicalArtifactIdentity else {
             throw HarcHostError.publicationRecoveryRequired("published canonical artifact identity is missing")
         }
         let paths = try publicationPaths(for: work)
-        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths, backgroundOnly: backgroundOnly)
         let capture = work.capture.capture
         let request = try HostCanonicalRecordingCommitRequest(
             canonicalID: work.canonicalRecordingID,
@@ -1303,7 +1411,7 @@ private extension HarcCanonicalIngestService {
         try await failureInjector.hit(.afterHostPublicationLinkage)
     }
 
-    func prepareExactReceipt(_ work: HostCanonicalPublicationWork) async throws {
+    func prepareExactReceipt(_ work: HostCanonicalPublicationWork, backgroundOnly: Bool = false) async throws {
         guard let revision = work.canonicalRevision,
               let cursor = work.changeCursor,
               let durableCommitTime = work.durableCommitTime,
@@ -1314,7 +1422,7 @@ private extension HarcCanonicalIngestService {
             )
         }
         let paths = try publicationPaths(for: work)
-        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths, backgroundOnly: backgroundOnly)
         let manifest = try await hostStore.validateBoundManifest(
             uploadID: work.attempt.uploadID,
             using: manifestValidator
@@ -1363,7 +1471,8 @@ private extension HarcCanonicalIngestService {
     }
 
     func publishSidecarsAndFinalizeReceipt(
-        _ work: HostCanonicalPublicationWork
+        _ work: HostCanonicalPublicationWork,
+        backgroundOnly: Bool = false
     ) async throws -> OpaqueExactObjectSlot {
         guard let manifestObject = work.attempt.boundManifest,
               let exactReceipt = work.exactPersistedReceipt,
@@ -1375,7 +1484,7 @@ private extension HarcCanonicalIngestService {
             throw HarcHostError.databaseFailure("Prepared receipt journal is incomplete.")
         }
         let paths = try publicationPaths(for: work)
-        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths, backgroundOnly: backgroundOnly)
         let manifest = try await hostStore.validateBoundManifest(
             uploadID: work.attempt.uploadID,
             using: manifestValidator
@@ -1442,47 +1551,49 @@ private extension HarcCanonicalIngestService {
     func deliverReceipt(
         _ work: HostReceiptProcessingWork,
         expectedReceipt: OpaqueExactObjectSlot,
-        handoff: ProcessingHandoff
+        handoff: ProcessingHandoff,
+        backgroundOnly: Bool = false
     ) async throws -> OpaqueExactObjectSlot {
         guard work.exactReceipt == expectedReceipt else {
             throw HarcHostError.databaseFailure(
                 "The committed upload receipt drifted from its publication journal."
             )
         }
-        await scheduleProcessingIfNeeded(work, handoff: handoff)
+        await scheduleProcessingIfNeeded(work, handoff: handoff, backgroundOnly: backgroundOnly)
         // Covers asynchronous failure seams and lost-response replay: a newly
         // delivered receipt is never returned from a replaced/missing WAV.
-        try await validateReceiptedArtifact(work)
+        try await validateReceiptedArtifact(work, backgroundOnly: backgroundOnly)
         return expectedReceipt
     }
 
-    func validateReceiptedArtifact(_ work: HostReceiptProcessingWork) async throws {
+    func validateReceiptedArtifact(_ work: HostReceiptProcessingWork, backgroundOnly: Bool = false) async throws {
         let paths = try HostCanonicalPublicationPaths.make(
             rootAnchor: canonicalRootAnchor,
             canonicalRecordingID: work.canonicalRecordingID,
             persistedRelativeWAVPath: work.publicationRelativePath,
             temporaryName: work.temporaryName
         )
-        _ = try await validatedCanonicalArtifact(for: work, paths: paths)
+        _ = try await validatedCanonicalArtifact(for: work, paths: paths, backgroundOnly: backgroundOnly)
     }
 
     func scheduleProcessingIfNeeded(
         _ work: HostReceiptProcessingWork,
-        handoff: ProcessingHandoff
+        handoff: ProcessingHandoff,
+        backgroundOnly: Bool = false
     ) async {
         guard work.state == .receipted else { return }
         switch handoff {
         case .asynchronous:
             Task { [weak self] in
                 guard let self else { return }
-                try? await self.scheduleProcessingDurably(work)
+                try? await self.scheduleProcessingDurably(work, backgroundOnly: backgroundOnly)
             }
         case .bestEffortSynchronous:
-            try? await scheduleProcessingDurably(work)
+            try? await scheduleProcessingDurably(work, backgroundOnly: backgroundOnly)
         }
     }
 
-    func scheduleProcessingDurably(_ work: HostReceiptProcessingWork) async throws {
+    func scheduleProcessingDurably(_ work: HostReceiptProcessingWork, backgroundOnly: Bool = false) async throws {
         try await failureInjector.hit(.beforeProcessingSchedule)
         let paths = try HostCanonicalPublicationPaths.make(
             rootAnchor: canonicalRootAnchor,
@@ -1490,7 +1601,7 @@ private extension HarcCanonicalIngestService {
             persistedRelativeWAVPath: work.publicationRelativePath,
             temporaryName: work.temporaryName
         )
-        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths, backgroundOnly: backgroundOnly)
         let request = try HostDurableProcessingRequest(
             canonicalRecordingID: work.canonicalRecordingID,
             canonicalWAVURL: paths.wavURL,
@@ -1514,13 +1625,16 @@ private extension HarcCanonicalIngestService {
     /// authenticates the retained evidence and hashes the complete safe inode.
     func validatedCanonicalArtifact(
         for work: HostCanonicalPublicationWork,
-        paths: HostCanonicalPublicationPaths
+        paths: HostCanonicalPublicationPaths,
+        backgroundOnly: Bool = false
     ) async throws -> HostValidatedCanonicalArtifact {
         guard let expectedIdentity = work.canonicalArtifactIdentity else {
             throw HarcHostError.publicationRecoveryRequired(
                 "published canonical artifact identity is missing"
             )
         }
+        if backgroundOnly { try requireBackgroundRead(paths: paths, url: paths.wavURL,
+            frames: work.capture.capture.totalCanonicalFrames) }
         let artifact = try HostValidatedCanonicalArtifact(
             at: paths.wavURL, in: paths,
             totalFrames: work.capture.capture.totalCanonicalFrames,
@@ -1555,8 +1669,10 @@ private extension HarcCanonicalIngestService {
 
     func validatedCanonicalArtifact(
         for work: HostReceiptProcessingWork,
-        paths: HostCanonicalPublicationPaths
+        paths: HostCanonicalPublicationPaths,
+        backgroundOnly: Bool = false
     ) async throws -> HostValidatedCanonicalArtifact {
+        if backgroundOnly { try requireBackgroundRead(paths: paths, url: paths.wavURL, frames: work.canonicalPCMFrames) }
         let artifact = try HostValidatedCanonicalArtifact(
             at: paths.wavURL, in: paths,
             totalFrames: work.canonicalPCMFrames,

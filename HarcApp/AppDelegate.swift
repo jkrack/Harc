@@ -4751,12 +4751,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
 
             await worker.installRequestValidator { canonicalID in
-                try await runtime.validatedProcessingRequest(canonicalRecordingID: canonicalID)
+                try await runtime.validatedProcessingRequest(canonicalRecordingID: canonicalID, backgroundOnly: true)
             }
 
             // `processing` journal rows are already durably handed off and do
             // not replay the scheduler during publication recovery. Rebuild
-            // their exact path/inode-bound requests from HostDB explicitly.
+            // metadata-only expectations without opening or hydrating audio.
+            // The admitted worker performs complete validation just before use.
             let backlog: [Recording]
             do {
                 backlog = try await runtime.storageRuntime.recordingStore
@@ -4769,10 +4770,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             for recording in backlog {
                 do {
-                    let request = try await runtime.validatedProcessingRequest(
+                    let request = try await runtime.processingRequestExpectation(
                         canonicalRecordingID: recording.canonicalID
                     )
-                    await worker.signal(request)
+                    await worker.signal(request, isRecovery: true)
                 } catch {
                     FileHandle.standardError.write(Data(
                         "harc-host: processing recovery failed for \(recording.canonicalID): \(error.localizedDescription)\n".utf8

@@ -96,6 +96,8 @@ enum HarcHostProcessingRequestValidation {
             let fresh: HostDurableProcessingRequest
             do {
                 fresh = try await validator(queued.canonicalRecordingID)
+            } catch let error as HostCanonicalResourceDeferred {
+                throw error
             } catch let error as StoreError where error == .canonicalArtifactIdentityMismatch {
                 // A descriptor/path race during full evidence validation must
                 // restart that validation, never reuse partially checked bytes.
@@ -152,7 +154,11 @@ actor HarcHostProcessingWorker {
     private let diarize: Bool
     private let vad: Bool
     private let clientArtifactGrace: TimeInterval
+    typealias ResourceAdmission = @Sendable (HostDurableProcessingRequest) async throws -> Void
     private let admissionSnapshot: AdmissionSnapshot
+    private let resourceAdmission: ResourceAdmission
+    private let resourceDeferralDelay: TimeInterval
+    private var recoveryRequests: Set<CanonicalRecordingID> = []
 
     private var requestValidator: HarcHostProcessingRequestValidation.Refresh?
     private var metadataRetryCounts: [CanonicalRecordingID: Int] = [:]
@@ -172,6 +178,11 @@ actor HarcHostProcessingWorker {
         vad: Bool,
         clientArtifactGrace: TimeInterval = 15,
         transcription: Transcription? = nil,
+        resourceAdmission: @escaping ResourceAdmission = { request in
+            try HostCanonicalResourceAdmission.requireResidentAudio(
+                at: request.canonicalWAVURL, expectedByteCount: request.artifactIdentity.fileByteCount)
+        },
+        resourceDeferralDelay: TimeInterval = 60,
         admissionSnapshot: @escaping AdmissionSnapshot = {
             HarcHostWorkAdmissionSnapshot.current()
         }
@@ -193,6 +204,8 @@ actor HarcHostProcessingWorker {
         self.vad = vad
         self.clientArtifactGrace = max(0, clientArtifactGrace)
         self.admissionSnapshot = admissionSnapshot
+        self.resourceAdmission = resourceAdmission
+        self.resourceDeferralDelay = max(0.05, resourceDeferralDelay)
     }
 
     func installRequestValidator(_ validator: @escaping HarcHostProcessingRequestValidation.Refresh) {
@@ -201,7 +214,12 @@ actor HarcHostProcessingWorker {
         drainTask = Task { await self.drain() }
     }
 
-    func signal(_ request: HostDurableProcessingRequest) {
+    func signal(_ request: HostDurableProcessingRequest, isRecovery: Bool = false) {
+        if isRecovery {
+            if pending[request.canonicalRecordingID] == nil { recoveryRequests.insert(request.canonicalRecordingID) }
+        } else {
+            recoveryRequests.remove(request.canonicalRecordingID)
+        }
         pending[request.canonicalRecordingID] = request
         if eligibleAt[request.canonicalRecordingID] == nil {
             eligibleAt[request.canonicalRecordingID] = Date()
@@ -233,6 +251,7 @@ actor HarcHostProcessingWorker {
         eligibleAt.removeAll()
         failureCounts.removeAll()
         metadataRetryCounts.removeAll()
+        recoveryRequests.removeAll()
         requestValidator = nil
     }
 
@@ -258,14 +277,19 @@ actor HarcHostProcessingWorker {
                 delayTask = nil
                 continue
             }
-            let batch = eligibleIDs.compactMap { pending[$0] }.sorted {
-                $0.canonicalRecordingID < $1.canonicalRecordingID
-            }
-            for request in batch {
-                pending.removeValue(forKey: request.canonicalRecordingID)
-                eligibleAt.removeValue(forKey: request.canonicalRecordingID)
-            }
-            for request in batch where !Task.isCancelled {
+            // Reconsider live signals between recordings, rather than retaining
+            // a startup-sized batch across every expensive validation/transcription.
+            let nextID = eligibleIDs.sorted {
+                let leftRecovery = recoveryRequests.contains($0)
+                let rightRecovery = recoveryRequests.contains($1)
+                if leftRecovery != rightRecovery { return !leftRecovery }
+                let leftDate = eligibleAt[$0] ?? .distantPast
+                let rightDate = eligibleAt[$1] ?? .distantPast
+                if leftDate != rightDate { return leftDate < rightDate }
+                return $0 < $1
+            }.first
+            if let nextID, let request = pending.removeValue(forKey: nextID) {
+                eligibleAt.removeValue(forKey: nextID)
                 await process(request)
             }
             if pending.isEmpty, wakeGeneration == observedGeneration { break }
@@ -309,14 +333,15 @@ actor HarcHostProcessingWorker {
                 pending[request.canonicalRecordingID] = request
                 return
             }
-            guard try await store.beginHostProcessingIfNotReady(
-                id: recordingID
-            ) else { return }
+            // Admission is a resource gate only, never evidence of audio integrity.
+            try await resourceAdmission(request)
             let socketPath = try await transcription.prepare()
 
             // Grace/admission and daemon startup can outlive metadata updates.
             // Refresh through signed receipt + exact WAV validation, never merely stat.
             let request = try await HarcHostProcessingRequestValidation.refresh(request, using: requestValidator)
+            try Task.checkCancellation()
+            guard try await store.beginHostProcessingIfNotReady(id: recordingID) else { return }
             try Task.checkCancellation()
             // No suspension between this strict check and the daemon request.
             try request.artifactIdentity.validatePathBinding(
@@ -423,6 +448,13 @@ actor HarcHostProcessingWorker {
             )
             failureCounts.removeValue(forKey: request.canonicalRecordingID)
             metadataRetryCounts.removeValue(forKey: request.canonicalRecordingID)
+            recoveryRequests.remove(request.canonicalRecordingID)
+        } catch is HostCanonicalResourceDeferred {
+            // Deferral neither marks an integrity failure nor spends retry budget.
+            // Every future attempt starts with admission and complete validation.
+            guard !Task.isCancelled else { return }
+            pending[request.canonicalRecordingID] = request
+            eligibleAt[request.canonicalRecordingID] = Date().addingTimeInterval(resourceDeferralDelay)
         } catch {
             let remainsPending = await persistRecoverableFailure(
                 canonicalRecordingID: request.canonicalRecordingID,
@@ -431,20 +463,13 @@ actor HarcHostProcessingWorker {
             guard remainsPending, !Task.isCancelled else { return }
             if let storeError = error as? StoreError,
                storeError == .canonicalArtifactIdentityMismatch,
-               let requestValidator,
                (metadataRetryCounts[request.canonicalRecordingID] ?? 0) < 2 {
-                // Never reuse the prior transcription on retry. Earlier staging
-                // may remain, but cannot become ready through this failed attempt.
-                // Retry only after full validation proves the original audio and
-                // all safe inode fields; the next attempt transcribes afresh.
-                do {
-                    let fresh = try await HarcHostProcessingRequestValidation.refresh(request, using: requestValidator)
-                    metadataRetryCounts[request.canonicalRecordingID, default: 0] += 1
-                    pending[request.canonicalRecordingID] = fresh
-                    eligibleAt[request.canonicalRecordingID] = Date().addingTimeInterval(5)
-                } catch {
-                    _ = await persistRecoverableFailure(canonicalRecordingID: request.canonicalRecordingID, underlyingError: error)
-                }
+                // Discard this result and requeue only the expected binding. The
+                // next pass must obtain resource admission before full validation;
+                // never hash eagerly in the failure path or reuse derived results.
+                metadataRetryCounts[request.canonicalRecordingID, default: 0] += 1
+                pending[request.canonicalRecordingID] = request
+                eligibleAt[request.canonicalRecordingID] = Date().addingTimeInterval(5)
                 return
             }
             guard Self.isAutomaticallyRetryable(error) else { return }

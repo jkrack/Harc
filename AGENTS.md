@@ -924,3 +924,14 @@ delays and discards transcription if its pre-read identity changes. Validate
 with `CanonicalIngestServiceTests`, `CanonicalWAVAssemblerTests` and the app
 Host processing tests. Synthetic metadata tests do not qualify eviction,
 rehydration or real iCloud/network endurance.
+
+Host startup must not hydrate historical iCloud audio before serving. Queue only
+journal metadata before listener readiness, exclude completed processing handoffs
+from publication replay, and recover remaining publications through one owned,
+cancellable post-listener scheduler. Processing backlog entries are expectations,
+never proofs. Before model preparation and every background data phase, defer
+dataless files and unverified/insufficient physical capacity. Residency and free
+space grant no integrity authority: signed evidence and the original full WAV/hash
+and race checks remain mandatory after admission. Resource deferral must preserve
+checkpoint, identity and retry budgets, while explicit receipt replay stays strict.
+Use injected residency/capacity in tests; never hydrate user recordings to test it.
