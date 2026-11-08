@@ -63,10 +63,18 @@ private final class HostCanonicalDescriptorOwner {
     deinit { closeDescriptor(descriptor) }
 }
 
+/// Only the authenticated ingest service opts into a full content proof after
+/// ctime drift. The persisted publication identity is never changed by this.
+enum HostCanonicalIdentityValidation {
+    case exact
+    case rehashSameFile
+}
+
 /// Retains the exact descriptor opened through a trusted canonical directory.
 /// Every content validation brackets the complete header/PCM read with the
-/// same persisted identity, so in-place mutation, leaf replacement, and root
-/// replacement all fail closed.
+/// same freshly captured identity, so in-place mutation, leaf replacement, and
+/// root replacement during use fail closed. Metadata drift admission requires a
+/// separate full hash proof and authentication by the ingest service.
 final class HostValidatedCanonicalArtifact: @unchecked Sendable {
     let identity: HostCanonicalArtifactIdentity
     let url: URL
@@ -83,6 +91,7 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         totalFrames: UInt64,
         expectedPCMHash: CanonicalPCMHash,
         expectedIdentity: HostCanonicalArtifactIdentity? = nil,
+        identityValidation: HostCanonicalIdentityValidation = .exact,
         diagnosticStep: ((HostReceiptBindingDiagnostic.AudioStep) -> Void)? = nil,
         closeDescriptor: @escaping (Int32) -> Void = { _ = Darwin.close($0) }
     ) throws {
@@ -101,10 +110,20 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
             )
             diagnosticStep?(.compareExpectedIdentity)
             if let expectedIdentity {
-                guard captured == expectedIdentity else {
-                    throw HarcHostError.canonicalArtifactIdentityMismatch
+                if captured != expectedIdentity {
+                    guard case .rehashSameFile = identityValidation,
+                          captured.deviceNumber == expectedIdentity.deviceNumber,
+                          captured.inodeNumber == expectedIdentity.inodeNumber,
+                          captured.ownerUserID == expectedIdentity.ownerUserID,
+                          captured.posixMode == expectedIdentity.posixMode,
+                          captured.linkCount == expectedIdentity.linkCount,
+                          captured.fileByteCount == expectedIdentity.fileByteCount else {
+                        throw HarcHostError.canonicalArtifactIdentityMismatch
+                    }
                 }
-                identity = expectedIdentity
+                // Captured BEFORE hashing. Never recapture after a read or
+                // mutate this proof in place, even for another metadata change.
+                identity = captured
             } else {
                 identity = captured
             }

@@ -87,6 +87,53 @@ struct HarcHostProcessingRetryPolicy {
     }
 }
 
+/// Queue entries are bindings to refresh, not authority to reuse a stale ctime.
+enum HarcHostProcessingRequestValidation {
+    typealias Refresh = @Sendable (CanonicalRecordingID) async throws -> HostDurableProcessingRequest
+
+    static func refresh(_ queued: HostDurableProcessingRequest, using validator: Refresh) async throws -> HostDurableProcessingRequest {
+        for attempt in 0 ..< 2 {
+            let fresh: HostDurableProcessingRequest
+            do {
+                fresh = try await validator(queued.canonicalRecordingID)
+            } catch let error as StoreError where error == .canonicalArtifactIdentityMismatch {
+                // A descriptor/path race during full evidence validation must
+                // restart that validation, never reuse partially checked bytes.
+                // Stable-field and content failures use HarcHostError instead.
+                guard attempt == 0 else { throw error }
+                continue
+            } catch {
+                throw HostProcessingWorkerError.canonicalRevalidationFailed
+            }
+            try requireSameBinding(queued, fresh)
+            do {
+                try fresh.artifactIdentity.validatePathBinding(at: fresh.canonicalWAVURL)
+                return fresh
+            } catch {
+                guard attempt == 0 else { throw error }
+            }
+        }
+        throw HostProcessingWorkerError.canonicalBindingChanged
+    }
+
+    static func requireSameBinding(_ queued: HostDurableProcessingRequest, _ fresh: HostDurableProcessingRequest) throws {
+        let old = queued.artifactIdentity
+        let new = fresh.artifactIdentity
+        guard queued.canonicalRecordingID == fresh.canonicalRecordingID,
+              queued.canonicalWAVURL == fresh.canonicalWAVURL,
+              queued.canonicalPCMHash == fresh.canonicalPCMHash,
+              queued.canonicalPCMFrames == fresh.canonicalPCMFrames,
+              old.deviceNumber == new.deviceNumber,
+              old.inodeNumber == new.inodeNumber,
+              old.ownerUserID == new.ownerUserID,
+              old.posixMode == new.posixMode,
+              old.linkCount == new.linkCount,
+              old.fileByteCount == new.fileByteCount else {
+            throw HostProcessingWorkerError.canonicalBindingChanged
+        }
+    }
+}
+
 /// Serial daemon-backed worker for canonical recordings received by Host.
 /// Its queue of record IDs is the canonical database; this actor only retains
 /// validated artifact requests while the current process is alive.
@@ -95,12 +142,20 @@ actor HarcHostProcessingWorker {
         -> HarcHostWorkAdmissionSnapshot
 
     private let store: RecordingStore
-    private let launcher: DaemonLauncher
+    // Internal dependency seam keeps tests off the real daemon and model.
+    struct Transcription: Sendable {
+        let prepare: @Sendable () async throws -> String
+        let run: @Sendable (String, String, Bool, Bool) async throws -> TranscribeResult
+    }
+    private let transcription: Transcription
     private let producerDeviceID: DeviceID
     private let diarize: Bool
     private let vad: Bool
     private let clientArtifactGrace: TimeInterval
     private let admissionSnapshot: AdmissionSnapshot
+
+    private var requestValidator: HarcHostProcessingRequestValidation.Refresh?
+    private var metadataRetryCounts: [CanonicalRecordingID: Int] = [:]
 
     private var pending: [CanonicalRecordingID: HostDurableProcessingRequest] = [:]
     private var eligibleAt: [CanonicalRecordingID: Date] = [:]
@@ -116,17 +171,34 @@ actor HarcHostProcessingWorker {
         diarize: Bool,
         vad: Bool,
         clientArtifactGrace: TimeInterval = 15,
+        transcription: Transcription? = nil,
         admissionSnapshot: @escaping AdmissionSnapshot = {
             HarcHostWorkAdmissionSnapshot.current()
         }
     ) {
         self.store = store
-        self.launcher = launcher
+        self.transcription = transcription ?? Transcription(
+            prepare: { try await launcher.ensureRunning() },
+            run: { socketPath, audioPath, diarize, vad in
+                let client = HarcSTTClient(socketPath: socketPath)
+                if diarize {
+                    return try await client.transcribeRequiringDiarization(
+                        audioPath: audioPath, vad: vad, diarizer: client)
+                }
+                return try await client.transcribe(audioPath: audioPath, diarize: false, vad: vad)
+            }
+        )
         self.producerDeviceID = producerDeviceID
         self.diarize = diarize
         self.vad = vad
         self.clientArtifactGrace = max(0, clientArtifactGrace)
         self.admissionSnapshot = admissionSnapshot
+    }
+
+    func installRequestValidator(_ validator: @escaping HarcHostProcessingRequestValidation.Refresh) {
+        requestValidator = validator
+        guard drainTask == nil, !pending.isEmpty else { return }
+        drainTask = Task { await self.drain() }
     }
 
     func signal(_ request: HostDurableProcessingRequest) {
@@ -140,7 +212,7 @@ actor HarcHostProcessingWorker {
         // deadline. New Client work must not inherit another recording's sleep.
         delayTask?.cancel()
         delayTask = nil
-        guard drainTask == nil else { return }
+        guard requestValidator != nil, drainTask == nil else { return }
         drainTask = Task { await self.drain() }
     }
 
@@ -160,6 +232,8 @@ actor HarcHostProcessingWorker {
         pending.removeAll()
         eligibleAt.removeAll()
         failureCounts.removeAll()
+        metadataRetryCounts.removeAll()
+        requestValidator = nil
     }
 
     private func drain() async {
@@ -214,9 +288,6 @@ actor HarcHostProcessingWorker {
                recording.canonicalPCMFrames == request.canonicalPCMFrames
             else { throw HostProcessingWorkerError.canonicalBindingChanged }
 
-            try request.artifactIdentity.validatePathBinding(
-                at: request.canonicalWAVURL
-            )
             if recording.processing.state == .ready { return }
 
             switch HarcHostWorkAdmissionPolicy.decide(
@@ -234,26 +305,28 @@ actor HarcHostProcessingWorker {
                 return
             }
 
+            guard let requestValidator else {
+                pending[request.canonicalRecordingID] = request
+                return
+            }
             guard try await store.beginHostProcessingIfNotReady(
                 id: recordingID
             ) else { return }
-            let socketPath = try await launcher.ensureRunning()
+            let socketPath = try await transcription.prepare()
 
-            // Revalidate immediately before the daemon opens the path. This is
-            // the final same-UID path-swap boundary for derived processing.
+            // Grace/admission and daemon startup can outlive metadata updates.
+            // Refresh through signed receipt + exact WAV validation, never merely stat.
+            let request = try await HarcHostProcessingRequestValidation.refresh(request, using: requestValidator)
+            try Task.checkCancellation()
+            // No suspension between this strict check and the daemon request.
             try request.artifactIdentity.validatePathBinding(
                 at: request.canonicalWAVURL
             )
-            let client = HarcSTTClient(socketPath: socketPath)
-            let result: TranscribeResult
-            if diarize {
-                result = try await client.transcribeRequiringDiarization(
-                    audioPath: request.canonicalWAVURL.path, vad: vad, diarizer: client)
-            } else {
-                result = try await client.transcribe(
-                    audioPath: request.canonicalWAVURL.path, diarize: false, vad: vad)
-            }
+            let result = try await transcription.run(
+                socketPath, request.canonicalWAVURL.path, diarize, vad)
 
+            try request.artifactIdentity.validatePathBinding(at: request.canonicalWAVURL)
+            try Task.checkCancellation()
             let transcript = SessionTranscript(
                 startedAt: recording.startedAt,
                 endedAt: recording.endedAt ?? recording.startedAt,
@@ -342,18 +415,39 @@ actor HarcHostProcessingWorker {
                 producerDeviceID: producerDeviceID,
                 processingArtifactSHA256: Data(SHA256.hash(data: structuredTranscriptData)),
                 diarization: diarize ? .completed : .disabled, clusters: clusters)
+            try request.artifactIdentity.validatePathBinding(at: request.canonicalWAVURL)
+            try Task.checkCancellation()
             _ = try await store.publishHostProcessedProjectionIfNotReady(
                 recordingID: recordingID, speakerEvidence: publishedSpeakerEvidence,
                 speakerOutcome: speakerOutcome, structuredTranscriptData: structuredTranscriptData
             )
             failureCounts.removeValue(forKey: request.canonicalRecordingID)
+            metadataRetryCounts.removeValue(forKey: request.canonicalRecordingID)
         } catch {
             let remainsPending = await persistRecoverableFailure(
                 canonicalRecordingID: request.canonicalRecordingID,
                 underlyingError: error
             )
-            guard remainsPending,
-                  Self.isAutomaticallyRetryable(error) else { return }
+            guard remainsPending, !Task.isCancelled else { return }
+            if let storeError = error as? StoreError,
+               storeError == .canonicalArtifactIdentityMismatch,
+               let requestValidator,
+               (metadataRetryCounts[request.canonicalRecordingID] ?? 0) < 2 {
+                // Never reuse the prior transcription on retry. Earlier staging
+                // may remain, but cannot become ready through this failed attempt.
+                // Retry only after full validation proves the original audio and
+                // all safe inode fields; the next attempt transcribes afresh.
+                do {
+                    let fresh = try await HarcHostProcessingRequestValidation.refresh(request, using: requestValidator)
+                    metadataRetryCounts[request.canonicalRecordingID, default: 0] += 1
+                    pending[request.canonicalRecordingID] = fresh
+                    eligibleAt[request.canonicalRecordingID] = Date().addingTimeInterval(5)
+                } catch {
+                    _ = await persistRecoverableFailure(canonicalRecordingID: request.canonicalRecordingID, underlyingError: error)
+                }
+                return
+            }
+            guard Self.isAutomaticallyRetryable(error) else { return }
             let count = min(
                 (failureCounts[request.canonicalRecordingID] ?? 0) + 1,
                 7
@@ -397,7 +491,9 @@ actor HarcHostProcessingWorker {
         _ error: Error
     ) -> Bool {
         if let workerError = error as? HostProcessingWorkerError {
-            if case .canonicalBindingChanged = workerError { return false }
+            switch workerError {
+            case .canonicalBindingChanged, .canonicalRevalidationFailed: return false
+            }
         }
         if let storeError = error as? StoreError,
            storeError == .canonicalArtifactIdentityMismatch {
@@ -500,11 +596,14 @@ actor HarcHostProcessingWorker {
 
 private enum HostProcessingWorkerError: LocalizedError {
     case canonicalBindingChanged
+    case canonicalRevalidationFailed
 
     var errorDescription: String? {
         switch self {
         case .canonicalBindingChanged:
             "The canonical recording binding changed before processing."
+        case .canonicalRevalidationFailed:
+            "The canonical recording could not be cryptographically revalidated."
         }
     }
 }

@@ -273,7 +273,7 @@ public actor HarcCanonicalIngestService {
                 "A committed reconciliation has no exact canonical artifact evidence."
             )
         }
-        try validateReceiptedArtifact(processing)
+        try await validateReceiptedArtifact(processing)
         return reconciliation
     }
 
@@ -823,13 +823,13 @@ public actor HarcCanonicalIngestService {
             persistedRelativeWAVPath: work.publicationRelativePath,
             temporaryName: work.temporaryName
         )
-        let artifact = try validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
         let request = try HostDurableProcessingRequest(
             canonicalRecordingID: work.canonicalRecordingID,
             canonicalWAVURL: paths.wavURL,
             canonicalPCMHash: work.canonicalPCMHash,
             canonicalPCMFrames: work.canonicalPCMFrames,
-            artifactIdentity: work.canonicalArtifactIdentity
+            artifactIdentity: artifact.identity
         )
         try artifact.validateBinding()
         return request
@@ -1264,8 +1264,11 @@ private extension HarcCanonicalIngestService {
     }
 
     func commitCanonicalRecording(_ work: HostCanonicalPublicationWork) async throws {
+        guard let publishedIdentity = work.canonicalArtifactIdentity else {
+            throw HarcHostError.publicationRecoveryRequired("published canonical artifact identity is missing")
+        }
         let paths = try publicationPaths(for: work)
-        let artifact = try validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
         let capture = work.capture.capture
         let request = try HostCanonicalRecordingCommitRequest(
             canonicalID: work.canonicalRecordingID,
@@ -1292,7 +1295,7 @@ private extension HarcCanonicalIngestService {
             uploadID: work.attempt.uploadID,
             canonicalRecordingID: work.canonicalRecordingID,
             publicationRelativePath: work.publicationRelativePath,
-            artifactIdentity: artifact.identity,
+            artifactIdentity: publishedIdentity,
             result: result,
             at: now()
         )
@@ -1311,7 +1314,7 @@ private extension HarcCanonicalIngestService {
             )
         }
         let paths = try publicationPaths(for: work)
-        let artifact = try validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
         let manifest = try await hostStore.validateBoundManifest(
             uploadID: work.attempt.uploadID,
             using: manifestValidator
@@ -1372,7 +1375,7 @@ private extension HarcCanonicalIngestService {
             throw HarcHostError.databaseFailure("Prepared receipt journal is incomplete.")
         }
         let paths = try publicationPaths(for: work)
-        let artifact = try validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
         let manifest = try await hostStore.validateBoundManifest(
             uploadID: work.attempt.uploadID,
             using: manifestValidator
@@ -1449,18 +1452,18 @@ private extension HarcCanonicalIngestService {
         await scheduleProcessingIfNeeded(work, handoff: handoff)
         // Covers asynchronous failure seams and lost-response replay: a newly
         // delivered receipt is never returned from a replaced/missing WAV.
-        try validateReceiptedArtifact(work)
+        try await validateReceiptedArtifact(work)
         return expectedReceipt
     }
 
-    func validateReceiptedArtifact(_ work: HostReceiptProcessingWork) throws {
+    func validateReceiptedArtifact(_ work: HostReceiptProcessingWork) async throws {
         let paths = try HostCanonicalPublicationPaths.make(
             rootAnchor: canonicalRootAnchor,
             canonicalRecordingID: work.canonicalRecordingID,
             persistedRelativeWAVPath: work.publicationRelativePath,
             temporaryName: work.temporaryName
         )
-        _ = try validatedCanonicalArtifact(for: work, paths: paths)
+        _ = try await validatedCanonicalArtifact(for: work, paths: paths)
     }
 
     func scheduleProcessingIfNeeded(
@@ -1487,13 +1490,13 @@ private extension HarcCanonicalIngestService {
             persistedRelativeWAVPath: work.publicationRelativePath,
             temporaryName: work.temporaryName
         )
-        let artifact = try validatedCanonicalArtifact(for: work, paths: paths)
+        let artifact = try await validatedCanonicalArtifact(for: work, paths: paths)
         let request = try HostDurableProcessingRequest(
             canonicalRecordingID: work.canonicalRecordingID,
             canonicalWAVURL: paths.wavURL,
             canonicalPCMHash: work.canonicalPCMHash,
             canonicalPCMFrames: work.canonicalPCMFrames,
-            artifactIdentity: work.canonicalArtifactIdentity
+            artifactIdentity: artifact.identity
         )
         // This is deliberately adjacent to the handoff. The scheduler receives
         // the same durable claims and must revalidate them before daemon read.
@@ -1506,35 +1509,76 @@ private extension HarcCanonicalIngestService {
         )
     }
 
+    /// Builds a fresh, immutable content proof without modifying the original
+    /// publication binding. Ctime is not by itself authority: every call
+    /// authenticates the retained evidence and hashes the complete safe inode.
     func validatedCanonicalArtifact(
         for work: HostCanonicalPublicationWork,
         paths: HostCanonicalPublicationPaths
-    ) throws -> HostValidatedCanonicalArtifact {
+    ) async throws -> HostValidatedCanonicalArtifact {
         guard let expectedIdentity = work.canonicalArtifactIdentity else {
             throw HarcHostError.publicationRecoveryRequired(
                 "published canonical artifact identity is missing"
             )
         }
-        return try HostCanonicalWAVAssembler.openValidatedPublishedFile(
-            at: paths.wavURL,
-            in: paths,
+        let artifact = try HostValidatedCanonicalArtifact(
+            at: paths.wavURL, in: paths,
             totalFrames: work.capture.capture.totalCanonicalFrames,
             expectedPCMHash: work.capture.capture.canonicalPCMSHA256,
-            expectedIdentity: expectedIdentity
+            expectedIdentity: expectedIdentity, identityValidation: .rehashSameFile
         )
+        let manifest = try await hostStore.validateBoundManifestForInspection(
+            uploadID: work.attempt.uploadID, using: manifestValidator)
+        guard manifest.hostTrust == hostTrust,
+              manifest.finalizedCapture == work.capture,
+              manifest.exactManifestObject == work.attempt.boundManifest else {
+            throw HarcHostError.manifestEvidenceRequired
+        }
+        if let exactReceipt = work.exactPersistedReceipt {
+            let receipt = try receiptValidator.validateRecordingReceipt(
+                exactSignedReceiptBytes: exactReceipt.exactBytes,
+                validatedManifest: manifest, hostTrust: hostTrust)
+            guard receipt.exactReceiptObject == exactReceipt,
+                  receipt.canonicalRecordingID == work.canonicalRecordingID,
+                  receipt.canonicalRevision == work.canonicalRevision,
+                  receipt.changeCursor == work.changeCursor,
+                  receipt.receiptID == work.receiptID,
+                  receipt.durableCommitTime == work.durableCommitTime,
+                  receipt.processingState == .pending else {
+                throw HarcHostError.canonicalArtifactIdentityMismatch
+            }
+        }
+        // The hash proof must survive the authentication actor hop too.
+        try artifact.validateBinding()
+        return artifact
     }
 
     func validatedCanonicalArtifact(
         for work: HostReceiptProcessingWork,
         paths: HostCanonicalPublicationPaths
-    ) throws -> HostValidatedCanonicalArtifact {
-        try HostCanonicalWAVAssembler.openValidatedPublishedFile(
-            at: paths.wavURL,
-            in: paths,
+    ) async throws -> HostValidatedCanonicalArtifact {
+        let artifact = try HostValidatedCanonicalArtifact(
+            at: paths.wavURL, in: paths,
             totalFrames: work.canonicalPCMFrames,
             expectedPCMHash: work.canonicalPCMHash,
-            expectedIdentity: work.canonicalArtifactIdentity
+            expectedIdentity: work.canonicalArtifactIdentity,
+            identityValidation: .rehashSameFile
         )
+        let manifest = try await hostStore.validateBoundManifestForInspection(
+            uploadID: work.uploadID, using: manifestValidator)
+        let receipt = try receiptValidator.validateRecordingReceipt(
+            exactSignedReceiptBytes: work.exactReceipt.exactBytes,
+            validatedManifest: manifest, hostTrust: hostTrust)
+        guard manifest.hostTrust == hostTrust,
+              receipt.exactReceiptObject == work.exactReceipt,
+              receipt.uploadID == work.uploadID,
+              receipt.canonicalRecordingID == work.canonicalRecordingID,
+              receipt.canonicalPCMSHA256 == work.canonicalPCMHash,
+              receipt.totalCanonicalFrames == work.canonicalPCMFrames else {
+            throw HarcHostError.canonicalArtifactIdentityMismatch
+        }
+        try artifact.validateBinding()
+        return artifact
     }
 
     func publicationPaths(

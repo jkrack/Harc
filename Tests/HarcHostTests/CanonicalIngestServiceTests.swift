@@ -935,6 +935,162 @@ struct CanonicalIngestServiceTests {
         #expect(await auth.batchCounts.isEmpty)
     }
 
+    @Test("metadata drift is reauthenticated and hashed without repairing durable identity",
+          arguments: ["chmod", "tracked"])
+    func verifiedMetadataDriftPreservesPublication(scenario: String) async throws {
+        let auth = ReceiptRepairAuthorization(allowed: true)
+        let fixture = try await makePreparedIngest(repairAuthorization: auth)
+        defer { fixture.cleanup() }
+        let scheduler = FailingProcessingScheduler()
+        let service = try fixture.service(scheduler: scheduler)
+        let receipt = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        try await waitForSchedulerAttempt(scheduler)
+        let original = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: original, canonicalRoot: fixture.canonicalRoot)
+        try await Task.sleep(for: .milliseconds(2))
+        if scenario == "tracked" {
+            var info = stat()
+            try #require(lstat(paths.wavURL.path, &info) == 0)
+            try #require(chflags(paths.wavURL.path, info.st_flags ^ UInt32(UF_TRACKED)) == 0)
+        } else {
+            try #require(chmod(paths.wavURL.path, 0o600) == 0)
+        }
+        let refreshed = try await service.validatedProcessingRequest(canonicalRecordingID: original.canonicalRecordingID)
+        #expect(refreshed.artifactIdentity != original.canonicalArtifactIdentity)
+        #expect(refreshed.artifactIdentity.deviceNumber == original.canonicalArtifactIdentity.deviceNumber)
+        #expect(refreshed.artifactIdentity.inodeNumber == original.canonicalArtifactIdentity.inodeNumber)
+        try refreshed.artifactIdentity.validatePathBinding(at: paths.wavURL)
+        #expect(try await service.recoverPublication(uploadID: fixture.uploadID) == receipt)
+        let reconciliation = try await service.reconcileUpload(for: fixture.uploadID,
+            expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256, context: fixture.context)
+        #expect(reconciliation.existingReceipt == receipt)
+        let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(after.canonicalArtifactIdentity == original.canonicalArtifactIdentity)
+        #expect(after.exactReceipt == original.exactReceipt)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canonical_artifact_binding_events")
+        } == 0)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canonical_receipt_repairs")
+        } == 0)
+        #expect(await auth.calls == 0)
+        #expect(await auth.migrationCalls == 0)
+        let reopened = try await fixture.reopen(scheduler: IdempotentProcessingScheduler())
+        _ = try await reopened.service.validatedProcessingRequest(canonicalRecordingID: original.canonicalRecordingID)
+        #expect(try await reopened.service.recoverPublication(uploadID: fixture.uploadID) == receipt)
+    }
+
+    @Test("metadata revalidation rejects changed content, unsafe identities and replaced roots",
+          arguments: ["pcm", "header", "replacement", "permissions", "link", "length", "symlink", "root"])
+    func metadataRevalidationRejectsUnsafeChanges(scenario: String) async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let scheduler = FailingProcessingScheduler()
+        let service = try fixture.service(scheduler: scheduler)
+        _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        try await waitForSchedulerAttempt(scheduler)
+        let original = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: original, canonicalRoot: fixture.canonicalRoot)
+        let bytes = try Data(contentsOf: paths.wavURL)
+        switch scenario {
+        case "pcm", "header":
+            let handle = try FileHandle(forWritingTo: paths.wavURL)
+            try handle.seek(toOffset: scenario == "pcm" ? 44 : 0)
+            try handle.write(contentsOf: Data([0xff]))
+            try handle.close()
+        case "replacement", "symlink":
+            let old = paths.wavURL.appendingPathExtension("old")
+            try FileManager.default.moveItem(at: paths.wavURL, to: old)
+            if scenario == "replacement" {
+                try bytes.write(to: paths.wavURL, options: .withoutOverwriting)
+                try #require(chmod(paths.wavURL.path, 0o600) == 0)
+            } else {
+                try FileManager.default.createSymbolicLink(at: paths.wavURL, withDestinationURL: old)
+            }
+        case "permissions": try #require(chmod(paths.wavURL.path, 0o400) == 0)
+        case "link": try #require(link(paths.wavURL.path, paths.wavURL.appendingPathExtension("hardlink").path) == 0)
+        case "length":
+            let handle = try FileHandle(forWritingTo: paths.wavURL)
+            try handle.seekToEnd(); try handle.write(contentsOf: Data([1])); try handle.close()
+        case "root":
+            let old = fixture.canonicalRoot.appendingPathExtension("old")
+            try FileManager.default.moveItem(at: fixture.canonicalRoot, to: old)
+            try FileManager.default.copyItem(at: old, to: fixture.canonicalRoot)
+        default: Issue.record("Unknown mutation")
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await service.validatedProcessingRequest(canonicalRecordingID: original.canonicalRecordingID)
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await service.recoverPublication(uploadID: fixture.uploadID)
+        }
+        let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(after.canonicalArtifactIdentity == original.canonicalArtifactIdentity)
+        #expect(after.exactReceipt == original.exactReceipt)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canonical_artifact_binding_events")
+        } == 0)
+    }
+
+    @Test("metadata revalidation rechecks signed evidence and detects mutation across evidence validation",
+          arguments: ["manifest", "receipt", "duringReceipt"])
+    func metadataRevalidationRequiresSignedEvidence(scenario: String) async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let scheduler = FailingProcessingScheduler()
+        let initial = try fixture.service(scheduler: scheduler)
+        _ = try await initial.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+            generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        try await waitForSchedulerAttempt(scheduler)
+        let original = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        let paths = try publicationPaths(for: original, canonicalRoot: fixture.canonicalRoot)
+        try await Task.sleep(for: .milliseconds(2))
+        try #require(chmod(paths.wavURL.path, 0o600) == 0)
+        let service: HarcCanonicalIngestService
+        if scenario == "manifest" {
+            service = try fixture.service(scheduler: scheduler, manifestValidator: RejectingDiagnosticManifestValidator())
+        } else if scenario == "receipt" {
+            service = try fixture.service(scheduler: scheduler, receiptValidator: RejectingRecordingReceiptValidator())
+        } else {
+            service = try fixture.service(scheduler: scheduler,
+                receiptValidator: MetadataChangingReceiptValidator(codec: fixture.codec, url: paths.wavURL))
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await service.validatedProcessingRequest(canonicalRecordingID: original.canonicalRecordingID)
+        }
+        let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(after.canonicalArtifactIdentity == original.canonicalArtifactIdentity)
+    }
+
+    @Test("interrupted publication rehashes metadata drift without rewriting original identity",
+          arguments: [HostPublicationFailurePoint.afterCanonicalDatabaseCommit,
+                      .afterHostPublicationLinkage, .afterReceiptPersistence])
+    func interruptedPublicationRehashesMetadataDrift(point: HostPublicationFailurePoint) async throws {
+        let fixture = try await makePreparedIngest()
+        defer { fixture.cleanup() }
+        let service = try fixture.service(scheduler: IdempotentProcessingScheduler(),
+            failureInjector: OneShotPublicationFailureInjector(point))
+        await #expect(throws: InjectedPublicationCrash.point(point)) {
+            _ = try await service.commitUpload(context: fixture.context, uploadID: fixture.uploadID,
+                generation: .initial, expectedUploadProfileSHA256: fixture.codec.manifest.uploadProfileSHA256)
+        }
+        let original = try await publicationWork(for: fixture)
+        let paths = try publicationPaths(for: original, canonicalRoot: fixture.canonicalRoot)
+        try await Task.sleep(for: .milliseconds(2))
+        try #require(chmod(paths.wavURL.path, 0o600) == 0)
+        let receipt = try await service.recoverPublication(uploadID: fixture.uploadID)
+        if let prepared = original.exactPersistedReceipt { #expect(receipt == prepared) }
+        let after = try #require(try await fixture.hostStore.receiptProcessingWork(uploadID: fixture.uploadID))
+        #expect(after.canonicalArtifactIdentity == original.canonicalArtifactIdentity)
+        #expect(try await fixture.recordingStore.fetchAll().count == 1)
+        #expect(try await fixture.hostStore.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canonical_artifact_binding_events")
+        } == 0)
+        #expect(try await service.recoverPublication(uploadID: fixture.uploadID) == receipt)
+    }
+
     @Test("local owner repair restores exact receipt replay after metadata drift and survives reopen")
     func receiptRepairRestoresReplay() async throws {
         let auth = ReceiptRepairAuthorization(allowed: true)
@@ -947,9 +1103,8 @@ struct CanonicalIngestServiceTests {
         let paths = try publicationPaths(for: work, canonicalRoot: fixture.canonicalRoot)
         try await Task.sleep(for: .milliseconds(2))
         #expect(chmod(paths.wavURL.path, 0o600) == 0)
-        await #expect(throws: (any Error).self) {
-            _ = try await service.validatedProcessingRequest(canonicalRecordingID: work.canonicalRecordingID)
-        }
+        let freshProof = try await service.validatedProcessingRequest(canonicalRecordingID: work.canonicalRecordingID)
+        #expect(freshProof.artifactIdentity != work.canonicalArtifactIdentity)
         #expect(try await service.repairReceiptBinding(canonicalRecordingID: work.canonicalRecordingID))
         #expect(try await exactReceiptBytes(fixture.hostStore, fixture.uploadID) == receipt.exactBytes)
         #expect(try await fixture.hostStore.dbQueue.read { db in
@@ -1289,7 +1444,7 @@ struct CanonicalIngestServiceTests {
         } == 1)
     }
 
-    @Test("pre-receipt metadata drift is repaired and completes one exact receipt")
+    @Test("legacy pre-receipt metadata failure remains explicitly owner-repairable")
     func publicationMetadataRepairRecoversPreReceiptPublication() async throws {
         let auth = ReceiptRepairAuthorization(allowed: true)
         let fixture = try await makePreparedIngest(repairAuthorization: auth)
@@ -1312,14 +1467,11 @@ struct CanonicalIngestServiceTests {
         try await Task.sleep(for: .milliseconds(2))
         #expect(chmod(paths.wavURL.path, 0o400) == 0)
         #expect(chmod(paths.wavURL.path, 0o600) == 0)
-        await #expect(throws: (any Error).self) {
-            _ = try await service.recoverPublication(uploadID: fixture.uploadID)
-        }
-        #expect(
-            try await publicationFailureCode(fixture.hostStore, fixture.uploadID)
-                == HostCanonicalIngestFailureCode.artifactIdentityMismatch.rawValue
-        )
 
+        // Preserve coverage for a legacy persisted identity failure. Ordinary
+        // metadata rehash no longer needs to create this failure or repair it.
+        try await fixture.hostStore.markPublicationFailedRecoverable(uploadID: fixture.uploadID,
+            errorCode: HostCanonicalIngestFailureCode.artifactIdentityMismatch.rawValue, at: Date())
         let report = try await service.migrateCanonicalLibraryBindings()
         #expect(report.eligibleArtifactCount == 1)
         #expect(report.reboundArtifactCount == 1)

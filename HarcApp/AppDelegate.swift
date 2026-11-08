@@ -4750,6 +4750,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 throw error
             }
 
+            await worker.installRequestValidator { canonicalID in
+                try await runtime.validatedProcessingRequest(canonicalRecordingID: canonicalID)
+            }
+
             // `processing` journal rows are already durably handed off and do
             // not replay the scheduler during publication recovery. Rebuild
             // their exact path/inode-bound requests from HostDB explicitly.
@@ -4758,6 +4762,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 backlog = try await runtime.storageRuntime.recordingStore
                     .hostProcessingBacklog()
             } catch {
+                await worker.shutdown()
                 await mcpServer.shutdown()
                 await runtime.shutdown()
                 throw error

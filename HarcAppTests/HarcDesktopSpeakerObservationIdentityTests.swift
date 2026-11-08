@@ -1,4 +1,8 @@
 import Foundation
+import Darwin
+import HarcHost
+@testable import HarcStore
+import GRDB
 import CryptoKit
 import HarcClient
 import Testing
@@ -314,5 +318,312 @@ struct HarcStandaloneSpeakerGenerationTests {
         #expect(throws: (any Error).self) { try build(changed, [voice]) }
         changed = transcript; changed.speakers = [.init(speaker: 0, startMs: 0, endMs: 6001)]
         #expect(throws: (any Error).self) { try build(changed, [voice]) }
+    }
+}
+
+
+@Suite("Host processing request refresh")
+struct HarcHostProcessingRequestValidationTests {
+    @Test func refreshAcceptsOnlyCtimeDrift() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let stale = try fixture.request(ctimeOffset: -1)
+        let fresh = try fixture.request()
+        let calls = RefreshCalls()
+        let result = try await HarcHostProcessingRequestValidation.refresh(stale) { id in
+            await calls.record()
+            #expect(id == fresh.canonicalRecordingID)
+            return fresh
+        }
+        #expect(result == fresh)
+        #expect(await calls.count == 1)
+    }
+
+    @Test func callbackFailureNeverFallsBackOrRetries() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let calls = RefreshCalls()
+        await #expect(throws: (any Error).self) {
+            _ = try await HarcHostProcessingRequestValidation.refresh(fixture.request()) { _ in
+                await calls.record()
+                throw RefreshFailure.integrity
+            }
+        }
+        #expect(await calls.count == 1)
+    }
+
+    @Test func readRaceRestartsFullValidation() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let fresh = try fixture.request()
+        let calls = RefreshCalls()
+        let result = try await HarcHostProcessingRequestValidation.refresh(fresh) { _ in
+            await calls.record()
+            if await calls.count == 1 { throw StoreError.canonicalArtifactIdentityMismatch }
+            return fresh
+        }
+        #expect(result == fresh)
+        #expect(await calls.count == 2)
+    }
+
+    @Test func persistentReadRacePreservesTypedFailureAndStops() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let calls = RefreshCalls()
+        await #expect(throws: StoreError.canonicalArtifactIdentityMismatch) {
+            _ = try await HarcHostProcessingRequestValidation.refresh(fixture.request()) { _ in
+                await calls.record()
+                throw StoreError.canonicalArtifactIdentityMismatch
+            }
+        }
+        #expect(await calls.count == 2)
+    }
+
+    @Test func contentAndStableIdentityFailuresAreTerminal() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        for failure in [HarcHostError.canonicalHashMismatch, .canonicalArtifactIdentityMismatch] {
+            let calls = RefreshCalls()
+            await #expect(throws: (any Error).self) {
+                _ = try await HarcHostProcessingRequestValidation.refresh(fixture.request()) { _ in
+                    await calls.record()
+                    throw failure
+                }
+            }
+            #expect(await calls.count == 1)
+        }
+    }
+
+    @Test func strictRaceHasOnlyOneImmediateRetry() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let stale = try fixture.request(ctimeOffset: -1)
+        let calls = RefreshCalls()
+        await #expect(throws: (any Error).self) {
+            _ = try await HarcHostProcessingRequestValidation.refresh(stale) { _ in
+                await calls.record()
+                return stale
+            }
+        }
+        #expect(await calls.count == 2)
+    }
+
+    @Test func rejectsChangedCanonicalAndSafeIdentityFields() throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let original = try fixture.request()
+        let identity = original.artifactIdentity
+        let identities = try [
+            fixture.identity(device: identity.deviceNumber + 1),
+            fixture.identity(inode: identity.inodeNumber + 1),
+            fixture.identity(owner: identity.ownerUserID + 1),
+            fixture.identity(mode: UInt32(S_IFREG) | 0o400)
+        ]
+        var changed = try identities.map { identity in
+            try HostDurableProcessingRequest(canonicalRecordingID: original.canonicalRecordingID,
+                canonicalWAVURL: original.canonicalWAVURL, canonicalPCMHash: original.canonicalPCMHash,
+                canonicalPCMFrames: 1, artifactIdentity: identity)
+        }
+        changed.append(try HostDurableProcessingRequest(canonicalRecordingID: .random(),
+            canonicalWAVURL: original.canonicalWAVURL, canonicalPCMHash: original.canonicalPCMHash,
+            canonicalPCMFrames: 1, artifactIdentity: identity))
+        changed.append(try HostDurableProcessingRequest(canonicalRecordingID: original.canonicalRecordingID,
+            canonicalWAVURL: original.canonicalWAVURL, canonicalPCMHash: CanonicalPCMHash(Data(repeating: 2, count: 32)),
+            canonicalPCMFrames: 1, artifactIdentity: identity))
+        changed.append(try HostDurableProcessingRequest(canonicalRecordingID: original.canonicalRecordingID,
+            canonicalWAVURL: original.canonicalWAVURL.appendingPathExtension("replacement"), canonicalPCMHash: original.canonicalPCMHash,
+            canonicalPCMFrames: 1, artifactIdentity: identity))
+        for request in changed {
+            #expect(throws: (any Error).self) {
+                try HarcHostProcessingRequestValidation.requireSameBinding(original, request)
+            }
+        }
+    }
+}
+
+private enum RefreshFailure: Error { case integrity }
+private actor RefreshCalls {
+    var count = 0
+    func record() { count += 1 }
+}
+private struct RefreshFixture: Sendable {
+    let url: URL
+    let canonicalID = CanonicalRecordingID.random()
+    let snapshot: HostCanonicalArtifactIdentity
+
+    init() throws {
+        url = FileManager.default.temporaryDirectory.appendingPathComponent("host-refresh-" + UUID().uuidString + ".wav")
+        try Data(repeating: 0, count: 46).write(to: url)
+        guard chmod(url.path, 0o600) == 0 else { throw RefreshFailure.integrity }
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { throw RefreshFailure.integrity }
+        defer { close(fd) }
+        snapshot = try HostCanonicalArtifactIdentity(validatingOpenFileDescriptor: fd, boundTo: url)
+    }
+
+    func identity(device: UInt64? = nil, inode: UInt64? = nil, owner: UInt32? = nil,
+                  mode: UInt32? = nil, ctimeOffset: Int64 = 0) throws -> HostCanonicalArtifactIdentity {
+        try HostCanonicalArtifactIdentity(deviceNumber: device ?? snapshot.deviceNumber,
+            inodeNumber: inode ?? snapshot.inodeNumber, ownerUserID: owner ?? snapshot.ownerUserID,
+            posixMode: mode ?? snapshot.posixMode, linkCount: snapshot.linkCount,
+            fileByteCount: snapshot.fileByteCount, changeTimeSeconds: snapshot.changeTimeSeconds + ctimeOffset,
+            changeTimeNanoseconds: snapshot.changeTimeNanoseconds)
+    }
+    func request(ctimeOffset: Int64 = 0) throws -> HostDurableProcessingRequest {
+        try HostDurableProcessingRequest(canonicalRecordingID: canonicalID, canonicalWAVURL: url,
+            canonicalPCMHash: CanonicalPCMHash(Data(repeating: 1, count: 32)), canonicalPCMFrames: 1,
+            artifactIdentity: identity(ctimeOffset: ctimeOffset))
+    }
+    func remove() { try? FileManager.default.removeItem(at: url) }
+}
+
+
+@Suite("Host processing worker metadata races")
+struct HarcHostProcessingWorkerMetadataTests {
+    @Test func queueWaitsForValidatorAndDiscardsChangedTranscription() async throws {
+        let fixture = try await WorkerRefreshFixture.make(drifts: 1)
+        await fixture.worker.signal(fixture.request)
+        await fixture.worker.waitUntilIdle()
+        #expect(await fixture.probe.transcriptions == 0)
+        #expect(await fixture.probe.preparations == 0)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .pending)
+        await fixture.worker.installRequestValidator { try await fixture.probe.validate($0) }
+        await fixture.worker.waitUntilIdle()
+        let row = try #require(try await fixture.store.fetch(id: fixture.recordingID))
+        #expect(await fixture.probe.transcriptions == 2)
+        #expect(await fixture.probe.validations == 3)
+        #expect(row.processing.state == .ready)
+        #expect(row.transcriptText?.contains("attempt 2") == true)
+        #expect(row.transcriptText?.contains("attempt 1") == false)
+        await fixture.cleanup()
+    }
+
+    @Test func repeatedDriftExhaustsVerifiedRetriesWithoutPublishing() async throws {
+        let fixture = try await WorkerRefreshFixture.make(drifts: 10)
+        await fixture.worker.installRequestValidator { try await fixture.probe.validate($0) }
+        await fixture.worker.signal(fixture.request)
+        await fixture.worker.waitUntilIdle()
+        let row = try #require(try await fixture.store.fetch(id: fixture.recordingID))
+        #expect(await fixture.probe.transcriptions == 3)
+        #expect(await fixture.probe.validations == 5)
+        #expect(row.processing.state == .failedRecoverable)
+        #expect(row.transcriptText == nil)
+        #expect(try await fixture.store.hostSpeakerProcessingOutcome(recordingID: fixture.recordingID) == nil)
+        await fixture.cleanup()
+    }
+
+    @Test func rejectedEvidenceNeverInvokesTranscription() async throws {
+        let fixture = try await WorkerRefreshFixture.make(drifts: 0)
+        let calls = RefreshCalls()
+        await fixture.worker.installRequestValidator { _ in
+            await calls.record()
+            throw HarcHostError.canonicalHashMismatch
+        }
+        await fixture.worker.signal(fixture.request)
+        await fixture.worker.waitUntilIdle()
+        #expect(await calls.count == 1)
+        #expect(await fixture.probe.transcriptions == 0)
+        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .failedRecoverable)
+        await fixture.cleanup()
+    }
+}
+
+private actor WorkerRefreshProbe {
+    let original: HostDurableProcessingRequest
+    let bytes: Data
+    let drifts: Int
+    var preparations = 0
+    var transcriptions = 0
+    var validations = 0
+
+    init(request: HostDurableProcessingRequest, bytes: Data, drifts: Int) {
+        original = request
+        self.bytes = bytes
+        self.drifts = drifts
+    }
+    func prepare() -> String { preparations += 1; return "test-only-no-socket" }
+    func validate(_ id: CanonicalRecordingID) throws -> HostDurableProcessingRequest {
+        validations += 1
+        guard id == original.canonicalRecordingID,
+              try Data(contentsOf: original.canonicalWAVURL) == bytes else {
+            throw HarcHostError.canonicalHashMismatch
+        }
+        let fd = open(original.canonicalWAVURL.path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { throw RefreshFailure.integrity }
+        defer { close(fd) }
+        let fresh = try HostDurableProcessingRequest(canonicalRecordingID: id,
+            canonicalWAVURL: original.canonicalWAVURL, canonicalPCMHash: original.canonicalPCMHash,
+            canonicalPCMFrames: original.canonicalPCMFrames,
+            artifactIdentity: HostCanonicalArtifactIdentity(validatingOpenFileDescriptor: fd, boundTo: original.canonicalWAVURL))
+        try HarcHostProcessingRequestValidation.requireSameBinding(original, fresh)
+        return fresh
+    }
+    func transcribe() async throws -> TranscribeResult {
+        transcriptions += 1
+        if transcriptions <= drifts {
+            // An unchanged final mode and unchanged bytes, but a new ctime.
+            try await Task.sleep(for: .milliseconds(10))
+            guard chmod(original.canonicalWAVURL.path, 0o400) == 0,
+                  chmod(original.canonicalWAVURL.path, 0o600) == 0 else { throw RefreshFailure.integrity }
+        }
+        return TranscribeResult(text: "attempt \(transcriptions)", words: [], speakers: [], processingMs: 1)
+    }
+}
+
+private struct WorkerRefreshFixture: Sendable {
+    let root: URL
+    let store: RecordingStore
+    let recordingID: Int64
+    let request: HostDurableProcessingRequest
+    let probe: WorkerRefreshProbe
+    let worker: HarcHostProcessingWorker
+
+    static func make(drifts: Int) async throws -> Self {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("host-worker-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let wav = root.appendingPathComponent("canonical.wav")
+        // Canonical mono Int16, 16 kHz WAV containing one sample.
+        let bytes = Data([82,73,70,70,38,0,0,0,87,65,86,69,102,109,116,32,16,0,0,0,
+                          1,0,1,0,128,62,0,0,0,125,0,0,2,0,16,0,100,97,116,97,2,0,0,0,0,0])
+        try bytes.write(to: wav)
+        guard chmod(wav.path, 0o600) == 0 else { throw RefreshFailure.integrity }
+        let fd = open(wav.path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { throw RefreshFailure.integrity }
+        defer { close(fd) }
+        let identity = try HostCanonicalArtifactIdentity(validatingOpenFileDescriptor: fd, boundTo: wav)
+        let hash = try CanonicalPCMHash(Data(SHA256.hash(data: bytes.suffix(2))))
+        let producer = try DeviceID(Data(repeating: 9, count: 32))
+        var recording = Recording(wavPath: wav.path,
+            txtPath: root.appendingPathComponent("transcript.md").path,
+            jsonPath: root.appendingPathComponent("transcript.json").path,
+            startedAt: Date(), endedAt: Date(), title: "Worker fixture", transcriptText: nil)
+        recording.processing = .pending
+        recording.projection = .pending
+        let store = try await RecordingStore.inMemory()
+        let inserted = try await store.upsert(recording)
+        let recordingID = try #require(inserted.id)
+        let database = await store.uncoordinatedDB
+        try await database.write { db in
+            try db.execute(sql: "UPDATE recordings SET canonical_pcm_sha256 = ?, canonical_pcm_frames = 1, origin_device_id = ?, origin_recording_uuid = ? WHERE id = ?",
+                           arguments: [hash.rawBytes, producer.rawBytes, UUID().uuidString.lowercased(), recordingID])
+        }
+        let request = try HostDurableProcessingRequest(canonicalRecordingID: inserted.canonicalID,
+            canonicalWAVURL: wav, canonicalPCMHash: hash, canonicalPCMFrames: 1, artifactIdentity: identity)
+        let probe = WorkerRefreshProbe(request: request, bytes: bytes, drifts: drifts)
+        let worker = HarcHostProcessingWorker(store: store,
+            launcher: DaemonLauncher(binaryURL: root.appendingPathComponent("nonexistent"),
+                socketPath: root.appendingPathComponent("unused.sock").path,
+                logURL: root.appendingPathComponent("unused.log")),
+            producerDeviceID: producer, diarize: false, vad: false, clientArtifactGrace: 0,
+            transcription: .init(prepare: { await probe.prepare() }, run: { _, _, _, _ in try await probe.transcribe() }),
+            admissionSnapshot: {
+                HarcHostWorkAdmissionSnapshot(thermalPressure: .nominal, lowPowerModeEnabled: false,
+                    oneMinuteLoad: 0, activeProcessorCount: 1, harcCaptureActive: false)
+            })
+        return Self(root: root, store: store, recordingID: recordingID, request: request, probe: probe, worker: worker)
+    }
+    func cleanup() async {
+        await worker.shutdown()
+        try? FileManager.default.removeItem(at: root)
     }
 }

@@ -912,3 +912,15 @@ verified receipt/Host-bound metadata evidence with completed durability barriers
 An empty eligible queue is never proof of delivery; preserve errors for blocked,
 missing, corrupt or foreign evidence. The desktop speaker-review coordinator
 suite includes deterministic inventory and post-commit cleanup fault regressions.
+
+Canonical ctime-only metadata drift may be used after a fresh full WAV/hash
+proof on the same device/inode/owner/mode/link count/length plus exact signed
+manifest and retained-receipt authentication. This is an ephemeral read proof,
+not automatic repair: original journal identities, receipts and binding chains
+remain unchanged. Every proof stays immutable and checks its captured ctime
+around reads and actor hops. Device/inode replacements still need explicit
+owner-approved moved-library recovery. Host processing refreshes after queue
+delays and discards transcription if its pre-read identity changes. Validate
+with `CanonicalIngestServiceTests`, `CanonicalWAVAssemblerTests` and the app
+Host processing tests. Synthetic metadata tests do not qualify eviction,
+rehydration or real iCloud/network endurance.
