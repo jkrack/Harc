@@ -395,8 +395,8 @@ private actor PublicationRecoverySleeper {
 
     func sleep(_ duration: Duration) async throws {
         let id = UUID()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+        try await withTaskCancellationHandler { () async throws -> Void in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 guard !Task.isCancelled else {
                     continuation.resume(throwing: CancellationError())
                     return
