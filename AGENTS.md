@@ -514,6 +514,15 @@ must match its model provenance; queued recording revisions protect concurrent
 edits. Validate archive orchestration with `ArchiveReprocessorTests` and
 `ArchivePublishingTests`, then build the Xcode app target.
 
+Library audio download checks local residency with `lstat` before opening the
+canonical file. Offloaded audio fails with a retryable, path-free recovery
+message rather than implicitly waiting for cloud hydration. This admission is
+not a residency lock: eviction after the check remains a filesystem race.
+Preserve exact header, PCM hash, representation hash, and retained-file identity
+checks. Mobile playback must preserve gRPC status instead of NSError's generic
+“error 1.” Validate with `HarcHostCanonicalAudioDownloadTests`,
+`PostSessionGRPCErrorMapperTests`, and `HarcTransportErrorDiagnosticTests`.
+
 ## Common Validation
 
 Voice enrollment uses the shared `SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs`

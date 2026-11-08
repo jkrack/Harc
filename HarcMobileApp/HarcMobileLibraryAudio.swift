@@ -336,7 +336,7 @@ final class HarcMobileRecordingAudioController: NSObject {
                     state = .playing
                 } catch {
                     stopAndRelease()
-                    state = .failed(error.localizedDescription)
+                    state = .failed(HarcTransportErrorDiagnostic.describe(error).userFacingMessage)
                 }
             }
             return
@@ -389,7 +389,7 @@ final class HarcMobileRecordingAudioController: NSObject {
             player = nil
             releaseSession()
             try? await coordinator.releaseDownloadedAudio(summary: summary)
-            state = .failed(error.localizedDescription)
+            state = .failed(HarcTransportErrorDiagnostic.describe(error).userFacingMessage)
         }
     }
 
