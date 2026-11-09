@@ -57,6 +57,27 @@ struct TranscriptDocumentTests {
         }
     }
 
+    @Test("retains the decoded sidecar when replacing presentation text")
+    func retainsStructuredTranscript() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let wav = dir.appendingPathComponent("retained.wav")
+        let json = dir.appendingPathComponent("retained.json")
+        let transcript = SessionTranscript(
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 101), audioPath: wav.path,
+            joinedText: "hello", words: [Word(text: "hello", startMs: 0, endMs: 500)],
+            speakers: [], chunks: []
+        )
+        try writeJSON(transcript, to: json)
+        let recording = Recording(wavPath: wav.path, jsonPath: json.path, startedAt: Date())
+        let document = TranscriptDocument.load(recording: recording)
+        #expect(document.structuredTranscript == transcript)
+        let replaced = document.replacingInitialText("different presentation")
+        #expect(replaced.initialText == "different presentation")
+        #expect(replaced.structuredTranscript == transcript)
+    }
+
     @Test("loads .txt + .json happy path")
     func happyPath() throws {
         let dir = try makeTempDir()

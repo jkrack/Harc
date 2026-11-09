@@ -21,14 +21,22 @@ public struct WordIndex: Sendable, Equatable {
         let nsText = text as NSString
         var cursor = 0
         var out: [Entry] = []
+        out.reserveCapacity(words.count)
+        // Edited transcripts can omit many occurrences of the same token.
+        // A failed search covers the entire remaining suffix, so advancing
+        // the cursor cannot make that exact token appear later. Remember
+        // misses instead of rescanning the same suffix for every occurrence.
+        var missingTokens: Set<String> = []
         for word in words {
-            guard !word.text.isEmpty else { continue }
+            guard !word.text.isEmpty, !missingTokens.contains(word.text) else { continue }
             guard cursor <= nsText.length else { break }
             let searchRange = NSRange(location: cursor, length: nsText.length - cursor)
             let found = nsText.range(of: word.text, options: .caseInsensitive, range: searchRange)
             if found.location != NSNotFound {
                 out.append(Entry(word: word, range: found))
                 cursor = found.location + found.length
+            } else {
+                missingTokens.insert(word.text)
             }
         }
         self.entries = out
