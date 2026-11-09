@@ -679,7 +679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Sparkle. Held for the app's lifetime; nil under UI testing.
     private var updaterController: SPUStandardUpdaterController?
     private let updaterDelegate = HarcUpdaterDelegate()
-    /// Windows that currently require Harc to behave as a regular app. A set
+    /// Managed windows awaiting presentation/focus completion. A set
     /// (rather than a presentation count) makes close/reopen idempotent for
     /// retained controllers such as the Library window.
     private var activeManagedWindows: Set<ObjectIdentifier> = []
@@ -692,6 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private static let minWordsToSummarize = 10
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        refreshActivationPolicy()
         if !isUITesting {
             Task.detached(priority: .utility) {
                 let defaults = UserDefaults.standard
@@ -1054,8 +1055,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openLibrary() }
-        return true
+        // A Dock click always returns to the Library, even when Settings or
+        // another auxiliary window is still visible. Reuse its controller.
+        openLibrary()
+        return false
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Closing the workspace must not stop recording or the resident Host.
+        false
     }
 
     private func trackManagedWindow(_ window: NSWindow?) {
@@ -1094,6 +1102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private func orderManagedWindowFront(_ window: NSWindow) {
         trackManagedWindow(window)
         installMainMenuIfNeeded()
+        if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
         if !NSApp.isActive {
@@ -1112,23 +1121,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     }
 
     private func refreshActivationPolicy() {
-        let desired: NSApplication.ActivationPolicy = activeManagedWindows.isEmpty
-            ? .accessory
-            : .regular
-        if desired == .regular { installMainMenuIfNeeded() }
-        guard NSApp.activationPolicy() != desired else { return }
-        // Do not bounce activation with deactivate() and a delayed activate().
-        // That drops the user's activation request and can leave a visible
-        // Library underneath the previous application's menu bar.
-        NSApp.setActivationPolicy(desired)
+        // Dock and Cmd-Tab presence belongs to the running app, not its windows.
+        installMainMenuIfNeeded()
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
     }
 
-    /// The app runs as an accessory (LSUIElement) with only a MenuBarExtra-style
-    /// UI. Its Settings-only SwiftUI scene can replace the managed-window
-    /// menu with a minimal menu lacking Edit. Restore the resident app's menu
-    /// before handling events so text editing retains standard shortcuts.
+    /// The Settings-only SwiftUI scene can replace the app menu. Restore Harc's
+    /// commands even when no Library window is open.
     func applicationWillUpdate(_ notification: Notification) {
-        guard !activeManagedWindows.isEmpty else { return }
         installMainMenuIfNeeded()
     }
 
@@ -3948,9 +3950,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if let existing = harcWindow {
             guard let window = existing.window else { return }
             // Harc retains the Library controller after close. Re-register
-            // the reopened window so the accessory app is promoted back to
-            // `.regular` and its application menu (including Settings) is
-            // restored.
+            // the reopened window so pending focus work and its application
+            // menu (including Settings) are restored.
             orderManagedWindowFront(window)
             return
         }

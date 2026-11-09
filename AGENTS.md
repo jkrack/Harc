@@ -24,8 +24,12 @@ Flag the user before violating these product decisions.
   boundary; no unattended export or implicit cloud destination is allowed.
 - **Apple Silicon first.** The package currently targets macOS v26 in
   `Package.swift`; verify deployment-target changes against `project.yml`.
-- **Menu bar resident.** The primary recording surface is the status item and
-  compact panel, with the Library as the fuller workspace.
+- **Desktop app with resident recording controls.** Keep Harc in the Dock and
+  Cmd-Tab while running, including with all windows closed. A Dock reopen
+  presents the Library even when Settings is visible. Closing windows must not
+  quit Harc or stop capture/Host work; retain the status item and compact panel.
+  Validate with `HarcManagedWindowMenuTests` and the app UI regression
+  `testDockReopenKeepsRegularAppAndReturnsToLibrary`.
 - **Long-form reliability over live latency.** Durable audio and recoverable
   stop/failure states matter more than live partial transcript UI.
 

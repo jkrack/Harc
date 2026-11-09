@@ -5,6 +5,15 @@ import Testing
 @Suite("Managed window menu identity")
 @MainActor
 struct HarcManagedWindowMenuTests {
+    @Test func runningAppUsesRegularActivationPolicy() {
+        #expect(Bundle.main.object(forInfoDictionaryKey: "LSUIElement") as? Bool == false)
+        #expect(NSApp.activationPolicy() == .regular)
+    }
+
+    @Test func closingLastWindowDoesNotTerminateResidentWork() {
+        #expect(!AppDelegate().applicationShouldTerminateAfterLastWindowClosed(NSApp))
+    }
+
     @Test func swiftUIEditMenuAloneDoesNotSuppressHarcCommands() {
         let menu = NSMenu()
         let edit = NSMenu(title: "Edit")

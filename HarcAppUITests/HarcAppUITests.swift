@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 final class HarcAppUITests: XCTestCase {
@@ -220,6 +221,51 @@ final class HarcAppUITests: XCTestCase {
             app.debugDescription
         )
         XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 4))
+    }
+
+    func testDockReopenKeepsRegularAppAndReturnsToLibrary() throws {
+        // Let the target create this fixture. A UI runner's private container
+        // temporary directory is not an accessible Library root for the app.
+        try FileManager.default.removeItem(at: rootURL)
+        rootURL = URL(fileURLWithPath: "/tmp/harc-dock-ui-\(UUID().uuidString)", isDirectory: true)
+        app.launchEnvironment["HARC_UI_TEST_ROOT"] = rootURL.path
+        launchFixtureLibrary()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        let running = try XCTUnwrap(NSWorkspace.shared.frontmostApplication)
+        XCTAssertTrue(running.bundleIdentifier?.hasPrefix("com.harc.Harc") == true)
+        let bundleURL = try XCTUnwrap(running.bundleURL)
+        for _ in 0..<3 {
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4))
+            XCTAssertFalse(running.isTerminated)
+            XCTAssertEqual(running.activationPolicy, .regular)
+            // Launch Services sends the reopen event used by the Dock. Merely
+            // activating XCUIApplication would not exercise the delegate.
+            let reopened = expectation(description: "Launch Services reopen")
+            NSWorkspace.shared.openApplication(at: bundleURL, configuration: .init()) { _, error in
+                XCTAssertNil(error)
+                reopened.fulfill()
+            }
+            wait(for: [reopened], timeout: 10)
+            XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 8))
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        }
+        // Settings remaining visible must not suppress the Library reopen.
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4))
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 6))
+        let reopened = expectation(description: "Reopen with Settings visible")
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: .init()) { _, error in
+            XCTAssertNil(error)
+            reopened.fulfill()
+        }
+        wait(for: [reopened], timeout: 10)
+        let search = app.searchFields["harc.library.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 8))
+        search.click()
+        app.typeText("Dock reopen")
+        XCTAssertEqual(search.value as? String, "Dock reopen")
     }
 
     func testLibraryOwnsMenusAfterRepeatedCloseAndReopen() throws {
