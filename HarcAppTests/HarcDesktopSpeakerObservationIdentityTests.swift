@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import HarcHost
+import HarcProtocol
 @testable import HarcStore
 import GRDB
 import CryptoKit
@@ -407,6 +408,35 @@ struct HarcHostProcessingRequestValidationTests {
         }
     }
 
+    @Test func validationPreservesSafeOriginalCauseWithoutChangingTerminalPolicy() async throws {
+        let fixture = try RefreshFixture()
+        defer { fixture.remove() }
+        let cases: [(any Error, HarcHostProcessingDiagnostic.Cause)] = [
+            (HarcHostError.canonicalHashMismatch, .hostCanonicalHashMismatch),
+            (HarcHostError.canonicalArtifactIdentityMismatch, .hostCanonicalArtifactIdentityMismatch),
+            (HarcHostError.publicationIO("SYNTHETIC-SECRET"), .hostPublicationIO),
+            (HarcProtocolCodecError.invalidSignature, .protocolInvalidSignature),
+            (StoreError.readFailed("SYNTHETIC-SECRET"), .storeReadFailed),
+            (RefreshFailure.integrity, .unknown),
+            (CancellationError(), .cancelled)
+        ]
+        for (failure, expected) in cases {
+            let calls = RefreshCalls()
+            do {
+                _ = try await HarcHostProcessingRequestValidation.refresh(fixture.request()) { _ in
+                    await calls.record()
+                    throw failure
+                }
+                Issue.record("Expected revalidation failure")
+            } catch {
+                #expect(HarcHostProcessingDiagnostic.Cause.classify(error) == expected)
+                #expect(!HarcHostProcessingWorker.isAutomaticallyRetryable(error))
+                #expect(error is HostProcessingWorkerError)
+            }
+            #expect(await calls.count == 1)
+        }
+    }
+
     @Test func strictRaceHasOnlyOneImmediateRetry() async throws {
         let fixture = try RefreshFixture()
         defer { fixture.remove() }
@@ -568,8 +598,54 @@ struct HarcHostProcessingWorkerMetadataTests {
         #expect(await fixture.probe.transcriptions == 3)
         #expect(await fixture.probe.validations == 3)
         #expect(row.processing.state == .failedRecoverable)
+        #expect(row.processing.failure?.code == "host.processing.audio_after_transcription.store.canonical_artifact_identity_mismatch")
         #expect(row.transcriptText == nil)
         #expect(try await fixture.store.hostSpeakerProcessingOutcome(recordingID: fixture.recordingID) == nil)
+        await fixture.cleanup()
+    }
+
+    @Test func transientDaemonFailuresRetainTheirPhaseAndStillRetry() async throws {
+        for prepareFailure in [true, false] {
+            let fixture = try await WorkerRefreshFixture.make(drifts: 0,
+                preparationError: prepareFailure ? .daemonLaunchFailed("SYNTHETIC-SECRET") : nil,
+                transcriptionError: prepareFailure ? nil : .transcribeFailed(code: "model_not_loaded", message: "SYNTHETIC-SECRET"))
+            await fixture.worker.installRequestValidator { try await fixture.probe.validate($0) }
+            await fixture.worker.signal(fixture.request)
+            let deadline = Date().addingTimeInterval(3)
+            var failure: ProcessingFailure?
+            while Date() < deadline {
+                failure = try await fixture.store.fetch(id: fixture.recordingID)?.processing.failure
+                if failure != nil { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(failure?.code == (prepareFailure
+                ? "host.processing.daemon_preparation.client.daemon_launch_failed"
+                : "host.processing.transcription.daemon.model_not_loaded"))
+            await fixture.worker.waitUntilIdle()
+            #expect(await fixture.probe.preparations == 2)
+            #expect(await fixture.probe.transcriptions == (prepareFailure ? 1 : 2))
+            #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing == .ready)
+            await fixture.cleanup()
+        }
+    }
+
+    @Test func typedValidationFailurePersistsAcrossStoreReopenAndRetryCanSucceed() async throws {
+        let fixture = try await WorkerRefreshFixture.make(drifts: 0, onDisk: true)
+        await fixture.worker.installRequestValidator { _ in
+            throw HarcHostError.publicationRecoveryRequired("SYNTHETIC-SECRET")
+        }
+        await fixture.worker.signal(fixture.request)
+        await fixture.worker.waitUntilIdle()
+        let expected = HarcHostProcessingDiagnostic(phase: .canonicalValidation,
+            cause: .hostPublicationRecoveryRequired).failure
+        let reopened = try await RecordingStore.onDisk(url: fixture.root.appendingPathComponent("diagnostic.sqlite"))
+        #expect(try await reopened.fetch(id: fixture.recordingID)?.processing.failure == expected)
+        #expect(await fixture.probe.transcriptions == 0)
+        await fixture.worker.installRequestValidator { try await fixture.probe.validate($0) }
+        await fixture.worker.signal(fixture.request)
+        await fixture.worker.waitUntilIdle()
+        #expect(try await reopened.fetch(id: fixture.recordingID)?.processing == .ready)
+        #expect(await fixture.probe.transcriptions == 1)
         await fixture.cleanup()
     }
 
@@ -584,7 +660,9 @@ struct HarcHostProcessingWorkerMetadataTests {
         await fixture.worker.waitUntilIdle()
         #expect(await calls.count == 1)
         #expect(await fixture.probe.transcriptions == 0)
-        #expect(try await fixture.store.fetch(id: fixture.recordingID)?.processing.state == .failedRecoverable)
+        let row = try #require(try await fixture.store.fetch(id: fixture.recordingID))
+        #expect(row.processing.state == .failedRecoverable)
+        #expect(row.processing.failure?.code == "host.processing.canonical_validation.host.canonical_hash_mismatch")
         await fixture.cleanup()
     }
 }
@@ -593,6 +671,8 @@ private actor WorkerRefreshProbe {
     let original: HostDurableProcessingRequest
     let bytes: Data
     let drifts: Int
+    let preparationError: ClientError?
+    let transcriptionError: ClientError?
     var preparations = 0
     var transcriptions = 0
     var validations = 0
@@ -602,10 +682,13 @@ private actor WorkerRefreshProbe {
     var deferValidation: Bool
 
     init(request: HostDurableProcessingRequest, bytes: Data, drifts: Int,
-         initiallyAllowed: Bool, deferAfterTranscription: Bool, deferValidation: Bool) {
+         initiallyAllowed: Bool, deferAfterTranscription: Bool, deferValidation: Bool,
+         preparationError: ClientError?, transcriptionError: ClientError?) {
         original = request
         self.bytes = bytes
         self.drifts = drifts
+        self.preparationError = preparationError
+        self.transcriptionError = transcriptionError
         self.resourcesAllowed = initiallyAllowed
         self.deferAfterTranscription = deferAfterTranscription
         self.deferValidation = deferValidation
@@ -628,7 +711,11 @@ private actor WorkerRefreshProbe {
         }
         #expect(admissions >= count)
     }
-    func prepare() -> String { preparations += 1; return "test-only-no-socket" }
+    func prepare() throws -> String {
+        preparations += 1
+        if preparations == 1, let preparationError { throw preparationError }
+        return "test-only-no-socket"
+    }
     func validate(_ id: CanonicalRecordingID) throws -> HostDurableProcessingRequest {
         validations += 1
         if deferValidation { throw HostCanonicalResourceDeferred.audioNotResident }
@@ -648,6 +735,7 @@ private actor WorkerRefreshProbe {
     }
     func transcribe() async throws -> TranscribeResult {
         transcriptions += 1
+        if transcriptions == 1, let transcriptionError { throw transcriptionError }
         if transcriptions <= drifts {
             // An unchanged final mode and unchanged bytes, but a new ctime.
             try await Task.sleep(for: .milliseconds(10))
@@ -667,7 +755,9 @@ private struct WorkerRefreshFixture: Sendable {
     let worker: HarcHostProcessingWorker
 
     static func make(drifts: Int, initiallyAllowed: Bool = true,
-                     deferAfterTranscription: Bool = false, deferValidation: Bool = false) async throws -> Self {
+                     deferAfterTranscription: Bool = false, deferValidation: Bool = false,
+                     onDisk: Bool = false, preparationError: ClientError? = nil,
+                     transcriptionError: ClientError? = nil) async throws -> Self {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("host-worker-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("canonical.wav")
@@ -688,7 +778,9 @@ private struct WorkerRefreshFixture: Sendable {
             startedAt: Date(), endedAt: Date(), title: "Worker fixture", transcriptText: nil)
         recording.processing = .pending
         recording.projection = .pending
-        let store = try await RecordingStore.inMemory()
+        let store = try await onDisk
+            ? RecordingStore.onDisk(url: root.appendingPathComponent("diagnostic.sqlite"))
+            : RecordingStore.inMemory()
         let inserted = try await store.upsert(recording)
         let recordingID = try #require(inserted.id)
         let database = await store.uncoordinatedDB
@@ -700,13 +792,13 @@ private struct WorkerRefreshFixture: Sendable {
             canonicalWAVURL: wav, canonicalPCMHash: hash, canonicalPCMFrames: 1, artifactIdentity: identity)
         let probe = WorkerRefreshProbe(request: request, bytes: bytes, drifts: drifts,
             initiallyAllowed: initiallyAllowed, deferAfterTranscription: deferAfterTranscription,
-            deferValidation: deferValidation)
+            deferValidation: deferValidation, preparationError: preparationError, transcriptionError: transcriptionError)
         let worker = HarcHostProcessingWorker(store: store,
             launcher: DaemonLauncher(binaryURL: root.appendingPathComponent("nonexistent"),
                 socketPath: root.appendingPathComponent("unused.sock").path,
                 logURL: root.appendingPathComponent("unused.log")),
             producerDeviceID: producer, diarize: false, vad: false, clientArtifactGrace: 0,
-            transcription: .init(prepare: { await probe.prepare() }, run: { _, _, _, _ in try await probe.transcribe() }),
+            transcription: .init(prepare: { try await probe.prepare() }, run: { _, _, _, _ in try await probe.transcribe() }),
             resourceAdmission: { _ in try await probe.admit() }, resourceDeferralDelay: 0.05,
             admissionSnapshot: {
                 HarcHostWorkAdmissionSnapshot(thermalPressure: .nominal, lowPowerModeEnabled: false,

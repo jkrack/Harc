@@ -105,7 +105,8 @@ enum HarcHostProcessingRequestValidation {
                 guard attempt == 0 else { throw error }
                 continue
             } catch {
-                throw HostProcessingWorkerError.canonicalRevalidationFailed
+                throw HostProcessingWorkerError.canonicalRevalidationFailed(
+                    HarcHostProcessingDiagnostic.Cause.classify(error))
             }
             try requireSameBinding(queued, fresh)
             do {
@@ -301,6 +302,7 @@ actor HarcHostProcessingWorker {
     }
 
     private func process(_ request: HostDurableProcessingRequest) async {
+        var phase = HarcHostProcessingDiagnostic.Phase.recordingLookup
         do {
             guard let recording = try await store.fetch(
                 canonicalID: request.canonicalRecordingID
@@ -334,24 +336,32 @@ actor HarcHostProcessingWorker {
                 return
             }
             // Admission is a resource gate only, never evidence of audio integrity.
+            phase = .resourceAdmission
             try await resourceAdmission(request)
+            phase = .daemonPreparation
             let socketPath = try await transcription.prepare()
 
             // Grace/admission and daemon startup can outlive metadata updates.
             // Refresh through signed receipt + exact WAV validation, never merely stat.
+            phase = .canonicalValidation
             let request = try await HarcHostProcessingRequestValidation.refresh(request, using: requestValidator)
             try Task.checkCancellation()
+            phase = .processingStart
             guard try await store.beginHostProcessingIfNotReady(id: recordingID) else { return }
             try Task.checkCancellation()
+            phase = .audioBeforeTranscription
             // No suspension between this strict check and the daemon request.
             try request.artifactIdentity.validatePathBinding(
                 at: request.canonicalWAVURL
             )
+            phase = .transcription
             let result = try await transcription.run(
                 socketPath, request.canonicalWAVURL.path, diarize, vad)
 
+            phase = .audioAfterTranscription
             try request.artifactIdentity.validatePathBinding(at: request.canonicalWAVURL)
             try Task.checkCancellation()
+            phase = .transcriptEncoding
             let transcript = SessionTranscript(
                 startedAt: recording.startedAt,
                 endedAt: recording.endedAt ?? recording.startedAt,
@@ -364,6 +374,7 @@ actor HarcHostProcessingWorker {
             transcriptEncoder.outputFormatting = [.sortedKeys]
             let structuredTranscriptData = try transcriptEncoder.encode(transcript)
 
+            phase = .transcriptStaging
             guard try await store.stageHostProcessedTranscriptIfNotReady(
                 recordingID: recordingID,
                 text: renderedText,
@@ -374,6 +385,7 @@ actor HarcHostProcessingWorker {
             // Bind every retained voice to the exact Host-produced JSON bytes,
             // canonical audio and this Host's public producer identity. Retention
             // alone grants neither enrollment nor a current review assignment.
+            phase = .speakerEvidence
             var publishedSpeakerEvidence: [Int: Data] = [:]
             for evidence in try Self.speakerEvidenceSnapshots(result,
                 canonicalID: request.canonicalRecordingID, canonicalPCMHash: request.canonicalPCMHash,
@@ -405,6 +417,7 @@ actor HarcHostProcessingWorker {
                     rows: rows
                 )
             }
+            phase = .speakerMatching
             var speakerDecisions: [Int: SpeakerObservationDecision] = [:]
             if let sourceDeviceID = recording.originID?.deviceID {
                 let recognitionRevision = try await store.publishedSpeakerRecognitionPack().revision
@@ -426,6 +439,7 @@ actor HarcHostProcessingWorker {
                     speakerDecisions[embedding.speakerIndex] = decision
                 }
             }
+            phase = .speakerOutcome
             let clusters = try Set(result.speakers.map(\.speaker)).map { index in
                 guard let boundedIndex = UInt32(exactly: index) else {
                     throw DomainValidationError.invalidState(reason: "Host transcript has an invalid speaker index")
@@ -440,8 +454,10 @@ actor HarcHostProcessingWorker {
                 producerDeviceID: producerDeviceID,
                 processingArtifactSHA256: Data(SHA256.hash(data: structuredTranscriptData)),
                 diarization: diarize ? .completed : .disabled, clusters: clusters)
+            phase = .audioBeforePublication
             try request.artifactIdentity.validatePathBinding(at: request.canonicalWAVURL)
             try Task.checkCancellation()
+            phase = .projectionPublication
             _ = try await store.publishHostProcessedProjectionIfNotReady(
                 recordingID: recordingID, speakerEvidence: publishedSpeakerEvidence,
                 speakerOutcome: speakerOutcome, structuredTranscriptData: structuredTranscriptData
@@ -458,7 +474,7 @@ actor HarcHostProcessingWorker {
         } catch {
             let remainsPending = await persistRecoverableFailure(
                 canonicalRecordingID: request.canonicalRecordingID,
-                underlyingError: error
+                diagnostic: HarcHostProcessingDiagnostic(phase: phase, error: error)
             )
             guard remainsPending, !Task.isCancelled else { return }
             if let storeError = error as? StoreError,
@@ -490,29 +506,22 @@ actor HarcHostProcessingWorker {
 
     private func persistRecoverableFailure(
         canonicalRecordingID: CanonicalRecordingID,
-        underlyingError: Error
+        diagnostic: HarcHostProcessingDiagnostic
     ) async -> Bool {
         FileHandle.standardError.write(Data(
-            "harc-host: canonical processing failed for \(canonicalRecordingID): \(underlyingError.localizedDescription)\n".utf8
+            diagnostic.logLine.utf8
         ))
         guard let recording = try? await store.fetch(
             canonicalID: canonicalRecordingID
         ), let recordingID = recording.id else { return false }
 
-        let failure = try? ProcessingFailure(
-            code: "host.processing_retry",
-            message: "Local processing did not finish and can be retried."
-        )
-        if let failure {
-            return (try? await store.markHostProcessingFailureIfNotReady(
-                recordingID: recordingID,
-                failure: failure
-            )) == true
-        }
-        return false
+        return (try? await store.markHostProcessingFailureIfNotReady(
+            recordingID: recordingID,
+            failure: diagnostic.failure
+        )) == true
     }
 
-    private nonisolated static func isAutomaticallyRetryable(
+    nonisolated static func isAutomaticallyRetryable(
         _ error: Error
     ) -> Bool {
         if let workerError = error as? HostProcessingWorkerError {
@@ -619,9 +628,9 @@ actor HarcHostProcessingWorker {
     }
 }
 
-private enum HostProcessingWorkerError: LocalizedError {
+enum HostProcessingWorkerError: LocalizedError {
     case canonicalBindingChanged
-    case canonicalRevalidationFailed
+    case canonicalRevalidationFailed(HarcHostProcessingDiagnostic.Cause)
 
     var errorDescription: String? {
         switch self {

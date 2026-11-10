@@ -955,3 +955,13 @@ space grant no integrity authority: signed evidence and the original full WAV/ha
 and race checks remain mandatory after admission. Resource deferral must preserve
 checkpoint, identity and retry budgets, while explicit receipt replay stays strict.
 Use injected residency/capacity in tests; never hydrate user recordings to test it.
+
+Host processing failures persist a bounded phase and typed cause in the existing
+ProcessingFailure code/message fields. Never log recording identifiers, paths,
+error descriptions, arbitrary NSError data or associated payloads at this boundary.
+Diagnostic classification must not change retry decisions: revalidation stays
+terminal, metadata races retain their bounded full-revalidation path, and resource
+deferral spends no retry budget. Validate with the app's
+HarcHostProcessingDiagnosticTests, HarcHostProcessingRequestValidationTests and
+HarcHostProcessingWorkerMetadataTests; synthetic fixtures do not qualify live Host
+recovery or real audio.
