@@ -681,6 +681,13 @@ The embedded helper scripts resolve their executable directory with
 Current Xcode toolchains may use `out/Products/Release` instead of the
 older architecture-specific directory.
 
+CI's Xcode lanes build with `build-for-testing`, then execute the same scheme,
+destination and products with `test-without-building`. Keep separate finite build
+and execution budgets so compilation cannot consume result-finalization time.
+A timeout or nonzero exit still fails; textual test passes never replace a sealed
+xcresult and execution gate. Preserve build and execution diagnostics. Validate
+flow and budgets with `test_mobile_stage_budgets.py` and `test_ci_job_partition.py`.
+
 CI's Xcode lanes must also pass `scripts/check-xcode-test-results.py` against
 the summary and test tree exported by `xcresulttool`. Zero tests, skipped or
 expected-failure tests, missing required bundles/UI cases, and inconsistent
