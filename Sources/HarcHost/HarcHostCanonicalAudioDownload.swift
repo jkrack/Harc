@@ -65,7 +65,8 @@ public actor HarcHostCanonicalAudioReader {
         revision: EntityRevision,
         fileURL: URL,
         canonicalPCMSHA256: CanonicalPCMHash,
-        totalCanonicalFrames: UInt64
+        totalCanonicalFrames: UInt64,
+        pathMetadata: (String) throws -> stat? = HarcHostCanonicalAudioReader.pathMetadata
     ) throws {
         guard fileURL.isFileURL,
               fileURL.path.hasPrefix("/"),
@@ -74,6 +75,16 @@ public actor HarcHostCanonicalAudioReader {
             throw HarcHostLibraryError.canonicalAudioUnavailable
         }
         path = fileURL.path
+        // Metadata only: opening a dataless iCloud placeholder can block while
+        // macOS hydrates it, before the client receives a stream descriptor.
+        // This is admission, not content proof; all identity/hash checks remain.
+        guard let entry = try pathMetadata(path),
+              (entry.st_mode & S_IFMT) == S_IFREG,
+              entry.st_uid == geteuid() else {
+            throw HarcHostLibraryError.canonicalAudioUnavailable
+        }
+        try Self.requireResident(entry)
+        try Task.checkCancellation()
         let opened = Darwin.open(
             path,
             O_RDONLY | O_CLOEXEC | O_NOFOLLOW
@@ -89,6 +100,7 @@ public actor HarcHostCanonicalAudioReader {
                   information.st_uid == geteuid() else {
                 throw HarcHostLibraryError.canonicalAudioUnavailable
             }
+            try Self.requireResident(information)
             identity = try FileIdentity(information)
             let layout = try HostCanonicalWAVLayout(
                 totalFrames: totalCanonicalFrames
@@ -155,6 +167,18 @@ public actor HarcHostCanonicalAudioReader {
         return data
     }
 
+    static func pathMetadata(_ path: String) throws -> stat? {
+        var information = stat()
+        guard lstat(path, &information) == 0 else { return nil }
+        return information
+    }
+
+    private static func requireResident(_ information: stat) throws {
+        guard information.st_flags & UInt32(SF_DATALESS) == 0 else {
+            throw HarcHostLibraryError.canonicalAudioNotResident
+        }
+    }
+
     private static func hashAndValidate(
         descriptor: Int32,
         layout: HostCanonicalWAVLayout,
@@ -173,6 +197,7 @@ public actor HarcHostCanonicalAudioReader {
         representationHasher.update(data: header)
         var offset = HostCanonicalWAVLayout.headerByteCount
         while offset < layout.fileByteCount {
+            try Task.checkCancellation()
             let remaining = layout.fileByteCount - offset
             let count = min(1 * 1_024 * 1_024, Int(remaining))
             let bytes = try readExactly(
@@ -205,6 +230,9 @@ public actor HarcHostCanonicalAudioReader {
               try FileIdentity(pathInformation) == expected else {
             throw HarcHostLibraryError.canonicalAudioChanged
         }
+        try requireResident(openInformation)
+        try requireResident(pathInformation)
+        try Task.checkCancellation()
     }
 
     private static func readExactly(

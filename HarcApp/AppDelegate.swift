@@ -679,7 +679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     /// Sparkle. Held for the app's lifetime; nil under UI testing.
     private var updaterController: SPUStandardUpdaterController?
     private let updaterDelegate = HarcUpdaterDelegate()
-    /// Windows that currently require Harc to behave as a regular app. A set
+    /// Managed windows awaiting presentation/focus completion. A set
     /// (rather than a presentation count) makes close/reopen idempotent for
     /// retained controllers such as the Library window.
     private var activeManagedWindows: Set<ObjectIdentifier> = []
@@ -692,6 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private static let minWordsToSummarize = 10
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        refreshActivationPolicy()
         if !isUITesting {
             Task.detached(priority: .utility) {
                 let defaults = UserDefaults.standard
@@ -1054,8 +1055,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openLibrary() }
-        return true
+        // A Dock click always returns to the Library, even when Settings or
+        // another auxiliary window is still visible. Reuse its controller.
+        openLibrary()
+        return false
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Closing the workspace must not stop recording or the resident Host.
+        false
     }
 
     private func trackManagedWindow(_ window: NSWindow?) {
@@ -1071,7 +1079,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             object: window,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // The observer is delivered on the main queue. Remove tracking
+            // before returning: a queued Task could otherwise remove a window
+            // that has already been reopened in the meantime.
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 self.activeManagedWindows.remove(identifier)
                 if let observer = self.managedWindowCloseObservers.removeValue(
@@ -1085,81 +1096,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         managedWindowCloseObservers[identifier] = observer
     }
 
-    /// Bring a managed window to the user without fighting macOS 26's
-    /// cooperative activation. Active app: normal key-and-front + activate.
-    /// Background (e.g. the post-stop Land path): activation may be DENIED —
-    /// and makeKeyAndOrderFront from a denied app never draws the window at
-    /// all. orderFrontRegardless is the sanctioned background move: the
-    /// window appears above the user's app, focus and menu bar stay where
-    /// the user is, and the first click on the window activates Harc
-    /// normally (policy is already .regular by then, so the menu follows).
+    /// Register the window and its regular-app policy before it becomes key.
+    /// Activation is cooperative: a background presentation may remain inactive
+    /// until the user chooses it, but must never deliberately deactivate Harc.
     private func orderManagedWindowFront(_ window: NSWindow) {
-        if NSApp.isActive {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate()
-        } else {
-            NSRunningApplication.current.activate(
-                options: [.activateAllWindows]
-            )
-            window.makeKeyAndOrderFront(nil)
-            // Activation is asynchronous and may still be denied; regardless,
-            // the window itself must appear.
+        trackManagedWindow(window)
+        installMainMenuIfNeeded()
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        if !NSApp.isActive {
             window.orderFrontRegardless()
+        }
+        // Policy/menu registration is asynchronous. Finish only for this still
+        // open window and only if Harc owns focus, never a later unrelated window
+        // or an app the user switched to while the request was pending.
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window,
+                  self.activeManagedWindows.contains(ObjectIdentifier(window)),
+                  window.isVisible, NSApp.isActive else { return }
+            self.installMainMenuIfNeeded()
+            window.makeKeyAndOrderFront(nil)
         }
     }
 
     private func refreshActivationPolicy() {
-        let desired: NSApplication.ActivationPolicy = activeManagedWindows.isEmpty
-            ? .accessory
-            : .regular
-        guard NSApp.activationPolicy() != desired else { return }
-        if desired == .regular {
-            installMainMenuIfNeeded()
+        // Dock and Cmd-Tab presence belongs to the running app, not its windows.
+        installMainMenuIfNeeded()
+        if NSApp.activationPolicy() != .regular {
             NSApp.setActivationPolicy(.regular)
-            if NSApp.isActive {
-                // accessory→regular while already the active app: the system
-                // keeps the previous app's menu bar until our activation state
-                // visibly changes. Bounce activation — deactivate now,
-                // re-activate on a later runloop turn — so the menu bar picks
-                // us up.
-                NSApp.deactivate()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NSApp.activate()
-                    NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
-                        .makeKeyAndOrderFront(nil)
-                }
-            } else {
-                // Promoted from the background (the post-stop Land path).
-                // Never call deactivate() here: deactivating an app that
-                // isn't active marks it user-deactivated, and macOS 26's
-                // cooperative activation then DENIES the activate() that
-                // follows — the library window ends up floating over the
-                // previous app with that app's menu bar still installed.
-                NSApp.activate()
-                NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
-                    .makeKeyAndOrderFront(nil)
-            }
-        } else {
-            NSApp.setActivationPolicy(.accessory)
         }
     }
 
-    /// The app runs as an accessory (LSUIElement) with only a MenuBarExtra-style
-    /// UI. Its Settings-only SwiftUI scene can replace the managed-window
-    /// menu with a minimal menu lacking Edit. Restore the resident app's menu
-    /// before handling events so text editing retains standard shortcuts.
+    /// The Settings-only SwiftUI scene can replace the app menu. Restore Harc's
+    /// commands even when no Library window is open.
     func applicationWillUpdate(_ notification: Notification) {
-        guard !activeManagedWindows.isEmpty else { return }
         installMainMenuIfNeeded()
     }
 
+    /// SwiftUI can supply a complete Edit menu while still replacing Harc's
+    /// File and Settings commands. Select All alone is not our menu identity.
+    static func hasManagedWindowCommands(_ menu: NSMenu?) -> Bool {
+        guard let menu,
+              let edit = menu.item(withTitle: "Edit")?.submenu,
+              let file = menu.item(withTitle: "File")?.submenu,
+              let app = menu.items.first?.submenu else { return false }
+        return edit.items.contains { $0.action == #selector(NSText.selectAll(_:)) }
+            && file.items.contains { $0.action == #selector(NSWindow.performClose(_:)) }
+            && file.items.contains { $0.action == #selector(presentImportOpenPanel(_:)) }
+            && app.items.contains { $0.action == #selector(harcShowSettingsWindow(_:)) }
+    }
+
     private func installMainMenuIfNeeded() {
-        // A Settings-only SwiftUI scene can replace this menu after launch.
-        // Check the installed menu, not whether we installed one in the past.
-        if let edit = NSApp.mainMenu?.item(withTitle: "Edit")?.submenu,
-           edit.items.contains(where: { $0.action == #selector(NSText.selectAll(_:)) }) {
-            return
-        }
+        guard !Self.hasManagedWindowCommands(NSApp.mainMenu) else { return }
 
         let main = NSMenu()
 
@@ -3750,7 +3739,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     @objc private func openSettings() {
         if let controller = settingsWindow, let window = controller.window {
-            controller.showWindow(nil)
             orderManagedWindowFront(window)
             return
         }
@@ -3784,8 +3772,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
         }
 
-        controller.showWindow(nil)
-        trackManagedWindow(window)
         orderManagedWindowFront(window)
     }
 
@@ -3868,7 +3854,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     private func showWelcome(markAsFirstRun: Bool) {
         if let controller = welcomeWindow, let window = controller.window {
-            controller.showWindow(nil)
             orderManagedWindowFront(window)
             return
         }
@@ -3946,8 +3931,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
         }
 
-        controller.showWindow(nil)
-        trackManagedWindow(window)
         orderManagedWindowFront(window)
     }
 
@@ -3965,13 +3948,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
 
     @objc private func openLibrary() {
         if let existing = harcWindow {
-            existing.showWindow(nil)
             guard let window = existing.window else { return }
             // Harc retains the Library controller after close. Re-register
-            // the reopened window so the accessory app is promoted back to
-            // `.regular` and its application menu (including Settings) is
-            // restored.
-            trackManagedWindow(window)
+            // the reopened window so pending focus work and its application
+            // menu (including Settings) are restored.
             orderManagedWindowFront(window)
             return
         }
@@ -4036,13 +4016,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
         )
         harcWindow = controller
-        controller.showWindow(nil)
         if desktopClientRuntime != nil {
             controller.window?.title = "Harc — On This Mac"
         }
-        controller.window?.makeKeyAndOrderFront(nil)
-        trackManagedWindow(controller.window)
-        NSApp.activate()
+        guard let window = controller.window else { return }
+        orderManagedWindowFront(window)
     }
 
     /// Rebuilds any missing/stale local transcript data, then stages a durable
@@ -4238,7 +4216,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         if let existing = desktopHostLibraryWindow,
            let window = existing.window {
             runtime.libraryCoordinator.refresh()
-            existing.showWindow(nil)
             orderManagedWindowFront(window)
             return
         }
@@ -4256,8 +4233,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 self?.desktopHostLibraryWindow = nil
             }
         }
-        controller.showWindow(nil)
-        trackManagedWindow(window)
         orderManagedWindowFront(window)
         runtime.libraryCoordinator.refresh()
     }
@@ -4272,7 +4247,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         }
         if let existing = desktopClientPairingWindow,
            let window = existing.window {
-            existing.showWindow(nil)
             orderManagedWindowFront(window)
             return
         }
@@ -4290,8 +4264,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 self?.desktopClientPairingWindow = nil
             }
         }
-        controller.showWindow(nil)
-        trackManagedWindow(window)
         orderManagedWindowFront(window)
     }
 
@@ -4423,7 +4395,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         if let existing = hostPairingWindow, let window = existing.window {
-            existing.showWindow(nil)
             orderManagedWindowFront(window)
             return
         }
@@ -4439,8 +4410,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 self?.hostPairingWindow = nil
             }
         }
-        controller.showWindow(nil)
-        trackManagedWindow(window)
         orderManagedWindowFront(window)
     }
 
@@ -4750,24 +4719,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 throw error
             }
 
+            await worker.installRequestValidator { canonicalID in
+                try await runtime.validatedProcessingRequest(canonicalRecordingID: canonicalID, backgroundOnly: true)
+            }
+
             // `processing` journal rows are already durably handed off and do
             // not replay the scheduler during publication recovery. Rebuild
-            // their exact path/inode-bound requests from HostDB explicitly.
+            // metadata-only expectations without opening or hydrating audio.
+            // The admitted worker performs complete validation just before use.
             let backlog: [Recording]
             do {
                 backlog = try await runtime.storageRuntime.recordingStore
                     .hostProcessingBacklog()
             } catch {
+                await worker.shutdown()
                 await mcpServer.shutdown()
                 await runtime.shutdown()
                 throw error
             }
             for recording in backlog {
                 do {
-                    let request = try await runtime.validatedProcessingRequest(
+                    let request = try await runtime.processingRequestExpectation(
                         canonicalRecordingID: recording.canonicalID
                     )
-                    await worker.signal(request)
+                    await worker.signal(request, isRecovery: true)
                 } catch {
                     FileHandle.standardError.write(Data(
                         "harc-host: processing recovery failed for \(recording.canonicalID): \(error.localizedDescription)\n".utf8

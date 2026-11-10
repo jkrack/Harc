@@ -10,6 +10,15 @@ import Testing
 
 @Suite("Post-session gRPC error mapper")
 struct PostSessionGRPCErrorMapperTests {
+    @Test("offloaded audio reports retryable local recovery without file details")
+    func offloadedAudioMapping() {
+        let error = HarcPostSessionGRPCErrorMapper.map(
+            HarcHostLibraryError.canonicalAudioNotResident)
+        #expect(error.code == .unavailable)
+        #expect(error.message == "This recording’s audio is not downloaded on the Host Mac. Download it there, then retry playback.")
+        #expect(error.cause == nil)
+    }
+
     @Test("authentication currentness failures are indistinguishable")
     func authenticationMappings() {
         assertMapped(

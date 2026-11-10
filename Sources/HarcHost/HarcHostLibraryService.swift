@@ -16,6 +16,7 @@ public enum HarcHostLibraryError: Error, Equatable, Sendable {
     case invalidSearchQuery
     case recordingRevisionConflict
     case canonicalAudioUnavailable
+    case canonicalAudioNotResident
     case invalidResumeOffset
     case canonicalAudioChanged
     case metadataMutationUnavailable

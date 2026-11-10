@@ -30,6 +30,20 @@ struct ExportInputBuilderTests {
         #expect(input.tags == ["Acme"])
     }
 
+    @Test("loaded snapshot avoids another sidecar read and preserves turn ordering")
+    func usesLoadedSnapshot() throws {
+        let source = Recording(wavPath: "/tmp/fake.wav", jsonPath: try fixtureURL("three-speakers").path,
+                               startedAt: Date())
+        let snapshot = try #require(ExportInputBuilder.loadTranscript(from: source))
+        let expected = ExportInputBuilder.build(from: source)
+        let missing = Recording(wavPath: "/tmp/fake.wav", jsonPath: "/tmp/no-sidecar-\(UUID()).json",
+                                startedAt: source.startedAt, transcriptText: "stored fallback")
+        let actual = ExportInputBuilder.build(from: missing, transcript: snapshot)
+        #expect(actual.segments == expected.segments)
+        let fallback = ExportInputBuilder.build(from: source, transcript: nil)
+        #expect(fallback.segments.isEmpty)
+    }
+
     @Test("single-speaker JSON still emits attributed segments")
     func singleSpeaker() throws {
         let url = try fixtureURL("single-speaker")

@@ -154,6 +154,20 @@ final class HostStagingDirectory: @unchecked Sendable {
         return String(components[1])
     }
 
+    /// No content open: cloud-backed objects must be deferred before a reader
+    /// can trigger hydration. This does not authenticate the staged bytes.
+    func requireResidentObject(named name: String) throws {
+        try validateHierarchy()
+        try Self.requireSafeObjectName(name)
+        var information = stat()
+        guard fstatat(objectsDescriptor, name, &information, AT_SYMLINK_NOFOLLOW) == 0 else {
+            throw HostCanonicalResourceDeferred.audioNotResident
+        }
+        try Self.validateOwnedRegularFile(information)
+        try HostCanonicalResourceAdmission.requireResidentMetadata(information)
+        try validateHierarchy()
+    }
+
     func createExclusiveObject(named name: String) throws -> Int32 {
         try validateHierarchy()
         try Self.requireSafeObjectName(name)

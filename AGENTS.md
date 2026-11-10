@@ -24,8 +24,12 @@ Flag the user before violating these product decisions.
   boundary; no unattended export or implicit cloud destination is allowed.
 - **Apple Silicon first.** The package currently targets macOS v26 in
   `Package.swift`; verify deployment-target changes against `project.yml`.
-- **Menu bar resident.** The primary recording surface is the status item and
-  compact panel, with the Library as the fuller workspace.
+- **Desktop app with resident recording controls.** Keep Harc in the Dock and
+  Cmd-Tab while running, including with all windows closed. A Dock reopen
+  presents the Library even when Settings is visible. Closing windows must not
+  quit Harc or stop capture/Host work; retain the status item and compact panel.
+  Validate with `HarcManagedWindowMenuTests` and the app UI regression
+  `testDockReopenKeepsRegularAppAndReturnsToLibrary`.
 - **Long-form reliability over live latency.** Durable audio and recoverable
   stop/failure states matter more than live partial transcript UI.
 
@@ -514,6 +518,15 @@ must match its model provenance; queued recording revisions protect concurrent
 edits. Validate archive orchestration with `ArchiveReprocessorTests` and
 `ArchivePublishingTests`, then build the Xcode app target.
 
+Library audio download checks local residency with `lstat` before opening the
+canonical file. Offloaded audio fails with a retryable, path-free recovery
+message rather than implicitly waiting for cloud hydration. This admission is
+not a residency lock: eviction after the check remains a filesystem race.
+Preserve exact header, PCM hash, representation hash, and retained-file identity
+checks. Mobile playback must preserve gRPC status instead of NSError's generic
+“error 1.” Validate with `HarcHostCanonicalAudioDownloadTests`,
+`PostSessionGRPCErrorMapperTests`, and `HarcTransportErrorDiagnosticTests`.
+
 ## Common Validation
 
 Voice enrollment uses the shared `SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs`
@@ -717,7 +730,14 @@ site, and open the pane in a real build.
 
 The Settings-only SwiftUI scene can replace the resident app's main menu.
 Check the installed Edit menu before handling events; a one-time installation
-flag does not prove editing shortcuts still exist. The UI suite checks Select
+flag does not prove editing shortcuts still exist. Validate Harc's Settings,
+Import and Close commands as well as Select All: SwiftUI can supply Edit while
+replacing the app menu. Promote and track managed windows before ordering them
+front; never deactivate and asynchronously reactivate to repair menus.
+Transcript reads and initial indexing run off the main actor, coalesce identical
+pending snapshots, and reject results after selection changes or dismissal.
+Validate with `HarcManagedWindowMenuTests`, the repeated Library reopen UI case,
+and `WordIndexTests|TranscriptDocumentTests|ExportInputBuilderTests`. The UI suite checks Select
 All in search and transcript replacement, undo/redo, autosave and relaunch.
 
 A newly stopped recording can be selected before its Library row arrives.
@@ -912,3 +932,36 @@ verified receipt/Host-bound metadata evidence with completed durability barriers
 An empty eligible queue is never proof of delivery; preserve errors for blocked,
 missing, corrupt or foreign evidence. The desktop speaker-review coordinator
 suite includes deterministic inventory and post-commit cleanup fault regressions.
+
+Canonical ctime-only metadata drift may be used after a fresh full WAV/hash
+proof on the same device/inode/owner/mode/link count/length plus exact signed
+manifest and retained-receipt authentication. This is an ephemeral read proof,
+not automatic repair: original journal identities, receipts and binding chains
+remain unchanged. Every proof stays immutable and checks its captured ctime
+around reads and actor hops. Device/inode replacements still need explicit
+owner-approved moved-library recovery. Host processing refreshes after queue
+delays and discards transcription if its pre-read identity changes. Validate
+with `CanonicalIngestServiceTests`, `CanonicalWAVAssemblerTests` and the app
+Host processing tests. Synthetic metadata tests do not qualify eviction,
+rehydration or real iCloud/network endurance.
+
+Host startup must not hydrate historical iCloud audio before serving. Queue only
+journal metadata before listener readiness, exclude completed processing handoffs
+from publication replay, and recover remaining publications through one owned,
+cancellable post-listener scheduler. Processing backlog entries are expectations,
+never proofs. Before model preparation and every background data phase, defer
+dataless files and unverified/insufficient physical capacity. Residency and free
+space grant no integrity authority: signed evidence and the original full WAV/hash
+and race checks remain mandatory after admission. Resource deferral must preserve
+checkpoint, identity and retry budgets, while explicit receipt replay stays strict.
+Use injected residency/capacity in tests; never hydrate user recordings to test it.
+
+Host processing failures persist a bounded phase and typed cause in the existing
+ProcessingFailure code/message fields. Never log recording identifiers, paths,
+error descriptions, arbitrary NSError data or associated payloads at this boundary.
+Diagnostic classification must not change retry decisions: revalidation stays
+terminal, metadata races retain their bounded full-revalidation path, and resource
+deferral spends no retry budget. Validate with the app's
+HarcHostProcessingDiagnosticTests, HarcHostProcessingRequestValidationTests and
+HarcHostProcessingWorkerMetadataTests; synthetic fixtures do not qualify live Host
+recovery or real audio.

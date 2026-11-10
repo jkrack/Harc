@@ -176,6 +176,20 @@ final class HostCanonicalDirectory: @unchecked Sendable {
         return true
     }
 
+    /// Advisory residency only. Never opens the file or replaces its later
+    /// signed-content/identity proof; all existing path safety checks apply.
+    func requireResidentFile(named name: String) throws {
+        try validateHierarchy()
+        try Self.requireSafeChildName(name)
+        var information = stat()
+        guard fstatat(descriptor, name, &information, AT_SYMLINK_NOFOLLOW) == 0 else {
+            throw HostCanonicalResourceDeferred.audioNotResident
+        }
+        try Self.validateOwnedRegularFile(information)
+        try HostCanonicalResourceAdmission.requireResidentMetadata(information)
+        try validateHierarchy()
+    }
+
     func createExclusiveFile(
         named name: String,
         flags: Int32 = O_WRONLY,
@@ -660,6 +674,10 @@ struct HostCanonicalPublicationPaths: Equatable, Sendable {
 
     func entryExists(at url: URL) throws -> Bool {
         try trustedDirectory.entryExists(named: childName(for: url))
+    }
+
+    func requireResidentFile(at url: URL) throws {
+        try trustedDirectory.requireResidentFile(named: childName(for: url))
     }
 
     func createExclusiveFile(at url: URL) throws -> Int32 {

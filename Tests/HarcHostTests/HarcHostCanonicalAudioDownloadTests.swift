@@ -1,11 +1,46 @@
 import CryptoKit
 import Foundation
+import Darwin
 import HarcDomain
 import Testing
 @testable import HarcHost
 
 @Suite("Host canonical audio download")
 struct HarcHostCanonicalAudioDownloadTests {
+    @Test("offloaded metadata rejects before opening a nonexistent fixture path")
+    func offloadedAdmissionDoesNotOpen() throws {
+        let fixture = try AudioDownloadFixture()
+        defer { fixture.remove() }
+        let missing = fixture.directory.appendingPathComponent("never-opened.wav")
+        var placeholder = stat()
+        placeholder.st_mode = mode_t(S_IFREG | 0o600)
+        placeholder.st_uid = geteuid()
+        placeholder.st_flags = UInt32(SF_DATALESS)
+        #expect(throws: HarcHostLibraryError.canonicalAudioNotResident) {
+            _ = try HarcHostCanonicalAudioReader(
+                canonicalID: fixture.canonicalID, revision: .initial,
+                fileURL: missing, canonicalPCMSHA256: fixture.pcmHash,
+                totalCanonicalFrames: fixture.totalFrames,
+                pathMetadata: { _ in placeholder }
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: missing.path))
+    }
+
+    @Test("resident admission does not bypass PCM hash verification")
+    func wrongHashFailsClosed() throws {
+        let fixture = try AudioDownloadFixture()
+        defer { fixture.remove() }
+        let wrongHash = try CanonicalPCMHash(Data(repeating: 0, count: 32))
+        #expect(throws: HarcHostLibraryError.canonicalAudioChanged) {
+            _ = try HarcHostCanonicalAudioReader(
+                canonicalID: fixture.canonicalID, revision: .initial,
+                fileURL: fixture.url, canonicalPCMSHA256: wrongHash,
+                totalCanonicalFrames: fixture.totalFrames
+            )
+        }
+    }
+
     @Test("reader verifies representation and supports bounded resume")
     func verifiedReadAndResume() async throws {
         let fixture = try AudioDownloadFixture()

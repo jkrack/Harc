@@ -141,6 +141,9 @@ extension HarcHostStore {
         }
     }
 
+    /// `artifactIdentity` is the original effective publication identity, not
+    /// the ephemeral descriptor proof used by RecordingStore. Keep this exact
+    /// comparison transactional; metadata revalidation never rewrites it.
     func persistCanonicalCommitLinkage(
         uploadID: UploadID,
         canonicalRecordingID: CanonicalRecordingID,
