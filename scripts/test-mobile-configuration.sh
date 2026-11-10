@@ -35,6 +35,7 @@ TEST_OPTIONS=("${XCODE_OPTIONS[@]}" \
   -only-testing:HarcMobileAppTests/HarcMobileFinalizationRecoveryTests \
   -only-testing:HarcMobileAppTests/HarcMobileUploadPreparationTests \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLocalLibraryIsReachableWithoutHost \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRefreshStatusProbePreservesPredicateAndRedactsLabels \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSyncDetailsAreDiscoverableWithoutHostOrRecording \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromLibraryRootControl \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromSyncControl \
@@ -66,6 +67,7 @@ python3 scripts/check-xcode-test-results.py \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
+  --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRefreshStatusProbePreservesPredicateAndRedactsLabels \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLibraryDaySummaryRemainsReadableAtLargestText \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testDequeuedReconfigurationCheckpointFailureReleasesEveryCaller \

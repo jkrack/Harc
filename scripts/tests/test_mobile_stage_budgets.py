@@ -138,11 +138,17 @@ print(Path('summary.json' if sys.argv[4] == 'summary' else 'tree.json').read_tex
     def test_timeout_change_preserves_exact_selection_and_gate_requirements(self):
         # Baseline 1dd2ae5; unrelated test-selection edits need separate review.
         source = SCRIPT.read_text()
+        diagnostic = ('HarcMobileUITests/HarcMobileReleaseReadinessUITests/'
+                      'testRefreshStatusProbePreservesPredicateAndRedactsLabels')
         for pattern, expected in [
             (r'-only-testing:([^\s\\]+)', '407998521d470d814d8c6a2715fa2f4c88d4cbdcbe7bff82ee12bb582bc5b220'),
             (r'--require-test ([^\s\\]+)', '2cbd496ce3a41e5dd790c52320aee39ebb22ae4b8c9ede201080b71836ffb24c'),
         ]:
-            self.assertEqual(hashlib.sha256('\n'.join(re.findall(pattern, source)).encode()).hexdigest(), expected)
+            selected = re.findall(pattern, source)
+            self.assertEqual(selected.count(diagnostic), 1)
+            # Reviewed diagnostic addition; all original entries/order stay pinned.
+            original = [item for item in selected if item != diagnostic]
+            self.assertEqual(hashlib.sha256('\n'.join(original).encode()).hexdigest(), expected)
 
 
 if __name__ == '__main__':
