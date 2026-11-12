@@ -7,7 +7,7 @@ import HarcPresenceUI
 /// - hovered: expands to 52pt with Stop and Discard after a 120ms dwell,
 ///   so a cursor crossing the top of the screen doesn't trigger it
 /// - mic silent: amber ring + label when ~2.4s of frames sit near zero
-/// - stopping: spinner · "Saving m:ss → Library"
+/// - stopping: spinner · "Finishing m:ss → Library"
 /// - discarded: "Discarded m:ss" · Undo · countdown
 ///
 /// Hosted by a non-activating panel (RecordingIslandPanel in the app
@@ -31,7 +31,7 @@ public struct RecordingIslandView: View {
         Group {
             if let countdown = bridge.discardCountdown {
                 discardedPill(countdown)
-            } else if bridge.recordingStopInFlight {
+            } else if bridge.recordingStopInFlight || recordingState.isStopping {
                 stoppingPill
             } else if recordingState.isRecording {
                 if model.expanded {
@@ -183,7 +183,7 @@ public struct RecordingIslandView: View {
                 showsSymbol: false
             )
             .accessibilityHidden(true)
-            Text("Saving \(elapsedString) → Library")
+            Text(finishingText)
                 .font(.harcCaption)
                 .foregroundStyle(.white.opacity(0.85))
         }
@@ -222,9 +222,9 @@ public struct RecordingIslandView: View {
 
     // MARK: - Pieces
 
-    private var elapsedString: String {
-        guard let startedAt = recordingState.recordingStartedAt else { return "Recording" }
-        return ElapsedFormatter.string(since: startedAt)
+    private var finishingText: String {
+        guard let elapsed = recordingState.finishingElapsedText else { return "Finishing → Library" }
+        return "Finishing \(elapsed) → Library"
     }
 
     private var microphoneLevel: Double {
@@ -235,7 +235,7 @@ public struct RecordingIslandView: View {
     private func elapsedText(font: Font) -> some View {
         if let startedAt = recordingState.recordingStartedAt {
             TimelineView(.periodic(from: startedAt, by: 1)) { _ in
-                Text(ElapsedFormatter.string(since: startedAt))
+                Text(recordingState.elapsedText())
                     .font(font)
                     .monospacedDigit()
                     .foregroundStyle(.white)

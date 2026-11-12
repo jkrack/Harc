@@ -18,7 +18,7 @@ struct RecordCardView: View {
 
     var body: some View {
         Group {
-            if bridge.recordingStopInFlight || isIdentifying {
+            if isFinishing || isIdentifying {
                 finishingCard
             } else if recordingState.isRecording || recordingState.isPreparing {
                 recordingCard
@@ -29,6 +29,10 @@ struct RecordCardView: View {
         .padding(.horizontal, HarcSpacing.md)
         .padding(.top, HarcSpacing.md)
         .padding(.bottom, HarcSpacing.xs)
+    }
+
+    private var isFinishing: Bool {
+        bridge.recordingStopInFlight || recordingState.isStopping
     }
 
     private var isIdentifying: Bool {
@@ -138,7 +142,7 @@ struct RecordCardView: View {
                 Spacer(minLength: 4)
                 if let startedAt = recordingState.recordingStartedAt {
                     TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                        Text(ElapsedFormatter.string(since: startedAt, now: context.date))
+                        Text(recordingState.elapsedText(at: context.date))
                             .font(.system(size: 17, weight: .semibold))
                             .monospacedDigit()
                     }
@@ -226,9 +230,14 @@ struct RecordCardView: View {
             )
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
-                Text(bridge.recordingStopInFlight ? "Saving…" : "Identifying speakers…")
+                Text(isFinishing ? "Finishing…" : "Identifying speakers…")
                     .font(.harcBody)
-                if let last = recordingState.lastResult {
+                if isFinishing {
+                    if let elapsed = recordingState.finishingElapsedText {
+                        Text(elapsed)
+                            .font(.harcMono)
+                    }
+                } else if let last = recordingState.lastResult {
                     Text("\(last.wavURL.deletingPathExtension().lastPathComponent) saved to disk")
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)

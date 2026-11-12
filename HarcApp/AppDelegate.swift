@@ -163,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             // flag is first set inside the Task below, a busy main actor can
             // leave the live controls on screen after the click appears to do
             // nothing.
+            self.state.markStopRequested()
             self.bridge.beginRecordingStop()
             if self.state.isPreparing && !self.state.isRecording {
                 self.stopRequestedDuringStart = true
@@ -2224,6 +2225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         } else {
             guard !bridge.recordingStopInFlight else { return }
         }
+        state.markStopRequested()
         // Stop pressed while the start is still in flight: stopping now
         // would interleave with `session.start()` at its suspension points
         // and close the writer under the live session — the UI would show
@@ -3976,6 +3978,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             return
         }
         let libraryVM = LibraryViewModel(store: store)
+        // Use only an identity already owned by the running capture runtime.
+        // Rendering the Library must never create or recover credentials.
+        libraryVM.localOriginDeviceID = desktopClientRuntime?.identity.deviceID
         libraryVM.loadOriginDeviceLabels = { [weak self] in
 #if DEBUG
             if self?.isUITesting == true,

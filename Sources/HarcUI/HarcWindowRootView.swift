@@ -1166,7 +1166,7 @@ public struct HarcWindowRootView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let deviceID = rec.originID?.deviceID {
-                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Another device")
+                    Text(libraryVM.originDeviceLabel(for: deviceID))
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1380,7 +1380,7 @@ public struct HarcWindowRootView: View {
             FileInspectorSection(recording: recording)
             if let deviceID = recording.originID?.deviceID {
                 Section("Recording origin") {
-                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Another device")
+                    LabeledContent("Device", value: libraryVM.originDeviceLabel(for: deviceID))
                     LabeledContent("Device ID", value: deviceID.description)
                         .textSelection(.enabled)
                 }
