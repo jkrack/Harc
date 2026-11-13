@@ -39,18 +39,18 @@ struct LiveTranscriptPane: View {
     private var header: some View {
         HStack(spacing: HarcSpacing.sm) {
             HarcPresenceBlob(
-                state: .recording,
+                state: recordingState.isStopping ? .saving : .recording,
                 size: .mini,
                 showsSymbol: false
             )
             .accessibilityHidden(true)
-            Text("Recording")
+            Text(recordingState.isStopping ? "Finishing…" : "Recording")
                 .font(HarcTideStyle.title)
             // TimelineView rather than a Timer: the pane only exists while
             // recording, so its clock should start and stop with it.
-            if let start = recordingState.recordingStartedAt {
+            if recordingState.recordingStartedAt != nil {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(ElapsedFormatter.string(since: start, now: context.date))
+                    Text(recordingState.elapsedText(at: context.date))
                         .font(HarcTideStyle.numeral.monospacedDigit())
                         .foregroundStyle(.primary)
                 }
@@ -73,13 +73,15 @@ struct LiveTranscriptPane: View {
         VStack(spacing: HarcSpacing.md) {
             Spacer()
             HarcPresenceBlob(
-                state: .recording,
+                state: recordingState.isStopping ? .saving : .recording,
                 size: .standard
             )
             .accessibilityHidden(true)
-            Text("Transcribing as you record")
+            Text(recordingState.isStopping ? "Finishing your recording" : "Transcribing as you record")
                 .font(.harcTitle.weight(.semibold))
-            Text("Text appears within a few seconds and firms up as each chunk finishes. The full transcript is saved when you stop.")
+            Text(recordingState.isStopping
+                ? "Completing audio and transcript processing. Your recording will appear in the Library when ready."
+                : "Text appears within a few seconds and firms up as each chunk finishes. The full transcript is saved when you stop.")
                 .font(.harcBody)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

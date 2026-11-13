@@ -220,13 +220,14 @@ public struct MenuBarPanelView: View {
             Button {
                 onStartStop()
             } label: {
-                Label(recordingState.isRecording ? "Stop and save" : "Record",
+                Label(recordingState.isStopping ? "Finishing…" : (recordingState.isRecording ? "Stop and save" : "Record"),
                       systemImage: recordingState.isRecording ? "stop.fill" : "record.circle")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(recordingState.isRecording ? HarcBrand.live : .accentColor)
             .controlSize(.large)
+            .disabled(recordingState.isStopping)
 
             if let onStartDictation {
                 Button {
@@ -444,6 +445,12 @@ public struct MenuBarPanelView: View {
         .animation(.easeInOut(duration: 0.2), value: trayState.isVisible)
         .onAppear { startTicker() }
         .onDisappear { stopTicker() }
+        .onChange(of: recordingState.stopRequestedAt) { _, _ in
+            if recordingState.isStopping {
+                stopTicker()
+                updateElapsed()
+            }
+        }
         .onChange(of: recordingState.isRecording) { _, isRecording in
             if isRecording {
                 startTicker()
@@ -463,7 +470,15 @@ public struct MenuBarPanelView: View {
                     .lineLimit(2)
                 Text("LOCAL")
             }
-            if recordingState.isRecording {
+            if recordingState.isStopping {
+                Text(recordingState.elapsedText())
+                    .font(.harcMono)
+                ProgressView("Finishing…")
+                    .font(.harcLabel)
+                Text("Completing audio and transcript processing")
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+            } else if recordingState.isRecording {
                 Text(elapsedText)
                     .font(.system(size: 48, weight: .light, design: .rounded)) // token-exempt: Tide capture clock
                     .monospacedDigit()
@@ -513,6 +528,7 @@ public struct MenuBarPanelView: View {
     }
 
     private var presenceState: HarcPresenceState {
+        if recordingState.isStopping { return .saving }
         if recordingState.isRecording {
             return microphoneIsSilent
                 ? .recordingAttention
@@ -527,6 +543,7 @@ public struct MenuBarPanelView: View {
     }
 
     private var presenceTitle: String {
+        if recordingState.isStopping { return "Finishing…" }
         if recordingState.isRecording {
             return microphoneIsSilent ? "Mic is silent" : "Recording"
         }
@@ -952,7 +969,7 @@ public struct MenuBarPanelView: View {
     // MARK: - Elapsed timer
 
     private func startTicker() {
-        guard recordingState.isRecording else { return }
+        guard recordingState.isRecording, !recordingState.isStopping else { return }
         updateElapsed()
         ticker?.invalidate()
         ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
@@ -966,11 +983,7 @@ public struct MenuBarPanelView: View {
     }
 
     private func updateElapsed() {
-        guard let start = recordingState.recordingStartedAt else {
-            elapsedText = "0:00"
-            return
-        }
-        elapsedText = ElapsedFormatter.string(since: start)
+        elapsedText = recordingState.elapsedText()
     }
 }
 

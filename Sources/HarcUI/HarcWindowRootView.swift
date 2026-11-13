@@ -858,12 +858,12 @@ public struct HarcWindowRootView: View {
                 .fill(.white)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Recording")
+                Text(recordingState.isStopping ? "Finishing…" : "Recording")
                     .font(.harcBody.weight(.semibold))
                     .foregroundStyle(.white)
-                if let start = recordingState.recordingStartedAt {
+                if recordingState.recordingStartedAt != nil {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(ElapsedFormatter.string(since: start, now: context.date))
+                        Text(recordingState.elapsedText(at: context.date))
                             .font(.harcCaption.monospacedDigit())
                             .foregroundStyle(.white.opacity(0.85))
                     }
@@ -873,7 +873,7 @@ public struct HarcWindowRootView: View {
             LiveWaveformView(
                 history: bridge.amplitudeHistory,
                 size: .pill,
-                isActive: true,
+                isActive: !recordingState.isStopping,
                 tint: .white
             )
             .frame(width: 44, height: 14)
@@ -1166,7 +1166,7 @@ public struct HarcWindowRootView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let deviceID = rec.originID?.deviceID {
-                    Text(libraryVM.originDeviceLabels[deviceID] ?? "Another device")
+                    Text(libraryVM.originDeviceLabel(for: deviceID))
                         .font(.harcCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1380,7 +1380,7 @@ public struct HarcWindowRootView: View {
             FileInspectorSection(recording: recording)
             if let deviceID = recording.originID?.deviceID {
                 Section("Recording origin") {
-                    LabeledContent("Device", value: libraryVM.originDeviceLabels[deviceID] ?? "Another device")
+                    LabeledContent("Device", value: libraryVM.originDeviceLabel(for: deviceID))
                     LabeledContent("Device ID", value: deviceID.description)
                         .textSelection(.enabled)
                 }
