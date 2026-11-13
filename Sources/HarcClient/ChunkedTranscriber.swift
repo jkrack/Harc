@@ -272,11 +272,13 @@ public actor ChunkedTranscriber {
         )
     }
 
-    /// Live-preview pass: every few seconds, transcribe a rolling window of
-    /// the most recent audio and splice its tail onto the committed text, so
-    /// the live pane trails the meeting by seconds instead of a chunk. The
-    /// preview never touches the assembler — the durable transcript is built
-    /// only from full chunks, and a failed preview pass is simply skipped.
+    /// Live-preview pass: transcribe the uncommitted audio while it fits the
+    /// configured preview budget. If it grows beyond that budget, retain the
+    /// last preview until a durable chunk commits instead of repeatedly
+    /// re-transcribing a growing tail or displaying a partial tail as complete.
+    /// Provisional updates may therefore pause until the next chunk commit.
+    /// Preview never touches the assembler: durable coverage still comes only
+    /// from full chunks, retries, and the final tail flush.
     private func previewPump() async {
         while !Task.isCancelled, !stopped {
             try? await Task.sleep(nanoseconds: UInt64(livePreviewIntervalSeconds * 1_000_000_000))
@@ -285,33 +287,36 @@ public actor ChunkedTranscriber {
         }
     }
 
-    private func emitPreview() async {
-        guard let chunker, !previewInFlight else { return }
+    // Internal for deterministic preview-budget tests without timer races.
+    func emitPreview() async {
+        guard let chunker, !previewInFlight, !stopped,
+              livePreviewWindowSeconds.isFinite, livePreviewWindowSeconds >= 1 else { return }
         previewInFlight = true
         defer { previewInFlight = false }
 
-        // Anchor the window at the committed boundary so the preview text is
-        // entirely new — no timestamp trimming, which would have to reason
-        // about sub-word tokens and would garble words at the cut. The cap
-        // only matters when chunk retries let the uncommitted span grow past
-        // two chunks; previews then cover the most recent stretch and the
-        // retry machinery owns the rest.
+        // Keep the complete uncommitted span or defer. A rolling window that
+        // starts after this boundary would silently remove earlier provisional
+        // words when composed with the committed transcript. Do not advance
+        // chunk consumption or the assembler to make preview work fit.
         let committedEndMs = assembler.currentEndMs
         guard let window = try? await chunker.previewWindow(
-            fromMs: committedEndMs, maxSeconds: chunkDurationSeconds * 2
+            fromMs: committedEndMs,
+            maxSeconds: min(livePreviewWindowSeconds, chunkDurationSeconds * 2),
+            requireCompleteSpan: true
         ) else { return }
         defer { try? FileManager.default.removeItem(at: window.audioURL) }
+        guard window.startMs <= committedEndMs else { return }
 
-        // No VAD on preview passes: a minute of audio costs well under a
-        // second on the ANE either way, and far-field VAD shredding would
-        // make the pane lie.
+        // No VAD on provisional passes: preserve far-field speech. Bound the
+        // speculative inference input instead of assuming a device speed.
         guard let result = try? await client.transcribe(
             audioPath: window.audioURL.path, diarize: false, vad: false
         ) else { return }
 
         // If a chunk committed while the transcribe ran, this window's text
         // now overlaps committed text — skip; the next tick re-covers.
-        guard assembler.currentEndMs == committedEndMs else { return }
+        guard !stopped, !Task.isCancelled,
+              assembler.currentEndMs == committedEndMs else { return }
 
         guard let composed = Self.composeLivePreview(
             committedText: assembler.currentJoinedText,

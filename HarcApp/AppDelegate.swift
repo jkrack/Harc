@@ -799,8 +799,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             }
             .store(in: &cancellables)
 
-        // Forward AutoStopController's rolling amplitude history to the bridge
-        // so the MenuBarExtra panel re-renders on each tick.
+        // Forward visual history into the narrow meter object. Broad Library
+        // observers of the bridge must not re-render on each audio tick.
         autoStop.$amplitudeHistory
             .receive(on: DispatchQueue.main)
             .assign(to: \.amplitudeHistory, on: bridge)
@@ -5771,7 +5771,7 @@ private struct StatusPopoverRoot: View {
         MenuBarPanelView(
             recordingState: bridge.recordingState,
             trayState: bridge.trayState,
-            amplitudeHistory: bridge.amplitudeHistory,
+            recordingMeters: bridge.recordingMeters,
             todayRecordingIntervals: bridge.todayRecordingIntervals,
             onStartStop: bridge.onStartStop,
             onOpenWindow: bridge.onOpenWindow,

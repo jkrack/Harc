@@ -244,16 +244,21 @@ public final class AutoStopController: ObservableObject {
         microphoneAmplitudeWindowMax = max(microphoneAmplitudeWindowMax, microphoneNormalized)
         if let windowStart = amplitudeWindowStartedAt,
            now.timeIntervalSince(windowStart) >= Self.amplitudeInterval {
-            amplitudeHistory.append(amplitudeWindowMax)
-            microphoneAmplitudeHistory.append(microphoneAmplitudeWindowMax)
-            if amplitudeHistory.count > Self.amplitudeCapacity {
-                amplitudeHistory.removeFirst(amplitudeHistory.count - Self.amplitudeCapacity)
+            // Publish each completed visual window once, after trimming.
+            // Mutating @Published arrays with append then removeFirst emitted
+            // twice per history without providing another useful frame.
+            var combined = amplitudeHistory
+            combined.append(amplitudeWindowMax)
+            if combined.count > Self.amplitudeCapacity {
+                combined.removeFirst(combined.count - Self.amplitudeCapacity)
             }
-            if microphoneAmplitudeHistory.count > Self.amplitudeCapacity {
-                microphoneAmplitudeHistory.removeFirst(
-                    microphoneAmplitudeHistory.count - Self.amplitudeCapacity
-                )
+            var microphone = microphoneAmplitudeHistory
+            microphone.append(microphoneAmplitudeWindowMax)
+            if microphone.count > Self.amplitudeCapacity {
+                microphone.removeFirst(microphone.count - Self.amplitudeCapacity)
             }
+            amplitudeHistory = combined
+            microphoneAmplitudeHistory = microphone
             amplitudeWindowMax = 0
             microphoneAmplitudeWindowMax = 0
             amplitudeWindowStartedAt = now

@@ -17,6 +17,7 @@ public struct RecordingIslandView: View {
     @ObservedObject var bridge: HarcAppBridge
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var model: RecordingIslandModel
+    @ObservedObject private var meters: RecordingMeterState
 
     @State private var hovering = false
     @State private var hoverDwellTask: Task<Void, Never>? = nil
@@ -25,6 +26,7 @@ public struct RecordingIslandView: View {
         self.bridge = bridge
         self.recordingState = recordingState
         self.model = model
+        self.meters = bridge.recordingMeters
     }
 
     public var body: some View {
@@ -70,7 +72,7 @@ public struct RecordingIslandView: View {
 
     private var micIsSilent: Bool {
         // 24 amplitude frames at 100ms each ≈ 2.4s of near-zero input.
-        let history = bridge.microphoneAmplitudeHistory
+        let history = meters.microphoneAmplitudeHistory
         guard history.count >= 24 else { return false }
         return history.suffix(24).allSatisfy { $0 < 0.02 }
     }
@@ -90,7 +92,7 @@ public struct RecordingIslandView: View {
                     .font(.harcCaption)
                     .foregroundStyle(Color.harc(.attention))
             } else {
-                HarcTideEnergyTrace(samples: bridge.microphoneAmplitudeHistory, isLive: true)
+                HarcTideEnergyTrace(samples: meters.microphoneAmplitudeHistory, isLive: true)
                 .frame(width: 44, height: 16)
             }
         }
@@ -115,7 +117,7 @@ public struct RecordingIslandView: View {
                 .foregroundStyle(micIsSilent ? Color.harc(.attention) : .white.opacity(0.72))
                 .lineLimit(1)
                 .frame(maxWidth: 150)
-            HarcTideEnergyTrace(samples: bridge.microphoneAmplitudeHistory, isLive: true)
+            HarcTideEnergyTrace(samples: meters.microphoneAmplitudeHistory, isLive: true)
             .frame(width: 96, height: 22)
             if micIsSilent {
                 islandButton(
@@ -228,7 +230,7 @@ public struct RecordingIslandView: View {
     }
 
     private var microphoneLevel: Double {
-        Double(bridge.microphoneAmplitudeHistory.last ?? 0)
+        Double(meters.microphoneAmplitudeHistory.last ?? 0)
     }
 
     @ViewBuilder
