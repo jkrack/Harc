@@ -8,7 +8,7 @@ transcription finalization, publication, recovery, or the stop timeout.
 
 - Record the first accepted Stop request as a presentation boundary. Elapsed
   displays freeze there while capture/resource ownership remains unchanged.
-- Show `Finishing…` in the menu panel and live transcript instead of continuing
+- Show `Finishing…` in the menu panel, live sidebar row and live transcript instead of continuing
   to claim active recording. The card and island share the frozen duration and
   omit it once lifecycle timestamps clear during Library ingest.
 - A queued Stop during preparation survives startup. Repeated Stop does not move
