@@ -78,6 +78,7 @@ public struct HarcWindowRootView: View {
     /// (timestamp + speaker + text) instead of the flat .txt blob.
     @State var transcriptSegments: [TranscriptDisplaySegment] = []
     @State var transcriptTurnSpeakerIndices: [Int] = []
+    @State var speakerMetadata: RecordingSpeakerMetadata?
     @State var transcriptLoadError: String? = nil
     @State var transcriptLoadTask: Task<Void, Never>?
     @State var transcriptLoadGeneration = UUID()
@@ -270,7 +271,6 @@ public struct HarcWindowRootView: View {
             resolvedSpeakerLabels = [:]
             resolvedSpeakerLabelRecordingID = nil
             loadTranscript()
-            Task { await loadEnvelope() }
             Task { await loadResolvedLabels() }
         }
         .onChange(of: navigationValidationToken) { _, _ in restoreOrValidateSelection() }
@@ -1412,7 +1412,8 @@ public struct HarcWindowRootView: View {
         var voiceprints: [RecordingStore.SpeakerEmbeddingRow] = []
         var chunkStats: (count: Int, embedderID: String?) = (0, nil)
         if let id = recording.id {
-            for index in speakerIndices(for: recording) {
+            let indices = await loadSpeakerIndices(for: recording)
+            for index in indices {
                 if let row = try? await store.speakerEmbedding(recordingID: id, speakerIndex: index) {
                     voiceprints.append(row)
                 }
@@ -1445,9 +1446,11 @@ public struct HarcWindowRootView: View {
         let reviews = await SpeakerSuggestionReviewBatch.load(suggestions, store: store)
         let slots: SpeakerSlotReviewBatch
         if let id = recording.id {
-            slots = await SpeakerSlotReviewBatch.load(recordingID: id, indices: speakerIndices(for: recording), store: store)
+            let indices = await loadSpeakerIndices(for: recording)
+            slots = await SpeakerSlotReviewBatch.load(recordingID: id, indices: indices, store: store)
         } else { slots = .empty }
-        guard inspectorSuggestionLoadID == loadID else { return }
+        guard !Task.isCancelled, inspectorSuggestionLoadID == loadID,
+              selectedRecording == recording else { return }
         allPeople = people
         allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
         inspectorSlotReviews = slots
@@ -1528,28 +1531,38 @@ public struct HarcWindowRootView: View {
         return FileManager.default.fileExists(atPath: path)
     }
 
-    /// Derive distinct speaker indices from the JSON sidecar via
-    /// `ExportInputBuilder.build`. Returns [] for un-diarized recordings.
+    /// Rendering reads a revision-bound snapshot, never recording files.
     func speakerIndices(for recording: Recording) -> [Int] {
-        let input = ExportInputBuilder.build(from: recording)
-        var seen: Set<Int> = []
-        for segment in input.segments {
-            if let id = segment.speaker { seen.insert(id) }
-        }
-        return seen.sorted()
+        guard speakerMetadata?.recording == recording else { return [] }
+        return speakerMetadata?.indices ?? []
     }
 
-    func loadEnvelope() async {
-        guard let rec = currentRecording else {
-            detailEnvelope = []
-            return
-        }
+    /// Refresh metadata independently of the editor, including while it has
+    /// unsaved text. SwiftUI cancels this task when any source row changes.
+    func loadSpeakerMetadata(for recording: Recording) async {
+        let metadata = await RecordingSpeakerMetadata.load(recording: recording)
+        guard !Task.isCancelled, selectedRecording == recording else { return }
+        speakerMetadata = metadata
+        await loadInspectorSummaryData(for: recording)
+    }
+
+    func loadSpeakerIndices(for recording: Recording) async -> [Int] {
+        if speakerMetadata?.recording == recording { return speakerMetadata?.indices ?? [] }
+        return await RecordingSpeakerMetadata.load(recording: recording).indices
+    }
+
+    func loadEnvelope(for recording: Recording) async {
+        guard !Task.isCancelled, currentRecording?.wavPath == recording.wavPath else { return }
+        detailEnvelope = []
         do {
-            detailEnvelope = try await AmplitudeEnvelopeLoader.load(
-                url: URL(fileURLWithPath: rec.wavPath),
-                samples: 1024
+            let envelope = try await AmplitudeEnvelopeLoader.load(
+                url: URL(fileURLWithPath: recording.wavPath), samples: 1024
             )
+            guard !Task.isCancelled, currentRecording?.wavPath == recording.wavPath else { return }
+            detailEnvelope = envelope
         } catch {
+            // A cancelled predecessor must not clear its successor's waveform.
+            guard !Task.isCancelled, currentRecording?.wavPath == recording.wavPath else { return }
             detailEnvelope = []
         }
     }

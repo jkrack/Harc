@@ -255,13 +255,14 @@ extension HarcWindowRootView {
         // it is dead code — the summary/suggestions load silently never ran,
         // which starved the "N speakers to review" chip whenever the
         // inspector was closed.
+        .task(id: recording) { await loadSpeakerMetadata(for: recording) }
+        .task(id: recording.wavPath) { await loadEnvelope(for: recording) }
         .task(id: recording.wavPath) {
             // A restored selection can arrive before the observed library
             // rows. Its selection-change handler then has no document to
             // load; initialize when the actual detail first becomes available.
             if detailDocument == nil {
                 loadTranscript()
-                await loadEnvelope()
                 await loadResolvedLabels()
             }
             async let observation: Void = observeRecording(recording: recording)
