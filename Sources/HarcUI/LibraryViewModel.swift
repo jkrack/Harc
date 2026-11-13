@@ -173,7 +173,19 @@ public final class LibraryViewModel: ObservableObject {
         if self.searchText.isEmpty {
             self.recordings = self.apply(filter: self.filter, to: list)
         }
+        // Search rank/snippets remain a query snapshot, but selected detail
+        // source rows must follow same-path processing/sync replacements.
+        self.hits = Self.reconcileSearchHits(self.hits, with: list)
         self.alignCalendarToNewestRecordingIfNeeded(list)
+    }
+
+    static func reconcileSearchHits(_ hits: [TranscriptHit], with recordings: [Recording]) -> [TranscriptHit] {
+        let byPath = Dictionary(recordings.map { ($0.wavPath, $0) }, uniquingKeysWith: { _, latest in latest })
+        return hits.map { hit in
+            var updated = hit
+            updated.recording = byPath[hit.recording.wavPath] ?? hit.recording
+            return updated
+        }
     }
 
     /// Refetch everything the observations would have delivered had the
@@ -273,6 +285,7 @@ public final class LibraryViewModel: ObservableObject {
                     // hybridSearch when nothing is indexed, so an un-indexed
                     // library behaves exactly as it always has.
                     let embedder = await MainActor.run { self.searchEmbedder }
+                    let searchRevision = self.observedListRevision
                     let results: [TranscriptHit]
                     if let embedder {
                         results = try await store.hybridSearch(query: trimmed, embedder: embedder)
@@ -283,7 +296,8 @@ public final class LibraryViewModel: ObservableObject {
                     await MainActor.run {
                         guard !Task.isCancelled,
                               self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
-                        self.hits = results
+                        self.hits = searchRevision == self.observedListRevision
+                            ? results : Self.reconcileSearchHits(results, with: self.fullList)
                         self.searchError = nil
                         // `recordings` stays populated with the unfiltered list so
                         // the detail pane can still look up full Recording data

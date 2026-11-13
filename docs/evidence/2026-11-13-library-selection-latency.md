@@ -21,3 +21,11 @@ Remaining source-confirmed work: `speakerIndices(for:)` reopened and decoded JSO
 - Synthetic debug diagnostic (8,000 words, 1,000 speaker turns): a legacy single sidecar-backed speaker lookup took 604.03 ms; background metadata preparation took 347.45 ms; 1,000 cached array accesses took 0.099 ms. These are diagnostic timings, not real-recording click-to-ready performance or a production speedup ratio.
 - Adjacent regression run passed all 41 tests across waveform/metadata, TranscriptDocument, WordIndex, TranscriptSpeakerLabelRewriter and ExportInputBuilder, with zero failures/skips. Repeat synthetic run measured 254.35 ms legacy lookup and 252.66 ms metadata preparation, illustrating run variability.
 - HarcUI sources compiled. Initial build planning predated the new metadata file and a test-only missing import was corrected before the successful final run. Real app interaction, rapid selection UI tests and full Xcode build remain separate qualification gates.
+
+## Active-search review follow-up
+
+A release review found that search hits retained their original Recording rows while the full-list observation advanced. Because detail selection prefers search hits, metadata task identity did not change for an observed same-path transcript replacement during search.
+
+Observation now reconciles existing hit Recording values while retaining query snippets, relevance scores and ordering. A pending search that completes after a newer list observation also reconciles its result rows before publication. The scoped recordings list retains its existing search-time behavior so unrelated observations cannot invalidate selection through filtered navigation. No editor text or autosave path is modified.
+
+The regression keeps an active `pricing` search selected, replaces same-path JSON speaker 1 with speaker 7, and verifies new selected source identity, refreshed speaker indices, unchanged search rank/snippet and stale-result reconciliation. Focused LibraryRefreshPublication and AmplitudeEnvelopeLoader suites passed all 12 tests with zero failures/skips. Full app/UI release qualification remains separate.
