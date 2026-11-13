@@ -1084,8 +1084,28 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             }
             let attention = app.buttons["harc.mobile.library.attention"]
             XCTAssertTrue(attention.waitForExistence(timeout: 10))
-            for _ in 0..<8 where !attention.isHittable { app.swipeUp() }
+            // isHittable can be true while this tall accessibility-size row
+            // extends behind the floating tab bar. Establish a fully visible
+            // interaction target before the single tap, rather than depending
+            // on XCTest's synthesized hit point at the scroll-edge overlay.
+            func attentionIsFullyVisible() -> Bool {
+                let frame = attention.frame
+                return !frame.isEmpty && app.frame.contains(frame)
+                    && frame.minY >= app.navigationBars["Library"].frame.maxY + 8
+                    && frame.maxY <= app.tabBars.firstMatch.frame.minY - 8
+            }
+            for _ in 0..<8 where !attentionIsFullyVisible() {
+                // Small drags avoid scrolling the tall row past the top bar.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+                    .press(forDuration: 0.1, thenDragTo:
+                        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            }
+            XCTAssertTrue(attentionIsFullyVisible(), "Attention row must be clear of navigation and tab chrome")
             XCTAssertTrue(attention.isHittable)
+            let interactionScreenshot = XCTAttachment(screenshot: app.screenshot())
+            interactionScreenshot.name = "Library-attention-before-tap-\(category)"
+            interactionScreenshot.lifetime = .keepAlways
+            add(interactionScreenshot)
             attention.tap()
             XCTAssertTrue(app.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
             app.navigationBars["Sending to Mac"].buttons["Library"].tap()
