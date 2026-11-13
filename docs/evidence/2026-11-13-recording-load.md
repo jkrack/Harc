@@ -55,3 +55,12 @@ No installed-app update, real recording manipulation, content inspection, settin
 change, publication, merge or release was performed. No end-to-end UI execution or
 runtime frame-time/CPU improvement measurement is claimed. Focused tests do not
 replace full CI or physical-device qualification.
+
+## Release integration scope
+
+The November 13 release integration includes only meter observation isolation.
+The speculative preview-budget production changes and their new tests are
+excluded pending explicit capture/preview/catching-up status design and real
+MacBook validation. Live-preview behavior remains unchanged from the qualified
+stack base; the original focused results above describe the PR, not this narrowed
+release integration. The integrated candidate requires fresh validation.
