@@ -24,15 +24,26 @@ public final class HarcAppBridge: ObservableObject {
 
     @Published public var frontmostAppName: String? = nil
     @Published public var frontmostPasteDenied: Bool = false
-    @Published public var amplitudeHistory: [Float] = []
+    /// Meter pulses must not invalidate the Library's broad bridge observer.
+    /// Only the small recording surfaces observe this nested object.
+    public let recordingMeters = RecordingMeterState()
+    public var amplitudeHistory: [Float] {
+        get { recordingMeters.amplitudeHistory }
+        set { recordingMeters.setAmplitudeHistory(newValue) }
+    }
     /// Mic-only amplitude. The combined history can move from system audio
     /// while the selected microphone is dead, so capture safety must not use it.
-    @Published public var microphoneAmplitudeHistory: [Float] = []
+    public var microphoneAmplitudeHistory: [Float] {
+        get { recordingMeters.microphoneAmplitudeHistory }
+        set { recordingMeters.setMicrophoneAmplitudeHistory(newValue) }
+    }
     @Published public var autoStopPhase: AutoStopController.Phase = .idle
     @Published public var autoStopWarningSeconds: Int = AutoStopController.Config.defaults.warningSeconds
     @Published public var autoStopThresholdMinutes: Int = 5
-    @Published public var autoStopMicDb: Float = -.infinity
-    @Published public var autoStopSystemDb: Float = -.infinity
+    // Retained diagnostic snapshots. No current view renders these raw values;
+    // publishing each audio buffer would invalidate every bridge observer.
+    public var autoStopMicDb: Float = -.infinity
+    public var autoStopSystemDb: Float = -.infinity
     @Published public var autoStopLastDurationText: String? = nil
     @Published public private(set) var stopRecovery: StopRecoveryInfo? = nil
     @Published public private(set) var activeCaptureStatus: ActiveCaptureStatus? = nil
@@ -289,9 +300,32 @@ public final class HarcAppBridge: ObservableObject {
     private var currentFlashToken: UUID = UUID()
 }
 
+/// High-frequency visual state, observed only by recording meter surfaces.
+/// It does not forward objectWillChange to the parent HarcAppBridge.
+@MainActor
+public final class RecordingMeterState: ObservableObject {
+    @Published public private(set) var amplitudeHistory: [Float]
+    @Published public private(set) var microphoneAmplitudeHistory: [Float]
+
+    public init(amplitudeHistory: [Float] = [], microphoneAmplitudeHistory: [Float] = []) {
+        self.amplitudeHistory = amplitudeHistory
+        self.microphoneAmplitudeHistory = microphoneAmplitudeHistory
+    }
+
+    public func setAmplitudeHistory(_ history: [Float]) {
+        guard history != amplitudeHistory else { return }
+        amplitudeHistory = history
+    }
+
+    public func setMicrophoneAmplitudeHistory(_ history: [Float]) {
+        guard history != microphoneAmplitudeHistory else { return }
+        microphoneAmplitudeHistory = history
+    }
+}
+
 /// Narrow observable read by the always-visible menu-bar label. Holds only
 /// the fields the label actually reads; high-frequency feeds like
-/// amplitudeHistory live on `HarcAppBridge` instead so the label doesn't
+/// amplitudeHistory live on `RecordingMeterState` instead so the label doesn't
 /// re-render on every audio tick.
 @MainActor
 public final class MenuBarIconState: ObservableObject {
