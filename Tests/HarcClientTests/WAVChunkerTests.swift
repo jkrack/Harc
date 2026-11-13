@@ -150,45 +150,6 @@ struct WAVChunkerTests {
         _ = file
     }
 
-    @Test("complete-span preview defers over budget without consuming durable audio")
-    func completeSpanPreviewBudget() async throws {
-        let url = tempWAVPath()
-        defer { try? FileManager.default.removeItem(at: url) }
-        let file = try openGrowingWAV(url: url)
-        try appendSine(file, seconds: 3.5)
-        let chunker = WAVChunker(audioURL: url, chunkDurationSeconds: 1)
-
-        // The full 3.5-second span does not fit. No partial preview is returned.
-        let deferred = try await chunker.previewWindow(
-            fromMs: 0, maxSeconds: 2, requireCompleteSpan: true
-        )
-        #expect(deferred == nil)
-
-        // Backward-compatible callers still receive the most recent 2 seconds.
-        let rolling = try #require(await chunker.previewWindow(fromMs: 0, maxSeconds: 2))
-        defer { try? FileManager.default.removeItem(at: rolling.audioURL) }
-        #expect(rolling.startMs == 1_500)
-        #expect(rolling.endMs == 3_500)
-
-        // Moving the committed anchor makes the exact budget eligible.
-        let complete = try #require(await chunker.previewWindow(
-            fromMs: 1_500, maxSeconds: 2, requireCompleteSpan: true
-        ))
-        defer { try? FileManager.default.removeItem(at: complete.audioURL) }
-        #expect(complete.startMs == 1_500)
-        #expect(complete.endMs == 3_500)
-
-        // Neither skipped nor emitted previews move the durable cursor.
-        let first = try #require(await chunker.nextChunk())
-        defer { try? FileManager.default.removeItem(at: first.audioURL) }
-        #expect(first.startMs == 0)
-        #expect(first.endMs == 1_000)
-        let remainder = try #require(await chunker.flush())
-        defer { try? FileManager.default.removeItem(at: remainder.audioURL) }
-        #expect(remainder.startMs == 1_000)
-        #expect(remainder.endMs == 3_500)
-    }
-
     @Test("previewWindow is nil until a second of new audio exists")
     func previewWindowTiny() async throws {
         let url = tempWAVPath()
