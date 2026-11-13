@@ -15,6 +15,14 @@ struct RecordCardView: View {
     @ObservedObject var bridge: HarcAppBridge
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var postProcessing: RecordingPostProcessingState
+    @ObservedObject private var meters: RecordingMeterState
+
+    init(bridge: HarcAppBridge, recordingState: RecordingState, postProcessing: RecordingPostProcessingState) {
+        self.bridge = bridge
+        self.recordingState = recordingState
+        self.postProcessing = postProcessing
+        self.meters = bridge.recordingMeters
+    }
 
     var body: some View {
         Group {
@@ -168,7 +176,7 @@ struct RecordCardView: View {
                 }
             }
             LiveWaveformView(
-                history: bridge.microphoneAmplitudeHistory,
+                history: meters.microphoneAmplitudeHistory,
                 size: .pill,
                 isActive: true,
                 tint: microphoneIsSilent ? Color.harc(.attention) : HarcBrand.live
@@ -214,7 +222,7 @@ struct RecordCardView: View {
     }
 
     private var microphoneIsSilent: Bool {
-        let history = bridge.microphoneAmplitudeHistory
+        let history = meters.microphoneAmplitudeHistory
         guard history.count >= 24 else { return false }
         return history.suffix(24).allSatisfy { $0 < 0.02 }
     }
@@ -255,6 +263,6 @@ struct RecordCardView: View {
     }
 
     private var microphoneLevel: Double {
-        Double(bridge.microphoneAmplitudeHistory.last ?? 0)
+        Double(meters.microphoneAmplitudeHistory.last ?? 0)
     }
 }

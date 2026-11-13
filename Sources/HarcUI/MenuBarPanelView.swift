@@ -10,7 +10,8 @@ import HarcStore
 public struct MenuBarPanelView: View {
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var trayState: PostStopTrayState
-    let amplitudeHistory: [Float]
+    @ObservedObject private var meters: RecordingMeterState
+    private var amplitudeHistory: [Float] { meters.amplitudeHistory }
     let todayRecordingIntervals: [DateInterval]?
     let onStartStop: () -> Void
     let onOpenWindow: () -> Void
@@ -87,6 +88,7 @@ public struct MenuBarPanelView: View {
         recordingState: RecordingState,
         trayState: PostStopTrayState,
         amplitudeHistory: [Float] = [],
+        recordingMeters: RecordingMeterState? = nil,
         todayRecordingIntervals: [DateInterval]? = nil,
         onStartStop: @escaping () -> Void,
         onOpenWindow: @escaping () -> Void,
@@ -150,7 +152,7 @@ public struct MenuBarPanelView: View {
     ) {
         self.recordingState = recordingState
         self.trayState = trayState
-        self.amplitudeHistory = amplitudeHistory
+        self.meters = recordingMeters ?? RecordingMeterState(amplitudeHistory: amplitudeHistory)
         self.todayRecordingIntervals = todayRecordingIntervals
         self.onStartStop = onStartStop
         self.onOpenWindow = onOpenWindow

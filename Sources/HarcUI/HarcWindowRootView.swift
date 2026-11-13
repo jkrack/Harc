@@ -870,8 +870,8 @@ public struct HarcWindowRootView: View {
                 }
             }
             Spacer(minLength: 4)
-            LiveWaveformView(
-                history: bridge.amplitudeHistory,
+            RecordingMeterWaveform(
+                meters: bridge.recordingMeters,
                 size: .pill,
                 isActive: !recordingState.isStopping,
                 tint: .white
