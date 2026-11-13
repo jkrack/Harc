@@ -6,6 +6,42 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testRefreshStatusProbePreservesPredicateAndRedactsLabels() {
+        let predicate = NSPredicate(format: "label CONTAINS %@", "Couldn’t refresh Mac Library")
+        var messages: [String] = []
+        var raw = "untrusted fixture sentinel /private/example token=secret"
+        var reads = 0
+        let probe = RefreshStatusQueryProbe(readLabel: {
+            reads += 1
+            return raw
+        }, emit: { messages.append($0) })
+        XCTAssertFalse(predicate.evaluate(with: probe))
+        XCTAssertEqual(reads, 1)
+        XCTAssertTrue(messages.last?.contains("state=other") == true)
+        raw = "Couldn’t refresh Mac Library, untrusted fixture sentinel token=secret"
+        XCTAssertTrue(predicate.evaluate(with: probe))
+        XCTAssertEqual(reads, 2)
+        XCTAssertTrue(messages.last?.contains("state=refresh_failed") == true)
+        raw = "Pair a Mac for its Library"
+        XCTAssertFalse(predicate.evaluate(with: probe))
+        XCTAssertTrue(messages.last?.contains("state=unpaired") == true)
+        for _ in 0..<30 { _ = predicate.evaluate(with: probe) }
+        XCTAssertEqual(reads, 33) // Logging limit never suppresses predicate reads.
+        XCTAssertEqual(messages.count, 33) // Sixteen begin/end pairs, one limit marker.
+        XCTAssertFalse(messages.joined().contains("sentinel"))
+        XCTAssertFalse(messages.joined().contains("secret"))
+        XCTAssertFalse(messages.joined().contains("/private"))
+
+        // Exercise XCTest's asynchronous KVC path too, not only direct evaluation.
+        let absent = RefreshStatusQueryProbe(readLabel: { "untrusted fixture sentinel" }, emit: { _ in })
+        let absentExpectation = expectation(for: predicate, evaluatedWith: absent)
+        absentExpectation.isInverted = true
+        waitForExpectations(timeout: 0.1)
+        let present = RefreshStatusQueryProbe(readLabel: { "Couldn’t refresh Mac Library" }, emit: { _ in })
+        expectation(for: predicate, evaluatedWith: present)
+        waitForExpectations(timeout: 10)
+    }
+
     func testSetupMacCardRemainsUsableAtNormalAndLargestText() {
         for category in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
             let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
@@ -240,8 +276,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let retainedStatus = cachedApp.descendants(matching: .any)["harc.mobile.library.refresh-status"]
         XCTAssertTrue(scrollUntilExists(retainedStatus, in: cachedApp))
         let offline = NSPredicate(format: "label CONTAINS %@", "Couldn’t refresh Mac Library")
-        expectation(for: offline, evaluatedWith: retainedStatus)
+        let probe = RefreshStatusQueryProbe(readLabel: { retainedStatus.label })
+        probe.mark("expectation_begin")
+        expectation(for: offline, evaluatedWith: probe)
         waitForExpectations(timeout: 10)
+        probe.mark("expectation_end")
+        XCTAssertTrue(offline.evaluate(with: retainedStatus))
         for _ in 0..<2 {
             let recovery = try XCTUnwrap(
                 scrollToHittableButton("harc.mobile.library.refresh-setup", in: cachedApp),
@@ -954,6 +994,15 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
                     XCTAssertTrue(searchField.isHittable)
                     searchField.tap()
                     searchField.typeText("fixture")
+                    // On a loaded simulator typeText can return while its
+                    // synthesized key sequence is still reaching the app.
+                    // Observe the exact completed query, never retype or accept
+                    // a prefix (which could hide dropped input).
+                    expectation(
+                        for: NSPredicate(format: "value == %@", "fixture"),
+                        evaluatedWith: searchField
+                    )
+                    waitForExpectations(timeout: 10)
                     XCTAssertEqual(searchField.value as? String, "fixture")
                 }
             }
@@ -1035,8 +1084,28 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             }
             let attention = app.buttons["harc.mobile.library.attention"]
             XCTAssertTrue(attention.waitForExistence(timeout: 10))
-            for _ in 0..<8 where !attention.isHittable { app.swipeUp() }
+            // isHittable can be true while this tall accessibility-size row
+            // extends behind the floating tab bar. Establish a fully visible
+            // interaction target before the single tap, rather than depending
+            // on XCTest's synthesized hit point at the scroll-edge overlay.
+            func attentionIsFullyVisible() -> Bool {
+                let frame = attention.frame
+                return !frame.isEmpty && app.frame.contains(frame)
+                    && frame.minY >= app.navigationBars["Library"].frame.maxY + 8
+                    && frame.maxY <= app.tabBars.firstMatch.frame.minY - 8
+            }
+            for _ in 0..<8 where !attentionIsFullyVisible() {
+                // Small drags avoid scrolling the tall row past the top bar.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+                    .press(forDuration: 0.1, thenDragTo:
+                        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            }
+            XCTAssertTrue(attentionIsFullyVisible(), "Attention row must be clear of navigation and tab chrome")
             XCTAssertTrue(attention.isHittable)
+            let interactionScreenshot = XCTAttachment(screenshot: app.screenshot())
+            interactionScreenshot.name = "Library-attention-before-tap-\(category)"
+            interactionScreenshot.lifetime = .keepAlways
+            add(interactionScreenshot)
             attention.tap()
             XCTAssertTrue(app.navigationBars["Sending to Mac"].waitForExistence(timeout: 10))
             app.navigationBars["Sending to Mac"].buttons["Library"].tap()
@@ -1047,4 +1116,58 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         }
     }
 
+}
+
+/// Diagnostic adapter only: KVC reads the same XCUIElement label exactly once,
+/// returns it unchanged to the original predicate, and emits no raw label data.
+@MainActor
+private final class RefreshStatusQueryProbe: NSObject {
+    private let readLabel: () -> String
+    private let emit: (String) -> Void
+    private let start = ProcessInfo.processInfo.systemUptime
+    private var reads = 0
+
+    init(readLabel: @escaping () -> String, emit: @escaping (String) -> Void = { print($0) }) {
+        self.readLabel = readLabel
+        self.emit = emit
+    }
+
+    @objc dynamic var label: String {
+        reads += 1
+        let ordinal = reads
+        let began = ProcessInfo.processInfo.systemUptime
+        if ordinal <= 16 { mark("read_begin", ordinal: ordinal) }
+        else if ordinal == 17 { mark("read_log_limit") }
+        let value = readLabel()
+        if ordinal <= 16 {
+            let duration = milliseconds(ProcessInfo.processInfo.systemUptime - began)
+            mark("read_end", ordinal: ordinal,
+                 fields: " duration_ms=\(duration) state=\(Self.state(value))")
+        }
+        return value
+    }
+
+    func mark(_ event: String, ordinal: Int = 0, fields: String = "") {
+        emit("HARC_UI_REFRESH_QUERY event=\(event) ordinal=\(ordinal) elapsed_ms=\(milliseconds(ProcessInfo.processInfo.systemUptime - start))\(fields)")
+    }
+
+    private func milliseconds(_ interval: TimeInterval) -> Int {
+        guard interval.isFinite else { return 600_000 }
+        return Int(min(max(interval * 1_000, 0), 600_000))
+    }
+
+    private static func state(_ label: String) -> String {
+        let known = [
+            ("Couldn’t refresh Mac Library", "refresh_failed"),
+            ("Pair a Mac for its Library", "unpaired"),
+            ("Opening Mac Library…", "opening"),
+            ("Refreshing Mac Library…", "refreshing"),
+            ("Mac Library access not granted", "access_not_granted"),
+            ("Library refresh cancelled", "cancelled"),
+            ("Mac Library updated", "ready"),
+            ("No recordings yet", "empty"),
+        ]
+        let matches = known.filter { label.contains($0.0) }
+        return matches.count == 1 ? matches[0].1 : "other"
+    }
 }

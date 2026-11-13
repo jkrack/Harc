@@ -32,13 +32,27 @@ class CIJobPartitionTests(unittest.TestCase):
         self.assertIn("Direct pinned-TLS pairing lifecycle", self.package_job)
         self.assertNotIn("Build Harc.app", self.package_job)
 
-        self.assertIn("Build Harc.app", self.macos_job)
+        self.assertIn("Build macOS app and tests", self.macos_job)
         self.assertIn("macOS app and UI regression", self.macos_job)
         self.assertNotIn("Build package tests", self.macos_job)
 
     def test_each_heavy_job_keeps_the_hosted_runner_bound(self):
         self.assertIn("timeout-minutes: 60", self.package_job)
-        self.assertIn("timeout-minutes: 60", self.macos_job)
+        self.assertIn("timeout-minutes: 100", self.macos_job)
+        self.assertIn("timeout-minutes: 65", self.macos_job)
+        self.assertIn("timeout-minutes: 25", self.macos_job)
+        self.assertIn("timeout-minutes: 65", self.mobile_job)
+        self.assertIn("timeout-minutes: 57", self.mobile_job)
+
+    def test_macos_builds_tests_before_execution_without_rebuilding(self):
+        self.assertEqual(self.macos_job.count("build-for-testing 2>&1"), 1)
+        self.assertEqual(self.macos_job.count("test-without-building 2>&1"), 1)
+        self.assertEqual(self.macos_job.count("-destination 'platform=macOS,arch=arm64'"), 2)
+        self.assertLess(self.macos_job.index("build-for-testing 2>&1"),
+                        self.macos_job.index("test-without-building 2>&1"))
+        self.assertIn("Enforce macOS test execution", self.macos_job)
+        self.assertIn("Verify embedded helpers", self.macos_job)
+        self.assertIn(".build/mobile-configuration/build-diagnostics", self.mobile_job)
 
     def test_independent_validation_jobs_do_not_wait_for_each_other(self):
         for job in [self.package_job, self.macos_job, self.mobile_job]:

@@ -17,6 +17,9 @@ public struct TranscriptDocument: Sendable {
     public let wordIndex: WordIndex
     public let audioAvailable: Bool
     public let jsonAvailable: Bool
+    /// The exact decoded sidecar used to load this snapshot. Retain it so
+    /// presentation code can build turns without reading/decoding it again.
+    public var structuredTranscript: SessionTranscript? = nil
     public var overlapRanges: [SpeechOverlapRange]? = nil
     public var overlapWarning: String? {
         overlapRanges?.isEmpty == false
@@ -121,6 +124,7 @@ public struct TranscriptDocument: Sendable {
             audioAvailable: audioAvailable,
             jsonAvailable: jsonAvailable
         )
+        document.structuredTranscript = structuredTranscript
         document.overlapRanges = structuredTranscript?.overlapRanges
         return document
     }
@@ -152,6 +156,7 @@ public struct TranscriptDocument: Sendable {
             audioAvailable: audioAvailable,
             jsonAvailable: jsonAvailable
         )
+        document.structuredTranscript = structuredTranscript
         document.overlapRanges = overlapRanges
         return document
     }

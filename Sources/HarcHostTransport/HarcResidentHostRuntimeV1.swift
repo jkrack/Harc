@@ -58,6 +58,8 @@ public actor HarcResidentHostRuntimeV1 {
     public nonisolated let storageRuntime: HarcResidentHostStorageRuntime
     public nonisolated let tuple: HostCryptographicStateTuple
     public nonisolated let listenerPorts: HarcHostListenerPorts
+    /// Metadata-only startup plan. Audio recovery runs after listeners bind;
+    /// use publicationRecoveryStatus() for its current outcome.
     public nonisolated let startupRecoveryReport: HostCanonicalRecoveryReport
 
     private let transportRuntime: HostTransportResidentRuntime
@@ -68,6 +70,7 @@ public actor HarcResidentHostRuntimeV1 {
     private let remoteRelayRouteDeliveryBox:
         HarcRemoteRelayRouteDeliveryBox
     private let stagingMaintenance: HarcHostStagingMaintenanceScheduler
+    private let publicationRecovery: HarcHostPublicationRecoveryScheduler
     private var transportStopped = false
     private var hostModeDisabled = false
 
@@ -255,8 +258,9 @@ public actor HarcResidentHostRuntimeV1 {
                 generationBoundary: generationController,
                 canonicalTuple: storage.tuple,
                 beforeServing: {
-                    let report = try await ingest.recoverPendingPublications()
-                    await recoveryBox.store(report)
+                    try await recoveryBox.prepare {
+                        try await ingest.pendingBackgroundPublicationIDs()
+                    }
                 }
             )
             startedTransport = transport
@@ -294,8 +298,15 @@ public actor HarcResidentHostRuntimeV1 {
             let stagingMaintenance = HarcHostStagingMaintenanceScheduler(
                 reap: { try await storage.hostStore.reapEligibleStaging() }
             )
+            let publicationRecovery = HarcHostPublicationRecoveryScheduler(
+                initialUploadIDs: recovery.deferredUploadIDs,
+                discover: { try await ingest.pendingBackgroundPublicationIDs() },
+                recover: { uploadID in
+                    try await ingest.recoverBackgroundPublication(uploadID: uploadID)
+                }
+            )
             await stagingMaintenance.start()
-            return HarcResidentHostRuntimeV1(
+            let runtime = HarcResidentHostRuntimeV1(
                 storageRuntime: storage,
                 transportRuntime: transport,
                 canonicalIngest: ingest,
@@ -305,8 +316,13 @@ public actor HarcResidentHostRuntimeV1 {
                 remoteRelayRouteDeliveryBox:
                     remoteRelayRouteDeliveryBox,
                 stagingMaintenance: stagingMaintenance,
+                publicationRecovery: publicationRecovery,
                 startupRecoveryReport: recovery
             )
+            // Security reconciliation and both listeners are ready before any
+            // historical publication is allowed to read or hash audio.
+            await publicationRecovery.start()
+            return runtime
         } catch {
             if let startedTransport { await startedTransport.shutdown() }
             if storage.enabledHostModeDuringStart {
@@ -332,6 +348,7 @@ public actor HarcResidentHostRuntimeV1 {
         remoteRelayHostAgent: HarcRemoteRelayHostAgent?,
         remoteRelayRouteDeliveryBox: HarcRemoteRelayRouteDeliveryBox,
         stagingMaintenance: HarcHostStagingMaintenanceScheduler,
+        publicationRecovery: HarcHostPublicationRecoveryScheduler,
         startupRecoveryReport: HostCanonicalRecoveryReport
     ) {
         self.storageRuntime = storageRuntime
@@ -342,6 +359,7 @@ public actor HarcResidentHostRuntimeV1 {
         self.remoteRelayHostAgent = remoteRelayHostAgent
         self.remoteRelayRouteDeliveryBox = remoteRelayRouteDeliveryBox
         self.stagingMaintenance = stagingMaintenance
+        self.publicationRecovery = publicationRecovery
         self.startupRecoveryReport = startupRecoveryReport
         tuple = storageRuntime.tuple
         listenerPorts = storageRuntime.listenerPorts
@@ -467,6 +485,23 @@ public actor HarcResidentHostRuntimeV1 {
         await remoteRelayHostAgent?.state()
     }
 
+    /// Local read-only inspection. Deliberately absent from network services;
+    /// this result grants no repair, receipt-replay, or cleanup authority.
+    public func inspectReceiptBinding(
+        canonicalRecordingID: CanonicalRecordingID
+    ) async throws -> HostReceiptBindingDiagnostic {
+        guard !transportStopped else { throw HarcHostError.processingSchedulerUnavailable }
+        return try await canonicalIngest.inspectReceiptBinding(
+            canonicalRecordingID: canonicalRecordingID
+        )
+    }
+
+    /// Local read-only inspection; absent from incoming network services.
+    public func inspectPublicationBinding(uploadID: UploadID) async throws -> HostReceiptBindingDiagnostic {
+        guard !transportStopped else { throw HarcHostError.processingSchedulerUnavailable }
+        return try await canonicalIngest.inspectPublicationBinding(uploadID: uploadID)
+    }
+
     /// Local app administration; deliberately absent from the network services.
     public func repairReceiptBindings(
         progress: (@Sendable (Int, Int) async -> Void)? = nil
@@ -485,11 +520,23 @@ public actor HarcResidentHostRuntimeV1 {
         return try await canonicalIngest.migrateCanonicalLibraryBindings()
     }
 
-    public func validatedProcessingRequest(
+    public func processingRequestExpectation(
         canonicalRecordingID: CanonicalRecordingID
     ) async throws -> HostDurableProcessingRequest {
-        try await canonicalIngest.validatedProcessingRequest(
+        guard !transportStopped else { throw HarcResidentHostRuntimeError.transportStopped }
+        return try await canonicalIngest.processingRequestExpectation(
             canonicalRecordingID: canonicalRecordingID
+        )
+    }
+
+    public func validatedProcessingRequest(
+        canonicalRecordingID: CanonicalRecordingID,
+        backgroundOnly: Bool = false
+    ) async throws -> HostDurableProcessingRequest {
+        guard !transportStopped else { throw HarcResidentHostRuntimeError.transportStopped }
+        return try await canonicalIngest.validatedProcessingRequest(
+            canonicalRecordingID: canonicalRecordingID,
+            backgroundOnly: backgroundOnly
         )
     }
 
@@ -497,7 +544,12 @@ public actor HarcResidentHostRuntimeV1 {
         guard !transportStopped else { return }
         await transportRuntime.handleSystemWake()
         await remoteRelayHostAgent?.handleSystemWake()
+        await publicationRecovery.handleSystemWake()
         await stagingMaintenance.handleSystemWake()
+    }
+
+    public func publicationRecoveryStatus() async -> HarcHostPublicationRecoveryStatus {
+        await publicationRecovery.status()
     }
 
     public func stagingMaintenanceStatus() async
@@ -513,6 +565,7 @@ public actor HarcResidentHostRuntimeV1 {
         guard !transportStopped else { return }
         transportStopped = true
         try? await pairingTickets.cancel()
+        await publicationRecovery.stop()
         await stagingMaintenance.stop()
         await remoteRelayHostAgent?.shutdown()
         await transportRuntime.shutdown()
@@ -589,21 +642,31 @@ extension HarcResidentHostRuntimeError: LocalizedError {
         case .transportStopped:
             "The resident Host transport is stopped."
         case .startupRecoveryDidNotRun:
-            "Resident Host startup did not complete its pre-serving publication recovery."
+            "Resident Host startup did not prepare its publication recovery plan."
         case .startupRollbackFailed(let startup, let rollback):
             "Resident Host startup failed (\(startup)) and its first-enable rollback failed (\(rollback))."
         }
     }
 }
 
-private actor HarcResidentStartupRecoveryBox {
+package actor HarcResidentStartupRecoveryBox {
     private var report: HostCanonicalRecoveryReport?
 
-    func store(_ report: HostCanonicalRecoveryReport) {
-        self.report = report
+    /// This boundary receives metadata discovery only, never an audio recovery
+    /// callback. The report must not imply that deferred audio was validated.
+    package func prepare(
+        discover: @Sendable () async throws -> [UploadID]
+    ) async throws {
+        let pending = try await discover()
+        report = HostCanonicalRecoveryReport(
+            attemptedUploadCount: 0,
+            recoveredReceiptCount: 0,
+            failedUploadIDs: [],
+            deferredUploadIDs: pending
+        )
     }
 
-    func requireReport() throws -> HostCanonicalRecoveryReport {
+    package func requireReport() throws -> HostCanonicalRecoveryReport {
         guard let report else {
             throw HarcResidentHostRuntimeError.startupRecoveryDidNotRun
         }

@@ -255,13 +255,14 @@ extension HarcWindowRootView {
         // it is dead code — the summary/suggestions load silently never ran,
         // which starved the "N speakers to review" chip whenever the
         // inspector was closed.
+        .task(id: recording) { await loadSpeakerMetadata(for: recording) }
+        .task(id: recording.wavPath) { await loadEnvelope(for: recording) }
         .task(id: recording.wavPath) {
             // A restored selection can arrive before the observed library
             // rows. Its selection-change handler then has no document to
             // load; initialize when the actual detail first becomes available.
             if detailDocument == nil {
                 loadTranscript()
-                await loadEnvelope()
                 await loadResolvedLabels()
             }
             async let observation: Void = observeRecording(recording: recording)
@@ -502,7 +503,11 @@ extension HarcWindowRootView {
 
     var transcriptEditorBody: some View {
         Group {
-            if let err = transcriptLoadError, editorText.isEmpty {
+            if transcriptIsLoading {
+                ProgressView("Loading transcript…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("harc.transcript.loading")
+            } else if let err = transcriptLoadError, editorText.isEmpty {
                 EmptyStateView(
                     icon: "doc.text.magnifyingglass",
                     title: "No transcript available",
@@ -885,7 +890,7 @@ extension HarcWindowRootView {
     /// Speaker turns in flat text: line starts that look like "Name: ".
     /// Computed at load; jumping moves the highlight (and the scroll) to the
     /// start of the neighboring turn relative to the current highlight.
-    static func speakerTurnOffsets(in text: String) -> [Int] {
+    nonisolated static func speakerTurnOffsets(in text: String) -> [Int] {
         let ns = text as NSString
         var offsets: [Int] = []
         var lineStart = 0

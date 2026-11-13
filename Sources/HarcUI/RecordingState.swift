@@ -13,6 +13,29 @@ public final class RecordingState: ObservableObject {
     /// only `isRecording` has a hole exactly that wide.
     @Published public private(set) var isPreparing: Bool = false
     @Published public private(set) var recordingStartedAt: Date? = nil
+    /// Presentation-only Stop acceptance boundary. Capture/resource ownership
+    /// remains active until the existing stop/finalization pipeline completes.
+    @Published public private(set) var stopRequestedAt: Date? = nil
+    public var isStopping: Bool { stopRequestedAt != nil }
+
+    public func markStopRequested(at date: Date = Date()) {
+        guard isActiveOrPreparing, stopRequestedAt == nil else { return }
+        stopRequestedAt = date
+    }
+
+    /// Frozen at accepted Stop, not a claim about the final audio's duration.
+    public func elapsedText(at now: Date = Date()) -> String {
+        guard let start = recordingStartedAt else { return "0:00" }
+        return ElapsedFormatter.string(since: start, now: stopRequestedAt ?? now)
+    }
+
+    /// The stopping surfaces outlive active timestamps during Library ingest.
+    /// Omit the duration then instead of presenting a spurious zero.
+    public var finishingElapsedText: String? {
+        guard isStopping, recordingStartedAt != nil else { return nil }
+        return elapsedText()
+    }
+
     @Published public var livePreviewText: String = ""
     @Published public private(set) var lastResult: RecordingResult? = nil
 
@@ -23,10 +46,12 @@ public final class RecordingState: ObservableObject {
     public var isActiveOrPreparing: Bool { isRecording || isPreparing }
 
     public func markPreparing() {
+        stopRequestedAt = nil
         isPreparing = true
     }
 
     public func markStarted(at date: Date) {
+        if !isPreparing { stopRequestedAt = nil }
         isPreparing = false
         isRecording = true
         recordingStartedAt = date
@@ -37,6 +62,7 @@ public final class RecordingState: ObservableObject {
         isPreparing = false
         isRecording = false
         recordingStartedAt = nil
+        stopRequestedAt = nil
         livePreviewText = ""
         lastResult = RecordingResult(wavURL: wavURL, txtURL: txtURL, jsonURL: jsonURL)
     }
@@ -49,6 +75,7 @@ public final class RecordingState: ObservableObject {
         isPreparing = false
         isRecording = false
         recordingStartedAt = nil
+        stopRequestedAt = nil
         livePreviewText = ""
         lastResult = nil
     }
@@ -57,6 +84,7 @@ public final class RecordingState: ObservableObject {
         isPreparing = false
         isRecording = false
         recordingStartedAt = nil
+        stopRequestedAt = nil
         livePreviewText = ""
     }
 

@@ -82,10 +82,10 @@ struct AddPersonSheet: View {
 
 // MARK: - Transcript display
 
-struct TranscriptDisplaySegment: Identifiable {
+struct TranscriptDisplaySegment: Identifiable, Sendable {
     let id = UUID()
     let speaker: Int
-    let speakerName: String
+    var speakerName: String
     let startSec: Int
     let text: String
 }

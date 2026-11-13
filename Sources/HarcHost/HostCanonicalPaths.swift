@@ -121,7 +121,7 @@ final class HostCanonicalDirectory: @unchecked Sendable {
         }
     }
 
-    init(rootAnchor: HostCanonicalRootAnchor, year: String, day: String) throws {
+    init(rootAnchor: HostCanonicalRootAnchor, year: String, day: String, create: Bool = true) throws {
         try rootAnchor.validateRetainedIdentity()
         var opened = rootAnchor.retainedRoot.components.map { $0.borrowed() }
         let borrowedCount = opened.count
@@ -130,7 +130,7 @@ final class HostCanonicalDirectory: @unchecked Sendable {
                 try Self.openChildDirectory(
                     named: year,
                     relativeTo: opened[opened.count - 1].descriptor,
-                    create: true,
+                    create: create,
                     allowTrustedSystemSymlink: false,
                     requireCurrentUserOwnership: true
                 )
@@ -139,7 +139,7 @@ final class HostCanonicalDirectory: @unchecked Sendable {
                 try Self.openChildDirectory(
                     named: day,
                     relativeTo: opened[opened.count - 1].descriptor,
-                    create: true,
+                    create: create,
                     allowTrustedSystemSymlink: false,
                     requireCurrentUserOwnership: true
                 )
@@ -174,6 +174,20 @@ final class HostCanonicalDirectory: @unchecked Sendable {
         try Self.validateOwnedRegularFile(information)
         try validateHierarchy()
         return true
+    }
+
+    /// Advisory residency only. Never opens the file or replaces its later
+    /// signed-content/identity proof; all existing path safety checks apply.
+    func requireResidentFile(named name: String) throws {
+        try validateHierarchy()
+        try Self.requireSafeChildName(name)
+        var information = stat()
+        guard fstatat(descriptor, name, &information, AT_SYMLINK_NOFOLLOW) == 0 else {
+            throw HostCanonicalResourceDeferred.audioNotResident
+        }
+        try Self.validateOwnedRegularFile(information)
+        try HostCanonicalResourceAdmission.requireResidentMetadata(information)
+        try validateHierarchy()
     }
 
     func createExclusiveFile(
@@ -619,7 +633,8 @@ struct HostCanonicalPublicationPaths: Equatable, Sendable {
         rootAnchor: HostCanonicalRootAnchor,
         canonicalRecordingID: CanonicalRecordingID,
         persistedRelativeWAVPath: String,
-        temporaryName: String
+        temporaryName: String,
+        createDirectories: Bool = true
     ) throws -> Self {
         guard isSafeTemporaryName(temporaryName) else {
             throw HarcHostError.unsafePublicationPath
@@ -635,7 +650,8 @@ struct HostCanonicalPublicationPaths: Equatable, Sendable {
         let trustedDirectory = try HostCanonicalDirectory(
             rootAnchor: rootAnchor,
             year: components.year,
-            day: components.day
+            day: components.day,
+            create: createDirectories
         )
 
         let wavURL = directory.appendingPathComponent(components.wavName)
@@ -658,6 +674,10 @@ struct HostCanonicalPublicationPaths: Equatable, Sendable {
 
     func entryExists(at url: URL) throws -> Bool {
         try trustedDirectory.entryExists(named: childName(for: url))
+    }
+
+    func requireResidentFile(at url: URL) throws {
+        try trustedDirectory.requireResidentFile(named: childName(for: url))
     }
 
     func createExclusiveFile(at url: URL) throws -> Int32 {

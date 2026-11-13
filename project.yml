@@ -9,8 +9,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.14.20"
-    CURRENT_PROJECT_VERSION: "75"
+    MARKETING_VERSION: "0.14.21"
+    CURRENT_PROJECT_VERSION: "76"
     CODE_SIGN_STYLE: Automatic
     DEAD_CODE_STRIPPING: YES
   configs:
@@ -86,7 +86,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         HarcBuildSHA: "$(HARC_BUILD_SHA)"
-        LSUIElement: true
+        LSUIElement: false
         NSHumanReadableCopyright: "Copyright © 2026 CloudArchitech LLC. All rights reserved."
         NSMicrophoneUsageDescription: "Harc uses the microphone to record meetings for transcription."
         NSCameraUsageDescription: "Harc uses a camera only when you scan a short-lived pairing code shown by your Harc host."

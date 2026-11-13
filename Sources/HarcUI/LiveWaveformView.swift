@@ -181,3 +181,21 @@ public struct LiveWaveformView: View {
         return out
     }
 }
+
+/// Keeps the sidebar's high-frequency history observation below the Library
+/// root. Passing the nested object alone does not subscribe the parent.
+struct RecordingMeterWaveform: View {
+    @ObservedObject var meters: RecordingMeterState
+    let size: LiveWaveformView.Size
+    let isActive: Bool
+    let tint: Color
+
+    var body: some View {
+        LiveWaveformView(
+            history: meters.amplitudeHistory,
+            size: size,
+            isActive: isActive,
+            tint: tint
+        )
+    }
+}

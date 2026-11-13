@@ -19,12 +19,11 @@ mkdir -p "$OUTPUT"
 python3 scripts/select-ios-configuration-simulator.py "$OUTPUT/destination.json"
 DESTINATION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination"])' "$OUTPUT/destination.json")
 SOURCE_SHA=$(git rev-parse HEAD)
-# Preserve owned-process diagnostics and xcresult on failure or timeout.
-python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$OUTPUT/diagnostics" -- \
-  xcodebuild "${XCODE_OPTIONS[@]}" \
+# Build and execute the same selection, destination and products in separate budgets.
+# Cold compilation must not consume the time needed to run tests and seal xcresult.
+TEST_OPTIONS=("${XCODE_OPTIONS[@]}" \
   -project Harc.xcodeproj -scheme HarcMobile -configuration Debug \
   -destination "$DESTINATION" -derivedDataPath "$DERIVED" \
-  -resultBundlePath "$OUTPUT/configuration.xcresult" \
   -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
   -only-testing:HarcMobileAppTests/HarcMobileConfigurationTests \
   -only-testing:HarcMobileAppTests/HarcMobileCaptureExperienceTests \
@@ -36,6 +35,7 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -only-testing:HarcMobileAppTests/HarcMobileFinalizationRecoveryTests \
   -only-testing:HarcMobileAppTests/HarcMobileUploadPreparationTests \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLocalLibraryIsReachableWithoutHost \
+  -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRefreshStatusProbePreservesPredicateAndRedactsLabels \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSyncDetailsAreDiscoverableWithoutHostOrRecording \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromLibraryRootControl \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testHostTabFromSyncControl \
@@ -46,7 +46,11 @@ python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLibraryTextActionsHaveAccessibleContrast \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLongHostNameKeepsRecordAndToolbarsUsable \
   -only-testing:HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSetupMacCardRemainsUsableAtNormalAndLargestText \
-  CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA" test
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO "HARC_BUILD_SHA=$SOURCE_SHA")
+python3 scripts/run-package-tests.py --timeout-seconds 1800 --diagnostics-dir "$OUTPUT/build-diagnostics" -- \
+  xcodebuild "${TEST_OPTIONS[@]}" build-for-testing
+python3 scripts/run-package-tests.py --timeout-seconds 1500 --diagnostics-dir "$OUTPUT/diagnostics" -- \
+  xcodebuild "${TEST_OPTIONS[@]}" -resultBundlePath "$OUTPUT/configuration.xcresult" test-without-building
 
 # A successful xcodebuild exit alone does not prove the selected tests ran.
 xcrun xcresulttool get test-results summary --path "$OUTPUT/configuration.xcresult" \
@@ -63,6 +67,7 @@ python3 scripts/check-xcode-test-results.py \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
+  --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRefreshStatusProbePreservesPredicateAndRedactsLabels \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRecordEmptyTodayRemainsNavigableAtLargestText \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testLibraryDaySummaryRemainsReadableAtLargestText \
   --require-test HarcMobileAppTests/HarcMobileCapturePipelineTests/testDequeuedReconfigurationCheckpointFailureReleasesEveryCaller \
