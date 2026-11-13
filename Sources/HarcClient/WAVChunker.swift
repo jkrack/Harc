@@ -85,17 +85,30 @@ public final class WAVChunker: @unchecked Sendable {
     /// entirely new relative to committed text, so no timestamp trimming —
     /// which would have to reason about sub-word tokens — is ever needed.
     /// `maxSeconds` bounds the slice when chunk retries let the uncommitted
-    /// span grow pathologically. Nil until a second of new audio exists.
-    public func previewWindow(fromMs: Int, maxSeconds: Double) async throws -> Chunk? {
-        try lockedPreviewWindow(fromMs: fromMs, maxSeconds: maxSeconds)
+    /// span grow pathologically. By default, return the most recent bounded
+    /// slice. With `requireCompleteSpan`, return nil before copying/converting
+    /// audio if the whole anchored span exceeds the budget. Neither mode
+    /// consumes durable chunks. Nil until a second of new audio exists.
+    public func previewWindow(
+        fromMs: Int,
+        maxSeconds: Double,
+        requireCompleteSpan: Bool = false
+    ) async throws -> Chunk? {
+        try lockedPreviewWindow(
+            fromMs: fromMs, maxSeconds: maxSeconds,
+            requireCompleteSpan: requireCompleteSpan
+        )
     }
 
-    private func lockedPreviewWindow(fromMs: Int, maxSeconds: Double) throws -> Chunk? {
+    private func lockedPreviewWindow(
+        fromMs: Int, maxSeconds: Double, requireCompleteSpan: Bool
+    ) throws -> Chunk? {
         ioLock.lock()
         defer { ioLock.unlock() }
         let currentLength = try readCurrentLength()
         let fromFrame = AVAudioFramePosition(Double(fromMs) / 1000.0 * targetSampleRate)
         let maxFrames = AVAudioFramePosition(maxSeconds * targetSampleRate)
+        if requireCompleteSpan, currentLength - fromFrame > maxFrames { return nil }
         let start = max(fromFrame, currentLength - maxFrames)
         guard currentLength - start >= AVAudioFramePosition(targetSampleRate) else { return nil }
         return try writeSlice(startFrame: start, endFrame: currentLength)
