@@ -1,7 +1,7 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-11-02
-**Candidate configuration:** HarcMobile 0.14.20 (75), iOS 26+, iPhone only
+**Updated:** 2026-11-13
+**Candidate configuration:** HarcMobile 0.14.21 (76), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed phone release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.
@@ -32,6 +32,12 @@ physical qualification phone.
 The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
 remain useful history and must not be relabeled as current-candidate qualification.
+
+## November 13 preparation identity
+
+The shared configuration is now 0.14.21 (76) for Mac release preparation. No
+phone artifact is selected or qualified, and no earlier evidence is transferred
+to this source or to the prospective Mac artifact.
 
 ## November 2 current checkpoint
 
@@ -259,7 +265,7 @@ logs, result bundles, hardware/OS identity, and artifact digests together.
 
 | Gate | Current status | Required closure |
 | --- | --- | --- |
-| Candidate version/build identification | Identified only | Match source 0.14.20 (75); retain the clean source commit and exact artifact receipts. No 0.14.20 phone artifact is selected or qualified; earlier evidence retains its original identity. |
+| Candidate version/build identification | Identified only | Match source 0.14.21 (76); retain the clean source commit and exact artifact receipts. No 0.14.21 phone artifact is selected or qualified; earlier evidence retains its original identity. |
 | Repository input preflight | Source inputs and public URLs passed during preparation | `xcodegen generate` and source/public-URL preflight passed in the isolated readiness checkout. Repeat on the clean committed candidate and retain its exit status. This does not close the gates below. |
 | Packaged iPhone configuration/privacy assertions | Local simulator diagnostic pass, 2026-10-19 | 71 logical tests passed with zero failures or skips on iOS 27.0: 57 XCTest app cases, 12 Swift Testing cases, and two UI cases. App source was `3224c78` with the SSD test harness being edited; this is not sealed release evidence. Repeat on the sealed release artifact. |
 | Package, Mac app, embedded helpers | Historical PR #136 exact-head CI pass | Run `39177518324` passed package/protocol/relay validation, the Mac app/UI regression, helpers and mobile configuration at the tree merged as `3afdccf`. Repeat affected gates on the current candidate and retain exact release-artifact identity. Keep Mac distribution on Sparkle. |
