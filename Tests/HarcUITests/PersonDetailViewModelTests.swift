@@ -277,7 +277,11 @@ struct PersonDetailViewModelTests {
         try await store.linkSpeaker(personID: bob, recordingID: ids[failureIndex], speakerIndex: 0)
         await vm.confirmAll()
         #expect(vm.mutationFailure?.action == .confirmSpeakerSuggestion)
-        #expect(vm.pendingSuggestions.map(\.recordingID) == Array(ids[(failureIndex + 1)...]))
+        // This fixture deliberately has no voice embeddings. A successful earlier
+        // confirmation now refreshes and removes those unsupported suggestions.
+        // If the first confirmation fails, no refresh has been authorized yet.
+        let remaining = failureIndex == 0 ? Array(ids[(failureIndex + 1)...]) : []
+        #expect(vm.pendingSuggestions.map(\.recordingID) == remaining)
         #expect(try await store.fetchPersonSpeakerLinks(recordingID: ids[failureIndex]).first?.personID == bob)
         for id in ids.prefix(failureIndex) {
             #expect(try await store.fetchPersonSpeakerLinks(recordingID: id).first?.personID == alice)
