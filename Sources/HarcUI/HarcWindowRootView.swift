@@ -133,6 +133,8 @@ public struct HarcWindowRootView: View {
 
     // Task 8.1: pending suggestions for the inspector chip system
     @State var inspectorPendingSuggestions: [PendingSuggestion] = []
+    @State var inspectorConfirmationBySpeaker: [Int: Bool] = [:]
+    @State var inspectorConfirmationRecordingID: Int64?
     @State var inspectorSuggestionReviews = SpeakerSuggestionReviewBatch.empty
     @State var inspectorSlotReviews = SpeakerSlotReviewBatch.empty
     @State var inspectorSuggestionLoadID = UUID()
@@ -1274,7 +1276,8 @@ public struct HarcWindowRootView: View {
                     }
                 },
                 suggestionsProvider: nil,
-                pendingSuggestions: inspectorPendingSuggestions,
+                confirmationBySpeaker: inspectorConfirmationRecordingID == recording.id ? inspectorConfirmationBySpeaker : [:],
+                pendingSuggestions: inspectorConfirmationRecordingID == recording.id ? inspectorPendingSuggestions : [],
                 personNamesByID: allPeopleByID,
                 onConfirmSuggestion: { s in
                     let reviews = inspectorSuggestionReviews
@@ -1438,10 +1441,13 @@ public struct HarcWindowRootView: View {
         inspectorSuggestionLoadID = loadID
         let people = (try? await store.fetchPeople()) ?? []
         let suggestions: [PendingSuggestion]
+        let links: [PersonSpeakerLink]
         if let id = recording.id {
+            links = (try? await store.fetchPersonSpeakerLinks(recordingID: id)) ?? []
             suggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
         } else {
             suggestions = []
+            links = []
         }
         let reviews = await SpeakerSuggestionReviewBatch.load(suggestions, store: store)
         let slots: SpeakerSlotReviewBatch
@@ -1456,6 +1462,8 @@ public struct HarcWindowRootView: View {
         inspectorSlotReviews = slots
         inspectorSuggestionReviews = reviews
         inspectorPendingSuggestions = suggestions
+        inspectorConfirmationBySpeaker = Dictionary(links.map { ($0.speakerIndex, $0.isUserConfirmed) }, uniquingKeysWith: { _, latest in latest })
+        inspectorConfirmationRecordingID = recording.id
     }
 
     /// Keep the recording's portable speaker-name metadata in step with its
