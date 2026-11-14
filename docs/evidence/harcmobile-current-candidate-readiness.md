@@ -1,6 +1,6 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-11-13
+**Updated:** 2026-11-14
 **Candidate configuration:** HarcMobile 0.14.21 (76), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed phone release source:** Not selected. Archive identity, executable digest, CDHash,
@@ -107,6 +107,25 @@ physical codec, transfer, Library or App Store gates. Old passes retain their
 original source identities; fresh candidate validation is tracked in its draft PR.
 
 ## Source-scoped observations
+
+### Omega physical codec and recovery diagnostic, 2026-11-14
+
+The [current-source physical diagnostic](2026-11-14-omega-physical-codec-and-recovery.md)
+passed all 31 selected codec, capture-pipeline, finalization, local-Library,
+playback-owner, and upload-preparation cases on Omega (`iPhone16,2`, iOS 26.6
+build `23G71`). Source was clean main `3e7cef72a512b7a9ded6ec8e66190bf66306c2ad`;
+the signed 0.14.21 (76) diagnostic's full app file inventory matched before and
+after execution. The sealed xcresult gate reports zero failures/skips and requires
+all 31 selectors. Repository/public-URL preflight and 61 focused tooling tests
+also passed.
+
+The three encoder cases exercise real iOS CAF/ALAC PCM/EOF and restart reuse.
+The remaining cases use disposable/injected fixtures. The production phone app
+was not replaced, no production Host was contacted, and no ordinary microphone
+recording or protected-master/receipt/Host-to-phone round trip was qualified.
+The exact shipping phone artifact, physical acceptance, archive, privacy/owner
+fields, and submission gates remain open. No prior observations are relabeled,
+and this diagnostic does not modify the pending Mac 0.14.22 release candidate.
 
 ### Omega processing and Library reconciliation, 2026-10-20
 
