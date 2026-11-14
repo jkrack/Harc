@@ -752,3 +752,99 @@ public extension RecordingStore {
         return dot / (sqrt(lhsNorm) * sqrt(rhsNorm))
     }
 }
+
+public extension RecordingStore {
+    /// Read evidence, rank identities, and replace only unlinked suggestions
+    /// in one transaction. No actor hop can interleave a confirmation, dismissal,
+    /// changed embedding, or enrollment correction with publication of this result.
+    func reconcileStandaloneSpeakerSuggestions(recordingID: Int64?, excludingRecordingID: Int64?,
+        embedderKind: String, embeddingDim: Int, defaultThreshold: Double) async throws {
+        guard let dimensions = UInt32(exactly: embeddingDim), dimensions > 0,
+              dimensions <= QuantizedSpeakerEmbedding.maximumDimensions else { return }
+        try await db.write { database in
+            let people = try Self.fetchPeople(db: database)
+            var references: [PersonID: [SpeakerRecognitionReference]] = [:]
+            for person in people {
+                references[person.stableID] = try Self.speakerRecognitionReferences(in: database,
+                    personID: person.id, modelID: embedderKind, dimensions: dimensions)
+            }
+            let recordings = try Int64.fetchAll(database, sql: """
+                SELECT id FROM recordings WHERE deleted_at IS NULL
+                  AND (? IS NULL OR id = ?) AND (? IS NULL OR id != ?)
+                """, arguments: [recordingID, recordingID, excludingRecordingID, excludingRecordingID])
+            for id in recordings {
+                let bound = try Self.requiresBoundSpeakerReview(in: database, recordingID: id)
+                let linked = Set(try Int.fetchAll(database, sql:
+                    "SELECT speaker_index FROM person_speakers WHERE recording_id = ?", arguments: [id]))
+                // Include stale suggestions even when their mutable query vanished.
+                let indices = try Int.fetchAll(database, sql: """
+                    SELECT speaker_index FROM speaker_embeddings WHERE recording_id = ? AND embedder_kind = ?
+                    UNION SELECT speaker_index FROM pending_suggestions WHERE recording_id = ?
+                    UNION SELECT speaker_index FROM current_speaker_evidence WHERE recording_id = ?
+                    """, arguments: [id, embedderKind, id, id])
+                for index in indices where !linked.contains(index) {
+                    let query: [Float]?
+                    if bound {
+                        // Standalone publication is bound too. Validate its exact
+                        // current snapshot, never fall back to a mutable slot row.
+                        // Unavailable bound reviews are left for their owner to repair.
+                        let evidence: SpeakerEvidenceSnapshot?
+                        do {
+                            evidence = try Self.currentHostSpeakerEvidence(in: database,
+                                recordingID: id, speakerIndex: index)
+                        } catch let error as DatabaseError {
+                            throw error
+                        } catch {
+                            // An unavailable or changed artifact must not authorize
+                            // a mutation, or block other recordings in a backfill.
+                            continue
+                        }
+                        guard let evidence, evidence.modelID == embedderKind,
+                            evidence.embedding.dimensions == dimensions else { continue }
+                        query = evidence.embedding.dequantized
+                    } else {
+                        let bytes = try Data.fetchOne(database, sql: """
+                            SELECT embedding FROM speaker_embeddings
+                            WHERE recording_id = ? AND speaker_index = ? AND embedder_kind = ?
+                            """, arguments: [id, index, embedderKind])
+                        query = bytes.flatMap { Self.decodeFloat32($0, expectedDimensions: embeddingDim) }
+                    }
+                    var scores: [PersonID: Double] = [:]
+                    if let query {
+                        for person in people {
+                            for reference in references[person.stableID] ?? [] where reference.recordingID != id {
+                                guard let vector = Self.decodeFloat32(reference.embedding, expectedDimensions: embeddingDim) else { continue }
+                                let score = Self.cosineSimilarity(query, vector)
+                                guard score.isFinite else { continue }
+                                scores[person.stableID] = max(scores[person.stableID] ?? -1, score)
+                            }
+                        }
+                    }
+                    let winner = SpeakerRecognitionMatcher.unambiguousBestPerson(scores: scores)
+                    let person = people.first(where: { $0.stableID == winner })
+                    let score = winner.flatMap { scores[$0] }
+                    var accepted: (Int64, Double)?
+                    if let person, let score, score >= (person.matchThreshold ?? defaultThreshold),
+                       try Bool.fetchOne(database, sql: """
+                           SELECT EXISTS(SELECT 1 FROM dismissed_suggestions
+                               WHERE person_id = ? AND recording_id = ? AND speaker_index = ?)
+                           """, arguments: [person.id, id, index]) != true {
+                        accepted = (person.id, score)
+                    }
+                    // Preserve unchanged row timestamps: an open evidence-bound
+                    // review must not become stale solely from an identical refresh.
+                    try database.execute(sql: """
+                        DELETE FROM pending_suggestions WHERE recording_id = ? AND speaker_index = ?
+                        AND (? IS NULL OR person_id != ? OR score != ?)
+                        """, arguments: [id, index, accepted?.0, accepted?.0, accepted?.1])
+                    if let (personID, score) = accepted {
+                        try database.execute(sql: """
+                            INSERT OR IGNORE INTO pending_suggestions (person_id, recording_id, speaker_index, score, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            """, arguments: [personID, id, index, score, Date().timeIntervalSince1970])
+                    }
+                }
+            }
+        }
+    }
+}

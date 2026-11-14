@@ -546,6 +546,14 @@ people too. A runner-up below its own acceptance threshold still causes ambiguit
 This consistency floor is not a calibrated accuracy guarantee. Validate with
 `swift test --filter 'PeopleStoreTests|SpeakerRecognitionMatcherTests|SpeakerReIDServiceTests|SpeakerSuggestionEngineTests'`.
 
+Standalone suggestion refreshes must reconcile obsolete rows, not only add new
+matches. Read references, rank, check links/dismissals, and reconcile in one Store
+transaction. Standalone publications also use bound evidence: match their validated
+current snapshots, never mutable slot embeddings. Preserve unchanged review rows,
+confirmed or automatic links, and unavailable bound reviews; one unavailable
+artifact must not block healthy recordings in a backfill. Keep database errors
+visible. Validate with `SpeakerSuggestionEngineTests` and `SpeakerEvidenceStoreTests`.
+
 Speaker identification evaluation must count query cases separately from enrollment
 replay and must not count absent speech as a successful unknown rejection. Use
 `scripts/quality/check-speaker-identification.py` for single-speaker corpora and
