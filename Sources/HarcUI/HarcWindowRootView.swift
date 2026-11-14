@@ -133,9 +133,11 @@ public struct HarcWindowRootView: View {
 
     // Task 8.1: pending suggestions for the inspector chip system
     @State var inspectorPendingSuggestions: [PendingSuggestion] = []
+    @State var inspectorConfirmationBySpeaker: [Int: Bool] = [:]
+    @State var inspectorConfirmationRecordingID: Int64?
     @State var inspectorSuggestionReviews = SpeakerSuggestionReviewBatch.empty
     @State var inspectorSlotReviews = SpeakerSlotReviewBatch.empty
-    @State var inspectorSuggestionLoadID = UUID()
+    @State var inspectorSuggestionLoads = SpeakerReviewLoadGeneration()
     /// Stats for Nerds for the current selection, assembled async from the
     /// JSON sidecar + store. Nil hides the section.
     @State var nerdStats: RecordingNerdStats? = nil
@@ -1274,20 +1276,21 @@ public struct HarcWindowRootView: View {
                     }
                 },
                 suggestionsProvider: nil,
-                pendingSuggestions: inspectorPendingSuggestions,
+                confirmationBySpeaker: inspectorConfirmationRecordingID == recording.id ? inspectorConfirmationBySpeaker : [:],
+                pendingSuggestions: inspectorConfirmationRecordingID == recording.id ? inspectorPendingSuggestions : [],
                 personNamesByID: allPeopleByID,
                 onConfirmSuggestion: { s in
                     let reviews = inspectorSuggestionReviews
                     Task {
                         do {
-                            let needsLegacyLabel = try await reviews.confirm(s, store: store)
-                            if needsLegacyLabel {
+                            let mutation = try await reviews.confirm(s, store: store)
+                            if mutation.needsLegacyLabel {
                                 try await mirrorResolvedSpeakerName(
                                     recordingID: s.recordingID, speakerIndex: s.speakerIndex)
                             }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = mutation.refreshFailure
                         } catch {
                             reportMutationFailure(.confirmSpeakerSuggestion, error: error)
                         }
@@ -1316,14 +1319,14 @@ public struct HarcWindowRootView: View {
                     let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            let needsLegacyLabel = try await reviews.link(personID: personID,
+                            let mutation = try await reviews.link(personID: personID,
                                 recordingID: rid, speakerIndex: speakerIndex, store: store)
-                            if needsLegacyLabel {
+                            if mutation.needsLegacyLabel {
                                 try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
                             }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = mutation.refreshFailure
                         } catch {
                             reportMutationFailure(.linkSpeaker, error: error)
                         }
@@ -1336,18 +1339,12 @@ public struct HarcWindowRootView: View {
                         do {
                             let created = try await reviews.createPerson(displayName: name,
                                 recordingID: rid, speakerIndex: speakerIndex, store: store)
-                            let pid = created.personID
                             if created.needsLegacyLabel {
                                 try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
                             }
-                            // Best-effort, non-blocking: backfill suggestions for the new person.
-                            Task.detached { [store] in
-                                let engine = SpeakerSuggestionEngine(store: store, embedderKind: "wespeaker_v2")
-                                try? await engine.suggestForNewPerson(personID: pid, fromRecording: rid, speakerIndex: speakerIndex)
-                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = created.refreshFailure
                         } catch {
                             reportMutationFailure(.createAndLinkPerson(name), error: error)
                         }
@@ -1358,14 +1355,14 @@ public struct HarcWindowRootView: View {
                     let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            let needsLegacyLabel = try await reviews.unlink(recordingID: rid,
+                            let mutation = try await reviews.unlink(recordingID: rid,
                                 speakerIndex: speakerIndex, store: store)
-                            if needsLegacyLabel {
+                            if mutation.needsLegacyLabel {
                                 try await clearMirroredSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
                             }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = mutation.refreshFailure
                         } catch {
                             reportMutationFailure(.unlinkSpeaker, error: error)
                         }
@@ -1434,14 +1431,17 @@ public struct HarcWindowRootView: View {
     }
 
     func loadInspectorSummaryData(for recording: Recording) async {
-        let loadID = UUID()
-        inspectorSuggestionLoadID = loadID
+        guard let loadID = inspectorSuggestionLoads.begin(recording: recording,
+            selectedRecording: selectedRecording, isCancelled: Task.isCancelled) else { return }
         let people = (try? await store.fetchPeople()) ?? []
         let suggestions: [PendingSuggestion]
+        let links: [PersonSpeakerLink]
         if let id = recording.id {
+            links = (try? await store.fetchPersonSpeakerLinks(recordingID: id)) ?? []
             suggestions = (try? await store.fetchPendingSuggestionsForRecording(id)) ?? []
         } else {
             suggestions = []
+            links = []
         }
         let reviews = await SpeakerSuggestionReviewBatch.load(suggestions, store: store)
         let slots: SpeakerSlotReviewBatch
@@ -1449,13 +1449,15 @@ public struct HarcWindowRootView: View {
             let indices = await loadSpeakerIndices(for: recording)
             slots = await SpeakerSlotReviewBatch.load(recordingID: id, indices: indices, store: store)
         } else { slots = .empty }
-        guard !Task.isCancelled, inspectorSuggestionLoadID == loadID,
-              selectedRecording == recording else { return }
+        guard inspectorSuggestionLoads.isCurrent(loadID, recording: recording,
+            selectedRecording: selectedRecording, isCancelled: Task.isCancelled) else { return }
         allPeople = people
         allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
         inspectorSlotReviews = slots
         inspectorSuggestionReviews = reviews
         inspectorPendingSuggestions = suggestions
+        inspectorConfirmationBySpeaker = Dictionary(links.map { ($0.speakerIndex, $0.isUserConfirmed) }, uniquingKeysWith: { _, latest in latest })
+        inspectorConfirmationRecordingID = recording.id
     }
 
     /// Keep the recording's portable speaker-name metadata in step with its

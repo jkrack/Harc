@@ -102,18 +102,28 @@ public struct SpeakerLabel: Codable, Equatable, Hashable, Sendable {
     public let displayName: String
     public let personID: PersonID?
     public let identityRevision: EntityRevision?
+    /// Nil means an older Host/cache did not provide confirmation provenance.
+    /// False is an automatic assignment, not a user-confirmed training sample.
+    public let isUserConfirmed: Bool?
 
     public init(
         speakerIndex: UInt32,
         displayName: String,
         personID: PersonID? = nil,
-        identityRevision: EntityRevision? = nil
+        identityRevision: EntityRevision? = nil,
+        isUserConfirmed: Bool? = nil
     ) throws {
         guard (personID == nil) == (identityRevision == nil) else {
             throw DomainValidationError.invalidState(
                 reason: "A canonical speaker identity requires both person ID and revision"
             )
         }
+        guard isUserConfirmed == nil || personID != nil else {
+            throw DomainValidationError.invalidState(
+                reason: "Speaker confirmation provenance requires a person identity"
+            )
+        }
+        self.isUserConfirmed = isUserConfirmed
         self.speakerIndex = speakerIndex
         self.displayName = try DomainValidation.nonemptyTrimmed(
             displayName,
@@ -129,6 +139,7 @@ public struct SpeakerLabel: Codable, Equatable, Hashable, Sendable {
         case displayName
         case personID
         case identityRevision
+        case isUserConfirmed
     }
 
     public init(from decoder: any Decoder) throws {
@@ -138,7 +149,8 @@ public struct SpeakerLabel: Codable, Equatable, Hashable, Sendable {
                 speakerIndex: container.decode(UInt32.self, forKey: .speakerIndex),
                 displayName: container.decode(String.self, forKey: .displayName),
                 personID: container.decodeIfPresent(PersonID.self, forKey: .personID),
-                identityRevision: container.decodeIfPresent(EntityRevision.self, forKey: .identityRevision)
+                identityRevision: container.decodeIfPresent(EntityRevision.self, forKey: .identityRevision),
+                isUserConfirmed: container.decodeIfPresent(Bool.self, forKey: .isUserConfirmed)
             )
         } catch {
             throw DecodingError.dataCorrupted(

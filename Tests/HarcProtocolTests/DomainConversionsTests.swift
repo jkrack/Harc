@@ -508,6 +508,26 @@ struct DomainConversionsTests {
         #expect(try Harc_V1_SpeakerLabelV1(label).domainValue() == label)
     }
 
+    @Test("speaker status preserves absent versus explicit false on the wire")
+    func speakerConfirmationWireCompatibility() throws {
+        for confirmed: Bool? in [nil, false, true] {
+            let label = try SpeakerLabel(speakerIndex: 1, displayName: "Alice", personID: PersonID.random(),
+                identityRevision: EntityRevision(1), isUserConfirmed: confirmed)
+            let wire = Harc_V1_SpeakerLabelV1(label)
+            let decoded = try Harc_V1_SpeakerLabelV1(serializedBytes: wire.serializedData())
+            #expect(decoded.hasUserConfirmed == (confirmed != nil))
+            #expect(try decoded.domainValue() == label)
+            // Simulate an older Host omitting the additive field.
+            var legacy = decoded
+            legacy.clearUserConfirmed()
+            #expect(try legacy.domainValue().isUserConfirmed == nil)
+        }
+        var invalid = Harc_V1_SpeakerLabelV1()
+        invalid.displayName = "Not an identity"
+        invalid.userConfirmed = true
+        #expect(throws: (any Error).self) { try invalid.domainValue() }
+    }
+
     private func signingKey(_ value: UInt8) throws -> SoftwareP256SigningKey {
         var scalar = Data(repeating: 0, count: 32)
         scalar[31] = value

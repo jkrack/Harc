@@ -115,3 +115,11 @@ an edge artifact with a Host transcript. The desktop client consumes this outcom
 status reviews even without local embeddings. Retained-master/sidecar cleanup,
 Host re-evaluation and full route-lifecycle qualification remain open. Feature
 advertisement and speaker-bearing edge acceptance remain unchanged.
+
+### Speaker confirmation display provenance
+
+`SpeakerLabelV1.user_confirmed` (optional field 5) distinguishes an automatic
+Host assignment (`false`) from an explicitly confirmed identity (`true`). Absence
+from older Hosts means unknown, never confirmed. This additive display metadata
+does not grant enrollment or mutation authority; old clients may ignore it.
+Existing identity and exact-evidence mutation validation remain mandatory.

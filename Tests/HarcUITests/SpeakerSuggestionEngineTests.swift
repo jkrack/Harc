@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CryptoKit
 import HarcDomain
 import GRDB
 @testable import HarcStore
@@ -9,6 +10,133 @@ import GRDB
 @Suite("SpeakerSuggestionEngine")
 @MainActor
 struct SpeakerSuggestionEngineTests {
+    @Test("published standalone targets use current bound evidence and preserve unchanged reviews")
+    func boundTargetSuggestions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try await RecordingStore.inMemory()
+        let person = try await store.createPerson(displayName: "Alice")
+        let reference = try await Self.seedRecording(in: store, wav: root.appendingPathComponent("reference.wav").path)
+        try await store.upsertSpeakerEmbeddings(recordingID: reference, rows: [
+            .init(recordingID: reference, speakerIndex: 0, embedding: EmbeddingBlob.encode([Float(1), 0]),
+                segmentCount: 1, totalMs: 6000, embedderKind: EmbedderKind.wespeakerV2)])
+        try await store.linkSpeaker(personID: person, recordingID: reference, speakerIndex: 0)
+        let target = try await store.upsert(Recording(wavPath: root.appendingPathComponent("target.wav").path, startedAt: Date()))
+        let id = try #require(target.id)
+        let hash = try CanonicalPCMHash(Data(repeating: 1, count: 32))
+        let data = Data(#"{"speakers":[{"speaker":0,"startMs":0,"endMs":6000}],"joinedText":"synthetic"}"#.utf8)
+        let snapshot = try SpeakerEvidenceSnapshot(canonicalRecordingID: target.canonicalID,
+            canonicalPCMHash: hash, producerDeviceID: DeviceID(Data(repeating: 2, count: 32)),
+            processingArtifactSHA256: Data(SHA256.hash(data: data)), localClusterID: "local-speaker-0",
+            embedding: .quantizing([Float(1), 0]), modelID: "wespeaker_v2", speechDurationMs: 6000, segmentCount: 1)
+        try await store.publishLocalSpeakerGeneration(recordingID: id, expectedRevision: target.revision,
+            expectedArtifactSHA256: nil, canonicalPCMHash: hash, canonicalFrames: 160000,
+            structuredTranscriptData: data, snapshots: [snapshot])
+        // A mutable slot must not replace the bound query's identity.
+        try await store.upsertSpeakerEmbeddings(recordingID: id, rows: [
+            .init(recordingID: id, speakerIndex: 0, embedding: EmbeddingBlob.encode([Float(0), 1]),
+                segmentCount: 1, totalMs: 6000, embedderKind: EmbedderKind.wespeakerV2)])
+        let engine = SpeakerSuggestionEngine(store: store, embedderKind: EmbedderKind.wespeakerV2, embeddingDim: 2)
+        try await engine.suggestForRecording(recordingID: id)
+        let suggestion = try #require(try await store.fetchPendingSuggestionsForRecording(id).first)
+        #expect(suggestion.personID == person)
+        let review = try #require(try await store.hostSpeakerReview(for: suggestion))
+        try await engine.suggestForRecording(recordingID: id)
+        #expect(try await store.fetchPendingSuggestionsForRecording(id) == [suggestion])
+        #expect(try await store.hostSpeakerReview(for: suggestion) == review)
+        let healthy = try await Self.seedRecording(in: store, wav: root.appendingPathComponent("healthy.wav").path)
+        try await store.upsertSpeakerEmbeddings(recordingID: healthy, rows: [
+            .init(recordingID: healthy, speakerIndex: 0, embedding: EmbeddingBlob.encode([Float(1), 0]),
+                segmentCount: 1, totalMs: 6000, embedderKind: EmbedderKind.wespeakerV2)])
+        try await engine.suggestForRecording(recordingID: healthy)
+        #expect(try await store.fetchPendingSuggestionsForRecording(healthy).count == 1)
+        let saved = try #require(try await store.fetch(id: id))
+        let sidecar = URL(fileURLWithPath: try #require(saved.jsonPath))
+        try Data("changed synthetic artifact".utf8).write(to: sidecar)
+        try await store.unlinkSpeaker(recordingID: reference, speakerIndex: 0)
+        try await engine.suggestForNewPerson(personID: person, fromRecording: reference, speakerIndex: 0)
+        #expect(try await store.fetchPendingSuggestionsForRecording(healthy).isEmpty)
+        #expect(try await store.fetchPendingSuggestionsForRecording(id) == [suggestion])
+        try data.write(to: sidecar)
+        try await engine.suggestForRecording(recordingID: id)
+        #expect(try await store.fetchPendingSuggestionsForRecording(id).isEmpty)
+    }
+
+    @Test("reevaluation clears ambiguity, replaces winners, and clears missing references")
+    func reconcileChangedEvidence() async throws {
+        for backfill in [false, true] {
+            let store = try await RecordingStore.inMemory()
+            let alice = try await store.createPerson(displayName: "Alice")
+            let bob = try await store.createPerson(displayName: "Bob")
+            let a = try await Self.seedRecording(in: store, wav: "/tmp/reconcile-a.wav")
+            let b = try await Self.seedRecording(in: store, wav: "/tmp/reconcile-b.wav")
+            let q = try await Self.seedRecording(in: store, wav: "/tmp/reconcile-query.wav")
+            func embed(_ id: Int64, _ vector: [Float]) async throws {
+                try await store.upsertSpeakerEmbeddings(recordingID: id, rows: [
+                    .init(recordingID: id, speakerIndex: 0, embedding: EmbeddingBlob.encode(vector),
+                        segmentCount: 1, totalMs: 6000, embedderKind: EmbedderKind.wespeakerV2)])
+            }
+            try await embed(a, [1, 0]); try await embed(b, [0, 1]); try await embed(q, [1, 0])
+            try await store.linkSpeaker(personID: alice, recordingID: a, speakerIndex: 0)
+            try await store.linkSpeaker(personID: bob, recordingID: b, speakerIndex: 0)
+            let engine = SpeakerSuggestionEngine(store: store, embedderKind: EmbedderKind.wespeakerV2, embeddingDim: 2)
+            func refresh() async throws {
+                if backfill { try await engine.suggestForNewPerson(personID: bob, fromRecording: b, speakerIndex: 0) }
+                else { try await engine.suggestForRecording(recordingID: q) }
+            }
+            try await engine.suggestForRecording(recordingID: q)
+            #expect(try await store.fetchPendingSuggestionsForRecording(q).map(\.personID) == [alice])
+            try await embed(b, [1, 0]); try await refresh()
+            #expect(try await store.fetchPendingSuggestionsForRecording(q).isEmpty)
+            try await embed(a, [0, 1]); try await refresh()
+            #expect(try await store.fetchPendingSuggestionsForRecording(q).map(\.personID) == [bob])
+            try await store.linkSpeaker(personID: alice, recordingID: b, speakerIndex: 0); try await refresh()
+            #expect(try await store.fetchPendingSuggestionsForRecording(q).map(\.personID) == [alice])
+            try await store.unlinkSpeaker(recordingID: b, speakerIndex: 0); try await refresh()
+            #expect(try await store.fetchPendingSuggestionsForRecording(q).isEmpty)
+            try await store.linkSpeaker(personID: bob, recordingID: b, speakerIndex: 0); try await refresh()
+            try await store.upsertSpeakerEmbeddings(recordingID: q, rows: []); try await refresh()
+            #expect(try await store.fetchPendingSuggestionsForRecording(q).isEmpty)
+        }
+    }
+
+    @Test("reconciliation preserves confirmations, dismissals and bound review rows")
+    func reconcileProtectedReviews() async throws {
+        let store = try await RecordingStore.inMemory()
+        let person = try await store.createPerson(displayName: "Alice")
+        let source = try await Self.seedRecording(in: store, wav: "/tmp/protected-source.wav")
+        let query = try await Self.seedRecording(in: store, wav: "/tmp/protected-query.wav")
+        for id in [source, query] {
+            try await store.upsertSpeakerEmbeddings(recordingID: id, rows: [
+                .init(recordingID: id, speakerIndex: 0, embedding: EmbeddingBlob.encode([Float(1), 0]),
+                    segmentCount: 1, totalMs: 6000, embedderKind: EmbedderKind.wespeakerV2)])
+        }
+        try await store.linkSpeaker(personID: person, recordingID: source, speakerIndex: 0)
+        let engine = SpeakerSuggestionEngine(store: store, embedderKind: EmbedderKind.wespeakerV2, embeddingDim: 2)
+        try await engine.suggestForRecording(recordingID: query)
+        // Either transaction ordering must preserve the user's confirmation.
+        async let refresh: Void = engine.suggestForRecording(recordingID: query)
+        async let confirm: Void = store.confirmSuggestion(personID: person, recordingID: query, speakerIndex: 0)
+        _ = try await (refresh, confirm)
+        #expect(try await store.fetchPersonSpeakerLinks(recordingID: query).first?.isUserConfirmed == true)
+        #expect(try await store.fetchPendingSuggestionsForRecording(query).isEmpty)
+        try await store.unlinkSpeaker(recordingID: query, speakerIndex: 0)
+        async let dismissRefresh: Void = engine.suggestForRecording(recordingID: query)
+        async let dismiss: Void = store.dismissSuggestion(personID: person, recordingID: query, speakerIndex: 0)
+        _ = try await (dismissRefresh, dismiss)
+        try await engine.suggestForRecording(recordingID: query)
+        #expect(try await store.fetchPendingSuggestionsForRecording(query).isEmpty)
+        // A bound review must not be treated as a standalone legacy suggestion.
+        let queue = await store.uncoordinatedDB
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO bound_speaker_enrollment_sources (recording_id) VALUES (?)", arguments: [query])
+        }
+        try await store.insertPendingSuggestion(personID: person, recordingID: query, speakerIndex: 0, score: 0.9)
+        try await engine.suggestForRecording(recordingID: query)
+        #expect(try await store.fetchPendingSuggestionsForRecording(query).count == 1)
+    }
+
     @Test("both triggers recognize selected snapshots without a mutable source embedding")
     func selectedSnapshotReferences() async throws {
         for backfill in [false, true] {

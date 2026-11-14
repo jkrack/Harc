@@ -40,6 +40,9 @@ message SpeakerLabelV1 {
   string display_name = 2;
   optional PersonIDV1 person_id = 3;
   optional uint64 identity_revision = 4;
+  // Display provenance only. Absence is unknown on older Hosts, not confirmed.
+  // This field never grants enrollment or mutation authority.
+  optional bool user_confirmed = 5;
 }
 
 // Compact client recognition state. `signed_int8_values` stores the bit

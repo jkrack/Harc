@@ -305,8 +305,34 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
             XCTAssertTrue(scrollUntilExists(retainedStatus, in: cachedApp))
             XCTAssertTrue(offline.evaluate(with: retainedStatus))
         }
+        // Preserve the single tap and original deadline. Only gather extra AX
+        // state after the outcome is fixed, so diagnostics cannot settle the
+        // navigation transition before the operation being investigated.
+        let backStarted = ProcessInfo.processInfo.systemUptime
         cachedApp.navigationBars["Sending to Mac"].buttons["Library"].tap()
-        XCTAssertTrue(cachedApp.navigationBars["Library"].waitForExistence(timeout: 10))
+        let backReturned = ProcessInfo.processInfo.systemUptime
+        let returnedToLibrary = cachedApp.navigationBars["Library"].waitForExistence(timeout: 10)
+        let waitReturned = ProcessInfo.processInfo.systemUptime
+        let timing = XCTAttachment(string:
+            "back_tap_ms=\(Int((backReturned - backStarted) * 1_000)) " +
+            "library_wait_ms=\(Int((waitReturned - backReturned) * 1_000)) " +
+            "returned_to_library=\(returnedToLibrary)"
+        )
+        timing.name = "Cached Library final Back timing"
+        timing.lifetime = .keepAlways
+        add(timing)
+        if !returnedToLibrary {
+            // This app uses only the isolated cached-library test fixture.
+            let hierarchy = XCTAttachment(string: cachedApp.debugDescription)
+            hierarchy.name = "Cached Library final Back failure hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            let screenshot = XCTAttachment(screenshot: cachedApp.screenshot())
+            screenshot.name = "Cached Library final Back failure screen"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+        XCTAssertTrue(returnedToLibrary)
         XCTAssertTrue(cachedApp.tabBars.buttons["Library"].isSelected)
     }
 

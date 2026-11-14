@@ -22,6 +22,9 @@ public struct WaveformPlayerView: View {
 
     @StateObject private var fallbackModel = WaveformPlayerModel()
     @State private var showsSpeakerTimeline = false
+    @GestureState private var scrubTime: Double?
+
+    private var displayedTime: Double { scrubTime ?? model.currentTime }
 
     public init(
         envelope: [Float],
@@ -76,17 +79,14 @@ public struct WaveformPlayerView: View {
                 .frame(height: hasLevels || showsSpeakerTimeline ? 150 : 72) // token-exempt: Tide's primary data plot.
                 if !speakerSegments.isEmpty {
                     speakerLane
-                        .frame(height: 7)
+                        .frame(height: 24) // token-exempt: generous speaker-strip seek target.
                 }
                 if hasLevels || !speakerSegments.isEmpty {
                     HStack(spacing: 4) {
                         playButton
-                        Text("0:00")
+                        Text(formatRange(current: displayedTime, total: model.duration))
+                            .accessibilityIdentifier("harc.player.elapsed")
                         Spacer()
-                        if model.duration > 0 {
-                            Text(formatTime(model.duration / 4))
-                            Spacer()
-                        }
                         modeButton("Energy", selected: !showsSpeakerTimeline) {
                             showsSpeakerTimeline = false
                         }
@@ -94,12 +94,6 @@ public struct WaveformPlayerView: View {
                             modeButton("Speakers", selected: showsSpeakerTimeline) {
                                 showsSpeakerTimeline = true
                             }
-                        }
-                        Spacer()
-                        if model.duration > 0 {
-                            Text(formatTime(model.duration * 3 / 4))
-                            Spacer()
-                            Text(formatTime(model.duration))
                         }
                     }
                     .font(.harcMono)
@@ -138,41 +132,69 @@ public struct WaveformPlayerView: View {
         Button {
             Task { await model.toggle() }
         } label: {
-            Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+            Label(model.isPlaying ? "Pause" : "Play",
+                  systemImage: model.isPlaying ? "pause.fill" : "play.fill")
                 .font(.harcLabel.weight(.semibold))
                 .foregroundStyle(HarcTideStyle.onAccent)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(HarcTideStyle.cyan))
+                .padding(.horizontal, HarcSpacing.md)
+                .frame(height: 32) // token-exempt: compact, labeled playback control.
+                .background(Capsule().fill(HarcTideStyle.cyan))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(model.isPlaying ? "Pause recording" : "Play recording")
+        .accessibilityIdentifier("harc.player.playPause")
+        .help(model.isPlaying ? "Pause recording" : "Play recording")
         .disabled(audioURL == nil || model.duration <= 0)
     }
 
     private var waveform: some View {
-        GeometryReader { geo in
+        seekable(inset: HarcTideStyle.curveInset,
+                 identifier: envelope.count > 1 ? "harc.player.waveform.ready" : "harc.player.waveform.loading") {
             Canvas { ctx, size in
                 drawEnvelope(ctx: ctx, size: size)
                 drawPlayhead(ctx: ctx, size: size)
             }
-            .contentShape(Rectangle())
-            .onTapGesture { location in
-                guard model.duration > 0 else { return }
-                let fraction = max(0, min(1, (location.x - HarcTideStyle.curveInset)
-                                             / max(1, geo.size.width - 2 * HarcTideStyle.curveInset)))
-                let target = fraction * model.duration
-                Task { await model.seek(to: target, andPlay: true) }
-            }
         }
+    }
+
+    /// Preview continuously, then commit one seek on release. Seeking preserves
+    /// the current play/pause state instead of unexpectedly starting paused audio.
+    private func seekable<Content: View>(
+        inset: CGFloat = 0, identifier: String, label: String = "Playback position",
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        GeometryReader { geo in
+            content()
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .updating($scrubTime) { value, preview, _ in
+                        guard model.duration > 0 else { return }
+                        preview = PlaybackSeekPosition.seconds(
+                            x: value.location.x, width: geo.size.width,
+                            inset: inset, duration: model.duration)
+                    }
+                    .onEnded { value in
+                        guard model.duration > 0 else { return }
+                        let target = PlaybackSeekPosition.seconds(
+                            x: value.location.x, width: geo.size.width,
+                            inset: inset, duration: model.duration)
+                        let wasPlaying = model.isPlaying
+                        Task {
+                            await model.seek(to: target, andPlay: wasPlaying)
+                        }
+                    })
+        }
+        .help("Click or drag to seek")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Playback position")
-        // Synchronize fixture captures with the real asynchronous envelope load.
-        .accessibilityIdentifier(envelope.count > 1 ? "harc.player.waveform.ready" : "harc.player.waveform.loading")
-        .accessibilityValue(formatRange(current: model.currentTime, total: model.duration))
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
+        .accessibilityValue(formatRange(current: displayedTime, total: model.duration))
+        .accessibilityHint("Adjust to seek backward or forward by ten seconds")
         .accessibilityAdjustableAction { direction in
             let delta: Double = direction == .increment ? 10 : -10
             let target = min(model.duration, max(0, model.currentTime + delta))
-            Task { await model.seek(to: target, andPlay: model.isPlaying) }
+            let wasPlaying = model.isPlaying
+            Task { await model.seek(to: target, andPlay: wasPlaying) }
         }
     }
 
@@ -186,41 +208,53 @@ public struct WaveformPlayerView: View {
     }
 
     private var speakerTimeline: some View {
-        Canvas { context, size in
-            guard model.duration > 0 else { return }
-            let speakers = Array(Set(speakerSegments.map(\.speaker))).sorted()
-            let rowHeight: CGFloat = 20
-            let rowSpacing: CGFloat = 8
-            let totalHeight = CGFloat(speakers.count) * rowHeight
-                + CGFloat(max(0, speakers.count - 1)) * rowSpacing
-            let top = max(0, (size.height - totalHeight) / 2)
-            for segment in speakerSegments {
-                let left = CGFloat(max(0, Double(segment.startMs) / 1000 / model.duration)) * size.width
-                let right = CGFloat(min(1, Double(segment.endMs) / 1000 / model.duration)) * size.width
-                guard right > left else { continue }
-                guard let row = speakers.firstIndex(of: segment.speaker) else { continue }
-                let rect = CGRect(x: left, y: top + CGFloat(row) * (rowHeight + rowSpacing),
-                                  width: max(2, right - left), height: rowHeight)
-                context.fill(Path(roundedRect: rect, cornerRadius: 5),
-                             with: .color(speakerColor(segment.speaker).opacity(0.8)))
+        seekable(identifier: "harc.player.speakers", label: "Speaker turns playback position") {
+            Canvas { context, size in
+                guard model.duration > 0 else { return }
+                let speakers = Array(Set(speakerSegments.map(\.speaker))).sorted()
+                let rowHeight: CGFloat = 20
+                let rowSpacing: CGFloat = 8
+                let totalHeight = CGFloat(speakers.count) * rowHeight
+                    + CGFloat(max(0, speakers.count - 1)) * rowSpacing
+                let top = max(0, (size.height - totalHeight) / 2)
+                for segment in speakerSegments {
+                    let left = CGFloat(max(0, Double(segment.startMs) / 1000 / model.duration)) * size.width
+                    let right = CGFloat(min(1, Double(segment.endMs) / 1000 / model.duration)) * size.width
+                    guard right > left else { continue }
+                    guard let row = speakers.firstIndex(of: segment.speaker) else { continue }
+                    let rect = CGRect(x: left, y: top + CGFloat(row) * (rowHeight + rowSpacing),
+                                      width: max(2, right - left), height: rowHeight)
+                    context.fill(Path(roundedRect: rect, cornerRadius: 5),
+                                 with: .color(speakerColor(segment.speaker).opacity(0.8)))
+                }
+            }
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Rectangle().fill(HarcTideStyle.played)
+                        .frame(width: 1)
+                        .offset(x: geo.size.width * CGFloat(min(1, max(0, displayedTime / max(1, model.duration)))))
+                }
+                .allowsHitTesting(false)
             }
         }
-        .accessibilityLabel("Speaker turns across recording")
     }
 
     private var speakerLane: some View {
-        Canvas { context, size in
-            guard model.duration > 0 else { return }
-            for segment in speakerSegments {
-                let left = CGFloat(max(0, Double(segment.startMs) / 1000 / model.duration)) * size.width
-                let right = CGFloat(min(1, Double(segment.endMs) / 1000 / model.duration)) * size.width
-                guard right > left else { continue }
-                context.fill(Path(CGRect(x: left, y: 0, width: max(2, right - left), height: size.height)),
-                             with: .color(speakerColor(segment.speaker)))
+        seekable(identifier: "harc.player.speakerStrip", label: "Speaker timeline playback position") {
+            Canvas { context, size in
+                guard model.duration > 0 else { return }
+                for segment in speakerSegments {
+                    let left = CGFloat(max(0, Double(segment.startMs) / 1000 / model.duration)) * size.width
+                    let right = CGFloat(min(1, Double(segment.endMs) / 1000 / model.duration)) * size.width
+                    guard right > left else { continue }
+                    context.fill(Path(CGRect(x: left, y: 0, width: max(2, right - left), height: size.height)),
+                                 with: .color(speakerColor(segment.speaker)))
+                }
             }
+            .frame(height: 7) // token-exempt: preserve the thin speaker visualization.
+            .clipShape(Capsule())
+            .frame(maxHeight: .infinity)
         }
-        .clipShape(Capsule())
-        .accessibilityLabel("Speaker timeline")
     }
 
     private func speakerColor(_ index: Int) -> Color {
@@ -250,7 +284,7 @@ public struct WaveformPlayerView: View {
         if model.duration > 0 {
             var played = ctx
             let width = HarcTideStyle.curveInset + max(0, size.width - 2 * HarcTideStyle.curveInset)
-                * min(1, max(0, model.currentTime / model.duration))
+                * min(1, max(0, displayedTime / model.duration))
             played.clip(to: Path(CGRect(x: 0, y: 0, width: width, height: size.height)))
             played.stroke(trace, with: .color(HarcTideStyle.played), lineWidth: 2)
         }
@@ -258,7 +292,7 @@ public struct WaveformPlayerView: View {
 
     private func drawPlayhead(ctx: GraphicsContext, size: CGSize) {
         guard model.duration > 0 else { return }
-        let fraction = min(1, max(0, model.currentTime / model.duration))
+        let fraction = min(1, max(0, displayedTime / model.duration))
         let x = HarcTideStyle.curveInset + CGFloat(fraction) * max(0, size.width - 2 * HarcTideStyle.curveInset)
         var p = Path()
         p.move(to: CGPoint(x: x, y: 0))

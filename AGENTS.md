@@ -527,6 +527,19 @@ checks. Mobile playback must preserve gRPC status instead of NSError's generic
 “error 1.” Validate with `HarcHostCanonicalAudioDownloadTests`,
 `PostSessionGRPCErrorMapperTests`, and `HarcTransportErrorDiagnosticTests`.
 
+Host Library speaker labels carry optional confirmation provenance. Render automatic
+and confirmed identities distinctly; absent legacy metadata means unknown. This
+field is display-only and never grants enrollment or mutation authority. Validate
+`LibraryViewAndConflictTests`, `DomainConversionsTests`,
+`CanonicalLibraryIntegrationTests`, and `HarcSpeakerIdentityPresentationTests`.
+
+Shared speaker review mutations refresh standalone suggestions after successful
+link, create, unlink and confirmation, including other slots in the same recording.
+Refresh failure is post-commit feedback, never a failed enrollment or permission to
+repeat a consumed review. Model-scoped reconciliation preserves foreign-model slots
+because pending rows carry no model provenance; truly missing query rows still clear.
+Validate with `SpeakerReviewRefreshTests` and `PersonDetailViewModelTests`.
+
 ## Common Validation
 
 Voice enrollment uses the shared `SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs`
@@ -539,6 +552,14 @@ after pooling references per person; new-person backfill must compare competing
 people too. A runner-up below its own acceptance threshold still causes ambiguity.
 This consistency floor is not a calibrated accuracy guarantee. Validate with
 `swift test --filter 'PeopleStoreTests|SpeakerRecognitionMatcherTests|SpeakerReIDServiceTests|SpeakerSuggestionEngineTests'`.
+
+Standalone suggestion refreshes must reconcile obsolete rows, not only add new
+matches. Read references, rank, check links/dismissals, and reconcile in one Store
+transaction. Standalone publications also use bound evidence: match their validated
+current snapshots, never mutable slot embeddings. Preserve unchanged review rows,
+confirmed or automatic links, and unavailable bound reviews; one unavailable
+artifact must not block healthy recordings in a backfill. Keep database errors
+visible. Validate with `SpeakerSuggestionEngineTests` and `SpeakerEvidenceStoreTests`.
 
 Speaker identification evaluation must count query cases separately from enrollment
 replay and must not count absent speech as a successful unknown rejection. Use

@@ -424,7 +424,7 @@ extension RecordingStore {
         }
     }
 
-    private static func currentHostSpeakerEvidence(in database: Database, recordingID: Int64,
+    internal static func currentHostSpeakerEvidence(in database: Database, recordingID: Int64,
                                                    speakerIndex: Int) throws -> SpeakerEvidenceSnapshot? {
         guard let recording = try Recording.fetchOne(database, key: recordingID), recording.deletedAt == nil,
               recording.processing.state == .ready, recording.projection.state == .ready,
@@ -480,22 +480,27 @@ public extension RecordingStore {
 
     func speakerRecognitionReferences(personID: Int64, modelID: String, dimensions: UInt32) async throws -> [SpeakerRecognitionReference] {
         try await db.read { database in
-            let legacy = try Row.fetchAll(database, sql: """
-                SELECT e.recording_id, e.embedding FROM speaker_embeddings e
-                JOIN person_speakers ps ON ps.recording_id = e.recording_id AND ps.speaker_index = e.speaker_index
-                JOIN recordings r ON r.id = e.recording_id
-                WHERE ps.person_id = ? AND ps.is_user_confirmed = 1 AND e.embedder_kind = ?
-                  AND e.total_ms >= ? AND e.segment_count > 0 AND r.deleted_at IS NULL
-                  AND NOT EXISTS (SELECT 1 FROM bound_speaker_enrollment_sources b WHERE b.recording_id = e.recording_id)
-                """, arguments: [personID, modelID, SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs])
-            var references = legacy.map { SpeakerRecognitionReference(recordingID: $0["recording_id"], embedding: $0["embedding"]) }
-            for selected in try Self.confirmedSpeakerEvidence(in: database, modelID: modelID, dimensions: dimensions)
-                where selected.personID == personID {
-                references.append(SpeakerRecognitionReference(recordingID: selected.recordingID,
-                    embedding: Self.encodeFloat32(selected.snapshot.embedding.dequantized)))
-            }
-            return references
+            try Self.speakerRecognitionReferences(in: database, personID: personID, modelID: modelID, dimensions: dimensions)
         }
+    }
+
+    internal static func speakerRecognitionReferences(in database: Database, personID: Int64,
+        modelID: String, dimensions: UInt32) throws -> [SpeakerRecognitionReference] {
+        let legacy = try Row.fetchAll(database, sql: """
+            SELECT e.recording_id, e.embedding FROM speaker_embeddings e
+            JOIN person_speakers ps ON ps.recording_id = e.recording_id AND ps.speaker_index = e.speaker_index
+            JOIN recordings r ON r.id = e.recording_id
+            WHERE ps.person_id = ? AND ps.is_user_confirmed = 1 AND e.embedder_kind = ?
+              AND e.total_ms >= ? AND e.segment_count > 0 AND r.deleted_at IS NULL
+              AND NOT EXISTS (SELECT 1 FROM bound_speaker_enrollment_sources b WHERE b.recording_id = e.recording_id)
+            """, arguments: [personID, modelID, SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs])
+        var references = legacy.map { SpeakerRecognitionReference(recordingID: $0["recording_id"], embedding: $0["embedding"]) }
+        for selected in try Self.confirmedSpeakerEvidence(in: database, modelID: modelID, dimensions: dimensions)
+            where selected.personID == personID {
+            references.append(SpeakerRecognitionReference(recordingID: selected.recordingID,
+                embedding: Self.encodeFloat32(selected.snapshot.embedding.dequantized)))
+        }
+        return references
     }
 }
 

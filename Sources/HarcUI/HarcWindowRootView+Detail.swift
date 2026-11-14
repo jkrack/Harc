@@ -696,9 +696,10 @@ extension HarcWindowRootView {
 
     func seekToWord(atCharOffset offset: Int) {
         guard let doc = detailDocument, !editorDirty,
-              let entry = doc.wordIndex.wordAt(charOffset: offset) else { return }
+              let entry = doc.wordIndex.wordForPlayback(atCharOffset: offset, text: editorText) else { return }
+        let wasPlaying = playerModel.isPlaying
         Task {
-            await playerModel.seek(to: Double(entry.word.startMs) / 1000.0, andPlay: true)
+            await playerModel.seek(to: Double(entry.word.startMs) / 1000.0, andPlay: wasPlaying)
         }
     }
 

@@ -84,6 +84,20 @@ struct TranscriptAudioPlayerTests {
         #expect(states.0)
         #expect(!states.1)
     }
+    @Test("Paused waveform seek updates position without starting playback")
+    @MainActor
+    func pausedWaveformSeek() async throws {
+        let url = tempWAV()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSilenceWAV(to: url, seconds: 5)
+        let model = WaveformPlayerModel()
+        await model.load(url: url)
+        await model.seek(to: 2.5, andPlay: false)
+        #expect(abs(model.currentTime - 2.5) < 0.05)
+        #expect(!model.isPlaying)
+        await model.unload()
+    }
+
     private static func playbackStates(_ player: isolated TranscriptAudioPlayer) -> (Bool, Bool) {
         player.play()
         let started = player.isPlaying

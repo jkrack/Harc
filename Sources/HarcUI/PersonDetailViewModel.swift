@@ -42,7 +42,8 @@ public final class PersonDetailViewModel: ObservableObject {
     public func confirm(_ suggestion: PendingSuggestion) async {
         mutationFailure = nil
         do {
-            try await suggestionReviews.confirm(suggestion, store: store)
+            let mutation = try await suggestionReviews.confirm(suggestion, store: store)
+            mutationFailure = mutation.refreshFailure
         } catch {
             mutationFailure = LibraryMutationFailure(action: .confirmSpeakerSuggestion, error: error)
         }
@@ -64,7 +65,11 @@ public final class PersonDetailViewModel: ObservableObject {
         mutationFailure = nil
         for suggestion in pendingSuggestions {
             do {
-                try await suggestionReviews.confirm(suggestion, store: store)
+                let mutation = try await suggestionReviews.confirm(suggestion, store: store)
+                if let warning = mutation.refreshFailure {
+                    mutationFailure = warning
+                    break
+                }
             } catch {
                 // Earlier confirmations remain committed. Stop here and refresh
                 // so the user can review the remaining work after the failure.
