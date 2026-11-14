@@ -1295,6 +1295,7 @@ public extension Harc_V1_SpeakerLabelV1 {
         displayName = value.displayName
         if let personID = value.personID { self.personID = Harc_V1_PersonIDV1(personID) }
         if let revision = value.identityRevision { identityRevision = revision.rawValue }
+        if let confirmed = value.isUserConfirmed { userConfirmed = confirmed }
     }
 
     func domainValue() throws -> SpeakerLabel {
@@ -1305,7 +1306,8 @@ public extension Harc_V1_SpeakerLabelV1 {
             speakerIndex: speakerIndex,
             displayName: displayName,
             personID: hasPersonID ? try personID.domainValue() : nil,
-            identityRevision: hasIdentityRevision ? try EntityRevision(identityRevision) : nil
+            identityRevision: hasIdentityRevision ? try EntityRevision(identityRevision) : nil,
+            isUserConfirmed: hasUserConfirmed ? userConfirmed : nil
         )
         guard result.displayName == displayName else {
             throw HarcProtobufConversionError.lossyConversion(field: "speakerLabel.displayName")

@@ -527,6 +527,12 @@ checks. Mobile playback must preserve gRPC status instead of NSError's generic
 “error 1.” Validate with `HarcHostCanonicalAudioDownloadTests`,
 `PostSessionGRPCErrorMapperTests`, and `HarcTransportErrorDiagnosticTests`.
 
+Host Library speaker labels carry optional confirmation provenance. Render automatic
+and confirmed identities distinctly; absent legacy metadata means unknown. This
+field is display-only and never grants enrollment or mutation authority. Validate
+`LibraryViewAndConflictTests`, `DomainConversionsTests`,
+`CanonicalLibraryIntegrationTests`, and `HarcSpeakerIdentityPresentationTests`.
+
 ## Common Validation
 
 Voice enrollment uses the shared `SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs`
