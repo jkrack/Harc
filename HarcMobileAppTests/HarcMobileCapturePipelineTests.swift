@@ -32,6 +32,14 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
             standardFormatWithSampleRate: 48_000,
             channels: 2
         ))
+        let trace = CaptureAdmissionTrace()
+        trace.mark("fixture_begin")
+        defer {
+            let attachment = XCTAttachment(string: trace.report())
+            attachment.name = "Capture route admission timing"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
         let attributes = FailSecondCheckpointAttributes()
         let enqueued = expectation(description: "all route requests queued before writer starts")
         enqueued.expectedFulfillmentCount = 3
@@ -49,8 +57,12 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
             captureStartedAt: Date(timeIntervalSince1970: 1_700_000_000),
             captureStartedMonotonicNanoseconds: 1_000_000_000,
             storageAttributes: attributes,
-            reconfigurationEnqueuedForTesting: { enqueued.fulfill() }
+            reconfigurationEnqueuedForTesting: {
+                trace.mark("request_enqueued")
+                enqueued.fulfill()
+            }
         ) { result in
+            trace.mark("pipeline_completion")
             switch result {
             case .success:
                 XCTFail("An empty failed capture unexpectedly produced a master")
@@ -64,8 +76,10 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
         // the first dequeued route request forces checkpoint #2 and throws.
         // Observe admission before starting the writer: its first request is
         // in-flight at the fault while exactly two more remain queued.
-        let callers = (0 ..< 3).map { _ in
+        trace.mark("callers_scheduled")
+        let callers = (0 ..< 3).map { ordinal in
             Task { @MainActor in
+                trace.mark("caller_started_\(ordinal)")
                 do {
                     _ = try await pipeline.prepareReplacementInput(
                         replacing: pipeline.initialInput,
@@ -79,6 +93,7 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
                 } catch {
                     XCTAssertEqual(error as? CheckpointFault, .injected)
                 }
+                trace.mark("caller_returned_\(ordinal)")
                 rebuilt.fulfill()
             }
         }
@@ -88,15 +103,22 @@ final class HarcMobileCapturePipelineTests: XCTestCase {
         if cancelAtCheckpoint {
             // The fault is reached only after dequeue. Cancel on the writer
             // thread just before it throws, without racing a timer or sleeping.
-            attributes.beforeFailure { callers.forEach { $0.cancel() } }
+            attributes.beforeFailure {
+                trace.mark("checkpoint_cancellation")
+                callers.forEach { $0.cancel() }
+            }
         }
+        trace.mark("admission_wait_begin")
         let admissionResult = await XCTWaiter.fulfillment(of: [enqueued], timeout: 5)
-        XCTAssertEqual(admissionResult, .completed)
+        trace.mark("admission_wait_end_\(admissionResult.rawValue)")
+        XCTAssertEqual(admissionResult, .completed, trace.report())
+        trace.mark("writer_start")
         pipeline.start()
         let result = await XCTWaiter.fulfillment(
             of: [completed, rebuilt], timeout: 5
         )
-        XCTAssertEqual(result, .completed, "Every rebuild await must terminate")
+        trace.mark("release_wait_end_\(result.rawValue)")
+        XCTAssertEqual(result, .completed, "Every rebuild await must terminate; \(trace.report())")
         XCTAssertEqual(attributes.checkpointApplications, 2)
 
         let late = expectation(description: "post-failure route request returned")
@@ -393,5 +415,27 @@ private final class FailSecondCheckpointAttributes:
             action?()
             throw CheckpointFault.injected
         }
+    }
+}
+
+/// Test-only, bounded monotonic trace. No I/O on the writer or admission path,
+/// and no recording IDs, paths, exception text, or audio data are retained.
+private final class CaptureAdmissionTrace: @unchecked Sendable {
+    private let lock = NSLock()
+    private let start = ProcessInfo.processInfo.systemUptime
+    private var events: [String] = []
+
+    func mark(_ event: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard events.count < 32 else { return }
+        let elapsed = Int((ProcessInfo.processInfo.systemUptime - start) * 1_000)
+        events.append("\(event) elapsed_ms=\(elapsed) main_thread=\(Thread.isMainThread)")
+    }
+
+    func report() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return events.joined(separator: "\n")
     }
 }
