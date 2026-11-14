@@ -803,10 +803,14 @@ public extension RecordingStore {
                             evidence.embedding.dimensions == dimensions else { continue }
                         query = evidence.embedding.dequantized
                     } else {
-                        let bytes = try Data.fetchOne(database, sql: """
-                            SELECT embedding FROM speaker_embeddings
-                            WHERE recording_id = ? AND speaker_index = ? AND embedder_kind = ?
-                            """, arguments: [id, index, embedderKind])
+                        let row = try Row.fetchOne(database, sql: """
+                            SELECT embedding, embedder_kind FROM speaker_embeddings
+                            WHERE recording_id = ? AND speaker_index = ?
+                            """, arguments: [id, index])
+                        // Pending rows have no model identity. A different model's
+                        // slot is outside this refresh's authority, not missing evidence.
+                        if let row, (row["embedder_kind"] as String) != embedderKind { continue }
+                        let bytes: Data? = row?["embedding"]
                         query = bytes.flatMap { Self.decodeFloat32($0, expectedDimensions: embeddingDim) }
                     }
                     var scores: [PersonID: Double] = [:]

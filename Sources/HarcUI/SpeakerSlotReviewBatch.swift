@@ -17,41 +17,45 @@ struct SpeakerSlotReviewBatch {
         return Self(recordingID: recordingID, reviews: reviews)
     }
 
-    /// True means the legacy caller still needs to mirror the selected person's name.
-    func link(personID: Int64, recordingID: Int64, speakerIndex: Int, store: RecordingStore) async throws -> Bool {
+    /// The result separates legacy label projection from post-commit refresh feedback.
+    func link(personID: Int64, recordingID: Int64, speakerIndex: Int, store: RecordingStore) async throws -> SpeakerReviewMutationResult {
         guard recordingID == self.recordingID, let result = reviews[speakerIndex] else {
             throw StoreError.invalidData("The speaker changed. Review it again before assigning its identity.")
         }
         if let review = try result.get() {
             try await store.confirmHostSpeakerReview(review, personID: personID)
-            return false
+            return await SpeakerReviewMutationResult.refreshed(store: store, needsLegacyLabel: false)
         }
         try await store.linkSpeaker(personID: personID, recordingID: recordingID, speakerIndex: speakerIndex)
-        return true
+        return await SpeakerReviewMutationResult.refreshed(store: store, needsLegacyLabel: true)
     }
 
     func createPerson(displayName: String, recordingID: Int64, speakerIndex: Int,
-                      store: RecordingStore) async throws -> (personID: Int64, needsLegacyLabel: Bool) {
+                      store: RecordingStore) async throws -> (personID: Int64, needsLegacyLabel: Bool, refreshFailure: LibraryMutationFailure?) {
         guard recordingID == self.recordingID, let result = reviews[speakerIndex] else {
             throw StoreError.invalidData("The speaker changed. Review it again before creating its identity.")
         }
+        let personID: Int64
         if let review = try result.get() {
-            return (try await store.createPersonForHostSpeakerReview(review, displayName: displayName), false)
+            personID = try await store.createPersonForHostSpeakerReview(review, displayName: displayName)
+        } else {
+            personID = try await store.createPersonForLegacySpeaker(displayName: displayName,
+                recordingID: recordingID, speakerIndex: speakerIndex)
         }
-        return (try await store.createPersonForLegacySpeaker(displayName: displayName,
-            recordingID: recordingID, speakerIndex: speakerIndex), false)
+        let refresh = await SpeakerReviewMutationResult.refreshed(store: store, needsLegacyLabel: false)
+        return (personID, false, refresh.refreshFailure)
     }
 
-    /// True means the legacy caller still needs to clear its mirrored label.
-    func unlink(recordingID: Int64, speakerIndex: Int, store: RecordingStore) async throws -> Bool {
+    /// The result identifies any legacy label cleanup and post-commit refresh warning.
+    func unlink(recordingID: Int64, speakerIndex: Int, store: RecordingStore) async throws -> SpeakerReviewMutationResult {
         guard recordingID == self.recordingID, let result = reviews[speakerIndex] else {
             throw StoreError.invalidData("The speaker changed. Review it again before removing its identity.")
         }
         if let review = try result.get() {
             try await store.unlinkHostSpeakerReview(review)
-            return false
+            return await SpeakerReviewMutationResult.refreshed(store: store, needsLegacyLabel: false)
         }
         try await store.unlinkSpeaker(recordingID: recordingID, speakerIndex: speakerIndex)
-        return true
+        return await SpeakerReviewMutationResult.refreshed(store: store, needsLegacyLabel: true)
     }
 }

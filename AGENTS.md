@@ -533,6 +533,13 @@ field is display-only and never grants enrollment or mutation authority. Validat
 `LibraryViewAndConflictTests`, `DomainConversionsTests`,
 `CanonicalLibraryIntegrationTests`, and `HarcSpeakerIdentityPresentationTests`.
 
+Shared speaker review mutations refresh standalone suggestions after successful
+link, create, unlink and confirmation, including other slots in the same recording.
+Refresh failure is post-commit feedback, never a failed enrollment or permission to
+repeat a consumed review. Model-scoped reconciliation preserves foreign-model slots
+because pending rows carry no model provenance; truly missing query rows still clear.
+Validate with `SpeakerReviewRefreshTests` and `PersonDetailViewModelTests`.
+
 ## Common Validation
 
 Voice enrollment uses the shared `SpeakerRecognitionMatcher.minimumEnrollmentSpeechMs`

@@ -1283,14 +1283,14 @@ public struct HarcWindowRootView: View {
                     let reviews = inspectorSuggestionReviews
                     Task {
                         do {
-                            let needsLegacyLabel = try await reviews.confirm(s, store: store)
-                            if needsLegacyLabel {
+                            let mutation = try await reviews.confirm(s, store: store)
+                            if mutation.needsLegacyLabel {
                                 try await mirrorResolvedSpeakerName(
                                     recordingID: s.recordingID, speakerIndex: s.speakerIndex)
                             }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = mutation.refreshFailure
                         } catch {
                             reportMutationFailure(.confirmSpeakerSuggestion, error: error)
                         }
@@ -1319,14 +1319,14 @@ public struct HarcWindowRootView: View {
                     let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            let needsLegacyLabel = try await reviews.link(personID: personID,
+                            let mutation = try await reviews.link(personID: personID,
                                 recordingID: rid, speakerIndex: speakerIndex, store: store)
-                            if needsLegacyLabel {
+                            if mutation.needsLegacyLabel {
                                 try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
                             }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = mutation.refreshFailure
                         } catch {
                             reportMutationFailure(.linkSpeaker, error: error)
                         }
@@ -1339,18 +1339,12 @@ public struct HarcWindowRootView: View {
                         do {
                             let created = try await reviews.createPerson(displayName: name,
                                 recordingID: rid, speakerIndex: speakerIndex, store: store)
-                            let pid = created.personID
                             if created.needsLegacyLabel {
                                 try await mirrorResolvedSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
                             }
-                            // Best-effort, non-blocking: backfill suggestions for the new person.
-                            Task.detached { [store] in
-                                let engine = SpeakerSuggestionEngine(store: store, embedderKind: "wespeaker_v2")
-                                try? await engine.suggestForNewPerson(personID: pid, fromRecording: rid, speakerIndex: speakerIndex)
-                            }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = created.refreshFailure
                         } catch {
                             reportMutationFailure(.createAndLinkPerson(name), error: error)
                         }
@@ -1361,14 +1355,14 @@ public struct HarcWindowRootView: View {
                     let reviews = inspectorSlotReviews
                     Task {
                         do {
-                            let needsLegacyLabel = try await reviews.unlink(recordingID: rid,
+                            let mutation = try await reviews.unlink(recordingID: rid,
                                 speakerIndex: speakerIndex, store: store)
-                            if needsLegacyLabel {
+                            if mutation.needsLegacyLabel {
                                 try await clearMirroredSpeakerName(recordingID: rid, speakerIndex: speakerIndex)
                             }
                             await loadInspectorSummaryData(for: recording)
                             await loadResolvedLabels()
-                            mutationFailure = nil
+                            mutationFailure = mutation.refreshFailure
                         } catch {
                             reportMutationFailure(.unlinkSpeaker, error: error)
                         }
