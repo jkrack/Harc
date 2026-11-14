@@ -486,7 +486,13 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)
         picker().click()
         app.menuItems["Unassign"].click()
-        XCTAssertEqual(waitForPickerText("Speaker 1"), .completed, app.debugDescription)
+        // The picker always includes "Speaker 1:" even while assigned. Wait
+        // for the actual unassigned state before capturing another review.
+        let unassigned = NSPredicate(format: "label == %@", "Speaker 1: Assign person…")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: unassigned, object: picker())],
+            timeout: 6
+        ), .completed, app.debugDescription)
         picker().click()
         app.menuItems["UI Voice Carol"].click()
         XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)
