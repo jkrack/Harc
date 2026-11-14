@@ -9,6 +9,30 @@ struct WordIndexTests {
         Word(text: text, startMs: startMs, endMs: endMs)
     }
 
+    @Test("Playback resolves speaker labels and spaces within the same turn")
+    func playbackTurnLookup() {
+        let text = "Amy: hello world\n\nJason: later words\n\nUntimed note"
+        let index = WordIndex(words: [word("hello", 1000, 1500), word("world", 1600, 2000),
+                                      word("later", 5000, 5500), word("words", 5600, 6000)], text: text)
+        let ns = text as NSString
+        #expect(index.wordForPlayback(atCharOffset: 0, text: text)?.word.startMs == 1000)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "Jason").location, text: text)?.word.startMs == 5000)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "hello").location + 5, text: text)?.word.startMs == 1600)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "later").location + 2, text: text)?.word.startMs == 5000)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "Untimed").location, text: text) == nil)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "\n\n").location + 1, text: text) == nil)
+        #expect(index.wordForPlayback(atCharOffset: -1, text: text) == nil)
+        #expect(index.wordForPlayback(atCharOffset: ns.length, text: text) == nil)
+    }
+
+    @Test("Playback does not invent timing for unmatched text within a timed turn")
+    func unmatchedPlaybackText() {
+        let text = "Amy: hello [unspoken note] world"
+        let index = WordIndex(words: [word("hello", 1000, 1500), word("world", 1600, 2000)], text: text)
+        #expect(index.wordForPlayback(atCharOffset: (text as NSString).range(of: "unspoken").location,
+                                      text: text) == nil)
+    }
+
     @Test("locates each word's range in joined text")
     func locatesRanges() {
         let idx = WordIndex(

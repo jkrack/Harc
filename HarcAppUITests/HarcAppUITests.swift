@@ -114,6 +114,74 @@ final class HarcAppUITests: XCTestCase {
         }
     }
 
+    func testPlaybackControlsSeekAndPause() throws {
+        app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = "complete"
+        app.launch()
+        let row = app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "harc.library.recording.")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 60))
+        row.click()
+        let waveform = app.descendants(matching: .any)["harc.player.waveform.ready"]
+        XCTAssertTrue(waveform.waitForExistence(timeout: 60))
+        let playPause = app.buttons["harc.player.playPause"]
+        XCTAssertEqual(playPause.label, "Play recording")
+        waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        let moved = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != nil AND NOT value BEGINSWITH %@", "0:00 / "),
+            object: waveform)
+        XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 5), .completed)
+        assertPlaybackPosition(waveform, fraction: 0.5)
+        XCTAssertEqual(playPause.label, "Play recording", "Seeking paused audio must not start it")
+        playPause.click()
+        XCTAssertTrue(app.buttons["Pause recording"].waitForExistence(timeout: 5))
+        waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).click()
+        assertPlaybackPosition(waveform, fraction: 0.3)
+        XCTAssertEqual(playPause.label, "Pause recording", "Seeking playing audio must keep playing")
+        playPause.click()
+        XCTAssertTrue(app.buttons["Play recording"].waitForExistence(timeout: 5))
+        let start = waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+        let end = waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        assertPlaybackPosition(waveform, fraction: 0.7)
+        XCTAssertEqual(playPause.label, "Play recording")
+        let strip = app.descendants(matching: .any)["harc.player.speakerStrip"]
+        XCTAssertTrue(strip.exists)
+        strip.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
+        assertPlaybackPosition(strip, fraction: 0.25)
+        XCTAssertEqual(playPause.label, "Play recording")
+        app.buttons["Speakers"].click()
+        let speakers = app.descendants(matching: .any)["harc.player.speakers"]
+        XCTAssertTrue(speakers.waitForExistence(timeout: 5))
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).click()
+        assertPlaybackPosition(speakers, fraction: 0.6)
+        XCTAssertEqual(playPause.label, "Play recording")
+        app.buttons["Energy"].click()
+        let editor = app.textViews["harc.transcript.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        // First line's speaker label is deliberately not a timed word.
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 24, dy: 20)).click()
+        assertPlaybackPosition(waveform, fraction: 0)
+        XCTAssertEqual(playPause.label, "Play recording")
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "Playback controls after transcript seek"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    private func assertPlaybackPosition(_ element: XCUIElement, fraction: Double,
+                                        file: StaticString = #filePath, line: UInt = #line) {
+        let expected = NSPredicate { object, _ in
+            guard let element = object as? XCUIElement,
+                  let value = element.value as? String else { return false }
+            let times = value.components(separatedBy: " / ").map { time in
+                time.split(separator: ":").reduce(0.0) { $0 * 60 + (Double($1) ?? 0) }
+            }
+            return times.count == 2 && times[1] > 0 && abs(times[0] / times[1] - fraction) < 0.03
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)],
+                                     timeout: 5), .completed, file: file, line: line)
+    }
+
     func testCaptureIntegrityWarningSurvivesRelaunch() throws {
         app.launchEnvironment["HARC_UI_TEST_CAPTURE_ISSUE"] = "1"
         launchFixtureLibrary()
