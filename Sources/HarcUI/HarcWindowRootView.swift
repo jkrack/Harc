@@ -137,7 +137,7 @@ public struct HarcWindowRootView: View {
     @State var inspectorConfirmationRecordingID: Int64?
     @State var inspectorSuggestionReviews = SpeakerSuggestionReviewBatch.empty
     @State var inspectorSlotReviews = SpeakerSlotReviewBatch.empty
-    @State var inspectorSuggestionLoadID = UUID()
+    @State var inspectorSuggestionLoads = SpeakerReviewLoadGeneration()
     /// Stats for Nerds for the current selection, assembled async from the
     /// JSON sidecar + store. Nil hides the section.
     @State var nerdStats: RecordingNerdStats? = nil
@@ -1431,8 +1431,8 @@ public struct HarcWindowRootView: View {
     }
 
     func loadInspectorSummaryData(for recording: Recording) async {
-        let loadID = UUID()
-        inspectorSuggestionLoadID = loadID
+        guard let loadID = inspectorSuggestionLoads.begin(recording: recording,
+            selectedRecording: selectedRecording, isCancelled: Task.isCancelled) else { return }
         let people = (try? await store.fetchPeople()) ?? []
         let suggestions: [PendingSuggestion]
         let links: [PersonSpeakerLink]
@@ -1449,8 +1449,8 @@ public struct HarcWindowRootView: View {
             let indices = await loadSpeakerIndices(for: recording)
             slots = await SpeakerSlotReviewBatch.load(recordingID: id, indices: indices, store: store)
         } else { slots = .empty }
-        guard !Task.isCancelled, inspectorSuggestionLoadID == loadID,
-              selectedRecording == recording else { return }
+        guard inspectorSuggestionLoads.isCurrent(loadID, recording: recording,
+            selectedRecording: selectedRecording, isCancelled: Task.isCancelled) else { return }
         allPeople = people
         allPeopleByID = Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.displayName) })
         inspectorSlotReviews = slots
