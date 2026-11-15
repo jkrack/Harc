@@ -1,7 +1,7 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-11-14
-**Candidate configuration:** HarcMobile 0.14.22 (77), iOS 26+, iPhone only
+**Updated:** 2026-11-15
+**Candidate configuration:** HarcMobile 0.14.22 (78), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed phone release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.
@@ -32,6 +32,26 @@ physical qualification phone.
 The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
 remain useful history and must not be relabeled as current-candidate qualification.
+
+## November 15 recording-detail TestFlight preparation
+
+An isolated preparation branch advances the candidate to **0.14.22 (78)** on top
+of PR #200's `35de37e1edf4eb8e8abd1e4ecb1ed04ddab7fdfe`. Build 77 was already
+uploaded and made available to the existing James-only internal group; it does
+not contain PR #200's recording-detail flow. This build-number change prepares a
+new identity, not a distribution-ready claim or a replacement Mac release.
+
+[PR #200 CI](https://github.com/jkrack/Harc/actions/runs/43679416506) passed on
+that source. Its physical synthetic app tests are not real-microphone/UI
+qualification. Real capture/Stop, paired-Host enrichment, offline reconciliation,
+spoken VoiceOver, and the remaining accessibility/error-state checks remain
+open. Archive identity, signing, source preflight, distribution processing and
+James-only group availability must be verified for build 78 itself. No earlier
+archive or test receipt can be relabeled as this candidate.
+
+Do not upload while required qualification is blocked. Do not create credentials,
+change security settings, invite other testers, or submit to App Review. Keep the
+published Mac Sparkle artifact and the user's recordings unchanged.
 
 ## November 14 internal TestFlight preparation
 
@@ -301,7 +321,7 @@ logs, result bundles, hardware/OS identity, and artifact digests together.
 
 | Gate | Current status | Required closure |
 | --- | --- | --- |
-| Candidate version/build identification | Identified only | Match source 0.14.22 (77); retain the clean source commit and exact artifact receipts. No 0.14.22 phone artifact is selected or qualified; earlier evidence retains its original identity. |
+| Candidate version/build identification | Identified only | Match source 0.14.22 (78); retain the clean source commit and exact artifact receipts. No build 78 phone artifact is selected or qualified; earlier evidence retains its original identity. |
 | Repository input preflight | Source inputs and public URLs passed during preparation | `xcodegen generate` and source/public-URL preflight passed in the isolated readiness checkout. Repeat on the clean committed candidate and retain its exit status. This does not close the gates below. |
 | Packaged iPhone configuration/privacy assertions | Local simulator diagnostic pass, 2026-10-19 | 71 logical tests passed with zero failures or skips on iOS 27.0: 57 XCTest app cases, 12 Swift Testing cases, and two UI cases. App source was `3224c78` with the SSD test harness being edited; this is not sealed release evidence. Repeat on the sealed release artifact. |
 | Package, Mac app, embedded helpers | Historical PR #136 exact-head CI pass | Run `39177518324` passed package/protocol/relay validation, the Mac app/UI regression, helpers and mobile configuration at the tree merged as `3afdccf`. Repeat affected gates on the current candidate and retain exact release-artifact identity. Keep Mac distribution on Sparkle. |
