@@ -150,6 +150,7 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
 
     private func launchFixture(largestText: Bool = false, storageExhausted: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
+        app.launchEnvironment["HARC_RECORDING_NAVIGATION_DIAGNOSTIC"] = "1"
         app.launchArguments = [
             "--harc-ui-test-root-id", UUID().uuidString,
             "--harc-ui-test-reset-root", "--harc-ui-test-local-recording",

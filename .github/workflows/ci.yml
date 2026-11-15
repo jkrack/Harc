@@ -341,6 +341,14 @@ jobs:
         run: |
           mkdir -p .build/mobile-configuration
           bash scripts/test-mobile-configuration.sh 2>&1 | tee .build/mobile-configuration/console.log
+      - name: Collect bounded recording navigation trace
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        run: |
+          python3 scripts/collect-recording-navigation-trace.py \
+            .build/mobile-configuration/destination.json \
+            .build/mobile-configuration/recording-navigation-trace.json
       - name: Summarize mobile execution
         if: always()
         shell: bash
@@ -387,6 +395,7 @@ jobs:
           name: mobile-configuration-evidence
           path: |
             .build/mobile-configuration/destination.json
+            .build/mobile-configuration/recording-navigation-trace.json
             .build/mobile-configuration/console.log
             .build/mobile-configuration/configuration.xcresult
             .build/mobile-configuration/build-diagnostics

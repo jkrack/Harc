@@ -2,6 +2,9 @@ import AVFAudio
 import HarcDomain
 import HarcPresenceUI
 import Observation
+#if DEBUG
+import OSLog
+#endif
 import SwiftUI
 import UIKit
 
@@ -98,7 +101,17 @@ struct HarcMobileRootView: View {
             if tab == .record { presentFinishedRecording(model.captureCoordinator?.state) }
         }
         .environment(\.harcNewRecording, startNewRecording)
+#if DEBUG
+        .onAppear { traceRecordingNavigation(.rootAppeared) }
+        .onDisappear { traceRecordingNavigation(.rootDisappeared) }
+        .onChange(of: presentedRecording?.id) { _, _ in
+            traceRecordingNavigation(.renderedRequestChanged)
+        }
+#endif
         .fullScreenCover(item: $presentedRecording, onDismiss: {
+#if DEBUG
+            traceRecordingNavigation(.coverDismissed)
+#endif
             switch model.captureCoordinator?.state {
             case .saved, .storageExhausted:
                 model.captureCoordinator?.resetTerminalState()
@@ -107,9 +120,18 @@ struct HarcMobileRootView: View {
         }) { recording in
             NavigationStack {
                 HarcMobileRecordingDetailView(recording: recording, storageExhausted: presentedRecordingWasPartial,
-                                             done: { presentedRecording = nil })
+                                             done: {
+#if DEBUG
+                                                 traceRecordingNavigation(.doneRequested)
+#endif
+                                                 presentedRecording = nil
+                                             })
             }
             .environment(\.harcNewRecording, startNewRecording)
+#if DEBUG
+            .onAppear { traceRecordingNavigation(.coverAppeared) }
+            .onDisappear { traceRecordingNavigation(.coverDisappeared) }
+#endif
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -139,6 +161,15 @@ struct HarcMobileRootView: View {
             HarcMobileSetupAndSyncView()
         }
     }
+
+#if DEBUG
+    private func traceRecordingNavigation(_ event: HarcMobileRecordingNavigationTrace.Event) {
+        HarcMobileRecordingNavigationTrace.record(
+            event, requested: presentedRecording != nil,
+            setupPresented: showsSetupAndSync, libraryPresented: showsLocalRecordings
+        )
+    }
+#endif
 
     private func startNewRecording() {
         guard let capture = model.captureCoordinator,
@@ -655,8 +686,14 @@ struct HarcMobileRootView: View {
 
                             if let recent = transfer.localRecordings.first {
                                 Button {
+#if DEBUG
+                                    traceRecordingNavigation(.recentTapped)
+#endif
                                     presentedRecordingWasPartial = false
                                     presentedRecording = recent
+#if DEBUG
+                                    traceRecordingNavigation(.recentRequestAssigned)
+#endif
                                 } label: {
                                     HStack(spacing: 12) {
                                         Image(systemName: "waveform").font(.title2)
@@ -1419,3 +1456,34 @@ struct HarcMobileSpeakerLabelEditor: View {
         }
     }
 }
+
+#if DEBUG
+/// Temporary CI diagnosis. No observable state, extra accessibility query, recording
+/// identifier, content, path or network event. Release builds contain none of this.
+private enum HarcMobileRecordingNavigationTrace {
+    enum Event: String {
+        case rootAppeared, rootDisappeared, renderedRequestChanged
+        case recentTapped, recentRequestAssigned, coverAppeared, coverDisappeared
+        case coverDismissed, doneRequested
+    }
+
+    private static let logger = Logger(
+        subsystem: "com.harc.recording-navigation-diagnostic", category: "RecentPresentation"
+    )
+    private static let enabled: Bool = {
+        let process = ProcessInfo.processInfo
+        guard process.environment["HARC_RECORDING_NAVIGATION_DIAGNOSTIC"] == "1",
+              process.arguments.contains("--harc-ui-test-local-recording"),
+              let rootID = try? HarcMobileUITestConfiguration.rootID(arguments: process.arguments),
+              (try? HarcMobileUITestConfiguration.shouldResetRoot(
+                  arguments: process.arguments, rootID: rootID
+              )) == true else { return false }
+        return true
+    }()
+
+    static func record(_ event: Event, requested: Bool, setupPresented: Bool, libraryPresented: Bool) {
+        guard enabled else { return }
+        logger.notice("event=\(event.rawValue, privacy: .public) requested=\(requested) setup=\(setupPresented) library=\(libraryPresented)")
+    }
+}
+#endif
