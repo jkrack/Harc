@@ -31,6 +31,7 @@ enum HarcMobileUITestConfigurationError: LocalizedError, Equatable {
     case invalidRootValue(String)
     case duplicateResetRootArgument
     case resetRootWithoutRootID
+    case invalidLocalRecordingFixtureArguments
 
     var errorDescription: String? {
         switch self {
@@ -44,6 +45,8 @@ enum HarcMobileUITestConfigurationError: LocalizedError, Equatable {
             "The UI-test reset-root argument was repeated."
         case .resetRootWithoutRootID:
             "The UI-test reset-root argument requires a scoped root UUID."
+        case .invalidLocalRecordingFixtureArguments:
+            "The local recording fixture requires one recording flag and a freshly reset scoped root; fixture flags cannot repeat."
         }
     }
 }
@@ -179,6 +182,16 @@ final class HarcMobileAppModel {
                     arguments: processArguments,
                     rootID: uiTestRootID
                 )
+#if DEBUG
+            let localFixtureCount = processArguments.count { $0 == "--harc-ui-test-local-recording" }
+            let exhaustedFixtureCount = processArguments.count { $0 == "--harc-ui-test-local-recording-storage-exhausted" }
+            if localFixtureCount > 0 || exhaustedFixtureCount > 0 {
+                guard localFixtureCount == 1, exhaustedFixtureCount <= 1,
+                      uiTestRootID != nil, shouldResetUITestRoot else {
+                    throw HarcMobileUITestConfigurationError.invalidLocalRecordingFixtureArguments
+                }
+            }
+#endif
             let root = try Self.applicationRoot(
                 uiTestRootID: uiTestRootID,
                 resetUITestRoot: shouldResetUITestRoot
@@ -243,6 +256,17 @@ final class HarcMobileAppModel {
                 locations: captureLocations,
                 currentRoot: root
             )
+#if DEBUG
+            // Real local WAV and durable sidecar, confined to a freshly reset test root.
+            // No microphone, adoption, receipt, transcript, or network evidence is invented.
+            if uiTestRootID != nil, shouldResetUITestRoot,
+               processArguments.contains("--harc-ui-test-local-recording") {
+                try Self.seedLocalRecordingForUITesting(
+                    locations: captureLocations, deviceID: identity.deviceID,
+                    storageExhausted: exhaustedFixtureCount == 1
+                )
+            }
+#endif
             let recovered = try prepareLocalCapture(
                 store: store, locations: captureLocations,
                 storageExhaustionAfterCanonicalBytesForTesting:
@@ -450,6 +474,38 @@ final class HarcMobileAppModel {
             try attributes.applyAndVerify(.transferArtifact, to: url)
         }
     }
+
+#if DEBUG
+    private static func seedLocalRecordingForUITesting(
+        locations: HarcMobileCaptureLocations,
+        deviceID: DeviceID,
+        storageExhausted: Bool
+    ) throws {
+        let start = Date.now.addingTimeInterval(-60)
+        let writer = try HarcMobileDurableMasterWriter(
+            locations: locations, producingDeviceID: deviceID,
+            captureStartedAt: start, captureStartedMonotonicNanoseconds: 1_000
+        )
+        // Canonical audio is signed 16-bit little-endian mono PCM at 16 kHz.
+        // Alternate audible tone and silence so the real extracted envelope is visible.
+        for second in 0..<60 {
+            var pcm = Data(capacity: 32_000)
+            for frame in 0..<16_000 {
+                let sample: Int16 = second.isMultiple(of: 2)
+                    ? Int16(sin(2 * Double.pi * 440 * Double(frame) / 16_000) * 4_000) : 0
+                var littleEndian = sample.littleEndian
+                withUnsafeBytes(of: &littleEndian) { pcm.append(contentsOf: $0) }
+            }
+            try writer.appendCanonicalPCM(
+                pcm, endedAt: start.addingTimeInterval(Double(second + 1)),
+                endedMonotonicNanoseconds: 1_000 + UInt64(second + 1) * 1_000_000_000
+            )
+        }
+        _ = try writer.finalize(reason: storageExhausted ? .storageExhausted : .userStopped)
+        // This optional finalization reason is synthetic UI coverage, not a disk-full drill.
+        // Normal startup recovery validates the real bytes and registers the outbox.
+    }
+#endif
 
     @discardableResult
     func prepareLocalCapture(

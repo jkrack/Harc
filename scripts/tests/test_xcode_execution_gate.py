@@ -114,5 +114,42 @@ class MobileLongHostNameSelectionTests(MobilePolishSelectionTests):
             'testLongHostNameKeepsRecordAndToolbarsUsable')
 
 
+class MobileRecordingDetailSelectionTests(unittest.TestCase):
+    suite = 'HarcMobileUITests/HarcMobileRecordingDetailUITests'
+    names = (
+        'testLocalDetailPlaybackSectionsAndReopening',
+        'testLocalDetailRemainsUsableAtLargestDynamicType',
+        'testStorageWarningSurvivesDoneRecentAndLibrary',
+    )
+
+    def test_detail_suite_and_each_required_case_are_selected_once(self):
+        root = Path(__file__).resolve().parents[2]
+        runner = (root / 'scripts/test-mobile-configuration.sh').read_text()
+        self.assertEqual(runner.count('-only-testing:' + self.suite + ' '), 1)
+        source = (root / 'HarcMobileUITests/HarcMobileRecordingDetailUITests.swift').read_text()
+        for name in self.names:
+            self.assertEqual(runner.count('--require-test ' + self.suite + '/' + name + ' '), 1)
+            self.assertEqual(source.count('func ' + name + '()'), 1)
+
+    def test_each_detail_case_must_execute_and_pass(self):
+        required = [self.suite + '/' + name for name in self.names]
+        cases = [dict(nodeType='Test Case', nodeIdentifier=key.split('/', 1)[1] + '()',
+                      result='Passed') for key in required]
+        summary = dict(result='Passed', failedTests=0, skippedTests=0,
+                       expectedFailures=0, passedTests=3, totalTestCount=3, testFailures=[])
+        tree = dict(testNodes=[dict(nodeType='UI test bundle', name='HarcMobileUITests',
+                                   result='Passed', children=cases)])
+        self.assertTrue(gate.check(summary, tree, ['HarcMobileUITests'], required)['passed'])
+        for index, name in enumerate(self.names):
+            with self.subTest(case=name):
+                missing = copy.deepcopy(tree)
+                del missing['testNodes'][0]['children'][index]
+                smaller = dict(summary, passedTests=2, totalTestCount=2)
+                self.assertFalse(gate.check(smaller, missing, ['HarcMobileUITests'], required)['passed'])
+                skipped = copy.deepcopy(tree)
+                skipped['testNodes'][0]['children'][index]['result'] = 'Skipped'
+                self.assertFalse(gate.check(summary, skipped, ['HarcMobileUITests'], required)['passed'])
+
+
 if __name__ == '__main__':
     unittest.main()
