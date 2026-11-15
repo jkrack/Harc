@@ -678,7 +678,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         let recordTab = app.tabBars.buttons["Record"]
         XCTAssertTrue(recordTab.waitForExistence(timeout: 10))
         recordTab.tap()
-        XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Saved on this iPhone"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.state, .runningForeground)
 #endif
     }
@@ -743,7 +743,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         keepTideScreenshot("Tide-Physical-LiveActivity")
         activityStop.tap()
         app.activate()
-        XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Saved on this iPhone"].waitForExistence(timeout: 15))
 #endif
     }
 
@@ -778,15 +778,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
                 .waitForExistence(timeout: 15)
         )
         XCTAssertTrue(
-            app.staticTexts["iPhone storage is full"]
+            app.staticTexts["Recording stopped when storage ran out. Harc saved the durable portion. Check free space before recording again."]
                 .waitForExistence(timeout: 30)
         )
-        XCTAssertTrue(
-            app.staticTexts[
-                "Recording stopped. Harc saved the durable portion locally."
-            ].exists
-        )
-        XCTAssertTrue(app.buttons["Record Again"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this iPhone"].exists)
+        XCTAssertTrue(app.buttons["harc.mobile.detail.newRecording"].exists)
+        XCTAssertTrue(app.buttons["harc.mobile.detail.newRecording"].isEnabled)
         XCTAssertEqual(app.state, .runningForeground)
 #endif
     }

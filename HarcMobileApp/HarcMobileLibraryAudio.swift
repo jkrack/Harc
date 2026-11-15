@@ -296,7 +296,7 @@ final class HarcMobileRecordingAudioController: NSObject {
     private(set) var envelope: [Float] = []
     private var envelopeTask: Task<Void, Never>?
     private let coordinator: HarcMobileLibraryCoordinator
-    private let summary: LibraryRecordingSummary
+    private(set) var summary: LibraryRecordingSummary
     private var player: AVAudioPlayer?
     #if os(iOS)
     private var sessionOwner: UUID?
@@ -308,6 +308,33 @@ final class HarcMobileRecordingAudioController: NSObject {
         player?.duration ?? Double(summary.canonicalAudio.totalFrames ?? 0) / 16_000
     }
     var canSeek: Bool { player != nil }
+
+    /// Refresh a future download descriptor without disturbing active or paused audio.
+    @discardableResult
+    func updateSummaryIfIdle(_ new: LibraryRecordingSummary) -> Bool {
+        guard Self.canUpdateSummary(current: summary, new: new, state: state,
+                                    hasPlayer: player != nil) else { return false }
+        envelopeTask?.cancel()
+        envelopeTask = nil
+        envelope = []
+        summary = new
+        return true
+    }
+
+    static func canUpdateSummary(
+        current: LibraryRecordingSummary,
+        new: LibraryRecordingSummary,
+        state: State,
+        hasPlayer: Bool
+    ) -> Bool {
+        guard !hasPlayer, current.canonicalID == new.canonicalID,
+              current.originID == new.originID,
+              new.revision.rawValue > current.revision.rawValue else { return false }
+        switch state {
+        case .idle, .failed: return true
+        case .downloading, .playing, .paused: return false
+        }
+    }
 
     func seek(to time: TimeInterval) {
         guard time.isFinite, let player else { return }
@@ -380,8 +407,9 @@ final class HarcMobileRecordingAudioController: NSObject {
                 } onCancel: {
                     worker.cancel()
                 }
-                guard !Task.isCancelled else { return }
-                self?.envelope = samples
+                guard !Task.isCancelled, let self,
+                      generation == playbackGeneration else { return }
+                envelope = samples
             }
         } catch {
             guard generation == playbackGeneration else { return }
@@ -402,13 +430,15 @@ final class HarcMobileRecordingAudioController: NSObject {
         player = nil
         releaseSession()
         state = .idle
+        let releasedSummary = summary
         Task {
-            try? await coordinator.releaseDownloadedAudio(summary: summary)
+            try? await coordinator.releaseDownloadedAudio(summary: releasedSummary)
         }
     }
 
     /// Bounded-memory display data derived only from verified downloaded audio.
     nonisolated static func readEnvelope(url: URL) throws -> [Float] {
+        try Task.checkCancellation()
         let file = try AVAudioFile(forReading: url)
         guard file.length > 0,
               let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)
@@ -445,11 +475,14 @@ extension HarcMobileRecordingAudioController: @preconcurrency AVAudioPlayerDeleg
         successfully flag: Bool
     ) {
         guard self.player === player else { return }
+        envelopeTask?.cancel()
+        envelopeTask = nil
         self.player = nil
         releaseSession()
         state = flag ? .idle : .failed("Playback ended unexpectedly.")
+        let releasedSummary = summary
         Task {
-            try? await coordinator.releaseDownloadedAudio(summary: summary)
+            try? await coordinator.releaseDownloadedAudio(summary: releasedSummary)
         }
     }
 }

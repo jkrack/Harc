@@ -64,6 +64,14 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
         }
     }
 
+    func testStorageExhaustionReasonSurvivesLocalLibraryReload() throws {
+        try withRecording(finalizationReason: .storageExhausted) { store, url in
+            let recording = try XCTUnwrap(HarcMobileLocalRecording.load(from: store).first)
+            XCTAssertEqual(recording.finalizationReason, .storageExhausted)
+            try assertLocalPlaybackSource(store, url: url, state: .localOnly)
+        }
+    }
+
     private func validatedOfflineAdoption() async throws -> ValidatedClientAdoptionEvidence {
         let fixture = try BootstrapClientFixture(deviceKey: deviceKey)
         let rpc = BootstrapClientFakeRPC(fixture: fixture)
@@ -112,6 +120,7 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
     }
 
     private func withRecording(
+        finalizationReason: CaptureFinalizationReason = .userStopped,
         _ body: (HarcTransferStore, URL) throws -> Void
     ) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -140,7 +149,7 @@ final class HarcMobileLocalLibraryTests: XCTestCase {
                 captureEndedAt: Date(timeIntervalSince1970: 1_700_000_010),
                 captureStartedMonotonicNanoseconds: 1_000,
                 captureEndedMonotonicNanoseconds: 10_000_001_000,
-                finalizationReason: .userStopped,
+                finalizationReason: finalizationReason,
                 totalCanonicalFrames: 1_000,
                 totalCanonicalBytes: 2_000,
                 canonicalPCMSHA256: CanonicalPCMHash(Data(repeating: 9, count: 32)),

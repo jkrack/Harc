@@ -143,6 +143,11 @@ final class HarcMobileLibraryCoordinator {
         case conflict
     }
 
+    struct MetadataSubmission: Equatable {
+        let outcome: MutationSubmissionOutcome
+        let operationID: OperationID
+    }
+
     private(set) var state: State = .loadingCache
     private(set) var recordings: [LibraryRecordingSummary] = []
     private(set) var isRefreshing = false
@@ -212,7 +217,7 @@ final class HarcMobileLibraryCoordinator {
     func submitMetadataMutation(
         summary: LibraryRecordingSummary,
         mutation: HarcMobileMetadataMutation
-    ) async throws -> MutationSubmissionOutcome {
+    ) async throws -> MetadataSubmission {
         guard let snapshot = try transferStore.activeAdoption() else {
             throw HarcMobileHostSessionConnectorError.notPaired
         }
@@ -260,7 +265,7 @@ final class HarcMobileLibraryCoordinator {
                 let conflicted = conflicts.contains {
                     $0.operationID == signed.queued.operationID
                 }
-                return conflicted ? .conflict : .applied
+                return .init(outcome: conflicted ? .conflict : .applied, operationID: signed.queued.operationID)
             } catch {
                 await opened.connection.shutdownImmediately()
                 throw error
@@ -270,20 +275,56 @@ final class HarcMobileLibraryCoordinator {
             if conflicts.contains(where: {
                 $0.operationID == signed.queued.operationID
             }) {
-                return .conflict
+                return .init(outcome: .conflict, operationID: signed.queued.operationID)
             }
             if !(try cache.offlineMutations()).contains(where: {
                 $0.operationID == signed.queued.operationID
             }) {
                 // The Host committed and acknowledged this operation; only
                 // the follow-up cache synchronization failed.
-                return .applied
+                return .init(outcome: .applied, operationID: signed.queued.operationID)
             }
             state = .offline(
                 message: "Your edit is protected on this client and will retry when the Host is reachable."
             )
-            return .queuedOffline
+            return .init(outcome: .queuedOffline, operationID: signed.queued.operationID)
         }
+    }
+
+    /// Completed operations are excluded by the durable cache query. A failed
+    /// read must propagate, never masquerade as an empty queue.
+    func pendingMetadataOperationIDs() throws -> Set<OperationID> {
+        Set(try cache.offlineMutations().map(\.operationID))
+    }
+
+    private func queuedMutation(for conflict: VisibleLibraryConflict) throws -> OfflineMetadataMutation? {
+        guard let operationID = conflict.operationID else { return nil }
+        return try cache.offlineMutations().first {
+            $0.operationID == operationID && $0.libraryID == conflict.libraryID
+                && $0.canonicalRecordingID == conflict.canonicalRecordingID
+        }
+    }
+
+    func mutationKind(for conflict: VisibleLibraryConflict) throws -> OfflineMetadataMutationKind? {
+        try queuedMutation(for: conflict)?.kind
+    }
+
+    /// Identify only the locally signed speaker edit represented by this conflict.
+    /// Authentication is historical read validation, never renewed edit authority.
+    func conflictingSpeakerIndex(for conflict: VisibleLibraryConflict) throws -> UInt32? {
+        guard let queued = try queuedMutation(for: conflict), queued.kind == .setSpeakerLabel else { return nil }
+        let signed = try HarcSignedObjectV1.decode(queued.exactPayload)
+        guard case .metadataMutation(let exact) = try signed.authenticateRegisteredPayload(
+            using: identity.publicKey, purpose: .historicalEvidence
+        ).payload,
+            try exact.message.operationID.domainValue() == queued.operationID,
+            try exact.message.libraryID.domainValue() == queued.libraryID,
+            try exact.message.canonicalRecordingID.domainValue() == queued.canonicalRecordingID,
+            exact.message.expectedRevision == queued.expectedRevision.rawValue,
+            case .setSpeakerLabel(let label) = exact.message.mutation else {
+            throw HarcMobileLibraryError.malformedResponse
+        }
+        return label.speakerIndex
     }
 
     func acceptHostValue(for conflict: VisibleLibraryConflict) throws {

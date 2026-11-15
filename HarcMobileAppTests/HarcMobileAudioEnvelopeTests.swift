@@ -41,6 +41,53 @@ final class HarcMobileAudioEnvelopeTests: XCTestCase {
         print("Tide resumed playback route: \(session.currentRoute.outputs.map { $0.portType.rawValue })")
     }
 
+    @MainActor
+    func testLocalPreparationDerivesWaveformWithoutClaimingPlaybackSession() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tide-local-envelope-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
+        buffer.frameLength = 16_000
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<16_000 { samples[frame] = frame < 8_000 ? 0 : 0.5 }
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            try file.write(from: buffer)
+        }
+        var activations = 0
+        let session = HarcMobilePlaybackSession(activate: { activations += 1 }, deactivate: {})
+        let controller = HarcMobileLocalRecordingAudioController(url: url, session: session)
+        session.beginCapture()
+        await controller.prepare()
+        XCTAssertEqual(activations, 0)
+        XCTAssertEqual(controller.state, .idle)
+        XCTAssertEqual(controller.duration, 1, accuracy: 0.001)
+        XCTAssertTrue(controller.canSeek)
+        XCTAssertEqual(controller.envelope.count, 320)
+        XCTAssertTrue(controller.envelope.prefix(160).allSatisfy { $0 == 0 })
+        XCTAssertTrue(controller.envelope.suffix(160).allSatisfy { abs($0 - 0.5) < 0.001 })
+        controller.seek(to: 0.5)
+        XCTAssertEqual(controller.currentTime, 0.5)
+        controller.stop()
+        XCTAssertEqual(activations, 0)
+        session.endCapture()
+    }
+
+    @MainActor
+    func testCancelledLocalPreparationDoesNotPublishDisplayData() async throws {
+        let controller = HarcMobileLocalRecordingAudioController(
+            url: URL(fileURLWithPath: "/missing-local-recording.wav")
+        )
+        let task = Task { await controller.prepare() }
+        task.cancel()
+        await task.value
+        XCTAssertEqual(controller.duration, 0)
+        XCTAssertTrue(controller.envelope.isEmpty)
+        XCTAssertFalse(controller.canSeek)
+        XCTAssertEqual(controller.state, .idle)
+    }
+
     func testEnvelopePreservesSilenceAndLocalizedAudio() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("tide-envelope-\(UUID().uuidString).caf")

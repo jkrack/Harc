@@ -30,6 +30,10 @@ TEST_OPTIONS=("${XCODE_OPTIONS[@]}" \
   -only-testing:HarcMobileAppTests/HarcMobileCapturePipelineTests \
   -only-testing:HarcMobileAppTests/HarcMobileSyncStatusPresentationTests \
   -only-testing:HarcMobileAppTests/HarcMobileLocalLibraryTests \
+  -only-testing:HarcMobileAppTests/HarcMobileRecordingDetailPresentationTests \
+  -only-testing:HarcMobileAppTests/HarcMobileAudioEnvelopeTests \
+  -only-testing:HarcMobileAppTests/HarcMobileAudioSummaryRefreshTests \
+  -only-testing:HarcMobileUITests/HarcMobileRecordingDetailUITests \
   -only-testing:HarcMobileAppTests/HarcMobileLibraryRefreshPresentationTests \
   -only-testing:HarcMobileAppTests/HarcMobilePlaybackSessionTests \
   -only-testing:HarcMobileAppTests/HarcMobileFinalizationRecoveryTests \
@@ -65,6 +69,9 @@ python3 scripts/check-xcode-test-results.py \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testSetupMacCardRemainsUsableAtNormalAndLargestText \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testSetupMacIconInkStaysInsideItsTileAtEveryTextSize \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder \
+  --require-test HarcMobileUITests/HarcMobileRecordingDetailUITests/testLocalDetailPlaybackSectionsAndReopening \
+  --require-test HarcMobileUITests/HarcMobileRecordingDetailUITests/testLocalDetailRemainsUsableAtLargestDynamicType \
+  --require-test HarcMobileUITests/HarcMobileRecordingDetailUITests/testStorageWarningSurvivesDoneRecentAndLibrary \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRefreshStatusProbePreservesPredicateAndRedactsLabels \
