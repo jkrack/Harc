@@ -646,7 +646,9 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         addUIInterruptionMonitor(
             withDescription: "Microphone permission"
         ) { alert in
-            guard alert.buttons["Allow"].exists else { return false }
+            let message = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
+            guard message.localizedCaseInsensitiveContains("microphone"),
+                  alert.buttons["Allow"].exists else { return false }
             alert.buttons["Allow"].tap()
             return true
         }
@@ -671,7 +673,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
 
-        let capturedAudio = expectation(description: "capture real microphone audio")
+        let capturedAudio = XCTestExpectation(description: "capture real microphone audio")
         _ = XCTWaiter.wait(for: [capturedAudio], timeout: 2)
         stop.tap()
 
@@ -688,7 +690,9 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         throw XCTSkip("Microphone handoff requires a physical iPhone.")
 #else
         addUIInterruptionMonitor(withDescription: "Microphone permission") { alert in
-            guard alert.buttons["Allow"].exists else { return false }
+            let message = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
+            guard message.localizedCaseInsensitiveContains("microphone"),
+                  alert.buttons["Allow"].exists else { return false }
             alert.buttons["Allow"].tap()
             return true
         }
