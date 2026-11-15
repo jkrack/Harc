@@ -149,6 +149,11 @@ struct HarcMobileRecordingDetailView: View {
       detailList
       newRecordingFooter
     }
+#if DEBUG
+    .onChange(of: selectedSection, initial: true) { _, section in
+      HarcMobileRecordingNavigationTrace.recordSection(.sectionObserved, name: section.rawValue)
+    }
+#endif
     .navigationTitle("Recording")
     .navigationBarTitleDisplayMode(.inline)
     .navigationBarBackButtonHidden(done != nil || hasUnsavedEdits)
@@ -766,6 +771,20 @@ struct HarcMobileRecordingDetailView: View {
 
   }
 
+  private var sectionSelection: Binding<DetailSection> {
+#if DEBUG
+    let original = $selectedSection
+    guard HarcMobileRecordingNavigationTrace.isEnabled else { return original }
+    return Binding(get: { original.wrappedValue }, set: { section, transaction in
+      HarcMobileRecordingNavigationTrace.recordSection(.sectionRequested, name: section.rawValue)
+      original.transaction(transaction).wrappedValue = section
+      HarcMobileRecordingNavigationTrace.recordSection(.sectionAssigned, name: original.wrappedValue.rawValue)
+    })
+#else
+    $selectedSection
+#endif
+  }
+
   @ViewBuilder private var sectionPicker: some View {
     if dynamicTypeSize.isAccessibilitySize {
       Menu {
@@ -780,7 +799,7 @@ struct HarcMobileRecordingDetailView: View {
       .accessibilityLabel("View \(selectedSection.rawValue)")
       .accessibilityIdentifier("harc.mobile.detail.sections")
     } else {
-      Picker("Sections", selection: $selectedSection) {
+      Picker("Sections", selection: sectionSelection) {
         ForEach(DetailSection.allCases, id: \.self) { section in
           Text(section.rawValue).tag(section)
         }
