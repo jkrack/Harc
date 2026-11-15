@@ -1460,11 +1460,15 @@ struct HarcMobileSpeakerLabelEditor: View {
 #if DEBUG
 /// Temporary CI diagnosis. No observable state, extra accessibility query, recording
 /// identifier, content, path or network event. Release builds contain none of this.
-private enum HarcMobileRecordingNavigationTrace {
+enum HarcMobileRecordingNavigationTrace {
     enum Event: String {
         case rootAppeared, rootDisappeared, renderedRequestChanged
         case recentTapped, recentRequestAssigned, coverAppeared, coverDisappeared
         case coverDismissed, doneRequested
+    }
+
+    enum SectionEvent: String {
+        case sectionRequested, sectionAssigned, sectionObserved
     }
 
     private static let logger = Logger(
@@ -1480,6 +1484,13 @@ private enum HarcMobileRecordingNavigationTrace {
               )) == true else { return false }
         return true
     }()
+
+    static var isEnabled: Bool { enabled }
+
+    static func recordSection(_ event: SectionEvent, name: String) {
+        guard enabled, ["Summary", "Transcript", "Notes"].contains(name) else { return }
+        logger.notice("event=\(event.rawValue, privacy: .public) section=\(name, privacy: .public)")
+    }
 
     static func record(_ event: Event, requested: Bool, setupPresented: Bool, libraryPresented: Bool) {
         guard enabled else { return }

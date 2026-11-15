@@ -12,6 +12,7 @@ EVENT = re.compile(
     r'event=(?:rootAppeared|rootDisappeared|renderedRequestChanged|recentTapped|'
     r'recentRequestAssigned|coverAppeared|coverDisappeared|coverDismissed|doneRequested)'
     r' requested=(?:true|false) setup=(?:true|false) library=(?:true|false)'
+    r'|event=section(?:Requested|Assigned|Observed) section=(?:Summary|Transcript|Notes)'
 )
 
 

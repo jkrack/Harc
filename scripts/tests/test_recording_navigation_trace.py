@@ -22,6 +22,16 @@ class RecordingNavigationTraceTests(unittest.TestCase):
         self.assertEqual(trace.bounded_events(json.dumps(event)),
                          [{key: event[key] for key in ('timestamp', 'processID', 'eventMessage')}])
 
+    def test_section_events_allow_only_fixed_phase_and_name(self):
+        for phase in ('Requested', 'Assigned', 'Observed'):
+            for name in ('Summary', 'Transcript', 'Notes'):
+                with self.subTest(phase=phase, name=name):
+                    event = self.event(eventMessage=f'event=section{phase} section={name}')
+                    self.assertEqual(len(trace.bounded_events(json.dumps(event))), 1)
+        for message in ('event=sectionRequested section=private text',
+                        'event=sectionArbitrary section=Transcript'):
+            self.assertEqual(trace.bounded_events(json.dumps(self.event(eventMessage=message))), [])
+
     def test_ignores_foreign_arbitrary_and_malformed_rows(self):
         rows = [self.event(subsystem='other'), self.event(eventMessage='recording title: private'),
                 self.event(eventMessage=self.event()['eventMessage'] + ' path=/private'),
