@@ -683,6 +683,77 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
 #endif
     }
 
+    func testPhysicalNewRecordingStopsPlaybackAndPreservesBothCaptures() throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("Microphone handoff requires a physical iPhone.")
+#else
+        addUIInterruptionMonitor(withDescription: "Microphone permission") { alert in
+            guard alert.buttons["Allow"].exists else { return false }
+            alert.buttons["Allow"].tap()
+            return true
+        }
+        // A new root keeps this diagnostic separate from every previous capture.
+        let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL",
+        ])
+        app.launch()
+        let start = app.buttons["harc.mobile.record.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 15))
+        start.tap()
+        triggerMicrophonePermissionMonitor(in: app)
+        let stop = app.buttons["harc.mobile.record.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        _ = XCTWaiter.wait(for: [XCTestExpectation(description: "capture recording A")], timeout: 3)
+        stop.tap()
+        let saved = app.staticTexts["Saved on this iPhone"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 15))
+        let play = app.buttons["harc.mobile.detail.play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        play.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Pause"), evaluatedWith: play)
+        waitForExpectations(timeout: 10)
+
+        let newRecording = app.buttons["harc.mobile.detail.newRecording"]
+        XCTAssertTrue(newRecording.isEnabled)
+        newRecording.tap()
+        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        XCTAssertTrue(play.waitForNonExistence(timeout: 10))
+        _ = XCTWaiter.wait(for: [XCTestExpectation(description: "capture recording B")], timeout: 3)
+        stop.tap()
+        XCTAssertTrue(saved.waitForExistence(timeout: 15))
+        XCTAssertEqual(play.label, "Play")
+        play.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Pause"), evaluatedWith: play)
+        waitForExpectations(timeout: 10)
+        let position = app.sliders["Playback position"]
+        let duration = (position.value as? String ?? "").split(separator: " ")
+        guard duration.count == 5 else {
+            XCTFail("Playback must expose elapsed and total seconds")
+            return
+        }
+        XCTAssertGreaterThan(Int(duration[3]) ?? 0, 0, "The second capture must contain playable audio")
+        play.tap()
+        keepTideScreenshot("Recording-handoff-second-capture")
+        app.buttons["harc.mobile.detail.done"].tap()
+        app.tabBars.buttons["Library"].tap()
+        let recordings = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "harc.mobile.local.recording."
+        ))
+        expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: recordings)
+        waitForExpectations(timeout: 10)
+        let identifiers = recordings.allElementsBoundByIndex.map(\.identifier)
+        XCTAssertEqual(Set(identifiers).count, 2)
+        // Library is newest-first. The original capture remains reopenable.
+        recordings.element(boundBy: 1).tap()
+        XCTAssertTrue(saved.waitForExistence(timeout: 15))
+        XCTAssertTrue(play.isEnabled)
+        play.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Pause"), evaluatedWith: play)
+        waitForExpectations(timeout: 10)
+        play.tap()
+#endif
+    }
+
     func testPhysicalLiveActivityStopsBackgroundRecording() throws {
 #if targetEnvironment(simulator)
         throw XCTSkip("Background microphone and Live Activity require a physical iPhone.")
