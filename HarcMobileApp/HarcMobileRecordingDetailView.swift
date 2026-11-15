@@ -279,7 +279,6 @@ struct HarcMobileRecordingDetailView: View {
       .padding(.horizontal, 16).padding(.vertical, 16)
       .foregroundStyle(HarcTideStyle.onAccent)
       .background(HarcMobilePalette.action, in: Capsule())
-      .drawingGroup()
       .opacity(captureBusy ? 0.5 : 1)
     }
     .buttonStyle(.plain)
