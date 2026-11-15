@@ -214,7 +214,19 @@ final class HarcMobileLibraryCoordinator {
         isSearching = false
     }
 
+    /// Keep the shared desktop entry point source-compatible. Long-lived mobile
+    /// drafts use the operation-aware variant to reconcile durable queued edits.
     func submitMetadataMutation(
+        summary: LibraryRecordingSummary,
+        mutation: HarcMobileMetadataMutation
+    ) async throws -> MutationSubmissionOutcome {
+        let submission = try await submitMetadataMutationWithOperationID(
+            summary: summary, mutation: mutation
+        )
+        return submission.outcome
+    }
+
+    func submitMetadataMutationWithOperationID(
         summary: LibraryRecordingSummary,
         mutation: HarcMobileMetadataMutation
     ) async throws -> MetadataSubmission {

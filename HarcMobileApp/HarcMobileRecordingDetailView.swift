@@ -418,7 +418,7 @@ struct HarcMobileRecordingDetailView: View {
           Spacer()
           Text(Duration.seconds(playbackDuration), format: .time(pattern: .minuteSecond))
         }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-        Slider(value: Binding(get: { playbackTime }, set: seek), in: 0...max(1, playbackDuration))
+        Slider(value: Binding(get: { playbackTime }, set: { value in seek(value) }), in: 0...max(1, playbackDuration))
           .disabled(!canSeek || captureBusy).accessibilityLabel("Playback position")
           .accessibilityValue("\(Int(playbackTime)) seconds of \(Int(playbackDuration)) seconds")
           .accessibilityAdjustableAction { direction in
@@ -942,7 +942,7 @@ struct HarcMobileRecordingDetailView: View {
     Task {
       defer { isSavingMetadata = false }
       do {
-        let submission = try await coordinator.submitMetadataMutation(
+        let submission = try await coordinator.submitMetadataMutationWithOperationID(
           summary: baseline,
           mutation: mutation
         )
