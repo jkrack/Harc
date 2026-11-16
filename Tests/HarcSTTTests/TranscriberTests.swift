@@ -55,7 +55,11 @@ struct TranscriberTests {
         let result: TranscribeResult = try await transcriber.transcribe(audioPath: url.path, vad: false)
 
         #expect(!result.text.isEmpty, "expected transcribed text from fixture")
-        #expect(result.words.count > 0, "expected at least one word timing")
+        #expect(result.words.count >= 3, "expected multiple word-level timing runs")
+        for pair in zip(result.words, result.words.dropFirst()) {
+            #expect(pair.0.startMs <= pair.1.startMs, "timings must stay in source order")
+        }
+        print("APPLE-FIXTURE words=\(result.words.count) timing=\(result.words.map { "\($0.text):\($0.startMs)-\($0.endMs)" })")
         #expect(result.processingMs > 0, "processingMs should be positive")
         #expect(result.text.lowercased().contains("test"), "expected 'test' in transcription; got: \(result.text)")
     }

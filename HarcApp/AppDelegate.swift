@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var sttReadinessTask: Task<Void, Never>?
     /// Set once the model has been observed loaded on this Mac — later
     /// daemon idle-exits then read as "starts on demand", not "missing".
-    private static let sttModelVerifiedKey = "harc.sttModelVerified"
+    private static var sttModelVerifiedKey: String { "harc.sttModelVerified.\(HarcVersion.sttEngineVersion)" }
     private var hudDismissTask: Task<Void, Never>?
     private var lastDictationPhase: DictationState.Phase = .idle
     /// Mode ids that already have per-mode hotkey handlers registered.
@@ -1774,21 +1774,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
         sttReadinessTask?.cancel()
         sttReadinessTask = Task { [weak self] in
             var verified = UserDefaults.standard.bool(forKey: Self.sttModelVerifiedKey)
-                || STTModelDiskProbe.modelPresent()
             while !Task.isCancelled {
                 let socket = FileManager.default.fileExists(atPath: HarcSTTClient.defaultSocketPath)
                 var status: DaemonStatus?
                 if socket {
                     status = try? await HarcSTTClient().status()
                 }
-                let readiness = STTReadiness.from(.init(
-                    socketExists: socket,
-                    statusModelLoaded: status?.modelLoaded,
-                    modelVerifiedBefore: verified,
-                    modelState: status?.modelState,
-                    downloadProgress: status?.downloadProgress,
-                    errorMessage: status?.errorMessage
-                ))
+                let readiness = STTReadiness.from(
+                    status: status,
+                    expectedModelID: HarcVersion.sttEngineVersion,
+                    modelVerifiedBefore: verified
+                )
                 if readiness == .ready, !verified {
                     verified = true
                     UserDefaults.standard.set(true, forKey: Self.sttModelVerifiedKey)

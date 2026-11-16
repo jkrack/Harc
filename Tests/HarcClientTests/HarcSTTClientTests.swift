@@ -6,6 +6,16 @@ import HarcCore
 
 @Suite("HarcSTTClient")
 struct HarcSTTClientTests {
+    @Test("missing or different transcription engine cannot acquire new-engine provenance")
+    func resultEngineMismatch() throws {
+        var result = TranscribeResult(text: "hello", words: [], speakers: [], processingMs: 1)
+        #expect(throws: ClientError.self) { try HarcSTTClient.validateEngine(result) }
+        result.sttModelID = "different-engine"
+        #expect(throws: ClientError.self) { try HarcSTTClient.validateEngine(result) }
+        result.sttModelID = HarcVersion.sttEngineVersion
+        try HarcSTTClient.validateEngine(result)
+    }
+
     /// Makes a connected pair of AF_UNIX fds so we can play fake-daemon in-process.
     private func makePair() throws -> (Int32, Int32) {
         var pair: [Int32] = [-1, -1]
@@ -86,7 +96,8 @@ struct HarcSTTClientTests {
             text: "hello world",
             words: [Word(text: "hello", startMs: 0, endMs: 500)],
             speakers: [],
-            processingMs: 42
+            processingMs: 42,
+            sttModelID: HarcVersion.sttEngineVersion
         )
 
         let fakeTask = SocketTestResponder(fd: serverFd) { [serverFd] in

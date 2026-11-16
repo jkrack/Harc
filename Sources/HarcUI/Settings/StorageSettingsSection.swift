@@ -50,9 +50,9 @@ struct StorageSettingsSection: View {
                 detail: "Gemma tiers downloaded from Settings → Models"
             ),
             Location(
-                title: "Speech models",
+                title: "Speaker and legacy speech models",
                 path: "\(appSupport)/FluidAudio/Models",
-                detail: "Parakeet speech-to-text, diarizer, and VAD"
+                detail: "Diarizer, VAD, and optional legacy Parakeet cache. Apple speech assets are managed by macOS elsewhere."
             ),
             Location(
                 title: "Caches",
