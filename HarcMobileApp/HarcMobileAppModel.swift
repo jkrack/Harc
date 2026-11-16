@@ -150,6 +150,7 @@ final class HarcMobileAppModel {
     private(set) var readiness: Readiness = .starting
     private(set) var bootstrapCompleted = false
     private(set) var rejectedCaptureMetadataFiles: [URL] = []
+    private(set) var localTranscription: HarcMobileLocalTranscriptionCoordinator?
     private(set) var captureCoordinator: HarcMobileCaptureCoordinator?
     private(set) var pairingCoordinator: HarcMobilePairingCoordinator?
     private(set) var transferCoordinator: HarcMobileTransferCoordinator?
@@ -267,6 +268,12 @@ final class HarcMobileAppModel {
                 )
             }
 #endif
+            localTranscription = HarcMobileLocalTranscriptionCoordinator(
+                store: HarcMobileLocalTranscriptStore(
+                    root: root.appendingPathComponent("LocalTranscripts", isDirectory: true)
+                ),
+                foreground: UIApplication.shared.applicationState == .active
+            )
             let recovered = try prepareLocalCapture(
                 store: store, locations: captureLocations,
                 storageExhaustionAfterCanonicalBytesForTesting:
@@ -351,6 +358,16 @@ final class HarcMobileAppModel {
             transfer.reconcileBackgroundUploads()
             library.refresh()
             hostHealth.startMonitoring()
+            let transcriptCandidates = (try? store.recordingOutboxes())?.map {
+                HarcMobileTranscriptRequest(capture: $0.finalizedCapture.capture,
+                    audioURL: $0.finalizedCapture.masterFileURL)
+            } ?? []
+            Task { [weak self] in
+                await self?.localTranscription?.restore(transcriptCandidates)
+                for master in recovered {
+                    self?.transcribeLocalRecording(master.originRecordingID.recordingUUID)
+                }
+            }
         } catch {
             readiness = .failed(error.localizedDescription)
         }
@@ -524,18 +541,35 @@ final class HarcMobileAppModel {
             producingDeviceID: store.installationDeviceID,
             locations: locations,
             storageExhaustionAfterCanonicalBytesForTesting:
-                storageExhaustionAfterCanonicalBytesForTesting
+                storageExhaustionAfterCanonicalBytesForTesting,
+            onCaptureActivityChanged: { [weak self] active in
+                self?.localTranscription?.setCaptureActive(active)
+            }
         ) { [weak self] master in
             guard let self, let store = self.transferStore else {
                 throw CocoaError(.fileNoSuchFile)
             }
+            let capture = try Self.finalizedCapture(master)
             _ = try store.persistFinalizedCapture(
-                try Self.finalizedCapture(master),
+                capture,
                 masterFileURL: master.masterFileURL
             )
             self.transferCoordinator?.enqueue(master)
+            self.localTranscription?.enqueue(HarcMobileTranscriptRequest(
+                capture: capture, audioURL: master.masterFileURL
+            ))
         }
         return report.masters
+    }
+
+    func transcribeLocalRecording(_ id: UUID) {
+        guard let outbox = try? transferStore?.recordingOutboxes().first(where: {
+            $0.finalizedCapture.capture.originRecordingID.recordingUUID == id
+        }), outbox.finalizedCapture.masterFileState == .present else { return }
+        localTranscription?.enqueue(HarcMobileTranscriptRequest(
+            capture: outbox.finalizedCapture.capture,
+            audioURL: outbox.finalizedCapture.masterFileURL
+        ))
     }
 
     static func recoverCaptures(

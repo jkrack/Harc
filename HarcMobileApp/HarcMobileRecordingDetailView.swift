@@ -92,6 +92,13 @@ struct HarcMobileRecordingDetailView: View {
       host: host, fallbackLocal: retainedLocal ?? initialLocal)
   }
 
+  private var localTranscriptOrigin: OriginRecordingID? {
+    guard case .origin(let origin) = reference else { return nil }
+    guard resolved.local?.originID == origin ||
+      model.localTranscription?.hasPreview(for: origin) == true else { return nil }
+    return origin
+  }
+
   private var currentSummary: LibraryRecordingSummary? {
     if let detail, let host = resolved.host {
       return detail.summary.revision.rawValue >= host.revision.rawValue ? detail.summary : host
@@ -251,6 +258,8 @@ struct HarcMobileRecordingDetailView: View {
       }
       if let detail, let coordinator = model.libraryCoordinator {
         hostContent(detail, coordinator: coordinator)
+      } else if selectedSection == .transcript, let origin = localTranscriptOrigin {
+        HarcMobileLocalTranscriptSection(recordingID: origin.recordingUUID)
       } else {
         Section(selectedSection.rawValue) { pendingContent }
       }
@@ -355,6 +364,11 @@ struct HarcMobileRecordingDetailView: View {
       Label(pendingTitle, systemImage: selectedSection == .notes ? "note.text" : "text.alignleft")
         .font(.headline)
       Text(pendingMessage).font(.subheadline).foregroundStyle(.secondary)
+      if selectedSection == .summary, let origin = localTranscriptOrigin,
+        model.localTranscription?.hasPreview(for: origin) == true {
+        Button("Read on-device transcript") { selectedSection = .transcript }
+          .accessibilityIdentifier("harc.mobile.detail.readLocalTranscript")
+      }
       if localAudio != nil, !isPartial {
         Text("You can listen now or start another recording.")
           .font(.footnote).foregroundStyle(.secondary)
@@ -739,7 +753,11 @@ struct HarcMobileRecordingDetailView: View {
       pendingContent
     }
     if selectedSection == .transcript, detail.transcriptText?.isEmpty != false {
-      pendingContent
+      if let origin = localTranscriptOrigin {
+        HarcMobileLocalTranscriptSection(recordingID: origin.recordingUUID)
+      } else {
+        pendingContent
+      }
     }
     if selectedSection == .summary, let generatedSummary = detail.summaryMarkdown,
       !generatedSummary.isEmpty

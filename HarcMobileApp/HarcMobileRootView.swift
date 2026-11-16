@@ -123,6 +123,7 @@ struct HarcMobileRootView: View {
                 for: UIApplication.didBecomeActiveNotification
             )
         ) { _ in
+            model.localTranscription?.setForeground(true)
             model.transferCoordinator?.refreshLocalRecordings()
             model.transferCoordinator?.reconcileBackgroundUploads()
             model.libraryCoordinator?.refresh()
@@ -133,6 +134,7 @@ struct HarcMobileRootView: View {
                 for: UIApplication.didEnterBackgroundNotification
             )
         ) { _ in
+            model.localTranscription?.setForeground(false)
             model.hostHealthCoordinator?.stopMonitoring()
         }
         .sheet(isPresented: $showsSetupAndSync) {
@@ -1150,7 +1152,7 @@ private struct HarcMobileLocalRecordingLabel: View {
             )
             .font(.subheadline)
             .foregroundStyle(.secondary)
-            Text("Transcript arrives after it reaches your Mac")
+            Text("On-device transcript; Mac adds speaker names and summary")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)

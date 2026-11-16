@@ -42,7 +42,10 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         let sections = app.segmentedControls["harc.mobile.detail.sections"]
         reveal(sections, in: app)
         sections.buttons["Transcript"].tap()
-        XCTAssertTrue(app.staticTexts["Transcript not available yet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["On-device transcript"].waitForExistence(timeout: 5))
+        // Native speech availability varies by simulator. The local surface
+        // must be reachable without a Host, regardless of model readiness.
+        XCTAssertFalse(app.staticTexts["No transcript is available from your Mac yet."].exists)
         sections.buttons["Notes"].tap()
         XCTAssertTrue(app.staticTexts[
             "Notes and title editing become available when this recording appears on your Mac."
