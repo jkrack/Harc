@@ -7,9 +7,12 @@ final class HarcAppUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("harc-app-ui-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        // FileManager.temporaryDirectory belongs to this runner's private
+        // container. The separately bundled app cannot safely use that root:
+        // macOS may block mkdir awaiting cross-container privacy approval.
+        // Give each case a unique shared scratch path and let the target create
+        // it. Never point synthetic fixtures at the user's normal Library.
+        rootURL = URL(fileURLWithPath: "/tmp/harc-app-ui-\(UUID().uuidString)", isDirectory: true)
 
         app = XCUIApplication()
         app.launchEnvironment["HARC_UI_TESTING"] = "1"
@@ -298,11 +301,6 @@ final class HarcAppUITests: XCTestCase {
     }
 
     func testDockReopenKeepsRegularAppAndReturnsToLibrary() throws {
-        // Let the target create this fixture. A UI runner's private container
-        // temporary directory is not an accessible Library root for the app.
-        try FileManager.default.removeItem(at: rootURL)
-        rootURL = URL(fileURLWithPath: "/tmp/harc-dock-ui-\(UUID().uuidString)", isDirectory: true)
-        app.launchEnvironment["HARC_UI_TEST_ROOT"] = rootURL.path
         launchFixtureLibrary()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         let running = try XCTUnwrap(NSWorkspace.shared.frontmostApplication)

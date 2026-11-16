@@ -72,13 +72,15 @@ public struct TranscribeResult: Codable, Equatable, Sendable {
     public var speakerEmbeddings: [SpeakerEmbeddingRow]
     public var overlapRanges: [SpeechOverlapRange]?
     public var processingMs: Int
+    public var sttModelID: String?
 
     public init(
         text: String,
         words: [Word],
         speakers: [SpeakerSegment],
         speakerEmbeddings: [SpeakerEmbeddingRow] = [],
-        processingMs: Int
+        processingMs: Int,
+        sttModelID: String? = nil
     ) {
         self.text = text
         self.words = words
@@ -86,10 +88,11 @@ public struct TranscribeResult: Codable, Equatable, Sendable {
         self.speakerEmbeddings = speakerEmbeddings
         self.overlapRanges = nil
         self.processingMs = processingMs
+        self.sttModelID = sttModelID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case text, words, speakers, speakerEmbeddings, processingMs, overlapRanges
+        case text, words, speakers, speakerEmbeddings, processingMs, overlapRanges, sttModelID
     }
 
     public init(from decoder: Decoder) throws {
@@ -102,6 +105,7 @@ public struct TranscribeResult: Codable, Equatable, Sendable {
             forKey: .speakerEmbeddings
         ) ?? []
         overlapRanges = try container.decodeIfPresent([SpeechOverlapRange].self, forKey: .overlapRanges)
+        sttModelID = try container.decodeIfPresent(String.self, forKey: .sttModelID)
         processingMs = try container.decode(Int.self, forKey: .processingMs)
     }
 }
@@ -258,6 +262,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
     public var downloadProgress: Double?
     /// Human-readable load failure while `modelState == .failed`.
     public var errorMessage: String?
+    /// Actual selected daemon engine. Nil means an older/unverified daemon.
+    public var sttModelID: String?
 
     public init(
         version: String,
@@ -265,7 +271,8 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         uptimeSeconds: Int,
         modelState: ModelState? = nil,
         downloadProgress: Double? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        sttModelID: String? = nil
     ) {
         self.version = version
         self.modelLoaded = modelLoaded
@@ -273,6 +280,7 @@ public struct DaemonStatus: Codable, Equatable, Sendable {
         self.modelState = modelState
         self.downloadProgress = downloadProgress
         self.errorMessage = errorMessage
+        self.sttModelID = sttModelID
     }
 }
 

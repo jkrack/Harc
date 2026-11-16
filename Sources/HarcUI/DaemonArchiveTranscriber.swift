@@ -18,7 +18,7 @@ public struct DaemonArchiveTranscriber: ArchiveTranscriber {
     public init(engineVersion: String, diarize: Bool, vad: Bool) {
         self.diarize = diarize
         self.vad = vad
-        self.modelID = "parakeet-\(engineVersion)\(diarize ? "+diar" : "")\(vad ? "+vad" : "")"
+        self.modelID = "\(engineVersion)\(diarize ? "+diar" : "")\(vad ? "+vad" : "")"
     }
 
     public func retranscribe(wavPath: String) async throws -> String {
