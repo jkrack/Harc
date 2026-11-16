@@ -1428,6 +1428,7 @@ private enum HarcMobileRecordingFormatting {
 }
 
 private struct HarcMobileRecordingDetailView: View {
+    @Environment(HarcMobileAppModel.self) private var model
     let coordinator: HarcMobileLibraryCoordinator
     let summary: LibraryRecordingSummary
 
@@ -1723,7 +1724,9 @@ private struct HarcMobileRecordingDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                     if selectedSection == .transcript, detail.transcriptText?.isEmpty != false {
-                        if let origin = summary.originID {
+                        if let origin = summary.originID,
+                           (localPreviewOrigin == origin ||
+                            model.transferCoordinator?.localRecordings.contains(where: { $0.originID == origin }) == true) {
                             HarcMobileLocalTranscriptSection(recordingID: origin.recordingUUID)
                         } else {
                             Text("A transcript will appear here when it is available from your Mac.")
@@ -1748,6 +1751,17 @@ private struct HarcMobileRecordingDetailView: View {
                         Section("Notes") {
                             Text(notes)
                                 .textSelection(.enabled)
+                        }
+                    }
+                }
+            } else if let origin = localPreviewOrigin {
+                List {
+                    HarcMobileLocalTranscriptSection(recordingID: origin.recordingUUID)
+                    Section {
+                        if let errorMessage {
+                            Text(errorMessage).foregroundStyle(.secondary)
+                        } else {
+                            ProgressView("Checking Mac for speaker names and summary…")
                         }
                     }
                 }
@@ -1784,6 +1798,12 @@ private struct HarcMobileRecordingDetailView: View {
             await loadDetail()
         }
         .onDisappear { audioController.stopAndRelease() }
+    }
+
+    private var localPreviewOrigin: OriginRecordingID? {
+        guard let origin = summary.originID,
+              model.localTranscription?.hasPreview(for: origin) == true else { return nil }
+        return origin
     }
 
     private var audioPlaybackControls: some View {

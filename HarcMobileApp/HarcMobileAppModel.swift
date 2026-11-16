@@ -247,7 +247,8 @@ final class HarcMobileAppModel {
             localTranscription = HarcMobileLocalTranscriptionCoordinator(
                 store: HarcMobileLocalTranscriptStore(
                     root: root.appendingPathComponent("LocalTranscripts", isDirectory: true)
-                )
+                ),
+                foreground: UIApplication.shared.applicationState == .active
             )
             let recovered = try prepareLocalCapture(
                 store: store, locations: captureLocations,
@@ -333,9 +334,7 @@ final class HarcMobileAppModel {
             transfer.reconcileBackgroundUploads()
             library.refresh()
             hostHealth.startMonitoring()
-            let transcriptCandidates = (try? store.recordingOutboxes())?.filter {
-                $0.finalizedCapture.masterFileState == .present
-            }.map {
+            let transcriptCandidates = (try? store.recordingOutboxes())?.map {
                 HarcMobileTranscriptRequest(capture: $0.finalizedCapture.capture,
                     audioURL: $0.finalizedCapture.masterFileURL)
             } ?? []

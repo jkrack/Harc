@@ -1,6 +1,7 @@
 import Foundation
 import HarcAudioMobile
 import HarcDomain
+import HarcTransfer
 import Observation
 
 /// A private derived preview, never a Host receipt, canonical artifact, speaker
@@ -95,6 +96,10 @@ actor HarcMobileLocalTranscriptStore {
             root.appendingPathComponent(request.storageName + ".pending.json").path)
     }
 
+    func hasSaved(_ request: HarcMobileTranscriptRequest) -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent(request.storageName + ".json").path)
+    }
+
     func load(_ request: HarcMobileTranscriptRequest) throws -> HarcMobileLocalTranscript? {
         let url = root.appendingPathComponent(request.storageName + ".json")
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -110,6 +115,10 @@ actor HarcMobileLocalTranscriptStore {
 
     func save(_ transcript: HarcMobileLocalTranscript, for request: HarcMobileTranscriptRequest) throws {
         try transcript.validate(for: request)
+        try Task.checkCancellation()
+        // Commit point: once the synchronous immutable publication starts, a
+        // later cancellation may leave a complete validated preview on disk.
+        // The coordinator still suppresses presentation until it resumes.
         try HarcMobileTransferArtifactPublisher.publishImmutable(
             encoder.encode(transcript),
             to: root.appendingPathComponent(request.storageName + ".json"),
@@ -124,7 +133,7 @@ actor HarcMobileLocalTranscriptStore {
 @Observable
 final class HarcMobileLocalTranscriptionCoordinator {
     enum State: Equatable {
-        case queued, transcribing, ready(HarcMobileLocalTranscript)
+        case queued, transcribing, available, ready(HarcMobileLocalTranscript)
         case needsModel, unavailable, failed
     }
     private(set) var states: [UUID: State] = [:]
@@ -134,40 +143,68 @@ final class HarcMobileLocalTranscriptionCoordinator {
     private var queue: [UUID] = []
     private var worker: Task<Void, Never>?
     private var captureActive = false
-    private var foreground = true
+    private var foreground: Bool
     private var generation: UInt64 = 0
 
-    init(store: HarcMobileLocalTranscriptStore,
+    init(store: HarcMobileLocalTranscriptStore, foreground: Bool = true,
          transcribe: @escaping @Sendable (HarcMobileTranscriptRequest) async throws -> HarcMobileLocalTranscript = HarcMobileAppleSpeech.transcribe) {
         self.store = store
+        self.foreground = foreground
         self.transcribe = transcribe
     }
 
     func restore(_ candidates: [HarcMobileTranscriptRequest]) async {
         for request in candidates {
             guard states[request.id] == nil else { continue }
-            do {
-                if let saved = try await store.load(request) {
-                    requests[request.id] = request
-                    states[request.id] = .ready(saved)
-                } else if await store.isRegistered(request) {
-                    enqueue(request)
-                }
-            } catch { states[request.id] = .failed }
+            requests[request.id] = request
+            if await store.hasSaved(request) {
+                // Read transcript payload only when its recording is opened.
+                states[request.id] = .available
+            } else if await store.isRegistered(request),
+                      FileManager.default.fileExists(atPath: request.audioURL.path) {
+                enqueue(request)
+            }
         }
     }
 
-    func enqueue(_ request: HarcMobileTranscriptRequest) {
-        // A reused UUID must not inherit another audio generation's result.
-        if let existing = requests[request.id], existing != request {
-            states[request.id] = .failed
-            return
+    func hasPreview(for origin: OriginRecordingID) -> Bool {
+        guard requests[origin.recordingUUID]?.origin == origin else { return false }
+        switch states[origin.recordingUUID] {
+        case .available, .ready: return true
+        default: return false
         }
+    }
+
+    func loadPreview(_ id: UUID) async {
+        guard states[id] == .available, let request = requests[id] else { return }
+        do {
+            if let saved = try await store.load(request), states[id] == .available {
+                states[id] = .ready(saved)
+                trimPayloads(keeping: id)
+            } else if states[id] == .available { states[id] = .failed }
+        } catch { states[id] = .failed }
+    }
+
+    private func trimPayloads(keeping id: UUID) {
+        let loaded = states.keys.filter { key in
+            if case .ready = states[key] { return key != id }; return false
+        }
+        for key in loaded.dropFirst(7) { states[key] = .available }
+    }
+
+    func enqueue(_ request: HarcMobileTranscriptRequest) {
+        // The first exact binding owns this slot. Reject a mismatched request
+        // without mutating or relabelling the original job/result.
+        if let existing = requests[request.id], existing != request { return }
         if case .ready = states[request.id] { return }
         if states[request.id] == .transcribing || queue.contains(request.id) { return }
         requests[request.id] = request
         states[request.id] = .queued
         queue.append(request.id)
+        // A recording can stop in the background. Persist its intent without
+        // waiting for foreground inference, but never block the capture commit.
+        let store = self.store
+        Task { try? await store.register(request) }
         startWorker()
     }
 
@@ -191,7 +228,10 @@ final class HarcMobileLocalTranscriptionCoordinator {
                 do {
                     try await store.register(request)
                     try Task.checkCancellation()
-                    if let saved = try await store.load(request) {
+                    let saved = try await store.load(request)
+                    try Task.checkCancellation()
+                    guard generation == currentGeneration else { break }
+                    if let saved {
                         guard generation == currentGeneration else { break }
                         states[id] = .ready(saved)
                     } else {
@@ -204,6 +244,7 @@ final class HarcMobileLocalTranscriptionCoordinator {
                         guard generation == currentGeneration else { break }
                         states[id] = .ready(result)
                     }
+                    trimPayloads(keeping: id)
                     queue.removeFirst()
                 } catch {
                     if Task.isCancelled || generation != currentGeneration {

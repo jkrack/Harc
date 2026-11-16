@@ -17,11 +17,15 @@ final class HarcMobileLocalTranscriptionTests: XCTestCase {
         let loaded = try await fixture.store.load(fixture.request)
         XCTAssertEqual(loaded, fixture.result)
         XCTAssertEqual(try Data(contentsOf: fixture.request.audioURL), before)
+        // A derived preview remains usable after an independent safe master cleanup.
+        try FileManager.default.removeItem(at: fixture.request.audioURL)
         let coordinator = HarcMobileLocalTranscriptionCoordinator(store: fixture.store) { _ in
             XCTFail("A retained preview must not repeat inference")
             throw HarcMobileTranscriptionError.unavailable
         }
         await coordinator.restore([fixture.request])
+        XCTAssertEqual(coordinator.states[fixture.request.id], .available)
+        await coordinator.loadPreview(fixture.request.id)
         XCTAssertEqual(coordinator.states[fixture.request.id], .ready(fixture.result))
     }
 
@@ -81,6 +85,48 @@ final class HarcMobileLocalTranscriptionTests: XCTestCase {
         XCTAssertEqual(coordinator.states[fixture.request.id], .ready(fixture.result))
     }
 
+    func testMismatchedRequestCannotRelabelAnActiveJob() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let gate = Gate()
+        let coordinator = HarcMobileLocalTranscriptionCoordinator(store: fixture.store) { _ in
+            await gate.wait()
+            return fixture.result
+        }
+        coordinator.enqueue(fixture.request)
+        await settle { coordinator.states[fixture.request.id] == .transcribing }
+        var changed = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(fixture.request)) as? [String: Any])
+        changed["audioURL"] = "file:///not-the-original.wav"
+        let foreign = try JSONDecoder().decode(HarcMobileTranscriptRequest.self,
+            from: JSONSerialization.data(withJSONObject: changed))
+        coordinator.enqueue(foreign)
+        XCTAssertEqual(coordinator.states[fixture.request.id], .transcribing)
+        await gate.open()
+        await settle { coordinator.states[fixture.request.id] == .ready(fixture.result) }
+        XCTAssertEqual(coordinator.states[fixture.request.id], .ready(fixture.result))
+    }
+
+    func testBackgroundLaunchDefersInferenceUntilForeground() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let coordinator = HarcMobileLocalTranscriptionCoordinator(store: fixture.store, foreground: false) { _ in
+            fixture.result
+        }
+        coordinator.enqueue(fixture.request)
+        XCTAssertEqual(coordinator.states[fixture.request.id], .queued)
+        coordinator.setCaptureActive(false)
+        XCTAssertEqual(coordinator.states[fixture.request.id], .queued)
+        for _ in 0..<200 {
+            if await fixture.store.isRegistered(fixture.request) { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        let registered = await fixture.store.isRegistered(fixture.request)
+        XCTAssertTrue(registered, "Background stop must persist pending work without starting STT")
+        coordinator.setForeground(true)
+        await settle { coordinator.states[fixture.request.id] == .ready(fixture.result) }
+    }
+
     func testRestoreDoesNotStartUnrequestedHistoricalWork() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -123,7 +169,7 @@ final class HarcMobileLocalTranscriptionTests: XCTestCase {
             root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             let locations = try HarcMobileCaptureLocations(applicationSupportRoot: root)
             let writer = try HarcMobileDurableMasterWriter(locations: locations,
-                producingDeviceID: .random(), captureStartedAt: Date(timeIntervalSince1970: 1_900_000_000),
+                producingDeviceID: DeviceID(Data(repeating: 0x63, count: 32)), captureStartedAt: Date(timeIntervalSince1970: 1_900_000_000),
                 captureStartedMonotonicNanoseconds: 1_000, attributes: Attributes())
             try writer.appendCanonicalPCM(Data(repeating: 1, count: 32_000),
                 endedAt: Date(timeIntervalSince1970: 1_900_000_001),
