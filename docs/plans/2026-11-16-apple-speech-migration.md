@@ -52,3 +52,25 @@ not installed. Evidence is retained on the development SSD.
 This is functional/regression evidence, not an accuracy benchmark, real-meeting
 or long-recording qualification, or a release. Full PR CI and installed-app
 validation remain gates; do not publish from this evidence alone.
+
+### Follow-up app qualification
+
+Full hosted PR CI passed on `bbaf29e` (run 43791810380), including macOS app/UI
+regressions, embedded helper verification, package tests, mobile configuration,
+relay/privacy and pairing/publication lifecycle checks. The workflow's main-only
+smoke job was not applicable to the pull request.
+
+Local UI qualification initially hung before useful assertions. A process sample
+identified startup blocked creating the synthetic Recordings directory inside the
+UI runner's private container. Generalize the existing Dock test workaround:
+each UI case now passes a unique `/tmp` fixture root for the target to create,
+never another app's container or the user's Library. No security setting changed.
+Independent review found no isolation/cleanup regression.
+
+After rebuilding the test target, the sealed native result passed all 21 selected
+tests: 16 app tests and five UI cases covering fixture Library/detail, playback
+seek/pause, fake record/stop persistence across relaunch, Settings, and repeated
+Dock reopen. The result gate passed with zero failures/skips. This was the
+separate ad-hoc qualification bundle, not an installed signed production update.
+The test-only fixture follow-up requires fresh CI, and the combined release
+candidate still needs its own release and device checks.
