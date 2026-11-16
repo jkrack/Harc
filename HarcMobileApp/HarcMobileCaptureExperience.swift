@@ -397,7 +397,7 @@ struct HarcMobileCaptureHeroView: View {
         switch state {
         case .idle:
             Button {
-                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                HarcMobileHaptics.emit(.startRequested)
                 start()
             } label: {
                 HarcPresenceBlob(
@@ -415,7 +415,6 @@ struct HarcMobileCaptureHeroView: View {
             .accessibilityIdentifier(HarcMobileAccessibilityID.startRecording)
         case .recording:
             Button {
-                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 stop()
             } label: {
                 HarcPresenceBlob(

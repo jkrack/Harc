@@ -8,6 +8,21 @@ import UIKit
 
 @MainActor
 final class HarcMobileCaptureExperienceTests: XCTestCase {
+    func testCaptureFeedbackWaitsForDurableTerminalState() {
+        let id = UUID()
+        let active: [HarcMobileCaptureCoordinator.State] = [
+            .requestingPermission, .starting, .recording(startedAt: Date()), .stopping, .idle
+        ]
+        for state in active {
+            XCTAssertNil(HarcMobileHaptics.captureEvent(from: .idle, to: state))
+        }
+        XCTAssertEqual(HarcMobileHaptics.captureEvent(from: .stopping, to: .saved(recordingUUID: id)), .recordingSaved)
+        XCTAssertEqual(HarcMobileHaptics.captureEvent(from: .stopping, to: .storageExhausted(recordingUUID: id)), .failed)
+        XCTAssertEqual(HarcMobileHaptics.captureEvent(from: .starting, to: .failed("start failed")), .failed)
+        XCTAssertNil(HarcMobileHaptics.captureEvent(from: .saved(recordingUUID: id), to: .saved(recordingUUID: id)))
+        XCTAssertNil(HarcMobileHaptics.captureEvent(from: .failed("failed"), to: .failed("failed")))
+    }
+
     func testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

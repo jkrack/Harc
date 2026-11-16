@@ -188,6 +188,47 @@ final class HarcMobilePlaybackSessionTests: XCTestCase {
         controller.stop()
     }
 
+    func testPlaybackFeedbackOnlyAfterSuccessfulStartAndResume() async {
+        let fixture = Fixture()
+        let player = Player()
+        var feedbackCount = 0
+        let controller = HarcMobileLocalRecordingAudioController(
+            url: URL(fileURLWithPath: "/synthetic.wav"), session: fixture.session,
+            onPlaybackStarted: { feedbackCount += 1 }, makePlayer: { _ in player }
+        )
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 1)
+        await controller.playOrPause() // Pause is not a start.
+        controller.seek(to: 12)
+        XCTAssertEqual(feedbackCount, 1)
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 2)
+        await controller.playOrPause()
+        player.canPlay = false
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 2)
+        controller.stop()
+    }
+
+    func testPlaybackFeedbackNotEmittedForFailedOrCaptureBlockedStart() async {
+        let fixture = Fixture()
+        let player = Player()
+        player.canPlay = false
+        var feedbackCount = 0
+        let controller = HarcMobileLocalRecordingAudioController(
+            url: URL(fileURLWithPath: "/synthetic.wav"), session: fixture.session,
+            onPlaybackStarted: { feedbackCount += 1 }, makePlayer: { _ in player }
+        )
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 0)
+        player.canPlay = true
+        fixture.session.beginCapture()
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 0)
+        fixture.session.endCapture()
+        controller.stop()
+    }
+
     private enum Failure: Error { case injected }
 
     @MainActor

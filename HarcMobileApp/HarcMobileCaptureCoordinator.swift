@@ -20,6 +20,9 @@ final class HarcMobileCaptureCoordinator {
 
     private(set) var state: State = .idle {
         didSet {
+            if let event = HarcMobileHaptics.captureEvent(from: oldValue, to: state) {
+                HarcMobileHaptics.emit(event)
+            }
             switch state {
             case .requestingPermission, .starting, .recording, .stopping:
                 onCaptureActivityChanged(true)

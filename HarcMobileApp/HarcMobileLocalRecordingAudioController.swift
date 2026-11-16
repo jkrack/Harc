@@ -96,6 +96,7 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
     }
 
     private let url: URL
+    private let onPlaybackStarted: () -> Void
     private var player: (any HarcMobileLocalAudioPlayer)?
     private let session: HarcMobilePlaybackSession
     private let makePlayer: (URL) throws -> any HarcMobileLocalAudioPlayer
@@ -104,11 +105,13 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
     init(
         url: URL,
         session: HarcMobilePlaybackSession = .shared,
+        onPlaybackStarted: @escaping () -> Void = { HarcMobileHaptics.emit(.playbackStarted) },
         makePlayer: @escaping (URL) throws -> any HarcMobileLocalAudioPlayer = {
             try AVAudioPlayer(contentsOf: $0)
         }
     ) {
         self.url = url
+        self.onPlaybackStarted = onPlaybackStarted
         self.session = session
         self.makePlayer = makePlayer
     }
@@ -124,6 +127,7 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
                     if player.currentTime >= duration { player.currentTime = 0 }
                     guard player.play() else { throw HarcMobileLocalPlaybackError.startFailed }
                     state = .playing
+                    onPlaybackStarted()
                 } catch {
                     stop()
                     state = .failed(error.localizedDescription)
@@ -145,6 +149,7 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
                 throw HarcMobileLocalPlaybackError.startFailed
             }
             state = .playing
+            onPlaybackStarted()
             startPreparation()
         } catch {
             stop()

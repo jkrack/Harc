@@ -361,6 +361,9 @@ final class HarcMobileRecordingAudioController: NSObject {
                     #endif
                     guard player.play() else { throw HarcMobileLibraryAudioError.playbackFailed }
                     state = .playing
+                    #if os(iOS)
+                    HarcMobileHaptics.emit(.playbackStarted)
+                    #endif
                 } catch {
                     stopAndRelease()
                     state = .failed(HarcTransportErrorDiagnostic.describe(error).userFacingMessage)
@@ -397,6 +400,9 @@ final class HarcMobileRecordingAudioController: NSObject {
             }
             self.player = player
             state = .playing
+            #if os(iOS)
+            HarcMobileHaptics.emit(.playbackStarted)
+            #endif
             envelopeTask?.cancel()
             envelopeTask = Task { [weak self] in
                 let worker = Task.detached(priority: .utility) {
