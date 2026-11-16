@@ -993,3 +993,12 @@ deferral spends no retry budget. Validate with the app's
 HarcHostProcessingDiagnosticTests, HarcHostProcessingRequestValidationTests and
 HarcHostProcessingWorkerMetadataTests; synthetic fixtures do not qualify live Host
 recovery or real audio.
+
+Mobile after-save Apple speech previews are independent derived artifacts, not
+canonical Host transcripts or speaker evidence. Save/register protected audio and
+start transfer without awaiting inference. Cancel inference for capture or app
+backgrounding; never let a late result publish across cancellation. Keep origin,
+PCM hash and frame-count binding, explicit model download, offline-only routine
+processing and Host-first non-destructive display reconciliation. Validate with
+`HarcMobileLocalTranscriptionTests` and the HarcMobile Xcode build; these do not
+qualify physical model availability or the codec/Host round trip.
