@@ -35,6 +35,9 @@ enum HarcMobileAppleSpeech {
                     let text = String(result.text.characters)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { continue }
+                    guard segments.count < 100_000 else {
+                        throw HarcMobileTranscriptionError.invalidEvidence
+                    }
                     segments.append(.init(start: result.range.start.seconds,
                         end: CMTimeRangeGetEnd(result.range).seconds, text: text))
                 }
@@ -81,7 +84,7 @@ enum HarcMobileAppleSpeech {
     /// The transcript cannot silently attach to replaced or changed audio.
     private static func verifyAudio(_ request: HarcMobileTranscriptRequest) throws -> Identity {
         guard request.audioURL.isFileURL, request.frames > 0,
-              request.frames <= UInt64(UInt32.max / 2) else {
+              request.frames <= UInt64((UInt32.max - 36) / 2) else {
             throw HarcMobileTranscriptionError.invalidEvidence
         }
         let fd = open(request.audioURL.path, O_RDONLY | O_NOFOLLOW)
@@ -115,10 +118,13 @@ enum HarcMobileAppleSpeech {
         var remaining = request.frames * 2
         while remaining > 0 {
             try Task.checkCancellation()
-            let data = try handle.read(upToCount: Int(min(remaining, 65_536))) ?? Data()
-            guard !data.isEmpty else { throw HarcMobileTranscriptionError.invalidEvidence }
-            hash.update(data: data)
-            remaining -= UInt64(data.count)
+            let consumed = try autoreleasepool {
+                let data = try handle.read(upToCount: Int(min(remaining, 65_536))) ?? Data()
+                guard !data.isEmpty else { throw HarcMobileTranscriptionError.invalidEvidence }
+                hash.update(data: data)
+                return UInt64(data.count)
+            }
+            remaining -= consumed
         }
         var after = stat()
         guard fstat(fd, &after) == 0, after.st_size == info.st_size,

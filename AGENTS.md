@@ -997,7 +997,8 @@ recovery or real audio.
 Mobile after-save Apple speech previews are independent derived artifacts, not
 canonical Host transcripts or speaker evidence. Save/register protected audio and
 start transfer without awaiting inference. Cancel inference for capture or app
-backgrounding; never let a late result publish across cancellation. Keep origin,
+backgrounding; suppress late presentation across cancellation. An already-started immutable
+preview commit may finish, but only complete, validated output is retained. Keep origin,
 PCM hash and frame-count binding, explicit model download, offline-only routine
 processing and Host-first non-destructive display reconciliation. Validate with
 `HarcMobileLocalTranscriptionTests` and the HarcMobile Xcode build; these do not

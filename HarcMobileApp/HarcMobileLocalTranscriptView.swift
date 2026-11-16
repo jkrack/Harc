@@ -17,6 +17,8 @@ struct HarcMobileLocalTranscriptSection: View {
                 Text("Transcribed on this iPhone. Speaker names and summaries are supplied separately by your Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            case .available:
+                ProgressView("Opening on-device transcript…")
             case .queued:
                 Text("Queued on this iPhone. Transcription resumes when Harc is open and not recording.")
                     .foregroundStyle(.secondary)
@@ -51,5 +53,8 @@ struct HarcMobileLocalTranscriptSection: View {
             }
         }
         .accessibilityIdentifier("harc.mobile.local.transcript.\(recordingID)")
+        .task(id: model.localTranscription?.states[recordingID] == .available) {
+            await model.localTranscription?.loadPreview(recordingID)
+        }
     }
 }
