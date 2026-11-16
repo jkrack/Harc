@@ -8,8 +8,8 @@ public actor DaemonLauncher {
     private let socketPath: String
     private let logPath: String
     /// Raw ASR engine name forwarded to the daemon as `--asr-engine`
-    /// (nil = daemon default, v2). Validated daemon-side — an unknown
-    /// value falls back to v2 there rather than failing the launch.
+    /// (nil = daemon default, Apple). Validated daemon-side — an unknown
+    /// value falls back to Apple there rather than failing the launch.
     private let asrEngine: String?
     private var process: Process?
     private var lifecycleGeneration: UInt64 = 0
@@ -38,7 +38,10 @@ public actor DaemonLauncher {
             let client = HarcSTTClient(socketPath: socketPath)
             let status = try? await client.status()
             try checkStartup(generation: generation)
-            if status != nil { return socketPath }
+            if let status {
+                try Self.validateEngine(status, requested: asrEngine)
+                return socketPath
+            }
         }
 
         // No suspension between checking ownership and registering the child:
@@ -64,11 +67,23 @@ public actor DaemonLauncher {
                 let client = HarcSTTClient(socketPath: socketPath)
                 let status = try? await client.status()
                 try checkStartup(generation: generation)
-                if status != nil { return socketPath }
+                if let status {
+                    try Self.validateEngine(status, requested: asrEngine)
+                    return socketPath
+                }
             }
             try await Task.sleep(for: .milliseconds(200))
         }
         throw ClientError.daemonLaunchFailed("timed out waiting for socket \(socketPath)")
+    }
+
+    /// A surviving pre-upgrade daemon must not produce transcripts stamped as
+    /// the new engine. Do not kill unknown active work to hide the mismatch.
+    static func validateEngine(_ status: DaemonStatus, requested: String?) throws {
+        let expected = HarcVersion.sttModelID(engine: requested ?? ProcessInfo.processInfo.environment["HARC_STT_ASR_ENGINE"])
+        guard status.sttModelID == expected else {
+            throw ClientError.daemonLaunchFailed("The speech helper uses a different engine. Quit and reopen Harc before retrying; recordings are safe.")
+        }
     }
 
     private func checkStartup(generation: UInt64) throws {

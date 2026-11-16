@@ -44,7 +44,7 @@ struct WelcomeFlowModelTests {
         #expect(setup != nil)
         // The audit's headline gap: onboarding must actually say a model
         // downloads, its rough size, and where the bytes come from.
-        #expect(setup?.body.contains("460 MB") == true)
+        #expect(setup?.body.contains("Audio is not uploaded for transcription") == true)
         #expect(setup?.primaryPoint.localizedCaseInsensitiveContains("Hugging Face") == true)
     }
 }

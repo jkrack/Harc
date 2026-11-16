@@ -85,7 +85,7 @@ struct ParakeetUnifiedSpikeTests {
         let url = try #require(
             Bundle.module.url(forResource: "short-speech", withExtension: "wav", subdirectory: "Fixtures")
         )
-        let transcriber = Transcriber()
+        let transcriber = Transcriber(engine: .v2)
         try await transcriber.loadModels()
         let started = Date()
         let result = try await transcriber.transcribe(audioPath: url.path, vad: false)
@@ -121,11 +121,12 @@ struct ParakeetUnifiedSpikeTests {
 struct ASREngineSelectionTests {
     @Test("engine parse: known values, nil, and unknown fallback")
     func parseEngine() {
+        #expect(HarcSTTCLI.parseEngine("apple") == .apple)
         #expect(HarcSTTCLI.parseEngine("v2") == .v2)
         #expect(HarcSTTCLI.parseEngine("unified") == .unified)
-        #expect(HarcSTTCLI.parseEngine(nil) == .v2)
-        #expect(HarcSTTCLI.parseEngine("") == .v2)
-        #expect(HarcSTTCLI.parseEngine("whisper") == .v2)
+        #expect(HarcSTTCLI.parseEngine(nil) == .apple)
+        #expect(HarcSTTCLI.parseEngine("") == .apple)
+        #expect(HarcSTTCLI.parseEngine("whisper") == .apple)
     }
 
     @Test("pcm buffer round-trips samples for the unified feed path")

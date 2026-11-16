@@ -25,7 +25,7 @@ public actor Daemon {
     public init(
         socketPath: String = Daemon.defaultSocketPath,
         idleTimeout: TimeInterval = Daemon.defaultIdleTimeout,
-        asrEngine: Transcriber.ASREngine = .v2,
+        asrEngine: Transcriber.ASREngine = .apple,
         preloadModels: Bool = true
     ) {
         self.socketPath = socketPath

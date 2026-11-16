@@ -103,7 +103,7 @@ public final class WelcomeFlowModel: ObservableObject {
             id: "setup",
             eyebrow: "Set up",
             title: "Get the models and permissions in place",
-            body: "Harc's speech model (~460 MB) downloads automatically in the background — recording works once it's ready. Summaries and dictation modes use a second, optional model you can grab now or later.",
+            body: "Apple's on-device speech recognition prepares automatically and may download language assets. Audio is not uploaded for transcription. Recording works once speech recognition is ready. Summaries and dictation modes use a second, optional model you can grab now or later.",
             primaryPoint: "Everything below is one-time. Downloads come from Hugging Face; nothing you record ever leaves this Mac.",
             secondaryPoint: "You can skip any of this — each item is also reachable from Settings.",
             symbolName: "arrow.down.circle",
