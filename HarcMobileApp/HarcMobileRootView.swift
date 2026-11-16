@@ -103,6 +103,7 @@ struct HarcMobileRootView: View {
                 for: UIApplication.didBecomeActiveNotification
             )
         ) { _ in
+            model.localTranscription?.setForeground(true)
             model.transferCoordinator?.refreshLocalRecordings()
             model.transferCoordinator?.reconcileBackgroundUploads()
             model.libraryCoordinator?.refresh()
@@ -113,6 +114,7 @@ struct HarcMobileRootView: View {
                 for: UIApplication.didEnterBackgroundNotification
             )
         ) { _ in
+            model.localTranscription?.setForeground(false)
             model.hostHealthCoordinator?.stopMonitoring()
         }
         .sheet(isPresented: $showsSetupAndSync) {
@@ -1092,7 +1094,7 @@ private struct HarcMobileLocalRecordingLabel: View {
             )
             .font(.subheadline)
             .foregroundStyle(.secondary)
-            Text("Transcript arrives after it reaches your Mac")
+            Text("On-device transcript; Mac adds speaker names and summary")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -1192,6 +1194,8 @@ private struct HarcMobileLocalRecordingDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
+
+            HarcMobileLocalTranscriptSection(recordingID: recording.id)
 
             if let discontinuity = recording.discontinuities.last {
                 Section("Capture note") {
@@ -1424,6 +1428,7 @@ private enum HarcMobileRecordingFormatting {
 }
 
 private struct HarcMobileRecordingDetailView: View {
+    @Environment(HarcMobileAppModel.self) private var model
     let coordinator: HarcMobileLibraryCoordinator
     let summary: LibraryRecordingSummary
 
@@ -1719,8 +1724,14 @@ private struct HarcMobileRecordingDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                     if selectedSection == .transcript, detail.transcriptText?.isEmpty != false {
-                        Text("A transcript will appear here when it is available from your Mac.")
-                            .foregroundStyle(.secondary)
+                        if let origin = summary.originID,
+                           (localPreviewOrigin == origin ||
+                            model.transferCoordinator?.localRecordings.contains(where: { $0.originID == origin }) == true) {
+                            HarcMobileLocalTranscriptSection(recordingID: origin.recordingUUID)
+                        } else {
+                            Text("A transcript will appear here when it is available from your Mac.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     if selectedSection == .summary, let generatedSummary = detail.summaryMarkdown,
                        !generatedSummary.isEmpty {
@@ -1740,6 +1751,17 @@ private struct HarcMobileRecordingDetailView: View {
                         Section("Notes") {
                             Text(notes)
                                 .textSelection(.enabled)
+                        }
+                    }
+                }
+            } else if let origin = localPreviewOrigin {
+                List {
+                    HarcMobileLocalTranscriptSection(recordingID: origin.recordingUUID)
+                    Section {
+                        if let errorMessage {
+                            Text(errorMessage).foregroundStyle(.secondary)
+                        } else {
+                            ProgressView("Checking Mac for speaker names and summary…")
                         }
                     }
                 }
@@ -1776,6 +1798,12 @@ private struct HarcMobileRecordingDetailView: View {
             await loadDetail()
         }
         .onDisappear { audioController.stopAndRelease() }
+    }
+
+    private var localPreviewOrigin: OriginRecordingID? {
+        guard let origin = summary.originID,
+              model.localTranscription?.hasPreview(for: origin) == true else { return nil }
+        return origin
     }
 
     private var audioPlaybackControls: some View {
