@@ -1,6 +1,75 @@
 # iPhone companion launch plan
 
-## Current checkpoint — November 2, 2026
+## Current checkpoint — November 16, 2026
+
+### Published Mac and separate phone candidate
+
+[Mac v0.14.22 (77)](https://github.com/jkrack/Harc/releases/tag/v0.14.22)
+was published November 14. Its release record identifies validated source
+`3220216ebe1c7693f5583354648393fa83ff317a` and
+[CI 43641366913](https://github.com/jkrack/Harc/actions/runs/43641366913).
+GitHub lists both release assets. This checkpoint verifies repository/release
+metadata, not a fresh signature, notarization or public-byte verification.
+Mac Host distribution remains Sparkle; a Mac release is not phone qualification.
+
+The recording-detail phone candidate is a separate, unmerged stack:
+[PR #200](https://github.com/jkrack/Harc/pull/200) at `35de37e`, followed by
+[PR #201](https://github.com/jkrack/Harc/pull/201), **0.14.22 (78)** at
+`4dc173f08c31f8ca69fb1a0e315a3bc80fefd925`. Main's candidate register still
+names build 77; do not change main's version or claim build 78 is integrated
+because this plan describes that branch.
+
+The clean, uninstrumented build-78
+[CI run 43725414179, attempt 2](https://github.com/jkrack/Harc/actions/runs/43725414179/attempts/2)
+passed, including all 131 mobile test methods without failures or skips.
+Attempt 1's ineffective Recent-card tap remains unexplained and its evidence is
+retained. The controlled unchanged-source pass is not a production fix.
+[Diagnostic PR #202](https://github.com/jkrack/Harc/pull/202) is separate:
+do not merge or distribute its instrumentation.
+
+PR #201 records a source-bound archive and a later read-only comparison of the
+existing Apple-processed upload: all 47 archived product-file hashes matched.
+This is attributed to that preparation record, not independently repeated here.
+An uploaded, processed binary does not prove assignment to the intended
+James-only tester group, installation, ordinary capture or release acceptance.
+Track those outcomes separately with the existing preparation owner.
+
+### Remaining acceptance, in execution order
+
+1. **Resume the existing physical qualification work.** Registration of its
+   diagnostic extension is awaiting owner approval. Do not duplicate the
+   registration, change credentials or work around the held operation. After
+   approval, record the exact app/extension, source, hardware and OS identities
+   and executed test count. Zero-test automation startup remains a failure.
+2. **Prove ordinary capture and detail behavior.** Exercise real microphone
+   Start/Stop, local durable save, playback/seek and New recording, including
+   lock-screen/accessory behavior, partial-save/audio-error presentation and
+   spoken VoiceOver/largest text. Synthetic physical app tests and Simulator
+   results do not establish these outcomes.
+3. **Close the exact-source codec and product path.** Preserve the codec gate.
+   Bind physical PCM/EOF results to the candidate, then ordinary phone capture,
+   adopted-Host transfer, one durable verified receipt, matching complete
+   canonical PCM hashes and protected-master retention until verification.
+   Verify phone Library playback/transcript, paired-Host enrichment during
+   playback/editing, and offline relaunch/reconciliation. Keep save, receipt,
+   processing and playback availability as separate states.
+4. **Finish release evidence.** Apply the remaining physical reliability,
+   protection/upgrade, accessibility and two-network requirements from the
+   [physical runbook](../operations/mobile-physical-qualification.md).
+   Capture all five exact-build product-page images; historical build-56
+   screenshots are not this candidate. Refresh deployed relay/privacy and
+   account-retention evidence, exact-build owner answers, and artifact checks
+   in the [release runbook](../operations/app-store-release-readiness.md).
+   App Store submission remains NO-GO until these gates and explicit submission
+   approval are complete.
+
+This checklist orders existing work; it grants no new app-control, data-sharing,
+registration, tester-assignment or release authority. Keep PRs #200/#201/#202
+and their physical/diagnostic evidence under their existing owners. Independent
+documentation work must not launch competing device or simulator jobs. The
+historical checkpoints below retain their original source and artifact scope.
+
+## Historical checkpoint — November 2, 2026
 
 The implementation/release baseline verified on main is
 `dbb48aa5f7dc004b1587bd5bec77aa2c6e9205b1`. GitHub metadata confirms
