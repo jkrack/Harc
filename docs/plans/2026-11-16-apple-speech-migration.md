@@ -42,6 +42,13 @@ Both short-speech fixture paths used the actual Apple engine. The synthetic
 fixture returned eight ordered timing runs spanning 0–2971 ms, with nonempty
 transcript and word timings. No Parakeet comparison was run.
 
+The Mac Xcode Debug app build passed, including fresh release builds of both
+embedded helpers. An isolated IPC smoke of that built `harc-stt` transcribed a
+44.560-second synthetic repetition (15 copies of the fixture): 120 ordered timed
+words, 15 mentions of “test,” first timestamp 0 ms and last 44280 ms. The reply
+reported `apple-speech-transcriber`. No user recordings were read; the app was
+not installed. Evidence is retained on the development SSD.
+
 This is functional/regression evidence, not an accuracy benchmark, real-meeting
-or long-recording qualification, or a release. Full PR CI, Mac app build and
-installed-app validation remain gates; do not publish from this evidence alone.
+or long-recording qualification, or a release. Full PR CI and installed-app
+validation remain gates; do not publish from this evidence alone.
