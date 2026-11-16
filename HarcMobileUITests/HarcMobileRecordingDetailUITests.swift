@@ -8,7 +8,10 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
     }
 
     func testLocalDetailPlaybackSectionsAndReopening() {
-        let app = launchFixture()
+        // Keep section-retention coverage independent of XCTest's best-effort
+        // midpoint gesture. Long real audio cannot finish during slow navigation;
+        // the dedicated 60-second case below retains the original seek checks.
+        let app = launchFixture(longPlayback: true)
         openRecent(in: app)
         assertSavedDetail(in: app)
         let title = app.staticTexts["harc.mobile.detail.title"].label
@@ -25,16 +28,17 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         let position = app.sliders["Playback position"]
         XCTAssertTrue(position.waitForExistence(timeout: 10))
         XCTAssertTrue(position.isEnabled)
-        let beforeSeek = position.value as? String
-        XCTAssertTrue(beforeSeek?.hasSuffix(" seconds of 60 seconds") == true)
-        position.adjust(toNormalizedSliderPosition: 0.5)
-        XCTAssertNotEqual(position.value as? String, beforeSeek)
-        let seekValue = position.value as? String ?? ""
-        XCTAssertTrue(seekValue.hasSuffix(" seconds of 60 seconds"))
-        let seekSeconds = Int(seekValue.split(separator: " ").first ?? "")
-        XCTAssertNotNil(seekSeconds)
-        XCTAssertTrue((25...35).contains(seekSeconds ?? -1), "A midpoint seek must expose seconds, not percent: \(seekValue)")
-        // Seeking paused audio must not silently start it.
+        let beforeSkip = position.value as? String ?? ""
+        XCTAssertTrue(beforeSkip.hasSuffix(" seconds of 600 seconds"))
+        guard let pausedSeconds = Int(beforeSkip.split(separator: " ").first ?? "") else {
+            XCTFail("Playback position must expose seconds: \(beforeSkip)")
+            return
+        }
+        app.buttons["Forward 15 seconds"].tap()
+        XCTAssertEqual(position.value as? String, "\(pausedSeconds + 15) seconds of 600 seconds")
+        XCTAssertEqual(play.label, "Play", "Skipping paused audio must not start playback")
+        app.buttons["Back 15 seconds"].tap()
+        XCTAssertEqual(position.value as? String, beforeSkip)
         XCTAssertEqual(play.label, "Play")
         play.tap()
         expectLabel("Pause", on: play)
@@ -73,6 +77,34 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["harc.mobile.detail.title"].label, title)
         XCTAssertTrue(app.buttons["harc.mobile.detail.newRecording"].isEnabled)
         XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
+    }
+
+    func testLocalDetailSeekPreservesPausedPlayback() {
+        // Preserve the original real-audio midpoint/seconds/no-autoplay checks.
+        // Staying paused after the gesture separates seek accuracy from EOF.
+        let app = launchFixture()
+        openRecent(in: app)
+        assertSavedDetail(in: app)
+        let play = app.buttons["harc.mobile.detail.play"]
+        reveal(play, in: app)
+        play.tap()
+        expectLabel("Pause", on: play)
+        play.tap()
+        expectLabel("Play", on: play)
+        let position = app.sliders["Playback position"]
+        XCTAssertTrue(position.waitForExistence(timeout: 10))
+        XCTAssertTrue(position.isEnabled)
+        let beforeSeek = position.value as? String
+        XCTAssertTrue(beforeSeek?.hasSuffix(" seconds of 60 seconds") == true)
+        position.adjust(toNormalizedSliderPosition: 0.5)
+        XCTAssertNotEqual(position.value as? String, beforeSeek)
+        let seekValue = position.value as? String ?? ""
+        XCTAssertTrue(seekValue.hasSuffix(" seconds of 60 seconds"))
+        let seekSeconds = Int(seekValue.split(separator: " ").first ?? "")
+        XCTAssertNotNil(seekSeconds)
+        XCTAssertTrue((25...35).contains(seekSeconds ?? -1), "A midpoint seek must expose seconds, not percent: \(seekValue)")
+        // Seeking paused audio must not silently start it.
+        XCTAssertEqual(play.label, "Play")
     }
 
     func testLocalDetailRemainsUsableAtLargestDynamicType() {
@@ -151,7 +183,9 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         }
     }
 
-    private func launchFixture(largestText: Bool = false, storageExhausted: Bool = false) -> XCUIApplication {
+    private func launchFixture(
+        largestText: Bool = false, storageExhausted: Bool = false, longPlayback: Bool = false
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "--harc-ui-test-root-id", UUID().uuidString,
@@ -159,6 +193,9 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         ]
         if storageExhausted {
             app.launchArguments.append("--harc-ui-test-local-recording-storage-exhausted")
+        }
+        if longPlayback {
+            app.launchArguments.append("--harc-ui-test-long-playback-recording")
         }
         if largestText {
             app.launchArguments += [

@@ -11,8 +11,11 @@ final class HarcAppUITests: XCTestCase {
         // container. The separately bundled app cannot safely use that root:
         // macOS may block mkdir awaiting cross-container privacy approval.
         // Give each case a unique shared scratch path and let the target create
-        // it. Never point synthetic fixtures at the user's normal Library.
-        rootURL = URL(fileURLWithPath: "/tmp/harc-app-ui-\(UUID().uuidString)", isDirectory: true)
+        // it. Use its canonical /private/tmp spelling: Foundation directory
+        // enumeration resolves /tmp, so mixing aliases makes legacy ingestion
+        // treat the same fixture WAV as a second recording after relaunch.
+        // Never point synthetic fixtures at the user's normal Library.
+        rootURL = URL(fileURLWithPath: "/private/tmp/harc-app-ui-\(UUID().uuidString)", isDirectory: true)
 
         app = XCUIApplication()
         app.launchEnvironment["HARC_UI_TESTING"] = "1"
@@ -445,9 +448,25 @@ final class HarcAppUITests: XCTestCase {
 
     func testBoundSpeakerCreateUnassignAndRelinkSurviveRelaunch() throws {
         app.launchEnvironment["HARC_UI_TEST_BOUND_SPEAKERS"] = "1"
+        var fixtureRecordingIdentifier: String?
         func openInspector() {
             launchFixtureLibrary()
-            seededRecordingRow().click()
+            // Row identifiers are inherited by every child text. Deduplicate
+            // them, and prove relaunch did not ingest the fixture a second time
+            // before testing persistence on the original recording.
+            let rows = app.staticTexts.matching(NSPredicate(
+                format: "identifier BEGINSWITH[c] %@", "harc.library.recording."
+            ))
+            XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
+            let identifiers = Set(rows.allElementsBoundByIndex.map { $0.identifier })
+            XCTAssertEqual(identifiers.count, 1, app.debugDescription)
+            let recording = seededRecordingRow()
+            if let fixtureRecordingIdentifier {
+                XCTAssertEqual(recording.identifier, fixtureRecordingIdentifier, app.debugDescription)
+            } else {
+                fixtureRecordingIdentifier = recording.identifier
+            }
+            recording.click()
             let inspector = app.buttons.containing(NSPredicate(format: "label BEGINSWITH[c] %@", "Inspector")).firstMatch
             XCTAssertTrue(inspector.waitForExistence(timeout: 4), app.debugDescription)
             inspector.click()

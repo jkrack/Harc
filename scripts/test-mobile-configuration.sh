@@ -30,6 +30,7 @@ TEST_OPTIONS=("${XCODE_OPTIONS[@]}" \
   -only-testing:HarcMobileAppTests/HarcMobileCapturePipelineTests \
   -only-testing:HarcMobileAppTests/HarcMobileSyncStatusPresentationTests \
   -only-testing:HarcMobileAppTests/HarcMobileLocalLibraryTests \
+  -only-testing:HarcMobileAppTests/HarcMobileLocalTranscriptionTests \
   -only-testing:HarcMobileAppTests/HarcMobileRecordingDetailPresentationTests \
   -only-testing:HarcMobileAppTests/HarcMobileAudioEnvelopeTests \
   -only-testing:HarcMobileAppTests/HarcMobileAudioSummaryRefreshTests \
@@ -70,8 +71,17 @@ python3 scripts/check-xcode-test-results.py \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testSetupMacIconInkStaysInsideItsTileAtEveryTextSize \
   --require-test HarcMobileAppTests/HarcMobileCaptureExperienceTests/testTimelineAccessibilityDescribesOnlyVisibleIntervalsInChronologicalOrder \
   --require-test HarcMobileUITests/HarcMobileRecordingDetailUITests/testLocalDetailPlaybackSectionsAndReopening \
+  --require-test HarcMobileUITests/HarcMobileRecordingDetailUITests/testLocalDetailSeekPreservesPausedPlayback \
+  --require-test HarcMobileAppTests/HarcMobileAudioEnvelopeTests/testLongLocalPlaybackSeeksExactlyWhilePaused \
   --require-test HarcMobileUITests/HarcMobileRecordingDetailUITests/testLocalDetailRemainsUsableAtLargestDynamicType \
   --require-test HarcMobileUITests/HarcMobileRecordingDetailUITests/testStorageWarningSurvivesDoneRecentAndLibrary \
+  --require-test HarcMobileAppTests/HarcMobileLocalTranscriptionTests/testPreviewPersistsSeparatelyAndExactRetryReusesIt \
+  --require-test HarcMobileAppTests/HarcMobileLocalTranscriptionTests/testRejectsWrongAudioBindingAndInvalidTimeline \
+  --require-test HarcMobileAppTests/HarcMobileLocalTranscriptionTests/testCaptureSuspendsQueueAndModelFailureLeavesAudioUntouched \
+  --require-test HarcMobileAppTests/HarcMobileLocalTranscriptionTests/testInterruptedWorkCannotPublishPartialResultAndResumesOnce \
+  --require-test HarcMobileAppTests/HarcMobileLocalTranscriptionTests/testMismatchedRequestCannotRelabelAnActiveJob \
+  --require-test HarcMobileAppTests/HarcMobileLocalTranscriptionTests/testBackgroundLaunchDefersInferenceUntilForeground \
+  --require-test HarcMobileAppTests/HarcMobileLocalTranscriptionTests/testRestoreDoesNotStartUnrequestedHistoricalWork \
   --require-bundle HarcMobileAppTests \
   --require-bundle HarcMobileUITests \
   --require-test HarcMobileUITests/HarcMobileReleaseReadinessUITests/testRefreshStatusProbePreservesPredicateAndRedactsLabels \

@@ -186,8 +186,9 @@ final class HarcMobileAppModel {
 #if DEBUG
             let localFixtureCount = processArguments.count { $0 == "--harc-ui-test-local-recording" }
             let exhaustedFixtureCount = processArguments.count { $0 == "--harc-ui-test-local-recording-storage-exhausted" }
-            if localFixtureCount > 0 || exhaustedFixtureCount > 0 {
-                guard localFixtureCount == 1, exhaustedFixtureCount <= 1,
+            let longPlaybackFixtureCount = processArguments.count { $0 == "--harc-ui-test-long-playback-recording" }
+            if localFixtureCount > 0 || exhaustedFixtureCount > 0 || longPlaybackFixtureCount > 0 {
+                guard localFixtureCount == 1, exhaustedFixtureCount <= 1, longPlaybackFixtureCount <= 1,
                       uiTestRootID != nil, shouldResetUITestRoot else {
                     throw HarcMobileUITestConfigurationError.invalidLocalRecordingFixtureArguments
                 }
@@ -264,7 +265,8 @@ final class HarcMobileAppModel {
                processArguments.contains("--harc-ui-test-local-recording") {
                 try Self.seedLocalRecordingForUITesting(
                     locations: captureLocations, deviceID: identity.deviceID,
-                    storageExhausted: exhaustedFixtureCount == 1
+                    storageExhausted: exhaustedFixtureCount == 1,
+                    durationSeconds: longPlaybackFixtureCount == 1 ? 600 : 60
                 )
             }
 #endif
@@ -496,25 +498,28 @@ final class HarcMobileAppModel {
     private static func seedLocalRecordingForUITesting(
         locations: HarcMobileCaptureLocations,
         deviceID: DeviceID,
-        storageExhausted: Bool
+        storageExhausted: Bool,
+        durationSeconds: Int
     ) throws {
-        let start = Date.now.addingTimeInterval(-60)
+        let start = Date.now.addingTimeInterval(-Double(durationSeconds))
         let writer = try HarcMobileDurableMasterWriter(
             locations: locations, producingDeviceID: deviceID,
             captureStartedAt: start, captureStartedMonotonicNanoseconds: 1_000
         )
         // Canonical audio is signed 16-bit little-endian mono PCM at 16 kHz.
         // Alternate audible tone and silence so the real extracted envelope is visible.
-        for second in 0..<60 {
-            var pcm = Data(capacity: 32_000)
-            for frame in 0..<16_000 {
-                let sample: Int16 = second.isMultiple(of: 2)
-                    ? Int16(sin(2 * Double.pi * 440 * Double(frame) / 16_000) * 4_000) : 0
-                var littleEndian = sample.littleEndian
-                withUnsafeBytes(of: &littleEndian) { pcm.append(contentsOf: $0) }
-            }
+        // Reuse the same one-second buffers so a longer playback fixture does
+        // not multiply main-thread tone generation or allocate a full long WAV.
+        var tone = Data(capacity: 32_000)
+        for frame in 0..<16_000 {
+            var sample = Int16(sin(2 * Double.pi * 440 * Double(frame) / 16_000) * 4_000).littleEndian
+            withUnsafeBytes(of: &sample) { tone.append(contentsOf: $0) }
+        }
+        let silence = Data(repeating: 0, count: 32_000)
+        for second in 0..<durationSeconds {
             try writer.appendCanonicalPCM(
-                pcm, endedAt: start.addingTimeInterval(Double(second + 1)),
+                second.isMultiple(of: 2) ? tone : silence,
+                endedAt: start.addingTimeInterval(Double(second + 1)),
                 endedMonotonicNanoseconds: 1_000 + UInt64(second + 1) * 1_000_000_000
             )
         }

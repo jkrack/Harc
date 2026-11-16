@@ -42,6 +42,63 @@ final class HarcMobileAudioEnvelopeTests: XCTestCase {
     }
 
     @MainActor
+    func testLongLocalPlaybackSeeksExactlyWhilePaused() async throws {
+        let sampleRate = 16_000.0
+        let oneFrame = 1.0 / sampleRate
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tide-long-paused-seek-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = try XCTUnwrap(AVAudioFormat(
+            commonFormat: .pcmFormatInt16, sampleRate: sampleRate,
+            channels: 1, interleaved: true
+        ))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
+        buffer.frameLength = 16_000
+        let samples = try XCTUnwrap(buffer.int16ChannelData?[0])
+        for frame in 0..<16_000 { samples[frame] = 0 }
+        do {
+            let file = try AVAudioFile(
+                forWriting: url, settings: format.settings,
+                commonFormat: .pcmFormatInt16, interleaved: true
+            )
+            // Reuse one second of silence instead of allocating ten minutes.
+            for _ in 0..<600 { try file.write(from: buffer) }
+        }
+        let source = try AVAudioFile(forReading: url)
+        XCTAssertEqual(source.length, 9_600_000)
+        XCTAssertEqual(source.processingFormat.sampleRate, sampleRate)
+
+        var createdPlayer: AVAudioPlayer?
+        let controller = HarcMobileLocalRecordingAudioController(url: url, makePlayer: { url in
+            let player = try AVAudioPlayer(contentsOf: url)
+            createdPlayer = player
+            return player
+        })
+        defer { controller.stop() }
+        await controller.playOrPause()
+        let player = try XCTUnwrap(createdPlayer)
+        XCTAssertEqual(controller.state, .playing)
+        XCTAssertTrue(player.isPlaying)
+        await controller.playOrPause()
+        XCTAssertEqual(controller.state, .paused)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(controller.duration, 600, accuracy: oneFrame)
+        XCTAssertEqual(player.duration, 600, accuracy: oneFrame)
+
+        controller.seek(to: 300)
+        XCTAssertEqual(controller.currentTime, 300, accuracy: oneFrame)
+        XCTAssertEqual(player.currentTime, 300, accuracy: oneFrame)
+        XCTAssertEqual(controller.state, .paused)
+        XCTAssertFalse(player.isPlaying)
+        let pausedTime = player.currentTime
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(player.currentTime, pausedTime, accuracy: oneFrame)
+        XCTAssertEqual(controller.currentTime, 300, accuracy: oneFrame)
+        XCTAssertEqual(controller.state, .paused)
+        XCTAssertFalse(player.isPlaying)
+    }
+
+    @MainActor
     func testLocalPreparationDerivesWaveformWithoutClaimingPlaybackSession() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("tide-local-envelope-\(UUID().uuidString).caf")

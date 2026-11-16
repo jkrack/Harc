@@ -143,6 +143,7 @@ print(Path('summary.json' if sys.argv[4] == 'summary' else 'tree.json').read_tex
         detail_suite = 'HarcMobileUITests/HarcMobileRecordingDetailUITests'
         detail_cases = [detail_suite + '/' + name for name in (
             'testLocalDetailPlaybackSectionsAndReopening',
+            'testLocalDetailSeekPreservesPausedPlayback',
             'testLocalDetailRemainsUsableAtLargestDynamicType',
             'testStorageWarningSurvivesDoneRecentAndLibrary',
         )]
@@ -152,6 +153,20 @@ print(Path('summary.json' if sys.argv[4] == 'summary' else 'tree.json').read_tex
             'HarcMobileAppTests/HarcMobileAudioSummaryRefreshTests',
             detail_suite,
         ]
+        transcription_suite = 'HarcMobileAppTests/HarcMobileLocalTranscriptionTests'
+        transcription_cases = [transcription_suite + '/' + name for name in (
+            'testPreviewPersistsSeparatelyAndExactRetryReusesIt',
+            'testRejectsWrongAudioBindingAndInvalidTimeline',
+            'testCaptureSuspendsQueueAndModelFailureLeavesAudioUntouched',
+            'testInterruptedWorkCannotPublishPartialResultAndResumesOnce',
+            'testMismatchedRequestCannotRelabelAnActiveJob',
+            'testBackgroundLaunchDefersInferenceUntilForeground',
+            'testRestoreDoesNotStartUnrequestedHistoricalWork',
+        )]
+        detail_cases.append('HarcMobileAppTests/HarcMobileAudioEnvelopeTests/'
+                            'testLongLocalPlaybackSeeksExactlyWhilePaused')
+        detail_suites.append(transcription_suite)
+        detail_cases.extend(transcription_cases)
         for pattern, expected, additions in [
             (r'-only-testing:([^\s\\]+)', '407998521d470d814d8c6a2715fa2f4c88d4cbdcbe7bff82ee12bb582bc5b220', detail_suites),
             (r'--require-test ([^\s\\]+)', '2cbd496ce3a41e5dd790c52320aee39ebb22ae4b8c9ede201080b71836ffb24c', detail_cases),
