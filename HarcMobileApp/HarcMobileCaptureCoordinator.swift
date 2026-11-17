@@ -18,7 +18,20 @@ final class HarcMobileCaptureCoordinator {
         case failed(String)
     }
 
-    private(set) var state: State = .idle
+    private(set) var state: State = .idle {
+        didSet {
+            if let event = HarcMobileHaptics.captureEvent(from: oldValue, to: state) {
+                HarcMobileHaptics.emit(event)
+            }
+            switch state {
+            case .requestingPermission, .starting, .recording, .stopping:
+                onCaptureActivityChanged(true)
+            default:
+                onCaptureActivityChanged(false)
+            }
+        }
+    }
+    private let onCaptureActivityChanged: @MainActor (Bool) -> Void
 
     var durableAudioSeconds: Double { audioLevelMeter.durableAudioSeconds }
 
@@ -43,10 +56,12 @@ final class HarcMobileCaptureCoordinator {
         producingDeviceID: DeviceID,
         locations: HarcMobileCaptureLocations,
         storageExhaustionAfterCanonicalBytesForTesting: UInt64? = nil,
+        onCaptureActivityChanged: @escaping @MainActor (Bool) -> Void = { _ in },
         onFinalized: @escaping @MainActor (
             HarcMobileFinalizedMaster
         ) throws -> Void
     ) {
+        self.onCaptureActivityChanged = onCaptureActivityChanged
         self.producingDeviceID = producingDeviceID
         self.locations = locations
         self.storageExhaustionAfterCanonicalBytesForTesting =

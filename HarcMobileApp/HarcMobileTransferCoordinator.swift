@@ -31,6 +31,27 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
     let masterFileURL: URL
     let transferState: TransferState
     let discontinuities: [CaptureDiscontinuity]
+    let finalizationReason: CaptureFinalizationReason
+
+    init(
+        id: UUID,
+        originID: OriginRecordingID,
+        startedAt: Date,
+        duration: TimeInterval,
+        masterFileURL: URL,
+        transferState: TransferState,
+        discontinuities: [CaptureDiscontinuity],
+        finalizationReason: CaptureFinalizationReason = .userStopped
+    ) {
+        self.id = id
+        self.originID = originID
+        self.startedAt = startedAt
+        self.duration = duration
+        self.masterFileURL = masterFileURL
+        self.transferState = transferState
+        self.discontinuities = discontinuities
+        self.finalizationReason = finalizationReason
+    }
 
     /// Reads device-owned masters independently of Host adoption, route, or cache.
     /// Transfer state is a badge, never a prerequisite for local playback.
@@ -67,7 +88,8 @@ struct HarcMobileLocalRecording: Identifiable, Equatable {
                     masterFileURL:
                         outbox.finalizedCapture.masterFileURL,
                     transferState: transferState,
-                    discontinuities: capture.discontinuities
+                    discontinuities: capture.discontinuities,
+                    finalizationReason: capture.finalizationReason
                 )
             }
             .sorted { $0.startedAt > $1.startedAt }

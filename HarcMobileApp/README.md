@@ -74,3 +74,30 @@ See:
 - [Runtime roles and pairing runbook](../docs/operations/runtime-roles-and-pairing.md)
 - [App Store release-readiness runbook](../docs/operations/app-store-release-readiness.md)
 - [Mobile privacy-policy source](../docs/privacy/harc-mobile-privacy-policy.md)
+
+## Local after-save transcription
+
+New finalized captures queue a read-only Apple SpeechTranscriber preview on a
+compatible iPhone. The queue is independent of capture registration, adopted-Host
+transfer and codec qualification. Capture and app backgrounding cancel inference;
+registered work resumes on foreground/relaunch. Historical recordings are not
+bulk-transcribed automatically. A local detail action can request one explicitly.
+The first enqueue-to-marker interruption can leave an unrequested preview; the
+protected audio/outbox still survives and the detail action retries it.
+
+The native adapter uses only installed speech assets during routine processing.
+Missing assets expose a separate, explicit Apple model download action. There is
+no cloud recognizer fallback, AppleLLM wrapper or audio upload. Device/language
+unavailability degrades transcription only. Model assets can require internet;
+Apple manages their retention and updates.
+
+Preview records retain origin, canonical PCM digest, frame count, native engine,
+locale and final segment timing, under backup-excluded protected storage. They
+never become Host receipts, canonical metadata, speaker identities or training
+samples. Host transcript text wins when present; otherwise the phone preview can
+be displayed distinctly. User edits and Host transcripts are never concatenated
+with or overwritten by this preview.
+
+Validate with HarcMobileLocalTranscriptionTests plus the mobile app build. These
+synthetic tests do not qualify Apple model accuracy, physical device availability,
+long-running resource use or the physical codec/Host round trip.

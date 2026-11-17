@@ -7,9 +7,15 @@ final class HarcAppUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("harc-app-ui-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        // FileManager.temporaryDirectory belongs to this runner's private
+        // container. The separately bundled app cannot safely use that root:
+        // macOS may block mkdir awaiting cross-container privacy approval.
+        // Give each case a unique shared scratch path and let the target create
+        // it. Use its canonical /private/tmp spelling: Foundation directory
+        // enumeration resolves /tmp, so mixing aliases makes legacy ingestion
+        // treat the same fixture WAV as a second recording after relaunch.
+        // Never point synthetic fixtures at the user's normal Library.
+        rootURL = URL(fileURLWithPath: "/private/tmp/harc-app-ui-\(UUID().uuidString)", isDirectory: true)
 
         app = XCUIApplication()
         app.launchEnvironment["HARC_UI_TESTING"] = "1"
@@ -115,6 +121,16 @@ final class HarcAppUITests: XCTestCase {
     }
 
     func testPlaybackControlsSeekAndPause() throws {
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = "dark"
+        try verifyPlaybackControlsSeekAndPause()
+    }
+
+    func testPlaybackControlsSeekAndPauseLight() throws {
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = "light"
+        try verifyPlaybackControlsSeekAndPause()
+    }
+
+    private func verifyPlaybackControlsSeekAndPause() throws {
         app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = "complete"
         app.launch()
         let row = app.staticTexts.matching(NSPredicate(
@@ -158,6 +174,25 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(speakers.waitForExistence(timeout: 5))
         speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).click()
         assertPlaybackPosition(elapsed, fraction: 0.6)
+        XCTAssertEqual(playPause.label, "Play recording")
+        XCTAssertEqual(speakers.label, "Speaker turns playback position")
+        XCTAssertEqual(strip.label, "Speaker timeline playback position")
+        // Decorative marker must leave the full-width seek target available,
+        // including endpoints, and switching modes must retain paused position.
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0)
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0.99)
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0.4)
+        let markerEvidence = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        markerEvidence.name = "Speaker playhead and strip aligned at 40 percent (visual review required)"
+        markerEvidence.lifetime = .keepAlways
+        add(markerEvidence)
+        app.buttons["Energy"].click()
+        assertPlaybackPosition(elapsed, fraction: 0.4)
+        app.buttons["Speakers"].click()
+        assertPlaybackPosition(elapsed, fraction: 0.4)
         XCTAssertEqual(playPause.label, "Play recording")
         app.buttons["Energy"].click()
         let editor = app.textViews["harc.transcript.editor"]
@@ -298,11 +333,6 @@ final class HarcAppUITests: XCTestCase {
     }
 
     func testDockReopenKeepsRegularAppAndReturnsToLibrary() throws {
-        // Let the target create this fixture. A UI runner's private container
-        // temporary directory is not an accessible Library root for the app.
-        try FileManager.default.removeItem(at: rootURL)
-        rootURL = URL(fileURLWithPath: "/tmp/harc-dock-ui-\(UUID().uuidString)", isDirectory: true)
-        app.launchEnvironment["HARC_UI_TEST_ROOT"] = rootURL.path
         launchFixtureLibrary()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         let running = try XCTUnwrap(NSWorkspace.shared.frontmostApplication)
@@ -447,9 +477,25 @@ final class HarcAppUITests: XCTestCase {
 
     func testBoundSpeakerCreateUnassignAndRelinkSurviveRelaunch() throws {
         app.launchEnvironment["HARC_UI_TEST_BOUND_SPEAKERS"] = "1"
+        var fixtureRecordingIdentifier: String?
         func openInspector() {
             launchFixtureLibrary()
-            seededRecordingRow().click()
+            // Row identifiers are inherited by every child text. Deduplicate
+            // them, and prove relaunch did not ingest the fixture a second time
+            // before testing persistence on the original recording.
+            let rows = app.staticTexts.matching(NSPredicate(
+                format: "identifier BEGINSWITH[c] %@", "harc.library.recording."
+            ))
+            XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
+            let identifiers = Set(rows.allElementsBoundByIndex.map { $0.identifier })
+            XCTAssertEqual(identifiers.count, 1, app.debugDescription)
+            let recording = seededRecordingRow()
+            if let fixtureRecordingIdentifier {
+                XCTAssertEqual(recording.identifier, fixtureRecordingIdentifier, app.debugDescription)
+            } else {
+                fixtureRecordingIdentifier = recording.identifier
+            }
+            recording.click()
             let inspector = app.buttons.containing(NSPredicate(format: "label BEGINSWITH[c] %@", "Inspector")).firstMatch
             XCTAssertTrue(inspector.waitForExistence(timeout: 4), app.debugDescription)
             inspector.click()

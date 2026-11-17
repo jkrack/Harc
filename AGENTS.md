@@ -993,3 +993,24 @@ deferral spends no retry budget. Validate with the app's
 HarcHostProcessingDiagnosticTests, HarcHostProcessingRequestValidationTests and
 HarcHostProcessingWorkerMetadataTests; synthetic fixtures do not qualify live Host
 recovery or real audio.
+
+Mobile after-save Apple speech previews are independent derived artifacts, not
+canonical Host transcripts or speaker evidence. Save/register protected audio and
+start transfer without awaiting inference. Cancel inference for capture or app
+backgrounding; suppress late presentation across cancellation. An already-started immutable
+preview commit may finish, but only complete, validated output is retained. Keep origin,
+PCM hash and frame-count binding, explicit model download, offline-only routine
+processing and Host-first non-destructive display reconciliation. Validate with
+`HarcMobileLocalTranscriptionTests` and the HarcMobile Xcode build; these do not
+qualify physical model availability or the codec/Host round trip.
+
+The Mac STT daemon defaults to Apple's on-device SpeechTranscriber (English),
+using original-file audio time attributes for word/diarization alignment. Missing
+assets or unavailable hardware fail processing visibly without cloud or legacy
+fallback; AssetInventory downloads model assets only. The explicit v2/unified
+CLI overrides remain local diagnostic options. Reusing a daemon requires matching
+engine identity, and persisted readiness is engine-scoped. Apple asset revisions
+are OS-managed and not exposed; do not invent a revision from the engine name.
+Validate AppleSpeechEngineTests, ASREngineSelectionTests, DaemonLauncherTests and
+SpeechEngineIdentityTests, plus opt-in TranscriberTests on real Apple assets.
+This changes neither iPhone capture/transfer codecs nor their qualification gate.

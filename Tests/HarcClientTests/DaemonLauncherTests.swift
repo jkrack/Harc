@@ -1,9 +1,22 @@
 import Foundation
 import Testing
+import HarcCore
 @testable import HarcClient
 
 @Suite("DaemonLauncher lifecycle", .timeLimit(.minutes(1)))
 struct DaemonLauncherTests {
+    @Test("helper reuse requires actual matching engine identity")
+    func engineIdentity() throws {
+        let old = DaemonStatus(version: "0.14.22", modelLoaded: true, uptimeSeconds: 10)
+        #expect(throws: ClientError.self) { try DaemonLauncher.validateEngine(old, requested: "apple") }
+        var current = old
+        current.sttModelID = "apple-speech-transcriber"
+        try DaemonLauncher.validateEngine(current, requested: "apple")
+        #expect(throws: ClientError.self) { try DaemonLauncher.validateEngine(current, requested: "v2") }
+        current.sttModelID = "parakeet-tdt-0.6b-v2"
+        try DaemonLauncher.validateEngine(current, requested: "v2")
+    }
+
     private func fixture(script: String) throws -> (URL, DaemonLauncher) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("harc-launcher-\(UUID())", isDirectory: true)

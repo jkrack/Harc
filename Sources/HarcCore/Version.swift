@@ -20,11 +20,19 @@ public enum HarcVersion {
     /// the xctest runner. `VersionTests` asserts this stays equal to
     /// `project.yml`'s `MARKETING_VERSION`, which is the check that would have
     /// caught the original drift.
-    public static let fallbackVersion = "0.14.22"
+    public static let fallbackVersion = "0.14.23"
 
-    /// Identity of the speech engine, stamped onto every transcript as
-    /// provenance. Bump this whenever a change would alter transcription
-    /// output — a new Parakeet build, different decoding — so existing
-    /// recordings correctly register as re-transcribable.
-    public static let sttEngineVersion = "tdt-0.6b-v3"
+    /// Engine identity, not an Apple asset revision: OS-managed model revisions
+    /// are not exposed. Legacy engines require explicit selection.
+    public static var sttEngineVersion: String {
+        sttModelID(engine: ProcessInfo.processInfo.environment["HARC_STT_ASR_ENGINE"])
+    }
+
+    public static func sttModelID(engine: String?) -> String {
+        switch engine {
+        case "v2": return "parakeet-tdt-0.6b-v2"
+        case "unified": return "parakeet-unified-en-0.6b"
+        default: return "apple-speech-transcriber"
+        }
+    }
 }

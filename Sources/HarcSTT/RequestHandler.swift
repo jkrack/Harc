@@ -6,6 +6,11 @@ public protocol TranscribeService: Sendable {
     func transcribe(audioPath: String, vad: Bool) async throws -> TranscribeResult
     var isLoaded: Bool { get async }
     var modelState: Transcriber.ModelState { get async }
+    var sttModelID: String? { get async }
+}
+
+public extension TranscribeService {
+    var sttModelID: String? { nil }
 }
 
 extension Transcriber: TranscribeService {}
@@ -60,12 +65,14 @@ public struct RequestHandler: Sendable {
                 uptimeSeconds: Int(Date().timeIntervalSince(startedAt)),
                 modelState: fields.state,
                 downloadProgress: fields.progress,
-                errorMessage: fields.error
+                errorMessage: fields.error,
+                sttModelID: await transcriber.sttModelID
             ))
 
         case .transcribe(let req):
             do {
                 var result = try await transcriber.transcribe(audioPath: req.audioPath, vad: req.vad)
+                result.sttModelID = await transcriber.sttModelID
                 if req.diarize, let diarizer {
                     do {
                         let output = try await diarizer.diarizeWithEmbeddings(

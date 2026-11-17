@@ -11,8 +11,8 @@ public enum STTReadiness: Equatable, Sendable {
     /// in [0, 1] when the daemon knows it, nil when it doesn't.
     case downloading(progress: Double?)
     /// The daemon is reachable but the model isn't loaded yet. On a first
-    /// run this is the one-time ~460 MB Hugging Face download; on later
-    /// launches it's a short local load.
+    /// run this may require an OS-managed asset download; on later
+    /// launches it may be a local load.
     case preparing(firstRun: Bool)
     /// The daemon reports a model load failure (offline first run, corrupt
     /// cache). Recording now would produce transcript holes; surface it.
@@ -30,7 +30,7 @@ public enum STTReadiness: Equatable, Sendable {
         /// `status().modelLoaded`; nil when `status()` failed or was skipped.
         public var statusModelLoaded: Bool?
         /// The model has loaded successfully at least once on this Mac
-        /// (persisted flag or FluidAudio's cache present on disk).
+        /// (engine-scoped persisted flag, not another engine's cache).
         public var modelVerifiedBefore: Bool
         /// `status().modelState`; nil from an older daemon or a failed call.
         public var modelState: DaemonStatus.ModelState?
@@ -54,6 +54,24 @@ public enum STTReadiness: Equatable, Sendable {
             self.downloadProgress = downloadProgress
             self.errorMessage = errorMessage
         }
+    }
+
+    /// Only the selected engine may establish readiness. Old daemons have no
+    /// identity; never present their progress as preparation of this engine.
+    public static func from(
+        status: DaemonStatus?, expectedModelID: String, modelVerifiedBefore: Bool
+    ) -> STTReadiness {
+        if let status, status.sttModelID != expectedModelID {
+            return .failed(message: "A different or older speech helper is running. Finish active work, then quit and reopen Harc to restart the speech helper.")
+        }
+        return from(.init(
+            socketExists: status != nil,
+            statusModelLoaded: status?.modelLoaded,
+            modelVerifiedBefore: modelVerifiedBefore,
+            modelState: status?.modelState,
+            downloadProgress: status?.downloadProgress,
+            errorMessage: status?.errorMessage
+        ))
     }
 
     public static func from(_ facts: Facts) -> STTReadiness {
@@ -99,11 +117,11 @@ public enum STTReadiness: Equatable, Sendable {
             return "Speech engine starts on demand"
         case .downloading(let progress):
             if let progress {
-                return "Downloading speech model — \(Int((progress * 100).rounded()))% of ~460 MB"
+                return "Downloading speech assets — \(Int((progress * 100).rounded()))%"
             }
-            return "Downloading speech model (one-time, ~460 MB)…"
+            return "Downloading speech assets…"
         case .preparing(firstRun: true):
-            return "Downloading speech model (one-time, ~460 MB)…"
+            return "Preparing local speech recognition…"
         case .preparing(firstRun: false):
             return "Loading speech model…"
         case .failed(let message):
