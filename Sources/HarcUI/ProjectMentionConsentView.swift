@@ -48,6 +48,9 @@ struct ProjectMentionConsentView: View {
                 if let feedback { Text(feedback).font(.harcBody).textSelection(.enabled) }
                 if busy { ProgressView("Working locally…") }
             }
+            // Preserve the source/consent disclosure and receipts at their
+            // natural height; the review list below can scroll instead.
+            .fixedSize(horizontal: false, vertical: true)
             .disabled(busy || !canWrite())
         }
         .padding(.horizontal, HarcSpacing.lg)

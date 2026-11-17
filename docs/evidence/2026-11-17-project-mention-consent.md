@@ -46,3 +46,20 @@ not an assumption that a combined filter exercised every target.
 The hardened app and app UI tests also passed Xcode build-for-testing. Hosted CI
 was still pending when this follow-up was pushed. No app UI-execution pass or
 physical/VoiceOver qualification is inferred from compilation.
+
+Dark/keyboard follow-up: isolated hardened app showed case-sensitive copy,
+unchecked consent and disabled Find. Typed project name via keyboard; project
+creation left consent off. With consent on, popup Up/Return changed project and
+cleared consent/disabled Find. Escape dismissed the sheet. Settled expanded dark
+screenshot showed the full source explanation, project limit and controls.
+Immediate post-expansion capture can show transient disclosure animation; no
+persistent clipping defect is claimed. Producer content now preserves natural
+vertical height while the review list remains scrollable.
+
+Full Tab-only traversal was not established under the current Mac keyboard
+settings. AX names are present, but actual VoiceOver spoken output and navigation
+remain unqualified. No accessibility/security preference changes were made.
+A fresh one-test local XCTest attempt failed before entering the consent test:
+`Timed out while enabling automation mode` after60seconds. Result bundle:
+`mention-consent-local-ui.xcresult` in the isolated qualification build directory.
+No local app XCTest pass is claimed and no automation permissions were changed.
