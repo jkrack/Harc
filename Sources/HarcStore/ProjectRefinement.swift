@@ -384,7 +384,8 @@ public extension RecordingStore {
     /// assignment. No aliases, confidence scores, remote inference or auto-link.
     func prepareProjectMentionProposals(recordingIDs: [Int64], projectID: UUID,
                                         expectedHost: LibraryMetadata,
-                                        expectedCanonicalIDs: [Int64: CanonicalRecordingID] = [:]) async throws -> ProjectMentionProposalBatch {
+                                        expectedCanonicalIDs: [Int64: CanonicalRecordingID] = [:],
+                                        expectedProjectVersion: UUID? = nil) async throws -> ProjectMentionProposalBatch {
         guard !recordingIDs.isEmpty, recordingIDs.count <= 25 else {
             throw ProjectRefinementError.invalidEvidence
         }
@@ -396,6 +397,9 @@ public extension RecordingStore {
                 throw ProjectRefinementError.missing
             }
             let project = try JSONDecoder().decode(KnowledgeProject.self, from: payload)
+            if let expectedProjectVersion, expectedProjectVersion != project.version {
+                throw ProjectRefinementError.staleEvidence
+            }
             // Literal, case-sensitive matching with Unicode word boundaries;
             // never match Harc inside Harcourt, nor invent semantic confidence.
             guard project.name.count >= 3, project.name.count <= 120 else {

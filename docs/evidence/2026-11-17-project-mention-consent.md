@@ -33,3 +33,16 @@ and checkbox/Find reset afterward. Light-mode screenshot was inspected; review
 cards scroll below the producer. Diagnostic app quit afterward. Production app
 and Library untouched. No XCTest execution or VoiceOver pass is claimed; CI must
 execute the new selector. Dark-mode consent expansion remains unqualified.
+
+Consent hardening: opt-in now binds row/canonical identity, Host tuple and project
+version; changes invalidate the key immediately. Store preparation also rejects
+an expected project version that changed after picker selection. Project-list
+load generations suppress late appearance reads after project creation. UI copy
+explicitly discloses case-sensitive matching.
+
+Executed after hardening:28 Store tests;2 consent-key/load-generation tests;
+13 existing presentation tests, all passing. These are separate executed filters,
+not an assumption that a combined filter exercised every target.
+The hardened app and app UI tests also passed Xcode build-for-testing. Hosted CI
+was still pending when this follow-up was pushed. No app UI-execution pass or
+physical/VoiceOver qualification is inferred from compilation.

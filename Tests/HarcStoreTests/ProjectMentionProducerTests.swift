@@ -115,6 +115,10 @@ struct ProjectMentionProducerTests {
             try db.execute(sql: "UPDATE knowledge_projects SET payload = ? WHERE id = ?", arguments: [try JSONEncoder().encode(renamed), project.id.uuidString])
         }
         #expect(try await store.commitProjectMentionProposals(second).stale == 1)
+        await #expect(throws: ProjectRefinementError.staleEvidence) {
+            _ = try await store.prepareProjectMentionProposals(recordingIDs: [recordingID], projectID: project.id,
+                expectedHost: store.libraryMetadata(), expectedProjectVersion: project.version)
+        }
     }
 
     @Test func boundsAndDeduplicationHaveHonestCounts() async throws {
