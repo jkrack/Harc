@@ -46,7 +46,7 @@ struct UntrustedProjectPreviewPanel: View {
                                 .font(.harcCaption)
                             literal(preview.quote, id: "excerpt")
                         }
-                        literalSection("Complete source transcript", value: preview.fullSourceText, id: "source")
+                        sourceSection(preview)
                         VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                             heading("Unverified model label")
                             literal(preview.unverifiedModelLabel, id: "model-label")
@@ -67,6 +67,31 @@ struct UntrustedProjectPreviewPanel: View {
         .padding(HarcSpacing.xl)
         .frame(minWidth: 320, idealWidth: 640, minHeight: 300, idealHeight: 640)
         .onDisappear { controller.dismiss(presentation: presentationToken) }
+    }
+
+    private func sourceSection(_ preview: UntrustedProjectLinkPreview) -> some View {
+        let parts = ProjectEvidenceSourcePartition.make(source: preview.fullSourceText,
+            quote: preview.quote, startUTF8: preview.startUTF8, endUTF8: preview.endUTF8)
+        return VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+            heading("Complete source transcript")
+            Text(verbatim: parts == nil
+                ? "The excerpt cannot be safely emphasized. The complete source is shown unchanged."
+                : "Emphasis marks words selected by the model, not verified meaning. All surrounding context is retained.")
+                .font(.harcCaption)
+            sourceText(preview.fullSourceText, parts: parts)
+                .font(.harcBody)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                // One coherent source element, not three focusable fragments.
+                .accessibilityLabel(Text(verbatim: preview.fullSourceText))
+                .accessibilityIdentifier("untrusted-project-preview-source")
+        }
+    }
+    private func sourceText(_ source: String, parts: ProjectEvidenceSourcePartition?) -> Text {
+        guard let parts else { return Text(verbatim: source) }
+        return Text(verbatim: parts.before)
+            + Text(verbatim: parts.selected).bold().underline()
+            + Text(verbatim: parts.after)
     }
 
     private func heading(_ title: String) -> some View {
