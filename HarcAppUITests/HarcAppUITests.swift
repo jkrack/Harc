@@ -42,10 +42,10 @@ final class HarcAppUITests: XCTestCase {
         let recording = seededRecordingRow()
         XCTAssertTrue(recording.waitForExistence(timeout: 60))
         recording.click()
-        let editor = app.textViews["harc.transcript.editor"]
-        let sourceLoaded = NSPredicate(format: "value CONTAINS %@", "Jason: Send the renewal plan by Friday.")
+        let title = app.textFields["Recording title"]
+        let sourceLoaded = NSPredicate(format: "value == %@", "UI Test Customer Renewal")
         XCTAssertEqual(XCTWaiter.wait(
-            for: [XCTNSPredicateExpectation(predicate: sourceLoaded, object: editor)],
+            for: [XCTNSPredicateExpectation(predicate: sourceLoaded, object: title)],
             timeout: 10
         ), .completed)
         let entry = app.buttons["libraryProjectConnections"]
