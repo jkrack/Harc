@@ -1014,3 +1014,13 @@ are OS-managed and not exposed; do not invent a revision from the engine name.
 Validate AppleSpeechEngineTests, ASREngineSelectionTests, DaemonLauncherTests and
 SpeechEngineIdentityTests, plus opt-in TranscriberTests on real Apple assets.
 This changes neither iPhone capture/transfer codecs nor their qualification gate.
+
+Project refinement is currently a local Store foundation, not an enabled UI or
+Host RPC. Accepted recording/project reviews preserve human assignments across
+retranscription, separately marking stale transcript evidence. Canonical identity
+and active (not trashed) recordings remain mandatory. General metadata revisions
+are provenance, not transcript freshness. Keep reject and unsure durable and distinct, operation replay idempotent,
+and undo compare-and-swap protected against later decisions. Impact counts actual
+changed relationships, never estimated precision. Do not promote aliases or
+speaker enrollment from project answers. Validate with ProjectRefinementTests;
+UI/sync/extraction need separate implementation and qualification.
