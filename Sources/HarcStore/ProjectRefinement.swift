@@ -358,3 +358,125 @@ public extension RecordingStore {
         }
     }
 }
+
+/// Immutable, bounded candidates from explicitly selected sources. Only Store
+/// can construct these; callers cannot substitute evidence or Host identity.
+public struct ProjectMentionProposalBatch: Sendable {
+    fileprivate let host: LibraryMetadata
+    fileprivate let reviews: [ProjectMatchReview]
+    public var candidateCount: Int { reviews.count }
+    public let selectedCount: Int
+    public let oversizedCount: Int
+    public let unavailableCount: Int
+    public let noMatchCount: Int
+}
+
+public struct ProjectMentionProposalResult: Sendable, Equatable {
+    public let inserted: Int
+    public let existing: Int
+    public let stale: Int
+}
+
+public extension RecordingStore {
+    /// Opt-in producer for an existing project and at most 25 caller-selected
+    /// recordings. A name mention is a hypothesis, not semantic relevance or an
+    /// assignment. No aliases, confidence scores, remote inference or auto-link.
+    func prepareProjectMentionProposals(recordingIDs: [Int64], projectID: UUID,
+                                        expectedHost: LibraryMetadata) async throws -> ProjectMentionProposalBatch {
+        guard !recordingIDs.isEmpty, recordingIDs.count <= 25 else {
+            throw ProjectRefinementError.invalidEvidence
+        }
+        try Task.checkCancellation()
+        return try await db.read { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            guard let payload = try Data.fetchOne(database,
+                sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [projectID.uuidString]) else {
+                throw ProjectRefinementError.missing
+            }
+            let project = try JSONDecoder().decode(KnowledgeProject.self, from: payload)
+            // Literal, case-sensitive matching with Unicode word boundaries;
+            // never match Harc inside Harcourt, nor invent semantic confidence.
+            guard project.name.count >= 3, project.name.count <= 120 else {
+                throw ProjectRefinementError.invalidEvidence
+            }
+            let pattern = "(?<![\\p{L}\\p{N}\\p{M}_])" + NSRegularExpression.escapedPattern(for: project.name)
+                + "(?![\\p{L}\\p{N}\\p{M}_])"
+            let matcher = try NSRegularExpression(pattern: pattern)
+            var candidates: [ProjectMatchReview] = []
+            var oversized = 0, unavailable = 0, noMatch = 0
+            for id in Set(recordingIDs).sorted() {
+                try Task.checkCancellation()
+                guard let size = try Int.fetchOne(database,
+                    sql: "SELECT length(CAST(transcript_text AS BLOB)) FROM recordings WHERE id = ? AND deleted_at IS NULL", arguments: [id]) else {
+                    unavailable += 1; continue
+                }
+                guard size <= 256_000 else { oversized += 1; continue }
+                guard let recording = try Recording.fetchOne(database, key: id), recording.deletedAt == nil,
+                      let text = recording.transcriptText,
+                      let match = matcher.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                      let range = Range(match.range, in: text) else { noMatch += 1; continue }
+                // Bounded verbatim surrounding evidence retains negation and
+                // quotation context; it never asserts the connection is true.
+                let start = text.index(range.lowerBound, offsetBy: -160, limitedBy: text.startIndex) ?? text.startIndex
+                let end = text.index(range.upperBound, offsetBy: 160, limitedBy: text.endIndex) ?? text.endIndex
+                candidates.append(ProjectMatchReview(id: UUID(), recordingID: id, canonicalID: recording.canonicalID,
+                    project: project, recordingRevision: recording.revision, transcriptSHA256: transcriptDigest(text),
+                    quote: String(text[start..<end]), generatorID: "literal-project-name-v1", decision: .pending, version: UUID()))
+            }
+            return ProjectMentionProposalBatch(host: expectedHost, reviews: candidates,
+                selectedCount: Set(recordingIDs).count, oversizedCount: oversized,
+                unavailableCount: unavailable, noMatchCount: noMatch)
+        }
+    }
+
+    /// Atomic source/Host revalidation prevents a changed context that happens
+    /// to retain the quote being silently rebound. Existing human decisions,
+    /// including rejected and unsure, are never overwritten or resurfaced.
+    func commitProjectMentionProposals(_ batch: ProjectMentionProposalBatch) async throws -> ProjectMentionProposalResult {
+        try await commitProjectMentionProposals(batch, beforeInsert: { _ in })
+    }
+}
+
+// Internal deterministic transaction hook supports cancellation/rollback tests.
+// It is not exposed to app callers.
+extension RecordingStore {
+    func commitProjectMentionProposals(_ batch: ProjectMentionProposalBatch,
+        beforeInsert: @escaping @Sendable (Int) -> Void) async throws -> ProjectMentionProposalResult {
+        try Task.checkCancellation()
+        let cancellation = ProjectProposalCancellation()
+        return try await withTaskCancellationHandler {
+          try await db.write { database in
+            try cancellation.check()
+            try validateProjectReviewHost(database, expected: batch.host)
+            var inserted = 0, existing = 0, stale = 0
+            for review in batch.reviews {
+                try cancellation.check()
+                do { try validateEvidence(database, review: review) }
+                catch ProjectRefinementError.staleEvidence { stale += 1; continue }
+                catch ProjectRefinementError.missing { stale += 1; continue }
+                if try Bool.fetchOne(database, sql: "SELECT EXISTS(SELECT 1 FROM project_match_reviews WHERE recording_id = ? AND project_id = ?)",
+                                     arguments: [review.recordingID, review.project.id.uuidString]) == true {
+                    existing += 1; continue
+                }
+                beforeInsert(inserted)
+                try cancellation.check()
+                try database.execute(sql: "INSERT INTO project_match_reviews(id, recording_id, project_id, payload) VALUES (?, ?, ?, ?)",
+                    arguments: [review.id.uuidString, review.recordingID, review.project.id.uuidString, try JSONEncoder().encode(review)])
+                inserted += 1
+            }
+            try cancellation.check()
+            return ProjectMentionProposalResult(inserted: inserted, existing: existing, stale: stale)
+          }
+        } onCancel: { cancellation.cancel() }
+    }
+}
+
+private final class ProjectProposalCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    func check() throws {
+        lock.lock(); let value = cancelled; lock.unlock()
+        if value { throw CancellationError() }
+    }
+}

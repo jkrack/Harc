@@ -1039,3 +1039,10 @@ on top of Store's writer lease checks. Never enable this for phone or secondary
 client mirrors without a separately qualified RPC. Three-card completion is not
 queue exhaustion. Validate ProjectRefinementTests and
 ProjectRefinementViewModelTests, then app-hosted navigation and accessibility.
+
+The literal project-name proposal producer is an opt-in Store API, not an
+installed scheduler or semantic classifier. Keep caller-selected sources bounded,
+Host-bound snapshot/commit validation atomic, and existing human answers intact.
+Pending candidates are hypotheses, not assignments or precision measurements.
+Validate ProjectMentionProducerTests; UI consent and source selection remain
+separate integration work. Never run synthetic producers on an owner's Library.
