@@ -13,9 +13,13 @@ This slice connects the inert preview session to actual Store invalidations. It 
 
 ## Validation
 On November 17, focused Swift package tests passed on the Mac mini with SSD scratch:
-- 6 new lifecycle tests (11 invocations including parameterized cases): unchanged display/dismissal, actual transcript/project/trash/Host/canonical mutations, mutation and cancellation during a suspended initial read, resident availability loss, external notification, stale response token, observation normal termination, and cancellation during suspended freshness check.
+- 7 new lifecycle tests (12 invocations including parameterized cases): unchanged display/dismissal, actual transcript/project/trash/Host/canonical mutations, mutation and cancellation during a suspended initial read, resident availability loss, external notification, stale response token, observation normal termination, cancellation during suspended freshness check, and concurrent/late duplicate response rejection.
 - 12 existing strict-contract and inert-session tests passed.
 - No audio, real Library data, installed model loading, app UI, VoiceOver, or distribution run was used.
 
 ## Remaining gates
 No real app view observes this controller yet. Future presentation must forward selection and resident runtime changes and release any copies it owns on dismissal. GRDB observation/freshness reads are not atomic with rendering, and an external process notification can be delayed. No displayed value can authorize a future write: confirmation must bind the captured source/project/decision/Host identities in the authoritative transaction. Actual GRDB error injection, live multi-process notification delivery, SwiftUI lifecycle, and device UI qualification remain untested.
+
+
+## Review correction
+Independent review found that concurrent calls could both accept the same response token before an awaited freshness read. The second session completion could invalidate the first valid preview. The controller now consumes the response token and enters processing state synchronously before suspension. A deterministic suspended-freshness regression exercises both concurrent and late duplicates; only the first response can publish.

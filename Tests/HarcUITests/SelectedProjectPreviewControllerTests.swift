@@ -182,4 +182,36 @@ struct SelectedProjectPreviewControllerTests {
         #expect(controller.preview == nil)
     }
 
+    @Test func concurrentDuplicateResponseCannotInvalidateLegitimatePreview() async throws {
+        let (store, rec, project, _, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = PreviewReadGate()
+        let controller = SelectedProjectPreviewController(readSnapshot: { selected in
+            try await store.projectEvidenceSnapshot(recordingID: selected.recordingID,
+                canonicalID: selected.canonicalID, projectID: selected.projectID,
+                projectVersion: selected.projectVersion, expectedHost: selected.expectedHost)
+        }, current: { snapshot in
+            if !(await gate.entered) { await gate.wait() }
+            return try await store.projectPreviewIsCurrent(snapshot)
+        }, watch: {
+            await store.observeProjectPreviewChanges(recordingID: $0.recordingID, projectID: $0.projectID)
+        })
+        controller.residentHostAvailabilityChanged(true)
+        let token = try #require(await controller.begin(selection(store, rec, project)))
+        let first = Task { await controller.receive(rawResponse: raw, unverifiedModelLabel: "first", token: token) }
+        #expect(await settle { await gate.entered })
+        #expect(controller.state == .processingResponse)
+        // First response is suspended inside freshness validation. The replay
+        // must return without validating or consuming the session ticket.
+        await controller.receive(rawResponse: raw, unverifiedModelLabel: "duplicate", token: token)
+        #expect(controller.state == .processingResponse)
+        await gate.release()
+        await first.value
+        #expect(controller.state == .showingPreview)
+        #expect(controller.preview?.unverifiedModelLabel == "first")
+        #expect(controller.preview?.fullSourceText == source)
+        await controller.receive(rawResponse: raw, unverifiedModelLabel: "late duplicate", token: token)
+        #expect(controller.state == .showingPreview)
+    }
+
 }

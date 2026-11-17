@@ -17,7 +17,7 @@ struct ProjectPreviewResponseToken: Equatable, Sendable { fileprivate let id: UU
 /// Real Store changes are observed while this selected-source session is open.
 @MainActor
 final class SelectedProjectPreviewController: ObservableObject {
-    enum State: Equatable { case idle, preparing, awaitingResponse, showingPreview, abstained, invalidated }
+    enum State: Equatable { case idle, preparing, awaitingResponse, processingResponse, showingPreview, abstained, invalidated }
     @Published private(set) var preview: UntrustedProjectLinkPreview?
     @Published private(set) var state: State = .idle
     private var residentHostAvailable = false
@@ -124,6 +124,11 @@ final class SelectedProjectPreviewController: ObservableObject {
     func receive(rawResponse: String, unverifiedModelLabel: String, token: ProjectPreviewResponseToken) async {
         guard residentHostAvailable, state == .awaitingResponse, token == responseToken,
               let ownedSession = session, let captured = snapshot, let ownedTicket = ticket else { return }
+        // Claim this response synchronously before the first suspension. A
+        // concurrent replay must not consume the actor ticket twice and clear
+        // the legitimate in-flight preview on the second completion's error.
+        responseToken = nil
+        state = .processingResponse
         let version = generation
         await withTaskCancellationHandler {
             await finish(rawResponse: rawResponse, unverifiedModelLabel: unverifiedModelLabel,
