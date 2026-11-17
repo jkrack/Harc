@@ -45,8 +45,8 @@ snapshot paths are not a cryptographic isolation boundary from another process
 running as the same user. A robust implementation must define the local threat
 model and prevent in-app mutation during loading. Do not claim that pre/post
 hashes prove intermediate bytes against an adversarial same-user writer. If that
-strong guarantee is required, qualify a loader consuming retained verified input
-handles/bytes instead of path-based reopening; current SDK does not expose that
+strong guarantee is required, qualify a loader consuming verified immutable in-memory bytes or mappings with proven copy
+semantics instead of path-based reopening; current SDK does not expose that
 whole-bundle contract. No security-setting or permission changes are proposed.
 
 ## Synthetic test matrix before touching real model data
@@ -64,5 +64,20 @@ whole-bundle contract. No security-setting or permission changes are proposed.
 - Existing resident unqualified container cannot satisfy evidence request.
 - Early evidence failure retains producer cleanup ownership (PR215 regression).
 
-No synthetic snapshot tests have been implemented or run yet. This design does
-not assert on-device semantic quality or model qualification.
+A separate internal synthetic-only copier now exercises flat-file manifests,
+no-follow descriptor-relative opens, regular-file checks, exclusive copies,
+destination hashes, exact source/destination file sets and scoped cleanup.
+It caps each file at 1 MiB and total input at 4 MiB, deliberately preventing use
+with real weights. It is not a production manifest resolver or resident receipt.
+Synthetic tests cover copied fake-loader input, corrupt bytes, extra/nested files,
+symlinks, invalid paths and consumer cancellation. Production loading and service
+load-generation receipt binding remain unimplemented. No semantic quality or
+real-model qualification is asserted.
+
+Qualification evidence for this slice: five synthetic test functions passed
+(including four adversarial-input variants). An initial assertion compared URL
+representations with differing trailing slashes; comparing parent paths corrected
+the test without changing copier behavior. No actual model files were used.
+Service-generation receipt tests are deferred with the still-unimplemented
+production loader binding; existing PR215 tests cover unload invalidation and
+producer cleanup ordering, not a verified model receipt.
