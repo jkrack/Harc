@@ -320,6 +320,7 @@ let package = Package(
             name: "HarcSummarize",
             dependencies: [
                 "HarcCore",
+                "HarcModels",
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),

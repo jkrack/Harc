@@ -1,5 +1,6 @@
 import Foundation
 import HarcCore
+import HarcModels
 
 /// Recoverable errors surfaced by `SummarizerService`. Non-recoverable
 /// bugs (contract violations) trap as usual.
@@ -288,6 +289,68 @@ public actor SummarizerService {
             throw error
         } catch {
             throw SummarizerError.generationFailed(error.localizedDescription)
+        }
+    }
+
+    /// Scoped qualified generation groundwork. No UI/default caller exists.
+    /// Rejects unrelated resident models instead of evicting them. The exact
+    /// verified snapshot is loaded under one operation owner and unloaded before
+    /// its factory callback returns and removes the copied files.
+    func generateQualifiedEvidence(promptBody: String, modelID: String,
+                                   installedDirectory: URL, scratchDirectory: URL) async throws -> String {
+        try await withEvidenceSession { generation in
+            try await QualifiedEvidenceSnapshotFactory.withSnapshot(modelID: modelID,
+                installedDirectory: installedDirectory, scratchDirectory: scratchDirectory) { snapshot in
+                try await self.generateScopedEvidence(promptBody: promptBody, modelID: snapshot.context.modelID,
+                    directory: snapshot.directory, contextLimit: snapshot.context.operationalContextTokens,
+                    manifestDigest: snapshot.manifestDigest, snapshotNonce: snapshot.nonce,
+                    expectedGeneration: generation)
+            }
+        }
+    }
+
+    // Internal composition seam for synthetic lifetime tests. The production
+    // caller above is the sole route from a catalog-qualified factory.
+    func withEvidenceSession<T: Sendable>(operation: @Sendable (UUID) async throws -> T) async throws -> T {
+        try await acquireOperation()
+        defer { releaseOperation() }
+        try Task.checkCancellation()
+        guard container == nil else { throw EvidenceGenerationError.unrelatedResident }
+        cancelIdleUnload()
+        let generation = loadGeneration
+        return try await operation(generation)
+    }
+
+    func generateScopedEvidence(promptBody: String, modelID: String, directory: URL, contextLimit: Int,
+                                manifestDigest: String, snapshotNonce: UUID,
+                                expectedGeneration: UUID) async throws -> String {
+        try Task.checkCancellation()
+        guard operationActive, container == nil, expectedGeneration == loadGeneration,
+              manifestDigest.count == 64 else { throw CancellationError() }
+        let loaded = try await getOrLoad(modelID: modelID, directory: directory)
+        // This receipt is local to the exact returned loader result and scope.
+        // It cannot upgrade an ordinary preload or survive unload/model switch.
+        let receipt = (generation: loadGeneration, snapshot: snapshotNonce, manifest: manifestDigest,
+                       load: UUID(), directory: directory.standardizedFileURL)
+        defer {
+            // Release only this scoped resident; keep unrelated queued callers.
+            idleUnloadTask?.cancel()
+            idleUnloadTask = nil
+            loadGeneration = UUID()
+            container = nil
+            loadedModelID = nil
+            loadedDirectory = nil
+        }
+        let budget = try EvidenceGenerationBudget(contextLimit: contextLimit, outputReserve: 512)
+        do {
+            let result = try await loaded.generateEvidence(promptBody: promptBody, budget: budget)
+            try Task.checkCancellation()
+            guard receipt.generation == loadGeneration, expectedGeneration == loadGeneration,
+                  loadedModelID == modelID, loadedDirectory == receipt.directory else { throw CancellationError() }
+            return result
+        } catch {
+            if Task.isCancelled || expectedGeneration != loadGeneration { throw CancellationError() }
+            throw error
         }
     }
 

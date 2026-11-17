@@ -59,17 +59,12 @@ import Testing
             HeldSnapshotContainer(directory: directory, filename: filename, bytes: bytes, gate: gate, fails: fails)
         })
         let run = Task {
-            try await SyntheticEvidenceSnapshot.withSnapshot(source: source, scratch: scratch, files: [file]) { snapshot in
-                try await service.preload(modelID: "fixture", modelDirectory: snapshot)
-                do {
-                    _ = try await service.generateEvidence(promptBody: "synthetic", modelID: "fixture",
-                        modelDirectory: snapshot, budget: EvidenceGenerationBudget(contextLimit: 100, outputReserve: 20))
-                    await service.unload()
-                } catch {
-                    // Snapshot ownership must outlast the resident container,
-                    // not merely a successful generation response.
-                    await service.unload()
-                    throw error
+            try await service.withEvidenceSession { generation in
+                try await SyntheticEvidenceSnapshot.withSnapshot(source: source, scratch: scratch, files: [file]) { snapshot in
+                    _ = try await service.generateScopedEvidence(promptBody: "synthetic", modelID: "fixture",
+                        directory: snapshot, contextLimit: 1024, manifestDigest: file.sha256,
+                        snapshotNonce: UUID(), expectedGeneration: generation)
+                    #expect(await service.loadedModelID == nil)
                 }
             }
         }
@@ -80,11 +75,54 @@ import Testing
         if let directory = staged.first {
             #expect(try Data(contentsOf: directory.appendingPathComponent(filename)) == bytes)
         }
+        let queued = Task { try await service.preload(modelID: "fixture", modelDirectory: source) }
+        for _ in 0..<1000 { if await service.pendingOperationCount == 1 { break }; try await Task.sleep(for: .milliseconds(2)) }
+        #expect(await service.pendingOperationCount == 1)
         await gate.release()
         do { try await run.value; #expect(!fails) }
         catch EvidenceGenerationError.outputExceeded { #expect(fails) }
+        // Scope cleanup must release, not cancel, unrelated queued callers.
+        try await queued.value
+        #expect(await service.loadedModelID == "fixture")
+        await service.unload()
         #expect(await service.loadedModelID == nil)
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
+    }
+
+    @Test func qualifiedEntryRefusesUnrelatedResidentBeforeAnyCopy() async throws {
+        let service = SummarizerService(loader: { directory in
+            SnapshotFakeContainer(directory: directory, expectedBytes: Data(), filename: "unused")
+        })
+        try await service.preload(modelID: "ordinary", modelDirectory: .temporaryDirectory)
+        await #expect(throws: EvidenceGenerationError.unrelatedResident) {
+            try await service.generateQualifiedEvidence(promptBody: "synthetic", modelID: "gemma-4-e2b-it-4bit",
+                installedDirectory: URL(fileURLWithPath: "/nonexistent-fixture"), scratchDirectory: .temporaryDirectory)
+        }
+        #expect(await service.loadedModelID == "ordinary")
+        await service.unload()
+    }
+
+    @Test(arguments: [false, true])
+    func scopedLoadInvalidationCannotMintUsableResident(cancel: Bool) async throws {
+        let gate = SnapshotGenerationGate()
+        let service = SummarizerService(loader: { directory in
+            await gate.wait()
+            return SnapshotFakeContainer(directory: directory, expectedBytes: Data(), filename: "never-read")
+        })
+        let run = Task {
+            try await service.withEvidenceSession { generation in
+                try await service.generateScopedEvidence(promptBody: "synthetic", modelID: "fixture",
+                    directory: .temporaryDirectory, contextLimit: 1024,
+                    manifestDigest: String(repeating: "a", count: 64), snapshotNonce: UUID(), expectedGeneration: generation)
+            }
+        }
+        for _ in 0..<1000 { if await gate.started { break }; try await Task.sleep(for: .milliseconds(2)) }
+        #expect(await gate.started)
+        if cancel { run.cancel() } else { await service.unload() }
+        await gate.release()
+        do { _ = try await run.value; Issue.record("Invalidated scoped load returned") }
+        catch is CancellationError { }
+        #expect(await service.loadedModelID == nil)
     }
 
     @Test func badManifestNeverInvokesLoader() async throws {
