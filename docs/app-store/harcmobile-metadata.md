@@ -1,6 +1,6 @@
 # HarcMobile App Store metadata
 
-**Prepared:** 2026-08-09
+**Prepared:** 2026-11-17
 **Primary localization:** English (U.S.)
 **Bundle ID:** `com.harc.HarcMobile`
 
@@ -53,9 +53,17 @@ durably committed the recording. When the Host is reachable, encrypted audio
 syncs directly over your local network or through the optional content-blind
 Harc Remote relay.
 
+On a compatible iPhone and supported language, Harc can create an on-device
+transcript preview after saving a recording. Apple speech models must be
+installed; a separate download action is offered when a model is missing.
+Routine transcription stays on the iPhone and does not upload your audio.
+Availability varies by device and language. Recording remains available when
+local transcription is unavailable.
+
 Your Harc Host transcribes, summarizes, and organizes recordings locally on
-Apple silicon. Harc has no cloud account, advertising, app-use analytics, or
-cloud speech-processing service.
+Apple silicon. Host transcripts take precedence over local previews. Harc has
+no cloud account, advertising, app-use analytics, or cloud speech-processing
+service.
 
 Features include:
 
@@ -68,9 +76,10 @@ Features include:
 - optional Harc Remote reachability without exposing recording content to the
   relay.
 
-Harc for Mac is required for transcription, summaries, and the canonical
-host-backed library. Recording and the bundled offline review sample do not
-require an account.
+Harc for Mac is required for summaries, speaker names, and the canonical
+host-backed library. Compatible iPhones can provide local transcript previews
+without a reachable Host. Recording and the bundled offline review sample do
+not require an account.
 
 **Keywords**
 meeting,recorder,transcription,voice,notes,audio,private,offline,summary,speech
