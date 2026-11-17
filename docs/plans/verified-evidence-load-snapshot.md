@@ -45,8 +45,8 @@ snapshot paths are not a cryptographic isolation boundary from another process
 running as the same user. A robust implementation must define the local threat
 model and prevent in-app mutation during loading. Do not claim that pre/post
 hashes prove intermediate bytes against an adversarial same-user writer. If that
-strong guarantee is required, qualify a loader consuming retained verified input
-handles/bytes instead of path-based reopening; current SDK does not expose that
+strong guarantee is required, qualify a loader consuming verified immutable in-memory bytes or mappings with proven copy
+semantics instead of path-based reopening; current SDK does not expose that
 whole-bundle contract. No security-setting or permission changes are proposed.
 
 ## Synthetic test matrix before touching real model data
@@ -64,5 +64,42 @@ whole-bundle contract. No security-setting or permission changes are proposed.
 - Existing resident unqualified container cannot satisfy evidence request.
 - Early evidence failure retains producer cleanup ownership (PR215 regression).
 
-No synthetic snapshot tests have been implemented or run yet. This design does
-not assert on-device semantic quality or model qualification.
+A separate internal synthetic-only copier now exercises flat-file manifests,
+no-follow descriptor-relative opens, regular-file checks, exclusive copies,
+destination hashes, exact source/destination file sets and scoped cleanup.
+It caps each file at 1 MiB and total input at 4 MiB, deliberately preventing use
+with real weights. It is not a production manifest resolver or resident receipt.
+Synthetic tests cover copied fake-loader input, corrupt bytes, extra/nested files,
+symlinks, invalid paths and consumer cancellation. Production loading and service
+load-generation receipt binding remain unimplemented. No semantic quality or
+real-model qualification is asserted.
+
+Qualification evidence for this slice: five synthetic test functions passed
+(including four adversarial-input variants). An initial assertion compared URL
+representations with differing trailing slashes; comparing parent paths corrected
+the test without changing copier behavior. No actual model files were used.
+Service-generation receipt tests are deferred with the still-unimplemented
+production loader binding; existing PR215 tests cover unload invalidation and
+producer cleanup ordering, not a verified model receipt.
+
+Snapshot hardening: roots are canonicalized before opening; just before consumer
+handoff, path-opened parent and snapshot device/inode identities must match the
+retained descriptors. A deterministic scratch rename/replacement regression
+rejects the replacement before consumer execution while cleanup removes only
+the original owned staging directory. This is point-in-time accidental-change
+protection, not an atomic defense against a hostile writer after the check.
+Directory enumeration now stops above manifest count and checks cancellation
+on each entry. A real caller task cancellation while detached preparation is
+paused verifies cancellation propagation and owned-directory cleanup.
+Seven synthetic snapshot test functions passed after handoff/cancellation fixes.
+The first cancellation fixture used a semaphore wait from an async context and
+failed compilation; the corrected fixture uses nonblocking locked state while
+only the synchronous preparation hook waits. No failing run is counted as pass.
+
+Cleanup also verifies the named child directory's device/inode against its retained
+descriptor before removing the directory name. If the child was renamed and an
+unrelated empty replacement created, cleanup removes only its copied files via
+the owned descriptor and skips pathname removal. The renamed empty staging
+directory may remain; this conservative leak is preferable to deleting an
+unowned replacement. A deterministic child-swap regression checks both remain.
+This remains a point-in-time check, not hostile same-user race protection.
