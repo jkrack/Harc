@@ -20,7 +20,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         let content = try await SyntheticEvidenceSnapshot.withSnapshot(source: source, scratch: scratch, files: [file]) { url in
             #expect(url != source)
-            #expect(url.deletingLastPathComponent().path == scratch.path)
+            #expect(url.deletingLastPathComponent().path == scratch.resolvingSymlinksInPath().path)
             return try Data(contentsOf: url.appendingPathComponent(file.name))
         }
         #expect(content == Data("synthetic model bytes".utf8))
@@ -68,6 +68,47 @@ import Testing
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
     }
 
+    @Test func replacedScratchCannotReachConsumer() async throws {
+        let (root, source, scratch, file) = try setup()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let moved = root.appendingPathComponent("old-scratch")
+        await #expect(throws: (any Error).self) {
+            try await SyntheticEvidenceSnapshot.withSnapshot(source: source, scratch: scratch, files: [file], beforeHandoff: { url in
+                do {
+                    try FileManager.default.moveItem(at: scratch, to: moved)
+                    try FileManager.default.createDirectory(at: scratch.appendingPathComponent(url.lastPathComponent), withIntermediateDirectories: true)
+                } catch { Issue.record("Fixture replacement failed: \(error)") }
+            }) { _ in Issue.record("Replaced path reached consumer") }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: moved.path).isEmpty)
+        // Cleanup must not remove the replacement directory it does not own.
+        #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).count == 1)
+    }
+
+    @Test func actualCallerCancellationDuringPreparationCleansOwnedDirectory() async throws {
+        let (root, source, scratch, file) = try setup()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let entered = SnapshotStartedFlag()
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let task = Task {
+            try await SyntheticEvidenceSnapshot.withSnapshot(source: source, scratch: scratch, files: [file], beforeCopy: {
+                entered.set()
+                release.wait()
+            }) { _ in Issue.record("Cancelled preparation reached consumer") }
+        }
+        var observed = false
+        for _ in 0..<1000 {
+            if entered.value { observed = true; break }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(observed)
+        task.cancel()
+        release.signal()
+        do { try await task.value; Issue.record("Cancelled task succeeded") } catch is CancellationError { }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
+    }
+
     @Test func invalidManifestNeverCopies() async throws {
         let (root, source, scratch, file) = try setup()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -79,4 +120,11 @@ import Testing
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
     }
+}
+
+private final class SnapshotStartedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    var value: Bool { lock.withLock { started } }
+    func set() { lock.withLock { started = true } }
 }

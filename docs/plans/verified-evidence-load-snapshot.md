@@ -81,3 +81,17 @@ the test without changing copier behavior. No actual model files were used.
 Service-generation receipt tests are deferred with the still-unimplemented
 production loader binding; existing PR215 tests cover unload invalidation and
 producer cleanup ordering, not a verified model receipt.
+
+Snapshot hardening: roots are canonicalized before opening; just before consumer
+handoff, path-opened parent and snapshot device/inode identities must match the
+retained descriptors. A deterministic scratch rename/replacement regression
+rejects the replacement before consumer execution while cleanup removes only
+the original owned staging directory. This is point-in-time accidental-change
+protection, not an atomic defense against a hostile writer after the check.
+Directory enumeration now stops above manifest count and checks cancellation
+on each entry. A real caller task cancellation while detached preparation is
+paused verifies cancellation propagation and owned-directory cleanup.
+Seven synthetic snapshot test functions passed after handoff/cancellation fixes.
+The first cancellation fixture used a semaphore wait from an async context and
+failed compilation; the corrected fixture uses nonblocking locked state while
+only the synchronous preparation hook waits. No failing run is counted as pass.

@@ -16,13 +16,18 @@ enum SyntheticEvidenceSnapshot {
     /// Small fixtures only. Executes synchronous bounded file work off-main and
     /// keeps cleanup ownership until the consumer (fake loader in tests) ends.
     static func withSnapshot<T: Sendable>(source: URL, scratch: URL, files: [File],
+        beforeCopy: @escaping @Sendable () -> Void = {},
+        beforeHandoff: @escaping @Sendable (URL) -> Void = { _ in },
         consume: @Sendable (URL) async throws -> T) async throws -> T {
         let preparation = Task.detached(priority: .utility) {
-            try prepare(source: source, scratch: scratch, files: files)
+            try prepare(source: source, scratch: scratch, files: files, beforeCopy: beforeCopy)
         }
         return try await withTaskCancellationHandler {
             let snapshot = try await preparation.value
             defer { snapshot.cleanup() }
+            try Task.checkCancellation()
+            beforeHandoff(snapshot.url)
+            try snapshot.validatePathBinding()
             try Task.checkCancellation()
             return try await consume(snapshot.url)
         } onCancel: { preparation.cancel() }
@@ -38,6 +43,20 @@ enum SyntheticEvidenceSnapshot {
             self.url = url; self.parent = parent; self.directory = directory
             self.name = name; self.files = files
         }
+        func validatePathBinding() throws {
+            let pathParent = open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard pathParent >= 0 else { throw Failure.filesystem }
+            defer { close(pathParent) }
+            let pathDirectory = openat(pathParent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard pathDirectory >= 0 else { throw Failure.filesystem }
+            defer { close(pathDirectory) }
+            func same(_ a: Int32, _ b: Int32) -> Bool {
+                var first = stat(); var second = stat()
+                return fstat(a, &first) == 0 && fstat(b, &second) == 0 &&
+                    first.st_dev == second.st_dev && first.st_ino == second.st_ino
+            }
+            guard same(parent, pathParent), same(directory, pathDirectory) else { throw Failure.integrity }
+        }
         // Called exactly once by ownership scope; never recursively traverses
         // caller paths or follows symlinks, and never removes source files.
         func cleanup() {
@@ -48,7 +67,7 @@ enum SyntheticEvidenceSnapshot {
         }
     }
 
-    private static func names(_ fd: Int32) throws -> Set<String> {
+    private static func names(_ fd: Int32, limit: Int) throws -> Set<String> {
         let copied = dup(fd)
         guard copied >= 0 else { throw Failure.filesystem }
         guard let directory = fdopendir(copied) else { close(copied); throw Failure.filesystem }
@@ -57,17 +76,21 @@ enum SyntheticEvidenceSnapshot {
         var result = Set<String>()
         errno = 0
         while let entry = readdir(directory) {
+            try Task.checkCancellation()
             let name = withUnsafePointer(to: &entry.pointee.d_name) {
                 $0.withMemoryRebound(to: CChar.self, capacity: Int(NAME_MAX) + 1) { String(cString: $0) }
             }
-            if name != "." && name != ".." { result.insert(name) }
+            if name != "." && name != ".." {
+                result.insert(name)
+                guard result.count <= limit else { throw Failure.unexpectedFiles }
+            }
             errno = 0
         }
         guard errno == 0 else { throw Failure.filesystem }
         return result
     }
 
-    private static func prepare(source: URL, scratch: URL, files: [File]) throws -> Snapshot {
+    private static func prepare(source: URL, scratch: URL, files: [File], beforeCopy: @Sendable () -> Void) throws -> Snapshot {
         guard !files.isEmpty, files.count <= 16,
               Set(files.map(\.name)).count == files.count,
               files.allSatisfy({ file in
@@ -77,10 +100,12 @@ enum SyntheticEvidenceSnapshot {
                   file.sha256.allSatisfy { "0123456789abcdef".contains($0) }
               }), files.reduce(0, { $0 + $1.bytes }) <= 4_194_304 else { throw Failure.invalidManifest }
         try Task.checkCancellation()
+        let source = source.standardizedFileURL.resolvingSymlinksInPath()
+        let scratch = scratch.standardizedFileURL.resolvingSymlinksInPath()
         let src = open(source.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard src >= 0 else { throw Failure.filesystem }
         defer { close(src) }
-        guard try names(src) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
+        guard try names(src, limit: files.count) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
         let parent = open(scratch.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard parent >= 0 else { throw Failure.filesystem }
         let name = "evidence-fixture-" + UUID().uuidString
@@ -92,6 +117,8 @@ enum SyntheticEvidenceSnapshot {
         let snapshot = Snapshot(url: scratch.appendingPathComponent(name), parent: parent,
                                 directory: destination, name: name, files: files)
         do {
+            beforeCopy()
+            try Task.checkCancellation()
             for file in files {
                 try Task.checkCancellation()
                 let input = openat(src, file.name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
@@ -137,8 +164,8 @@ enum SyntheticEvidenceSnapshot {
                 let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
                 guard hashedBytes == file.bytes, digest == file.sha256 else { throw Failure.integrity }
             }
-            guard try names(destination) == Set(files.map(\.name)),
-                  try names(src) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
+            guard try names(destination, limit: files.count) == Set(files.map(\.name)),
+                  try names(src, limit: files.count) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
             try Task.checkCancellation()
             return snapshot
         } catch { snapshot.cleanup(); throw error }
