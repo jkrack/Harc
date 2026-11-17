@@ -9,6 +9,12 @@ guard AXIsProcessTrusted() else {
     print("AX client not trusted; no prompt or permission change attempted.")
     exit(2)
 }
+// Wall-clock bound includes all attributes/nodes, even a stalled AX server.
+DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+    print("Whole-process AX watchdog expired after 20 seconds.")
+    fflush(stdout)
+    exit(124)
+}
 let application = AXUIElementCreateApplication(pid)
 AXUIElementSetMessagingTimeout(application, 2)
 var count = 0

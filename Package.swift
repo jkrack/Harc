@@ -1,5 +1,6 @@
 // swift-tools-version: 6.2
 import PackageDescription
+import Foundation
 
 let package = Package(
     name: "Harc",
@@ -499,3 +500,12 @@ let package = Package(
         ),
     ]
 )
+
+
+// Explicit development-only fixture. Absent from ordinary package graphs and
+// all shipping products; never added to the app project.
+if ProcessInfo.processInfo.environment["HARC_BUILD_PREVIEW_QA"] == "1" {
+    package.targets.append(.executableTarget(name: "HarcPreviewQAFixture",
+        dependencies: ["HarcUI", "HarcStore", "HarcDomain"],
+        path: "Tools/PreviewQAFixture"))
+}
