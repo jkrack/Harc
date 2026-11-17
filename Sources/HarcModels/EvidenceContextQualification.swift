@@ -27,7 +27,23 @@ public struct QualifiedEvidenceContext: Sendable, Equatable {
 
 public enum EvidenceContextQualification {
     /// Deliberately narrow allowlist, not every catalog entry or SDK default.
-    public static func resolve(modelID: String, directory: URL) throws -> QualifiedEvidenceContext {
+    public static func resolve(modelID: String, directory: URL) async throws -> QualifiedEvidenceContext {
+        let read = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            let result = try resolveConfig(modelID: modelID, directory: directory)
+            try Task.checkCancellation()
+            return result
+        }
+        return try await withTaskCancellationHandler {
+            let result = try await read.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: { read.cancel() }
+    }
+
+    // Internal synchronous core for bounded synthetic tests; production reads
+    // always go through the detached utility task, never the main actor.
+    static func resolveConfig(modelID: String, directory: URL) throws -> QualifiedEvidenceContext {
         guard modelID == "gemma-4-e2b-it-4bit",
               let descriptor = ModelCatalog.descriptor(for: modelID), descriptor.manifestVerified,
               let config = descriptor.files.first(where: { $0.path == "config.json" }),
@@ -47,8 +63,8 @@ public enum EvidenceContextQualification {
 
     /// Re-read immediately around model binding; this is a point-in-time check,
     /// not filesystem locking or proof of the identity of an already loaded model.
-    public static func revalidate(_ qualified: QualifiedEvidenceContext) throws {
-        guard try resolve(modelID: qualified.modelID, directory: qualified.directory) == qualified else {
+    public static func revalidate(_ qualified: QualifiedEvidenceContext) async throws {
+        guard try await resolve(modelID: qualified.modelID, directory: qualified.directory) == qualified else {
             throw EvidenceContextError.changed
         }
     }

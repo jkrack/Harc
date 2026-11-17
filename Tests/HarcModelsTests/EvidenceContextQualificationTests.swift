@@ -3,21 +3,44 @@ import Testing
 @testable import HarcModels
 
 @Suite struct EvidenceContextQualificationTests {
-    @Test func pinnedFixtureQualifiesAndMutationFailsRevalidation() throws {
+    @Test func pinnedFixtureQualifiesAndMutationFailsRevalidation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let fixture = try #require(Bundle.module.url(forResource: "evidence-gemma4-config", withExtension: "json"))
         let target = directory.appendingPathComponent("config.json")
         try FileManager.default.copyItem(at: fixture, to: target)
-        let result = try EvidenceContextQualification.resolve(modelID: "gemma-4-e2b-it-4bit", directory: directory)
+        let result = try EvidenceContextQualification.resolveConfig(modelID: "gemma-4-e2b-it-4bit", directory: directory)
         #expect(result.modelContextTokens == 131_072)
         #expect(result.operationalContextTokens == 32_768)
-        try EvidenceContextQualification.revalidate(result)
+        try await EvidenceContextQualification.revalidate(result)
         var data = try Data(contentsOf: target)
         data[0] = 32
         try data.write(to: target)
-        #expect(throws: EvidenceContextError.digestMismatch) { try EvidenceContextQualification.revalidate(result) }
+        await #expect(throws: EvidenceContextError.digestMismatch) { try await EvidenceContextQualification.revalidate(result) }
+    }
+
+    @Test func directorySymlinkRetargetCannotRebindReceipt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let first = root.appendingPathComponent("first")
+        let second = root.appendingPathComponent("second")
+        let link = root.appendingPathComponent("current")
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try #require(Bundle.module.url(forResource: "evidence-gemma4-config", withExtension: "json"))
+        try FileManager.default.copyItem(at: fixture, to: first.appendingPathComponent("config.json"))
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: first)
+        let receipt = try await EvidenceContextQualification.resolve(modelID: "gemma-4-e2b-it-4bit", directory: link)
+        #expect(receipt.directory == first.resolvingSymlinksInPath())
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: second)
+        // Revalidation remains bound to the original resolved directory, never
+        // silently authorizes the replacement target at the old alias.
+        try await EvidenceContextQualification.revalidate(receipt)
+        await #expect(throws: (any Error).self) {
+            try await EvidenceContextQualification.resolve(modelID: "gemma-4-e2b-it-4bit", directory: link)
+        }
     }
 
     @Test func explicitKnownSchemaOnly() throws {
@@ -36,7 +59,7 @@ import Testing
     }
     @Test func unknownModelCannotSupplyOwnConfig() {
         #expect(throws: EvidenceContextError.unsupportedModel) {
-            try EvidenceContextQualification.resolve(modelID: "unknown", directory: .temporaryDirectory)
+            try EvidenceContextQualification.resolveConfig(modelID: "unknown", directory: .temporaryDirectory)
         }
     }
     @Test func sizeAndDigestRejectUntrustedConfig() throws {
@@ -46,11 +69,11 @@ import Testing
         let file = directory.appendingPathComponent("config.json")
         try Data(repeating: 32, count: 5997).write(to: file)
         #expect(throws: EvidenceContextError.invalidConfig) {
-            try EvidenceContextQualification.resolve(modelID: "gemma-4-e2b-it-4bit", directory: directory)
+            try EvidenceContextQualification.resolveConfig(modelID: "gemma-4-e2b-it-4bit", directory: directory)
         }
         try Data(repeating: 32, count: 5996).write(to: file)
         #expect(throws: EvidenceContextError.digestMismatch) {
-            try EvidenceContextQualification.resolve(modelID: "gemma-4-e2b-it-4bit", directory: directory)
+            try EvidenceContextQualification.resolveConfig(modelID: "gemma-4-e2b-it-4bit", directory: directory)
         }
     }
 }

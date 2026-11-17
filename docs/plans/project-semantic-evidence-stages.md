@@ -152,3 +152,28 @@ load-generation identity. The immutable result supports a point-in-time re-read,
 not locking against filesystem mutation. No bridge to the generation budget is
 provided yet; adapter activation still needs verified installed bundle identity
 bound across loading, synthetic model tests, and Store source revalidation.
+
+### Resident identity investigation: activation remains blocked
+
+Pinned SDK `MLXLMCommon/Load.swift` recursively enumerates ALL `.safetensors`
+files, not only a manifest index. Extra unlisted weights can override tensor keys.
+`LLMModelFactory.swift` separately reads config, optional generation config and
+loads tokenizer in parallel. Harc's `ModelStorage.persistedState` intentionally
+checks catalog identity and file sizes, not same-size mutations or extra files.
+Consequently neither install marker nor matching config can attest an already
+resident container. Do not attach qualification retroactively to arbitrary
+`preload`/summary containers.
+
+A next qualified-load slice must enumerate the complete allowed input set,
+reject unlisted loader-relevant files and escaping symlinks, stream-hash all
+pinned inputs off-main with cancellation, and load only a stable isolated
+verified snapshot. Bind its receipt to the exact loader invocation, normalized
+snapshot directory and service load-generation UUID; invalidate on unload or
+model switch. Pre/post hashing a writable source alone does not prove the bytes
+consumed between checks. Snapshot creation/cleanup and multi-GB disk impact
+need focused qualification before implementing that loader. No weights were
+hashed, copied or loaded in this investigation.
+
+Config resolver public reads now run in a detached utility task with cancellation.
+A directory symlink test confirms a receipt stays bound to its original resolved
+location after the alias retargets; it never authorizes a replacement directory.
