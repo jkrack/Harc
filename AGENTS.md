@@ -1024,3 +1024,11 @@ and undo compare-and-swap protected against later decisions. Impact counts actua
 changed relationships, never estimated precision. Do not promote aliases or
 speaker enrollment from project answers. Validate with ProjectRefinementTests;
 UI/sync/extraction need separate implementation and qualification.
+
+ProjectRefinementPanel is a reusable, unhosted local-canonical UI, not enabled
+for Client mirrors. Restore recent answer/undo history from Store; current action
+feedback must never come from that historical list. Reopening while a save is
+in flight must reactivate and reload without dropping its receipt. Set-aside
+stale evidence can explicitly reopen for refreshed review, preserving prior
+answer events. Validate ProjectRefinementViewModelTests and
+ProjectRefinementTests; package passes do not qualify app/VoiceOver behavior.

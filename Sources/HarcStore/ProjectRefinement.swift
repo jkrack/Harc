@@ -45,6 +45,28 @@ public struct ProjectReviewReceipt: Codable, Equatable, Sendable {
     public let newlyLinkedRecordings: Int
 }
 
+public struct ProjectReviewApplication: Sendable {
+    public let receipt: ProjectReviewReceipt
+    public let didApply: Bool
+}
+
+public struct ProjectReviewCard: Sendable, Identifiable {
+    public var id: UUID { review.id }
+    public let review: ProjectMatchReview
+    public let recordingTitle: String
+    public let projectName: String
+    public let sourceContext: String?
+    public let evidenceIsCurrent: Bool
+}
+
+public struct ProjectReviewHistoryItem: Sendable {
+    public let receipt: ProjectReviewReceipt
+    public let projectName: String
+    public let recordingTitle: String
+    public let undone: Bool
+    public let canUndo: Bool
+}
+
 public enum ProjectRefinementError: Error, Equatable {
     case missing, invalidEvidence, staleEvidence, conflict, operationMismatch
 }
@@ -80,6 +102,13 @@ extension DatabaseMigrator {
                     payload BLOB NOT NULL,
                     undone INTEGER NOT NULL DEFAULT 0 CHECK(undone IN (0, 1))
                 );
+                """)
+        }
+        migrator.registerMigration("v35_project_review_queue_index") { db in
+            try db.execute(sql: """
+                CREATE INDEX project_match_review_decision ON project_match_reviews(
+                    json_extract(CAST(payload AS TEXT), '$.decision'), id
+                )
                 """)
         }
     }
@@ -179,15 +208,95 @@ public extension RecordingStore {
         }
     }
 
+    /// Bounded local review snapshot. Never returns trashed recordings or
+    /// resolved/unsure decisions. No filesystem reads or inferred timestamps.
+    func pendingProjectReviewCards(limit: Int = 3, deferred: Bool = false) async throws -> [ProjectReviewCard] {
+        let limit = min(max(limit, 1), 20)
+        return try await db.read { database in
+            let data = try Data.fetchAll(database, sql: """
+                SELECT m.payload FROM project_match_reviews m
+                JOIN recordings r ON r.id = m.recording_id
+                WHERE r.deleted_at IS NULL AND json_extract(CAST(m.payload AS TEXT), '$.decision') = ?
+                ORDER BY m.id LIMIT ?
+                """, arguments: [deferred ? "unsure" : "pending", limit])
+            return try data.map { data in
+                let review = try JSONDecoder().decode(ProjectMatchReview.self, from: data)
+                guard let recording = try Recording.fetchOne(database, key: review.recordingID),
+                      let projectData = try Data.fetchOne(database, sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [review.project.id.uuidString]) else { throw ProjectRefinementError.missing }
+                let project = try JSONDecoder().decode(KnowledgeProject.self, from: projectData)
+                var current = true
+                do { try validateEvidence(database, review: review) }
+                catch ProjectRefinementError.staleEvidence { current = false }
+                let context: String?
+                if let text = recording.transcriptText, let range = text.range(of: review.quote) {
+                    let start = text.index(range.lowerBound, offsetBy: -160, limitedBy: text.startIndex) ?? text.startIndex
+                    let end = text.index(range.upperBound, offsetBy: 160, limitedBy: text.endIndex) ?? text.endIndex
+                    context = String(text[start..<end])
+                } else { context = nil }
+                return ProjectReviewCard(review: review, recordingTitle: recording.title ?? "Untitled recording",
+                    projectName: project.name, sourceContext: context, evidenceIsCurrent: current)
+            }
+        }
+    }
+
+    /// Explicitly reopens a pending or set-aside hypothesis when its original verbatim
+    /// quote still exists. It cannot manufacture new supporting text or erase a
+    /// accepted/rejected answer. Prior set-aside event history remains intact.
+    /// The caller must display the refreshed card before acceptance.
+    func refreshPendingProjectReview(id: UUID, expectedVersion: UUID) async throws {
+        try await db.write { database in
+            let old = try loadReview(database, id: id)
+            guard old.version == expectedVersion, old.decision == .pending || old.decision == .unsure else { throw ProjectRefinementError.conflict }
+            guard let recording = try Recording.fetchOne(database, key: old.recordingID), recording.deletedAt == nil,
+                  recording.canonicalID == old.canonicalID,
+                  let text = recording.transcriptText, text.contains(old.quote),
+                  let data = try Data.fetchOne(database, sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [old.project.id.uuidString]) else { throw ProjectRefinementError.invalidEvidence }
+            let project = try JSONDecoder().decode(KnowledgeProject.self, from: data)
+            let updated = ProjectMatchReview(id: old.id, recordingID: old.recordingID, canonicalID: old.canonicalID,
+                project: project, recordingRevision: recording.revision, transcriptSHA256: transcriptDigest(text),
+                quote: old.quote, generatorID: old.generatorID, decision: .pending, version: UUID())
+            try saveReview(database, review: updated)
+        }
+    }
+
+    /// Durable undo-history presentation. Deleted/trashed sources remain hidden.
+    /// The newest 20 events are bounded; old conflicting events are inspectable
+    /// but never offered as undoable. This does not replay committed effects.
+    func recentProjectReviewHistory(limit: Int = 20) async throws -> [ProjectReviewHistoryItem] {
+        try await db.read { database in
+            let rows = try Row.fetchAll(database, sql: """
+                SELECT e.payload AS event_payload, e.undone AS undone, m.payload AS review_payload,
+                       p.payload AS project_payload, r.title AS recording_title, r.canonical_uuid AS canonical_uuid
+                FROM project_review_events e JOIN project_match_reviews m ON m.id = e.review_id
+                JOIN recordings r ON r.id = m.recording_id
+                JOIN knowledge_projects p ON p.id = m.project_id
+                WHERE r.deleted_at IS NULL ORDER BY e.rowid DESC LIMIT ?
+                """, arguments: [min(max(limit, 1), 100)])
+            return try rows.map { row in
+                let event = try JSONDecoder().decode(ProjectReviewEvent.self, from: row["event_payload"] as Data)
+                let review = try JSONDecoder().decode(ProjectMatchReview.self, from: row["review_payload"] as Data)
+                let project = try JSONDecoder().decode(KnowledgeProject.self, from: row["project_payload"] as Data)
+                let undone = (row["undone"] as Int) == 1
+                return ProjectReviewHistoryItem(receipt: event.receipt, projectName: project.name,
+                    recordingTitle: (row["recording_title"] as String?) ?? "Untitled recording", undone: undone,
+                    canUndo: !undone && review.version == event.after.version)
+            }
+        }
+    }
+
     /// The UI retains one operation ID per tap intent. Replays return the same
     /// receipt; they never reapply an undone or superseded decision.
     func decideProjectMatch(id: UUID, expectedVersion: UUID, decision: ProjectReviewDecision, operationID: UUID) async throws -> ProjectReviewReceipt {
+        try await applyProjectMatchDecision(id: id, expectedVersion: expectedVersion, decision: decision, operationID: operationID).receipt
+    }
+
+    func applyProjectMatchDecision(id: UUID, expectedVersion: UUID, decision: ProjectReviewDecision, operationID: UUID) async throws -> ProjectReviewApplication {
         guard decision != .pending else { throw ProjectRefinementError.invalidEvidence }
         return try await db.write { database in
             if let data = try Data.fetchOne(database, sql: "SELECT payload FROM project_review_events WHERE operation_id = ?", arguments: [operationID.uuidString]) {
                 let event = try JSONDecoder().decode(ProjectReviewEvent.self, from: data)
                 guard event.before.id == id, event.before.version == expectedVersion, event.after.decision == decision else { throw ProjectRefinementError.operationMismatch }
-                return event.receipt
+                return ProjectReviewApplication(receipt: event.receipt, didApply: false)
             }
             let before = try loadReview(database, id: id)
             guard before.version == expectedVersion else { throw ProjectRefinementError.conflict }
@@ -205,7 +314,7 @@ public extension RecordingStore {
             let event = ProjectReviewEvent(before: before, after: after, receipt: receipt)
             try database.execute(sql: "INSERT INTO project_review_events(operation_id, review_id, payload) VALUES (?, ?, ?)",
                 arguments: [operationID.uuidString, id.uuidString, try JSONEncoder().encode(event)])
-            return receipt
+            return ProjectReviewApplication(receipt: receipt, didApply: true)
         }
     }
 

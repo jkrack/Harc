@@ -1,6 +1,24 @@
 # Project review UI follow-on (separate from PR209 and release)
 
-Status: proposed implementation contract, not an enabled screen.
+Status: reusable panel, presentation model and Store support implemented on this
+isolated branch; not hosted in the normal Library or enabled for customers.
+
+## Implementation evidence
+
+- `ProjectRefinementPanel` and `ProjectRefinementViewModel`: source context,
+  yes/no/unsure, explicit refresh, set-aside revisit, durable recent-answer/undo
+  restoration, current-action feedback separate from historical events.
+- Store adds replay-aware application result, bounded indexed queue, current
+  project labels, refresh of pending/set-aside evidence and persisted undo query.
+- Focused SwiftPM validation: 10 presentation tests and 16 Store tests passed,
+  zero failures/skips; one Store function covers two parameter cases. This
+  includes rollback/retry, file-backed reopen and suspended-save navigation.
+- Independent review findings corrected. Actual app hosting, screenshots,
+  VoiceOver/keyboard verification, app-hosted UI tests and Xcode build remain
+  outstanding. Package validation is not app qualification.
+- No actual haptics are emitted by the Mac panel. The commit callback is tested
+  to occur only after a newly applied transaction, for future platform use.
+
 
 ## First experience
 
@@ -20,15 +38,15 @@ claim is true. No suppresses that pair until explicitly reconsidered. Not sure
 removes it from the current session without teaching a negative match. Starting
 another recording remains immediate and independent of this background work.
 
-## Store prerequisites before wiring
+## Before wiring into normal Library
 
-1. Add bounded pending-review query joining active recordings and current project
+1. Implemented: bounded indexed review query joins active recordings and current project
    display data. Do not scan the entire Library on the main actor.
-2. Explicit refresh creates new evidence only with user-visible renewed review;
+2. Implemented: explicit refresh creates new evidence only with user-visible renewed review;
    it must not erase an existing human assignment, rejection or uncertainty.
-3. Return an application outcome distinguishing newly committed, exact replay,
+3. Implemented: return an application outcome distinguishing newly committed, exact replay,
    superseded and undone operations. Historical receipts cannot replay rewards.
-4. Add file-backed reopen and injected transaction-failure tests. Define project
+4. Reopen/transaction-failure tests pass. Still define project
    rename (display only) separately from changed project meaning/version.
 5. Only expose local mutations under the current canonical writer authority.
    Do not enable secondary-client/phone writes until authenticated Host RPC/sync
