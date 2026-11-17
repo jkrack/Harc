@@ -25,3 +25,16 @@ unsure parameter cases). Coverage includes Unicode near-substrings, retained
 negation context, idempotency, rejected/unsure preservation, stale full-transcript
 hash despite unchanged excerpt, Host revocation, bounds, trash and pre-cancelled
 commit. No app UI, performance benchmark or physical behavior is claimed.
+
+Hardening follow-up: SQL checks transcript byte length before fetching the
+Recording into Swift. Batch statistics expose selected, oversized, unavailable
+and no-match counts. Mid-transaction cancellation is bridged through a locked
+flag and rolls back earlier inserts. Cancellation after the final check/commit
+boundary can still race a completed commit; callers must reload rather than
+asserting that cancellation means nothing was saved.
+
+Latest focused run: 27 tests passed, including canonical-identity and project-
+version races, rejected/unsure/accepted preservation, oversized input, duplicate
+IDs, invalid name bounds and cancellation after the first insertion. The source
+identity test uses direct mutation of its synthetic database because normal
+upsert correctly preserves canonical identity.

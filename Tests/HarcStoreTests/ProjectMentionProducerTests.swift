@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import GRDB
 import HarcDomain
 @testable import HarcStore
 
@@ -50,7 +51,7 @@ struct ProjectMentionProducerTests {
         #expect(result.inserted == 0)
     }
 
-    @Test(arguments: [ProjectReviewDecision.rejected, .unsure])
+    @Test(arguments: [ProjectReviewDecision.rejected, .unsure, .accepted])
     func neverOverwritesHumanDecision(_ decision: ProjectReviewDecision) async throws {
         let (store, recordings, project, _, root) = try await fixture(["Harc discussed."])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -93,6 +94,65 @@ struct ProjectMentionProducerTests {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await store.commitProjectMentionProposals(batch)
         }
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(try await store.pendingProjectReviewCards().isEmpty)
+    }
+
+    @Test func projectVersionAndCanonicalIdentityRacesAreStale() async throws {
+        let (store, recordings, project, _, root) = try await fixture(["Harc discussed."])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let batch = try await store.prepareProjectMentionProposals(recordingIDs: [recordings[0].id!], projectID: project.id, expectedHost: store.libraryMetadata())
+        let recordingID = recordings[0].id!
+        try await store.db.write { db in
+            try db.execute(sql: "UPDATE recordings SET canonical_uuid = ? WHERE id = ?",
+                arguments: [CanonicalRecordingID.random().description, recordingID])
+        }
+        #expect(try await store.commitProjectMentionProposals(batch).stale == 1)
+        let second = try await store.prepareProjectMentionProposals(recordingIDs: [recordings[0].id!], projectID: project.id, expectedHost: store.libraryMetadata())
+        let renamed = KnowledgeProject(id: project.id, name: "Renamed", version: UUID())
+        try await store.db.write { db in
+            try db.execute(sql: "UPDATE knowledge_projects SET payload = ? WHERE id = ?", arguments: [try JSONEncoder().encode(renamed), project.id.uuidString])
+        }
+        #expect(try await store.commitProjectMentionProposals(second).stale == 1)
+    }
+
+    @Test func boundsAndDeduplicationHaveHonestCounts() async throws {
+        let (store, recordings, project, _, root) = try await fixture(["Harc " + String(repeating: "x", count: 256_000), "Harc discussed.", "Nothing relevant."])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let host = try await store.libraryMetadata()
+        let ids = recordings.compactMap(\.id)
+        let batch = try await store.prepareProjectMentionProposals(recordingIDs: ids + [ids[1]], projectID: project.id, expectedHost: host)
+        #expect(batch.selectedCount == 3)
+        #expect(batch.oversizedCount == 1)
+        #expect(batch.noMatchCount == 1)
+        #expect(batch.candidateCount == 1)
+        for name in ["Hi", String(repeating: "x", count: 121)] {
+            let invalid = try await store.createKnowledgeProject(name: name)
+            await #expect(throws: ProjectRefinementError.invalidEvidence) {
+                _ = try await store.prepareProjectMentionProposals(recordingIDs: ids, projectID: invalid.id, expectedHost: host)
+            }
+        }
+    }
+
+    private static func waitForSignal(_ signal: DispatchSemaphore) -> Bool {
+        signal.wait(timeout: .now() + 10) == .success
+    }
+
+    @Test func cancellationAfterFirstInsertRollsBackWholeBatch() async throws {
+        let (store, recordings, project, _, root) = try await fixture(["Harc one.", "Harc two."])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let batch = try await store.prepareProjectMentionProposals(recordingIDs: recordings.compactMap(\.id), projectID: project.id, expectedHost: store.libraryMetadata())
+        let reached = DispatchSemaphore(value: 0)
+        let resume = DispatchSemaphore(value: 0)
+        let task = Task {
+            try await store.commitProjectMentionProposals(batch, beforeInsert: { inserted in
+                if inserted == 1 { reached.signal(); _ = resume.wait(timeout: .now() + 10) }
+            })
+        }
+        let arrived = await Task.detached { Self.waitForSignal(reached) }.value
+        #expect(arrived)
+        task.cancel()
+        resume.signal()
         await #expect(throws: CancellationError.self) { _ = try await task.value }
         #expect(try await store.pendingProjectReviewCards().isEmpty)
     }
