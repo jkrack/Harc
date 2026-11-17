@@ -107,3 +107,7 @@ No generator or project-creation flow is added, so an empty production queue is
 expected until a separately qualified producer creates real suggestions. No
 fixture data is inserted into user Libraries. This is not the full graph or
 phone HITL experience, and is not in release 0.14.23 (79).
+
+Next-batch traversal uses a stable review-ID cursor, so setting an already
+deferred batch aside again cannot repeat the same three cards forever. Explicit
+Refresh starts over; Undo restarts from its refreshed bounded snapshot.

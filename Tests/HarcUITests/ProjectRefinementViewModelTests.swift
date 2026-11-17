@@ -207,6 +207,32 @@ struct ProjectRefinementViewModelTests {
         #expect(try await store.projectMatchReview(id: card.id).decision == .pending)
     }
 
+    @Test func nextDeferredBatchDoesNotRepeatSetAsideCards() async throws {
+        let (store, vm) = try await fixture()
+        let project = try await store.createKnowledgeProject(name: "Deferred")
+        for index in 0..<5 {
+            let rec = try await store.upsert(Recording(wavPath: "/tmp/deferred-\(UUID()).wav",
+                startedAt: Date(), title: "Deferred \(index)", transcriptText: "Deferred project."))
+            let review = try await store.proposeProjectMatch(recordingID: rec.id!, projectID: project.id,
+                quote: "Deferred", generatorID: "fixture")
+            _ = try await store.decideProjectMatch(id: review.id, expectedVersion: review.version,
+                decision: .unsure, operationID: UUID())
+        }
+        await vm.load(deferred: true)
+        let firstIDs = Set(vm.cards.map(\.id))
+        #expect(firstIDs.count == 3)
+        for card in vm.cards { await vm.decide(card, decision: .unsure) }
+        #expect(vm.completedBatch)
+        await vm.load(deferred: true, nextBatch: true)
+        #expect(vm.cards.count == 2)
+        #expect(firstIDs.isDisjoint(with: vm.cards.map(\.id)))
+        for card in vm.cards { await vm.decide(card, decision: .unsure) }
+        await vm.load(deferred: true, nextBatch: true)
+        #expect(vm.cards.isEmpty)
+        await vm.load(deferred: true)
+        #expect(Set(vm.cards.map(\.id)) == firstIDs)
+    }
+
     @MainActor
     private final class SaveGate {
         var entered = false

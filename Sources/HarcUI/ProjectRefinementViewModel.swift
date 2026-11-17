@@ -33,6 +33,7 @@ public final class ProjectRefinementViewModel: ObservableObject {
     private let expectedHost: LibraryMetadata?
     private let canWrite: @MainActor () -> Bool
     @Published public private(set) var completedBatch = false
+    private var nextBatchCursor: UUID?
     private var intents: [UUID: Intent] = [:]
     private var generation = UUID()
     private var active = true
@@ -57,8 +58,9 @@ public final class ProjectRefinementViewModel: ObservableObject {
         isLoading = false
     }
 
-    public func load(deferred: Bool = false) async {
+    public func load(deferred: Bool = false, nextBatch: Bool = false) async {
         active = true
+        if !nextBatch || reviewingDeferred != deferred { nextBatchCursor = nil }
         reviewingDeferred = deferred
         guard !isSaving else { reloadAfterSave = true; return }
         let token = UUID()
@@ -68,10 +70,11 @@ public final class ProjectRefinementViewModel: ObservableObject {
         errorMessage = nil
         statusMessage = nil
         do {
-            let loaded = try await store.pendingProjectReviewCards(deferred: deferred)
+            let loaded = try await store.pendingProjectReviewCards(deferred: deferred, afterReviewID: nextBatchCursor)
             let history = try await store.recentProjectReviewHistory()
             guard active, generation == token else { return }
             cards = loaded
+            if let last = loaded.last { nextBatchCursor = last.id }
             completedBatch = false
             confirmations = history.map { item in
                 Confirmation(receipt: item.receipt, message: Self.confirmationMessage(item.receipt, projectName: item.projectName),
@@ -163,6 +166,7 @@ public final class ProjectRefinementViewModel: ObservableObject {
             let refreshed = try await store.pendingProjectReviewCards(deferred: reviewingDeferred)
             guard active, generation == token else { return }
             cards = refreshed
+            nextBatchCursor = refreshed.last?.id
             completedBatch = false
             statusMessage = "Answer undone."
         } catch {

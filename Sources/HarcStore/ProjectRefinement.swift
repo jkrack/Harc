@@ -223,15 +223,16 @@ public extension RecordingStore {
 
     /// Bounded local review snapshot. Never returns trashed recordings or
     /// resolved/unsure decisions. No filesystem reads or inferred timestamps.
-    func pendingProjectReviewCards(limit: Int = 3, deferred: Bool = false) async throws -> [ProjectReviewCard] {
+    func pendingProjectReviewCards(limit: Int = 3, deferred: Bool = false, afterReviewID: UUID? = nil) async throws -> [ProjectReviewCard] {
         let limit = min(max(limit, 1), 20)
         return try await db.read { database in
             let data = try Data.fetchAll(database, sql: """
                 SELECT m.payload FROM project_match_reviews m
                 JOIN recordings r ON r.id = m.recording_id
                 WHERE r.deleted_at IS NULL AND json_extract(CAST(m.payload AS TEXT), '$.decision') = ?
+                AND (? IS NULL OR m.id > ?)
                 ORDER BY m.id LIMIT ?
-                """, arguments: [deferred ? "unsure" : "pending", limit])
+                """, arguments: [deferred ? "unsure" : "pending", afterReviewID?.uuidString, afterReviewID?.uuidString, limit])
             return try data.map { data in
                 let review = try JSONDecoder().decode(ProjectMatchReview.self, from: data)
                 guard let recording = try Recording.fetchOne(database, key: review.recordingID),

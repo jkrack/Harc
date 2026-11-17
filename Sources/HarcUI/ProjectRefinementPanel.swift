@@ -68,9 +68,9 @@ public struct ProjectRefinementPanel: View {
                 if !model.isLoading && model.cards.isEmpty && model.errorMessage == nil {
                     if model.completedBatch {
                         Text("This batch is complete. There may be more connections to review.").font(.harcBody)
-                        Button("Review next 3") { Task { await model.load(deferred: model.reviewingDeferred) } }
+                        Button("Review next 3") { Task { await model.load(deferred: model.reviewingDeferred, nextBatch: true) } }
                     } else {
-                        Text("No connections awaiting review in this queue.").font(.harcBody)
+                        Text("No more connections in this batch sequence. Refresh to start again.").font(.harcBody)
                     }
                 }
                 if model.isSaving { ProgressView("Saving…") }
