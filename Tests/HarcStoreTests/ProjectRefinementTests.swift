@@ -171,4 +171,44 @@ struct ProjectRefinementTests {
         #expect(try await store.projectMatchReview(id: review.id).decision == .unsure)
     }
 
+    @Test func applicationDistinguishesNewCommitFromReplay() async throws {
+        let (store, review) = try await fixture()
+        let op = UUID()
+        let first = try await store.applyProjectMatchDecision(id: review.id, expectedVersion: review.version, decision: .accepted, operationID: op)
+        let replay = try await store.applyProjectMatchDecision(id: review.id, expectedVersion: review.version, decision: .accepted, operationID: op)
+        #expect(first.didApply)
+        #expect(!replay.didApply)
+        #expect(first.receipt == replay.receipt)
+    }
+
+    @Test func pendingQueryIncludesSourceContextAndBoundsResults() async throws {
+        let (store, review) = try await fixture()
+        let cards = try await store.pendingProjectReviewCards(limit: 1)
+        #expect(cards.count == 1)
+        #expect(cards.first?.sourceContext == "We should discuss the Harc launch next week.")
+        _ = try await store.decideProjectMatch(id: review.id, expectedVersion: review.version, decision: .unsure, operationID: UUID())
+        #expect(try await store.pendingProjectReviewCards().isEmpty)
+        #expect(try await store.pendingProjectReviewCards(deferred: true).count == 1)
+        try await store.softDelete(id: review.recordingID)
+        #expect(try await store.pendingProjectReviewCards(deferred: true).isEmpty)
+    }
+
+    @Test func fileBackedDecisionAndUndoSurviveReopen() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-reopen-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("fixture.sqlite")
+        let store = try await RecordingStore.onDisk(url: url)
+        let recording = try await store.upsert(Recording(wavPath: root.appendingPathComponent("fixture.wav").path,
+            startedAt: Date(), transcriptText: "Discuss Harc."))
+        let project = try await store.createKnowledgeProject(name: "Harc")
+        let review = try await store.proposeProjectMatch(recordingID: recording.id!, projectID: project.id,
+            quote: "Harc", generatorID: "fixture")
+        let op = UUID()
+        _ = try await store.decideProjectMatch(id: review.id, expectedVersion: review.version, decision: .accepted, operationID: op)
+        let reopened = try await RecordingStore.onDisk(url: url)
+        #expect(try await reopened.confirmedProjectMatches(recordingID: recording.id!).count == 1)
+        #expect(try await reopened.undoProjectMatch(operationID: op) == 1)
+        #expect(try await store.projectMatchReview(id: review.id).decision == .pending)
+    }
+
 }
