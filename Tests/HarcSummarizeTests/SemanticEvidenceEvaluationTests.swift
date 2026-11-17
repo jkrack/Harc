@@ -14,7 +14,7 @@ import HarcStore
 private struct EvidenceEvalCorpus: Decodable { let version: String; let cases: [EvidenceEvalCase] }
 private struct EvidenceEvalCase: Decodable {
     let id, split, label, category, projectName, projectBrief, transcript: String
-    let allowedEvidenceSpans: [String]
+    let allowedQuotes: [String]
     let labelReason: String
 }
 private enum EvidenceEvalPrompt {
@@ -56,16 +56,16 @@ final class SemanticEvidenceEvaluationTests: XCTestCase {
 
     func testFrozenCorpusAndStrictValidatorWithoutModel() async throws {
         let (corpus, bytes) = try corpus()
-        XCTAssertEqual(Self.hash(bytes), "7b58c378c176310d40ee14dff7f48aa57ed04a31f2726ebf81156c6feb2ba51e")
+        XCTAssertEqual(Self.hash(bytes), "bf60329f9eaf6e1c493ce5be33e7aeee4ad620ae16bef93aef8a48bf80d757f4")
         XCTAssertEqual(corpus.cases.filter { $0.split == "development" }.count, 12)
         XCTAssertEqual(corpus.cases.filter { $0.split == "holdout" }.count, 20)
         XCTAssertEqual(Set(corpus.cases.map(\.id)).count, 32)
         XCTAssertEqual(Set(corpus.cases.map(\.transcript)).count, 32)
         for item in corpus.cases {
             XCTAssertTrue(["positive", "negative", "ambiguous"].contains(item.label))
-            XCTAssertEqual(item.allowedEvidenceSpans.isEmpty, item.label != "positive")
+            XCTAssertEqual(item.allowedQuotes.isEmpty, item.label != "positive")
             let (store, snapshot, _, root) = try await fixture(item)
-            for span in item.allowedEvidenceSpans {
+            for span in item.allowedQuotes {
                 XCTAssertTrue(item.transcript.contains(span))
                 let raw = String(decoding: try JSONSerialization.data(withJSONObject: ["decision":"suggest", "quote":span]), as: UTF8.self)
                 guard case .candidate = try RecordingStore.validateProjectEvidenceResponse(raw, snapshot: snapshot, modelID: "fake") else {
@@ -80,13 +80,27 @@ final class SemanticEvidenceEvaluationTests: XCTestCase {
         }
     }
 
+    func testGenericSubquoteCannotReceiveSemanticCredit() async throws {
+        let (corpus, _) = try corpus()
+        let item = try XCTUnwrap(corpus.cases.first { $0.id == "h01" })
+        let (_, snapshot, _, root) = try await fixture(item)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let generic = "when I tap its transcript."
+        let raw = String(decoding: try JSONSerialization.data(withJSONObject: ["decision":"suggest","quote":generic]), as: UTF8.self)
+        guard case .candidate(let evidence) = try RecordingStore.validateProjectEvidenceResponse(raw, snapshot: snapshot, modelID: "fake") else {
+            XCTFail("Fixture should pass source-presence validation"); return
+        }
+        XCTAssertFalse(Self.approvedQuote(evidence.quote, item: item))
+        XCTAssertTrue(Self.approvedQuote(item.allowedQuotes[0], item: item))
+    }
+
     func testScoringDoesNotRewardWrongSpanOrZeroDenominator() {
-        let wrong: [[String: Any]] = [["label":"positive","category":"nonliteral","outcome":"suggest", "approvedSpan":false,"literalSuggest":false]]
+        let wrong: [[String: Any]] = [["label":"positive","category":"nonliteral","outcome":"suggest", "approvedQuote":false,"literalSuggest":false]]
         let summary = Self.summarize(wrong)
         XCTAssertEqual(summary["TP"] as? Int, 0)
         XCTAssertEqual(summary["FP"] as? Int, 1)
         XCTAssertEqual(summary["FN"] as? Int, 1)
-        XCTAssertEqual(summary["wrongSpanPositive"] as? Int, 1)
+        XCTAssertEqual(summary["wrongQuotePositive"] as? Int, 1)
         XCTAssertTrue(Self.summarize([])["precision"] is NSNull)
     }
 
@@ -99,6 +113,9 @@ final class SemanticEvidenceEvaluationTests: XCTestCase {
         let scratch = try XCTUnwrap(env["HARC_QUALIFIED_EVIDENCE_SCRATCH"])
         let reportPath = try XCTUnwrap(env["HARC_EVIDENCE_EVAL_REPORT"])
         let (corpus, rawCorpus) = try corpus()
+        guard Self.hash(rawCorpus) == "bf60329f9eaf6e1c493ce5be33e7aeee4ad620ae16bef93aef8a48bf80d757f4" else {
+            XCTFail("Frozen corpus hash mismatch; no evaluation permitted"); return
+        }
         let selected = corpus.cases.filter { $0.split == split }
         let metrics = EvaluationRuntimeMetrics()
         let service = SummarizerService(loader: { directory in
@@ -120,11 +137,7 @@ final class SemanticEvidenceEvaluationTests: XCTestCase {
                     case .abstain: outcome = "abstain"
                     case .candidate(let evidence):
                         outcome = "suggest"
-                        let sourceBytes = Data(item.transcript.utf8)
-                        approved = item.allowedEvidenceSpans.contains { span in
-                            guard let range = sourceBytes.range(of: Data(span.utf8)) else { return false }
-                            return evidence.startUTF8 >= range.lowerBound && evidence.endUTF8 <= range.upperBound
-                        }
+                        approved = Self.approvedQuote(evidence.quote, item: item)
                     }
                 } catch {
                     outcome = error as? ProjectEvidenceContractError == .ambiguousQuote ? "ambiguousQuote" : "invalidResponse"
@@ -137,7 +150,7 @@ final class SemanticEvidenceEvaluationTests: XCTestCase {
             } catch { outcome = "runtimeError" }
             let observed = metrics.values
             rows.append(["id":item.id,"split":split,"label":item.label,"category":item.category,
-                "literalSuggest":literal,"outcome":outcome,"approvedSpan":approved,"unsupportedQuote":unsupportedQuote,
+                "literalSuggest":literal,"outcome":outcome,"approvedQuote":approved,"unsupportedQuote":unsupportedQuote,
                 "elapsedCopyLoadInferenceCleanupSeconds":Date().timeIntervalSince(started),
                 "inferenceOnlySeconds":NSNull(), "promptTokens":observed.first?.0 ?? -1,
                 "generatedTokens":observed.first?.1 ?? -1,"stop":observed.first?.2 ?? "missing",
@@ -160,24 +173,27 @@ final class SemanticEvidenceEvaluationTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted,.sortedKeys]).write(to: URL(fileURLWithPath: reportPath), options: .atomic)
         XCTAssertEqual(rows.count, selected.count, "Evaluation incomplete; inspect partial report")
         XCTAssertFalse(rows.contains { $0["outcome"] as? String == "runtimeError" }, "Runtime error; no accuracy claim")
-        print("EVIDENCE_EVAL completed split=\(split) count=\(rows.count) corpusSHA256=\(Self.hash(rawCorpus))")
+        print("EVIDENCE_EVAL finished split=\(split) count=\(rows.count) corpusSHA256=\(Self.hash(rawCorpus))")
+    }
+    private static func approvedQuote(_ quote: String, item: EvidenceEvalCase) -> Bool {
+        item.allowedQuotes.contains { Data($0.utf8) == Data(quote.utf8) }
     }
     private static func summarize(_ rows: [[String: Any]]) -> [String: Any] {
         let positives = rows.filter { $0["label"] as? String == "positive" }.count
         let suggestions = rows.filter { $0["outcome"] as? String == "suggest" }
-        let tp = suggestions.filter { $0["label"] as? String == "positive" && $0["approvedSpan"] as? Bool == true }.count
+        let tp = suggestions.filter { $0["label"] as? String == "positive" && $0["approvedQuote"] as? Bool == true }.count
         let fp = suggestions.count - tp
-        let wrongSpan = suggestions.filter { $0["label"] as? String == "positive" && $0["approvedSpan"] as? Bool != true }.count
+        let wrongSpan = suggestions.filter { $0["label"] as? String == "positive" && $0["approvedQuote"] as? Bool != true }.count
         let literalTP = rows.filter { $0["literalSuggest"] as? Bool == true && $0["label"] as? String == "positive" }.count
         let literalFP = rows.filter { $0["literalSuggest"] as? Bool == true && $0["label"] as? String != "positive" }.count
         let nonliteral = rows.filter { $0["label"] as? String == "positive" && $0["category"] as? String == "nonliteral" }
-        let semanticNonliteralTP = nonliteral.filter { $0["outcome"] as? String == "suggest" && $0["approvedSpan"] as? Bool == true }.count
+        let semanticNonliteralTP = nonliteral.filter { $0["outcome"] as? String == "suggest" && $0["approvedQuote"] as? Bool == true }.count
         let literalNonliteralTP = nonliteral.filter { $0["literalSuggest"] as? Bool == true }.count
         func ratio(_ n: Int, _ d: Int) -> Any { d == 0 ? NSNull() : Double(n) / Double(d) }
         return ["count":rows.count,"positiveCount":positives,"TP":tp,"FP":fp,"FN":positives-tp,
             "precision":ratio(tp,tp+fp),"recall":ratio(tp,positives),"labelCoverage":ratio(suggestions.count,rows.count),
             "abstain":rows.filter { $0["outcome"] as? String == "abstain" }.count,
-            "wrongSpanPositive":wrongSpan,"unsupportedQuote":rows.filter { $0["unsupportedQuote"] as? Bool == true }.count,
+            "wrongQuotePositive":wrongSpan,"unsupportedQuote":rows.filter { $0["unsupportedQuote"] as? Bool == true }.count,
             "invalidResponse":rows.filter { $0["outcome"] as? String == "invalidResponse" }.count,
             "ambiguousQuote":rows.filter { $0["outcome"] as? String == "ambiguousQuote" }.count,
             "runtimeError":rows.filter { $0["outcome"] as? String == "runtimeError" }.count,
