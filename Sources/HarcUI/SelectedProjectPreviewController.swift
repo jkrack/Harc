@@ -11,6 +11,7 @@ struct ProjectPreviewSelection: Sendable {
     let expectedHost: LibraryMetadata
 }
 struct ProjectPreviewResponseToken: Equatable, Sendable { fileprivate let id: UUID }
+struct ProjectPreviewPresentationToken: Equatable, Sendable { fileprivate let id: UUID }
 
 /// No app caller, model invocation, confirmation or Store mutation. The future
 /// UI must explicitly select/dismiss and forward resident Host availability.
@@ -58,6 +59,12 @@ final class SelectedProjectPreviewController: ObservableObject {
         guard available != residentHostAvailable else { return }
         residentHostAvailable = available
         invalidate() // Changing true also requires a new explicit selection.
+    }
+    var presentationToken: ProjectPreviewPresentationToken { .init(id: generation) }
+    func isCurrentPresentation(_ token: ProjectPreviewPresentationToken) -> Bool { token.id == generation }
+    func dismiss(presentation token: ProjectPreviewPresentationToken) {
+        guard isCurrentPresentation(token) else { return }
+        dismiss()
     }
     func selectionDidChange() { invalidate() }
     func dismiss() { clear(state: .idle) }

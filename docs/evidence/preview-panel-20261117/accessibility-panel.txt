@@ -1,0 +1,2 @@
+depth=0 class=NSHostingView<ModifiedContent<ModifiedContent<UntrustedProjectPreviewPanel, _EnvironmentKeyWritingModifier<ColorScheme>>, _BackgroundStyleModifier<Color>>> role=Optional(AXGroup) identifier=nil children=0 navigationChildren=0
+TEXT VALUES

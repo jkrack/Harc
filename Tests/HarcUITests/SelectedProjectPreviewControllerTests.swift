@@ -214,4 +214,25 @@ struct SelectedProjectPreviewControllerTests {
         #expect(controller.state == .showingPreview)
     }
 
+    @Test func oldPresentationDismissalCannotClearNewSelection() async throws {
+        let (store, rec, project, _, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = SelectedProjectPreviewController(store: store, externalChanges: NotificationCenter())
+        controller.residentHostAvailabilityChanged(true)
+        let selected = try await selection(store, rec, project)
+        _ = try #require(await controller.begin(selected))
+        let oldPresentation = controller.presentationToken
+        let response = try #require(await controller.begin(selected))
+        let currentPresentation = controller.presentationToken
+        #expect(!controller.isCurrentPresentation(oldPresentation))
+        #expect(controller.isCurrentPresentation(currentPresentation))
+        await controller.receive(rawResponse: raw, unverifiedModelLabel: "new presentation", token: response)
+        controller.dismiss(presentation: oldPresentation)
+        #expect(controller.state == .showingPreview)
+        #expect(controller.preview?.unverifiedModelLabel == "new presentation")
+        controller.dismiss(presentation: currentPresentation)
+        #expect(controller.state == .idle)
+        #expect(controller.preview == nil)
+    }
+
 }
