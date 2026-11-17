@@ -297,14 +297,15 @@ public actor SummarizerService {
     /// verified snapshot is loaded under one operation owner and unloaded before
     /// its factory callback returns and removes the copied files.
     func generateQualifiedEvidence(promptBody: String, modelID: String,
-                                   installedDirectory: URL, scratchDirectory: URL) async throws -> String {
+                                   installedDirectory: URL, scratchDirectory: URL,
+                                   systemPrompt: String? = nil) async throws -> String {
         try await withEvidenceSession { generation in
             try await QualifiedEvidenceSnapshotFactory.withSnapshot(modelID: modelID,
                 installedDirectory: installedDirectory, scratchDirectory: scratchDirectory) { snapshot in
                 try await self.generateScopedEvidence(promptBody: promptBody, modelID: snapshot.context.modelID,
                     directory: snapshot.directory, contextLimit: snapshot.context.operationalContextTokens,
                     manifestDigest: snapshot.manifestDigest, snapshotNonce: snapshot.nonce,
-                    expectedGeneration: generation)
+                    expectedGeneration: generation, systemPrompt: systemPrompt)
             }
         }
     }
@@ -323,7 +324,7 @@ public actor SummarizerService {
 
     func generateScopedEvidence(promptBody: String, modelID: String, directory: URL, contextLimit: Int,
                                 manifestDigest: String, snapshotNonce: UUID,
-                                expectedGeneration: UUID) async throws -> String {
+                                expectedGeneration: UUID, systemPrompt: String? = nil) async throws -> String {
         try Task.checkCancellation()
         guard operationActive, container == nil, expectedGeneration == loadGeneration,
               manifestDigest.count == 64 else { throw CancellationError() }
@@ -343,7 +344,12 @@ public actor SummarizerService {
         }
         let budget = try EvidenceGenerationBudget(contextLimit: contextLimit, outputReserve: 512)
         do {
-            let result = try await loaded.generateEvidence(promptBody: promptBody, budget: budget)
+            let result: String
+            if let systemPrompt {
+                result = try await loaded.generateEvidence(systemPrompt: systemPrompt, sourceJSON: promptBody, budget: budget)
+            } else {
+                result = try await loaded.generateEvidence(promptBody: promptBody, budget: budget)
+            }
             try Task.checkCancellation()
             guard receipt.generation == loadGeneration, expectedGeneration == loadGeneration,
                   loadedModelID == modelID, loadedDirectory == receipt.directory else { throw CancellationError() }
