@@ -61,8 +61,14 @@ enum SyntheticEvidenceSnapshot {
         // caller paths or follows symlinks, and never removes source files.
         func cleanup() {
             for file in files { _ = unlinkat(directory, file.name, 0) }
+            // The child name may have been replaced after preparation. Never
+            // remove a different directory merely because it reused our name.
+            var retained = stat(); var named = stat()
+            let ownsName = fstat(directory, &retained) == 0 &&
+                fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+                retained.st_dev == named.st_dev && retained.st_ino == named.st_ino
+            if ownsName { _ = unlinkat(parent, name, AT_REMOVEDIR) }
             _ = close(directory)
-            _ = unlinkat(parent, name, AT_REMOVEDIR)
             _ = close(parent)
         }
     }

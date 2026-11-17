@@ -95,3 +95,11 @@ Seven synthetic snapshot test functions passed after handoff/cancellation fixes.
 The first cancellation fixture used a semaphore wait from an async context and
 failed compilation; the corrected fixture uses nonblocking locked state while
 only the synchronous preparation hook waits. No failing run is counted as pass.
+
+Cleanup also verifies the named child directory's device/inode against its retained
+descriptor before removing the directory name. If the child was renamed and an
+unrelated empty replacement created, cleanup removes only its copied files via
+the owned descriptor and skips pathname removal. The renamed empty staging
+directory may remain; this conservative leak is preferable to deleting an
+unowned replacement. A deterministic child-swap regression checks both remain.
+This remains a point-in-time check, not hostile same-user race protection.

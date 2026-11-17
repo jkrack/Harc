@@ -85,6 +85,24 @@ import Testing
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).count == 1)
     }
 
+    @Test func replacedChildDirectoryIsNotDeletedByCleanup() async throws {
+        let (root, source, scratch, file) = try setup()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let moved = scratch.appendingPathComponent("renamed-owned-snapshot")
+        await #expect(throws: (any Error).self) {
+            try await SyntheticEvidenceSnapshot.withSnapshot(source: source, scratch: scratch, files: [file], beforeHandoff: { url in
+                do {
+                    try FileManager.default.moveItem(at: url, to: moved)
+                    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+                } catch { Issue.record("Fixture child replacement failed: \(error)") }
+            }) { _ in Issue.record("Replaced child reached consumer") }
+        }
+        let remaining = try FileManager.default.contentsOfDirectory(atPath: scratch.path)
+        #expect(remaining.count == 2) // renamed original + untouched replacement
+        #expect(remaining.contains("renamed-owned-snapshot"))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: moved.path).isEmpty)
+    }
+
     @Test func actualCallerCancellationDuringPreparationCleansOwnedDirectory() async throws {
         let (root, source, scratch, file) = try setup()
         defer { try? FileManager.default.removeItem(at: root) }
