@@ -124,3 +124,12 @@ Synthetic tests exercise boundary/completion/serialization/unload behavior only.
 They do not establish Metal inference, semantic relevance, accurate extraction,
 Store proposal persistence or app accessibility. Actual local synthetic model
 evaluation and strict Store snapshot validation remain separate gates.
+
+The dedicated stream now retains the SDK `generateTask` producer rather than
+using the convenience method that discards its handle. On every error it cancels
+and awaits that producer; success also awaits it. The service operation lock
+therefore cannot be released while residual model/KVCache work is finishing.
+A synthetic delayed-cleanup regression verifies that a queued operation stays
+blocked after an early consumer error until producer cleanup is released.
+Six evidence capability tests passed after this correction; no Metal inference
+was run.

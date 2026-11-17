@@ -49,3 +49,24 @@ struct EvidenceGenerationCollector {
         return text
     }
 }
+
+/// The model task may outlive stream consumption. Keep the service's operation
+/// ownership until all producer cleanup has finished, on success AND error.
+func withEvidenceProducerCleanup<T: Sendable>(
+    _ producer: Task<Void, Never>, operation: () async throws -> T
+) async throws -> T {
+    try await withTaskCancellationHandler {
+        do {
+            let result = try await operation()
+            await producer.value
+            try Task.checkCancellation()
+            return result
+        } catch {
+            producer.cancel()
+            await producer.value
+            throw error
+        }
+    } onCancel: {
+        producer.cancel()
+    }
+}

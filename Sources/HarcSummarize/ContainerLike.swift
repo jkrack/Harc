@@ -95,22 +95,29 @@ public struct MLXModelContainer: ContainerLike {
         parameters.maxTokens = budget.outputReserve
         parameters.temperature = 0
         // Generate the SAME prepared input whose actual templated tokens were counted.
-        let stream = try await container.generate(input: prepared, parameters: parameters)
-        var result = EvidenceGenerationCollector()
-        for await event in stream {
-            try Task.checkCancellation()
-            switch event {
-            case .chunk(let fragment): try result.append(fragment)
-            case .info(let info):
-                switch info.stopReason {
-                case .stop: try result.complete(normally: true)
-                case .length, .cancelled: throw EvidenceGenerationError.invalidCompletion
-                }
-            case .toolCall: throw EvidenceGenerationError.invalidCompletion
-            }
+        let configuredParameters = parameters
+        let (stream, producer) = try await container.perform(nonSendable: prepared) { context, input in
+            let iterator = try TokenIterator(input: input, model: context.model, parameters: configuredParameters)
+            return MLXLMCommon.generateTask(promptTokenCount: input.text.tokens.size,
+                modelConfiguration: context.configuration, tokenizer: context.tokenizer, iterator: iterator)
         }
-        try Task.checkCancellation()
-        return try result.finish()
+        return try await withEvidenceProducerCleanup(producer) {
+            var result = EvidenceGenerationCollector()
+            for await event in stream {
+                try Task.checkCancellation()
+                switch event {
+                case .chunk(let fragment): try result.append(fragment)
+                case .info(let info):
+                    switch info.stopReason {
+                    case .stop: try result.complete(normally: true)
+                    case .length, .cancelled: throw EvidenceGenerationError.invalidCompletion
+                    }
+                case .toolCall: throw EvidenceGenerationError.invalidCompletion
+                }
+            }
+            try Task.checkCancellation()
+            return try result.finish()
+        }
     }
 
     private func generateConfigured(promptBody: String, systemPrompt: String?, maxTokens: Int,
