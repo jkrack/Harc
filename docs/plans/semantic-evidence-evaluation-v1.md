@@ -1,8 +1,10 @@
 # Frozen semantic evidence evaluation v1
 
-Status: corpus/harness prepared; NO model evaluation has run. Independent review
-required before running development, then untouched holdout. This is not training
-or fine-tuning the model. No owner data or production Library is involved.
+Status: frozen development and holdout evaluations completed on 2026-11-17 after
+independent review, using ac11ce8 unchanged. Immutable results and a separately
+labeled fresh diagnostic reproduction are in `docs/evidence/semantic-evaluation-20261117/`.
+Original scores are not rerated by that diagnostic. No owner data, production
+Library, training or fine-tuning was involved; no semantic UI is activated.
 
 ## Freeze
 
