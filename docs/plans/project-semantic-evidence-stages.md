@@ -133,3 +133,22 @@ A synthetic delayed-cleanup regression verifies that a queued operation stays
 blocked after an early consumer error until producer cleanup is released.
 Six evidence capability tests passed after this correction; no Metal inference
 was run.
+
+### Config qualification groundwork
+
+`EvidenceContextQualification` accepts only the catalog's Gemma4 E2B ID and
+immutable catalog config bytes/hash. It never accepts caller-provided expected
+hashes or descriptors. Bounded file reading precedes digest and known-schema
+parsing; `gemma4` / `gemma4_text` must explicitly provide a positive integer
+`max_position_embeddings`. Unknown/missing schemas and values fail closed.
+The actual pinned config reports 131072; the separate operational cap is 32768.
+The included 5996-byte public model config fixture matches catalog SHA256
+`6d12c87861fff3871d3a745011b0d852be6513f3ce594ae1e8d643dae9d3b9a8`.
+It originated from the already-installed model and pinned upstream revision
+`99d9a53ff828d365a8ecae538e45f80a08d612cd`, not recordings or owner content.
+
+This qualifies CONFIG only. It does not attest resident weights, tokenizer or
+load-generation identity. The immutable result supports a point-in-time re-read,
+not locking against filesystem mutation. No bridge to the generation budget is
+provided yet; adapter activation still needs verified installed bundle identity
+bound across loading, synthetic model tests, and Store source revalidation.

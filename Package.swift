@@ -424,7 +424,8 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcModelsTests",
-            dependencies: ["HarcModels", "HarcCore"]
+            dependencies: ["HarcModels", "HarcCore"],
+            resources: [.copy("Fixtures/evidence-gemma4-config.json")]
         ),
         .testTarget(
             name: "HarcVoiceprintTests",
