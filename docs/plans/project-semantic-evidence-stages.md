@@ -69,3 +69,32 @@ model was loaded; this is not a semantic-quality or app-UI result.
   availability disabled until actual local-model evaluation has passed.
 The follow-up seven-test contract run passed, including whitespace-only evidence
 and a duplicate JSON key expressed through a Unicode escape. No model invoked.
+
+## Adapter feasibility checkpoint (implementation paused)
+
+Read-only inspection of current code found the operation lifecycle is reusable,
+but the strict token-budget prerequisite is not yet exposed:
+
+- `ContainerLike` exposes generation methods, not a prepared-input token-count /
+  context-capacity contract. The production wrapper prepares the full chat input
+  internally immediately before generation.
+- `ModelDescriptor.contextTokens` is documented as a prompt-context budget.
+  Treating it as authoritative actual model capacity would be an assumption.
+- The pinned MLX `ModelConfiguration` exposes model/tokenizer locations and EOS
+  configuration, but no uniform context-limit property. Model-family-specific
+  position limits exist elsewhere and cannot safely be generalized by guessing.
+- `generateSummaryPass` accepts a nil completion reason for legacy/test adapters;
+  the project verifier must instead require explicit final normal completion.
+  Production stream validation alone is not a complete injected-adapter contract.
+
+No local verifier adapter/model invocation was added at this checkpoint. Safe
+next implementation is a narrowly typed bounded prepared-input capability on the
+existing container: measure the actual chat-template token count, reserve output,
+validate against verified model-specific capacity, then generate that same input
+within the existing operation slot. Unsupported metadata must fail closed. Add
+fake-container tests for over-budget, missing metadata, nonfinal/nil completion,
+output limit, cancellation, unload generation changes and operation serialization.
+Only after that seam is qualified should actual local synthetic-model evaluation
+begin. Do not substitute the32KB cap, approximate word counts, catalog budget or
+parseable JSON for these prerequisites. No model, downloads, external service,
+content logging, UI activation or production-source test was used in this check.
