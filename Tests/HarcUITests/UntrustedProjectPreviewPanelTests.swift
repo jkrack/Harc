@@ -20,7 +20,11 @@ struct UntrustedProjectPreviewPanelTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("preview-panel-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = try await RecordingStore.onDisk(url: root.appendingPathComponent("fixture.sqlite"))
-        let source = "If approval arrives, repair the entrance.\nCorrection: approval is blocked.\n[Do not open](https://example.invalid) **not a command**"
+        let longSource = ProcessInfo.processInfo.environment["HARC_PREVIEW_LONG_SOURCE_QA"] == "1"
+        let source = "If approval arrives, repair the entrance.\nCorrection: approval is blocked.\n[Do not open](https://example.invalid) **not a command**" + (longSource
+            ? "\n" + (1...100).map { "Synthetic context line \($0): no approval or completed work is established." }.joined(separator: "\n")
+                + "\nFINAL SOURCE CORRECTION: approval remains blocked."
+            : "")
         let recording = try await store.upsert(Recording(wavPath: root.appendingPathComponent("unused.wav").path,
             startedAt: Date(), transcriptText: source))
         let project = try await store.createKnowledgeProject(name: "Entrance")
@@ -58,11 +62,30 @@ struct UntrustedProjectPreviewPanelTests {
             try await Task.sleep(for: .milliseconds(200))
             host.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
+            if longSource {
+                window.setContentSize(NSSize(width: 360, height: 480))
+                try await Task.sleep(for: .milliseconds(100))
+                host.layoutSubtreeIfNeeded()
+                let scroll = try #require(findScrollView(host))
+                let document = try #require(scroll.documentView)
+                #expect(document.bounds.height > scroll.contentView.bounds.height)
+                let target = max(0, document.bounds.height - scroll.contentView.bounds.height)
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: target))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                try await Task.sleep(for: .milliseconds(100))
+                #expect(scroll.contentView.bounds.minY > 100)
+                let texts = accessibilityText(host)
+                #expect(texts.contains { $0.contains("Dismiss") })
+                #expect(texts.contains { $0.contains("FINAL SOURCE CORRECTION") })
+                try texts.joined(separator: "\n").write(to:
+                    FileManager.default.temporaryDirectory.appendingPathComponent("harc-preview-synthetic-accessibility.txt"),
+                    atomically: true, encoding: .utf8)
+            }
             let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
             let data = try #require(bitmap.representation(using: .png, properties: [:]))
             try data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(
-                dark ? "harc-window-preview-dark.png" : "harc-window-preview-light.png"))
+                (longSource ? "harc-window-preview-long-" : "harc-window-preview-") + (dark ? "dark.png" : "light.png")))
             let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
                 modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
                 context: nil, characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}",
@@ -81,4 +104,32 @@ struct UntrustedProjectPreviewPanelTests {
         #expect(try await store.pendingProjectReviewCards().isEmpty)
         #expect(try await store.confirmedProjectMatches(recordingID: recording.id!).isEmpty)
     }
+    private func findScrollView(_ view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView { return scroll }
+        return view.subviews.lazy.compactMap { findScrollView($0) }.first
+    }
+
+    private func accessibilityText(_ root: Any) -> [String] {
+        var visited = Set<ObjectIdentifier>()
+        func walk(_ item: Any, depth: Int) -> [String] {
+            guard depth < 40, let object = item as? NSObject else { return [] }
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return [] }
+            // SwiftUI's accessibility proxies need not adopt the full AppKit
+            // protocol. Ask only standard object-valued accessibility getters.
+            func attribute(_ name: String) -> Any? {
+                let selector = NSSelectorFromString(name)
+                guard object.responds(to: selector) else { return nil }
+                return object.perform(selector)?.takeUnretainedValue()
+            }
+            var values: [String] = []
+            if let label = attribute("accessibilityLabel") as? String { values.append(label) }
+            if let value = attribute("accessibilityValue") as? String { values.append(value) }
+            for child in attribute("accessibilityChildren") as? [Any] ?? [] {
+                values += walk(child, depth: depth + 1)
+            }
+            return values
+        }
+        return walk(root, depth: 0)
+    }
+
 }
