@@ -512,3 +512,69 @@ public extension RecordingStore {
         }
     }
 }
+
+
+/// Immutable, bounded view of accepted associations for one selected recording.
+/// This is a point-in-time read, not live authority or a factual knowledge claim.
+public struct ConfirmedProjectMapSnapshot: Sendable {
+    public struct Connection: Identifiable, Sendable {
+        public let id: UUID
+        public let projectName: String
+        public let originalQuote: String
+        public let evidenceIsCurrent: Bool
+    }
+    public let recordingID: Int64
+    public let canonicalID: CanonicalRecordingID
+    public let recordingTitle: String
+    public let connections: [Connection]
+    public let hasMore: Bool
+}
+
+public extension RecordingStore {
+    /// No scan, inference, graph mutation, filesystem access, or mirror fallback.
+    /// Caller must invalidate this snapshot on selection/Host/Store changes before
+    /// hosting it in production. Empty means no accepted links in this snapshot,
+    /// not no possible semantic relationship.
+    func confirmedProjectMap(recordingID: Int64, canonicalID: CanonicalRecordingID,
+                             expectedHost: LibraryMetadata, limit: Int = 20) async throws -> ConfirmedProjectMapSnapshot {
+        let boundedLimit = min(max(limit, 1), 50)
+        return try await db.read { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            guard let recording = try Recording.fetchOne(database, key: recordingID),
+                  recording.deletedAt == nil, recording.canonicalID == canonicalID else {
+                throw ProjectRefinementError.missing
+            }
+            let rows = try Row.fetchAll(database, sql: """
+                SELECT m.id AS review_id, m.project_id AS project_id,
+                       m.payload AS review_payload, p.payload AS project_payload
+                FROM project_match_reviews m
+                JOIN knowledge_projects p ON p.id = m.project_id
+                WHERE m.recording_id = ?
+                  AND json_extract(CAST(m.payload AS TEXT), '$.decision') = 'accepted'
+                ORDER BY m.id LIMIT ?
+                """, arguments: [recordingID, boundedLimit + 1])
+            // Hash the selected transcript once, not once per displayed edge.
+            let sourceDigest = recording.transcriptText.map(transcriptDigest)
+            var connections: [ConfirmedProjectMapSnapshot.Connection] = []
+            for row in rows {
+                let review = try JSONDecoder().decode(ProjectMatchReview.self, from: row["review_payload"] as Data)
+                let project = try JSONDecoder().decode(KnowledgeProject.self, from: row["project_payload"] as Data)
+                guard review.id.uuidString == row["review_id"] as String,
+                      project.id.uuidString == row["project_id"] as String,
+                      review.project.id == project.id, review.recordingID == recordingID,
+                      review.canonicalID == canonicalID, review.decision == .accepted else {
+                    throw ProjectRefinementError.invalidEvidence
+                }
+                let current = project.version == review.project.version
+                    && sourceDigest == review.transcriptSHA256
+                    && !review.quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && recording.transcriptText?.contains(review.quote) == true
+                connections.append(.init(id: review.id, projectName: project.name,
+                    originalQuote: review.quote, evidenceIsCurrent: current))
+            }
+            return ConfirmedProjectMapSnapshot(recordingID: recordingID, canonicalID: canonicalID,
+                recordingTitle: recording.displayTitle, connections: Array(connections.prefix(boundedLimit)),
+                hasMore: connections.count > boundedLimit)
+        }
+    }
+}
