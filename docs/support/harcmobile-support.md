@@ -9,7 +9,9 @@ offline review sample works without an account or Host.
 
 - An iPhone running iOS 26 or later
 - Microphone permission for recording
-- Harc for Mac for pairing, transcription, summaries, and the canonical Library
+- Harc for Mac for pairing, summaries, speaker names, and the canonical Library
+- A compatible iPhone, supported current language and installed Apple speech
+  model for optional on-device transcript previews
 - Local Network permission for direct Host discovery
 - Camera permission only when scanning a Host pairing code
 
@@ -23,6 +25,24 @@ the iPhone and adopted Host.
 
 Yes. Harc keeps a protected local master and queues it until the adopted Host is
 available. Do not delete the app while recordings are waiting to transfer.
+
+### Can I transcribe without my Mac?
+
+On a compatible iPhone, Harc can create an on-device transcript preview after
+saving a recording. Availability depends on the device and current language.
+If the Apple speech model is missing, use **Download speech model** in the
+transcript section. This separate download needs a connection; your recording
+is not uploaded. Routine processing uses installed assets with no cloud
+recognizer fallback.
+
+Queued transcription resumes while Harc is open and not recording. If it fails,
+your saved audio and transfer are unaffected; use **Retry on-device transcription**
+when available. Older recordings are not bulk-transcribed automatically, but
+you can request **Transcribe on this iPhone** for an individual local recording.
+
+The preview does not replace the adopted Host's transcript or a user edit.
+Speaker names and summaries still come from the Mac. A local preview is not a
+Host receipt and does not authorize deletion of the protected recording.
 
 ### Why does a recording say Saved locally?
 
