@@ -437,7 +437,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcSummarizeTests",
-            dependencies: ["HarcSummarize", "HarcCore"]
+            dependencies: ["HarcSummarize", "HarcCore", "HarcModels"]
         ),
         .testTarget(
             name: "HarcExportTests",

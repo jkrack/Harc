@@ -103,3 +103,18 @@ the owned descriptor and skips pathname removal. The renamed empty staging
 directory may remain; this conservative leak is preferable to deleting an
 unowned replacement. A deterministic child-swap regression checks both remain.
 This remains a point-in-time check, not hostile same-user race protection.
+
+### Concrete fake-loader consumer before receipt machinery
+
+A test-only cross-module harness connects the existing synthetic copier to
+SummarizerService's existing serialized preload/evidence paths. The fake loader
+checks exact bytes at the passed snapshot path and the fake generator rereads
+those bytes to verify lifetime. Tests require a distinct snapshot load rather
+than reuse of an earlier ordinary preload, rejection after unload, cleanup after
+scope, and zero loader calls for a bad manifest.
+
+This does NOT turn ordinary preload into a qualified load or create a trusted
+receipt. It establishes a concrete consumer and lifetime contract before adding
+production provenance state. A production receipt must still be minted only by
+a verified-bundle loader and bound to its exact successful container/load epoch,
+not supplied by a caller or inferred from these tests.
