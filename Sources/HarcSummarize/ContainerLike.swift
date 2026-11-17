@@ -22,12 +22,20 @@ public protocol ContainerLike: Sendable {
         maxTokens: Int,
         onStats: (@Sendable (GenerationStats) -> Void)?
     ) async throws -> String
+    /// Fail-closed evidence capability; implementations must prepare once and
+    /// enforce the full templated token budget before starting generation.
+    func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String
+
     func generateSummary(promptBody: String, maxTokens: Int,
                          onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String
 
 }
 
 public extension ContainerLike {
+    func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String {
+        throw EvidenceGenerationError.unsupported
+    }
+
     func generateSummary(promptBody: String, maxTokens: Int,
                          onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String {
         try await generate(promptBody: promptBody, systemPrompt: nil, maxTokens: maxTokens, onStats: onStats)
@@ -73,6 +81,43 @@ public struct MLXModelContainer: ContainerLike {
                                 onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String {
         try await generateConfigured(promptBody: promptBody, systemPrompt: nil,
             maxTokens: maxTokens, onStats: onStats, temperature: 0)
+    }
+
+    public func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String {
+        guard promptBody.utf8.count <= 40_960 else { throw EvidenceGenerationError.contextExceeded }
+        try Task.checkCancellation()
+        let input = UserInput(messages: [["role": "user", "content": promptBody]],
+                              additionalContext: ["enable_thinking": false])
+        let prepared = try await container.prepare(input: input)
+        try budget.validate(promptTokens: prepared.text.tokens.size)
+        try Task.checkCancellation()
+        var parameters = GenerateParameters()
+        parameters.maxTokens = budget.outputReserve
+        parameters.temperature = 0
+        // Generate the SAME prepared input whose actual templated tokens were counted.
+        let configuredParameters = parameters
+        let (stream, producer) = try await container.perform(nonSendable: prepared) { context, input in
+            let iterator = try TokenIterator(input: input, model: context.model, parameters: configuredParameters)
+            return MLXLMCommon.generateTask(promptTokenCount: input.text.tokens.size,
+                modelConfiguration: context.configuration, tokenizer: context.tokenizer, iterator: iterator)
+        }
+        return try await withEvidenceProducerCleanup(producer) {
+            var result = EvidenceGenerationCollector()
+            for await event in stream {
+                try Task.checkCancellation()
+                switch event {
+                case .chunk(let fragment): try result.append(fragment)
+                case .info(let info):
+                    switch info.stopReason {
+                    case .stop: try result.complete(normally: true)
+                    case .length, .cancelled: throw EvidenceGenerationError.invalidCompletion
+                    }
+                case .toolCall: throw EvidenceGenerationError.invalidCompletion
+                }
+            }
+            try Task.checkCancellation()
+            return try result.finish()
+        }
     }
 
     private func generateConfigured(promptBody: String, systemPrompt: String?, maxTokens: Int,
