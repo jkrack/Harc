@@ -43,6 +43,13 @@ final class ConfirmedProjectMapController: ObservableObject {
         available = value; invalidate()
     }
     func selectionDidChange() { invalidate() }
+    /// Capture when presenting a map. A dismissed older view must not clear a
+    /// newer selection that happens to share this controller.
+    var presentationID: UUID { generation }
+    func dismiss(presentationID: UUID) {
+        guard presentationID == generation else { return }
+        clear(.idle)
+    }
     func dismiss() { clear(.idle) }
     func invalidate() { clear(.invalidated) }
     private func clear(_ state: State) {

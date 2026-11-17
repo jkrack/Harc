@@ -102,11 +102,28 @@ struct ConfirmedProjectMapControllerTests {
             task.cancel()
             #expect(await settle { controller.state == .invalidated })
         case "selection": controller.selectionDidChange()
-        default: controller.dismiss()
+        default: controller.dismiss(presentationID: controller.presentationID)
         }
         await gate.release(); await task.value
         #expect(controller.snapshot == nil)
         #expect(controller.state == (reason == "dismiss" ? .idle : .invalidated))
+    }
+    @Test func oldPresentationDismissalCannotClearNewSelection() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ConfirmedProjectMapController(store: store, externalChanges: NotificationCenter())
+        controller.residentHostAvailabilityChanged(true)
+        await controller.select(selection)
+        let oldPresentation = controller.presentationID
+        await controller.select(selection)
+        let currentPresentation = controller.presentationID
+        #expect(oldPresentation != currentPresentation)
+        controller.dismiss(presentationID: oldPresentation)
+        #expect(controller.state == .ready)
+        #expect(controller.snapshot != nil)
+        controller.dismiss(presentationID: currentPresentation)
+        #expect(controller.state == .idle)
+        #expect(controller.snapshot == nil)
     }
     @Test func observationTerminationHidesMap() async throws {
         let (store, _, _, _, selection, root) = try await fixture()

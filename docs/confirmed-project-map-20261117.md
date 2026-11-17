@@ -33,3 +33,16 @@ An independently run standalone synthetic app using a copy of the actual map pan
 Independent lifecycle review found no blocking issue and requested an actual Store-mutation-during-read case, now included alongside dismissal, cancellation and selection invalidation races. No PR228 files or history were changed.
 
 Final focused lifecycle/map/Unicode regression exited 0: 15 executed test methods passed (including 8 Store mutation, 4 lifecycle and 4 delayed-read parameter cases); the opt-in window/AX method was explicitly skipped. This does not replace its separately documented execution or full CI.
+
+## Presentation teardown follow-through
+
+The inactive wrapper now requires a captured presentation generation and uses
+conditional dismissal. A late disappearance belonging to an old selection cannot
+clear a newer map sharing its controller. The caller must capture the generation
+**after `select` starts or completes**, and replace the wrapper/token for each new
+selection; capturing before a deferred `.task` starts selection is not supported.
+No production caller has been installed or qualified.
+
+Regression coverage adds old-token dismissal followed by current-token dismissal,
+and exercises current-token dismissal while a snapshot read is suspended. This is
+controller-level coverage, not a SwiftUI sheet lifecycle qualification.
