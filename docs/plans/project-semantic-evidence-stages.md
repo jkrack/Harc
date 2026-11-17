@@ -98,3 +98,29 @@ Only after that seam is qualified should actual local synthetic-model evaluation
 begin. Do not substitute the32KB cap, approximate word counts, catalog budget or
 parseable JSON for these prerequisites. No model, downloads, external service,
 content logging, UI activation or production-source test was used in this check.
+
+### Prepare-once capability groundwork (not activated)
+
+The stacked bounded-evidence branch adds a separate `generateEvidence` capability.
+The production container prepares the full chat template once, measures
+`prepared.text.tokens.size`, rejects input plus reserved output over the limit,
+and passes that same prepared input to generation. It accepts exactly one normal
+completion, rejects tool calls, output-limit/cancel termination, missing/duplicate
+completion and content after completion. Responses have a 4096-byte cap.
+Existing summary/answer/transform behavior is unchanged; other container adapters
+fail unsupported by default.
+
+The service entry is internal, resident-only and shares the existing operation
+lock. It cannot load/download a model and rejects unload/cancellation after a
+noncooperative response. `EvidenceGenerationBudget` has no public constructor:
+its 32768-token ceiling is an operational ceiling, NOT model qualification.
+This change deliberately does not provide the installed-config resolver or a
+public adapter. Before exposing it, bind a known schema's explicit context limit
+to a SHA-verified installed config and model identity, revalidate config around
+loading, and test unsupported/missing/ambiguous metadata. Never substitute SDK
+default limits or descriptor prompt budgets for that evidence.
+
+Synthetic tests exercise boundary/completion/serialization/unload behavior only.
+They do not establish Metal inference, semantic relevance, accurate extraction,
+Store proposal persistence or app accessibility. Actual local synthetic model
+evaluation and strict Store snapshot validation remain separate gates.

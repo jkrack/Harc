@@ -291,6 +291,32 @@ public actor SummarizerService {
         }
     }
 
+    /// Internal groundwork only: refuses to load/download a model. The future
+    /// qualified adapter must bind budget to the installed config and validate
+    /// returned evidence against the Store snapshot before proposing anything.
+    func generateEvidence(promptBody: String, modelID: String, modelDirectory: URL,
+                          budget: EvidenceGenerationBudget) async throws -> String {
+        try await acquireOperation()
+        defer { releaseOperation() }
+        try Task.checkCancellation()
+        guard let container, loadedModelID == modelID,
+              loadedDirectory == modelDirectory.standardizedFileURL else {
+            throw EvidenceGenerationError.modelNotResident
+        }
+        cancelIdleUnload()
+        defer { scheduleIdleUnload(reason: "idle") }
+        let generation = loadGeneration
+        do {
+            let result = try await container.generateEvidence(promptBody: promptBody, budget: budget)
+            try Task.checkCancellation()
+            guard generation == loadGeneration else { throw CancellationError() }
+            return result
+        } catch {
+            if Task.isCancelled || generation != loadGeneration { throw CancellationError() }
+            throw error
+        }
+    }
+
     /// Load the container for `modelID` without generating — lets callers
     /// (dictation's cold-load phase) attribute the multi-GB load to its own
     /// UI state instead of hiding it under generation time. No-op when the
