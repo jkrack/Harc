@@ -1,7 +1,9 @@
 # Frozen unseen-project semantic evaluation v2
 
-Status: corpus and harness prepared, no v2 model execution yet. Independent
-methodology review is required before development then untouched holdout runs.
+Status: independently reviewed db0d466 ran development then unchanged holdout
+on 2026-11-17. Reports and label-masked packets are in
+`docs/evidence/semantic-evaluation-v2-20261117/`; independent output adjudication
+is pending. The holdout exposed false positives, so no activation is justified.
 No v1 score or output is modified. This is evaluation, not training/fine-tuning.
 
 ## Freeze and generalization scope
