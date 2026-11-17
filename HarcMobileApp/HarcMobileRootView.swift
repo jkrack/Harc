@@ -2,6 +2,7 @@ import AVFAudio
 import HarcDomain
 import HarcPresenceUI
 import Observation
+import OSLog
 import SwiftUI
 import UIKit
 
@@ -139,6 +140,8 @@ struct HarcMobileRootView: View {
         }
         .sheet(isPresented: $showsSetupAndSync) {
             HarcMobileSetupAndSyncView()
+                .onAppear { traceSetup("sheet_appeared") }
+                .onDisappear { traceSetup("sheet_disappeared") }
         }
     }
 
@@ -186,12 +189,22 @@ struct HarcMobileRootView: View {
         )
     }
 
+    private func traceSetup(_ event: String) {
+#if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("--harc-ui-test-long-host-name") else { return }
+        Logger(subsystem: "com.harc.mobile.uidiagnostic", category: "setup")
+            .notice("event=\(event, privacy: .public) presented=\(showsSetupAndSync, privacy: .public)")
+#endif
+    }
+
     private var hostPill: some View {
         HarcMobileHostPill(
             presentation: hostPillPresentation,
             compact: true
         ) {
+            traceSetup("host_action_received")
             showsSetupAndSync = true
+            traceSetup("host_action_requested_sheet")
         }
     }
 

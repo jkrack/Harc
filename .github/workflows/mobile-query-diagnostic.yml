@@ -1,0 +1,41 @@
+name: Mobile query diagnostic
+on:
+  push:
+    branches: [test/mobile-query-diagnostic-20261117]
+permissions:
+  contents: read
+jobs:
+  focused-query:
+    runs-on: macos-26
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Execute original two selectors with traces
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .build/mobile-query-diagnostic
+          bash scripts/diagnose-mobile-query.sh 2>&1 | tee .build/mobile-query-diagnostic/console.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-query-diagnostic
+          path: |
+            .build/mobile-query-diagnostic/*.json
+            .build/mobile-query-diagnostic/*.txt
+            .build/mobile-query-diagnostic/console.log
+            .build/mobile-query-diagnostic/configuration.xcresult
+            .build/mobile-query-diagnostic/diagnostics
+            .build/mobile-query-diagnostic/build-diagnostics
+          retention-days: 3

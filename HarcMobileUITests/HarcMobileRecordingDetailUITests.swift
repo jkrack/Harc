@@ -230,10 +230,13 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         let tabs = app.tabBars.firstMatch
         let bottom = newRecording.exists ? newRecording.frame.minY
             : (tabs.exists ? tabs.frame.minY : app.frame.maxY)
-        for _ in 0..<16 {
+        for probe in 0..<16 {
             // List may not materialize offscreen rows at accessibility sizes.
+            print("HARC_REVEAL phase=exists_begin iteration=\(probe)")
             let exists = element.exists
+            print("HARC_REVEAL phase=exists_end iteration=\(probe) exists=\(exists)")
             let frame = exists ? element.frame : .zero
+            print("HARC_REVEAL phase=frame_end iteration=\(probe) finite=\(frame.minY.isFinite && frame.maxY.isFinite)")
             if exists, element.isHittable, frame.minY >= top + 8, frame.maxY <= bottom - 8 { break }
             // Short drags avoid overshooting a control behind the persistent CTA
             // at accessibility text sizes. SwipeUp can advance several rows.
@@ -246,7 +249,9 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
                 .withOffset(CGVector(dx: app.frame.midX, dy: centerY + (down ? distance / 2 : -distance / 2)))
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.05)
         }
+        print("HARC_REVEAL phase=final_exists_begin")
         XCTAssertTrue(element.waitForExistence(timeout: 5))
+        print("HARC_REVEAL phase=final_exists_end")
         XCTAssertTrue(element.isHittable)
         XCTAssertGreaterThanOrEqual(element.frame.minY, top)
         XCTAssertLessThanOrEqual(element.frame.maxY, bottom)
