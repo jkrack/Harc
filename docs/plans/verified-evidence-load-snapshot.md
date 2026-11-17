@@ -143,3 +143,30 @@ This is a concrete future consumer of the snapshot, not implemented provenance.
 The production snapshot factory still needs real-bundle resource limits,
 complete loader-input verification and lifetime ownership qualification. No
 real-model download/copy/load or default selection change is performed here.
+
+### Scoped concrete entry, still unactivated
+
+The next stack adds `QualifiedEvidenceSnapshotFactory`: only the fixed E2B
+catalog ID/revision is accepted; every pinned input is copied and destination
+SHA256-verified. Only the two named Harc marker files are ignored at source;
+unknown loader inputs are rejected. The factory checks config before copying,
+checks available disk headroom, then qualifies the copied config. Limits rise
+only through this catalog-only factory (4 GiB total); default copier fixture
+limits remain small. Nothing downloads or alters installed source files.
+
+`generateQualifiedEvidence` is internal with no app/UI callsite. It owns the
+existing service operation across factory scope, load, strict prepared-input
+generation/producer join, resident unload and snapshot cleanup. It refuses any
+existing unrelated resident before copying. Successful loader result identity
+is scoped locally with snapshot/manifest metadata and service generation; no
+ordinary preload is retroactively qualified. Cleanup clears only the scoped
+resident and preserves unrelated queued callers. An externally requested unload
+still invalidates a suspended load/generation.
+
+Synthetic tests exercise the actual shared operation composition with fake
+loaders, including success/error suspension and cancel/unload during loading.
+These do not qualify Metal execution, a real 3.6GB snapshot copy, disk endurance,
+semantic quality or full app behavior. No real-model copy/load was run. The
+same-user non-hostile corruption/concurrent-update threat limitation remains;
+this is not hostile-process attestation. Independent review and actual synthetic
+local-model evaluation must precede any caller activation.

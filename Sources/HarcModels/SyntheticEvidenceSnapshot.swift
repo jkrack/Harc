@@ -2,7 +2,8 @@ import Foundation
 import CryptoKit
 import Darwin
 
-/// Inert synthetic-only copier. No production catalog bridge or model loader.
+/// Internal bounded copier. Defaults restrict synthetic fixtures; only the
+/// catalog-only factory raises limits for a verified installed bundle.
 /// Protects against accidental corruption/concurrent updates, NOT hostile
 /// same-user mutation. Open file descriptors do not make inodes immutable.
 enum SyntheticEvidenceSnapshot {
@@ -13,14 +14,17 @@ enum SyntheticEvidenceSnapshot {
     }
     enum Failure: Error { case invalidManifest, filesystem, unexpectedFiles, integrity }
 
-    /// Small fixtures only. Executes synchronous bounded file work off-main and
+    /// Executes synchronous bounded file work off-main and
     /// keeps cleanup ownership until the consumer (fake loader in tests) ends.
     static func withSnapshot<T: Sendable>(source: URL, scratch: URL, files: [File],
+        maximumFileBytes: Int = 1_048_576, maximumTotalBytes: Int = 4_194_304,
+        ignoredSourceNames: Set<String> = [],
         beforeCopy: @escaping @Sendable () -> Void = {},
         beforeHandoff: @escaping @Sendable (URL) -> Void = { _ in },
         consume: @Sendable (URL) async throws -> T) async throws -> T {
         let preparation = Task.detached(priority: .utility) {
-            try prepare(source: source, scratch: scratch, files: files, beforeCopy: beforeCopy)
+            try prepare(source: source, scratch: scratch, files: files, maximumFileBytes: maximumFileBytes, maximumTotalBytes: maximumTotalBytes,
+                        ignoredSourceNames: ignoredSourceNames, beforeCopy: beforeCopy)
         }
         return try await withTaskCancellationHandler {
             let snapshot = try await preparation.value
@@ -96,25 +100,26 @@ enum SyntheticEvidenceSnapshot {
         return result
     }
 
-    private static func prepare(source: URL, scratch: URL, files: [File], beforeCopy: @Sendable () -> Void) throws -> Snapshot {
+    private static func prepare(source: URL, scratch: URL, files: [File], maximumFileBytes: Int, maximumTotalBytes: Int,
+                                ignoredSourceNames: Set<String>, beforeCopy: @Sendable () -> Void) throws -> Snapshot {
         guard !files.isEmpty, files.count <= 16,
               Set(files.map(\.name)).count == files.count,
               files.allSatisfy({ file in
                   !file.name.isEmpty && file.name.utf8.count <= 128 && !file.name.hasPrefix(".") &&
                   file.name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) } &&
-                  file.bytes >= 0 && file.bytes <= 1_048_576 && file.sha256.count == 64 &&
+                  file.bytes >= 0 && file.bytes <= maximumFileBytes && file.sha256.count == 64 &&
                   file.sha256.allSatisfy { "0123456789abcdef".contains($0) }
-              }), files.reduce(0, { $0 + $1.bytes }) <= 4_194_304 else { throw Failure.invalidManifest }
+              }), files.reduce(0, { $0 + $1.bytes }) <= maximumTotalBytes else { throw Failure.invalidManifest }
         try Task.checkCancellation()
         let source = source.standardizedFileURL.resolvingSymlinksInPath()
         let scratch = scratch.standardizedFileURL.resolvingSymlinksInPath()
         let src = open(source.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard src >= 0 else { throw Failure.filesystem }
         defer { close(src) }
-        guard try names(src, limit: files.count) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
+        guard try names(src, limit: files.count + ignoredSourceNames.count).subtracting(ignoredSourceNames) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
         let parent = open(scratch.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard parent >= 0 else { throw Failure.filesystem }
-        let name = "evidence-fixture-" + UUID().uuidString
+        let name = "evidence-snapshot-" + UUID().uuidString
         guard mkdirat(parent, name, 0o700) == 0 else { close(parent); throw Failure.filesystem }
         let destination = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard destination >= 0 else {
@@ -171,7 +176,7 @@ enum SyntheticEvidenceSnapshot {
                 guard hashedBytes == file.bytes, digest == file.sha256 else { throw Failure.integrity }
             }
             guard try names(destination, limit: files.count) == Set(files.map(\.name)),
-                  try names(src, limit: files.count) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
+                  try names(src, limit: files.count + ignoredSourceNames.count).subtracting(ignoredSourceNames) == Set(files.map(\.name)) else { throw Failure.unexpectedFiles }
             try Task.checkCancellation()
             return snapshot
         } catch { snapshot.cleanup(); throw error }

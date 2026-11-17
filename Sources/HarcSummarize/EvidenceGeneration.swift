@@ -22,7 +22,7 @@ public struct EvidenceGenerationBudget: Sendable {
 }
 
 public enum EvidenceGenerationError: Error, Equatable {
-    case unsupported, invalidBudget, contextExceeded, invalidCompletion, outputExceeded, modelNotResident
+    case unsupported, invalidBudget, contextExceeded, invalidCompletion, outputExceeded, modelNotResident, unrelatedResident
 }
 
 /// Collector accepts only one authoritative normal completion, no tools or
