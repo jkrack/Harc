@@ -9,6 +9,12 @@ guard AXIsProcessTrusted() else {
     print("AX client not trusted; no prompt or permission change attempted.")
     exit(2)
 }
+// Wall-clock bound includes all attributes/nodes, even a stalled AX server.
+DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+    print("Whole-process AX watchdog expired after 20 seconds.")
+    fflush(stdout)
+    exit(124)
+}
 let application = AXUIElementCreateApplication(pid)
 AXUIElementSetMessagingTimeout(application, 2)
 var count = 0
@@ -23,6 +29,9 @@ func read(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 }
 func walk(_ element: AXUIElement, depth: Int) {
     guard depth < 32, count < 1000 else { return }
+    // Defense in depth: no menu traversal even if exposed below a window.
+    guard let role = read(element, "AXRole") as? String else { return }
+    guard !["AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem"].contains(role) else { return }
     count += 1
     for name in ["AXRole", "AXTitle", "AXDescription", "AXValue", "AXIdentifier"] {
         if let value = read(element, name) as? String {
@@ -33,4 +42,24 @@ func walk(_ element: AXUIElement, depth: Int) {
     for child in children { walk(child, depth: depth + 1) }
 }
 print("Trusted actual AX client; synthetic target PID \(pid)")
-walk(application, depth: 0)
+// Never walk application children: inherited menu bars can expose Recent Items.
+// Read only the fixed role, then descend into exact synthetic fixture windows.
+if let role = read(application, "AXRole") as? String, role == "AXApplication" {
+    print("0 AXRole: AXApplication")
+} else { exit(3) }
+let allowedTitles: Set<String> = [
+    "Synthetic Harc preview", "Synthetic native controls", "Synthetic SwiftUI controls"
+]
+let windows = read(application, "AXWindows") as? [AXUIElement] ?? []
+var matched = Set<String>()
+for window in windows {
+    guard let role = read(window, "AXRole") as? String, role == "AXWindow",
+          let title = read(window, "AXTitle") as? String,
+          allowedTitles.contains(title) else { continue }
+    matched.insert(title)
+    walk(window, depth: 1)
+}
+guard matched == allowedTitles else {
+    print("Required synthetic windows unavailable; refusing incomplete qualification.")
+    exit(4)
+}

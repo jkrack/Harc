@@ -1,0 +1,29 @@
+# Standalone synthetic preview AX qualification
+
+A separate development-only .app now hosts the same preview/controller against a synthetic temporary Store with a normal NSApplication lifecycle and run loop. Native controls and a minimal SwiftUI control window are diagnostic siblings. No model runs, production Library reads, production entry points, permission prompts, trust changes or force-accessibility flags occur.
+
+The fixture target is absent from the default Package graph. HARC_BUILD_PREVIEW_QA=1 explicitly adds it; it is not an app-project target or shipping product. The internal panel remains internal; the debug fixture imports HarcUI testably.
+
+## Reproduction
+Run Tools/run-preview-accessibility-qa.sh with the SSD scratch path and an evidence output directory. It builds the opted-in debug fixture, creates a temporary .app, launches it independently, and runs the separate read-only AX client against only that PID. The client requires existing trust (otherwise exits without a prompt), has a 2-second per-message timeout and 20-second whole-process watchdog, and caps depth/nodes. The fixture self-terminates after 120 seconds; normal script cleanup sends TERM to only its captured PID, which is handled by NSApplication termination, allows five seconds for normal exit, then terminates only that still-running shell child if needed, and deletes only its generated bundle directory. Temporary synthetic Store data is removed on app termination.
+
+## Observed result
+On November 17, the reproducible script exited zero. All nine [assertions](evidence/standalone-preview-ax-20261117/assertions.json) passed in the original run (raw tree removed during privacy remediation):
+- application and panel Dismiss AXButton/identifier exposed;
+- unverified warning, complete-source heading and final blocked-approval correction exposed;
+- complete-source identifier and scroll area exposed;
+- native and minimal SwiftUI diagnostic controls exposed.
+
+The original probe incorrectly traversed application children including inherited system menus. Although the panel source was synthetic, the raw artifact was NOT entirely synthetic: it included recent-item and account menu metadata. The raw tree has been removed from current HEAD. This correction does not erase the earlier published commit. No historical rewrite has been performed. Repository visibility was confirmed public; owner coordination is required for any history remediation.
+
+The corrected probe reads only the application's role and AXWindows, selects exactly the three fixed synthetic window titles, and refuses menu-role traversal. It never descends through application AXChildren or AXMenuBar. The corrected run remains pending; original content-exposure assertions are not a privacy-isolation pass.
+
+## Interpretation and remaining limits
+This is successful external AX content exposure under a proper app lifecycle. It resolves the question of whether this fixture can expose the required content, but does not establish why the Swift Testing process could not. The earlier four failed opt-in getter assertions, minimal-control results and CannotComplete errors remain unchanged in PR227 evidence. They are not silently rerated as passes.
+
+No AXPress, AX scrolling action, human keyboard traversal or VoiceOver speech was performed here. Earlier native scrolling/resize and programmatic Escape checks remain separate evidence. Real app integration, actual VoiceOver/focus order, dynamic accessibility sizes, future write authorization and production activation remain gated. No feature was enabled or released.
+
+Default package description confirmed the fixture is absent without opt-in; the 10 focused panel/lifecycle tests passed on the final default graph. One connection-interrupted test attempt had no completion evidence and was not counted; a fresh run was made only after checking no prior process remained.
+
+### Corrected window-only run
+The corrected probe also refuses traversal when a node's role cannot be read, and requires AXWindow at each allowlisted root. A subsequent isolated run exited zero with all nine content assertions; local-only inspection found exactly the three synthetic root titles and no menu-role nodes. The new raw tree is not committed or published. Swift typecheck passed. This positive run does not simulate transport failures; the unreadable-role behavior is a fail-closed code guard, not an injected-failure test. Earlier public-history remediation remains pending owner authorization.

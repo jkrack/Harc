@@ -1,0 +1,11 @@
+{
+  "application_accessible": true,
+  "dismiss_button_identifier": true,
+  "warning_present": true,
+  "source_heading": true,
+  "full_source_correction": true,
+  "source_identifier": true,
+  "scroll_area": true,
+  "native_control": true,
+  "minimal_swiftui_control": true
+}
