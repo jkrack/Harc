@@ -10,8 +10,8 @@ public struct ProjectRefinementPanel: View {
     @AccessibilityFocusState private var feedbackFocused: Bool
     private let onOpenRecording: (CanonicalRecordingID) -> Void
 
-    public init(store: RecordingStore, onOpenRecording: @escaping (CanonicalRecordingID) -> Void) {
-        _model = StateObject(wrappedValue: ProjectRefinementViewModel(store: store))
+    public init(store: RecordingStore, expectedHost: LibraryMetadata, canWrite: @escaping @MainActor () -> Bool, onOpenRecording: @escaping (CanonicalRecordingID) -> Void) {
+        _model = StateObject(wrappedValue: ProjectRefinementViewModel(store: store, expectedHost: expectedHost, canWrite: canWrite))
         self.onOpenRecording = onOpenRecording
     }
 
@@ -66,7 +66,12 @@ public struct ProjectRefinementPanel: View {
                     .overlay(RoundedRectangle(cornerRadius: HarcSpacing.md).stroke(.secondary.opacity(0.25)))
                 }
                 if !model.isLoading && model.cards.isEmpty && model.errorMessage == nil {
-                    Text("Nothing to review here right now.").font(.harcBody)
+                    if model.completedBatch {
+                        Text("This batch is complete. There may be more connections to review.").font(.harcBody)
+                        Button("Review next 3") { Task { await model.load(deferred: model.reviewingDeferred, nextBatch: true) } }
+                    } else {
+                        Text("No more connections in this batch sequence. Refresh to start again.").font(.harcBody)
+                    }
                 }
                 if model.isSaving { ProgressView("Saving…") }
                 if !model.confirmations.isEmpty { Text("Recent answers").font(.harcLabel) }

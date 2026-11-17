@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import GRDB
+import HarcDomain
 @testable import HarcStore
 
 @Suite("Evidence-backed project refinement")
@@ -209,6 +210,53 @@ struct ProjectRefinementTests {
         #expect(try await reopened.confirmedProjectMatches(recordingID: recording.id!).count == 1)
         #expect(try await reopened.undoProjectMatch(operationID: op) == 1)
         #expect(try await store.projectMatchReview(id: review.id).decision == .pending)
+    }
+
+    @Test func hostSessionRejectsStandaloneWritesIncludingReplayUndoAndRefresh() async throws {
+        let (store, review) = try await fixture()
+        let metadata = try await store.libraryMetadata()
+        let expected = try LibraryMetadata(libraryID: metadata.libraryID, writerMode: .host,
+            hostAuthorityID: try HostAuthorityID(Data(repeating: 0x51, count: 32)), hostStateID: .random(),
+            currentChangeCursor: metadata.currentChangeCursor)
+        let op = UUID()
+        _ = try await store.decideProjectMatch(id: review.id, expectedVersion: review.version,
+            decision: .accepted, operationID: op)
+        await #expect(throws: ProjectRefinementError.hostUnavailable) {
+            _ = try await store.applyProjectMatchDecision(id: review.id, expectedVersion: review.version,
+                decision: .accepted, operationID: op, expectedHost: expected)
+        }
+        await #expect(throws: ProjectRefinementError.hostUnavailable) {
+            _ = try await store.undoProjectMatch(operationID: op, expectedHost: expected)
+        }
+        await #expect(throws: ProjectRefinementError.hostUnavailable) {
+            try await store.refreshPendingProjectReview(id: review.id,
+                expectedVersion: review.version, expectedHost: expected)
+        }
+        #expect(try await store.confirmedProjectMatches(recordingID: review.recordingID).count == 1)
+    }
+
+    @Test func liveHostBindingAllowsCommitButRevokedBindingBlocksUndo() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("host-review-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try await RecordingStore.onDisk(url: root.appendingPathComponent("fixture.sqlite"))
+        let recording = try await store.upsert(Recording(wavPath: root.appendingPathComponent("fixture.wav").path,
+            startedAt: Date(), transcriptText: "Harc project."))
+        let project = try await store.createKnowledgeProject(name: "Harc")
+        let review = try await store.proposeProjectMatch(recordingID: recording.id!, projectID: project.id,
+            quote: "Harc", generatorID: "fixture")
+        let metadata = try await store.libraryMetadata()
+        let lease = try await store.enableHostMode(expectedLibraryID: metadata.libraryID,
+            hostAuthorityID: try HostAuthorityID(Data(repeating: 0x52, count: 32)), hostStateID: .random())
+        let expected = try await store.libraryMetadata()
+        let op = UUID()
+        let result = try await store.applyProjectMatchDecision(id: review.id, expectedVersion: review.version,
+            decision: .accepted, operationID: op, expectedHost: expected)
+        #expect(result.didApply)
+        try await store.disableHostMode(lease)
+        await #expect(throws: ProjectRefinementError.hostUnavailable) {
+            _ = try await store.undoProjectMatch(operationID: op, expectedHost: expected)
+        }
+        #expect(try await store.confirmedProjectMatches(recordingID: review.recordingID).count == 1)
     }
 
 }

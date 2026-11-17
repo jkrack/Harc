@@ -33,6 +33,58 @@ final class HarcAppUITests: XCTestCase {
         rootURL = nil
     }
 
+    func testProjectConnectionsHostFlowDark() throws {
+        try verifyProjectConnections(appearance: "dark")
+    }
+
+    func testProjectConnectionsHostFlowLight() throws {
+        try verifyProjectConnections(appearance: "light")
+    }
+
+    private func verifyProjectConnections(appearance: String) throws {
+        app.launchEnvironment["HARC_UI_TEST_PROJECT_REVIEW"] = "host"
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = appearance
+        app.launch()
+        let entry = app.buttons["libraryProjectConnections"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 60), app.debugDescription)
+        let search = app.searchFields["harc.library.search"]
+        search.click()
+        search.typeText("unrelated-no-match")
+        XCTAssertTrue(app.staticTexts["No results"].waitForExistence(timeout: 15))
+        entry.click()
+        let yes = app.buttons["Yes, assign UI Test Customer Renewal to Customer renewal"]
+        XCTAssertTrue(yes.waitForExistence(timeout: 15), app.debugDescription)
+        let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        shot.name = "project-connections-\(appearance)"
+        shot.lifetime = .keepAlways
+        add(shot)
+        yes.click()
+        XCTAssertTrue(app.staticTexts["This batch is complete. There may be more connections to review."].waitForExistence(timeout: 10))
+        let undo = app.buttons["Undo answer for UI Test Customer Renewal, Customer renewal"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 10))
+        undo.click()
+        let open = app.buttons["Open recording: UI Test Customer Renewal"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10), app.debugDescription)
+        open.click()
+        XCTAssertTrue(open.waitForNonExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["harc.player.waveform.ready"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertEqual(search.value as? String, "")
+        entry.click()
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(open.waitForNonExistence(timeout: 10))
+        entry.click()
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        app.buttons["Done"].click()
+        XCTAssertTrue(open.waitForNonExistence(timeout: 10))
+    }
+
+    func testProjectConnectionsAbsentWithoutHostAuthority() throws {
+        app.launch()
+        XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 60))
+        XCTAssertFalse(app.buttons["libraryProjectConnections"].exists)
+    }
+
     /// Separate cases bound screenshot memory and scratch audio per appearance.
     func testTideFidelityStateMatrixDark() throws {
         try captureTideMatrix(appearance: "dark")

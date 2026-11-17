@@ -170,6 +170,69 @@ struct ProjectRefinementViewModelTests {
     }
 
 
+    @Test func exhaustedBatchDoesNotClaimQueueIsEmpty() async throws {
+        let (store, vm) = try await fixture()
+        let project = try await store.createKnowledgeProject(name: "Second")
+        for index in 0..<4 {
+            let recording = try await store.upsert(Recording(wavPath: "/tmp/batch-\(UUID()).wav",
+                startedAt: Date(), title: "Extra \(index)", transcriptText: "Second project."))
+            _ = try await store.proposeProjectMatch(recordingID: recording.id!, projectID: project.id,
+                quote: "Second", generatorID: "fixture")
+        }
+        await vm.load()
+        #expect(vm.cards.count == 3)
+        for card in vm.cards { await vm.decide(card, decision: .rejected) }
+        #expect(vm.completedBatch)
+        await vm.load()
+        #expect(vm.cards.count == 2)
+        #expect(!vm.completedBatch)
+    }
+
+    @Test func revokedHostBeforeCommitDoesNotSaveOrReward() async throws {
+        let (store, _) = try await fixture()
+        let gate = SaveGate()
+        var allowed = true
+        var commits = 0
+        let vm = ProjectRefinementViewModel(store: store, onCommitted: { commits += 1 },
+            beforeApply: { await gate.wait() }, canWrite: { allowed })
+        await vm.load()
+        let card = try #require(vm.cards.first)
+        let task = Task { await vm.decide(card, decision: .accepted) }
+        while !gate.entered { await Task.yield() }
+        allowed = false
+        gate.release()
+        await task.value
+        #expect(vm.errorMessage != nil)
+        #expect(commits == 0)
+        #expect(try await store.projectMatchReview(id: card.id).decision == .pending)
+    }
+
+    @Test func nextDeferredBatchDoesNotRepeatSetAsideCards() async throws {
+        let (store, vm) = try await fixture()
+        let project = try await store.createKnowledgeProject(name: "Deferred")
+        for index in 0..<5 {
+            let rec = try await store.upsert(Recording(wavPath: "/tmp/deferred-\(UUID()).wav",
+                startedAt: Date(), title: "Deferred \(index)", transcriptText: "Deferred project."))
+            let review = try await store.proposeProjectMatch(recordingID: rec.id!, projectID: project.id,
+                quote: "Deferred", generatorID: "fixture")
+            _ = try await store.decideProjectMatch(id: review.id, expectedVersion: review.version,
+                decision: .unsure, operationID: UUID())
+        }
+        await vm.load(deferred: true)
+        let firstIDs = Set(vm.cards.map(\.id))
+        #expect(firstIDs.count == 3)
+        for card in vm.cards { await vm.decide(card, decision: .unsure) }
+        #expect(vm.completedBatch)
+        await vm.load(deferred: true, nextBatch: true)
+        #expect(vm.cards.count == 2)
+        #expect(firstIDs.isDisjoint(with: vm.cards.map(\.id)))
+        for card in vm.cards { await vm.decide(card, decision: .unsure) }
+        await vm.load(deferred: true, nextBatch: true)
+        #expect(vm.cards.isEmpty)
+        await vm.load(deferred: true)
+        #expect(Set(vm.cards.map(\.id)) == firstIDs)
+    }
+
     @MainActor
     private final class SaveGate {
         var entered = false

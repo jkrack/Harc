@@ -599,6 +599,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
     private var store: RecordingStore?
     /// Present only in Host role. It owns the canonical store above; no second
     /// RecordingStore is opened while this runtime is resident.
+#if DEBUG
+    // Synthetic UI qualification owns a fresh isolated database, not a resident
+    // network Host. No keys, listeners or production authority are created.
+    private var projectReviewUITestStore: RecordingStore?
+    private var projectReviewUITestLease: HostWriterLease?
+#endif
     private var hostRuntime: HarcResidentHostRuntimeV1?
     /// Non-fatal relay setup failures are kept separate from Host readiness:
     /// local capture, Library, LAN pairing, and upload recovery stay online.
@@ -987,6 +993,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
                 sender?.reply(toApplicationShouldTerminate: true)
                 return
             }
+#if DEBUG
+            if let store = self.projectReviewUITestStore, let lease = self.projectReviewUITestLease {
+                try? await store.disableHostMode(lease)
+                self.projectReviewUITestStore = nil
+                self.projectReviewUITestLease = nil
+            }
+#endif
             if let runtime = self.hostRuntime {
                 self.remoteRelayStatusTask?.cancel()
                 await self.hostMCPServer?.shutdown()
@@ -4014,6 +4027,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             },
             onReprocessAll: desktopClientRuntime == nil ? nil : { [weak self] in
                 self?.reprocessEntireLocalLibrary()
+            },
+            canReviewProjects: { [weak self, weak store] in
+#if DEBUG
+                if let self, let store, self.isUITesting,
+                   self.projectReviewUITestStore === store,
+                   self.projectReviewUITestLease != nil { return true }
+#endif
+                guard let self, let store, self.prefs.runtimeRole == .host,
+                      self.bridge.hostRuntimeReady, let runtime = self.hostRuntime else { return false }
+                return runtime.storageRuntime.recordingStore === store
             }
         )
         harcWindow = controller
@@ -4781,6 +4804,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             _ = try? await ingestor.ingestAll()
             if isUITesting {
                 try? await seedUITestLibraryIfNeeded(store: store)
+#if DEBUG
+                try await configureProjectReviewUITest(store: store)
+#endif
             }
 
             let vm = RecordingsViewModel(store: store)
@@ -5451,6 +5477,26 @@ private extension AppDelegate {
         previewTask?.cancel()
         previewTask = nil
         resetUI()
+    }
+
+    func configureProjectReviewUITest(store: RecordingStore) async throws {
+        guard isUITesting,
+              ProcessInfo.processInfo.environment["HARC_UI_TEST_PROJECT_REVIEW"] == "host",
+              let root = uiTestRootURL,
+              root.standardizedFileURL.path.hasPrefix("/tmp/harc-app-ui-") else { return }
+        let metadata = try await store.libraryMetadata()
+        guard metadata.writerMode == .standalone else { return }
+        let project = try await store.createKnowledgeProject(name: "Customer renewal")
+        for recording in try await store.fetchAll() {
+            guard let id = recording.id, let text = recording.transcriptText,
+                  !text.isEmpty else { continue }
+            _ = try await store.proposeProjectMatch(recordingID: id, projectID: project.id,
+                quote: text, generatorID: "isolated-ui-fixture")
+        }
+        let lease = try await store.enableHostMode(expectedLibraryID: metadata.libraryID,
+            hostAuthorityID: try HostAuthorityID(Data(repeating: 0x71, count: 32)), hostStateID: .random())
+        projectReviewUITestStore = store
+        projectReviewUITestLease = lease
     }
 
     func seedUITestLibraryIfNeeded(store: RecordingStore) async throws {

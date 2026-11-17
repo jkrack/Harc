@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import HarcStore
+import HarcDomain
 
 /// Presentation for an explicitly authorized local canonical Store. The app
 /// must not construct this for a secondary-client mirror; no RPC exists yet.
@@ -29,6 +30,10 @@ public final class ProjectRefinementViewModel: ObservableObject {
         let operationID: UUID
     }
     private let store: RecordingStore
+    private let expectedHost: LibraryMetadata?
+    private let canWrite: @MainActor () -> Bool
+    @Published public private(set) var completedBatch = false
+    private var nextBatchCursor: UUID?
     private var intents: [UUID: Intent] = [:]
     private var generation = UUID()
     private var active = true
@@ -37,8 +42,10 @@ public final class ProjectRefinementViewModel: ObservableObject {
     private var reloadAfterSave = false
     var reloadTask: Task<Void, Never>?
 
-    public init(store: RecordingStore, onCommitted: @escaping () -> Void = {}, beforeApply: @escaping @MainActor () async -> Void = {}) {
+    public init(store: RecordingStore, onCommitted: @escaping () -> Void = {}, beforeApply: @escaping @MainActor () async -> Void = {}, expectedHost: LibraryMetadata? = nil, canWrite: @escaping @MainActor () -> Bool = { true }) {
         self.store = store
+        self.expectedHost = expectedHost
+        self.canWrite = canWrite
         self.onCommitted = onCommitted
         self.beforeApply = beforeApply
     }
@@ -51,8 +58,9 @@ public final class ProjectRefinementViewModel: ObservableObject {
         isLoading = false
     }
 
-    public func load(deferred: Bool = false) async {
+    public func load(deferred: Bool = false, nextBatch: Bool = false) async {
         active = true
+        if !nextBatch || reviewingDeferred != deferred { nextBatchCursor = nil }
         reviewingDeferred = deferred
         guard !isSaving else { reloadAfterSave = true; return }
         let token = UUID()
@@ -62,10 +70,12 @@ public final class ProjectRefinementViewModel: ObservableObject {
         errorMessage = nil
         statusMessage = nil
         do {
-            let loaded = try await store.pendingProjectReviewCards(deferred: deferred)
+            let loaded = try await store.pendingProjectReviewCards(deferred: deferred, afterReviewID: nextBatchCursor)
             let history = try await store.recentProjectReviewHistory()
             guard active, generation == token else { return }
             cards = loaded
+            if let last = loaded.last { nextBatchCursor = last.id }
+            completedBatch = false
             confirmations = history.map { item in
                 Confirmation(receipt: item.receipt, message: Self.confirmationMessage(item.receipt, projectName: item.projectName),
                     undone: item.undone, canUndo: item.canUndo, context: "\(item.recordingTitle), \(item.projectName)")
@@ -95,8 +105,9 @@ public final class ProjectRefinementViewModel: ObservableObject {
         defer { finishSaving() }
         do {
             await beforeApply()
+            guard canWrite() else { throw ProjectRefinementError.hostUnavailable }
             let result = try await store.applyProjectMatchDecision(id: card.id, expectedVersion: intent.version,
-                decision: decision, operationID: intent.operationID)
+                decision: decision, operationID: intent.operationID, expectedHost: expectedHost)
             // Retain undo even if this panel disappeared while commit completed.
             if !confirmations.contains(where: { $0.id == result.receipt.operationID }) {
                 let message: String
@@ -110,6 +121,7 @@ public final class ProjectRefinementViewModel: ObservableObject {
             }
             guard active, generation == token else { return }
             cards.removeAll { $0.id == card.id }
+            completedBatch = cards.isEmpty
             statusMessage = result.didApply
                 ? Self.confirmationMessage(result.receipt, projectName: card.projectName)
                 : "This answer was already processed. No new changes."
@@ -127,7 +139,8 @@ public final class ProjectRefinementViewModel: ObservableObject {
         errorMessage = nil
         defer { finishSaving() }
         do {
-            try await store.refreshPendingProjectReview(id: card.id, expectedVersion: card.review.version)
+            guard canWrite() else { throw ProjectRefinementError.hostUnavailable }
+            try await store.refreshPendingProjectReview(id: card.id, expectedVersion: card.review.version, expectedHost: expectedHost)
             guard active, generation == token else { return }
             isSaving = false
             await load(deferred: false)
@@ -146,12 +159,15 @@ public final class ProjectRefinementViewModel: ObservableObject {
         let token = generation
         defer { finishSaving() }
         do {
-            _ = try await store.undoProjectMatch(operationID: confirmation.id)
+            guard canWrite() else { throw ProjectRefinementError.hostUnavailable }
+            _ = try await store.undoProjectMatch(operationID: confirmation.id, expectedHost: expectedHost)
             if let index = confirmations.firstIndex(where: { $0.id == confirmation.id }) { confirmations[index].undone = true }
             guard active, generation == token else { return }
             let refreshed = try await store.pendingProjectReviewCards(deferred: reviewingDeferred)
             guard active, generation == token else { return }
             cards = refreshed
+            nextBatchCursor = refreshed.last?.id
+            completedBatch = false
             statusMessage = "Answer undone."
         } catch {
             guard active, generation == token else { return }
@@ -183,6 +199,8 @@ public final class ProjectRefinementViewModel: ObservableObject {
 
     private static func message(for error: Error) -> String {
         switch error {
+        case ProjectRefinementError.hostUnavailable:
+            return "This Host is no longer available for changes. Reopen connections on the active Host."
         case ProjectRefinementError.conflict:
             return "This connection changed since your answer. Refresh to see the current state."
         case ProjectRefinementError.staleEvidence:

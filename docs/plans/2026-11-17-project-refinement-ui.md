@@ -86,3 +86,28 @@ shows “Source changed; review evidence” instead of disappearing.
 
 The graph picture comes later. This first experience earns trust through a small
 number of useful decisions, visible source evidence and honest, reversible impact.
+
+## Host entry follow-on
+
+The separate Host-entry branch adds a Connections sheet to the normal Mac
+Library only while the resident Host is ready and owns that exact Store. The
+panel captures canonical library/authority/state identity on open. Every answer,
+refresh and Undo checks the active runtime before dispatch, then rechecks the
+Host tuple inside its write transaction, in addition to existing Store writer
+lease validation. Standalone, phone and secondary-client mirrors get no entry.
+A Host-to-standalone transition cannot reuse the old panel's write authority.
+
+Completing three cards says the batch is complete, not that the whole queue is
+empty. Review next 3 explicitly fetches the next bounded snapshot. Source links
+resolve canonical identity into existing Library selection, suppressing late
+navigation after sheet dismissal or a newer source selection. They do not invent
+an audio timestamp.
+
+No generator or project-creation flow is added, so an empty production queue is
+expected until a separately qualified producer creates real suggestions. No
+fixture data is inserted into user Libraries. This is not the full graph or
+phone HITL experience, and is not in release 0.14.23 (79).
+
+Next-batch traversal uses a stable review-ID cursor, so setting an already
+deferred batch aside again cannot repeat the same three cards forever. Explicit
+Refresh starts over; Undo restarts from its refreshed bounded snapshot.
