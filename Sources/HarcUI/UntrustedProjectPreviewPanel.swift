@@ -8,6 +8,12 @@ import HarcStore
 struct UntrustedProjectPreviewPanel: View {
     @ObservedObject var controller: SelectedProjectPreviewController
     @Environment(\.dismiss) private var dismissPresentation
+    private let presentationToken: ProjectPreviewPresentationToken
+
+    init(controller: SelectedProjectPreviewController) {
+        self.controller = controller
+        presentationToken = controller.presentationToken
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: HarcSpacing.lg) {
@@ -15,7 +21,7 @@ struct UntrustedProjectPreviewPanel: View {
                 Text("Possible connection").font(.harcTitle).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button("Dismiss") {
-                    controller.dismiss()
+                    controller.dismiss(presentation: presentationToken)
                     dismissPresentation()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -30,7 +36,8 @@ struct UntrustedProjectPreviewPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: HarcSpacing.xl) {
-                    if let preview = controller.preview, controller.state == .showingPreview {
+                    if controller.isCurrentPresentation(presentationToken),
+                       let preview = controller.preview, controller.state == .showingPreview {
                         literalSection("Project", value: preview.projectName, id: "project")
                         literalSection("Project brief", value: preview.projectBrief, id: "brief")
                         VStack(alignment: .leading, spacing: HarcSpacing.sm) {
@@ -47,7 +54,7 @@ struct UntrustedProjectPreviewPanel: View {
                                 .font(.harcCaption)
                         }
                     } else {
-                        Text(verbatim: Self.statusText(controller.state))
+                        Text(verbatim: Self.statusText(controller.isCurrentPresentation(presentationToken) ? controller.state : .invalidated))
                             .font(.harcBody)
                             .accessibilityIdentifier("untrusted-project-preview-status")
                     }
@@ -59,7 +66,7 @@ struct UntrustedProjectPreviewPanel: View {
         }
         .padding(HarcSpacing.xl)
         .frame(minWidth: 320, idealWidth: 640, minHeight: 300, idealHeight: 640)
-        .onDisappear { controller.dismiss() }
+        .onDisappear { controller.dismiss(presentation: presentationToken) }
     }
 
     private func heading(_ title: String) -> some View {

@@ -38,12 +38,40 @@ struct UntrustedProjectPreviewPanelTests {
             unverifiedModelLabel: "[unverified](https://example.invalid)", token: token)
         #expect(controller.preview?.fullSourceText == source)
         let panel = UntrustedProjectPreviewPanel(controller: controller)
-        let host = NSHostingView(rootView: panel)
+        let host = NSHostingView(rootView: panel
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .background(dark ? Color.black : Color.white))
         host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         host.frame = NSRect(x: 0, y: 0, width: 640, height: 640)
         host.layoutSubtreeIfNeeded()
         #expect(host.fittingSize.width > 0)
         #expect(host.fittingSize.height > 0)
+        if ProcessInfo.processInfo.environment["HARC_PREVIEW_WINDOW_QA"] == "1" {
+            let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 640, height: 640),
+                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.title = "Harc synthetic preview QA"
+            window.appearance = host.appearance
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let data = try #require(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(
+                dark ? "harc-window-preview-dark.png" : "harc-window-preview-light.png"))
+            let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                context: nil, characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}",
+                isARepeat: false, keyCode: 53))
+            #expect(window.performKeyEquivalent(with: escape))
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(controller.state == .idle)
+            #expect(controller.preview == nil)
+        }
         // Harness only: no application entry point, model, or automatic scan.
         // Layout construction is not a VoiceOver/keyboard/visual qualification.
         controller.dismiss()
