@@ -8,6 +8,12 @@ public struct KnowledgeProject: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
     public let name: String
     public let version: UUID
+    /// Owner-authored context only; never silently populated by model output.
+    public let brief: String?
+
+    public init(id: UUID, name: String, version: UUID, brief: String? = nil) {
+        self.id = id; self.name = name; self.version = version; self.brief = brief
+    }
 }
 
 public enum ProjectReviewDecision: String, Codable, Sendable {
@@ -77,7 +83,7 @@ private struct ProjectReviewEvent: Codable {
     let receipt: ProjectReviewReceipt
 }
 
-private func transcriptDigest(_ text: String) -> String {
+func transcriptDigest(_ text: String) -> String {
     SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
@@ -116,7 +122,7 @@ extension DatabaseMigrator {
 
 // Additional UI session binding, on top of StoreDatabaseAccess's live writer
 // lease validation. A former Host becoming standalone must not retain UI writes.
-private func validateProjectReviewHost(_ db: Database, expected: LibraryMetadata?) throws {
+func validateProjectReviewHost(_ db: Database, expected: LibraryMetadata?) throws {
     guard let expected else { return }
     let current = try RecordingStore.readLibraryMetadata(in: db)
     guard expected.writerMode == .host, current.writerMode == .host,

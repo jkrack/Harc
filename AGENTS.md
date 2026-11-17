@@ -1048,3 +1048,11 @@ Validate ProjectMentionProducerTests; The Host-only consent UI selects only the 
 an explicit unchecked opt-in before each scan; project creation alone does not
 scan. Validate testProjectConnectionsExplicitSingleSourceConsent in the app.
 Never run synthetic producers on an owner's Library.
+
+ProjectEvidenceContract is inert stage-one infrastructure: versioned owner brief,
+Host-bound selected original transcript and strict fake/model response validation.
+A unique verbatim span proves source presence, not semantic truth. No model call,
+candidate persistence or UI activation is provided yet. Validate
+ProjectEvidenceContractTests. Future inference must reuse serialized local
+SummarizerService and authoritative completion checks; never reuse the lexical
+all-library index or interpolated chunk timestamps as semantic evidence.
