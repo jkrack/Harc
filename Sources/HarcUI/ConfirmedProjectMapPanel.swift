@@ -53,3 +53,23 @@ struct ConfirmedProjectMapPanel: View {
         .frame(minWidth: 320, idealWidth: 560, minHeight: 300)
     }
 }
+
+/// Lifecycle-aware presentation for future explicit-selection callers. Not
+/// installed in production. Never leaves a prior map behind on failure/loss.
+struct SelectedConfirmedProjectMapPanel: View {
+    @ObservedObject var controller: ConfirmedProjectMapController
+    var body: some View {
+        Group {
+            if controller.state == .ready, let snapshot = controller.snapshot {
+                ConfirmedProjectMapPanel(snapshot: snapshot)
+            } else if controller.state == .loading {
+                ProgressView("Loading accepted connections")
+            } else if controller.state == .invalidated {
+                Text("Connections changed or are unavailable. Select the recording again to load a fresh snapshot.")
+            } else {
+                Text("Select a recording to view accepted project connections.")
+            }
+        }
+        .onDisappear { controller.dismiss() }
+    }
+}

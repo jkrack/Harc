@@ -578,3 +578,21 @@ public extension RecordingStore {
         }
     }
 }
+
+public extension RecordingStore {
+    /// Register before reading; tracks all dependencies, including newly accepted
+    /// reviews. Region observation returns a signal, never source content.
+    func observeConfirmedProjectMapChanges(recordingID: Int64) -> ProjectPreviewChangeObservation {
+        let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let observation = DatabaseRegionObservation(tracking:
+            SQLRequest<Row>(sql: "SELECT * FROM recordings WHERE id = ?", arguments: [recordingID]),
+            SQLRequest<Row>(sql: "SELECT * FROM project_match_reviews WHERE recording_id = ?", arguments: [recordingID]),
+            SQLRequest<Row>(sql: "SELECT p.payload FROM knowledge_projects p JOIN project_match_reviews m ON m.project_id = p.id WHERE m.recording_id = ?", arguments: [recordingID]),
+            SQLRequest<Row>(sql: "SELECT library_uuid, writer_mode, host_authority_id, host_state_uuid FROM library_metadata WHERE id = 1"))
+        nonisolated(unsafe) let cancellable = observation.start(in: uncoordinatedDB,
+            onError: { _ in continuation.yield(()); continuation.finish() },
+            onChange: { _ in continuation.yield(()); continuation.finish() })
+        continuation.onTermination = { _ in cancellable.cancel() }
+        return ProjectPreviewChangeObservation(changes: stream, cancel: { cancellable.cancel(); continuation.finish() })
+    }
+}

@@ -100,7 +100,7 @@ struct ConfirmedProjectMapPanelTests {
             }
             // Fail closed before reading text: no menus, windows, application
             // roots, unknown roles, or back-links may enter this owned subtree.
-            let allowedRoles: Set<String> = ["AXGroup", "AXScrollArea", "AXStaticText", "AXButton",
+            let allowedRoles: Set<String> = ["AXGroup", "AXScrollArea", "AXStaticText", "AXHeading", "AXButton",
                 "AXDisclosureTriangle", "AXCheckBox", "AXTextArea", "AXTextField"]
             guard let role = attribute("accessibilityRole") as? String,
                   allowedRoles.contains(role) else { return [] }
