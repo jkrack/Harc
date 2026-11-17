@@ -25,6 +25,14 @@ public enum QualifiedEvidenceSnapshotFactory {
               descriptor.files.count <= 16, descriptor.totalBytes <= 4_294_967_296 else {
             throw EvidenceContextError.unsupportedModel
         }
+        return try await withSnapshotCore(descriptor: descriptor, installedDirectory: installedDirectory,
+            scratchDirectory: scratchDirectory, consume: consume)
+    }
+
+    // Internal fixed-fixture seam, never an app/API source of caller-provided trust.
+    static func withSnapshotCore<T: Sendable>(descriptor: ModelDescriptor, installedDirectory: URL,
+        scratchDirectory: URL, consume: @Sendable (QualifiedEvidenceSnapshot) async throws -> T) async throws -> T {
+        let modelID = descriptor.id
         // Resolve before potentially copying gigabytes; still recheck the copy.
         _ = try await EvidenceContextQualification.resolve(modelID: modelID, directory: installedDirectory)
         let attributes = try FileManager.default.attributesOfFileSystem(forPath: scratchDirectory.path)

@@ -170,3 +170,28 @@ semantic quality or full app behavior. No real-model copy/load was run. The
 same-user non-hostile corruption/concurrent-update threat limitation remains;
 this is not hostile-process attestation. Independent review and actual synthetic
 local-model evaluation must precede any caller activation.
+
+### Actual installed-model offline smoke, 2026-11-17
+
+After tiny fixed-manifest factory success/error tests passed (3 test functions),
+one explicitly opt-in synthetic smoke exercised the real scoped entry. The
+already-installed Gemma4 E2B fixed catalog revision
+`99d9a53ff828d365a8ecae538e45f80a08d612cd` supplied all eight SHA-pinned model
+inputs. No download, owner recording or transcript was used; no prompt/response
+content was logged. An internal observer records only numeric completion data.
+
+Verified result: one XCTest passed, no skip/failure; prompt 32 tokens, generated
+6 tokens, authoritative stop reason `stop`, expected abstain JSON schema.
+Elapsed 15.10 seconds includes verified snapshot copying, loading, generation,
+producer completion, unload and cleanup. Peak MLX allocation 2,689,271,390 bytes;
+active MLX after unload 5,116 bytes. Snapshot scratch returned to 0 bytes, service
+resident ID nil. System had 16GiB RAM, memory-pressure free percentage 51% before,
+44% observed during copying and 49% after; SSD had ~1.4TiB available. No installed
+app was closed or altered. Host was not recording at preflight, no writable audio
+handles; no active local build/model process was present.
+
+This qualifies the mechanical offline scoped runtime path for this one model and
+short synthetic response, NOT semantic evidence quality, accuracy, long input,
+thermal endurance, full app lifecycle, or UI readiness. Source-span validation,
+semantic positive/negative synthetic cases and cancellation during real model
+work remain separate qualification. No app caller or default was activated.

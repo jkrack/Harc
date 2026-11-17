@@ -62,9 +62,17 @@ public extension ContainerLike {
 /// chunks into one string.
 public struct MLXModelContainer: ContainerLike {
     private let container: ModelContainer
+    private let evidenceObserver: (@Sendable (Int, Int, String) -> Void)?
 
     public init(container: ModelContainer) {
         self.container = container
+        self.evidenceObserver = nil
+    }
+
+    // Internal diagnostic observer: numeric completion metadata only, no text.
+    init(container: ModelContainer, evidenceObserver: @escaping @Sendable (Int, Int, String) -> Void) {
+        self.container = container
+        self.evidenceObserver = evidenceObserver
     }
 
     public func generate(
@@ -89,7 +97,8 @@ public struct MLXModelContainer: ContainerLike {
         let input = UserInput(messages: [["role": "user", "content": promptBody]],
                               additionalContext: ["enable_thinking": false])
         let prepared = try await container.prepare(input: input)
-        try budget.validate(promptTokens: prepared.text.tokens.size)
+        let promptTokenCount = prepared.text.tokens.size
+        try budget.validate(promptTokens: promptTokenCount)
         try Task.checkCancellation()
         var parameters = GenerateParameters()
         parameters.maxTokens = budget.outputReserve
@@ -108,6 +117,7 @@ public struct MLXModelContainer: ContainerLike {
                 switch event {
                 case .chunk(let fragment): try result.append(fragment)
                 case .info(let info):
+                    evidenceObserver?(promptTokenCount, info.generationTokenCount, String(describing: info.stopReason))
                     switch info.stopReason {
                     case .stop: try result.complete(normally: true)
                     case .length, .cancelled: throw EvidenceGenerationError.invalidCompletion
