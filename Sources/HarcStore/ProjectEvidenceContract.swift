@@ -157,3 +157,56 @@ public extension ProjectEvidenceSnapshot {
             projectID: project.id, projectVersion: project.version, transcriptDigest: digest, host: host)
     }
 }
+
+public extension RecordingStore {
+    /// Read-only freshness check; future confirmation still requires an atomic
+    /// transaction. A true result can become stale immediately after returning.
+    func projectPreviewIsCurrent(_ snapshot: ProjectEvidenceSnapshot) async throws -> Bool {
+        try await db.read { database in
+            do { try validateProjectReviewHost(database, expected: snapshot.host) }
+            catch { return false }
+            guard let count = try Int.fetchOne(database,
+                sql: "SELECT length(CAST(transcript_text AS BLOB)) FROM recordings WHERE id = ? AND deleted_at IS NULL",
+                arguments: [snapshot.recording.id]), count <= 32_768,
+                let recording = try Recording.fetchOne(database, key: snapshot.recording.id),
+                recording.canonicalID == snapshot.recording.canonicalID, recording.deletedAt == nil,
+                let text = recording.transcriptText, transcriptDigest(text) == snapshot.digest,
+                let data = try Data.fetchOne(database, sql: "SELECT payload FROM knowledge_projects WHERE id = ?",
+                    arguments: [snapshot.project.id.uuidString]) else { return false }
+            return try JSONDecoder().decode(KnowledgeProject.self, from: data) == snapshot.project
+        }
+    }
+
+    /// Registers synchronously on the DB writer queue before returning. Does not
+    /// fetch transcript content or mutate the database. Observe before reading a
+    /// fresh snapshot, so a transaction cannot fall in a read/subscribe gap.
+    func observeProjectPreviewChanges(recordingID: Int64, projectID: UUID) -> ProjectPreviewChangeObservation {
+        let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let observation = DatabaseRegionObservation(tracking:
+            SQLRequest<Row>(sql: "SELECT canonical_uuid, transcript_text, deleted_at FROM recordings WHERE id = ?", arguments: [recordingID]),
+            SQLRequest<Row>(sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [projectID.uuidString]),
+            SQLRequest<Row>(sql: "SELECT library_uuid, writer_mode, host_authority_id, host_state_uuid FROM library_metadata WHERE id = 1"))
+        nonisolated(unsafe) let cancellable = observation.start(in: uncoordinatedDB,
+            onError: { _ in continuation.yield(()); continuation.finish() },
+            onChange: { _ in continuation.yield(()); continuation.finish() })
+        continuation.onTermination = { _ in cancellable.cancel() }
+        return ProjectPreviewChangeObservation(changes: stream, cancel: { cancellable.cancel(); continuation.finish() })
+    }
+}
+
+/// Ownership of registration is explicit even if the stream is never consumed.
+/// GRDB's cancellable is thread-safe. Cancellation is idempotent, no callbacks
+/// or source values are exposed beyond a single invalidation signal.
+public final class ProjectPreviewChangeObservation: @unchecked Sendable {
+    public let changes: AsyncStream<Void>
+    private let lock = NSLock()
+    private var cancellation: (@Sendable () -> Void)?
+    init(changes: AsyncStream<Void>, cancel: @escaping @Sendable () -> Void) {
+        self.changes = changes; cancellation = cancel
+    }
+    public func cancel() {
+        let action = lock.withLock { let value = cancellation; cancellation = nil; return value }
+        action?()
+    }
+    deinit { cancel() }
+}
