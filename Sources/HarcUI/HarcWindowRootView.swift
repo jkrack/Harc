@@ -447,7 +447,7 @@ public struct HarcWindowRootView: View {
             // delete key, and Import lives in File › Import and the empty
             // state, where a rare action belongs.
             ToolbarItemGroup {
-                if prefs.runtimeRole == .host && bridge.hostRuntimeReady && canReviewProjects() {
+                if canReviewProjects() {
                     Button("Connections", systemImage: "point.3.connected.trianglepath.dotted") {
                         showProjectReview = true
                     }

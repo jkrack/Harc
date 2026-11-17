@@ -280,6 +280,9 @@ jobs:
             --require-bundle HarcAppTests \
             --require-bundle HarcAppUITests \
             --require-test HarcAppUITests/HarcAppUITests/testCaptureIntegrityWarningSurvivesRelaunch \
+            --require-test HarcAppUITests/HarcAppUITests/testProjectConnectionsHostFlowDark \
+            --require-test HarcAppUITests/HarcAppUITests/testProjectConnectionsHostFlowLight \
+            --require-test HarcAppUITests/HarcAppUITests/testProjectConnectionsAbsentWithoutHostAuthority \
             --require-test HarcAppUITests/HarcAppUITests/testSettingsCanOpenFromLibrary \
             --require-test HarcAppUITests/HarcAppUITests/testSettingsCanOpenAfterLibraryIsClosedAndReopened \
             --require-test HarcAppUITests/HarcAppUITests/testLaunchOpensFixtureLibraryAndShowsRecordingDetail \
