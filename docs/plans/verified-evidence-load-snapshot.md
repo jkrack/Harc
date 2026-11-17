@@ -103,3 +103,43 @@ the owned descriptor and skips pathname removal. The renamed empty staging
 directory may remain; this conservative leak is preferable to deleting an
 unowned replacement. A deterministic child-swap regression checks both remain.
 This remains a point-in-time check, not hostile same-user race protection.
+
+### Concrete fake-loader consumer before receipt machinery
+
+A test-only cross-module harness connects the existing synthetic copier to
+SummarizerService's existing serialized preload/evidence paths. The fake loader
+checks exact bytes at the passed snapshot path and the fake generator rereads
+those bytes to verify lifetime. Tests require a distinct snapshot load rather
+than reuse of an earlier ordinary preload, rejection after unload, cleanup after
+scope, and zero loader calls for a bad manifest.
+
+This does NOT turn ordinary preload into a qualified load or create a trusted
+receipt. It establishes a concrete consumer and lifetime contract before adding
+production provenance state. A production receipt must still be minted only by
+a verified-bundle loader and bound to its exact successful container/load epoch,
+not supplied by a caller or inferred from these tests.
+
+### Minimal production integration boundary (not implemented)
+
+Prefer one scoped qualified-evidence operation over a second resident-model
+state machine. A future verified-bundle module owns an opaque snapshot lease
+(private initializer, catalog verification only); the service must not accept a
+caller-constructed digest/directory as qualification. Its lifetime begins before
+loading and ends only after retained generation cleanup AND container unload.
+A held synthetic generation test now proves files remain readable while paused,
+including an error return followed by explicit unload before scope cleanup.
+
+The first production adapter can reject when an unrelated resident model exists
+rather than evicting it or loading a second multi-GB container. With operation
+ownership held and no resident container, capture a fresh attempt nonce plus
+loadGeneration, load the exact opaque snapshot, then mint a private receipt only
+for that returned container. Receipt fields: catalog/revision/manifest identity,
+snapshot nonce/canonical directory, successful-load nonce, service generation
+and qualified context. Ordinary preload must never mint or upgrade this receipt.
+Model switch/unload/failed load invalidate it; every evidence call checks it
+before and after producer completion. Finally unload before releasing the lease.
+
+This is a concrete future consumer of the snapshot, not implemented provenance.
+The production snapshot factory still needs real-bundle resource limits,
+complete loader-input verification and lifetime ownership qualification. No
+real-model download/copy/load or default selection change is performed here.
