@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 import Foundation
 import Testing
@@ -74,10 +75,28 @@ struct UntrustedProjectPreviewPanelTests {
                 scroll.reflectScrolledClipView(scroll.contentView)
                 try await Task.sleep(for: .milliseconds(100))
                 #expect(scroll.contentView.bounds.minY > 100)
-                let texts = accessibilityText(host)
+                if let probe = ProcessInfo.processInfo.environment["HARC_PREVIEW_AX_PROBE"] {
+                    let pid = ProcessInfo.processInfo.processIdentifier
+                    let output = try await Task.detached {
+                        let process = Process()
+                        process.executableURL = URL(fileURLWithPath: probe)
+                        process.arguments = [String(pid)]
+                        let pipe = Pipe()
+                        process.standardOutput = pipe
+                        process.standardError = pipe
+                        try process.run()
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        process.waitUntilExit()
+                        return String(decoding: data, as: UTF8.self)
+                    }.value
+                    try output.write(to: FileManager.default.temporaryDirectory
+                        .appendingPathComponent("harc-preview-real-ax-client.txt"), atomically: true, encoding: .utf8)
+                }
+                let snapshot = accessibilitySnapshot(host)
+                let texts = snapshot.texts
                 #expect(texts.contains { $0.contains("Dismiss") })
                 #expect(texts.contains { $0.contains("FINAL SOURCE CORRECTION") })
-                try texts.joined(separator: "\n").write(to:
+                try (snapshot.diagnostics + ["TEXT VALUES"] + texts).joined(separator: "\n").write(to:
                     FileManager.default.temporaryDirectory.appendingPathComponent("harc-preview-synthetic-accessibility.txt"),
                     atomically: true, encoding: .utf8)
             }
@@ -94,6 +113,7 @@ struct UntrustedProjectPreviewPanelTests {
             try await Task.sleep(for: .milliseconds(50))
             #expect(controller.state == .idle)
             #expect(controller.preview == nil)
+            if longSource { try await compareAccessibilityControls(in: window) }
         }
         // Harness only: no application entry point, model, or automatic scan.
         // Layout construction is not a VoiceOver/keyboard/visual qualification.
@@ -109,7 +129,8 @@ struct UntrustedProjectPreviewPanelTests {
         return view.subviews.lazy.compactMap { findScrollView($0) }.first
     }
 
-    private func accessibilityText(_ root: Any) -> [String] {
+    private func accessibilitySnapshot(_ root: Any) -> (texts: [String], diagnostics: [String]) {
+        var diagnostics: [String] = []
         var visited = Set<ObjectIdentifier>()
         func walk(_ item: Any, depth: Int) -> [String] {
             guard depth < 40, let object = item as? NSObject else { return [] }
@@ -121,15 +142,51 @@ struct UntrustedProjectPreviewPanelTests {
                 guard object.responds(to: selector) else { return nil }
                 return object.perform(selector)?.takeUnretainedValue()
             }
+            let children = attribute("accessibilityChildren") as? [Any] ?? []
+            let navigation = attribute("accessibilityChildrenInNavigationOrder") as? [Any] ?? []
+            diagnostics.append("depth=\(depth) class=\(type(of: object)) role=\(String(describing: attribute("accessibilityRole"))) identifier=\(String(describing: attribute("accessibilityIdentifier"))) children=\(children.count) navigationChildren=\(navigation.count)")
             var values: [String] = []
+            if let title = attribute("accessibilityTitle") as? String { values.append(title) }
             if let label = attribute("accessibilityLabel") as? String { values.append(label) }
             if let value = attribute("accessibilityValue") as? String { values.append(value) }
-            for child in attribute("accessibilityChildren") as? [Any] ?? [] {
+            for child in children + navigation {
                 values += walk(child, depth: depth + 1)
             }
             return values
         }
-        return walk(root, depth: 0)
+        let texts = walk(root, depth: 0)
+        return (texts, diagnostics)
+    }
+
+    private func compareAccessibilityControls(in window: NSWindow) async throws {
+        let native = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 480))
+        let button = NSButton(title: "Dismiss native control", target: nil, action: nil)
+        button.frame = NSRect(x: 20, y: 100, width: 240, height: 32)
+        let label = NSTextField(labelWithString: "NATIVE ACCESSIBILITY CONTROL MARKER")
+        label.frame = NSRect(x: 20, y: 160, width: 320, height: 32)
+        native.addSubview(button); native.addSubview(label)
+        window.contentView = native
+        try await Task.sleep(for: .milliseconds(100))
+        let nativeRoot = accessibilitySnapshot(native)
+        let nativeButton = accessibilitySnapshot(button)
+        let nativeLabel = accessibilitySnapshot(label)
+        let minimal = NSHostingView(rootView: VStack {
+            Button("Dismiss SwiftUI control") { }
+            Text("SWIFTUI ACCESSIBILITY CONTROL MARKER")
+        })
+        window.contentView = minimal
+        try await Task.sleep(for: .milliseconds(100))
+        minimal.layoutSubtreeIfNeeded()
+        let swiftUI = accessibilitySnapshot(minimal)
+        var sections = ["Test process AXIsProcessTrusted=\(AXIsProcessTrusted()) (read-only, no prompt)"]
+        for (name, snapshot) in [("native subtree", nativeRoot), ("native button direct diagnostic", nativeButton),
+                                 ("native label direct diagnostic", nativeLabel), ("minimal SwiftUI subtree", swiftUI)] {
+            sections += [name] + snapshot.diagnostics + ["TEXT VALUES"] + snapshot.texts
+        }
+        try sections.joined(separator: "\n").write(to: FileManager.default.temporaryDirectory
+            .appendingPathComponent("harc-preview-synthetic-accessibility-controls.txt"), atomically: true, encoding: .utf8)
+        // Controls diagnose the probe, never substitute for panel assertions.
+        // No real-client/VoiceOver traversal or permissions change is implied.
     }
 
 }

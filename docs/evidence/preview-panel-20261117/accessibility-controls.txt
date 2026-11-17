@@ -1,0 +1,26 @@
+Test process AXIsProcessTrusted=true (read-only, no prompt)
+native subtree
+depth=0 class=NSView role=Optional(AXUnknown) identifier=nil children=2 navigationChildren=2
+depth=1 class=NSButtonCell role=Optional(AXButton) identifier=nil children=0 navigationChildren=0
+depth=1 class=NSTextFieldCell role=Optional(AXStaticText) identifier=nil children=0 navigationChildren=0
+TEXT VALUES
+Dismiss native control
+Dismiss native control
+NATIVE ACCESSIBILITY CONTROL MARKER
+native button direct diagnostic
+depth=0 class=NSButton role=Optional(AXUnknown) identifier=nil children=1 navigationChildren=1
+depth=1 class=NSButtonCell role=Optional(AXButton) identifier=nil children=0 navigationChildren=0
+TEXT VALUES
+Dismiss native control
+Dismiss native control
+Dismiss native control
+Dismiss native control
+native label direct diagnostic
+depth=0 class=NSTextField role=Optional(AXUnknown) identifier=nil children=1 navigationChildren=1
+depth=1 class=NSTextFieldCell role=Optional(AXStaticText) identifier=nil children=0 navigationChildren=0
+TEXT VALUES
+NATIVE ACCESSIBILITY CONTROL MARKER
+NATIVE ACCESSIBILITY CONTROL MARKER
+minimal SwiftUI subtree
+depth=0 class=NSHostingView<VStack<TupleView<(Button<Text>, Text)>>> role=Optional(AXGroup) identifier=nil children=0 navigationChildren=0
+TEXT VALUES
