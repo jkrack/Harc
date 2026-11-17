@@ -187,6 +187,106 @@ final class RoleSeparatedEvidenceDevelopmentTests: XCTestCase {
         XCTAssertEqual(rows.count, selected.count)
         XCTAssertFalse(rows.contains { $0["outcome"] as? String == "runtimeError" })
     }
+    private struct ChallengeInputs: Decodable {
+        let version: String
+        let cases: [ChallengeSource]
+    }
+    private struct ChallengeSource: Decodable {
+        let id, projectName, projectBrief, transcript: String
+        var asSourceOnlyFixture: EvidenceV3Case {
+            EvidenceV3Case(id: id, split: "independent-challenge", label: "withheld", category: "withheld",
+                projectName: projectName, projectBrief: projectBrief, transcript: transcript,
+                requiredAnchorAlternatives: [], exampleSufficientQuote: nil, labelReason: "withheld")
+        }
+    }
+    private func challengeInputs() throws -> (ChallengeInputs, Data) {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "evidence-independent-challenge-v1", withExtension: "json"))
+        let bytes = try Data(contentsOf: url)
+        guard Self.hash(bytes) == "a2a870aaa54476c6199676d6a9930bc30f553fe13314aa14d7b3ad9029816338" else { throw V3Error.freezeMismatch }
+        return (try JSONDecoder().decode(ChallengeInputs.self, from: bytes), bytes)
+    }
+    func testIndependentInputFreezeWithoutGoldOrModel() throws {
+        let (inputs, bytes) = try challengeInputs()
+        XCTAssertEqual(inputs.cases.count, 24)
+        XCTAssertEqual(Set(inputs.cases.map(\.id)).count, 24)
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        for row in try XCTUnwrap(raw["cases"] as? [[String: Any]]) {
+            XCTAssertEqual(Set(row.keys), ["id", "projectName", "projectBrief", "transcript"])
+        }
+        XCTAssertEqual(Self.hash(Data(EvidenceV3Prompt.instructions.utf8)), "38e499ce710ee345fc8e6511f79de5052c0472b3790831ea3e6c827d7495d310")
+    }
+    func testOptInIndependentChallenge() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HARC_EVIDENCE_INDEPENDENT_CHALLENGE"] == "1", "Reviewed synthetic evaluation only")
+        let split = "independent-challenge"
+        let source = try XCTUnwrap(env["HARC_QUALIFIED_EVIDENCE_SOURCE"])
+        let scratch = try XCTUnwrap(env["HARC_QUALIFIED_EVIDENCE_SCRATCH"])
+        let reportPath = try XCTUnwrap(env["HARC_EVIDENCE_EVAL_REPORT"])
+        let (inputs, bytes) = try challengeInputs() // Hash checked before model creation.
+        let selected = inputs.cases.map { $0.asSourceOnlyFixture }
+        let metrics = V3RuntimeMetrics()
+        let service = SummarizerService(loader: { directory in
+            let container = try await LLMModelFactory.shared.loadContainer(from: directory, using: #huggingFaceTokenizerLoader())
+            return MLXModelContainer(container: container) { p, g, stop in metrics.record(p, g, stop) }
+        })
+        var rows: [[String: Any]] = []
+        var adjudication: [[String: Any]] = []
+        for item in selected {
+            let (store, snapshot, literal, root) = try await fixture(item)
+            let started = Date(); metrics.reset()
+            var raw = "", outcome = "runtimeError", quote: String?
+            var unsupported = false
+            do {
+                raw = try await service.generateQualifiedEvidence(promptBody: EvidenceV3Prompt.build(item),
+                    modelID: "gemma-4-e2b-it-4bit", installedDirectory: URL(fileURLWithPath: source),
+                    scratchDirectory: URL(fileURLWithPath: scratch), systemPrompt: EvidenceV3Prompt.instructions)
+                do {
+                    switch try RecordingStore.validateProjectEvidenceResponse(raw, snapshot: snapshot, modelID: "gemma-4-e2b-it-4bit") {
+                    case .abstain: outcome = "abstain"
+                    case .candidate(let evidence):
+                        outcome = "suggest"; quote = evidence.quote
+                    }
+                } catch {
+                    outcome = error as? ProjectEvidenceContractError == .ambiguousQuote ? "ambiguousQuote" : "invalidResponse"
+                    // Diagnostic only; permissive dictionary parsing never earns relation/source credit.
+                    if let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+                       let text = object["quote"] as? String {
+                        unsupported = Data(item.transcript.utf8).range(of: Data(text.utf8)) == nil
+                    }
+                }
+            } catch { outcome = "runtimeError" }
+            let observed = metrics.values
+            rows.append(["id":item.id,"literalSuggest":literal,
+                "outcome":outcome,"unsupportedQuoteDiagnostic":unsupported,
+                "syntheticRawOutput":raw,"syntheticValidatedQuote":quote as Any? ?? NSNull(),
+                "elapsedCopyLoadInferenceCleanupSeconds":Date().timeIntervalSince(started),"inferenceOnlySeconds":NSNull(),
+                "promptTokens":observed.first?.0 ?? -1,"generatedTokens":observed.first?.1 ?? -1,
+                "stop":observed.first?.2 ?? "missing","completionCount":observed.count,
+                "observedProcessPeakMLXBytes":Memory.peakMemory])
+            // Separate packet deliberately omits labels, anchor lists and automatic score.
+            adjudication.append(["id":item.id,"projectName":item.projectName,"projectBrief":item.projectBrief,
+                "syntheticTranscript":item.transcript,"syntheticRawOutput":raw])
+            let resident = await service.loadedModelID
+            XCTAssertNil(resident)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: scratch).isEmpty)
+            let pending = try await store.pendingProjectReviewCards(); XCTAssertTrue(pending.isEmpty)
+            try? FileManager.default.removeItem(at: root)
+            if outcome == "runtimeError" { break }
+        }
+        let descriptor = try XCTUnwrap(ModelCatalog.descriptor(for: "gemma-4-e2b-it-4bit"))
+        let manifest = descriptor.files.sorted { $0.path < $1.path }.map { "\($0.path)\t\($0.bytes)\t\($0.sha256)" }.joined(separator: "\n")
+        let report: [String: Any] = ["corpusVersion":inputs.version,"corpusSHA256":Self.hash(bytes),"split":split,
+            "promptVersion":EvidenceV3Prompt.version,"promptInstructionsSHA256":Self.hash(Data(EvidenceV3Prompt.instructions.utf8)),
+            "modelID":descriptor.id,"revision":descriptor.revision,
+            "configSHA256":descriptor.files.first { $0.path == "config.json" }!.sha256,
+            "manifestSHA256":Self.hash(Data((descriptor.id + "\n" + descriptor.revision + "\n" + manifest).utf8)),
+            "rows":rows,"goldUnavailableAtRun":true,
+            "notes":"Independent input-only challenge. No labels or semantic scoring available at run. Freeze outputs before gold release. Peak MLX cumulative, latency includes copying/loading/cleanup."]
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted,.sortedKeys]).write(to: URL(fileURLWithPath: reportPath), options: .atomic)
+        try JSONSerialization.data(withJSONObject: ["corpusSHA256":Self.hash(bytes),"cases":adjudication], options: [.prettyPrinted,.sortedKeys]).write(to: URL(fileURLWithPath: reportPath + ".adjudication.json"), options: .atomic)
+        XCTAssertEqual(rows.count, selected.count)
+        XCTAssertFalse(rows.contains { $0["outcome"] as? String == "runtimeError" })
+    }
     private static func summarize(_ rows: [[String: Any]]) -> [String: Any] {
         func ratio(_ a: Int, _ b: Int) -> Any { b == 0 ? NSNull() : Double(a) / Double(b) }
         let positive = rows.filter { $0["label"] as? String == "positive" }.count

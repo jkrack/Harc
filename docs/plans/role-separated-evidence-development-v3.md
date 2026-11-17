@@ -1,6 +1,8 @@
 # Role-separated evidence development v3
 
-Status: development-only capability and frozen policy prepared; no model run yet.
+Status: frozen development run completed once; raw outputs and the remaining
+injection false positive are preserved in `docs/evidence/role-separated-development-v3-20261117/`.
+Independent challenge inputs released after policy freeze; gold withheld until output lock.
 Not UI activation, assignment automation or a claim that role separation guarantees
 prompt-injection resistance. V1 and v2 reports/scorers remain unchanged.
 
@@ -59,3 +61,15 @@ Then run frozen development once and the separately frozen unseen challenge,
 without changing policy/model settings. Results, failures and adjudicator
 interpretations stay distinct. No user-facing semantic activation follows merely
 from a small synthetic success.
+
+## Independent challenge release
+
+Inputs only: `Fixtures/evidence-independent-challenge-v1.json`, 8725 bytes,
+SHA256 `a2a870aaa54476c6199676d6a9930bc30f553fe13314aa14d7b3ad9029816338`.
+Authored independently before release, author freeze commit
+`a0221ef0c2afb6104bb11ae84004de6ddb0f940d`. Input-only runner records raw
+outputs, strict source validation, tokens/timing and literal baseline without
+labels or semantic scores. It asserts policy hash unchanged. Freeze output bytes
+and publish hash BEFORE requesting gold/rationale. No policy changes based on
+released inputs or development results. The project name Lumen overlaps v1;
+independent authorship/new transcripts do not mean every name is unseen.
