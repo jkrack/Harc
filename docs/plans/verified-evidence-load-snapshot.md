@@ -181,9 +181,9 @@ inputs. No download, owner recording or transcript was used; no prompt/response
 content was logged. An internal observer records only numeric completion data.
 
 Verified result: one XCTest passed, no skip/failure; prompt 32 tokens, generated
-6 tokens, authoritative stop reason `stop`, expected abstain JSON schema.
+6 tokens, authoritative stop reason `stop`, expected abstain JSON shape (not production strict evidence-parser proof).
 Elapsed 15.10 seconds includes verified snapshot copying, loading, generation,
-producer completion, unload and cleanup. Peak MLX allocation 2,689,271,390 bytes;
+producer completion, unload and cleanup. Observed cumulative process peak MLX allocation 2,689,271,390 bytes;
 active MLX after unload 5,116 bytes. Snapshot scratch returned to 0 bytes, service
 resident ID nil. System had 16GiB RAM, memory-pressure free percentage 51% before,
 44% observed during copying and 49% after; SSD had ~1.4TiB available. No installed
