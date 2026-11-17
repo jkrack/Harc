@@ -36,10 +36,23 @@ final class HarcAppUITests: XCTestCase {
     func testProjectConnectionsExplicitSingleSourceConsent() throws {
         app.launchEnvironment["HARC_UI_TEST_PROJECT_REVIEW"] = "host"
         app.launch()
+        // Connections can be available before asynchronous Library selection
+        // restoration finishes. This case checks explicit source consent, not
+        // default selection: select the isolated fixture and wait for its detail.
+        let recording = seededRecordingRow()
+        XCTAssertTrue(recording.waitForExistence(timeout: 60))
+        recording.click()
+        let editor = app.textViews["harc.transcript.editor"]
+        let sourceLoaded = NSPredicate(format: "value CONTAINS %@", "Jason: Send the renewal plan by Friday.")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: sourceLoaded, object: editor)],
+            timeout: 10
+        ), .completed)
         let entry = app.buttons["libraryProjectConnections"]
         XCTAssertTrue(entry.waitForExistence(timeout: 60))
         entry.click()
         app.disclosureTriangles["Find a connection in the selected recording"].click()
+        XCTAssertTrue(app.staticTexts["Source: UI Test Customer Renewal"].waitForExistence(timeout: 10))
         let find = app.buttons["projectMention.find"]
         XCTAssertTrue(find.waitForExistence(timeout: 10))
         XCTAssertFalse(find.isEnabled)
