@@ -90,4 +90,18 @@ struct ProjectEvidenceContractTests {
             _ = try await store.projectEvidenceSnapshot(recordingID: rec.id!, canonicalID: rec.canonicalID, projectID: project.id, projectVersion: snap.project.version, expectedHost: host)
         }
     }
+    @Test func blankEvidenceAndEscapedDuplicateKeysFailClosed() async throws {
+        let (store, rec, project, host, root) = try await fixture(text: "Prefix            suffix.")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snap = try await snapshot(store, rec, project, host)
+        let blank = "{\"decision\":\"suggest\",\"quote\":\"            \"}"
+        #expect(throws: ProjectEvidenceContractError.invalidResponse) {
+            _ = try RecordingStore.validateProjectEvidenceResponse(blank, snapshot: snap, modelID: "fake-local")
+        }
+        let escapedDuplicate = #"{"decision":"suggest","\u0064ecision":"abstain"}"#
+        #expect(throws: ProjectEvidenceContractError.invalidResponse) {
+            _ = try RecordingStore.validateProjectEvidenceResponse(escapedDuplicate, snapshot: snap, modelID: "fake-local")
+        }
+    }
+
 }

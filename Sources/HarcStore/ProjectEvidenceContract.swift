@@ -80,7 +80,8 @@ public extension RecordingStore {
               let decision = object["decision"] as? String else { throw ProjectEvidenceContractError.invalidResponse }
         if decision == "abstain", Set(object.keys) == ["decision"] { return .abstain }
         guard decision == "suggest", Set(object.keys) == ["decision", "quote"],
-              let quote = object["quote"] as? String, quote.count >= 12, quote.utf8.count <= 2_048 else {
+              let quote = object["quote"] as? String, quote.count >= 12, quote.utf8.count <= 2_048,
+              !quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProjectEvidenceContractError.invalidResponse
         }
         let source = Data(snapshot.transcript.utf8), needle = Data(quote.utf8)

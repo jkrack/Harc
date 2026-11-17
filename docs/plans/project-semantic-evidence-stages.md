@@ -53,3 +53,19 @@ legacy decode, owner brief CAS/project-version invalidation, Unicode exact spans
 abstention, malformed/unknown/duplicate fields, hallucinated or short quotes,
 ambiguous repeated quotes, missing brief and source-size rejection. No actual
 model was loaded; this is not a semantic-quality or app-UI result.
+
+### Adapter prerequisites from independent review
+
+- Acquire/release the existing SummarizerService operation slot and reuse its
+  loaded container; no parallel container, silent download or cloud fallback.
+- Tokenize the full prompt and reserve output tokens against the actual selected
+  model context limit. The32KB Store cap is not a token-budget guarantee.
+- Require authoritative normal generation completion and unchanged loadGeneration
+  before accepting output, even if the JSON parses. Cancellation/truncation fails.
+- Never log brief/transcript/model content. Supplied modelID currently records
+  caller input only; the adapter must bind it to the actual loaded model.
+- Blank evidence is invalid, even when whitespace occurs uniquely in the source.
+  Exact spans establish presence, not semantic relevance. Keep semantic UI/model
+  availability disabled until actual local-model evaluation has passed.
+The follow-up seven-test contract run passed, including whitespace-only evidence
+and a duplicate JSON key expressed through a Unicode escape. No model invoked.
