@@ -4014,6 +4014,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MeetingDetector.Delega
             },
             onReprocessAll: desktopClientRuntime == nil ? nil : { [weak self] in
                 self?.reprocessEntireLocalLibrary()
+            },
+            canReviewProjects: { [weak self, weak store] in
+                guard let self, let store, self.prefs.runtimeRole == .host,
+                      self.bridge.hostRuntimeReady, let runtime = self.hostRuntime else { return false }
+                return runtime.storageRuntime.recordingStore === store
             }
         )
         harcWindow = controller

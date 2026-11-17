@@ -37,6 +37,9 @@ public struct HarcWindowRootView: View {
     @ObservedObject var peopleVM: PeopleViewModel
 
     let store: RecordingStore
+    let canReviewProjects: @MainActor () -> Bool
+    @State private var showProjectReview = false
+    @State private var projectReviewNavigation = UUID()
     let reIDService: SpeakerReIDService
     let summarizerService: SummarizerService
     let onDelete: (Recording) -> Void
@@ -175,13 +178,15 @@ public struct HarcWindowRootView: View {
         onSummarizeSession: ((Int64) -> Void)? = nil,
         reprocessState: LocalLibraryReprocessState = LocalLibraryReprocessState(),
         onReprocessRecording: ((Recording) -> Void)? = nil,
-        onReprocessAll: (() -> Void)? = nil
+        onReprocessAll: (() -> Void)? = nil,
+        canReviewProjects: @escaping @MainActor () -> Bool = { false }
     ) {
         self.libraryVM = libraryVM
         self.recordingState = recordingState
         self.bridge = bridge
         self.peopleVM = peopleVM
         self.store = store
+        self.canReviewProjects = canReviewProjects
         self.reIDService = reIDService
         self.summarizerService = summarizerService
         self.onDelete = onDelete
@@ -297,6 +302,23 @@ public struct HarcWindowRootView: View {
             Button("Cancel", role: .cancel) { pendingDeleteRecording = nil }
         } message: { rec in
             Text("\u{201C}\(rec.displayTitle)\u{201D} will be removed from the library and the audio + transcript files will be deleted from disk.")
+        }
+        .sheet(isPresented: $showProjectReview) {
+            HostProjectRefinementSheet(store: store, canWrite: canReviewProjects) { canonicalID in
+                let navigation = UUID()
+                projectReviewNavigation = navigation
+                Task { @MainActor in
+                    guard canReviewProjects(),
+                          let recording = try? await store.fetch(canonicalID: canonicalID),
+                          recording.deletedAt == nil, canReviewProjects(), showProjectReview,
+                          projectReviewNavigation == navigation else { return }
+                    showProjectReview = false
+                    libraryVM.searchText = ""
+                    libraryVM.filter = .all
+                    selection = .recording(wavPath: recording.wavPath)
+                }
+            }
+            .onDisappear { projectReviewNavigation = UUID() }
         }
         .sheet(isPresented: $showingAddPerson) {
             AddPersonSheet { name in
@@ -425,6 +447,13 @@ public struct HarcWindowRootView: View {
             // delete key, and Import lives in File › Import and the empty
             // state, where a rare action belongs.
             ToolbarItemGroup {
+                if prefs.runtimeRole == .host && bridge.hostRuntimeReady && canReviewProjects() {
+                    Button("Connections", systemImage: "point.3.connected.trianglepath.dotted") {
+                        showProjectReview = true
+                    }
+                    .help("Review source-backed project connections on this Host")
+                    .accessibilityIdentifier("libraryProjectConnections")
+                }
                 Button {
                     if let rec = currentRecording { copyForPrompt(rec) }
                 } label: {

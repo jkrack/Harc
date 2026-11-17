@@ -1032,3 +1032,10 @@ in flight must reactivate and reload without dropping its receipt. Set-aside
 stale evidence can explicitly reopen for refreshed review, preserving prior
 answer events. Validate ProjectRefinementViewModelTests and
 ProjectRefinementTests; package passes do not qualify app/VoiceOver behavior.
+
+The Host Connections sheet requires the live resident Host and its exact Store.
+Panel mutations also bind the Host library/authority/state tuple transactionally,
+on top of Store's writer lease checks. Never enable this for phone or secondary
+client mirrors without a separately qualified RPC. Three-card completion is not
+queue exhaustion. Validate ProjectRefinementTests and
+ProjectRefinementViewModelTests, then app-hosted navigation and accessibility.

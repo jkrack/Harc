@@ -68,7 +68,7 @@ public struct ProjectReviewHistoryItem: Sendable {
 }
 
 public enum ProjectRefinementError: Error, Equatable {
-    case missing, invalidEvidence, staleEvidence, conflict, operationMismatch
+    case missing, invalidEvidence, staleEvidence, conflict, operationMismatch, hostUnavailable
 }
 
 private struct ProjectReviewEvent: Codable {
@@ -111,6 +111,19 @@ extension DatabaseMigrator {
                 )
                 """)
         }
+    }
+}
+
+// Additional UI session binding, on top of StoreDatabaseAccess's live writer
+// lease validation. A former Host becoming standalone must not retain UI writes.
+private func validateProjectReviewHost(_ db: Database, expected: LibraryMetadata?) throws {
+    guard let expected else { return }
+    let current = try RecordingStore.readLibraryMetadata(in: db)
+    guard expected.writerMode == .host, current.writerMode == .host,
+          expected.libraryID == current.libraryID,
+          expected.hostAuthorityID == current.hostAuthorityID,
+          expected.hostStateID == current.hostStateID else {
+        throw ProjectRefinementError.hostUnavailable
     }
 }
 
@@ -243,8 +256,9 @@ public extension RecordingStore {
     /// quote still exists. It cannot manufacture new supporting text or erase a
     /// accepted/rejected answer. Prior set-aside event history remains intact.
     /// The caller must display the refreshed card before acceptance.
-    func refreshPendingProjectReview(id: UUID, expectedVersion: UUID) async throws {
+    func refreshPendingProjectReview(id: UUID, expectedVersion: UUID, expectedHost: LibraryMetadata? = nil) async throws {
         try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
             let old = try loadReview(database, id: id)
             guard old.version == expectedVersion, old.decision == .pending || old.decision == .unsure else { throw ProjectRefinementError.conflict }
             guard let recording = try Recording.fetchOne(database, key: old.recordingID), recording.deletedAt == nil,
@@ -290,9 +304,10 @@ public extension RecordingStore {
         try await applyProjectMatchDecision(id: id, expectedVersion: expectedVersion, decision: decision, operationID: operationID).receipt
     }
 
-    func applyProjectMatchDecision(id: UUID, expectedVersion: UUID, decision: ProjectReviewDecision, operationID: UUID) async throws -> ProjectReviewApplication {
+    func applyProjectMatchDecision(id: UUID, expectedVersion: UUID, decision: ProjectReviewDecision, operationID: UUID, expectedHost: LibraryMetadata? = nil) async throws -> ProjectReviewApplication {
         guard decision != .pending else { throw ProjectRefinementError.invalidEvidence }
         return try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
             if let data = try Data.fetchOne(database, sql: "SELECT payload FROM project_review_events WHERE operation_id = ?", arguments: [operationID.uuidString]) {
                 let event = try JSONDecoder().decode(ProjectReviewEvent.self, from: data)
                 guard event.before.id == id, event.before.version == expectedVersion, event.after.decision == decision else { throw ProjectRefinementError.operationMismatch }
@@ -320,8 +335,9 @@ public extension RecordingStore {
 
     /// Returns the number of links actually removed (0 or 1). A later decision
     /// prevents undo rather than being overwritten. A fresh version prevents ABA.
-    func undoProjectMatch(operationID: UUID) async throws -> Int {
+    func undoProjectMatch(operationID: UUID, expectedHost: LibraryMetadata? = nil) async throws -> Int {
         try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
             guard let row = try Row.fetchOne(database, sql: "SELECT payload, undone FROM project_review_events WHERE operation_id = ?", arguments: [operationID.uuidString]) else { throw ProjectRefinementError.missing }
             let undone: Int = row["undone"]
             if undone == 1 { return 0 }
