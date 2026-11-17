@@ -1,0 +1,35 @@
+# Read-only accepted connections map
+
+This PR229-based slice adds a first branching map of one selected recording and its accepted project associations. It is an unhosted reusable view, not a production entry point, live graph, semantic extraction engine, or graph writer. PR228 and its history are excluded and untouched.
+
+`confirmedProjectMap` reads the expected Host library/authority/state, active selected canonical recording, accepted reviews and current project names in one database read snapshot. It validates SQL/payload identities, propagates errors, and returns a bounded 1–50 associations with an explicit `hasMore` indicator. Pending/rejected/unsure candidates and unrelated recordings are not included. No filesystem, audio, model or network reads occur. The selected transcript is hashed once per snapshot; changed transcript or project evidence is marked stale without removing the prior human association. Empty results do not assert that no semantic relationship exists.
+
+The view draws a recording card and branches to project cards in a vertically scrolling, narrow-width layout. It labels the map as a point-in-time snapshot and accepted associations as distinct from verified facts. Stale supporting evidence has an explicit textual warning, not color alone. Original quotations are disclosed as historical partial context, not current facts. Project names, titles and quotes render literally. The panel has no Store reference, model capability, assignment/navigation/export action or automatic scan.
+
+Before production integration, provide observation/selection lifecycle to dispose of stale snapshots on Host, source, trash, project and decision changes. This immutable view alone supplies no live invalidation. Qualify actual light/dark and narrow-window visuals, disclosure interaction, keyboard/VoiceOver, real app navigation and all required CI. Do not infer playback timing from the quote or mistake a link for a typed decision/commitment edge.
+
+Validation uses disposable synthetic on-disk Host libraries and unhosted NSHostingView layout. No private recording or accessibility tree is collected. The first run exposed an invalid in-memory Host fixture; it was corrected to the required disposable on-disk library rather than bypassing the Host check. Final results are recorded below after execution.
+
+## Verified results
+
+Focused map run passed all 8 test methods (15 parameterized invocations). The expanded regression passed 29 test methods: 25 Store methods and 4 UI/source-partition methods, including Unicode byte/grapheme partition coverage. The UI check compiles and lays out synthetic content in a 360×480 host in light and dark appearance; it is not screenshot, accessibility or interaction acceptance. `swift test` is not full Xcode or release qualification.
+
+Independent review found no blocking privacy/correctness issue for this inactive slice after identity-corruption and Host-tuple tests were added and transcript hashing was reduced to once per snapshot. Production invalidation, large-text performance, rendered accessibility and full app integration remain unqualified. The association count is bounded, but legacy quote/name/transcript byte sizes are not bounded by this change.
+
+## Test-only Store → window qualification follow-up
+
+The opt-in `HARC_MAP_WINDOW_QA=1` harness now creates a disposable synthetic Host library, accepts two project associations, changes one project's brief, reads the authoritative snapshot and renders the actual panel in its own temporary window. No production entry point is installed. Both 360×640 light/dark view-only PNG captures were inspected: the selected recording, two association branches, current-source qualification and stale-evidence warning are readable. Disclosure controls remain collapsed; expanded excerpts, keyboard actions, screen-reader operation and contrast compliance were not qualified.
+
+**Accessibility qualification failed / is inconclusive, not passed.** The final opt-in run returned exit 1 with 10 assertion issues across two appearances: three expected panel labels plus native and minimal SwiftUI control labels were not exposed in each appearance. Controls were attached to the same owned window, so this probe does not establish a map-specific accessibility defect. No permissions were changed or assertions weakened. The strict failing assertions are retained; the test is explicitly skipped without its opt-in environment variable, not counted as default-run coverage.
+
+The diagnostic walks only the owned synthetic view, rejecting application/window/menu/unknown roles before reading text or traversing children, and records no raw accessibility dump. Captures contain only that view's synthetic pixels, never screen/window-server or global menu content. Independent review cleared the data/capture boundaries. A properly functioning scoped accessibility client and keyboard/VoiceOver checks remain an activation blocker. The previous 29-method regression pass does not supersede this failed qualification run.
+
+## Lifecycle and scoped external accessibility follow-up
+
+Added an inactive lifecycle adapter and presentation wrapper. Explicit selection registers a database-region observation before the atomic snapshot read. Selected recording/title/transcript/trash/canonical changes, review additions/decisions, linked-project changes and Host metadata changes invalidate and remove the visible snapshot. Resident Host loss, selection changes, distributed change notifications, dismissal and observer error/termination do the same. Generation checks reject late reads; no automatic re-read, inference, graph writes or production activation occurs. The future production caller still must forward resident Host/selection changes and present this wrapper rather than retain the immutable snapshot panel directly.
+
+An independently run standalone synthetic app using a copy of the actual map panel implementation passed a separately scoped external accessibility check: heading, accepted-association label, unchanged-source and stale-source warnings were all found in the exact PID/title window (19 allowed nodes). This uses only `AXWindows` discovery and allowed-role children, not application children, menus or global trees; no permissions changed or raw AX values published. `AXHeading` was added to the test probe's allowlist. The standalone fixture uses snapshot/theme shims, not production Store/controller linking. This is positive scoped AX-label evidence, not VoiceOver, expanded-excerpt, keyboard or full app acceptance; the earlier in-process probe failure remains documented.
+
+Independent lifecycle review found no blocking issue and requested an actual Store-mutation-during-read case, now included alongside dismissal, cancellation and selection invalidation races. No PR228 files or history were changed.
+
+Final focused lifecycle/map/Unicode regression exited 0: 15 executed test methods passed (including 8 Store mutation, 4 lifecycle and 4 delayed-read parameter cases); the opt-in window/AX method was explicitly skipped. This does not replace its separately documented execution or full CI.
