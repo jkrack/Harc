@@ -155,11 +155,12 @@ private func validateEvidence(_ db: Database, review: ProjectMatchReview) throws
 }
 
 public extension RecordingStore {
-    func createKnowledgeProject(name: String, id: UUID = UUID()) async throws -> KnowledgeProject {
+    func createKnowledgeProject(name: String, id: UUID = UUID(), expectedHost: LibraryMetadata? = nil) async throws -> KnowledgeProject {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw ProjectRefinementError.invalidEvidence }
         let project = KnowledgeProject(id: id, name: name, version: UUID())
         return try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
             try database.execute(sql: "INSERT INTO knowledge_projects(id, payload) VALUES (?, ?)",
                                  arguments: [id.uuidString, try JSONEncoder().encode(project)])
             return project
@@ -382,7 +383,8 @@ public extension RecordingStore {
     /// recordings. A name mention is a hypothesis, not semantic relevance or an
     /// assignment. No aliases, confidence scores, remote inference or auto-link.
     func prepareProjectMentionProposals(recordingIDs: [Int64], projectID: UUID,
-                                        expectedHost: LibraryMetadata) async throws -> ProjectMentionProposalBatch {
+                                        expectedHost: LibraryMetadata,
+                                        expectedCanonicalIDs: [Int64: CanonicalRecordingID] = [:]) async throws -> ProjectMentionProposalBatch {
         guard !recordingIDs.isEmpty, recordingIDs.count <= 25 else {
             throw ProjectRefinementError.invalidEvidence
         }
@@ -411,8 +413,13 @@ public extension RecordingStore {
                     unavailable += 1; continue
                 }
                 guard size <= 256_000 else { oversized += 1; continue }
-                guard let recording = try Recording.fetchOne(database, key: id), recording.deletedAt == nil,
-                      let text = recording.transcriptText,
+                guard let recording = try Recording.fetchOne(database, key: id), recording.deletedAt == nil else {
+                    unavailable += 1; continue
+                }
+                if let expected = expectedCanonicalIDs[id], expected != recording.canonicalID {
+                    unavailable += 1; continue
+                }
+                guard let text = recording.transcriptText,
                       let match = matcher.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                       let range = Range(match.range, in: text) else { noMatch += 1; continue }
                 // Bounded verbatim surrounding evidence retains negation and
@@ -451,6 +458,10 @@ extension RecordingStore {
             var inserted = 0, existing = 0, stale = 0
             for review in batch.reviews {
                 try cancellation.check()
+                guard let size = try Int.fetchOne(database,
+                    sql: "SELECT length(CAST(transcript_text AS BLOB)) FROM recordings WHERE id = ? AND deleted_at IS NULL", arguments: [review.recordingID]), size <= 256_000 else {
+                    stale += 1; continue
+                }
                 do { try validateEvidence(database, review: review) }
                 catch ProjectRefinementError.staleEvidence { stale += 1; continue }
                 catch ProjectRefinementError.missing { stale += 1; continue }
@@ -478,5 +489,16 @@ private final class ProjectProposalCancellation: @unchecked Sendable {
     func check() throws {
         lock.lock(); let value = cancelled; lock.unlock()
         if value { throw CancellationError() }
+    }
+}
+
+public extension RecordingStore {
+    /// Bounded project chooser; this reads names only, never recording content.
+    func knowledgeProjectsForReview(expectedHost: LibraryMetadata) async throws -> [KnowledgeProject] {
+        try await db.read { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            return try Data.fetchAll(database, sql: "SELECT payload FROM knowledge_projects ORDER BY id LIMIT 100")
+                .map { try JSONDecoder().decode(KnowledgeProject.self, from: $0) }
+        }
     }
 }

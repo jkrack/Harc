@@ -38,13 +38,14 @@ struct ProjectMentionProducerTests {
         #expect(try await store.commitProjectMentionProposals(batch).existing == 2)
     }
 
-    @Test func changedTranscriptCannotRebindEvenWhenQuoteRemains() async throws {
+    @Test(arguments: [false, true])
+    func changedTranscriptCannotRebindEvenWhenQuoteRemains(growsOversized: Bool) async throws {
         let (store, recordings, project, _, root) = try await fixture(["Harc " + String(repeating: "a", count: 600)])
         defer { try? FileManager.default.removeItem(at: root) }
         let batch = try await store.prepareProjectMentionProposals(recordingIDs: [recordings[0].id!],
             projectID: project.id, expectedHost: store.libraryMetadata())
         var changed = recordings[0]
-        changed.transcriptText! += " changed outside excerpt"
+        changed.transcriptText! += growsOversized ? String(repeating: "z", count: 256_000) : " changed outside excerpt"
         _ = try await store.upsert(changed)
         let result = try await store.commitProjectMentionProposals(batch)
         #expect(result.stale == 1)
@@ -155,6 +156,26 @@ struct ProjectMentionProducerTests {
         resume.signal()
         await #expect(throws: CancellationError.self) { _ = try await task.value }
         #expect(try await store.pendingProjectReviewCards().isEmpty)
+    }
+
+    @Test func sourceConsentAndProjectChooserRemainHostBound() async throws {
+        let (store, recordings, project, lease, root) = try await fixture(["Harc discussed."])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let host = try await store.libraryMetadata()
+        let id = recordings[0].id!
+        let batch = try await store.prepareProjectMentionProposals(recordingIDs: [id], projectID: project.id,
+            expectedHost: host, expectedCanonicalIDs: [id: .random()])
+        #expect(batch.unavailableCount == 1)
+        #expect(batch.candidateCount == 0)
+        #expect(try await store.knowledgeProjectsForReview(expectedHost: host).count == 1)
+        _ = try await store.createKnowledgeProject(name: "Other", expectedHost: host)
+        try await store.disableHostMode(lease)
+        await #expect(throws: ProjectRefinementError.hostUnavailable) {
+            _ = try await store.createKnowledgeProject(name: "Forbidden", expectedHost: host)
+        }
+        await #expect(throws: ProjectRefinementError.hostUnavailable) {
+            _ = try await store.knowledgeProjectsForReview(expectedHost: host)
+        }
     }
 
 }

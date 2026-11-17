@@ -1044,5 +1044,7 @@ The literal project-name proposal producer is an opt-in Store API, not an
 installed scheduler or semantic classifier. Keep caller-selected sources bounded,
 Host-bound snapshot/commit validation atomic, and existing human answers intact.
 Pending candidates are hypotheses, not assignments or precision measurements.
-Validate ProjectMentionProducerTests; UI consent and source selection remain
-separate integration work. Never run synthetic producers on an owner's Library.
+Validate ProjectMentionProducerTests; The Host-only consent UI selects only the current Library recording and requires
+an explicit unchecked opt-in before each scan; project creation alone does not
+scan. Validate testProjectConnectionsExplicitSingleSourceConsent in the app.
+Never run synthetic producers on an owner's Library.
