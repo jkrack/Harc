@@ -70,3 +70,21 @@ func withEvidenceProducerCleanup<T: Sendable>(
         producer.cancel()
     }
 }
+
+/// Role separation is a prompt boundary, never a semantic-safety guarantee.
+/// Pure construction seam shared by production and synthetic boundary tests.
+enum EvidenceRoleMessages {
+    static func legacy(_ body: String) throws -> [[String: String]] {
+        guard body.utf8.count <= 40_960 else { throw EvidenceGenerationError.contextExceeded }
+        return [["role": "user", "content": body]]
+    }
+    static func separated(systemPrompt: String, sourceJSON: String) throws -> [[String: String]] {
+        let policyBytes = systemPrompt.utf8.count
+        guard !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !sourceJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              policyBytes <= 8_192, sourceJSON.utf8.count <= 40_960 - policyBytes else {
+            throw EvidenceGenerationError.contextExceeded
+        }
+        return [["role": "system", "content": systemPrompt], ["role": "user", "content": sourceJSON]]
+    }
+}

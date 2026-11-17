@@ -25,6 +25,10 @@ public protocol ContainerLike: Sendable {
     /// Fail-closed evidence capability; implementations must prepare once and
     /// enforce the full templated token budget before starting generation.
     func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String
+    /// Separate trusted policy from selected-source data. Unsupported by default;
+    /// implementations must not concatenate roles or silently fall back.
+    func generateEvidence(systemPrompt: String, sourceJSON: String,
+                          budget: EvidenceGenerationBudget) async throws -> String
 
     func generateSummary(promptBody: String, maxTokens: Int,
                          onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String
@@ -32,6 +36,11 @@ public protocol ContainerLike: Sendable {
 }
 
 public extension ContainerLike {
+    func generateEvidence(systemPrompt: String, sourceJSON: String,
+                          budget: EvidenceGenerationBudget) async throws -> String {
+        throw EvidenceGenerationError.unsupported
+    }
+
     func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String {
         throw EvidenceGenerationError.unsupported
     }
@@ -92,9 +101,20 @@ public struct MLXModelContainer: ContainerLike {
     }
 
     public func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String {
-        guard promptBody.utf8.count <= 40_960 else { throw EvidenceGenerationError.contextExceeded }
+        try await generateEvidenceMessages(EvidenceRoleMessages.legacy(promptBody), budget: budget)
+    }
+
+    public func generateEvidence(systemPrompt: String, sourceJSON: String,
+                                 budget: EvidenceGenerationBudget) async throws -> String {
+        try await generateEvidenceMessages(EvidenceRoleMessages.separated(systemPrompt: systemPrompt,
+            sourceJSON: sourceJSON), budget: budget)
+    }
+
+    private func generateEvidenceMessages(_ messages: [[String: String]],
+                                          budget: EvidenceGenerationBudget) async throws -> String {
         try Task.checkCancellation()
-        let input = UserInput(messages: [["role": "user", "content": promptBody]],
+        // BOTH roles and the template are prepared ONCE and counted together.
+        let input = UserInput(messages: messages.map { $0.mapValues { $0 as any Sendable } },
                               additionalContext: ["enable_thinking": false])
         let prepared = try await container.prepare(input: input)
         let promptTokenCount = prepared.text.tokens.size

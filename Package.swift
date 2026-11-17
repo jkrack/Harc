@@ -439,7 +439,7 @@ let package = Package(
         .testTarget(
             name: "HarcSummarizeTests",
             dependencies: ["HarcSummarize", "HarcCore", "HarcModels", "HarcStore", "HarcDomain"],
-            resources: [.copy("Fixtures/evidence-evaluation-v1.json"), .copy("Fixtures/evidence-evaluation-v2.json")]
+            resources: [.copy("Fixtures/evidence-evaluation-v1.json"), .copy("Fixtures/evidence-evaluation-v2.json"), .copy("Fixtures/evidence-development-v3.json")]
         ),
         .testTarget(
             name: "HarcExportTests",
