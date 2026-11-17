@@ -37,7 +37,8 @@ final class RoleSeparatedEvidenceDevelopmentTests: XCTestCase {
     private func corpus() throws -> (EvidenceV3Corpus, Data) {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "evidence-development-v3", withExtension: "json"))
         let bytes = try Data(contentsOf: url)
-        guard Self.hash(bytes) == Self.frozenHash else { throw V3Error.freezeMismatch }
+        guard Self.hash(bytes) == Self.frozenHash,
+              Self.hash(Data(EvidenceV3Prompt.instructions.utf8)) == "38e499ce710ee345fc8e6511f79de5052c0472b3790831ea3e6c827d7495d310" else { throw V3Error.freezeMismatch }
         return (try JSONDecoder().decode(EvidenceV3Corpus.self, from: bytes), bytes)
     }
     private enum V3Error: Error { case freezeMismatch }
@@ -202,7 +203,8 @@ final class RoleSeparatedEvidenceDevelopmentTests: XCTestCase {
     private func challengeInputs() throws -> (ChallengeInputs, Data) {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "evidence-independent-challenge-v1", withExtension: "json"))
         let bytes = try Data(contentsOf: url)
-        guard Self.hash(bytes) == "a2a870aaa54476c6199676d6a9930bc30f553fe13314aa14d7b3ad9029816338" else { throw V3Error.freezeMismatch }
+        guard Self.hash(bytes) == "a2a870aaa54476c6199676d6a9930bc30f553fe13314aa14d7b3ad9029816338",
+              Self.hash(Data(EvidenceV3Prompt.instructions.utf8)) == "38e499ce710ee345fc8e6511f79de5052c0472b3790831ea3e6c827d7495d310" else { throw V3Error.freezeMismatch }
         return (try JSONDecoder().decode(ChallengeInputs.self, from: bytes), bytes)
     }
     func testIndependentInputFreezeWithoutGoldOrModel() throws {

@@ -73,3 +73,9 @@ labels or semantic scores. It asserts policy hash unchanged. Freeze output bytes
 and publish hash BEFORE requesting gold/rationale. No policy changes based on
 released inputs or development results. The project name Lumen overlaps v1;
 independent authorship/new transcripts do not mean every name is unseen.
+
+Post-run hardening: both opt-in loaders now check the frozen policy hash directly
+alongside corpus/input hash before model service creation, rather than relying
+on a preceding non-model assertion. This changes no policy/output or score; four
+non-model XCTest checks passed and both model opt-ins skipped. Original challenge
+run remains attributed to56664b4, not this later guard change.
