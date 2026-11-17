@@ -7,10 +7,12 @@ import HarcDomain
 struct HostProjectRefinementSheet: View {
     let store: RecordingStore
     let canWrite: @MainActor () -> Bool
+    let source: Recording?
     let onOpenRecording: (CanonicalRecordingID) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var host: LibraryMetadata?
     @State private var failed = false
+    @State private var reviewGeneration = UUID()
 
     var body: some View {
         VStack {
@@ -20,8 +22,12 @@ struct HostProjectRefinementSheet: View {
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(HarcSpacing.lg)
             if let host, canWrite() {
+                ProjectMentionConsentView(store: store, host: host, source: source, canWrite: canWrite) {
+                    reviewGeneration = UUID()
+                }
                 ProjectRefinementPanel(store: store, expectedHost: host, canWrite: canWrite,
                                        onOpenRecording: onOpenRecording)
+                    .id(reviewGeneration)
             } else if failed || !canWrite() {
                 Text("Connections can only be reviewed on the active Mac Host.")
                     .font(.harcBody).padding(HarcSpacing.lg)

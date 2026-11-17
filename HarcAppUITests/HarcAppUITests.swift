@@ -33,6 +33,29 @@ final class HarcAppUITests: XCTestCase {
         rootURL = nil
     }
 
+    func testProjectConnectionsExplicitSingleSourceConsent() throws {
+        app.launchEnvironment["HARC_UI_TEST_PROJECT_REVIEW"] = "host"
+        app.launch()
+        let entry = app.buttons["libraryProjectConnections"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 60))
+        entry.click()
+        app.disclosureTriangles["Find a connection in the selected recording"].click()
+        let find = app.buttons["projectMention.find"]
+        XCTAssertTrue(find.waitForExistence(timeout: 10))
+        XCTAssertFalse(find.isEnabled)
+        let name = app.textFields["projectMention.newProject"]
+        name.click(); name.typeText("customer renewal")
+        app.buttons["projectMention.create"].click()
+        XCTAssertTrue(app.staticTexts["Project created. Choose whether to check the selected transcript."].waitForExistence(timeout: 10))
+        XCTAssertFalse(find.isEnabled)
+        app.checkBoxes["projectMention.consent"].click()
+        XCTAssertTrue(find.isEnabled)
+        find.click()
+        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "1 new suggestions;")).firstMatch
+        XCTAssertTrue(receipt.waitForExistence(timeout: 15))
+        XCTAssertFalse(find.isEnabled)
+    }
+
     func testProjectConnectionsHostFlowDark() throws {
         try verifyProjectConnections(appearance: "dark")
     }
