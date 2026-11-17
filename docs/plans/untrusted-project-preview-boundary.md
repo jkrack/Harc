@@ -25,7 +25,9 @@ Proposed preview payload:
 
 - Opaque Store-bound snapshot identity: canonical recording, transcript digest,
   project ID/version and exact resident Host authority/state/library tuple.
-- Model/catalog and generation provenance retained separately from user authorship.
+- Model label is explicitly caller-supplied/unverified in the first inert slice.
+  Do not fabricate catalog/load attestation from a string; a future opaque scoped
+  generation receipt is a separate prerequisite for authenticated provenance.
 - Exact source-bound quote byte range (existing strict parser), NOT timestamps or
   reconstructed words. The type/name must not imply semantic verification.
 - The entire already-bounded selected transcript and project brief as the review
@@ -88,7 +90,8 @@ Quarantine is optional defense in depth, not the core permission boundary.
    ranges; corrections, conditionals, unrelated-project disclaimers and prior
    utterance antecedents are retained outside the highlight.
 3. Invalid, repeated, fabricated, over-limit or blank quotes cannot create a
-   preview. Model/source/config provenance cannot be caller-rebound.
+   preview. Source selection is opaque and captured; model label remains explicitly
+   unverified until an authenticated generation receipt is implemented.
 4. No conversion to accepted relation without explicit controller user action;
    cancellation/dismissal/abstention/quarantine leaves assignments unchanged.
 5. Confirmation races: transcript/canonical/project/Host changes, trash, repeat
@@ -111,3 +114,35 @@ No automatic graph changes, background scans, cloud fallback, production Library
 experimentation or release activation is part of this proposal. The first code PR
 should only add an inert preview contract plus synthetic tests, reviewed separately
 before any confirmation path or UI is implemented.
+
+## Reviewed implementation constraints
+
+The first slice is a memory-only session and immutable full-context payload, no
+confirmation API, model calls, Store writes, heuristic detector or UI. Selection
+keys bind captured canonical/transcript/project/Host identity, but are not live DB
+freshness proofs. The future controller must invalidate on every selection/Host
+change and release its own preview copies on dismissal. Session dismissal drops
+its references only; it cannot securely erase Swift Strings or invalidate copies
+held elsewhere. No persistence, logs or background cache. Full context being
+available is not evidence that a person reviewed it. No model-generated title,
+markdown or action rendering is supplied by this contract.
+
+## Inert contract validation
+
+Implemented on the isolated `feat/inert-project-link-preview-20261117` branch:
+`UntrustedProjectPreviewSession` has no Store reference or mutation/model API;
+only begin, finish, captured-selection comparison and dismissal/invalidation.
+`UntrustedProjectLinkPreview` retains all source/brief text and exact byte highlight,
+with caller-provided model label explicitly unverified. No UI/controller or
+confirmation path is installed, so automatic observation of live Store changes
+is NOT claimed. Future controller wiring and transactional confirmation remain
+unimplemented qualification gates.
+
+Twelve synthetic tests passed across new preview and existing evidence-contract
+suites. They verify full context/Unicode, no pending/confirmed relations even for
+an injected quote, superseded/duplicate/late completion refusal, malformed output,
+source/project selection changes, explicit Host-loss invalidation and dismissal.
+An initial test incorrectly attempted a new Host authority on a retained library
+and was correctly rejected by existing tuple invariants. It was replaced with
+an actual Host-loss/invalidate test, not an authority bypass. No real recordings,
+model evaluation, confirmation API, heuristics or app activation was involved.

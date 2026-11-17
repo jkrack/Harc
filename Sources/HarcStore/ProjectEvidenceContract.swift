@@ -131,3 +131,29 @@ private func uniqueTopLevelEvidenceKeys(_ data: Data) -> Bool {
     }
     return true
 }
+
+/// Opaque captured selection identity, not a proof that the database is still
+/// current. Future confirmation must revalidate its source/Host transactionally.
+public struct ProjectPreviewSelectionKey: Equatable, Sendable {
+    fileprivate let recordingID: Int64?
+    fileprivate let canonicalID: CanonicalRecordingID
+    fileprivate let projectID: UUID
+    fileprivate let projectVersion: UUID
+    fileprivate let transcriptDigest: String
+    fileprivate let host: LibraryMetadata
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.recordingID == rhs.recordingID && lhs.canonicalID == rhs.canonicalID &&
+        lhs.projectID == rhs.projectID && lhs.projectVersion == rhs.projectVersion &&
+        lhs.transcriptDigest == rhs.transcriptDigest &&
+        lhs.host.writerMode == rhs.host.writerMode && lhs.host.libraryID == rhs.host.libraryID &&
+        lhs.host.hostAuthorityID == rhs.host.hostAuthorityID && lhs.host.hostStateID == rhs.host.hostStateID
+    }
+}
+
+public extension ProjectEvidenceSnapshot {
+    var previewSelectionKey: ProjectPreviewSelectionKey {
+        ProjectPreviewSelectionKey(recordingID: recording.id, canonicalID: recording.canonicalID,
+            projectID: project.id, projectVersion: project.version, transcriptDigest: digest, host: host)
+    }
+}
