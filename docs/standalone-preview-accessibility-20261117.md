@@ -24,3 +24,6 @@ This is successful external AX content exposure under a proper app lifecycle. It
 No AXPress, AX scrolling action, human keyboard traversal or VoiceOver speech was performed here. Earlier native scrolling/resize and programmatic Escape checks remain separate evidence. Real app integration, actual VoiceOver/focus order, dynamic accessibility sizes, future write authorization and production activation remain gated. No feature was enabled or released.
 
 Default package description confirmed the fixture is absent without opt-in; the 10 focused panel/lifecycle tests passed on the final default graph. One connection-interrupted test attempt had no completion evidence and was not counted; a fresh run was made only after checking no prior process remained.
+
+### Corrected window-only run
+The corrected probe also refuses traversal when a node's role cannot be read, and requires AXWindow at each allowlisted root. A subsequent isolated run exited zero with all nine content assertions; local-only inspection found exactly the three synthetic root titles and no menu-role nodes. The new raw tree is not committed or published. Swift typecheck passed. This positive run does not simulate transport failures; the unreadable-role behavior is a fail-closed code guard, not an injected-failure test. Earlier public-history remediation remains pending owner authorization.

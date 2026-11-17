@@ -30,8 +30,8 @@ func read(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 func walk(_ element: AXUIElement, depth: Int) {
     guard depth < 32, count < 1000 else { return }
     // Defense in depth: no menu traversal even if exposed below a window.
-    if let role = read(element, "AXRole") as? String,
-       ["AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem"].contains(role) { return }
+    guard let role = read(element, "AXRole") as? String else { return }
+    guard !["AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem"].contains(role) else { return }
     count += 1
     for name in ["AXRole", "AXTitle", "AXDescription", "AXValue", "AXIdentifier"] {
         if let value = read(element, name) as? String {
@@ -53,7 +53,8 @@ let allowedTitles: Set<String> = [
 let windows = read(application, "AXWindows") as? [AXUIElement] ?? []
 var matched = Set<String>()
 for window in windows {
-    guard let title = read(window, "AXTitle") as? String,
+    guard let role = read(window, "AXRole") as? String, role == "AXWindow",
+          let title = read(window, "AXTitle") as? String,
           allowedTitles.contains(title) else { continue }
     matched.insert(title)
     walk(window, depth: 1)
