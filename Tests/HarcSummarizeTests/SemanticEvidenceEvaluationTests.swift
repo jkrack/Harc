@@ -175,6 +175,45 @@ final class SemanticEvidenceEvaluationTests: XCTestCase {
         XCTAssertFalse(rows.contains { $0["outcome"] as? String == "runtimeError" }, "Runtime error; no accuracy claim")
         print("EVIDENCE_EVAL finished split=\(split) count=\(rows.count) corpusSHA256=\(Self.hash(rawCorpus))")
     }
+    /// Supplemental reproduction only. Original run did not retain quote text;
+    /// these responses cannot be represented as the original mismatches.
+    func testOptInQuoteDiagnosticReproduction() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["HARC_EVIDENCE_QUOTE_DIAGNOSTIC"] == "1", "Separate synthetic diagnostic only")
+        let source = try XCTUnwrap(env["HARC_QUALIFIED_EVIDENCE_SOURCE"])
+        let scratch = try XCTUnwrap(env["HARC_QUALIFIED_EVIDENCE_SCRATCH"])
+        let reportPath = try XCTUnwrap(env["HARC_EVIDENCE_EVAL_REPORT"])
+        let (corpus, bytes) = try corpus()
+        guard Self.hash(bytes) == "bf60329f9eaf6e1c493ce5be33e7aeee4ad620ae16bef93aef8a48bf80d757f4" else {
+            XCTFail("Frozen corpus mismatch"); return
+        }
+        let service = SummarizerService(loader: SummarizerService.defaultLoader)
+        var rows: [[String: Any]] = []
+        for item in corpus.cases.filter({ ["h05", "h09", "h10"].contains($0.id) }) {
+            let (_, snapshot, _, root) = try await fixture(item)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let raw = try await service.generateQualifiedEvidence(promptBody: EvidenceEvalPrompt.build(item),
+                modelID: "gemma-4-e2b-it-4bit", installedDirectory: URL(fileURLWithPath: source),
+                scratchDirectory: URL(fileURLWithPath: scratch))
+            let response = try RecordingStore.validateProjectEvidenceResponse(raw, snapshot: snapshot, modelID: "gemma-4-e2b-it-4bit")
+            switch response {
+            case .abstain: rows.append(["id":item.id,"outcome":"abstain"])
+            case .candidate(let evidence):
+                rows.append(["id":item.id,"outcome":"suggest","syntheticQuote":evidence.quote,
+                    "startUTF8":evidence.startUTF8,"endUTF8":evidence.endUTF8,
+                    "strictSourceValidated":true,"matchesFrozenQuote":Self.approvedQuote(evidence.quote, item: item)])
+            }
+            let resident = await service.loadedModelID
+            XCTAssertNil(resident)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: scratch).isEmpty)
+        }
+        let report: [String: Any] = ["type":"supplemental-diagnostic-reproduction-not-original-output",
+            "corpusSHA256":Self.hash(bytes),"promptVersion":EvidenceEvalPrompt.version,
+            "promptInstructionsSHA256":Self.hash(Data(EvidenceEvalPrompt.instructions.utf8)),
+            "rows":rows,"notes":"Synthetic quotes retained solely for independent review. Original scores immutable; no prompt/label/quote tuning or retrospective rescoring."]
+        try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys,.prettyPrinted]).write(to: URL(fileURLWithPath: reportPath), options: .atomic)
+    }
+
     private static func approvedQuote(_ quote: String, item: EvidenceEvalCase) -> Bool {
         item.allowedQuotes.contains { Data($0.utf8) == Data(quote.utf8) }
     }

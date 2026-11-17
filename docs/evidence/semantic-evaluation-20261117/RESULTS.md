@@ -69,3 +69,26 @@ Timing includes full verified bundle copy, load, token preparation, inference, p
 This small hand-authored, same-project holdout is illustrative, not unseen-project or real-transcript generalization. Exact quote scoring intentionally penalizes alternate wording/spans and may undercount useful evidence; it was not relaxed post hoc. No statistical confidence or production precision claim is warranted. Additional disjoint cases should cover unseen projects, noisy/long transcripts and confusable decisions. Real model cancellation and long-running resource behavior remain unqualified.
 
 The results support continuing local evidence-backed suggestion work, but not auto-assignment or automatic UI rollout. Keep explicit selected-source consent, source/version/Host revalidation, abstention and human review. Optimize snapshot/model lifecycle only after preserving these guarantees. Raw reports preserve all numeric outcomes and fingerprints; prompts/responses are not logged.
+
+## Supplemental quote diagnostic (not original run outputs)
+
+Original scored runs intentionally did not retain generated text, so we cannot
+assert what exact alternate quotes those original mismatches contained. A separate
+parent-authorized reproduction ran only h05/h09/h10 with the unchanged frozen
+prompt/model/source. It passed in42.96s, strictly validated each source quote and
+cleaned scratch to0 bytes. The separate `quote-diagnostic.json` retains only these
+synthetic quotes for independent review. It does not replace original rows/scores.
+
+- h05 reproduced `choose the deeper sink before the plumber starts`, a narrower
+  source excerpt omitting the project-context prefix and terminal punctuation.
+- h09 reproduced `Zoë approved the café-colored kitchen cabinets and the matching
+  sink.`, omitting the project-name prefix and trailing emoji.
+- h10 reproduced `Cedar phone-to-Mac transfer needs a retry queue`, differing from
+  the frozen acceptable quote by terminal punctuation.
+
+These reproduced excerpts appear substantively related to their synthetic briefs,
+not unsupported/invented text. That is a supplemental qualitative interpretation,
+not retrospective acceptance or proof of the original outputs. Independent review
+is requested. Keep frozen conservative quote-aware70%/70% holdout scores intact.
+For a future evaluation, pre-register meaningful required semantic anchors on a
+new disjoint corpus rather than relaxing this held-out rubric after the result.
