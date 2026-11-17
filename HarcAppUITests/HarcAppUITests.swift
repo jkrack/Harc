@@ -121,6 +121,16 @@ final class HarcAppUITests: XCTestCase {
     }
 
     func testPlaybackControlsSeekAndPause() throws {
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = "dark"
+        try verifyPlaybackControlsSeekAndPause()
+    }
+
+    func testPlaybackControlsSeekAndPauseLight() throws {
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = "light"
+        try verifyPlaybackControlsSeekAndPause()
+    }
+
+    private func verifyPlaybackControlsSeekAndPause() throws {
         app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = "complete"
         app.launch()
         let row = app.staticTexts.matching(NSPredicate(
