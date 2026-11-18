@@ -1,0 +1,41 @@
+name: Mobile playback trace
+on:
+  push:
+    branches: [test/mobile-playback-trace-20261118]
+permissions:
+  contents: read
+jobs:
+  focused-playback:
+    runs-on: macos-26
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Execute unchanged largest-text playback assertion
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .build/mobile-playback-trace
+          bash scripts/diagnose-mobile-playback.sh 2>&1 | tee .build/mobile-playback-trace/console.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-playback-trace
+          path: |
+            .build/mobile-playback-trace/*.json
+            .build/mobile-playback-trace/*.txt
+            .build/mobile-playback-trace/console.log
+            .build/mobile-playback-trace/configuration.xcresult
+            .build/mobile-playback-trace/diagnostics
+            .build/mobile-playback-trace/build-diagnostics
+          retention-days: 3

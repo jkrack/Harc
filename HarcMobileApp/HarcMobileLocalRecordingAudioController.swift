@@ -1,6 +1,7 @@
 import AVFAudio
 import Foundation
 import Observation
+import OSLog
 
 @MainActor
 protocol HarcMobileLocalAudioPlayer: AnyObject {
@@ -117,20 +118,24 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
     }
 
     func playOrPause() async {
+        HarcSyntheticPlaybackTrace.emit(.playEntered)
         if let player {
             if player.isPlaying {
                 player.pause()
                 state = .paused
+                HarcSyntheticPlaybackTrace.emit(.paused)
             } else {
                 do {
                     try session.reactivate(sessionOwner)
                     if player.currentTime >= duration { player.currentTime = 0 }
                     guard player.play() else { throw HarcMobileLocalPlaybackError.startFailed }
                     state = .playing
+                    HarcSyntheticPlaybackTrace.emit(.resumed)
                     onPlaybackStarted()
                 } catch {
                     stop()
                     state = .failed(error.localizedDescription)
+                    HarcSyntheticPlaybackTrace.emit(.failed)
                 }
             }
             return
@@ -149,15 +154,18 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
                 throw HarcMobileLocalPlaybackError.startFailed
             }
             state = .playing
+            HarcSyntheticPlaybackTrace.emit(.started)
             onPlaybackStarted()
             startPreparation()
         } catch {
             stop()
             state = .failed(error.localizedDescription)
+            HarcSyntheticPlaybackTrace.emit(.failed)
         }
     }
 
     func stop() {
+        HarcSyntheticPlaybackTrace.emit(.stopped)
         preparationGeneration &+= 1
         envelopeTask?.cancel()
         envelopeTask = nil
@@ -179,6 +187,7 @@ final class HarcMobileLocalRecordingAudioController: NSObject {
 
     func playbackFinished(_ finished: any HarcMobileLocalAudioPlayer, successfully flag: Bool) {
         guard let player, player === finished else { return }
+        HarcSyntheticPlaybackTrace.emit(.finished)
         pendingTime = flag ? duration : player.currentTime
         player.delegate = nil
         self.player = nil
@@ -206,3 +215,25 @@ private enum HarcMobileLocalPlaybackError: LocalizedError {
     }
 }
 
+
+/// Opt-in, synthetic-only diagnostic. Closed events, no content or identities.
+@MainActor
+enum HarcSyntheticPlaybackTrace {
+    enum Event: String {
+        case tap, handler, playEntered, resumed, started, paused, failed
+        case stopped, finished, detailDisappeared, sessionAcquire, sessionRevoke, captureBegin
+    }
+    private static var count = 0
+    static func emit(_ event: Event) {
+        #if DEBUG
+        let info = ProcessInfo.processInfo
+        guard info.environment["HARC_SYNTHETIC_PLAYBACK_TRACE"] == "1",
+              info.arguments.contains("--harc-ui-test-local-recording"),
+              info.arguments.contains("--harc-ui-test-reset-root"),
+              info.arguments.contains("--harc-ui-test-root-id"), count < 40 else { return }
+        count += 1
+        Logger(subsystem: "com.harc.mobile.syntheticplayback", category: "event")
+            .notice("event=\(event.rawValue, privacy: .public) sequence=\(count)")
+        #endif
+    }
+}

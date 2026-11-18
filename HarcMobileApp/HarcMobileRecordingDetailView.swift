@@ -236,6 +236,7 @@ struct HarcMobileRecordingDetailView: View {
       }
     }
     .onDisappear {
+      HarcSyntheticPlaybackTrace.emit(.detailDisappeared)
       detailRequestGeneration += 1
       localAudio?.stop()
       hostAudio?.stopAndRelease()
@@ -447,7 +448,9 @@ struct HarcMobileRecordingDetailView: View {
             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
             .disabled(!canSeek)
           Button {
+            HarcSyntheticPlaybackTrace.emit(.tap)
             Task {
+              HarcSyntheticPlaybackTrace.emit(.handler)
               if let localAudio {
                 await localAudio.playOrPause()
               } else {
