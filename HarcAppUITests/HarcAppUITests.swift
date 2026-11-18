@@ -51,14 +51,16 @@ final class HarcAppUITests: XCTestCase {
         let entry = app.buttons["libraryProjectConnections"]
         XCTAssertTrue(entry.waitForExistence(timeout: 60))
         entry.click()
-        let disclosure = app.disclosureTriangles["Find a connection in the selected recording"]
+        let disclosure = app.buttons["projectMention.disclosure"]
         XCTAssertTrue(disclosure.waitForExistence(timeout: 10))
         XCTAssertTrue(disclosure.isHittable)
-        // In hosted CI, the native AX triangle included the label, and its
-        // centre click visibly left this disclosure collapsed.
-        // Target the visible leading chevron, relative to this exact element.
-        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-            .withOffset(CGVector(dx: 5, dy: 0)).click()
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+        disclosure.click()
+        let expanded = NSPredicate(format: "value == %@", "Expanded")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: expanded, object: disclosure)],
+            timeout: 10
+        ), .completed)
         let source = app.staticTexts["Source: UI Test Customer Renewal"]
         XCTAssertTrue(source.waitForExistence(timeout: 10))
         XCTAssertTrue(source.isHittable, "Expanded consent must visibly identify its selected source")

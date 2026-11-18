@@ -53,6 +53,7 @@ struct ProjectMentionConsentView: View {
             .fixedSize(horizontal: false, vertical: true)
             .disabled(busy || !canWrite())
         }
+        .disclosureGroupStyle(ProjectMentionDisclosureStyle())
         .padding(.horizontal, HarcSpacing.lg)
         .task { await loadProjects() }
         .onChange(of: selectionKey) { _, _ in consentKey = nil }
@@ -137,4 +138,30 @@ struct ProjectMentionLoadGeneration {
     private var current = UUID()
     mutating func begin() -> UUID { current = UUID(); return current }
     func isCurrent(_ value: UUID) -> Bool { current == value }
+}
+
+/// The entire source-disclosure label is an ordinary keyboard-accessible button.
+/// Keep the native DisclosureGroup state; opening it does not grant consent.
+private struct ProjectMentionDisclosureStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
+            Button {
+                configuration.isExpanded.toggle()
+            } label: {
+                HStack {
+                    Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+                        .accessibilityHidden(true)
+                    configuration.label
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("projectMention.disclosure")
+            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+            if configuration.isExpanded {
+                configuration.content
+            }
+        }
+    }
 }
