@@ -24,6 +24,7 @@ struct ProjectMentionConsentView: View {
             VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 if let source, source.id != nil {
                     Text("Source: \(source.displayTitle)").font(.harcLabel)
+                        .accessibilityIdentifier("projectMention.source")
                     Text("Only this recording’s transcript will be checked on this Mac. Case-sensitive, exact project-name mentions become suggestions, not assignments. Other recordings and audio are not scanned.")
                         .font(.harcBody)
                     Picker("Knowledge project", selection: $projectID) {
@@ -45,7 +46,10 @@ struct ProjectMentionConsentView: View {
                 } else {
                     Text("Select a recording in the Library, then reopen Connections to choose that source.")
                 }
-                if let feedback { Text(feedback).font(.harcBody).textSelection(.enabled) }
+                if let feedback {
+                    Text(feedback).font(.harcBody).textSelection(.enabled)
+                        .accessibilityIdentifier("projectMention.feedback")
+                }
                 if busy { ProgressView("Working locally…") }
             }
             // Preserve the source/consent disclosure and receipts at their
@@ -53,6 +57,7 @@ struct ProjectMentionConsentView: View {
             .fixedSize(horizontal: false, vertical: true)
             .disabled(busy || !canWrite())
         }
+        .disclosureGroupStyle(ProjectMentionDisclosureStyle())
         .padding(.horizontal, HarcSpacing.lg)
         .task { await loadProjects() }
         .onChange(of: selectionKey) { _, _ in consentKey = nil }
@@ -137,4 +142,29 @@ struct ProjectMentionLoadGeneration {
     private var current = UUID()
     mutating func begin() -> UUID { current = UUID(); return current }
     func isCurrent(_ value: UUID) -> Bool { current == value }
+}
+
+/// The entire source-disclosure label is an ordinary keyboard-accessible button.
+/// Keep the native DisclosureGroup state; opening it does not grant consent.
+private struct ProjectMentionDisclosureStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: HarcSpacing.md) {
+            Button {
+                configuration.isExpanded.toggle()
+            } label: {
+                HStack {
+                    Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+                        .accessibilityHidden(true)
+                    configuration.label
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("projectMention.disclosure")
+            if configuration.isExpanded {
+                configuration.content
+            }
+        }
+    }
 }

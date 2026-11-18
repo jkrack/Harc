@@ -472,6 +472,7 @@ extension HarcWindowRootView {
             TextField("Recording title", text: $titleDraft,
                       prompt: Text(recording.hasNameOrSuggestion ? recording.displayTitle : "Name this recording")
                         .foregroundStyle(.primary))
+                .accessibilityIdentifier("harc.recording.title")
                 .textFieldStyle(.plain)
                 .font(HarcTideStyle.title)
                 .onSubmit { commitTitle(for: recording) }
