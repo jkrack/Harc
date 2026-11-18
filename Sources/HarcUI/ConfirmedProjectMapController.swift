@@ -46,6 +46,7 @@ final class ConfirmedProjectMapController: ObservableObject {
     /// Capture when presenting a map. A dismissed older view must not clear a
     /// newer selection that happens to share this controller.
     var presentationID: UUID { generation }
+    func ownsPresentation(_ presentationID: UUID) -> Bool { presentationID == generation }
     func dismiss(presentationID: UUID) {
         guard presentationID == generation else { return }
         clear(.idle)

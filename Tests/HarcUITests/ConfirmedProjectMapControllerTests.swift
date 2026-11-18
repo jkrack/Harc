@@ -115,15 +115,22 @@ struct ConfirmedProjectMapControllerTests {
         controller.residentHostAvailabilityChanged(true)
         await controller.select(selection)
         let oldPresentation = controller.presentationID
-        await controller.select(selection)
+        let other = try await store.upsert(Recording(wavPath: root.appendingPathComponent("other-unused.wav").path,
+            startedAt: Date(), transcriptText: "A separate synthetic recording."))
+        let nextSelection = ConfirmedProjectMapSelection(recordingID: other.id!, canonicalID: other.canonicalID,
+            expectedHost: selection.expectedHost)
+        await controller.select(nextSelection)
         let currentPresentation = controller.presentationID
         #expect(oldPresentation != currentPresentation)
+        #expect(!controller.ownsPresentation(oldPresentation))
+        #expect(controller.ownsPresentation(currentPresentation))
         controller.dismiss(presentationID: oldPresentation)
         #expect(controller.state == .ready)
         #expect(controller.snapshot != nil)
         controller.dismiss(presentationID: currentPresentation)
         #expect(controller.state == .idle)
         #expect(controller.snapshot == nil)
+        #expect(!controller.ownsPresentation(currentPresentation))
     }
     @Test func observationTerminationHidesMap() async throws {
         let (store, _, _, _, selection, root) = try await fixture()

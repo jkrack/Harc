@@ -63,7 +63,9 @@ struct SelectedConfirmedProjectMapPanel: View {
     let presentationID: UUID
     var body: some View {
         Group {
-            if controller.state == .ready, let snapshot = controller.snapshot {
+            if !controller.ownsPresentation(presentationID) {
+                Text("This connection snapshot is no longer available. Select the recording again.")
+            } else if controller.state == .ready, let snapshot = controller.snapshot {
                 ConfirmedProjectMapPanel(snapshot: snapshot)
             } else if controller.state == .loading {
                 ProgressView("Loading accepted connections")

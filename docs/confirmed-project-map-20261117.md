@@ -46,3 +46,18 @@ No production caller has been installed or qualified.
 Regression coverage adds old-token dismissal followed by current-token dismissal,
 and exercises current-token dismissal while a snapshot read is suspended. This is
 controller-level coverage, not a SwiftUI sheet lifecycle qualification.
+
+## Presentation content isolation follow-through
+
+The inactive wrapper also gates content by the captured presentation identity,
+not only teardown. An old wrapper cannot display the new selection's shared
+controller snapshot while waiting to disappear. It instead shows an unavailable
+message. The regression now selects two distinct synthetic recordings, checks
+old/current ownership, and confirms old dismissal preserves the new snapshot.
+Independent source review found no blocking issue; actual SwiftUI presentation
+lifecycle/rendered interaction remains unqualified. No production entry point,
+graph write, private source access or PR228 changes are included.
+
+Final offline focused run passed all 5 lifecycle test methods (18 expanded
+cases), zero failures/skips. This is not full CI, window interaction or release
+qualification. Existing hosted Mac consent-test failure remains separate.
