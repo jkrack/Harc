@@ -61,8 +61,9 @@ final class HarcAppUITests: XCTestCase {
             for: [XCTNSPredicateExpectation(predicate: expanded, object: disclosure)],
             timeout: 10
         ), .completed)
-        let source = app.staticTexts["Source: UI Test Customer Renewal"]
+        let source = app.staticTexts["projectMention.source"]
         XCTAssertTrue(source.waitForExistence(timeout: 10))
+        XCTAssertEqual(source.value as? String, "Source: UI Test Customer Renewal")
         XCTAssertTrue(source.isHittable, "Expanded consent must visibly identify its selected source")
         let find = app.buttons["projectMention.find"]
         XCTAssertTrue(find.waitForExistence(timeout: 10))

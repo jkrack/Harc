@@ -24,6 +24,7 @@ struct ProjectMentionConsentView: View {
             VStack(alignment: .leading, spacing: HarcSpacing.md) {
                 if let source, source.id != nil {
                     Text("Source: \(source.displayTitle)").font(.harcLabel)
+                        .accessibilityIdentifier("projectMention.source")
                     Text("Only this recording’s transcript will be checked on this Mac. Case-sensitive, exact project-name mentions become suggestions, not assignments. Other recordings and audio are not scanned.")
                         .font(.harcBody)
                     Picker("Knowledge project", selection: $projectID) {
