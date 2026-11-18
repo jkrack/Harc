@@ -82,11 +82,18 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
     func testLocalDetailSeekPreservesPausedPlayback() {
         // Preserve the original real-audio midpoint/seconds/no-autoplay checks.
         // Staying paused after the gesture separates seek accuracy from EOF.
+        print("HARC_SEEK_PHASE:launch-start")
         let app = launchFixture()
+        print("HARC_SEEK_PHASE:launch-complete")
+        print("HARC_SEEK_PHASE:recent-start")
         openRecent(in: app)
+        print("HARC_SEEK_PHASE:recent-complete")
         assertSavedDetail(in: app)
+        print("HARC_SEEK_PHASE:detail-confirmed")
         let play = app.buttons["harc.mobile.detail.play"]
+        print("HARC_SEEK_PHASE:reveal-play-start")
         reveal(play, in: app)
+        print("HARC_SEEK_PHASE:reveal-play-complete")
         play.tap()
         expectLabel("Pause", on: play)
         play.tap()

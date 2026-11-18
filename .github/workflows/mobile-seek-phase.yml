@@ -1,0 +1,45 @@
+name: Synthetic mobile seek phases
+on:
+  push:
+    branches: [test/mobile-seek-phase-20261118]
+permissions:
+  contents: read
+jobs:
+  focused-mobile-seek:
+    runs-on: macos-26
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify hosted isolation and select Xcode
+        shell: bash
+        run: |
+          [[ "$GITHUB_ACTIONS" == true && "$RUNNER_ENVIRONMENT" == github-hosted ]]
+          xcode_candidates=(/Applications/Xcode_*.app)
+          xcode_path=$(printf '%s\n' "${xcode_candidates[@]}" | sort -V | tail -1)
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Build synthetic mobile test without trust overrides
+        timeout-minutes: 30
+        shell: bash
+        run: bash scripts/diagnose-mobile-seek-phase.sh build
+      - name: Execute unchanged paused-seek assertions
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/diagnose-mobile-seek-phase.sh test 2>&1 | tee .build/mobile-seek-phase/console.log
+      - name: Report closed phase tokens
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PYREPORT'
+          import json, runpy
+          from pathlib import Path
+          p = Path('.build/mobile-seek-phase/console.log')
+          summarize = runpy.run_path('scripts/summarize-mobile-seek-phases.py')['summarize']
+          print(json.dumps({'syntheticPausedSeekPhases': summarize(p.read_text(errors='replace')) if p.exists() else []}))
+          PYREPORT
