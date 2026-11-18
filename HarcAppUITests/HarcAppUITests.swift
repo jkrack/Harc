@@ -119,7 +119,10 @@ final class HarcAppUITests: XCTestCase {
         open.click()
         let heading = app.staticTexts["Accepted connections"]
         XCTAssertTrue(heading.waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["projectMap.recordingTitle"].label, "UI Test Customer Renewal")
+        // macOS exposes this SwiftUI Text's literal content as AXValue, not label.
+        let mapTitle = app.staticTexts["projectMap.recordingTitle"]
+        XCTAssertTrue(mapTitle.waitForExistence(timeout: 10))
+        XCTAssertEqual(mapTitle.value as? String, "UI Test Customer Renewal")
         app.buttons["projectMap.refresh"].click()
         XCTAssertTrue(heading.waitForExistence(timeout: 10))
         app.buttons["projectMap.back"].click()

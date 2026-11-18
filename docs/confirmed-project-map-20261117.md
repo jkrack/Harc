@@ -134,3 +134,21 @@ Final integration package build and opt-in synthetic lifecycle suite exited 0:
 8 methods / 21 expanded cases passed, zero failures/skips. AppDelegate and app UI
 test sources pass Swift parser checks only; full Xcode app/UI validation remains
 pending on hosted CI, so this draft is not approved for merge or distribution.
+
+## Hosted title assertion diagnosis
+
+At 5d24a7c, hosted Mac UI executed 21 tests with two failures: the existing
+single-source consent case and the new map navigation case. The new case opened
+the map and found its heading, then failed because the selected-title StaticText's
+`label` was empty. Later Back/Refresh/dismiss steps were not reached. Package and
+mobile jobs passed; this is not a green Mac result.
+
+A bounded local standalone synthetic reproduction of the same literal title Text
+and accessibility identifier found exactly one matching element in its own exact
+PID/window. AXTitle and AXDescription were absent; AXValue equaled the expected
+synthetic title. The probe returned only match/absence booleans, never raw AX
+values, and did not traverse application children, menus or other windows. It
+used snapshot/theme shims, not the production Store. No artifact download occurred.
+The app test now reads `.value` and retains the exact expected recording title;
+existence is explicitly checked. Parser/diff checks pass. The corrected full app
+navigation test still requires hosted execution.
