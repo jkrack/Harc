@@ -228,13 +228,10 @@ public struct WaveformPlayerView: View {
                                  with: .color(speakerColor(segment.speaker).opacity(0.8)))
                 }
             }
-            .overlay(alignment: .leading) {
-                GeometryReader { geo in
-                    Rectangle().fill(HarcTideStyle.played)
-                        .frame(width: 1)
-                        .offset(x: geo.size.width * CGFloat(min(1, max(0, displayedTime / max(1, model.duration)))))
-                }
-                .allowsHitTesting(false)
+            .overlay {
+                speakerPlayhead
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -254,6 +251,35 @@ public struct WaveformPlayerView: View {
             .frame(height: 7) // token-exempt: preserve the thin speaker visualization.
             .clipShape(Capsule())
             .frame(maxHeight: .infinity)
+            .overlay {
+                speakerPlayhead
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    /// Both speaker surfaces share the same full-width time axis and scrub
+    /// preview. Drawing inside their bounds keeps the marker visible at either
+    /// endpoint, while the decorative overlay never steals seek or AX actions.
+    private var speakerPlayhead: some View {
+        Canvas { context, size in
+            guard let position = PlaybackSeekPosition.x(
+                seconds: displayedTime, width: size.width, duration: model.duration),
+                  size.height > 0 else { return }
+            // token-exempt: data marker stroke and cap dimensions, not layout spacing.
+            let stroke: CGFloat = min(4, size.width)
+            let x = min(size.width - stroke / 2, max(stroke / 2, position))
+            var line = Path()
+            line.move(to: CGPoint(x: x, y: 0))
+            line.addLine(to: CGPoint(x: x, y: size.height))
+            // Dark outline plus white core stays legible over every speaker
+            // color and in both appearances, unlike a single one-pixel line.
+            context.stroke(line, with: .color(HarcTideStyle.navy), lineWidth: stroke)
+            context.stroke(line, with: .color(HarcTideStyle.played), lineWidth: min(2, stroke))
+            let radius = min(5, size.width / 2, size.height / 2)
+            let capX = min(size.width - radius, max(radius, position))
+            HarcTideStyle.drawNowDot(in: context, at: CGPoint(x: capX, y: radius), radius: radius)
         }
     }
 

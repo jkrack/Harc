@@ -151,5 +151,37 @@ class MobileRecordingDetailSelectionTests(unittest.TestCase):
                 self.assertFalse(gate.check(summary, skipped, ['HarcMobileUITests'], required)['passed'])
 
 
+class MacSpeakerPlayheadSelectionTests(unittest.TestCase):
+    suite = 'HarcAppUITests/HarcAppUITests'
+    names = ('testPlaybackControlsSeekAndPause', 'testPlaybackControlsSeekAndPauseLight')
+
+    def test_both_appearances_are_present_and_required_by_hosted_gate(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / '.github/workflows/ci.yml').read_text()
+        source = (root / 'HarcAppUITests/HarcAppUITests.swift').read_text()
+        for name in self.names:
+            self.assertEqual(workflow.count('--require-test ' + self.suite + '/' + name + ' '), 1)
+            self.assertEqual(source.count('func ' + name + '()'), 1)
+
+    def test_missing_or_skipped_appearance_cannot_pass(self):
+        required = [self.suite + '/' + name for name in self.names]
+        cases = [dict(nodeType='Test Case', nodeIdentifier=key.split('/', 1)[1] + '()',
+                      result='Passed') for key in required]
+        summary = dict(result='Passed', failedTests=0, skippedTests=0,
+                       expectedFailures=0, passedTests=2, totalTestCount=2, testFailures=[])
+        tree = dict(testNodes=[dict(nodeType='UI test bundle', name='HarcAppUITests',
+                                   result='Passed', children=cases)])
+        self.assertTrue(gate.check(summary, tree, ['HarcAppUITests'], required)['passed'])
+        for index, name in enumerate(self.names):
+            with self.subTest(case=name):
+                missing = copy.deepcopy(tree)
+                del missing['testNodes'][0]['children'][index]
+                self.assertFalse(gate.check(dict(summary, passedTests=1, totalTestCount=1),
+                                            missing, ['HarcAppUITests'], required)['passed'])
+                skipped = copy.deepcopy(tree)
+                skipped['testNodes'][0]['children'][index]['result'] = 'Skipped'
+                self.assertFalse(gate.check(summary, skipped, ['HarcAppUITests'], required)['passed'])
+
+
 if __name__ == '__main__':
     unittest.main()
