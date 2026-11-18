@@ -137,7 +137,21 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         }
         keepScreenshot(app, named: "Local-recording-detail-largest-text")
         let done = app.buttons["harc.mobile.detail.done"]
-        XCTAssertTrue(done.isHittable)
+        let doneHittable = done.isHittable
+        // Synthetic-only failure metadata: booleans, no labels, frames, paths,
+        // screenshots or hierarchy. Preserve the initial failed observation.
+        var doneDiagnostic = ""
+        if !doneHittable {
+            doneDiagnostic = "synthetic-done-state"
+                + " exists=\(done.exists)"
+                + " enabled=\(done.exists && done.isEnabled)"
+                + " inViewport=\(done.exists && app.frame.contains(done.frame))"
+                + " summarySelected=\(sections.exists && sections.label == "View Summary")"
+                + " transcriptChoiceHittable=\(app.buttons["Transcript"].exists && app.buttons["Transcript"].isHittable)"
+                + " notesChoiceHittable=\(app.buttons["Notes"].exists && app.buttons["Notes"].isHittable)"
+                + " alertPresent=\(app.alerts.firstMatch.exists)"
+        }
+        XCTAssertTrue(doneHittable, doneDiagnostic)
         done.tap()
         XCTAssertTrue(app.buttons["harc.mobile.record.recent"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["harc.mobile.record.stop"].exists)
