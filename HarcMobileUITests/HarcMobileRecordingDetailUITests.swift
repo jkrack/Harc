@@ -198,6 +198,7 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
             app.launchArguments.append("--harc-ui-test-long-playback-recording")
         }
         if largestText {
+            app.launchEnvironment["HARC_SYNTHETIC_PLAYBACK_TRACE"] = "1"
             app.launchArguments += [
                 "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
             ]

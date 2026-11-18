@@ -17,6 +17,7 @@ final class HarcMobilePlaybackSession {
     }
 
     func acquire(onRevoked: @escaping () -> Void) throws -> UUID {
+        HarcSyntheticPlaybackTrace.emit(.sessionAcquire)
         guard !captureActive else { throw PlaybackError.captureActive }
         try activate()
         revokeCurrent(deactivating: false)
@@ -38,6 +39,7 @@ final class HarcMobilePlaybackSession {
     }
 
     func beginCapture() {
+        HarcSyntheticPlaybackTrace.emit(.captureBegin)
         captureActive = true
         captureGeneration &+= 1
         revokeCurrent(deactivating: true)
@@ -48,6 +50,7 @@ final class HarcMobilePlaybackSession {
     private func revokeCurrent(deactivating: Bool) {
         guard let previous = owner else { return }
         owner = nil
+        HarcSyntheticPlaybackTrace.emit(.sessionRevoke)
         previous.revoke()
         if deactivating { deactivate() }
     }
