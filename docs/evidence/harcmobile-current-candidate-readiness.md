@@ -44,6 +44,20 @@ final source-bound artifact checks remain required. Graph/project-refinement
 work is not included, and LLM summarization is unchanged. Owner-only TestFlight
 scope and all physical/codec/release limitations below are unchanged.
 
+## November 18 graph and playhead source integration
+
+Release integration starts at `8a0f013`, combining graph/consent integration
+`f5b9c0f` with playhead source `49f776d`. Unlike the earlier preparation
+candidate, this source includes the explicit read-only accepted-connections map
+and project-refinement stack. Earlier exclusions below describe their dated
+candidate only. The map does not automatically activate or write graph data.
+
+This is source integration, not release qualification. Full exact-head CI,
+archive identity/signing, applicable physical qualification and published
+artifact/feed checks remain required. No upload or distribution is claimed.
+The earlier intermittent largest-text Done-button failure remains recorded;
+an unchanged rerun passed without establishing its root cause.
+
 ## November 16 combined Apple speech release preparation
 
 The shared preparation identity is now **0.14.23 (79)**. It combines the

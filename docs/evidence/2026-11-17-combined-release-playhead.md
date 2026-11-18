@@ -52,3 +52,11 @@ build 79. No App Store submission, external testers, credential creation or
 security-settings changes are part of this handoff. Physical Apple-model
 availability, real capture/Stop/playback, protected-master/codec and authenticated
 phone-to-Host/Library gates remain open; hosted tests do not waive them.
+
+## November 18 successor integration
+
+The exclusions above apply to the November 17 candidate. Successor source
+`8a0f013` combines `49f776d` with graph/consent integration `f5b9c0f`; it includes
+the explicit read-only accepted map and project-refinement stack. Its exact
+head requires new full CI and artifact/device release checks. No earlier pass
+is relabeled as qualification of the successor, and no publication is claimed.
