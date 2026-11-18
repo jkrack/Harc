@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 import GRDB
 import HarcDomain
@@ -190,6 +192,53 @@ struct ConfirmedProjectMapControllerTests {
         #expect(controller.snapshot == nil)
         #expect(await counter.reads == 0)
         #expect(await counter.watches == 0)
+    }
+    /// Owned synthetic window only: no activation, capture, or accessibility collection.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["HARC_MAP_LIFECYCLE_WINDOW_QA"] == "1"))
+    func swiftUIPresentationReplacementPreservesNewSelection() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ConfirmedProjectMapController(store: store, externalChanges: NotificationCenter())
+        controller.residentHostAvailabilityChanged(true)
+        let first = controller.prepare(selection)
+        await controller.load(first)
+        #expect(controller.state == .ready)
+        var disappearanceCount = 0
+        var appearanceCount = 0
+        let host = NSHostingView(rootView: AnyView(SelectedConfirmedProjectMapPanel(
+            controller: controller, presentationID: first.presentationID)
+            .onAppear { appearanceCount += 1 }
+            .onDisappear { disappearanceCount += 1 }.id(first.presentationID)))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 480, height: 500),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "Synthetic map lifecycle qualification"
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        #expect(await settle { appearanceCount == 1 })
+
+        let other = try await store.upsert(Recording(wavPath: root.appendingPathComponent("next-unused.wav").path,
+            startedAt: Date(), title: "Synthetic second recording", transcriptText: "A separate source."))
+        let next = controller.prepare(.init(recordingID: other.id!, canonicalID: other.canonicalID,
+            expectedHost: selection.expectedHost))
+        await controller.load(next)
+        host.rootView = AnyView(SelectedConfirmedProjectMapPanel(controller: controller,
+            presentationID: next.presentationID)
+            .onDisappear { disappearanceCount += 1 }.id(next.presentationID))
+        host.layoutSubtreeIfNeeded()
+        #expect(await settle { disappearanceCount == 1 })
+        #expect(controller.state == .ready)
+        #expect(disappearanceCount == 1)
+        #expect(controller.snapshot?.recordingID == other.id)
+        #expect(controller.ownsPresentation(next.presentationID))
+
+        host.rootView = AnyView(Text("Synthetic presentation dismissed"))
+        host.layoutSubtreeIfNeeded()
+        #expect(await settle { controller.state == .idle && disappearanceCount == 2 })
+        #expect(disappearanceCount == 2)
+        #expect(controller.snapshot == nil)
     }
     @Test func observationTerminationHidesMap() async throws {
         let (store, _, _, _, selection, root) = try await fixture()

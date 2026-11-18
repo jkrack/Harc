@@ -85,3 +85,22 @@ Independent review found no blocking ticket lifecycle issue. Read/watch counters
 now prove stale and dismissed tickets do no work, and duplicate loads add no
 observer/read. Final offline regression passed 7 methods / 20 expanded cases,
 zero failures/skips. SwiftUI integration and hosted CI remain separate gates.
+
+## Actual SwiftUI wrapper lifecycle qualification
+
+The opt-in `HARC_MAP_LIFECYCLE_WINDOW_QA=1` test now links the actual Store,
+controller and selected-map SwiftUI wrapper in one owned synthetic NSWindow.
+It prepares/loads recording A, observes its appearance, prepares/loads distinct
+recording B, replaces the SwiftUI identity, verifies A's disappearance occurred
+without clearing B, then removes B and verifies its disappearance clears the
+snapshot. Bounded condition waits observe actual lifecycle callbacks rather
+than assuming fixed animation delays. No screen capture, AX traversal, app
+activation call, private source or production graph writer is used.
+
+Independent review found no blocking correctness/privacy issue. This closes the
+specific unhosted SwiftUI replacement/teardown gap; production sheet navigation,
+Host-selection forwarding, keyboard/VoiceOver and full CI still require separate
+qualification. The window test is explicitly opt-in, not default CI coverage.
+
+Final opt-in run exited 0: all 8 test methods / 21 expanded cases passed,
+including the actual window lifecycle test, with zero failures/skips.
