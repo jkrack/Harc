@@ -270,6 +270,20 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             test-without-building 2>&1 | tee build/validation/macos-tests.log
 
+      # This closed-token summary remains readable through the jobs connector
+      # when full log transport is unavailable. It never copies error content.
+      - name: Summarize synthetic consent result
+        if: always()
+        id: consent_status
+        run: |
+          python3 scripts/test-summarize-consent-ci.py
+          status=$(python3 scripts/summarize-consent-ci.py build/validation/macos-tests.log)
+          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
+
+      - name: "Synthetic consent result: ${{ steps.consent_status.outputs.status }}"
+        if: always()
+        run: ':'
+
       - name: Enforce macOS test execution
         run: |
           xcrun xcresulttool get test-results summary --path build/validation/macos-tests.xcresult --format json > build/validation/macos-summary.json
