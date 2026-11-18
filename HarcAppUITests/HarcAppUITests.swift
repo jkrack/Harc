@@ -76,8 +76,11 @@ final class HarcAppUITests: XCTestCase {
         app.checkBoxes["projectMention.consent"].click()
         XCTAssertTrue(find.isEnabled)
         find.click()
-        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "1 new suggestions;")).firstMatch
-        XCTAssertTrue(receipt.waitForExistence(timeout: 15))
+        let receipt = app.staticTexts["projectMention.feedback"]
+        let produced = NSPredicate(format: "value CONTAINS %@", "1 new suggestions;")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: produced, object: receipt)], timeout: 15
+        ), .completed)
         XCTAssertFalse(find.isEnabled)
     }
 

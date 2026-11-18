@@ -46,7 +46,10 @@ struct ProjectMentionConsentView: View {
                 } else {
                     Text("Select a recording in the Library, then reopen Connections to choose that source.")
                 }
-                if let feedback { Text(feedback).font(.harcBody).textSelection(.enabled) }
+                if let feedback {
+                    Text(feedback).font(.harcBody).textSelection(.enabled)
+                        .accessibilityIdentifier("projectMention.feedback")
+                }
                 if busy { ProgressView("Working locally…") }
             }
             // Preserve the source/consent disclosure and receipts at their
