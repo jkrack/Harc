@@ -5497,6 +5497,7 @@ private extension AppDelegate {
             hostAuthorityID: try HostAuthorityID(Data(repeating: 0x71, count: 32)), hostStateID: .random())
         projectReviewUITestStore = store
         projectReviewUITestLease = lease
+        bridge.projectReviewFixtureReady = true
     }
 
     func seedUITestLibraryIfNeeded(store: RecordingStore) async throws {

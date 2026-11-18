@@ -9,8 +9,8 @@ struct ConfirmedProjectMapSelection: Sendable {
     let expectedHost: LibraryMetadata
 }
 
-/// Inactive lifecycle adapter. Explicit selection only; never refreshes, scans,
-/// infers, or writes automatically. Future caller must forward Host/selection loss.
+/// Explicit-selection lifecycle adapter; never refreshes, scans, infers, or
+/// writes automatically. Callers must forward Host/selection loss.
 @MainActor
 final class ConfirmedProjectMapController: ObservableObject {
     enum State: Equatable { case idle, loading, ready, invalidated }

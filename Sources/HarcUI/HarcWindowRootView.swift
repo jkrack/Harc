@@ -304,7 +304,7 @@ public struct HarcWindowRootView: View {
             Text("\u{201C}\(rec.displayTitle)\u{201D} will be removed from the library and the audio + transcript files will be deleted from disk.")
         }
         .sheet(isPresented: $showProjectReview) {
-            HostProjectRefinementSheet(store: store, canWrite: canReviewProjects, source: selectedRecording) { canonicalID in
+            HostProjectRefinementSheet(store: store, bridge: bridge, canWrite: canReviewProjects, source: selectedRecording) { canonicalID in
                 let navigation = UUID()
                 projectReviewNavigation = navigation
                 Task { @MainActor in

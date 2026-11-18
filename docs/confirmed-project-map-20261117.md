@@ -104,3 +104,33 @@ qualification. The window test is explicitly opt-in, not default CI coverage.
 
 Final opt-in run exited 0: all 8 test methods / 21 expanded cases passed,
 including the actual window lifecycle test, with zero failures/skips.
+
+## Explicit Host entry (draft integration, not distributed)
+
+The draft now wires an explicit “Accepted connections for selected recording”
+action into Host Connections. Merely opening Connections does not load a map.
+The action prepares one canonical source ticket and asynchronously reads that
+snapshot. Back, Done, source identity changes, sheet disappearance and observed
+Host loss revoke it. Refresh is another explicit read of the same bound selected
+source, not extraction or relationship mutation. A changed Host tuple stays
+fail-closed; the UI instructs closing/reopening Connections for a fresh binding.
+
+The sheet directly observes the bridge instead of assuming a canWrite closure
+is observable. Production requires both live Host readiness and the existing
+Store/runtime identity permission check. DEBUG UI fixtures use a separate
+observable flag set only after the existing temporary-root guard and synthetic
+Host lease succeed; they still require the fixture's exact Store/lease permission.
+No real runtime is claimed to have started by that flag.
+
+A synthetic app navigation test covers explicit open, exact source title,
+Back/reopen, Refresh invocation, Escape and reopening without an automatically
+loaded map. That new app test has not run locally; its Refresh assertion alone
+is not proof of completed reload. Controller one-shot tests separately cover load
+behavior. Package compilation/lifecycle evidence is not full app qualification.
+The earlier “no production caller” descriptions above are historical; this draft
+entry is now wired in source, but has not been merged, installed or released.
+
+Final integration package build and opt-in synthetic lifecycle suite exited 0:
+8 methods / 21 expanded cases passed, zero failures/skips. AppDelegate and app UI
+test sources pass Swift parser checks only; full Xcode app/UI validation remains
+pending on hosted CI, so this draft is not approved for merge or distribution.
