@@ -1,7 +1,7 @@
 import SwiftUI
 import HarcStore
 
-/// Read-only map, intentionally not installed in the app. It accepts an immutable
+/// Read-only map, opened explicitly from Host Connections. It accepts an immutable
 /// snapshot and has no Store, model, navigation or mutation capability.
 struct ConfirmedProjectMapPanel: View {
     let snapshot: ConfirmedProjectMapSnapshot
@@ -15,6 +15,7 @@ struct ConfirmedProjectMapPanel: View {
                 VStack(alignment: .leading, spacing: HarcSpacing.sm) {
                     Label("Selected recording", systemImage: "waveform").font(.harcLabel)
                     Text(verbatim: snapshot.recordingTitle).font(.harcBody)
+                        .accessibilityIdentifier("projectMap.recordingTitle")
                 }
                 .padding(HarcSpacing.lg)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -54,13 +55,18 @@ struct ConfirmedProjectMapPanel: View {
     }
 }
 
-/// Lifecycle-aware presentation for future explicit-selection callers. Not
-/// installed in production. Never leaves a prior map behind on failure/loss.
+/// Lifecycle-aware explicit-selection presentation. Never leaves a prior map
+/// behind on failure/loss. Release qualification is tracked separately.
 struct SelectedConfirmedProjectMapPanel: View {
     @ObservedObject var controller: ConfirmedProjectMapController
+    // Caller synchronously prepares a selection, passes its presentationID here,
+    // then loads that same ticket in the presentation task. One token per view.
+    let presentationID: UUID
     var body: some View {
         Group {
-            if controller.state == .ready, let snapshot = controller.snapshot {
+            if !controller.ownsPresentation(presentationID) {
+                Text("This connection snapshot is no longer available. Select the recording again.")
+            } else if controller.state == .ready, let snapshot = controller.snapshot {
                 ConfirmedProjectMapPanel(snapshot: snapshot)
             } else if controller.state == .loading {
                 ProgressView("Loading accepted connections")
@@ -70,6 +76,6 @@ struct SelectedConfirmedProjectMapPanel: View {
                 Text("Select a recording to view accepted project connections.")
             }
         }
-        .onDisappear { controller.dismiss() }
+        .onDisappear { controller.dismiss(presentationID: presentationID) }
     }
 }

@@ -33,3 +33,142 @@ An independently run standalone synthetic app using a copy of the actual map pan
 Independent lifecycle review found no blocking issue and requested an actual Store-mutation-during-read case, now included alongside dismissal, cancellation and selection invalidation races. No PR228 files or history were changed.
 
 Final focused lifecycle/map/Unicode regression exited 0: 15 executed test methods passed (including 8 Store mutation, 4 lifecycle and 4 delayed-read parameter cases); the opt-in window/AX method was explicitly skipped. This does not replace its separately documented execution or full CI.
+
+## Presentation teardown follow-through
+
+The inactive wrapper now requires a captured presentation generation and uses
+conditional dismissal. A late disappearance belonging to an old selection cannot
+clear a newer map sharing its controller. The caller must capture the generation
+**after `select` starts or completes**, and replace the wrapper/token for each new
+selection; capturing before a deferred `.task` starts selection is not supported.
+No production caller has been installed or qualified.
+
+Regression coverage adds old-token dismissal followed by current-token dismissal,
+and exercises current-token dismissal while a snapshot read is suspended. This is
+controller-level coverage, not a SwiftUI sheet lifecycle qualification.
+
+## Presentation content isolation follow-through
+
+The inactive wrapper also gates content by the captured presentation identity,
+not only teardown. An old wrapper cannot display the new selection's shared
+controller snapshot while waiting to disappear. It instead shows an unavailable
+message. The regression now selects two distinct synthetic recordings, checks
+old/current ownership, and confirms old dismissal preserves the new snapshot.
+Independent source review found no blocking issue; actual SwiftUI presentation
+lifecycle/rendered interaction remains unqualified. No production entry point,
+graph write, private source access or PR228 changes are included.
+
+Final offline focused run passed all 5 lifecycle test methods (18 expanded
+cases), zero failures/skips. This is not full CI, window interaction or release
+qualification. Existing hosted Mac consent-test failure remains separate.
+
+## Synchronous presentation preparation
+
+The future caller no longer needs to race an asynchronous `select` to capture a
+presentation ID. On the main actor, call `let ticket = controller.prepare(selection)`,
+present the wrapper with `ticket.presentationID`, then `await controller.load(ticket)`
+in its task. A ticket is consumed once, before suspension. A queued old ticket,
+repeated task, or dismissed ticket cannot replace the newer selection or install
+another observer. The existing async `select` convenience remains for non-view
+callers/tests. This supersedes the earlier capture-after-select ordering contract.
+
+The next user-visible integration should be an explicit read-only Accepted
+connections action for the selected canonical recording in the existing resident
+Host Connections flow. It must prepare synchronously, forward selection and Host
+loss, and discard on dismissal. It must not run model extraction, scan other
+recordings, or add a new graph writer. Before enabling it, qualify real app open,
+selection change, dismiss/reopen, stale-source invalidation, and keyboard/VoiceOver
+behavior plus CI. Phone/client graph sync is a separate protocol-qualified slice.
+This change does not add that action or claim those qualifications.
+
+Independent review found no blocking ticket lifecycle issue. Read/watch counters
+now prove stale and dismissed tickets do no work, and duplicate loads add no
+observer/read. Final offline regression passed 7 methods / 20 expanded cases,
+zero failures/skips. SwiftUI integration and hosted CI remain separate gates.
+
+## Actual SwiftUI wrapper lifecycle qualification
+
+The opt-in `HARC_MAP_LIFECYCLE_WINDOW_QA=1` test now links the actual Store,
+controller and selected-map SwiftUI wrapper in one owned synthetic NSWindow.
+It prepares/loads recording A, observes its appearance, prepares/loads distinct
+recording B, replaces the SwiftUI identity, verifies A's disappearance occurred
+without clearing B, then removes B and verifies its disappearance clears the
+snapshot. Bounded condition waits observe actual lifecycle callbacks rather
+than assuming fixed animation delays. No screen capture, AX traversal, app
+activation call, private source or production graph writer is used.
+
+Independent review found no blocking correctness/privacy issue. This closes the
+specific unhosted SwiftUI replacement/teardown gap; production sheet navigation,
+Host-selection forwarding, keyboard/VoiceOver and full CI still require separate
+qualification. The window test is explicitly opt-in, not default CI coverage.
+
+Final opt-in run exited 0: all 8 test methods / 21 expanded cases passed,
+including the actual window lifecycle test, with zero failures/skips.
+
+## Explicit Host entry (draft integration, not distributed)
+
+The draft now wires an explicit “Accepted connections for selected recording”
+action into Host Connections. Merely opening Connections does not load a map.
+The action prepares one canonical source ticket and asynchronously reads that
+snapshot. Back, Done, source identity changes, sheet disappearance and observed
+Host loss revoke it. Refresh is another explicit read of the same bound selected
+source, not extraction or relationship mutation. A changed Host tuple stays
+fail-closed; the UI instructs closing/reopening Connections for a fresh binding.
+
+The sheet directly observes the bridge instead of assuming a canWrite closure
+is observable. Production requires both live Host readiness and the existing
+Store/runtime identity permission check. DEBUG UI fixtures use a separate
+observable flag set only after the existing temporary-root guard and synthetic
+Host lease succeed; they still require the fixture's exact Store/lease permission.
+No real runtime is claimed to have started by that flag.
+
+A synthetic app navigation test covers explicit open, exact source title,
+Back/reopen, Refresh invocation, Escape and reopening without an automatically
+loaded map. That new app test has not run locally; its Refresh assertion alone
+is not proof of completed reload. Controller one-shot tests separately cover load
+behavior. Package compilation/lifecycle evidence is not full app qualification.
+The earlier “no production caller” descriptions above are historical; this draft
+entry is now wired in source, but has not been merged, installed or released.
+
+Final integration package build and opt-in synthetic lifecycle suite exited 0:
+8 methods / 21 expanded cases passed, zero failures/skips. AppDelegate and app UI
+test sources pass Swift parser checks only; full Xcode app/UI validation remains
+pending on hosted CI, so this draft is not approved for merge or distribution.
+
+## Hosted title assertion diagnosis
+
+At 5d24a7c, hosted Mac UI executed 21 tests with two failures: the existing
+single-source consent case and the new map navigation case. The new case opened
+the map and found its heading, then failed because the selected-title StaticText's
+`label` was empty. Later Back/Refresh/dismiss steps were not reached. Package and
+mobile jobs passed; this is not a green Mac result.
+
+A bounded local standalone synthetic reproduction of the same literal title Text
+and accessibility identifier found exactly one matching element in its own exact
+PID/window. AXTitle and AXDescription were absent; AXValue equaled the expected
+synthetic title. The probe returned only match/absence booleans, never raw AX
+values, and did not traverse application children, menus or other windows. It
+used snapshot/theme shims, not the production Store. No artifact download occurred.
+The app test now reads `.value` and retains the exact expected recording title;
+existence is explicitly checked. Parser/diff checks pass. The corrected full app
+navigation test still requires hosted execution.
+
+## Refresh task-identity regression
+
+Hosted 82d824c passed the exact selected-title check, then failed waiting for the
+map heading after Refresh. A new owned synthetic NSWindow test reproduced the
+same failure using the actual controller/wrapper and the exact `.id(ticket)` then
+unkeyed `.task` ordering: first load succeeded; after preparing the refresh ticket,
+ready-state and non-nil-snapshot assertions failed (2 issues). No private source,
+artifact download or accessibility capture was used for this reproduction.
+
+The loading task now explicitly uses `.task(id: presentationID)`. Changing the
+inner view identity alone did not establish a restarted loader. The view identity
+and generation-guarded teardown/cancellation remain in place; no invalidation or
+consent guard was removed. The regression remains opt-in alongside the owned
+window lifecycle qualification. Full hosted app navigation remains a separate gate.
+
+After the fix, the final offline opt-in suite exited 0 with 9 methods / 22 expanded
+cases passed, zero failures/skips, including both actual SwiftUI window tests.
+Independent review confirms the fix keeps task cancellation and presentation
+identity protections. This is not a claim that hosted app navigation now passes.

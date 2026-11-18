@@ -102,6 +102,41 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(open.waitForNonExistence(timeout: 10))
     }
 
+    func testAcceptedMapExplicitOpenBackRefreshAndDismiss() throws {
+        app.launchEnvironment["HARC_UI_TEST_PROJECT_REVIEW"] = "host"
+        app.launch()
+        let recording = seededRecordingRow()
+        XCTAssertTrue(recording.waitForExistence(timeout: 60))
+        recording.click()
+        let entry = app.buttons["libraryProjectConnections"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 60))
+        entry.click()
+        let open = app.buttons["projectMap.open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: open)], timeout: 10), .completed)
+        XCTAssertFalse(app.staticTexts["Accepted connections"].exists)
+        open.click()
+        let heading = app.staticTexts["Accepted connections"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        // macOS exposes this SwiftUI Text's literal content as AXValue, not label.
+        let mapTitle = app.staticTexts["projectMap.recordingTitle"]
+        XCTAssertTrue(mapTitle.waitForExistence(timeout: 10))
+        XCTAssertEqual(mapTitle.value as? String, "UI Test Customer Renewal")
+        app.buttons["projectMap.refresh"].click()
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        app.buttons["projectMap.back"].click()
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        XCTAssertFalse(heading.exists)
+        open.click()
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(heading.waitForNonExistence(timeout: 10))
+        entry.click()
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        XCTAssertFalse(heading.exists)
+    }
+
     func testProjectConnectionsAbsentWithoutHostAuthority() throws {
         app.launch()
         XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 60))

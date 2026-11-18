@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 import GRDB
 import HarcDomain
@@ -10,6 +12,30 @@ private actor MapReadGate {
     private var continuation: CheckedContinuation<Void, Never>?
     func wait() async { entered = true; await withCheckedContinuation { continuation = $0 } }
     func release() { continuation?.resume(); continuation = nil }
+}
+
+private actor MapLoadCounter {
+    var reads = 0
+    var watches = 0
+    func didRead() { reads += 1 }
+    func didWatch() { watches += 1 }
+}
+
+@MainActor
+private final class MapTaskPresentation: ObservableObject {
+    @Published var ticket: ConfirmedProjectMapController.PreparedSelection
+    init(_ ticket: ConfirmedProjectMapController.PreparedSelection) { self.ticket = ticket }
+}
+@MainActor
+private struct MapTaskHarness: View {
+    @ObservedObject var presentation: MapTaskPresentation
+    let controller: ConfirmedProjectMapController
+    var body: some View {
+        let ticket = presentation.ticket
+        SelectedConfirmedProjectMapPanel(controller: controller, presentationID: ticket.presentationID)
+            .id(ticket.presentationID)
+            .task(id: ticket.presentationID) { await controller.load(ticket) }
+    }
 }
 
 @Suite("Accepted map lifecycle", .serialized)
@@ -102,11 +128,155 @@ struct ConfirmedProjectMapControllerTests {
             task.cancel()
             #expect(await settle { controller.state == .invalidated })
         case "selection": controller.selectionDidChange()
-        default: controller.dismiss()
+        default: controller.dismiss(presentationID: controller.presentationID)
         }
         await gate.release(); await task.value
         #expect(controller.snapshot == nil)
         #expect(controller.state == (reason == "dismiss" ? .idle : .invalidated))
+    }
+    @Test func oldPresentationDismissalCannotClearNewSelection() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ConfirmedProjectMapController(store: store, externalChanges: NotificationCenter())
+        controller.residentHostAvailabilityChanged(true)
+        await controller.select(selection)
+        let oldPresentation = controller.presentationID
+        let other = try await store.upsert(Recording(wavPath: root.appendingPathComponent("other-unused.wav").path,
+            startedAt: Date(), transcriptText: "A separate synthetic recording."))
+        let nextSelection = ConfirmedProjectMapSelection(recordingID: other.id!, canonicalID: other.canonicalID,
+            expectedHost: selection.expectedHost)
+        await controller.select(nextSelection)
+        let currentPresentation = controller.presentationID
+        #expect(oldPresentation != currentPresentation)
+        #expect(!controller.ownsPresentation(oldPresentation))
+        #expect(controller.ownsPresentation(currentPresentation))
+        controller.dismiss(presentationID: oldPresentation)
+        #expect(controller.state == .ready)
+        #expect(controller.snapshot != nil)
+        controller.dismiss(presentationID: currentPresentation)
+        #expect(controller.state == .idle)
+        #expect(controller.snapshot == nil)
+        #expect(!controller.ownsPresentation(currentPresentation))
+    }
+    @Test func queuedOldSelectionCannotReplaceCurrentPresentation() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let counter = MapLoadCounter()
+        let controller = ConfirmedProjectMapController(read: { selected in
+            await counter.didRead()
+            return try await store.confirmedProjectMap(recordingID: selected.recordingID,
+                canonicalID: selected.canonicalID, expectedHost: selected.expectedHost)
+        }, watch: { selected in
+            await counter.didWatch()
+            return await store.observeConfirmedProjectMapChanges(recordingID: selected.recordingID)
+        })
+        controller.residentHostAvailabilityChanged(true)
+        let old = controller.prepare(selection)
+        let current = controller.prepare(selection)
+        #expect(controller.ownsPresentation(current.presentationID))
+        await controller.load(old)
+        #expect(controller.state == .loading)
+        #expect(controller.ownsPresentation(current.presentationID))
+        #expect(await counter.reads == 0)
+        #expect(await counter.watches == 0)
+        await controller.load(current)
+        #expect(controller.state == .ready)
+        await controller.load(old)
+        await controller.load(current) // one-shot ticket must not install another observer
+        #expect(controller.state == .ready)
+        #expect(controller.snapshot != nil)
+        #expect(await counter.reads == 1)
+        #expect(await counter.watches == 1)
+        #expect(controller.ownsPresentation(current.presentationID))
+    }
+    @Test func dismissedPreparedSelectionNeverLoads() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let counter = MapLoadCounter()
+        let controller = ConfirmedProjectMapController(read: { selected in
+            await counter.didRead()
+            return try await store.confirmedProjectMap(recordingID: selected.recordingID,
+                canonicalID: selected.canonicalID, expectedHost: selected.expectedHost)
+        }, watch: { selected in
+            await counter.didWatch()
+            return await store.observeConfirmedProjectMapChanges(recordingID: selected.recordingID)
+        })
+        controller.residentHostAvailabilityChanged(true)
+        let prepared = controller.prepare(selection)
+        controller.dismiss(presentationID: prepared.presentationID)
+        await controller.load(prepared)
+        #expect(controller.state == .idle)
+        #expect(controller.snapshot == nil)
+        #expect(await counter.reads == 0)
+        #expect(await counter.watches == 0)
+    }
+    /// Owned synthetic window only: no activation, capture, or accessibility collection.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["HARC_MAP_LIFECYCLE_WINDOW_QA"] == "1"))
+    func swiftUIPresentationReplacementPreservesNewSelection() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ConfirmedProjectMapController(store: store, externalChanges: NotificationCenter())
+        controller.residentHostAvailabilityChanged(true)
+        let first = controller.prepare(selection)
+        await controller.load(first)
+        #expect(controller.state == .ready)
+        var disappearanceCount = 0
+        var appearanceCount = 0
+        let host = NSHostingView(rootView: AnyView(SelectedConfirmedProjectMapPanel(
+            controller: controller, presentationID: first.presentationID)
+            .onAppear { appearanceCount += 1 }
+            .onDisappear { disappearanceCount += 1 }.id(first.presentationID)))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 480, height: 500),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "Synthetic map lifecycle qualification"
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        #expect(await settle { appearanceCount == 1 })
+
+        let other = try await store.upsert(Recording(wavPath: root.appendingPathComponent("next-unused.wav").path,
+            startedAt: Date(), title: "Synthetic second recording", transcriptText: "A separate source."))
+        let next = controller.prepare(.init(recordingID: other.id!, canonicalID: other.canonicalID,
+            expectedHost: selection.expectedHost))
+        await controller.load(next)
+        host.rootView = AnyView(SelectedConfirmedProjectMapPanel(controller: controller,
+            presentationID: next.presentationID)
+            .onDisappear { disappearanceCount += 1 }.id(next.presentationID))
+        host.layoutSubtreeIfNeeded()
+        #expect(await settle { disappearanceCount == 1 })
+        #expect(controller.state == .ready)
+        #expect(disappearanceCount == 1)
+        #expect(controller.snapshot?.recordingID == other.id)
+        #expect(controller.ownsPresentation(next.presentationID))
+
+        host.rootView = AnyView(Text("Synthetic presentation dismissed"))
+        host.layoutSubtreeIfNeeded()
+        #expect(await settle { controller.state == .idle && disappearanceCount == 2 })
+        #expect(disappearanceCount == 2)
+        #expect(controller.snapshot == nil)
+    }
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["HARC_MAP_LIFECYCLE_WINDOW_QA"] == "1"))
+    func swiftUITaskRefreshLoadsNewTicket() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ConfirmedProjectMapController(store: store, externalChanges: NotificationCenter())
+        controller.residentHostAvailabilityChanged(true)
+        let presentation = MapTaskPresentation(controller.prepare(selection))
+        let host = NSHostingView(rootView: MapTaskHarness(presentation: presentation, controller: controller))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 480, height: 500),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "Synthetic map refresh qualification"
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        #expect(await settle { controller.state == .ready })
+        presentation.ticket = controller.prepare(selection)
+        #expect(await settle { controller.state == .ready })
+        #expect(controller.snapshot != nil)
+        #expect(controller.ownsPresentation(presentation.ticket.presentationID))
     }
     @Test func observationTerminationHidesMap() async throws {
         let (store, _, _, _, selection, root) = try await fixture()
