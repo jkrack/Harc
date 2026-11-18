@@ -36,10 +36,35 @@ final class HarcAppUITests: XCTestCase {
     func testProjectConnectionsExplicitSingleSourceConsent() throws {
         app.launchEnvironment["HARC_UI_TEST_PROJECT_REVIEW"] = "host"
         app.launch()
+        // Connections can be available before asynchronous Library selection
+        // restoration finishes. This case checks explicit source consent, not
+        // default selection: select the isolated fixture and wait for its detail.
+        let recording = seededRecordingRow()
+        XCTAssertTrue(recording.waitForExistence(timeout: 60))
+        recording.click()
+        let title = app.textFields["harc.recording.title"]
+        let sourceLoaded = NSPredicate(format: "value == %@", "UI Test Customer Renewal")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: sourceLoaded, object: title)],
+            timeout: 10
+        ), .completed)
         let entry = app.buttons["libraryProjectConnections"]
         XCTAssertTrue(entry.waitForExistence(timeout: 60))
         entry.click()
-        app.disclosureTriangles["Find a connection in the selected recording"].click()
+        let disclosure = app.disclosureTriangles["projectMention.disclosure"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 10))
+        XCTAssertTrue(disclosure.isHittable)
+        XCTAssertTrue(NSPredicate(format: "value == 0").evaluate(with: disclosure))
+        disclosure.click()
+        let expanded = NSPredicate(format: "value == 1")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: expanded, object: disclosure)],
+            timeout: 10
+        ), .completed)
+        let source = app.staticTexts["projectMention.source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        XCTAssertEqual(source.value as? String, "Source: UI Test Customer Renewal")
+        XCTAssertTrue(source.isHittable, "Expanded consent must visibly identify its selected source")
         let find = app.buttons["projectMention.find"]
         XCTAssertTrue(find.waitForExistence(timeout: 10))
         XCTAssertFalse(find.isEnabled)
@@ -51,8 +76,11 @@ final class HarcAppUITests: XCTestCase {
         app.checkBoxes["projectMention.consent"].click()
         XCTAssertTrue(find.isEnabled)
         find.click()
-        let receipt = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "1 new suggestions;")).firstMatch
-        XCTAssertTrue(receipt.waitForExistence(timeout: 15))
+        let receipt = app.staticTexts["projectMention.feedback"]
+        let produced = NSPredicate(format: "value CONTAINS %@", "1 new suggestions;")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: produced, object: receipt)], timeout: 15
+        ), .completed)
         XCTAssertFalse(find.isEnabled)
     }
 
