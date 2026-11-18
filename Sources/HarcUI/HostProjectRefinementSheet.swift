@@ -65,7 +65,7 @@ struct HostProjectRefinementSheet: View {
                     SelectedConfirmedProjectMapPanel(controller: mapController,
                         presentationID: mapSelection.presentationID)
                         .id(mapSelection.presentationID)
-                        .task { await mapController.load(mapSelection) }
+                        .task(id: mapSelection.presentationID) { await mapController.load(mapSelection) }
                 } else {
                     Button("Accepted connections for selected recording", systemImage: "point.3.connected.trianglepath.dotted") {
                         openMap()

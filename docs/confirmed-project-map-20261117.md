@@ -152,3 +152,23 @@ used snapshot/theme shims, not the production Store. No artifact download occurr
 The app test now reads `.value` and retains the exact expected recording title;
 existence is explicitly checked. Parser/diff checks pass. The corrected full app
 navigation test still requires hosted execution.
+
+## Refresh task-identity regression
+
+Hosted 82d824c passed the exact selected-title check, then failed waiting for the
+map heading after Refresh. A new owned synthetic NSWindow test reproduced the
+same failure using the actual controller/wrapper and the exact `.id(ticket)` then
+unkeyed `.task` ordering: first load succeeded; after preparing the refresh ticket,
+ready-state and non-nil-snapshot assertions failed (2 issues). No private source,
+artifact download or accessibility capture was used for this reproduction.
+
+The loading task now explicitly uses `.task(id: presentationID)`. Changing the
+inner view identity alone did not establish a restarted loader. The view identity
+and generation-guarded teardown/cancellation remain in place; no invalidation or
+consent guard was removed. The regression remains opt-in alongside the owned
+window lifecycle qualification. Full hosted app navigation remains a separate gate.
+
+After the fix, the final offline opt-in suite exited 0 with 9 methods / 22 expanded
+cases passed, zero failures/skips, including both actual SwiftUI window tests.
+Independent review confirms the fix keeps task cancellation and presentation
+identity protections. This is not a claim that hosted app navigation now passes.

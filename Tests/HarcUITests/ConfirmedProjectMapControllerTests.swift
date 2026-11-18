@@ -21,6 +21,23 @@ private actor MapLoadCounter {
     func didWatch() { watches += 1 }
 }
 
+@MainActor
+private final class MapTaskPresentation: ObservableObject {
+    @Published var ticket: ConfirmedProjectMapController.PreparedSelection
+    init(_ ticket: ConfirmedProjectMapController.PreparedSelection) { self.ticket = ticket }
+}
+@MainActor
+private struct MapTaskHarness: View {
+    @ObservedObject var presentation: MapTaskPresentation
+    let controller: ConfirmedProjectMapController
+    var body: some View {
+        let ticket = presentation.ticket
+        SelectedConfirmedProjectMapPanel(controller: controller, presentationID: ticket.presentationID)
+            .id(ticket.presentationID)
+            .task(id: ticket.presentationID) { await controller.load(ticket) }
+    }
+}
+
 @Suite("Accepted map lifecycle", .serialized)
 @MainActor
 struct ConfirmedProjectMapControllerTests {
@@ -239,6 +256,27 @@ struct ConfirmedProjectMapControllerTests {
         #expect(await settle { controller.state == .idle && disappearanceCount == 2 })
         #expect(disappearanceCount == 2)
         #expect(controller.snapshot == nil)
+    }
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["HARC_MAP_LIFECYCLE_WINDOW_QA"] == "1"))
+    func swiftUITaskRefreshLoadsNewTicket() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ConfirmedProjectMapController(store: store, externalChanges: NotificationCenter())
+        controller.residentHostAvailabilityChanged(true)
+        let presentation = MapTaskPresentation(controller.prepare(selection))
+        let host = NSHostingView(rootView: MapTaskHarness(presentation: presentation, controller: controller))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 480, height: 500),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "Synthetic map refresh qualification"
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        #expect(await settle { controller.state == .ready })
+        presentation.ticket = controller.prepare(selection)
+        #expect(await settle { controller.state == .ready })
+        #expect(controller.snapshot != nil)
+        #expect(controller.ownsPresentation(presentation.ticket.presentationID))
     }
     @Test func observationTerminationHidesMap() async throws {
         let (store, _, _, _, selection, root) = try await fixture()
