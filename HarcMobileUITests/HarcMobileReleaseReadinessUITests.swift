@@ -1108,7 +1108,9 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
                 host.tap()
                 XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForExistence(timeout: 10))
                 // The fixture changes presentation only; real pairing stays absent.
-                XCTAssertTrue(app.buttons["Pair a Mac"].exists)
+                // A periodic health probe can temporarily show Checking after the
+                // sheet appears. Require the unpaired action, not just its container.
+                XCTAssertTrue(app.buttons["Pair a Mac"].waitForExistence(timeout: 10))
                 app.buttons["Done"].tap()
                 XCTAssertTrue(app.navigationBars["Setup & Sync"].waitForNonExistence(timeout: 10))
                 XCTAssertTrue(host.waitForExistence(timeout: 10))
