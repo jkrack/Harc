@@ -158,7 +158,6 @@ private struct ProjectMentionDisclosureStyle: DisclosureGroupStyle {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("projectMention.disclosure")
-            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
             if configuration.isExpanded {
                 configuration.content
             }

@@ -51,12 +51,12 @@ final class HarcAppUITests: XCTestCase {
         let entry = app.buttons["libraryProjectConnections"]
         XCTAssertTrue(entry.waitForExistence(timeout: 60))
         entry.click()
-        let disclosure = app.buttons["projectMention.disclosure"]
+        let disclosure = app.disclosureTriangles["projectMention.disclosure"]
         XCTAssertTrue(disclosure.waitForExistence(timeout: 10))
         XCTAssertTrue(disclosure.isHittable)
-        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+        XCTAssertTrue(NSPredicate(format: "value == 0").evaluate(with: disclosure))
         disclosure.click()
-        let expanded = NSPredicate(format: "value == %@", "Expanded")
+        let expanded = NSPredicate(format: "value == 1")
         XCTAssertEqual(XCTWaiter.wait(
             for: [XCTNSPredicateExpectation(predicate: expanded, object: disclosure)],
             timeout: 10
