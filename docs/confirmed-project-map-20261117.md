@@ -61,3 +61,27 @@ graph write, private source access or PR228 changes are included.
 Final offline focused run passed all 5 lifecycle test methods (18 expanded
 cases), zero failures/skips. This is not full CI, window interaction or release
 qualification. Existing hosted Mac consent-test failure remains separate.
+
+## Synchronous presentation preparation
+
+The future caller no longer needs to race an asynchronous `select` to capture a
+presentation ID. On the main actor, call `let ticket = controller.prepare(selection)`,
+present the wrapper with `ticket.presentationID`, then `await controller.load(ticket)`
+in its task. A ticket is consumed once, before suspension. A queued old ticket,
+repeated task, or dismissed ticket cannot replace the newer selection or install
+another observer. The existing async `select` convenience remains for non-view
+callers/tests. This supersedes the earlier capture-after-select ordering contract.
+
+The next user-visible integration should be an explicit read-only Accepted
+connections action for the selected canonical recording in the existing resident
+Host Connections flow. It must prepare synchronously, forward selection and Host
+loss, and discard on dismissal. It must not run model extraction, scan other
+recordings, or add a new graph writer. Before enabling it, qualify real app open,
+selection change, dismiss/reopen, stale-source invalidation, and keyboard/VoiceOver
+behavior plus CI. Phone/client graph sync is a separate protocol-qualified slice.
+This change does not add that action or claim those qualifications.
+
+Independent review found no blocking ticket lifecycle issue. Read/watch counters
+now prove stale and dismissed tickets do no work, and duplicate loads add no
+observer/read. Final offline regression passed 7 methods / 20 expanded cases,
+zero failures/skips. SwiftUI integration and hosted CI remain separate gates.

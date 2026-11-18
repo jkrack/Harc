@@ -14,10 +14,15 @@ struct ConfirmedProjectMapSelection: Sendable {
 @MainActor
 final class ConfirmedProjectMapController: ObservableObject {
     enum State: Equatable { case idle, loading, ready, invalidated }
+    struct PreparedSelection {
+        let presentationID: UUID
+        fileprivate let selection: ConfirmedProjectMapSelection
+    }
     @Published private(set) var snapshot: ConfirmedProjectMapSnapshot?
     @Published private(set) var state: State = .idle
     private var available = false
     private var generation = UUID()
+    private var pendingSelectionID: UUID?
     private var observation: ProjectPreviewChangeObservation?
     private var observationTask: Task<Void, Never>?
     private var externalSubscription: AnyCancellable?
@@ -54,14 +59,26 @@ final class ConfirmedProjectMapController: ObservableObject {
     func dismiss() { clear(.idle) }
     func invalidate() { clear(.invalidated) }
     private func clear(_ state: State) {
-        generation = UUID(); snapshot = nil; self.state = state
+        generation = UUID(); pendingSelectionID = nil; snapshot = nil; self.state = state
         observationTask?.cancel(); observationTask = nil
         observation?.cancel(); observation = nil
     }
-    func select(_ selection: ConfirmedProjectMapSelection) async {
+    /// Prepare synchronously before presenting a wrapper or scheduling its task.
+    /// A queued task for an older ticket never clears a newer selection.
+    func prepare(_ selection: ConfirmedProjectMapSelection) -> PreparedSelection {
         clear(.loading)
+        pendingSelectionID = generation
+        return PreparedSelection(presentationID: generation, selection: selection)
+    }
+    func select(_ selection: ConfirmedProjectMapSelection) async {
+        await load(prepare(selection))
+    }
+    func load(_ prepared: PreparedSelection) async {
+        let token = prepared.presentationID
+        guard token == generation, pendingSelectionID == token else { return }
+        pendingSelectionID = nil // consume before suspension; duplicate tasks are inert
         guard available, !Task.isCancelled else { invalidate(); return }
-        let token = generation
+        let selection = prepared.selection
         await withTaskCancellationHandler {
             let registered = await watch(selection)
             guard token == generation, available, !Task.isCancelled else {

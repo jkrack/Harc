@@ -12,6 +12,13 @@ private actor MapReadGate {
     func release() { continuation?.resume(); continuation = nil }
 }
 
+private actor MapLoadCounter {
+    var reads = 0
+    var watches = 0
+    func didRead() { reads += 1 }
+    func didWatch() { watches += 1 }
+}
+
 @Suite("Accepted map lifecycle", .serialized)
 @MainActor
 struct ConfirmedProjectMapControllerTests {
@@ -131,6 +138,58 @@ struct ConfirmedProjectMapControllerTests {
         #expect(controller.state == .idle)
         #expect(controller.snapshot == nil)
         #expect(!controller.ownsPresentation(currentPresentation))
+    }
+    @Test func queuedOldSelectionCannotReplaceCurrentPresentation() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let counter = MapLoadCounter()
+        let controller = ConfirmedProjectMapController(read: { selected in
+            await counter.didRead()
+            return try await store.confirmedProjectMap(recordingID: selected.recordingID,
+                canonicalID: selected.canonicalID, expectedHost: selected.expectedHost)
+        }, watch: { selected in
+            await counter.didWatch()
+            return await store.observeConfirmedProjectMapChanges(recordingID: selected.recordingID)
+        })
+        controller.residentHostAvailabilityChanged(true)
+        let old = controller.prepare(selection)
+        let current = controller.prepare(selection)
+        #expect(controller.ownsPresentation(current.presentationID))
+        await controller.load(old)
+        #expect(controller.state == .loading)
+        #expect(controller.ownsPresentation(current.presentationID))
+        #expect(await counter.reads == 0)
+        #expect(await counter.watches == 0)
+        await controller.load(current)
+        #expect(controller.state == .ready)
+        await controller.load(old)
+        await controller.load(current) // one-shot ticket must not install another observer
+        #expect(controller.state == .ready)
+        #expect(controller.snapshot != nil)
+        #expect(await counter.reads == 1)
+        #expect(await counter.watches == 1)
+        #expect(controller.ownsPresentation(current.presentationID))
+    }
+    @Test func dismissedPreparedSelectionNeverLoads() async throws {
+        let (store, _, _, _, selection, root) = try await fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let counter = MapLoadCounter()
+        let controller = ConfirmedProjectMapController(read: { selected in
+            await counter.didRead()
+            return try await store.confirmedProjectMap(recordingID: selected.recordingID,
+                canonicalID: selected.canonicalID, expectedHost: selected.expectedHost)
+        }, watch: { selected in
+            await counter.didWatch()
+            return await store.observeConfirmedProjectMapChanges(recordingID: selected.recordingID)
+        })
+        controller.residentHostAvailabilityChanged(true)
+        let prepared = controller.prepare(selection)
+        controller.dismiss(presentationID: prepared.presentationID)
+        await controller.load(prepared)
+        #expect(controller.state == .idle)
+        #expect(controller.snapshot == nil)
+        #expect(await counter.reads == 0)
+        #expect(await counter.watches == 0)
     }
     @Test func observationTerminationHidesMap() async throws {
         let (store, _, _, _, selection, root) = try await fixture()

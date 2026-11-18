@@ -58,8 +58,8 @@ struct ConfirmedProjectMapPanel: View {
 /// installed in production. Never leaves a prior map behind on failure/loss.
 struct SelectedConfirmedProjectMapPanel: View {
     @ObservedObject var controller: ConfirmedProjectMapController
-    // Caller captures this after select starts (or completes), not before a
-    // deferred .task selection or inside onDisappear. One token per presentation.
+    // Caller synchronously prepares a selection, passes its presentationID here,
+    // then loads that same ticket in the presentation task. One token per view.
     let presentationID: UUID
     var body: some View {
         Group {
