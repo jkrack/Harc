@@ -56,6 +56,7 @@ enum HarcPostSessionGRPCErrorMapper {
         case failedPrecondition
         case conflict
         case unavailable
+        case audioNotResident
         case internalFailure
 
         var rpcError: RPCError {
@@ -94,6 +95,11 @@ enum HarcPostSessionGRPCErrorMapper {
                 RPCError(
                     code: .aborted,
                     message: "The operation conflicted with durable state."
+                )
+            case .audioNotResident:
+                RPCError(
+                    code: .unavailable,
+                    message: "This recording’s audio is not downloaded on the Host Mac. Download it there, then retry playback."
                 )
             case .unavailable:
                 RPCError(
@@ -268,6 +274,8 @@ enum HarcPostSessionGRPCErrorMapper {
             .resourceExhausted
         case .metadataMutationRateLimited:
             .resourceExhausted
+        case .canonicalAudioNotResident:
+            .audioNotResident
         case .canonicalAudioChanged:
             .unavailable
         case .metadataMutationUnavailable:

@@ -136,6 +136,15 @@ extension HarcHostStore {
         using validator: any RecordingManifestEvidenceValidating
     ) async throws -> ValidatedRecordingManifestEvidence {
         try await repairSecurityRegistryOnReopen()
+        return try await validateBoundManifestForInspection(uploadID: uploadID, using: validator)
+    }
+
+    /// Pure evidence inspection. Unlike ordinary publication, this must not
+    /// repair security-registry persistence or authorize any state transition.
+    func validateBoundManifestForInspection(
+        uploadID: UploadID,
+        using validator: any RecordingManifestEvidenceValidating
+    ) async throws -> ValidatedRecordingManifestEvidence {
         let inputs: StoredManifestValidationInputs = try await dbQueue.read { db in
             guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID) else {
                 throw HarcHostError.uploadNotFound
@@ -223,6 +232,39 @@ extension HarcHostStore {
         }
     }
 
+    /// Background recovery never replays a durable processing handoff.
+    func pendingBackgroundPublicationIDs() async throws -> [UploadID] {
+        try await dbQueue.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT upload_id FROM publication_journal
+                WHERE legacy_quarantined = 0 AND state IN (
+                    'assembling', 'temporarySynchronized', 'audioRenamed',
+                    'audioPublished', 'recordingCommitted', 'receiptPrepared',
+                    'receipted', 'failedRecoverable')
+                ORDER BY created_at, upload_id
+                """).map { raw in
+                    guard let value = UUID(uuidString: raw) else {
+                        throw HarcHostError.databaseFailure("Publication journal has an invalid upload ID.")
+                    }
+                    return UploadID(value)
+                }
+        }
+    }
+
+    /// Normalizes a failed checkpoint in memory only. Admission must happen
+    /// before recovery clears a failure or creates/removes any filesystem entry.
+    func backgroundPublicationWorkForInspection(uploadID: UploadID) async throws -> HostCanonicalPublicationWork {
+        let plan: StoredPublicationPlan = try await dbQueue.read { db in
+            guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID),
+                  let row = try Row.fetchOne(db, sql: "SELECT * FROM publication_journal WHERE upload_id = ?",
+                                            arguments: [uploadID.description]) else { throw HarcHostError.uploadNotFound }
+            try Self.requireRecoverablePublicationRow(row)
+            let plan = try self.decodePublicationPlan(row, attempt: attempt, in: db)
+            return try self.restoreRecoverableCheckpoint(plan, in: db, persist: false)
+        }
+        return try materializePublicationWork(plan)
+    }
+
     /// Read-only administrative view used to verify an already-published WAV
     /// before an owner-authorized binding transition. Unlike recovery, this
     /// never advances a failed checkpoint.
@@ -238,6 +280,23 @@ extension HarcHostStore {
                 sql: "SELECT * FROM publication_journal WHERE upload_id = ?",
                 arguments: [uploadID.description]
             ) else { throw HarcHostError.uploadNotFound }
+            try Self.requireRecoverablePublicationRow(row)
+            return try self.decodePublicationPlan(row, attempt: attempt, in: db)
+        }
+        return try materializePublicationWork(plan)
+    }
+
+    /// Reads one eligible checkpoint; never invokes recovery or registry repair.
+    func failedPublicationWorkForInspection(uploadID: UploadID) async throws -> HostCanonicalPublicationWork {
+        let plan: StoredPublicationPlan = try await dbQueue.read { db in
+            guard let attempt = try self.fetchUploadAttempt(in: db, uploadID: uploadID),
+                  attempt.status == .active,
+                  let row = try Row.fetchOne(db, sql: "SELECT * FROM publication_journal WHERE upload_id = ?",
+                                            arguments: [uploadID.description]),
+                  row["state"] as String? == "failedRecoverable",
+                  let resume = row["resume_state"] as String?,
+                  ["audioPublished", "recordingCommitted", "receiptPrepared"].contains(resume)
+            else { throw HarcHostError.publicationRecoveryRequired("No eligible failed publication") }
             try Self.requireRecoverablePublicationRow(row)
             return try self.decodePublicationPlan(row, attempt: attempt, in: db)
         }
@@ -682,7 +741,8 @@ private extension HarcHostStore {
 
     nonisolated func restoreRecoverableCheckpoint(
         _ plan: StoredPublicationPlan,
-        in db: Database
+        in db: Database,
+        persist: Bool = true
     ) throws -> StoredPublicationPlan {
         guard plan.checkpoint == .failedRecoverable else { return plan }
         guard let rawResume = try String.fetchOne(
@@ -692,28 +752,30 @@ private extension HarcHostStore {
         ), let resume = HostUploadJournalState(rawValue: rawResume),
               Self.isRecoverablePublicationCheckpoint(resume)
         else { throw HarcHostError.publicationRecoveryRequired("invalid recovery checkpoint") }
-        let restoredAt = now()
-        try Self.requireFinitePublicationDate(restoredAt, field: "publication recovery")
-        try db.execute(
-            sql: """
-                UPDATE publication_journal
-                SET state = ?, resume_state = NULL, last_error_code = NULL, updated_at = ?
-                WHERE upload_id = ? AND state = 'failedRecoverable'
-                """,
-            arguments: [resume.rawValue, Self.unixTime(restoredAt), plan.attempt.uploadID.description]
-        )
-        guard db.changesCount == 1 else {
-            throw HarcHostError.publicationRecoveryRequired("recovery checkpoint update was lost")
+        if persist {
+            let restoredAt = now()
+            try Self.requireFinitePublicationDate(restoredAt, field: "publication recovery")
+            try db.execute(
+                sql: """
+                    UPDATE publication_journal
+                    SET state = ?, resume_state = NULL, last_error_code = NULL, updated_at = ?
+                    WHERE upload_id = ? AND state = 'failedRecoverable'
+                    """,
+                arguments: [resume.rawValue, Self.unixTime(restoredAt), plan.attempt.uploadID.description]
+            )
+            guard db.changesCount == 1 else {
+                throw HarcHostError.publicationRecoveryRequired("recovery checkpoint update was lost")
+            }
+            try db.execute(
+                sql: "UPDATE uploads SET journal_state = ?, updated_at = ? WHERE upload_id = ?",
+                arguments: [
+                    resume.rawValue,
+                    Self.unixTime(restoredAt),
+                    plan.attempt.uploadID.description,
+                ]
+            )
+            guard db.changesCount == 1 else { throw HarcHostError.uploadNotFound }
         }
-        try db.execute(
-            sql: "UPDATE uploads SET journal_state = ?, updated_at = ? WHERE upload_id = ?",
-            arguments: [
-                resume.rawValue,
-                Self.unixTime(restoredAt),
-                plan.attempt.uploadID.description,
-            ]
-        )
-        guard db.changesCount == 1 else { throw HarcHostError.uploadNotFound }
         return StoredPublicationPlan(
             attempt: plan.attempt,
             capture: plan.capture,

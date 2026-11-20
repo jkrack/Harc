@@ -1,5 +1,6 @@
 #if canImport(Network)
 import Foundation
+import HarcDomain
 import HarcHost
 import HarcIdentity
 import HarcStore
@@ -8,6 +9,21 @@ import Testing
 
 @Suite("Resident Host production composition")
 struct ResidentHostRuntimeV1Tests {
+    @Test("pre-serving publication planning reports only deferred metadata")
+    func startupPublicationPlanIsMetadataOnly() async throws {
+        let box = HarcResidentStartupRecoveryBox()
+        let pending = [UploadID.random(), UploadID.random()]
+        await #expect(throws: HarcResidentHostRuntimeError.startupRecoveryDidNotRun) {
+            _ = try await box.requireReport()
+        }
+        try await box.prepare { pending }
+        let report = try await box.requireReport()
+        #expect(report.attemptedUploadCount == 0)
+        #expect(report.recoveredReceiptCount == 0)
+        #expect(report.failedUploadIDs.isEmpty)
+        #expect(report.deferredUploadIDs == pending)
+    }
+
     @Test("a pre-listener first-enable failure rolls canonical mode back")
     func firstEnableFailureRollsBack() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

@@ -426,10 +426,12 @@ public struct HostSyncSettingsView: View {
                         .buttonStyle(.borderedProminent)
                     Button("Manage Devices…") { bridge.onOpenHostPairing() }
                 }
+                HostReceiptInspectionView(bridge: bridge)
                 Button("Verify and Repair Recording Receipts…") { bridge.onRepairHostReceipts() }
                     .disabled(
                         bridge.hostReceiptRepairInProgress
                             || bridge.hostLibraryMigrationInProgress
+                            || bridge.hostReceiptInspectionInProgress
                     )
                 Button("Verify Moved Library…") {
                     bridge.onMigrateHostLibraryBindings()
@@ -437,6 +439,7 @@ public struct HostSyncSettingsView: View {
                 .disabled(
                     bridge.hostReceiptRepairInProgress
                         || bridge.hostLibraryMigrationInProgress
+                        || bridge.hostReceiptInspectionInProgress
                 )
                 if bridge.hostReceiptRepairInProgress {
                     ProgressView("Verifying recordings…")

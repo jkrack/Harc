@@ -297,11 +297,11 @@ public extension RecordingStore {
             else { return nil }
 
             var names = recording.speakerNames
-            var identities: [Int: (PersonID, EntityRevision)] = [:]
+            var identities: [Int: (PersonID, EntityRevision, Bool)] = [:]
             if let recordingID = recording.id {
                 let identityRows = try Row.fetchAll(database, sql: """
                     SELECT ps.speaker_index, p.stable_uuid, p.display_name,
-                           p.profile_revision
+                           p.profile_revision, ps.is_user_confirmed
                     FROM person_speakers ps
                     JOIN people p ON p.id = ps.person_id
                     WHERE ps.recording_id = ?
@@ -314,7 +314,8 @@ public extension RecordingStore {
                     names[index] = row["display_name"]
                     identities[index] = (
                         PersonID(uuid),
-                        try EntityRevision(signedValue: row["profile_revision"])
+                        try EntityRevision(signedValue: row["profile_revision"]),
+                        row["is_user_confirmed"]
                     )
                 }
             }
@@ -329,7 +330,8 @@ public extension RecordingStore {
                         speakerIndex: portableIndex,
                         displayName: name,
                         personID: identities[index]?.0,
-                        identityRevision: identities[index]?.1
+                        identityRevision: identities[index]?.1,
+                        isUserConfirmed: identities[index]?.2
                     )
                 }
 

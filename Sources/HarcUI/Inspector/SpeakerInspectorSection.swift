@@ -11,6 +11,7 @@ import HarcStore
 public struct SpeakerInspectorSection: View {
     private let speakerIndices: [Int]
     private let initialNames: [Int: String]
+    private let confirmationBySpeaker: [Int: Bool]
     private let onCommit: ([Int: String]) -> Void
     private let suggestionsProvider: SpeakerNameEditor.SuggestionsProvider?
 
@@ -32,6 +33,7 @@ public struct SpeakerInspectorSection: View {
         initialNames: [Int: String],
         onCommit: @escaping ([Int: String]) -> Void,
         suggestionsProvider: SpeakerNameEditor.SuggestionsProvider? = nil,
+        confirmationBySpeaker: [Int: Bool] = [:],
         pendingSuggestions: [PendingSuggestion] = [],
         personNamesByID: [Int64: String] = [:],
         onConfirmSuggestion: @escaping (PendingSuggestion) -> Void = { _ in },
@@ -44,6 +46,7 @@ public struct SpeakerInspectorSection: View {
     ) {
         self.speakerIndices = speakerIndices
         self.initialNames = initialNames
+        self.confirmationBySpeaker = confirmationBySpeaker
         self.onCommit = onCommit
         self.suggestionsProvider = suggestionsProvider
         self.pendingSuggestions = pendingSuggestions
@@ -65,6 +68,7 @@ public struct SpeakerInspectorSection: View {
                 onCommit: onCommit,
                 suggestionsProvider: suggestionsProvider,
                 showsHeader: false,
+                confirmationBySpeaker: confirmationBySpeaker,
                 pendingSuggestions: pendingSuggestions,
                 personNamesByID: personNamesByID,
                 onConfirmSuggestion: onConfirmSuggestion,

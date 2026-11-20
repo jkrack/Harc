@@ -38,15 +38,35 @@ public final class LibraryViewModel: ObservableObject {
     @Published public private(set) var originDeviceLabels: [DeviceID: String] = [:]
     public var loadOriginDeviceLabels: (@MainActor () async throws -> [DeviceID: String])?
 
+    /// Exact identity already loaded by the active runtime. Never infer local
+    /// ownership from an audio path, a missing remote label, or the current role.
+    public var localOriginDeviceID: DeviceID?
+
+    public func originDeviceLabel(for deviceID: DeviceID) -> String {
+        if deviceID == localOriginDeviceID { return "This Mac" }
+        return knownOriginDeviceLabel(for: deviceID) ?? "Unknown device"
+    }
+
+    private func knownOriginDeviceLabel(for deviceID: DeviceID) -> String? {
+        guard let label = originDeviceLabels[deviceID]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !label.isEmpty else { return nil }
+        return label
+    }
+
     public func originLabel(for recording: Recording) -> String {
         guard let deviceID = recording.originID?.deviceID else {
             return "Device not recorded"
         }
-        if let label = originDeviceLabels[deviceID]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !label.isEmpty {
-            return "Recorded on \(label)"
+        if deviceID == localOriginDeviceID { return "Recorded on this Mac" }
+        guard let label = knownOriginDeviceLabel(for: deviceID) else {
+            return "Recording device unknown"
         }
-        return "Recorded on another device"
+        return "Recorded on \(label)"
+    }
+
+    func refreshOriginDeviceLabels() async {
+        guard let load = loadOriginDeviceLabels else { return }
+        if let labels = try? await load() { originDeviceLabels = labels }
     }
     @Published public var searchText: String = ""
     @Published public private(set) var recordings: [Recording] = []
@@ -103,8 +123,7 @@ public final class LibraryViewModel: ObservableObject {
 
     public func start() {
         Task { [weak self] in
-            guard let self, let load = self.loadOriginDeviceLabels else { return }
-            if let labels = try? await load() { self.originDeviceLabels = labels }
+            await self?.refreshOriginDeviceLabels()
         }
         $searchText
             .removeDuplicates()
@@ -154,7 +173,19 @@ public final class LibraryViewModel: ObservableObject {
         if self.searchText.isEmpty {
             self.recordings = self.apply(filter: self.filter, to: list)
         }
+        // Search rank/snippets remain a query snapshot, but selected detail
+        // source rows must follow same-path processing/sync replacements.
+        self.hits = Self.reconcileSearchHits(self.hits, with: list)
         self.alignCalendarToNewestRecordingIfNeeded(list)
+    }
+
+    static func reconcileSearchHits(_ hits: [TranscriptHit], with recordings: [Recording]) -> [TranscriptHit] {
+        let byPath = Dictionary(recordings.map { ($0.wavPath, $0) }, uniquingKeysWith: { _, latest in latest })
+        return hits.map { hit in
+            var updated = hit
+            updated.recording = byPath[hit.recording.wavPath] ?? hit.recording
+            return updated
+        }
     }
 
     /// Refetch everything the observations would have delivered had the
@@ -254,6 +285,7 @@ public final class LibraryViewModel: ObservableObject {
                     // hybridSearch when nothing is indexed, so an un-indexed
                     // library behaves exactly as it always has.
                     let embedder = await MainActor.run { self.searchEmbedder }
+                    let searchRevision = self.observedListRevision
                     let results: [TranscriptHit]
                     if let embedder {
                         results = try await store.hybridSearch(query: trimmed, embedder: embedder)
@@ -264,7 +296,8 @@ public final class LibraryViewModel: ObservableObject {
                     await MainActor.run {
                         guard !Task.isCancelled,
                               self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
-                        self.hits = results
+                        self.hits = searchRevision == self.observedListRevision
+                            ? results : Self.reconcileSearchHits(results, with: self.fullList)
                         self.searchError = nil
                         // `recordings` stays populated with the unfiltered list so
                         // the detail pane can still look up full Recording data

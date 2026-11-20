@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 import HarcStore
+import HarcClient
+import HarcCore
 @testable import HarcUI
 
 @Suite("Library refresh publication")
@@ -42,6 +44,53 @@ struct LibraryRefreshPublicationTests {
         await stale?.value
         #expect(fixture.library.searchText == "pricing")
         #expect(fixture.library.hits.first?.recording.id == fixture.today.id)
+    }
+
+    @Test("active search selection receives same-path speaker replacement", .timeLimit(.minutes(1)))
+    func activeSearchReplacementRefreshesMetadata() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.library.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+        let json = fixture.directory.appendingPathComponent("today.json")
+        var transcript = SessionTranscript(startedAt: .now, endedAt: .now,
+            audioPath: fixture.today.wavPath, joinedText: "pricing renewal",
+            words: [.init(text: "pricing", startMs: 0, endMs: 500)],
+            speakers: [.init(speaker: 1, startMs: 0, endMs: 500)], chunks: [])
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .secondsSince1970
+        try encoder.encode(transcript).write(to: json)
+        var row = fixture.today
+        row.jsonPath = json.path
+        row = try await fixture.store.upsert(row)
+        fixture.library.publishObservedRecordings(try await fixture.store.fetchAll(), totalBytes: 0)
+        fixture.library.filter = .day(fixture.older.startedAt)
+        let scopedRows = fixture.library.recordings
+        fixture.library.searchText = "pricing"
+        fixture.library.refreshAfterExternalChange()
+        await fixture.library.searchTask?.value
+        let originalHit = try #require(fixture.library.hits.first)
+        let oldMetadata = await RecordingSpeakerMetadata.load(recording: originalHit.recording)
+        #expect(oldMetadata.indices == [1])
+
+        transcript.speakers = [.init(speaker: 7, startMs: 0, endMs: 500)]
+        try encoder.encode(transcript).write(to: json)
+        row.transcribedAt = .now
+        let replacement = try await fixture.store.upsert(row)
+        _ = try await fixture.store.upsert(Recording(
+            wavPath: fixture.directory.appendingPathComponent("unrelated.wav").path,
+            startedAt: fixture.older.startedAt))
+        fixture.library.publishObservedRecordings(try await fixture.store.fetchAll(), totalBytes: 0)
+        let selectedHit = try #require(fixture.library.hits.first)
+        #expect(fixture.library.searchText == "pricing")
+        // Preserve scoped navigation inventory while the selected search hit
+        // lies outside that scope; hit reconciliation must not jump selection.
+        #expect(fixture.library.recordings == scopedRows)
+        #expect(selectedHit.id == originalHit.id)
+        #expect(selectedHit.snippet == originalHit.snippet)
+        #expect(selectedHit.score == originalHit.score)
+        #expect(selectedHit.recording == replacement)
+        #expect(selectedHit.recording != oldMetadata.recording)
+        #expect(await RecordingSpeakerMetadata.load(recording: selectedHit.recording).indices == [7])
+        // A search begun before the observation must not restore its stale row.
+        #expect(LibraryViewModel.reconcileSearchHits([originalHit], with: [replacement]).first?.recording == replacement)
     }
 
     private struct Fixture {

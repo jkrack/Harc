@@ -207,7 +207,9 @@ jobs:
   macos:
     if: github.event_name == 'pull_request'
     runs-on: macos-26
-    timeout-minutes: 60
+    # Cold app/test compilation took ~55m in run 42870561962. Reserve a
+    # separate execution budget and time for gates, provenance and artifacts.
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
 
@@ -234,7 +236,8 @@ jobs:
       - name: Prepare validation directory
         run: mkdir -p build/validation
 
-      - name: Build Harc.app
+      - name: Build macOS app and tests
+        timeout-minutes: 65
         run: |
           set -o pipefail
           xcodebuild \
@@ -244,12 +247,13 @@ jobs:
             -project Harc.xcodeproj \
             -scheme Harc \
             -configuration Debug \
-            -destination 'platform=macOS' \
+            -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            build 2>&1 | tee build/validation/macos-build.log
+            build-for-testing 2>&1 | tee build/validation/macos-build.log
 
       - name: macOS app and UI regression
+        timeout-minutes: 25
         run: |
           set -o pipefail
           xcodebuild \
@@ -264,7 +268,7 @@ jobs:
             -resultBundlePath build/validation/macos-tests.xcresult \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            test 2>&1 | tee build/validation/macos-tests.log
+            test-without-building 2>&1 | tee build/validation/macos-tests.log
 
       - name: Enforce macOS test execution
         run: |
@@ -314,7 +318,8 @@ jobs:
     if: github.event_name == 'pull_request'
     # Independent runner and source build: no artifacts from the other jobs are needed.
     runs-on: macos-26
-    timeout-minutes: 45
+    # 30m build + 25m execution, plus bounded cleanup and evidence upload.
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
@@ -332,7 +337,7 @@ jobs:
           xcodegen generate
       - name: Bounded mobile configuration tests
         shell: bash
-        timeout-minutes: 32
+        timeout-minutes: 57
         run: |
           mkdir -p .build/mobile-configuration
           bash scripts/test-mobile-configuration.sh 2>&1 | tee .build/mobile-configuration/console.log
@@ -384,6 +389,7 @@ jobs:
             .build/mobile-configuration/destination.json
             .build/mobile-configuration/console.log
             .build/mobile-configuration/configuration.xcresult
+            .build/mobile-configuration/build-diagnostics
             .build/mobile-configuration/diagnostics
           if-no-files-found: warn
           retention-days: 3

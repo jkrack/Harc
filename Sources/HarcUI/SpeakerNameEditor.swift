@@ -22,6 +22,7 @@ public struct SpeakerNameEditor: View {
     private let onCommit: ([Int: String]) -> Void
     private let suggestionsProvider: SuggestionsProvider?
     private let showsHeader: Bool
+    private let confirmationBySpeaker: [Int: Bool]
 
     // Task 8.1: pending suggestions from the store-backed system
     private let pendingSuggestions: [PendingSuggestion]
@@ -49,6 +50,7 @@ public struct SpeakerNameEditor: View {
         onCommit: @escaping ([Int: String]) -> Void,
         suggestionsProvider: SuggestionsProvider? = nil,
         showsHeader: Bool = true,
+        confirmationBySpeaker: [Int: Bool] = [:],
         pendingSuggestions: [PendingSuggestion] = [],
         personNamesByID: [Int64: String] = [:],
         onConfirmSuggestion: @escaping (PendingSuggestion) -> Void = { _ in },
@@ -59,11 +61,12 @@ public struct SpeakerNameEditor: View {
         onCreatePerson: @escaping (_ displayName: String, _ speakerIndex: Int) -> Void = { _, _ in },
         onUnlinkPerson: @escaping (_ speakerIndex: Int) -> Void = { _ in }
     ) {
-        self.speakerIndices = speakerIndices.sorted()
+        self.speakerIndices = Array(Set(speakerIndices)).sorted()
         self.initialNames = initialNames
         self.onCommit = onCommit
         self.suggestionsProvider = suggestionsProvider
         self.showsHeader = showsHeader
+        self.confirmationBySpeaker = confirmationBySpeaker
         self.pendingSuggestions = pendingSuggestions
         self.personNamesByID = personNamesByID
         self.onConfirmSuggestion = onConfirmSuggestion
@@ -117,12 +120,16 @@ public struct SpeakerNameEditor: View {
     }
 
     private func row(for index: Int) -> some View {
-        let currentLabel = draftNames[index] ?? "Speaker \(index + 1)"
+        let currentLabel = SpeakerReviewPresentation.assignmentTitle(draftNames[index], speakerIndex: index)
         return HStack(spacing: HarcSpacing.md) {
-            Text("Speaker \(index + 1)")
-                .font(.harcBody)
-                .foregroundStyle(Color.primary)
-                .frame(minWidth: 78, idealWidth: 90, alignment: .leading)
+            VStack(alignment: .leading, spacing: HarcSpacing.xs) {
+                Text("Speaker \(index + 1)")
+                    .font(.harcBody)
+                Text(SpeakerReviewPresentation.statusText(confirmationBySpeaker[index]))
+                    .font(.harcCaption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minWidth: 78, idealWidth: 110, alignment: .leading)
             Menu {
                 ForEach(allPeople) { p in
                     Button(p.displayName) {
@@ -155,6 +162,9 @@ public struct SpeakerNameEditor: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .accessibilityLabel("Speaker \(index + 1): \(currentLabel)")
+            .accessibilityHint("Choose a person for this speaker")
             .accessibilityIdentifier("harc.speaker.\(index).picker")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -253,9 +263,22 @@ private struct PendingSpeakerSuggestionRow: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            horizontalLayout
-            compactLayout
+        VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+            ViewThatFits(in: .horizontal) {
+                horizontalLayout
+                compactLayout
+            }
+            DisclosureGroup("Review evidence") {
+                VStack(alignment: .leading, spacing: HarcSpacing.sm) {
+                    Text(SpeakerReviewPresentation.similarityText(score))
+                    Text("Similarity compares voice features. It is not a probability that this is the right person.")
+                    Text("No timestamped voice sample is available here. Check the recording before confirming. Confirmation links this speaker to the person and may help recognize them in future recordings.")
+                }
+                .font(.harcCaption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            }
+            .font(.harcCaption)
         }
         .padding(.horizontal, HarcSpacing.sm)
         .padding(.vertical, HarcSpacing.sm)
@@ -293,7 +316,7 @@ private struct PendingSpeakerSuggestionRow: View {
     }
 
     private var suggestionText: some View {
-        Text("May be \(personName) · \(String(format: "%.2f", score))")
+        Text("May be \(personName)")
             .font(.harcCaption)
             .foregroundStyle(.primary)
             .lineLimit(2)

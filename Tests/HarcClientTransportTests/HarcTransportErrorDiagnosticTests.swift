@@ -5,6 +5,15 @@ import Testing
 
 @Suite("Transport error diagnostics")
 struct HarcTransportErrorDiagnosticTests {
+    @Test("audio playback preserves unavailable status and recovery instructions")
+    func audioUnavailableFeedback() {
+        let message = "This recording’s audio is not downloaded on the Host Mac. Download it there, then retry playback."
+        let diagnostic = HarcTransportErrorDiagnostic.describe(
+            RPCError(code: .unavailable, message: message))
+        #expect(diagnostic.userFacingMessage == "\(message) (unavailable)")
+        #expect(!diagnostic.userFacingMessage.contains("error 1"))
+    }
+
     @Test("ambiguous commit preserves uncertainty and explains retained local audio")
     func missingReceiptFeedback() {
         let diagnostic = HarcTransportErrorDiagnostic.describe(

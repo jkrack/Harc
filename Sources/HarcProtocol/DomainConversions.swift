@@ -1295,6 +1295,7 @@ public extension Harc_V1_SpeakerLabelV1 {
         displayName = value.displayName
         if let personID = value.personID { self.personID = Harc_V1_PersonIDV1(personID) }
         if let revision = value.identityRevision { identityRevision = revision.rawValue }
+        if let confirmed = value.isUserConfirmed { userConfirmed = confirmed }
     }
 
     func domainValue() throws -> SpeakerLabel {
@@ -1305,7 +1306,8 @@ public extension Harc_V1_SpeakerLabelV1 {
             speakerIndex: speakerIndex,
             displayName: displayName,
             personID: hasPersonID ? try personID.domainValue() : nil,
-            identityRevision: hasIdentityRevision ? try EntityRevision(identityRevision) : nil
+            identityRevision: hasIdentityRevision ? try EntityRevision(identityRevision) : nil,
+            isUserConfirmed: hasUserConfirmed ? userConfirmed : nil
         )
         guard result.displayName == displayName else {
             throw HarcProtobufConversionError.lossyConversion(field: "speakerLabel.displayName")
@@ -1351,7 +1353,10 @@ public extension Harc_V1_RecordingTombstoneV1 {
         self.init()
         canonicalRecordingID = Harc_V1_CanonicalRecordingIDV1(value.canonicalID)
         revision = value.revision.rawValue
-        deletedAtUnixMs = try harcWireUnixMilliseconds(value.deletedAt, field: "recordingTombstone.deletedAt")
+        // Tombstones share the millisecond projection contract with summaries.
+        deletedAtUnixMs = try harcWireCanonicalUnixMilliseconds(
+            value.deletedAt, field: "recordingTombstone.deletedAt"
+        )
     }
 
     func domainValue() throws -> RecordingTombstone {
@@ -1403,7 +1408,9 @@ public struct HarcValidatedLibraryChangeV1: Equatable, Hashable, Sendable {
             wire.cursor = descriptor.cursor.rawValue
             wire.canonicalRecordingID = Harc_V1_CanonicalRecordingIDV1(descriptor.canonicalID)
             wire.revision = descriptor.revision.rawValue
-            wire.changedAtUnixMs = try harcWireUnixMilliseconds(
+            // SQLite calendar dates may differ by one floating-point ULP from
+            // an epoch-based Date, even when stored at millisecond precision.
+            wire.changedAtUnixMs = try harcWireCanonicalUnixMilliseconds(
                 descriptor.changedAt,
                 field: "libraryChange.changedAt"
             )

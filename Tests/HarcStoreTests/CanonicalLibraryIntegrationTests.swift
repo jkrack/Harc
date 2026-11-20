@@ -6,6 +6,26 @@ import Testing
 
 @Suite("Canonical library integration")
 struct CanonicalLibraryIntegrationTests {
+    @Test("canonical detail distinguishes automatic, confirmed and label-only speakers")
+    func speakerConfirmationProjection() async throws {
+        let store = try await RecordingStore.inMemory()
+        let person = try await store.createPerson(displayName: "Alice")
+        let row = try await store.upsert(Recording(wavPath: "/tmp/status-fixture.wav", startedAt: Date()))
+        let id = try #require(row.id)
+        try await store.updateSpeakerNames(id: id, names: [2: "Saved label"])
+        try await store.linkSpeaker(personID: person, recordingID: id, speakerIndex: 0)
+        try await store.linkSpeaker(personID: person, recordingID: id, speakerIndex: 1)
+        let queue = await store.uncoordinatedDB
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE person_speakers SET is_user_confirmed = 0 WHERE recording_id = ? AND speaker_index = 1", arguments: [id])
+        }
+        let detail = try #require(try await store.recordingDetail(canonicalID: row.canonicalID))
+        #expect(detail.speakerLabels.map(\.isUserConfirmed) == [true, false, nil])
+        #expect(detail.speakerLabels.map(\.displayName) == ["Alice", "Alice", "Saved label"])
+        let stored = try #require(try await store.fetch(id: id))
+        #expect(stored.speakerNames[2] == "Saved label")
+    }
+
     private let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func recording(

@@ -14,15 +14,36 @@ public enum AmplitudeEnvelopeLoader {
     /// `totalFrames / samples` consecutive frames of the WAV, normalized
     /// by the global max so quiet recordings still render visibly.
     public static func load(url: URL, samples: Int = 1024) async throws -> [Float] {
+        try Task.checkCancellation()
         let key = CacheKey(path: url.standardizedFileURL.path, samples: samples)
         if let cached = await cache.get(key) {
+            try Task.checkCancellation()
             return cached
         }
-        let env = try await Task.detached(priority: .userInitiated) {
+        let env = try await cancellableDecode {
             try decodeEnvelope(url: url, samples: samples)
-        }.value
+        }
+        try Task.checkCancellation()
         await cache.put(key, env)
         return env
+    }
+
+    /// Detached decoding must inherit cancellation from the selection task.
+    static func cancellableDecode(
+        _ decode: @escaping @Sendable () throws -> [Float]
+    ) async throws -> [Float] {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            return try decode()
+        }
+        return try await withTaskCancellationHandler {
+            let result = try await worker.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     // MARK: - Private
@@ -35,6 +56,7 @@ public enum AmplitudeEnvelopeLoader {
     private static let cache = EnvelopeCache(capacity: 16)
 
     private static func decodeEnvelope(url: URL, samples outSamples: Int) throws -> [Float] {
+        try Task.checkCancellation()
         let file = try AVAudioFile(forReading: url)
         let totalFrames = AVAudioFrameCount(file.length)
         guard totalFrames > 0, outSamples > 0 else { return [] }
@@ -51,6 +73,7 @@ public enum AmplitudeEnvelopeLoader {
         var globalMax: Float = 0
 
         for i in 0..<outSamples {
+            try Task.checkCancellation()
             buffer.frameLength = 0
             try file.read(into: buffer, frameCount: AVAudioFrameCount(framesPerBin))
             let read = Int(buffer.frameLength)

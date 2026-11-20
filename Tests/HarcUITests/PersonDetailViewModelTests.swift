@@ -128,7 +128,7 @@ struct PersonDetailViewModelTests {
         let inspectorReviews = await SpeakerSuggestionReviewBatch.load(inspectorSuggestions, store: store)
         let inspectorSuggestion = try #require(inspectorSuggestions.first)
         let needsLegacyLabel = try await inspectorReviews.confirm(inspectorSuggestion, store: store)
-        #expect(!needsLegacyLabel, "Bound confirmation already commits the visible name")
+        #expect(!needsLegacyLabel.needsLegacyLabel, "Bound confirmation already commits the visible name")
         #expect(try await store.fetch(id: id)?.speakerNames[0] == "Bob")
         #expect(try await store.speakerEvidenceAssignment(sha256: evidence.evidenceSHA256)?.personID == bob)
         do {
@@ -157,7 +157,7 @@ struct PersonDetailViewModelTests {
         #expect(try await store.fetchPersonSpeakerLinks(recordingID: id).first?.personID == alice)
         try await queue.write { try $0.execute(sql: "DROP TRIGGER reject_unlink_label") }
         let needsLegacyClear = try await slots.unlink(recordingID: id, speakerIndex: 0, store: store)
-        #expect(!needsLegacyClear)
+        #expect(!needsLegacyClear.needsLegacyLabel)
         #expect(try await store.speakerEvidenceAssignment(sha256: evidence.evidenceSHA256) == nil)
         #expect(try await store.fetchPersonSpeakerLinks(recordingID: id).isEmpty)
         #expect(try await store.fetch(id: id)?.speakerNames[0] == nil)
@@ -168,7 +168,7 @@ struct PersonDetailViewModelTests {
         } catch { }
         let relinkReview = await SpeakerSlotReviewBatch.load(recordingID: id, indices: [0], store: store)
         let needsLegacyMirror = try await relinkReview.link(personID: bob, recordingID: id, speakerIndex: 0, store: store)
-        #expect(!needsLegacyMirror)
+        #expect(!needsLegacyMirror.needsLegacyLabel)
         #expect(try await store.speakerEvidenceAssignment(sha256: evidence.evidenceSHA256)?.personID == bob)
         #expect(try await store.fetch(id: id)?.speakerNames[0] == "Bob")
         do {
@@ -277,7 +277,11 @@ struct PersonDetailViewModelTests {
         try await store.linkSpeaker(personID: bob, recordingID: ids[failureIndex], speakerIndex: 0)
         await vm.confirmAll()
         #expect(vm.mutationFailure?.action == .confirmSpeakerSuggestion)
-        #expect(vm.pendingSuggestions.map(\.recordingID) == Array(ids[(failureIndex + 1)...]))
+        // This fixture deliberately has no voice embeddings. A successful earlier
+        // confirmation now refreshes and removes those unsupported suggestions.
+        // If the first confirmation fails, no refresh has been authorized yet.
+        let remaining = failureIndex == 0 ? Array(ids[(failureIndex + 1)...]) : []
+        #expect(vm.pendingSuggestions.map(\.recordingID) == remaining)
         #expect(try await store.fetchPersonSpeakerLinks(recordingID: ids[failureIndex]).first?.personID == bob)
         for id in ids.prefix(failureIndex) {
             #expect(try await store.fetchPersonSpeakerLinks(recordingID: id).first?.personID == alice)

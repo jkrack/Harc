@@ -53,15 +53,34 @@ struct HostCanonicalWAVLayout: Equatable, Sendable {
     }
 }
 
+private final class HostCanonicalDescriptorOwner {
+    let descriptor: Int32
+    private let closeDescriptor: (Int32) -> Void
+    init(_ descriptor: Int32, closeDescriptor: @escaping (Int32) -> Void) {
+        self.descriptor = descriptor
+        self.closeDescriptor = closeDescriptor
+    }
+    deinit { closeDescriptor(descriptor) }
+}
+
+/// Only the authenticated ingest service opts into a full content proof after
+/// ctime drift. The persisted publication identity is never changed by this.
+enum HostCanonicalIdentityValidation {
+    case exact
+    case rehashSameFile
+}
+
 /// Retains the exact descriptor opened through a trusted canonical directory.
 /// Every content validation brackets the complete header/PCM read with the
-/// same persisted identity, so in-place mutation, leaf replacement, and root
-/// replacement all fail closed.
+/// same freshly captured identity, so in-place mutation, leaf replacement, and
+/// root replacement during use fail closed. Metadata drift admission requires a
+/// separate full hash proof and authentication by the ingest service.
 final class HostValidatedCanonicalArtifact: @unchecked Sendable {
     let identity: HostCanonicalArtifactIdentity
     let url: URL
 
-    private let descriptor: Int32
+    private let descriptorOwner: HostCanonicalDescriptorOwner
+    private var descriptor: Int32 { descriptorOwner.descriptor }
     private let paths: HostCanonicalPublicationPaths
     private let layout: HostCanonicalWAVLayout
     private let expectedPCMHash: CanonicalPCMHash
@@ -71,38 +90,54 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         in paths: HostCanonicalPublicationPaths,
         totalFrames: UInt64,
         expectedPCMHash: CanonicalPCMHash,
-        expectedIdentity: HostCanonicalArtifactIdentity? = nil
+        expectedIdentity: HostCanonicalArtifactIdentity? = nil,
+        identityValidation: HostCanonicalIdentityValidation = .exact,
+        diagnosticStep: ((HostReceiptBindingDiagnostic.AudioStep) -> Void)? = nil,
+        closeDescriptor: @escaping (Int32) -> Void = { _ = Darwin.close($0) }
     ) throws {
         self.url = url
         self.paths = paths
         layout = try HostCanonicalWAVLayout(totalFrames: totalFrames)
         self.expectedPCMHash = expectedPCMHash
-        descriptor = try paths.openExistingRegularFile(at: url)
+        diagnosticStep?(.open)
+        let openedDescriptor = try paths.openExistingRegularFile(at: url)
+        descriptorOwner = HostCanonicalDescriptorOwner(openedDescriptor, closeDescriptor: closeDescriptor)
         do {
+            diagnosticStep?(.captureIdentity)
             let captured = try HostCanonicalArtifactIdentity(
-                validatingOpenFileDescriptor: descriptor,
+                validatingOpenFileDescriptor: openedDescriptor,
                 boundTo: url
             )
+            diagnosticStep?(.compareExpectedIdentity)
             if let expectedIdentity {
-                guard captured == expectedIdentity else {
-                    throw HarcHostError.canonicalArtifactIdentityMismatch
+                if captured != expectedIdentity {
+                    guard case .rehashSameFile = identityValidation,
+                          captured.deviceNumber == expectedIdentity.deviceNumber,
+                          captured.inodeNumber == expectedIdentity.inodeNumber,
+                          captured.ownerUserID == expectedIdentity.ownerUserID,
+                          captured.posixMode == expectedIdentity.posixMode,
+                          captured.linkCount == expectedIdentity.linkCount,
+                          captured.fileByteCount == expectedIdentity.fileByteCount else {
+                        throw HarcHostError.canonicalArtifactIdentityMismatch
+                    }
                 }
-                identity = expectedIdentity
+                // Captured BEFORE hashing. Never recapture after a read or
+                // mutate this proof in place, even for another metadata change.
+                identity = captured
             } else {
                 identity = captured
             }
+            diagnosticStep?(.layout)
             guard identity.fileByteCount == layout.fileByteCount else {
                 throw HarcHostError.unsafePublicationPath
             }
-            try validateCanonicalContent()
+            try validateCanonicalContent(diagnosticStep: diagnosticStep)
         } catch {
-            _ = Darwin.close(descriptor)
+            // The owner releases on partial initialization and on deinit.
+            // Closing here as well can close a reused descriptor after a
+            // failure occurring once all stored properties are initialized.
             throw error
         }
-    }
-
-    deinit {
-        _ = Darwin.close(descriptor)
     }
 
     /// Cheap interstitial proof used around actor hops and sidecar operations.
@@ -113,23 +148,28 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         try paths.validateOpenFile(descriptor, at: url)
     }
 
-    func validateCanonicalContent() throws {
+    func validateCanonicalContent(diagnosticStep: ((HostReceiptBindingDiagnostic.AudioStep) -> Void)? = nil) throws {
+        diagnosticStep?(.preReadBinding)
         try validateBinding()
+        diagnosticStep?(.rewind)
         guard lseek(descriptor, 0, SEEK_SET) == 0 else {
             throw HarcHostError.publicationIO(
                 "Could not rewind the canonical WAV: errno \(errno)."
             )
         }
 
+        diagnosticStep?(.header)
         let header = try HostCanonicalWAVAssembler.readExactly(
             Int(HostCanonicalWAVLayout.headerByteCount),
             from: descriptor
         )
         guard header == layout.header else { throw HarcHostError.invalidCanonicalWAV }
 
+        diagnosticStep?(.pcmHash)
         var hasher = SHA256()
         var remaining = layout.pcmByteCount
         while remaining > 0 {
+            try Task.checkCancellation()
             let requested = Int(min(remaining, UInt64(256 * 1_024)))
             let fragment = try HostCanonicalWAVAssembler.readExactly(
                 requested,
@@ -144,6 +184,7 @@ final class HostValidatedCanonicalArtifact: @unchecked Sendable {
         // This post-read identity check is part of the hash proof. Capturing
         // identity only after the read could bless bytes mutated behind the
         // reader after their region had already been hashed.
+        diagnosticStep?(.postReadBinding)
         try validateBinding()
     }
 }

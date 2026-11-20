@@ -27,20 +27,20 @@ struct SpeakerSuggestionReviewBatch {
         return Self(suggestions: suggestions, reviews: reviews)
     }
 
-    /// Returns true only when the legacy path still needs its separate label projection.
+    /// Enrollment errors throw; a post-commit refresh warning is returned separately.
     @discardableResult
-    func confirm(_ suggestion: PendingSuggestion, store: RecordingStore) async throws -> Bool {
+    func confirm(_ suggestion: PendingSuggestion, store: RecordingStore) async throws -> SpeakerReviewMutationResult {
         guard let (loaded, review) = reviews[suggestion.id], loaded == suggestion else {
             throw StoreError.invalidData("The speaker suggestion changed. Review it again before confirming.")
         }
         switch review {
         case .bound(let value):
             try await store.confirmHostSpeakerReview(value, personID: suggestion.personID)
-            return false
+            return await SpeakerReviewMutationResult.refreshed(store: store, needsLegacyLabel: false)
         case .legacy:
             try await store.confirmSuggestion(personID: suggestion.personID,
                 recordingID: suggestion.recordingID, speakerIndex: suggestion.speakerIndex)
-            return true
+            return await SpeakerReviewMutationResult.refreshed(store: store, needsLegacyLabel: true)
         case .unavailable(let error):
             throw error
         }

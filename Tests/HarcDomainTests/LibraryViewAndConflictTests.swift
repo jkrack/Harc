@@ -4,6 +4,23 @@ import Testing
 
 @Suite("HarcDomain path-free library values")
 struct LibraryViewAndConflictTests {
+    @Test("speaker confirmation provenance is optional and requires an identity")
+    func speakerConfirmationProvenance() throws {
+        let person = PersonID.random()
+        for confirmed: Bool? in [nil, false, true] {
+            let label = try SpeakerLabel(speakerIndex: 0, displayName: "Alice", personID: person,
+                identityRevision: EntityRevision(1), isUserConfirmed: confirmed)
+            #expect(try JSONDecoder().decode(SpeakerLabel.self, from: JSONEncoder().encode(label)) == label)
+        }
+        let old = Data(#"{"speakerIndex":0,"displayName":"Legacy"}"#.utf8)
+        #expect(try JSONDecoder().decode(SpeakerLabel.self, from: old).isUserConfirmed == nil)
+        for confirmed in [false, true] {
+            #expect(throws: DomainValidationError.self) {
+                try SpeakerLabel(speakerIndex: 0, displayName: "Label only", isUserConfirmed: confirmed)
+            }
+        }
+    }
+
     private let firstID = CanonicalRecordingID(
         UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
     )

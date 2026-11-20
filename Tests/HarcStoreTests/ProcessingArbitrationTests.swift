@@ -7,6 +7,42 @@ import Testing
 
 @Suite("Host and edge processing arbitration")
 struct ProcessingArbitrationTests {
+    @Test func boundedFailurePersistsAcrossReopenAndReadyWinnerRejectsLateFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("processing-diagnostic-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        let store = try await RecordingStore.onDisk(url: url)
+        var recording = Recording(wavPath: root.appendingPathComponent("synthetic.wav").path,
+            txtPath: root.appendingPathComponent("synthetic.md").path,
+            jsonPath: nil, startedAt: Date(), title: "Synthetic diagnostic fixture")
+        recording.processing = .pending
+        recording.projection = .pending
+        let stored = try await store.upsert(recording)
+        let id = try #require(stored.id)
+        let legacy = try ProcessingFailure(code: "host.processing_retry", message: "Local processing did not finish and can be retried.")
+        #expect(try await store.markHostProcessingFailureIfNotReady(recordingID: id, failure: legacy))
+        let reopened = try await RecordingStore.onDisk(url: url)
+        #expect(try await reopened.fetch(id: id)?.processing.failure == legacy)
+        let diagnostic = try ProcessingFailure(
+            code: "host.processing.canonical_validation.host.canonical_hash_mismatch",
+            message: "Canonical audio validation failed; inspect the protected local audio and receipt before retrying.")
+        #expect(try await reopened.markHostProcessingFailureIfNotReady(recordingID: id, failure: diagnostic))
+        #expect(try await store.fetch(id: id)?.processing.failure == diagnostic)
+        #expect(try await store.beginHostProcessingIfNotReady(id: id))
+        #expect(try await store.stageHostProcessedTranscriptIfNotReady(recordingID: id, text: "fixture", modelID: "synthetic"))
+        #expect(try await store.markHostProcessingFailureIfNotReady(recordingID: id, failure: diagnostic))
+        let failed = try #require(try await reopened.fetch(id: id))
+        #expect(failed.processing.failure == diagnostic)
+        #expect(failed.projection.failure == diagnostic)
+        try await store.applyAcceptedEdgeTranscript(recordingID: id, text: "winner", modelID: "synthetic-edge")
+        #expect(try await !store.markHostProcessingFailureIfNotReady(recordingID: id, failure: diagnostic))
+        let winner = try #require(try await reopened.fetch(id: id))
+        #expect(winner.processing == .ready)
+        #expect(winner.projection == .readyV1)
+        #expect(winner.transcriptText == "winner")
+    }
+
     @Test func readingHostOutcomeRejectsMissingOrInventedTranscriptClusters() async throws {
         let fixture = try await makeFixture(canonicalPCMHash: CanonicalPCMHash(Data(repeating: 7, count: 32)))
         defer { try? FileManager.default.removeItem(at: fixture.root) }

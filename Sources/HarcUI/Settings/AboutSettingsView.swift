@@ -85,9 +85,7 @@ public struct AboutSettingsView: View {
 
     /// Reset every grant, then put the app back on screen.
     ///
-    /// The old flow reset, opened System Settings, and quit — which stranded
-    /// the user, because Harc is `LSUIElement` and leaves nothing behind to
-    /// click when it exits. The relaunch is scheduled *before* terminating so
+    /// The relaunch is scheduled *before* terminating so
     /// the app returns on its own with the repair flow showing.
     private func resetRecordingPermissions() {
         permissionRepairError = nil

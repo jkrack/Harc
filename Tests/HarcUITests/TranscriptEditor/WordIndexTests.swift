@@ -9,6 +9,30 @@ struct WordIndexTests {
         Word(text: text, startMs: startMs, endMs: endMs)
     }
 
+    @Test("Playback resolves speaker labels and spaces within the same turn")
+    func playbackTurnLookup() {
+        let text = "Amy: hello world\n\nJason: later words\n\nUntimed note"
+        let index = WordIndex(words: [word("hello", 1000, 1500), word("world", 1600, 2000),
+                                      word("later", 5000, 5500), word("words", 5600, 6000)], text: text)
+        let ns = text as NSString
+        #expect(index.wordForPlayback(atCharOffset: 0, text: text)?.word.startMs == 1000)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "Jason").location, text: text)?.word.startMs == 5000)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "hello").location + 5, text: text)?.word.startMs == 1600)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "later").location + 2, text: text)?.word.startMs == 5000)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "Untimed").location, text: text) == nil)
+        #expect(index.wordForPlayback(atCharOffset: ns.range(of: "\n\n").location + 1, text: text) == nil)
+        #expect(index.wordForPlayback(atCharOffset: -1, text: text) == nil)
+        #expect(index.wordForPlayback(atCharOffset: ns.length, text: text) == nil)
+    }
+
+    @Test("Playback does not invent timing for unmatched text within a timed turn")
+    func unmatchedPlaybackText() {
+        let text = "Amy: hello [unspoken note] world"
+        let index = WordIndex(words: [word("hello", 1000, 1500), word("world", 1600, 2000)], text: text)
+        #expect(index.wordForPlayback(atCharOffset: (text as NSString).range(of: "unspoken").location,
+                                      text: text) == nil)
+    }
+
     @Test("locates each word's range in joined text")
     func locatesRanges() {
         let idx = WordIndex(
@@ -86,4 +110,31 @@ struct WordIndexTests {
         #expect(idx.entries[0].range == NSRange(location: 0, length: 3))
         #expect(idx.entries[1].range == NSRange(location: 8, length: 3))
     }
+
+    @Test("repeated missing tokens do not hide later matches or change UTF-16 offsets")
+    func repeatedMissingTokens() {
+        let words = [word("removed", 0, 100), word("HELLO", 100, 200),
+                     word("removed", 200, 300), word("café", 300, 400),
+                     word("removed", 400, 500), word("hello", 500, 600)]
+        let text = "🙂 hello café hello"
+        let idx = WordIndex(words: words, text: text)
+        #expect(idx.entries.map(\.word) == [words[1], words[3], words[5]])
+        #expect(idx.entries.map(\.range) == [
+            NSRange(location: 3, length: 5), NSRange(location: 9, length: 4),
+            NSRange(location: 14, length: 5)
+        ])
+    }
+
+    @Test("large edited transcript skips repeated absent words and retains its matching tail")
+    func largeEditedTranscript() {
+        var words = (0..<15_000).map { word("removed", $0 * 100, $0 * 100 + 100) }
+        let tail = word("retained", 1_500_000, 1_500_100)
+        words.append(tail)
+        let text = String(repeating: "replacement ", count: 15_000) + "retained"
+        let idx = WordIndex(words: words, text: text)
+        #expect(idx.entries == [WordIndex.Entry(
+            word: tail, range: NSRange(location: 180_000, length: 8)
+        )])
+    }
+
 }

@@ -28,7 +28,7 @@ enum HarcRecordingActivityActions {
 
 struct StopHarcRecordingIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Stop Harc recording"
-    static let description = IntentDescription("Stop and save this recording on your iPhone.")
+    static let description = IntentDescription("Stop and save this recording.")
     static let openAppWhenRun: Bool = false
 
     @Parameter(title: "Recording") var captureID: String

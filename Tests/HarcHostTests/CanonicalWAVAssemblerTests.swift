@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import AudioToolbox
 import CryptoKit
+import Darwin
 import Foundation
 import HarcDomain
 import HarcTransfer
@@ -217,6 +218,41 @@ struct CanonicalWAVAssemblerTests {
         #expect(file.prefix(4) == Data("RIFF".utf8))
         #expect(file[8 ..< 12] == Data("WAVE".utf8))
         #expect(file.suffix(pcm.count) == pcm)
+    }
+
+    @Test("metadata rehash proofs stay exact and reject mutations during the read",
+          arguments: [HostReceiptBindingDiagnostic.AudioStep.pcmHash, .postReadBinding])
+    func metadataProofRejectsReadRaces(step: HostReceiptBindingDiagnostic.AudioStep) throws {
+        let fixture = HostTestFixture()
+        let root = try fixture.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pcm = Data(repeating: 7, count: 32_000)
+        let hash = try CanonicalPCMHash(Data(SHA256.hash(data: pcm)))
+        let paths = try HostCanonicalPublicationPaths.make(root: root,
+            captureStartedAt: fixture.beganAt, canonicalRecordingID: .random(),
+            temporaryName: ".harc-\(UUID().uuidString.lowercased()).partial")
+        let writer = try HostCanonicalWAVAssembler(paths: paths, totalFrames: 16_000)
+        try writer.appendCanonicalPCM(pcm)
+        try writer.synchronizeAndClose(expectedPCMHash: hash)
+        try HostCanonicalWAVAssembler.publishExclusively(in: paths)
+        let original = try HostCanonicalWAVAssembler.validatePublishedFile(at: paths.wavURL,
+            in: paths, totalFrames: 16_000, expectedPCMHash: hash)
+        Thread.sleep(forTimeInterval: 0.002)
+        try #require(chmod(paths.wavURL.path, 0o600) == 0)
+        #expect(throws: HarcHostError.canonicalArtifactIdentityMismatch) {
+            _ = try HostValidatedCanonicalArtifact(at: paths.wavURL, in: paths,
+                totalFrames: 16_000, expectedPCMHash: hash, expectedIdentity: original)
+        }
+        #expect(throws: (any Error).self) {
+            _ = try HostValidatedCanonicalArtifact(at: paths.wavURL, in: paths,
+                totalFrames: 16_000, expectedPCMHash: hash, expectedIdentity: original,
+                identityValidation: .rehashSameFile, diagnosticStep: { current in
+                    if current == step {
+                        Thread.sleep(forTimeInterval: 0.002)
+                        #expect(chmod(paths.wavURL.path, 0o600) == 0)
+                    }
+                })
+        }
     }
 
     @Test("classic RIFF limit is enforced without allocating the declared body")

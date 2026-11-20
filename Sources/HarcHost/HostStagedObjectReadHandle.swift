@@ -97,10 +97,12 @@ public final class HostStagedObjectReadHandle: @unchecked Sendable {
             throw Self.io("position staged object at its beginning")
         }
 
+        try Task.checkCancellation()
         var hasher = SHA256()
         var length: UInt64 = 0
         var buffer = [UInt8](repeating: 0, count: maximumFragmentBytes)
         while true {
+            try Task.checkCancellation()
             let count = Darwin.read(fileDescriptor, &buffer, buffer.count)
             if count < 0 {
                 if errno == EINTR { continue }
@@ -119,6 +121,7 @@ public final class HostStagedObjectReadHandle: @unchecked Sendable {
             hasher.update(data: Data(buffer[0 ..< count]))
             length = next.partialValue
         }
+        try Task.checkCancellation()
         guard length == logicalDescriptor.encodedByteLength else {
             throw HarcHostError.encodedLengthMismatch(
                 expected: logicalDescriptor.encodedByteLength,
@@ -147,6 +150,13 @@ public final class HostStagedObjectReadHandle: @unchecked Sendable {
 }
 
 extension HarcHostStore {
+    nonisolated func requireResidentStagedObject(_ staged: HostDurableStagedChunk) throws {
+        let name = try HostStagingDirectory.objectName(
+            forGeneratedRelativePath: staged.relativePath
+        )
+        try stagingDirectory.requireResidentObject(named: name)
+    }
+
     nonisolated func openDurableStagedObject(
         _ staged: HostDurableStagedChunk
     ) throws -> HostStagedObjectReadHandle {

@@ -8,7 +8,7 @@ import AppKit
 /// SwiftUI wrapper around `NSTextView` (not `TextEditor`) because the two
 /// things this surface must do are things `TextEditor` cannot: apply a
 /// background attribute to an arbitrary range (find match, playback word
-/// highlight) and report ⌘-click character offsets for click-to-seek.
+/// highlight) and report clicked character offsets for click-to-seek.
 public struct TranscriptDetailEditor: NSViewRepresentable {
     @Binding public var text: String
     public let highlightRange: NSRange?
@@ -43,6 +43,7 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
         let textView = CmdClickTextView()
         textView.setAccessibilityIdentifier("harc.transcript.editor")
         textView.setAccessibilityLabel("Transcript")
+        textView.setAccessibilityHelp("Click a timed word or speaker turn to seek. Text remains editable.")
         textView.isEditable = true
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -78,6 +79,7 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
     }
 
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text {
             let selected = textView.selectedRanges
@@ -219,7 +221,7 @@ public struct TranscriptDetailEditor: NSViewRepresentable {
     }
 
     public final class Coordinator: NSObject, NSTextViewDelegate {
-        let parent: TranscriptDetailEditor
+        var parent: TranscriptDetailEditor
         weak var textView: NSTextView?
         var appliedHighlightRange: NSRange?
         var lastScrolledRange: NSRange?
@@ -321,7 +323,8 @@ final class TranscriptTimestampRuler: NSRulerView {
     }
 }
 
-/// NSTextView subclass that reports cmd-click insertion offsets.
+/// Single clicks seek without taking away the editor's caret or selection.
+/// Command-click remains available as a seek-only shortcut.
 final class CmdClickTextView: NSTextView {
     var onCommandClick: ((Int) -> Void)?
 
@@ -332,6 +335,28 @@ final class CmdClickTextView: NSTextView {
             onCommandClick?(Int(offset))
             return
         }
+        let local = convert(event.locationInWindow, from: nil)
+        let offset = playbackCharacterOffset(at: local)
         super.mouseDown(with: event)
+        // NSTextView tracks the mouse through release. A drag-selection,
+        // multi-click or modified selection must retain normal editing behavior.
+        guard event.clickCount == 1,
+              event.modifierFlags.intersection([.shift, .option, .control]).isEmpty,
+              selectedRange().length == 0, let offset else { return }
+        onCommandClick?(offset)
+    }
+
+    /// Reject empty space instead of snapping a click below/beside the text
+    /// to the nearest insertion position and seeking to an unrelated word.
+    func playbackCharacterOffset(at point: NSPoint) -> Int? {
+        guard let layout = layoutManager, let container = textContainer,
+              !string.isEmpty else { return nil }
+        let location = NSPoint(x: point.x - textContainerOrigin.x,
+                               y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: location, in: container)
+        guard glyph < layout.numberOfGlyphs,
+              layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1),
+                                  in: container).contains(location) else { return nil }
+        return layout.characterIndexForGlyph(at: glyph)
     }
 }

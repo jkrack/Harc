@@ -1,5 +1,6 @@
 import AppKit
 import HarcDomain
+import HarcUI
 import Observation
 import SwiftUI
 
@@ -390,6 +391,10 @@ private struct HarcDesktopHostRecordingDetailView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 Text(label.displayName)
+                                Text(HarcSpeakerIdentityPresentation.statusText(label))
+                                    .font(.caption)
+                                    .foregroundStyle(label.isUserConfirmed == false ? Color.orange : Color.secondary)
+                                    .accessibilityIdentifier("harc.host.speaker.\(label.speakerIndex).identityStatus")
                             }
                             Spacer()
                             Menu(label.personID == nil ? "Link Person" : "Change Person") {

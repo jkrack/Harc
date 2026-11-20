@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 final class HarcAppUITests: XCTestCase {
@@ -113,6 +114,80 @@ final class HarcAppUITests: XCTestCase {
         }
     }
 
+    func testPlaybackControlsSeekAndPause() throws {
+        app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = "complete"
+        app.launch()
+        let row = app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "harc.library.recording.")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 60))
+        row.click()
+        let waveform = app.descendants(matching: .any)["harc.player.waveform.ready"]
+        XCTAssertTrue(waveform.waitForExistence(timeout: 60))
+        // The macOS waveform AX node is an adjustable Other without a textual
+        // value. Read the visible, named elapsed control for every seek surface.
+        let elapsed = app.staticTexts["harc.player.elapsed"]
+        XCTAssertTrue(elapsed.waitForExistence(timeout: 5))
+        let playPause = app.buttons["harc.player.playPause"]
+        XCTAssertEqual(playPause.label, "Play recording")
+        waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        let moved = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != nil AND NOT value BEGINSWITH %@", "0:00 / "),
+            object: elapsed)
+        XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 5), .completed)
+        assertPlaybackPosition(elapsed, fraction: 0.5)
+        XCTAssertEqual(playPause.label, "Play recording", "Seeking paused audio must not start it")
+        playPause.click()
+        XCTAssertTrue(app.buttons["Pause recording"].waitForExistence(timeout: 5))
+        waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0.3)
+        XCTAssertEqual(playPause.label, "Pause recording", "Seeking playing audio must keep playing")
+        playPause.click()
+        XCTAssertTrue(app.buttons["Play recording"].waitForExistence(timeout: 5))
+        let start = waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+        let end = waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        assertPlaybackPosition(elapsed, fraction: 0.7)
+        XCTAssertEqual(playPause.label, "Play recording")
+        let strip = app.descendants(matching: .any)["harc.player.speakerStrip"]
+        XCTAssertTrue(strip.exists)
+        strip.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0.25)
+        XCTAssertEqual(playPause.label, "Play recording")
+        app.buttons["Speakers"].click()
+        let speakers = app.descendants(matching: .any)["harc.player.speakers"]
+        XCTAssertTrue(speakers.waitForExistence(timeout: 5))
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0.6)
+        XCTAssertEqual(playPause.label, "Play recording")
+        app.buttons["Energy"].click()
+        let editor = app.textViews["harc.transcript.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        // First line's speaker label is deliberately not a timed word.
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 24, dy: 20)).click()
+        assertPlaybackPosition(elapsed, fraction: 0)
+        XCTAssertEqual(playPause.label, "Play recording")
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "Playback controls after transcript seek"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    private func assertPlaybackPosition(_ element: XCUIElement, fraction: Double,
+                                        file: StaticString = #filePath, line: UInt = #line) {
+        let expected = NSPredicate { object, _ in
+            guard let element = object as? XCUIElement,
+                  let value = element.value as? String else { return false }
+            let times = value.components(separatedBy: " / ").map { time in
+                time.split(separator: ":").reduce(0.0) { $0 * 60 + (Double($1) ?? 0) }
+            }
+            return times.count == 2 && times[1] > 0 && abs(times[0] / times[1] - fraction) < 0.03
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)],
+                                     timeout: 5), .completed,
+                       "Expected playback fraction \(fraction); elapsed value: \(String(describing: element.value))",
+                       file: file, line: line)
+    }
+
     func testCaptureIntegrityWarningSurvivesRelaunch() throws {
         app.launchEnvironment["HARC_UI_TEST_CAPTURE_ISSUE"] = "1"
         launchFixtureLibrary()
@@ -220,6 +295,78 @@ final class HarcAppUITests: XCTestCase {
             app.debugDescription
         )
         XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 4))
+    }
+
+    func testDockReopenKeepsRegularAppAndReturnsToLibrary() throws {
+        // Let the target create this fixture. A UI runner's private container
+        // temporary directory is not an accessible Library root for the app.
+        try FileManager.default.removeItem(at: rootURL)
+        rootURL = URL(fileURLWithPath: "/tmp/harc-dock-ui-\(UUID().uuidString)", isDirectory: true)
+        app.launchEnvironment["HARC_UI_TEST_ROOT"] = rootURL.path
+        launchFixtureLibrary()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        let running = try XCTUnwrap(NSWorkspace.shared.frontmostApplication)
+        XCTAssertTrue(running.bundleIdentifier?.hasPrefix("com.harc.Harc") == true)
+        let bundleURL = try XCTUnwrap(running.bundleURL)
+        for _ in 0..<3 {
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4))
+            XCTAssertFalse(running.isTerminated)
+            XCTAssertEqual(running.activationPolicy, .regular)
+            // Launch Services sends the reopen event used by the Dock. Merely
+            // activating XCUIApplication would not exercise the delegate.
+            let reopened = expectation(description: "Launch Services reopen")
+            NSWorkspace.shared.openApplication(at: bundleURL, configuration: .init()) { _, error in
+                XCTAssertNil(error)
+                reopened.fulfill()
+            }
+            wait(for: [reopened], timeout: 10)
+            XCTAssertTrue(app.searchFields["harc.library.search"].waitForExistence(timeout: 8))
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        }
+        // Settings remaining visible must not suppress the Library reopen.
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4))
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["Appearance"].waitForExistence(timeout: 6))
+        let reopened = expectation(description: "Reopen with Settings visible")
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: .init()) { _, error in
+            XCTAssertNil(error)
+            reopened.fulfill()
+        }
+        wait(for: [reopened], timeout: 10)
+        let search = app.searchFields["harc.library.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 8))
+        search.click()
+        app.typeText("Dock reopen")
+        XCTAssertEqual(search.value as? String, "Dock reopen")
+    }
+
+    func testLibraryOwnsMenusAfterRepeatedCloseAndReopen() throws {
+        launchFixtureLibrary()
+        for _ in 0..<3 {
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), app.debugDescription)
+            let menu = app.menuBars.firstMatch
+            XCTAssertTrue(menu.menuBarItems["Edit"].exists, app.debugDescription)
+            XCTAssertTrue(menu.menuBarItems["File"].exists, app.debugDescription)
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 4), app.debugDescription)
+            let statusItem = app.menuBars.element(boundBy: 1).children(matching: .any).firstMatch
+            XCTAssertTrue(statusItem.waitForExistence(timeout: 4), app.debugDescription)
+            statusItem.click()
+            let library = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Library")).firstMatch
+            XCTAssertTrue(library.waitForExistence(timeout: 4), app.debugDescription)
+            library.click()
+            XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
+            // Do not call activate() here: that would hide a failed handoff.
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), app.debugDescription)
+            let search = app.searchFields.firstMatch
+            search.click()
+            app.typeText("Customer")
+            app.typeKey("a", modifierFlags: .command)
+            app.typeText("Renewal")
+            XCTAssertEqual(search.value as? String, "Renewal", app.debugDescription)
+        }
     }
 
     func testTranscriptEditingPreservesSpecialCharactersAcrossRelaunch() throws {
@@ -339,7 +486,13 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)
         picker().click()
         app.menuItems["Unassign"].click()
-        XCTAssertEqual(waitForPickerText("Speaker 1"), .completed, app.debugDescription)
+        // The picker always includes "Speaker 1:" even while assigned. Wait
+        // for the actual unassigned state before capturing another review.
+        let unassigned = NSPredicate(format: "label == %@", "Speaker 1: Assign person…")
+        XCTAssertEqual(XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: unassigned, object: picker())],
+            timeout: 6
+        ), .completed, app.debugDescription)
         picker().click()
         app.menuItems["UI Voice Carol"].click()
         XCTAssertEqual(waitForPickerText("UI Voice Carol"), .completed, app.debugDescription)

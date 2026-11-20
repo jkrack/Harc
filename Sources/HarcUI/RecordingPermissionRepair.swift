@@ -226,10 +226,9 @@ public enum RecordingPermissionRepair {
 
     /// Schedule this app to reopen after it quits.
     ///
-    /// Resetting TCC requires a relaunch to take effect, but Harc is
-    /// `LSUIElement` — quitting leaves no Dock icon and no window, so a user
-    /// who has just been dropped into System Settings has no obvious way
-    /// back. A detached `open` that fires after we exit closes that trap.
+    /// Resetting TCC requires a relaunch to take effect. Schedule it so users
+    /// return from System Settings to the repair flow without reopening Harc
+    /// manually. A detached `open` fires after we exit.
     /// The child is deliberately not a subprocess of anything we own: it has
     /// to outlive us.
     @discardableResult

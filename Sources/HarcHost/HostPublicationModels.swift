@@ -81,6 +81,8 @@ public struct NoHostPublicationFailureInjector: HostPublicationFailureInjector {
 /// Complete durable binding handed to derived processing. The scheduler must
 /// treat the artifact identity and PCM claims as part of its idempotency key,
 /// and must revalidate the path binding before daemon ingestion.
+/// A durable expected binding, not authority to read or publish. Queue consumers
+/// must obtain a fresh authenticated content proof after resource admission.
 public struct HostDurableProcessingRequest: Equatable, Sendable {
     public let canonicalRecordingID: CanonicalRecordingID
     public let canonicalWAVURL: URL
