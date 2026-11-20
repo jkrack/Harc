@@ -133,7 +133,13 @@ it only when every reported failure is the HarcMobile UI runner's exact
 automation-mode timeout. A zero-test or runner-only result never passes; only
 an attempt with executed Harc tests, zero failures, and a successful
 `xcodebuild` status is selected. Signing, compilation, real test, and other
-deterministic failures stop immediately. Physical runs require the explicit
+deterministic failures stop immediately.
+
+The receipt preserves the raw `xcode_status` separately from
+`qualification_status`, which is the wrapper's exit status. A zero process
+status without a selected passing attempt is a qualification failure, including
+missing, malformed, zero-test, or all-skipped summaries.
+Physical runs require the explicit
 Apple team ID used to sign the candidate. The wrapper embeds the recorded
 source commit in the Debug app. Use `--attempts 1` to diagnose the first-launch
 failure itself, not to weaken the release gate.
