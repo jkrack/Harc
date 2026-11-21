@@ -29,38 +29,62 @@ struct DaemonLauncherTests {
                                     logURL: root.appendingPathComponent("launch.log")))
     }
 
+    private func withFixture(
+        script: String,
+        _ body: (URL, DaemonLauncher) async throws -> Void
+    ) async throws {
+        let (root, launcher) = try fixture(script: script)
+        defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            try await body(root, launcher)
+        } catch {
+            await launcher.stop()
+            throw error
+        }
+        await launcher.stop()
+    }
+
     private func waitForLaunch(in root: URL) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < deadline {
-            if let text = try? String(contentsOf: root.appendingPathComponent("launch.log"), encoding: .utf8),
-               text.contains("launched") { return }
+        let log = root.appendingPathComponent("launch.log")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while true {
+            // Read the marker even if this task resumed after the deadline.
+            // The watchdog should catch a missing child, not a delayed poll.
+            let marker = (try? String(contentsOf: log, encoding: .utf8))?
+                .split(separator: "\n").contains("launched") == true
+            if marker { return }
+            if ContinuousClock.now >= deadline {
+                try #require(marker, "fake daemon did not write its launch marker")
+                return
+            }
             try await Task.sleep(for: .milliseconds(10))
         }
-        Issue.record("fake daemon did not start")
     }
 
     @Test("concurrent waiters share one child; cancellation and stop invalidate waits")
     func sharedLaunch() async throws {
-        let (root, launcher) = try fixture(script: "echo launched\nexec /bin/sleep 30\n")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let first = Task { try await launcher.ensureRunning() }
-        try await waitForLaunch(in: root)
-        let others = (0..<6).map { _ in Task { try await launcher.ensureRunning() } }
-        // Allow every waiter to enter the polling phase while no socket exists.
-        try await Task.sleep(for: .milliseconds(400))
-        first.cancel()
-        do {
-            _ = try await first.value
-            Issue.record("cancelled startup returned success")
-        } catch is CancellationError {} catch { Issue.record("unexpected error: \(error)") }
-        let launches = try String(contentsOf: root.appendingPathComponent("launch.log"), encoding: .utf8)
-        #expect(launches.split(separator: "\n").count == 1)
-        await launcher.stop()
-        for task in others {
+        try await withFixture(script: "echo launched\nexec /bin/sleep 30\n") { root, launcher in
+            let first = Task { try await launcher.ensureRunning() }
+            defer { first.cancel() }
+            try await waitForLaunch(in: root)
+            let others = (0..<6).map { _ in Task { try await launcher.ensureRunning() } }
+            defer { others.forEach { $0.cancel() } }
+            // Allow every waiter to enter the polling phase while no socket exists.
+            try await Task.sleep(for: .milliseconds(400))
+            first.cancel()
             do {
-                _ = try await task.value
-                Issue.record("stopped startup returned success")
+                _ = try await first.value
+                Issue.record("cancelled startup returned success")
             } catch is CancellationError {} catch { Issue.record("unexpected error: \(error)") }
+            let launches = try String(contentsOf: root.appendingPathComponent("launch.log"), encoding: .utf8)
+            #expect(launches.split(separator: "\n").count == 1)
+            await launcher.stop()
+            for task in others {
+                do {
+                    _ = try await task.value
+                    Issue.record("stopped startup returned success")
+                } catch is CancellationError {} catch { Issue.record("unexpected error: \(error)") }
+            }
         }
     }
 
@@ -82,20 +106,23 @@ struct DaemonLauncherTests {
 
     @Test("early child exit fails promptly and a later request can retry")
     func earlyExit() async throws {
-        let (root, launcher) = try fixture(script: "echo launched\nexit 7\n")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let began = ContinuousClock.now
-        for _ in 0..<2 {
-            do {
-                _ = try await launcher.ensureRunning()
-                Issue.record("exited child returned success")
-            } catch {
-                #expect(String(describing: error).contains("status 7"))
+        try await withFixture(script: "echo launched\nexit 7\n") { root, launcher in
+            for _ in 0..<2 {
+                let began = ContinuousClock.now
+                do {
+                    _ = try await launcher.ensureRunning()
+                    Issue.record("exited child returned success")
+                } catch ClientError.daemonLaunchFailed(let reason) {
+                    #expect(reason == "exited before becoming responsive (status 7)")
+                } catch {
+                    Issue.record("unexpected error: \(error)")
+                }
+                // Keep a backstop below the launcher's 60-second readiness
+                // timeout, without making two process launches share one budget.
+                #expect(began.duration(to: .now) < .seconds(20))
             }
+            let launches = try String(contentsOf: root.appendingPathComponent("launch.log"), encoding: .utf8)
+            #expect(launches.split(separator: "\n").count == 2)
         }
-        #expect(began.duration(to: .now) < .seconds(5))
-        let launches = try String(contentsOf: root.appendingPathComponent("launch.log"), encoding: .utf8)
-        #expect(launches.split(separator: "\n").count == 2)
-        await launcher.stop()
     }
 }

@@ -83,10 +83,10 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         // Preserve the original real-audio midpoint/seconds/no-autoplay checks.
         // Staying paused after the gesture separates seek accuracy from EOF.
         let app = launchFixture()
-        openRecent(in: app)
+        openRecent(in: app, allowHittableFastPath: true)
         assertSavedDetail(in: app)
         let play = app.buttons["harc.mobile.detail.play"]
-        reveal(play, in: app)
+        reveal(play, in: app, allowHittableFastPath: true)
         play.tap()
         expectLabel("Pause", on: play)
         play.tap()
@@ -210,10 +210,10 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         return app
     }
 
-    private func openRecent(in app: XCUIApplication) {
+    private func openRecent(in app: XCUIApplication, allowHittableFastPath: Bool = false) {
         let recent = app.buttons["harc.mobile.record.recent"]
         XCTAssertTrue(recent.waitForExistence(timeout: 20))
-        reveal(recent, in: app)
+        reveal(recent, in: app, allowHittableFastPath: allowHittableFastPath)
         recent.tap()
     }
 
@@ -223,7 +223,10 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Saved on this iPhone"].waitForExistence(timeout: 10))
     }
 
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+    private func reveal(
+        _ element: XCUIElement, in app: XCUIApplication, allowHittableFastPath: Bool = false
+    ) {
+        if allowHittableFastPath, element.exists, element.isHittable { return }
         let navigation = app.navigationBars.firstMatch
         let top = navigation.exists ? navigation.frame.maxY : app.frame.minY
         let newRecording = app.buttons["harc.mobile.detail.newRecording"]
