@@ -259,6 +259,16 @@ final class HarcAppUITests: XCTestCase {
     }
 
     func testPlaybackControlsSeekAndPause() throws {
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = "dark"
+        try verifyPlaybackControlsSeekAndPause()
+    }
+
+    func testPlaybackControlsSeekAndPauseLight() throws {
+        app.launchEnvironment["HARC_UI_TEST_APPEARANCE"] = "light"
+        try verifyPlaybackControlsSeekAndPause()
+    }
+
+    private func verifyPlaybackControlsSeekAndPause() throws {
         app.launchEnvironment["HARC_UI_TEST_LIBRARY_STATE"] = "complete"
         app.launch()
         let row = app.staticTexts.matching(NSPredicate(
@@ -302,6 +312,25 @@ final class HarcAppUITests: XCTestCase {
         XCTAssertTrue(speakers.waitForExistence(timeout: 5))
         speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).click()
         assertPlaybackPosition(elapsed, fraction: 0.6)
+        XCTAssertEqual(playPause.label, "Play recording")
+        XCTAssertEqual(speakers.label, "Speaker turns playback position")
+        XCTAssertEqual(strip.label, "Speaker timeline playback position")
+        // Decorative marker must leave the full-width seek target available,
+        // including endpoints, and switching modes must retain paused position.
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0)
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0.99)
+        speakers.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).click()
+        assertPlaybackPosition(elapsed, fraction: 0.4)
+        let markerEvidence = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        markerEvidence.name = "Speaker playhead and strip aligned at 40 percent (visual review required)"
+        markerEvidence.lifetime = .keepAlways
+        add(markerEvidence)
+        app.buttons["Energy"].click()
+        assertPlaybackPosition(elapsed, fraction: 0.4)
+        app.buttons["Speakers"].click()
+        assertPlaybackPosition(elapsed, fraction: 0.4)
         XCTAssertEqual(playPause.label, "Play recording")
         app.buttons["Energy"].click()
         let editor = app.textViews["harc.transcript.editor"]

@@ -1,6 +1,6 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-11-16
+**Updated:** 2026-11-17
 **Candidate configuration:** HarcMobile 0.14.23 (79), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed phone release source:** Not selected. Archive identity, executable digest, CDHash,
@@ -32,6 +32,31 @@ physical qualification phone.
 The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
 remain useful history and must not be relabeled as current-candidate qualification.
+
+## November 17 playhead and haptics integration
+
+The shared 0.14.23 (79) preparation now includes iPhone haptics from `7f3c047`
+and the requested Mac speaker playhead through `57c1c5d`. See the
+[exact-source validation handoff](2026-11-17-combined-release-playhead.md).
+The earlier `7f3c047` development archive and signed Mac DMG are retained as
+preparation evidence, not relabeled as the later source. Full hosted CI and
+final source-bound artifact checks remain required. Graph/project-refinement
+work is not included, and LLM summarization is unchanged. Owner-only TestFlight
+scope and all physical/codec/release limitations below are unchanged.
+
+## November 18 graph and playhead source integration
+
+Release integration starts at `8a0f013`, combining graph/consent integration
+`f5b9c0f` with playhead source `49f776d`. Unlike the earlier preparation
+candidate, this source includes the explicit read-only accepted-connections map
+and project-refinement stack. Earlier exclusions below describe their dated
+candidate only. The map does not automatically activate or write graph data.
+
+This is source integration, not release qualification. Full exact-head CI,
+archive identity/signing, applicable physical qualification and published
+artifact/feed checks remain required. No upload or distribution is claimed.
+The earlier intermittent largest-text Done-button failure remains recorded;
+an unchanged rerun passed without establishing its root cause.
 
 ## November 16 combined Apple speech release preparation
 

@@ -303,6 +303,9 @@ jobs:
             --require-test HarcAppUITests/HarcAppUITests/testLaunchOpensFixtureLibraryAndShowsRecordingDetail \
             --require-test HarcAppUITests/HarcAppUITests/testLibrarySearchFindsRecordingByTitleAndTranscript \
             --require-test HarcAppUITests/HarcAppUITests/testRecordingInspectorShowsSpeakersAndFiles \
+            --require-test HarcAppUITests/HarcAppUITests/testAcceptedMapExplicitOpenBackRefreshAndDismiss \
+            --require-test HarcAppUITests/HarcAppUITests/testPlaybackControlsSeekAndPause \
+            --require-test HarcAppUITests/HarcAppUITests/testPlaybackControlsSeekAndPauseLight \
             --require-test HarcAppUITests/HarcAppUITests/testTranscriptEditingPreservesSpecialCharactersAcrossRelaunch \
             --require-test HarcAppUITests/HarcAppUITests/testRecordStopPersistsGoldenTranscriptAcrossRelaunch \
             --output build/validation/macos-execution-gate.json
