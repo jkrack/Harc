@@ -41,7 +41,12 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         XCTAssertEqual(position.value as? String, beforeSkip)
         XCTAssertEqual(play.label, "Play")
         play.tap()
-        expectLabel("Pause", on: play)
+        // The hosted recording showed Pause and advancing audio while the
+        // generic predicate wait timed out. Keep the same accessibility
+        // assertion, but use XCTest's dedicated property wait on a fresh query.
+        let resumeButton = app.buttons.matching(identifier: "harc.mobile.detail.play").firstMatch
+        XCTAssertTrue(resumeButton.wait(for: \.label, toEqual: "Pause", timeout: 10),
+                      "Play after a backward skip must expose the Pause accessibility label")
 
         let sections = app.segmentedControls["harc.mobile.detail.sections"]
         reveal(sections, in: app)
