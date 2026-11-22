@@ -5,6 +5,68 @@ import GRDB
 
 @Suite("Migration upgrade path")
 struct MigrationUpgradeTest {
+    @Test("project schema upgrade preserves a v33 recording and permits a legacy reader")
+    func upgradesProjectSchemaAndOpensWithLegacyReader() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-migration-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("fixture.sqlite")
+        let v33 = "v33_host_speaker_review_queue"
+        let migrator = DatabaseMigrator.harcMigrator()
+        let index = try #require(migrator.migrations.firstIndex(of: v33))
+        let legacyIDs = migrator.migrations[...index]
+        do {
+            let db = try DatabaseQueue(path: url.path)
+            try migrator.migrate(db, upTo: v33)
+            try await db.read { database in
+                let hasProjects = try database.tableExists("knowledge_projects")
+                #expect(!hasProjects)
+            }
+        }
+        var previous = DatabaseMigrator()
+        for id in legacyIDs {
+            // Reproduce the old reader's migration-identification gate, not
+            // its migration implementations or the full old application.
+            previous.registerMigration(id) { _ in
+                throw CocoaError(.featureUnsupported)
+            }
+        }
+        let legacyMigrator = previous
+        let transcript = "Synthetic Harc project migration recording."
+        let wav = root.appendingPathComponent("fixture.wav").path
+        let recordingID: Int64
+        do {
+            let legacy = try RecordingStore.onDiskForTesting(url: url, migrator: legacyMigrator)
+            let recording = try await legacy.upsert(Recording(wavPath: wav, startedAt: Date(), transcriptText: transcript))
+            recordingID = try #require(recording.id)
+        }
+        do {
+            let upgraded = try await RecordingStore.onDisk(url: url)
+            #expect(try await upgraded.fetch(id: recordingID)?.transcriptText == transcript)
+            let project = try await upgraded.createKnowledgeProject(name: "Harc")
+            let review = try await upgraded.proposeProjectMatch(
+                recordingID: recordingID, projectID: project.id, quote: "Harc", generatorID: "fixture"
+            )
+            _ = try await upgraded.decideProjectMatch(
+                id: review.id, expectedVersion: review.version, decision: .accepted, operationID: UUID()
+            )
+        }
+        do {
+            let db = try DatabaseQueue(path: url.path)
+            let applied = try await db.read { database in
+                try DatabaseMigrator().appliedIdentifiers(database)
+            }
+            #expect(applied.subtracting(legacyIDs) == ["v34_project_refinement", "v35_project_review_queue_index"])
+        }
+        do {
+            let legacy = try RecordingStore.onDiskForTesting(url: url, migrator: legacyMigrator)
+            #expect(try await legacy.fetch(id: recordingID)?.transcriptText == transcript)
+        }
+        let reopened = try await RecordingStore.onDisk(url: url)
+        #expect(try await reopened.fetch(id: recordingID)?.wavPath == wav)
+        #expect(try await reopened.confirmedProjectMatches(recordingID: recordingID).count == 1)
+    }
+
     /// Real users are upgrading from a v12 database. v13 alters a live table,
     /// so prove the columns land and existing rows survive untouched.
     @Test("a v12 database upgrades to v13 without losing rows")
