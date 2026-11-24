@@ -51,7 +51,7 @@ enum HarcDesktopLocalLibraryReprocessPlanner {
     }
 
     static func currentModelID(diarize: Bool, vad: Bool) -> String {
-        "parakeet-\(HarcVersion.sttEngineVersion)\(diarize ? "+diar" : "")\(vad ? "+vad" : "")"
+        "\(HarcVersion.sttEngineVersion)\(diarize ? "+diar" : "")\(vad ? "+vad" : "")"
     }
 
     static func shouldTranscribe(

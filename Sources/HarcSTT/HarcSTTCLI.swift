@@ -25,9 +25,9 @@ struct HarcSTTCLI {
             socketPath = args[idx + 1]
         }
 
-        // Opt-in experimental ASR engine: --asr-engine <v2|unified>, or the
+        // Opt-in experimental ASR engine: --asr-engine <apple|v2|unified>, or the
         // HARC_STT_ASR_ENGINE env var (flag wins). Unknown values fall back
-        // to v2 with a stderr note rather than refusing to start.
+        // to apple with a stderr note rather than refusing to start.
         var engineRaw = ProcessInfo.processInfo.environment["HARC_STT_ASR_ENGINE"]
         if let idx = args.firstIndex(of: "--asr-engine"), args.indices.contains(idx + 1) {
             engineRaw = args[idx + 1]
@@ -53,22 +53,22 @@ struct HarcSTTCLI {
     Usage:
       harc-stt                         Start daemon on ~/.harc/stt.sock (idle timeout 30 min)
       harc-stt --socket <path>         Start daemon on a custom socket path
-      harc-stt --asr-engine <engine>   Select the ASR engine: v2 (default) or
+      harc-stt --asr-engine <engine>   Select the ASR engine: apple (default, on-device), v2 or
                                        unified (experimental Parakeet Unified
                                        EN). Also via HARC_STT_ASR_ENGINE.
       harc-stt --version               Print version and exit
       harc-stt --help                  Print this help and exit
     """
 
-    /// Parse an engine string; unknown values fall back to v2 with a
+    /// Parse an engine string; unknown values fall back to apple with a
     /// stderr note rather than refusing to start. Extracted for tests.
     static func parseEngine(_ raw: String?) -> Transcriber.ASREngine {
-        guard let raw, !raw.isEmpty else { return .v2 }
+        guard let raw, !raw.isEmpty else { return .apple }
         if let parsed = Transcriber.ASREngine(rawValue: raw) { return parsed }
         FileHandle.standardError.write(Data(
-            "harc-stt: unknown ASR engine '\(raw)' — using v2\n".utf8
+            "harc-stt: unknown ASR engine '\(raw)' — using apple\n".utf8
         ))
-        return .v2
+        return .apple
     }
 
     /// Install simple SIGTERM/SIGINT handlers that remove the socket and exit.

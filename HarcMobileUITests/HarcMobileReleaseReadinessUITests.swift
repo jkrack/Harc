@@ -646,7 +646,9 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         addUIInterruptionMonitor(
             withDescription: "Microphone permission"
         ) { alert in
-            guard alert.buttons["Allow"].exists else { return false }
+            let message = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
+            guard message.localizedCaseInsensitiveContains("microphone"),
+                  alert.buttons["Allow"].exists else { return false }
             alert.buttons["Allow"].tap()
             return true
         }
@@ -671,15 +673,116 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
 
-        let capturedAudio = expectation(description: "capture real microphone audio")
+        let capturedAudio = XCTestExpectation(description: "capture real microphone audio")
         _ = XCTWaiter.wait(for: [capturedAudio], timeout: 2)
         stop.tap()
 
         let recordTab = app.tabBars.buttons["Record"]
         XCTAssertTrue(recordTab.waitForExistence(timeout: 10))
         recordTab.tap()
-        XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Saved on this iPhone"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.state, .runningForeground)
+#endif
+    }
+
+    func testPhysicalNewRecordingOpensDistinctCaptureAndPreservesOriginal() throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("Microphone handoff requires a physical iPhone.")
+#else
+        addUIInterruptionMonitor(withDescription: "Microphone permission") { alert in
+            let message = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " ")
+            guard message.localizedCaseInsensitiveContains("microphone"),
+                  alert.buttons["Allow"].exists else { return false }
+            alert.buttons["Allow"].tap()
+            return true
+        }
+        // The real sixty-second WAV fixture gives playback ample time to remain
+        // active at handoff. Its start is a minute earlier than the new capture.
+        let app = makeApp(rootID: UUID().uuidString, additionalArguments: [
+            "--harc-ui-test-local-recording",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL",
+        ])
+        app.launch()
+        XCTAssertTrue(app.buttons["harc.mobile.record.recent"].waitForExistence(timeout: 20))
+        guard let today = scrollToHittableButton("harc.mobile.record.today", in: app) else {
+            XCTFail("The seeded recording must be reachable")
+            return
+        }
+        today.tap()
+        let rows = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "harc.mobile.local.recording."
+        ))
+        expectation(for: NSPredicate(format: "count == 1"), evaluatedWith: rows)
+        waitForExpectations(timeout: 10)
+        let originalID = rows.firstMatch.identifier
+        rows.firstMatch.tap()
+        let saved = app.staticTexts["Saved on this iPhone"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 15))
+        let title = app.staticTexts["harc.mobile.detail.title"]
+        let originalTitle = title.label
+        let play = app.buttons["harc.mobile.detail.play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        play.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Pause"), evaluatedWith: play)
+        waitForExpectations(timeout: 10)
+        let position = app.sliders["Playback position"]
+        let originalClock = (position.value as? String ?? "").split(separator: " ")
+        guard originalClock.count == 5 else {
+            XCTFail("Playback must expose elapsed and total seconds")
+            return
+        }
+        XCTAssertEqual(Int(originalClock[3]), 60)
+        XCTAssertLessThan(Int(originalClock[0]) ?? 60, 20)
+        XCTAssertEqual(play.label, "Pause")
+        app.buttons["harc.mobile.detail.newRecording"].tap()
+        triggerMicrophonePermissionMonitor(in: app)
+        let stop = app.buttons["harc.mobile.record.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        XCTAssertTrue(play.waitForNonExistence(timeout: 10))
+        _ = XCTWaiter.wait(for: [XCTestExpectation(description: "capture recording B")], timeout: 3)
+        stop.tap()
+        XCTAssertTrue(saved.waitForExistence(timeout: 15))
+        let newTitle = title.label
+        XCTAssertNotEqual(newTitle, originalTitle, "Stop must show the new capture, not the earlier fixture")
+        XCTAssertEqual(play.label, "Play")
+        play.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Pause"), evaluatedWith: play)
+        waitForExpectations(timeout: 10)
+        let newClock = (position.value as? String ?? "").split(separator: " ")
+        guard newClock.count == 5 else {
+            XCTFail("The new capture must expose its playback duration")
+            return
+        }
+        let newDuration = Int(newClock[3]) ?? 0
+        XCTAssertGreaterThan(newDuration, 0)
+        XCTAssertLessThan(newDuration, 30, "Playback must be the brief new capture, not the sixty-second fixture")
+        play.tap()
+        keepTideScreenshot("Recording-handoff-new-capture")
+        app.buttons["harc.mobile.detail.done"].tap()
+        app.tabBars.buttons["Library"].tap()
+        expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: rows)
+        waitForExpectations(timeout: 10)
+        let identifiers = rows.allElementsBoundByIndex.map(\.identifier)
+        XCTAssertEqual(Set(identifiers).count, 2)
+        XCTAssertTrue(identifiers.contains(originalID))
+        guard let newID = identifiers.first(where: { $0 != originalID }) else {
+            XCTFail("A distinct recording identity must be saved")
+            return
+        }
+        for (identifier, expectedTitle) in [(newID, newTitle), (originalID, originalTitle)] {
+            guard let row = scrollToHittableButton(identifier, in: app) else {
+                XCTFail("Each exact saved recording must remain reachable")
+                return
+            }
+            row.tap()
+            XCTAssertTrue(saved.waitForExistence(timeout: 15))
+            XCTAssertEqual(title.label, expectedTitle)
+            play.tap()
+            expectation(for: NSPredicate(format: "label == %@", "Pause"), evaluatedWith: play)
+            waitForExpectations(timeout: 10)
+            play.tap()
+            app.navigationBars.buttons["Library"].tap()
+        }
 #endif
     }
 
@@ -743,7 +846,7 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
         keepTideScreenshot("Tide-Physical-LiveActivity")
         activityStop.tap()
         app.activate()
-        XCTAssertTrue(app.staticTexts["Saved locally"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Saved on this iPhone"].waitForExistence(timeout: 15))
 #endif
     }
 
@@ -778,15 +881,12 @@ final class HarcMobileReleaseReadinessUITests: XCTestCase {
                 .waitForExistence(timeout: 15)
         )
         XCTAssertTrue(
-            app.staticTexts["iPhone storage is full"]
+            app.staticTexts["Recording stopped when storage ran out. Harc saved the durable portion. Check free space before recording again."]
                 .waitForExistence(timeout: 30)
         )
-        XCTAssertTrue(
-            app.staticTexts[
-                "Recording stopped. Harc saved the durable portion locally."
-            ].exists
-        )
-        XCTAssertTrue(app.buttons["Record Again"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this iPhone"].exists)
+        XCTAssertTrue(app.buttons["harc.mobile.detail.newRecording"].exists)
+        XCTAssertTrue(app.buttons["harc.mobile.detail.newRecording"].isEnabled)
         XCTAssertEqual(app.state, .runningForeground)
 #endif
     }

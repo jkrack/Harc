@@ -1,0 +1,36 @@
+{
+  "corpusSHA256" : "bf60329f9eaf6e1c493ce5be33e7aeee4ad620ae16bef93aef8a48bf80d757f4",
+  "notes" : "Synthetic quotes retained solely for independent review. Original scores immutable; no prompt\/label\/quote tuning or retrospective rescoring.",
+  "promptInstructionsSHA256" : "b209aba461496f1ad137872b5d14c2b96c9b2c06a052cfdf2e62ae083e472d54",
+  "promptVersion" : "selected-source-evidence-v1",
+  "rows" : [
+    {
+      "endUTF8" : 76,
+      "id" : "h05",
+      "matchesFrozenQuote" : false,
+      "outcome" : "suggest",
+      "startUTF8" : 28,
+      "strictSourceValidated" : true,
+      "syntheticQuote" : "choose the deeper sink before the plumber starts"
+    },
+    {
+      "endUTF8" : 82,
+      "id" : "h09",
+      "matchesFrozenQuote" : false,
+      "outcome" : "suggest",
+      "startUTF8" : 11,
+      "strictSourceValidated" : true,
+      "syntheticQuote" : "Zoë approved the café-colored kitchen cabinets and the matching sink."
+    },
+    {
+      "endUTF8" : 113,
+      "id" : "h10",
+      "matchesFrozenQuote" : false,
+      "outcome" : "suggest",
+      "startUTF8" : 66,
+      "strictSourceValidated" : true,
+      "syntheticQuote" : "Cedar phone-to-Mac transfer needs a retry queue"
+    }
+  ],
+  "type" : "supplemental-diagnostic-reproduction-not-original-output"
+}

@@ -47,3 +47,13 @@ struct VersionTests {
         )
     }
 }
+
+struct SpeechEngineIdentityTests {
+    @Test func identitiesAreExplicitAndAppleIsDefault() {
+        #expect(HarcVersion.sttModelID(engine: nil) == "apple-speech-transcriber")
+        #expect(HarcVersion.sttModelID(engine: "apple") == "apple-speech-transcriber")
+        #expect(HarcVersion.sttModelID(engine: "unknown") == "apple-speech-transcriber")
+        #expect(HarcVersion.sttModelID(engine: "v2") == "parakeet-tdt-0.6b-v2")
+        #expect(HarcVersion.sttModelID(engine: "unified") == "parakeet-unified-en-0.6b")
+    }
+}

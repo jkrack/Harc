@@ -320,6 +320,7 @@ let package = Package(
             name: "HarcSummarize",
             dependencies: [
                 "HarcCore",
+                "HarcModels",
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
@@ -424,7 +425,8 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcModelsTests",
-            dependencies: ["HarcModels", "HarcCore"]
+            dependencies: ["HarcModels", "HarcCore"],
+            resources: [.copy("Fixtures/evidence-gemma4-config.json")]
         ),
         .testTarget(
             name: "HarcVoiceprintTests",
@@ -436,7 +438,8 @@ let package = Package(
         ),
         .testTarget(
             name: "HarcSummarizeTests",
-            dependencies: ["HarcSummarize", "HarcCore"]
+            dependencies: ["HarcSummarize", "HarcCore", "HarcModels", "HarcStore", "HarcDomain"],
+            resources: [.copy("Fixtures/evidence-evaluation-v1.json"), .copy("Fixtures/evidence-evaluation-v2.json"), .copy("Fixtures/evidence-development-v3.json"), .copy("Fixtures/evidence-independent-challenge-v1.json")]
         ),
         .testTarget(
             name: "HarcExportTests",

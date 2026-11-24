@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import HarcUI
 import HarcClient
+import HarcCore
 
 struct STTReadinessTests {
     @Test("model loaded → ready, regardless of prior verification")
@@ -15,14 +16,15 @@ struct STTReadinessTests {
         }
     }
 
-    @Test("daemon up but model not loaded → preparing; first run mentions the download")
+    @Test("daemon up but model not loaded → preparing; first run does not invent a download or asset size")
     func notLoadedIsPreparing() {
         let firstRun = STTReadiness.from(.init(
             socketExists: true, statusModelLoaded: false, modelVerifiedBefore: false
         ))
         #expect(firstRun == .preparing(firstRun: true))
         #expect(!firstRun.isReady)
-        #expect(firstRun.displayText.contains("460 MB"))
+        #expect(firstRun.displayText == "Preparing local speech recognition…")
+        #expect(!firstRun.displayText.contains("Downloading"))
 
         let laterRun = STTReadiness.from(.init(
             socketExists: true, statusModelLoaded: false, modelVerifiedBefore: true
@@ -182,5 +184,44 @@ struct WelcomeSetupSuggestionTests {
         let big = WelcomeSetupModel.suggestedSummarizer(ramGB: 128)
         #expect(big != nil)
         #expect(big?.tier == .standard || big?.tier == .quality)
+    }
+}
+
+struct ArchiveSpeechProvenanceTests {
+    @Test func appleArchiveProvenanceDoesNotClaimParakeet() {
+        let transcriber = DaemonArchiveTranscriber(
+            engineVersion: "apple-speech-transcriber", diarize: true, vad: true
+        )
+        #expect(transcriber.modelID == "apple-speech-transcriber+diar+vad")
+    }
+
+    @Test func legacyArchiveProvenanceRetainsActualEngine() {
+        let transcriber = DaemonArchiveTranscriber(
+            engineVersion: "parakeet-tdt-0.6b-v2", diarize: false, vad: false
+        )
+        #expect(transcriber.modelID == "parakeet-tdt-0.6b-v2")
+    }
+}
+
+struct SpeechReadinessIdentityTests {
+    @Test func wrongOrLegacyDaemonFailsInsteadOfPreparing() {
+        let modelIDs: [String?] = [nil, "parakeet-tdt-0.6b-v2"]
+        for modelID in modelIDs {
+            for state in [DaemonStatus.ModelState.ready, .downloading, .failed] {
+                let status = DaemonStatus(
+                    version: "test", modelLoaded: true, uptimeSeconds: 1,
+                    modelState: state, downloadProgress: 0.5,
+                    errorMessage: "foreign failure", sttModelID: modelID
+                )
+                let readiness = STTReadiness.from(
+                    status: status, expectedModelID: "apple-speech-transcriber",
+                    modelVerifiedBefore: true
+                )
+                #expect(!readiness.isReady)
+                #expect(readiness.displayText.contains("quit and reopen Harc"))
+                #expect(!readiness.displayText.contains("foreign failure"))
+                #expect(readiness.progress == nil)
+            }
+        }
     }
 }

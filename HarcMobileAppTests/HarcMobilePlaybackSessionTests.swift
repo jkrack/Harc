@@ -145,6 +145,90 @@ final class HarcMobilePlaybackSessionTests: XCTestCase {
         XCTAssertEqual(player.plays, 1)
     }
 
+    func testSeekClampsFinitePositionsAndPreservesPause() async {
+        let fixture = Fixture()
+        let player = Player()
+        let controller = fixture.controller(player: player)
+        XCTAssertFalse(controller.canSeek)
+        controller.seek(to: 10)
+        XCTAssertEqual(controller.currentTime, 0)
+        await controller.playOrPause()
+        XCTAssertEqual(controller.duration, 60)
+        XCTAssertTrue(controller.canSeek)
+        controller.seek(to: 25)
+        XCTAssertEqual(player.currentTime, 25)
+        controller.seek(to: .nan)
+        controller.seek(to: .infinity)
+        XCTAssertEqual(player.currentTime, 25)
+        await controller.playOrPause()
+        controller.seek(to: -1)
+        XCTAssertEqual(controller.currentTime, 0)
+        XCTAssertEqual(controller.state, .paused)
+        controller.seek(to: 100)
+        XCTAssertEqual(controller.currentTime, 60)
+        controller.stop()
+        XCTAssertEqual(controller.currentTime, 0)
+        XCTAssertEqual(fixture.deactivations, 1)
+    }
+
+    func testFinishedPlaybackCanSeekBeforeRestartWithoutClaimingSession() async {
+        let fixture = Fixture()
+        let player = Player()
+        let controller = fixture.controller(player: player)
+        await controller.playOrPause()
+        controller.playbackFinished(player, successfully: true)
+        XCTAssertEqual(controller.currentTime, 60)
+        XCTAssertEqual(fixture.activations, 1)
+        controller.seek(to: 12)
+        XCTAssertEqual(controller.currentTime, 12)
+        XCTAssertEqual(fixture.activations, 1)
+        await controller.playOrPause()
+        XCTAssertEqual(player.currentTime, 12)
+        XCTAssertEqual(fixture.activations, 2)
+        controller.stop()
+    }
+
+    func testPlaybackFeedbackOnlyAfterSuccessfulStartAndResume() async {
+        let fixture = Fixture()
+        let player = Player()
+        var feedbackCount = 0
+        let controller = HarcMobileLocalRecordingAudioController(
+            url: URL(fileURLWithPath: "/synthetic.wav"), session: fixture.session,
+            onPlaybackStarted: { feedbackCount += 1 }, makePlayer: { _ in player }
+        )
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 1)
+        await controller.playOrPause() // Pause is not a start.
+        controller.seek(to: 12)
+        XCTAssertEqual(feedbackCount, 1)
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 2)
+        await controller.playOrPause()
+        player.canPlay = false
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 2)
+        controller.stop()
+    }
+
+    func testPlaybackFeedbackNotEmittedForFailedOrCaptureBlockedStart() async {
+        let fixture = Fixture()
+        let player = Player()
+        player.canPlay = false
+        var feedbackCount = 0
+        let controller = HarcMobileLocalRecordingAudioController(
+            url: URL(fileURLWithPath: "/synthetic.wav"), session: fixture.session,
+            onPlaybackStarted: { feedbackCount += 1 }, makePlayer: { _ in player }
+        )
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 0)
+        player.canPlay = true
+        fixture.session.beginCapture()
+        await controller.playOrPause()
+        XCTAssertEqual(feedbackCount, 0)
+        fixture.session.endCapture()
+        controller.stop()
+    }
+
     private enum Failure: Error { case injected }
 
     @MainActor
@@ -171,6 +255,8 @@ final class HarcMobilePlaybackSessionTests: XCTestCase {
     private final class Player: HarcMobileLocalAudioPlayer {
         var delegate: (any AVAudioPlayerDelegate)?
         var isPlaying = false
+        var duration: TimeInterval = 60
+        var currentTime: TimeInterval = 0
         var canPlay = true
         var plays = 0
         var stops = 0

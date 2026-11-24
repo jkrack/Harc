@@ -6,6 +6,7 @@ import UIKit
 struct HarcMobileSetupAndSyncView: View {
     @Environment(HarcMobileAppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.harcNewRecording) private var newRecording
 
     @State private var showsPairing = false
     @State private var showsReviewSample = false
@@ -114,6 +115,12 @@ struct HarcMobileSetupAndSyncView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+        .environment(\.harcNewRecording) {
+            // Setup can be presented by the root or a Library status sheet.
+            // Dismiss its actual presentation before returning to capture.
+            dismiss()
+            newRecording()
         }
         .accessibilityIdentifier(HarcMobileAccessibilityID.setupAndSync)
         .sheet(isPresented: $showsPairing) {

@@ -1,0 +1,7 @@
+Trusted actual AX client; synthetic target PID 2208
+AX read failed: AXRole, error -25204
+AX read failed: AXTitle, error -25204
+AX read failed: AXDescription, error -25204
+AX read failed: AXValue, error -25204
+AX read failed: AXIdentifier, error -25204
+AX read failed: AXChildren, error -25204

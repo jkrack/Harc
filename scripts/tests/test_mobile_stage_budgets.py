@@ -140,14 +140,44 @@ print(Path('summary.json' if sys.argv[4] == 'summary' else 'tree.json').read_tex
         source = SCRIPT.read_text()
         diagnostic = ('HarcMobileUITests/HarcMobileReleaseReadinessUITests/'
                       'testRefreshStatusProbePreservesPredicateAndRedactsLabels')
-        for pattern, expected in [
-            (r'-only-testing:([^\s\\]+)', '407998521d470d814d8c6a2715fa2f4c88d4cbdcbe7bff82ee12bb582bc5b220'),
-            (r'--require-test ([^\s\\]+)', '2cbd496ce3a41e5dd790c52320aee39ebb22ae4b8c9ede201080b71836ffb24c'),
+        detail_suite = 'HarcMobileUITests/HarcMobileRecordingDetailUITests'
+        detail_cases = [detail_suite + '/' + name for name in (
+            'testLocalDetailPlaybackSectionsAndReopening',
+            'testLocalDetailSeekPreservesPausedPlayback',
+            'testLocalDetailRemainsUsableAtLargestDynamicType',
+            'testStorageWarningSurvivesDoneRecentAndLibrary',
+        )]
+        detail_suites = [
+            'HarcMobileAppTests/HarcMobileRecordingDetailPresentationTests',
+            'HarcMobileAppTests/HarcMobileAudioEnvelopeTests',
+            'HarcMobileAppTests/HarcMobileAudioSummaryRefreshTests',
+            detail_suite,
+        ]
+        transcription_suite = 'HarcMobileAppTests/HarcMobileLocalTranscriptionTests'
+        transcription_cases = [transcription_suite + '/' + name for name in (
+            'testPreviewPersistsSeparatelyAndExactRetryReusesIt',
+            'testRejectsWrongAudioBindingAndInvalidTimeline',
+            'testCaptureSuspendsQueueAndModelFailureLeavesAudioUntouched',
+            'testInterruptedWorkCannotPublishPartialResultAndResumesOnce',
+            'testMismatchedRequestCannotRelabelAnActiveJob',
+            'testBackgroundLaunchDefersInferenceUntilForeground',
+            'testRestoreDoesNotStartUnrequestedHistoricalWork',
+        )]
+        detail_cases.append('HarcMobileAppTests/HarcMobileAudioEnvelopeTests/'
+                            'testLongLocalPlaybackSeeksExactlyWhilePaused')
+        detail_suites.append(transcription_suite)
+        detail_cases.extend(transcription_cases)
+        for pattern, expected, additions in [
+            (r'-only-testing:([^\s\\]+)', '407998521d470d814d8c6a2715fa2f4c88d4cbdcbe7bff82ee12bb582bc5b220', detail_suites),
+            (r'--require-test ([^\s\\]+)', '2cbd496ce3a41e5dd790c52320aee39ebb22ae4b8c9ede201080b71836ffb24c', detail_cases),
         ]:
             selected = re.findall(pattern, source)
-            self.assertEqual(selected.count(diagnostic), 1)
-            # Reviewed diagnostic addition; all original entries/order stay pinned.
-            original = [item for item in selected if item != diagnostic]
+            reviewed_additions = [diagnostic] + additions
+            for item in reviewed_additions:
+                self.assertEqual(selected.count(item), 1, item)
+            # Reviewed additions are required exactly once. All original entries
+            # and their order retain the unchanged baseline fingerprint.
+            original = [item for item in selected if item not in reviewed_additions]
             self.assertEqual(hashlib.sha256('\n'.join(original).encode()).hexdigest(), expected)
 
 
