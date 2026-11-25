@@ -137,4 +137,22 @@ struct WordIndexTests {
         )])
     }
 
+    @Test("Timestamp lookups retain UTF-16 boundaries near the end of a long transcript")
+    func longTranscriptByCharOffset() {
+        let repeated = 15_000
+        let text = String(repeating: "voice ", count: repeated) + "🙂 CAFE\u{301}  tail"
+        let words = (0..<repeated).map { word("voice", $0 * 450, $0 * 450 + 400) }
+            + [word("café", 6_750_500, 6_751_000), word("tail", 6_751_500, 6_752_000)]
+        let index = WordIndex(words: words, text: text)
+        let expected = 6 * repeated + 3 // two UTF-16 code units for the emoji
+        #expect(index.entries.count == repeated + 2)
+        #expect(index.wordAt(charOffset: expected - 1) == nil)
+        #expect(index.wordAt(charOffset: expected)?.range == NSRange(location: expected, length: 5))
+        #expect(index.wordAt(charOffset: expected + 4)?.word.text == "café")
+        #expect(index.wordAt(charOffset: expected + 5) == nil)
+        #expect(index.wordAt(charOffset: expected + 7)?.word.text == "tail")
+        #expect(index.wordAt(charOffset: -1) == nil)
+        #expect(index.wordAt(charOffset: Int.max) == nil)
+    }
+
 }

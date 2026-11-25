@@ -132,13 +132,22 @@ public struct TranscriptDocument: Sendable {
     private static func matchesGeneratedText(
         _ text: String, transcript: SessionTranscript, recording: Recording
     ) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Legacy recognition is an exact match against any of these forms.
+        // Avoid building whole renderings that cannot change the decision.
+        if transcript.joinedText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+            return true
+        }
         var legacy = transcript
         legacy.overlapRanges = nil
-        let candidates = [transcript.joinedText,
-            TranscriptPlainTextRenderer.render(legacy),
-            TranscriptPlainTextRenderer.render(legacy) { recording.speakerNames[$0] ?? "Speaker \($0 + 1)" }]
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return candidates.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
+        let defaultRendering = TranscriptPlainTextRenderer.render(legacy)
+        if defaultRendering.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+            return true
+        }
+        guard !recording.speakerNames.isEmpty else { return false }
+        return TranscriptPlainTextRenderer.render(legacy) {
+            recording.speakerNames[$0] ?? "Speaker \($0 + 1)"
+        }.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
     }
 
     /// Return the same document metadata with a different presentation text
